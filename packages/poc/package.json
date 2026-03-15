@@ -1,0 +1,10 @@
+{
+  "name": "@mercury/poc",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@mercury/core": "workspace:*",
+    "@mercury/sdk-adapters": "workspace:*"
+  }
+}

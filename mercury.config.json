@@ -1,0 +1,35 @@
+{
+  "agents": [
+    {
+      "id": "claude-code",
+      "displayName": "Claude Code",
+      "cli": "claude",
+      "role": "main",
+      "integration": "sdk",
+      "capabilities": ["code", "review", "orchestration"],
+      "restrictions": [],
+      "maxConcurrentSessions": 3
+    },
+    {
+      "id": "codex-cli",
+      "displayName": "Codex CLI",
+      "cli": "codex",
+      "role": "dev",
+      "integration": "sdk",
+      "capabilities": ["code", "test"],
+      "restrictions": [],
+      "maxConcurrentSessions": 2
+    },
+    {
+      "id": "opencode",
+      "displayName": "opencode",
+      "cli": "opencode",
+      "role": "dev",
+      "integration": "http",
+      "capabilities": ["code"],
+      "restrictions": [],
+      "maxConcurrentSessions": 1
+    }
+  ],
+  "workDir": "."
+}

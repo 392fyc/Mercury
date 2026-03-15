@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+dist-ssr/
+*.local
+
+# Rust/Tauri
+packages/gui/src-tauri/target/
+packages/gui/src-tauri/gen/schemas/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Environment / Secrets
+.env
+.env.*
+*.key
+*.pem
+credentials.json
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+Thumbs.db
+
+# OS
+desktop.ini
+$RECYCLE.BIN/
+
+# Claude Code
+.claude/plans/

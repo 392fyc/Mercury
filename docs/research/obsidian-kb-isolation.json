@@ -1,0 +1,161 @@
+{
+  "meta": {
+    "title": "Obsidian KB Isolation Research",
+    "created": "2026-03-15",
+    "context": "Mercury与SoT双项目并行时，Obsidian知识库隔离方案调研",
+    "status": "actionable",
+    "sources": [
+      "https://help.obsidian.md/cli",
+      "https://obsidian.md/changelog/2026-02-27-desktop-v1.12.4/",
+      "https://frankanaya.com/obsidian-cli/",
+      "https://github.com/MarkusPfundstein/mcp-obsidian/issues/46",
+      "https://github.com/MarkusPfundstein/mcp-obsidian/issues/63",
+      "https://forum.obsidian.md/t/cli-vault-parameter-ignored-all-commands-resolve-to-the-focused-vault/112217"
+    ]
+  },
+
+  "obsidian_cli": {
+    "release": {
+      "version": "1.12.0",
+      "early_access_date": "2026-02-10",
+      "public_release_version": "1.12.4",
+      "public_release_date": "2026-02-27",
+      "license": "free",
+      "enable_path": "Settings → General → Command line interface"
+    },
+    "architecture": {
+      "type": "remote_control",
+      "requires_gui": true,
+      "note": "CLI通过运行中的Obsidian桌面端执行操作，非独立headless工具"
+    },
+    "capabilities": {
+      "read": "obsidian cli read <path>",
+      "write": "obsidian cli write <path> --content <text>",
+      "append": "obsidian cli append <path> --content <text>",
+      "search": "obsidian cli search <query>",
+      "move": "obsidian cli move <from> <to>  (自动更新wikilinks)",
+      "daily_note": "obsidian cli daily",
+      "eval_js": "obsidian cli eval <code>",
+      "plugin_mgmt": true,
+      "template_create": true
+    },
+    "multi_vault": {
+      "parameter": "vault=\"VaultName\"",
+      "known_bug": {
+        "forum_url": "https://forum.obsidian.md/t/cli-vault-parameter-ignored-all-commands-resolve-to-the-focused-vault/112217",
+        "description": "vault=参数可能被忽略，所有命令指向当前聚焦的Vault",
+        "status": "unconfirmed",
+        "workaround": "回退到Local REST API双端口方案",
+        "action_required": "部署前手动测试vault=参数是否生效"
+      }
+    }
+  },
+
+  "local_rest_api": {
+    "plugin": "obsidian-local-rest-api",
+    "author": "coddingtonbear",
+    "mcp_server": "mcp-obsidian (MarkusPfundstein)",
+    "default_ports": {
+      "https": 27124,
+      "http": 27123
+    },
+    "multi_vault": {
+      "method": "每个Vault配置不同端口",
+      "port_config_path": "Settings → Community Plugins → Local REST API → Advanced → Port",
+      "api_key": "每个Vault独立生成"
+    }
+  },
+
+  "isolation_schemes": [
+    {
+      "id": "A",
+      "name": "Local REST API 双端口",
+      "method": "mcp-obsidian",
+      "sot_config": {
+        "host": "https://localhost:27124",
+        "vault_path": "D:\\ShipOfTheseus\\ShipOfTheseus-KB"
+      },
+      "mercury_config": {
+        "host": "https://localhost:27126",
+        "vault_path": "D:\\Mercury\\Mercury-KB"
+      },
+      "mcp_json_example": {
+        "mcpServers": {
+          "obsidian": {
+            "command": "uvx",
+            "args": ["mcp-obsidian"],
+            "env": {
+              "OBSIDIAN_API_KEY": "<mercury-api-key>",
+              "OBSIDIAN_HOST": "https://localhost:27126"
+            }
+          }
+        }
+      },
+      "pros": [
+        "SoT项目已全链路验证",
+        "MCP原生集成，obsidian_*工具直接可用",
+        "稳定可靠"
+      ],
+      "cons": [
+        "需要社区插件",
+        "双端口配置",
+        "文件移动不自动更新wikilinks"
+      ],
+      "risk": "low"
+    },
+    {
+      "id": "B",
+      "name": "Obsidian CLI",
+      "method": "obsidian cli + Bash tool",
+      "vault_param": "vault=\"Mercury-KB\"",
+      "pros": [
+        "官方原生，无需社区插件",
+        "文件操作经Obsidian运行时，自动更新wikilinks",
+        "v1.12.4免费内置"
+      ],
+      "cons": [
+        "vault=参数存在已知bug（未确认修复）",
+        "无MCP server封装，需通过Bash调用",
+        "发布不到1个月，成熟度待验证"
+      ],
+      "risk": "medium",
+      "blocker": "vault=参数bug未确认修复前不可用于多Vault场景"
+    },
+    {
+      "id": "C",
+      "name": "混合方案",
+      "method": "SoT用REST API + Mercury用CLI",
+      "pros": [
+        "SoT保持稳定不变",
+        "Mercury用更现代方案"
+      ],
+      "cons": [
+        "两套工具链，维护成本高",
+        "Agent Prompt需区分两种调用方式"
+      ],
+      "risk": "medium"
+    }
+  ],
+
+  "decision": {
+    "recommended": "A",
+    "fallback": "B",
+    "rationale": "方案A已在SoT验证稳定；方案B的vault=参数存在已知bug，需先手动验证。Mercury为新项目无历史包袱，但稳定性优先。若vault= bug已修复，可升级为B。",
+    "validation_test": {
+      "command": "obsidian cli read --vault=\"Mercury-KB\" \"test.md\"",
+      "expected": "读取Mercury-KB vault中的test.md内容",
+      "if_pass": "可采用方案B",
+      "if_fail": "采用方案A（双端口REST API）"
+    }
+  },
+
+  "mercury_kb_structure": {
+    "vault_path": "D:\\Mercury\\Mercury-KB",
+    "directories": [
+      "00-Index",
+      "01-Design",
+      "02-Development",
+      "03-AI-Context"
+    ]
+  }
+}
