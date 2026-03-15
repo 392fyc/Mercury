@@ -148,7 +148,9 @@ export class OpencodeAdapter implements AgentAdapter {
         }
       });
 
-      proc.on("error", reject);
+      proc.on("error", (err) => {
+        reject(new Error(`Failed to run 'opencode': ${err.message}. Is opencode installed and on PATH?`));
+      });
     });
   }
 

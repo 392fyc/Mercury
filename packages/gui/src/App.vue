@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { onMounted, computed } from "vue";
+import { onMounted, ref } from "vue";
 import TitleBar from "./components/TitleBar.vue";
 import AgentPanel from "./components/AgentPanel.vue";
 import EventLog from "./components/EventLog.vue";
+import SettingsPanel from "./components/SettingsPanel.vue";
 import { useAgentStore } from "./stores/agents";
 import { useMessageStore } from "./stores/messages";
 import { useEventStore } from "./stores/events";
@@ -11,6 +12,8 @@ const { agents, mainAgent, subAgents, sidecarReady, sidecarError, initAgents } =
   useAgentStore();
 const { initMessageListeners } = useMessageStore();
 const { initEventListeners } = useEventStore();
+
+const showSettings = ref(false);
 
 onMounted(async () => {
   await initAgents();
@@ -21,7 +24,8 @@ onMounted(async () => {
 
 <template>
   <div class="app-shell">
-    <TitleBar />
+    <TitleBar @open-settings="showSettings = true" />
+    <SettingsPanel v-if="showSettings" @close="showSettings = false" />
 
     <div v-if="sidecarError" class="error-banner">
       Orchestrator error: {{ sidecarError }}

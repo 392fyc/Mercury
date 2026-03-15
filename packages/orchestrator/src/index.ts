@@ -7,15 +7,11 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import type { AgentConfig } from "@mercury/core";
+import type { MercuryConfig } from "@mercury/core";
 import { RpcTransport } from "./rpc-transport.js";
 import { AgentRegistry } from "./agent-registry.js";
 import { Orchestrator } from "./orchestrator.js";
-
-interface MercuryConfig {
-  agents: AgentConfig[];
-  workDir?: string;
-}
+import { KnowledgeService } from "./knowledge-service.js";
 
 function loadConfig(configPath?: string): MercuryConfig {
   const paths = [
@@ -73,6 +69,18 @@ if (config.workDir) {
 
 const registry = new AgentRegistry(config.agents);
 const orchestrator = new Orchestrator(registry, transport);
+
+// Store full config for get_config/update_config RPC
+orchestrator.setProjectConfig(config);
+
+// Initialize optional Knowledge Service (Obsidian CLI)
+if (config.obsidian?.enabled) {
+  const kb = new KnowledgeService(config.obsidian);
+  orchestrator.setKnowledgeService(kb);
+  transport.log(`Knowledge service enabled: vault="${config.obsidian.vaultName}"`);
+} else {
+  transport.log("Knowledge service disabled (obsidian not configured or not enabled)");
+}
 
 transport.start((method, params) => orchestrator.handleRpc(method, params));
 

@@ -3,8 +3,9 @@
  */
 
 import { EventBus } from "@mercury/core";
-import type { AgentConfig, SessionInfo, AgentMessage } from "@mercury/core";
+import type { AgentConfig, SessionInfo, AgentMessage, MercuryConfig } from "@mercury/core";
 import { AgentRegistry } from "./agent-registry.js";
+import type { KnowledgeService } from "./knowledge-service.js";
 import type { RpcTransport } from "./rpc-transport.js";
 
 export class Orchestrator {
@@ -13,6 +14,8 @@ export class Orchestrator {
   private transport: RpcTransport;
   private sessions = new Map<string, SessionInfo>();
   private agentSessions = new Map<string, string>(); // agentId → active sessionId
+  private kb: KnowledgeService | null = null;
+  private projectConfig: MercuryConfig | null = null;
 
   constructor(
     registry: AgentRegistry,
@@ -35,6 +38,16 @@ export class Orchestrator {
         parentEventId: event.parentEventId,
       });
     });
+  }
+
+  /** Inject optional knowledge service. */
+  setKnowledgeService(kb: KnowledgeService) {
+    this.kb = kb;
+  }
+
+  /** Store project config for get_config/update_config RPC. */
+  setProjectConfig(config: MercuryConfig) {
+    this.projectConfig = config;
   }
 
   async handleRpc(
@@ -64,6 +77,20 @@ export class Orchestrator {
           params.toAgentId as string,
           params.prompt as string,
         );
+      case "get_config":
+        return this.getConfig();
+      case "update_config":
+        return this.updateConfig(params.config as MercuryConfig);
+      case "kb_read":
+        return this.kbRead(params.file as string);
+      case "kb_search":
+        return this.kbSearch(params.query as string);
+      case "kb_list":
+        return this.kbList(params.folder as string | undefined);
+      case "kb_write":
+        return this.kbWrite(params.name as string, params.content as string);
+      case "kb_append":
+        return this.kbAppend(params.file as string, params.content as string);
       case "ping":
         return { pong: true, timestamp: Date.now() };
       default:
@@ -149,6 +176,12 @@ export class Orchestrator {
         sessionId,
         error: errorMsg,
       });
+
+      // Clean up failed session
+      this.sessions.delete(sessionId);
+      if (this.agentSessions.get(agentId) === sessionId) {
+        this.agentSessions.delete(agentId);
+      }
     }
   }
 
@@ -195,5 +228,63 @@ export class Orchestrator {
     const result = await this.sendPrompt(toAgentId, prompt);
 
     return { sessionId: result.sessionId, taskId };
+  }
+
+  // ─── Config RPC ───
+
+  private getConfig(): MercuryConfig | null {
+    return this.projectConfig;
+  }
+
+  private async updateConfig(config: MercuryConfig): Promise<{ ok: true }> {
+    this.projectConfig = config;
+
+    // Hot-reload agents from new config
+    const currentIds = new Set(this.registry.listAgents().map((a) => a.id));
+    const newIds = new Set(config.agents.map((a) => a.id));
+
+    // Remove agents no longer in config
+    for (const id of currentIds) {
+      if (!newIds.has(id)) this.registry.unregister(id);
+    }
+
+    // Add/update agents
+    for (const agentConfig of config.agents) {
+      this.registry.register(agentConfig);
+    }
+
+    return { ok: true };
+  }
+
+  // ─── Knowledge Base RPC (optional) ───
+
+  private requireKb(): NonNullable<typeof this.kb> {
+    if (!this.kb || !this.kb.isEnabled()) {
+      throw new Error("Knowledge service is not enabled. Configure obsidian in mercury.config.json.");
+    }
+    return this.kb;
+  }
+
+  private async kbRead(file: string): Promise<{ content: string }> {
+    const content = await this.requireKb().read(file);
+    return { content };
+  }
+
+  private async kbSearch(query: string) {
+    return this.requireKb().search(query);
+  }
+
+  private async kbList(folder?: string) {
+    return this.requireKb().list(folder);
+  }
+
+  private async kbWrite(name: string, content: string): Promise<{ ok: true }> {
+    await this.requireKb().write(name, content);
+    return { ok: true };
+  }
+
+  private async kbAppend(file: string, content: string): Promise<{ ok: true }> {
+    await this.requireKb().append(file, content);
+    return { ok: true };
   }
 }

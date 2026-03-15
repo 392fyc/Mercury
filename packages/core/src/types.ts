@@ -25,6 +25,36 @@ export interface AgentConfig {
   maxConcurrentSessions: number;
 }
 
+// ─── Project Configuration ───
+
+export interface ObsidianConfig {
+  enabled: boolean;
+  vaultName: string;
+  autoInjectContext: boolean;
+  contextFiles: string[]; // files to inject as system prompt context
+}
+
+export interface MercuryConfig {
+  agents: AgentConfig[];
+  workDir?: string;
+  obsidian?: ObsidianConfig;
+}
+
+// ─── Knowledge Base Types ───
+
+export interface KBSearchResult {
+  file: string;
+  matches: string[];
+  score?: number;
+}
+
+export interface KBFileInfo {
+  path: string;
+  name: string;
+  folder: string;
+  modified?: number;
+}
+
 // ─── Event Bus ───
 
 export type EventType =

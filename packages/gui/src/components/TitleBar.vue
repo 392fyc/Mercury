@@ -2,6 +2,8 @@
 import { computed } from "vue";
 import { useAgentStore } from "../stores/agents";
 
+const emit = defineEmits<{ "open-settings": [] }>();
+
 const { sidecarReady, anyActive, anyError } = useAgentStore();
 
 const statusClass = computed(() => {
@@ -32,7 +34,7 @@ const statusText = computed(() => {
     </div>
     <div class="titlebar-right">
       <button class="titlebar-btn" title="Event Log">⚡</button>
-      <button class="titlebar-btn" title="Settings">⚙</button>
+      <button class="titlebar-btn" title="Settings" @click="emit('open-settings')">⚙</button>
     </div>
   </header>
 </template>

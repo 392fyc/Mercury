@@ -31,5 +31,11 @@
       "maxConcurrentSessions": 1
     }
   ],
-  "workDir": "."
+  "workDir": ".",
+  "obsidian": {
+    "enabled": false,
+    "vaultName": "",
+    "autoInjectContext": false,
+    "contextFiles": []
+  }
 }

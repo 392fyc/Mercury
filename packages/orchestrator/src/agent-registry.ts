@@ -48,11 +48,11 @@ export class AgentRegistry {
   private createAdapter(config: AgentConfig): AgentAdapter {
     switch (config.cli) {
       case "claude":
-        return new ClaudeAdapter();
+        return new ClaudeAdapter(config);
       case "codex":
-        return new CodexAdapter();
+        return new CodexAdapter(config);
       case "opencode":
-        return new OpencodeAdapter();
+        return new OpencodeAdapter(undefined, config);
       default:
         throw new Error(`Unknown CLI agent: ${config.cli}. Supported: claude, codex, opencode`);
     }

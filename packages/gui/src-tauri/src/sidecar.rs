@@ -7,6 +7,7 @@ use tokio::sync::{Mutex, oneshot};
 
 use crate::types::RpcRequest;
 
+#[derive(Clone)]
 pub struct SidecarManager {
     stdin: Arc<Mutex<tokio::process::ChildStdin>>,
     child: Arc<Mutex<Child>>,
@@ -19,19 +20,27 @@ impl SidecarManager {
         app_handle: tauri::AppHandle,
         project_dir: String,
     ) -> Result<Self, String> {
-        // In dev mode, use npx tsx to run the orchestrator
-        let mut cmd = Command::new("npx");
-        cmd.args(["tsx", "packages/orchestrator/src/index.ts"])
-            .current_dir(&project_dir)
+        // In dev mode, use npx tsx to run the orchestrator.
+        // On Windows, npx is a .cmd script so we must run via cmd.exe.
+        #[cfg(target_os = "windows")]
+        let mut cmd = {
+            let mut c = Command::new("cmd");
+            c.args(["/c", "npx", "tsx", "packages/orchestrator/src/index.ts"]);
+            c.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            c
+        };
+
+        #[cfg(not(target_os = "windows"))]
+        let mut cmd = {
+            let mut c = Command::new("npx");
+            c.args(["tsx", "packages/orchestrator/src/index.ts"]);
+            c
+        };
+
+        cmd.current_dir(&project_dir)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
-
-        // Windows needs shell for npx
-        #[cfg(target_os = "windows")]
-        {
-            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-        }
 
         let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn orchestrator: {}", e))?;
 
@@ -168,6 +177,11 @@ impl SidecarManager {
             .map_err(|e| format!("Failed to write to sidecar: {}", e))?;
         stdin.flush().await.map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    pub async fn is_alive(&self) -> bool {
+        let mut child = self.child.lock().await;
+        matches!(child.try_wait(), Ok(None))
     }
 
     pub async fn shutdown(&self) {

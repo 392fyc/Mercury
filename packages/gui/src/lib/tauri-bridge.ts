@@ -72,6 +72,63 @@ export async function dispatchTask(
   return invoke("dispatch_task", { fromAgentId, toAgentId, prompt });
 }
 
+// ─── Config Operations ───
+
+export interface ObsidianConfig {
+  enabled: boolean;
+  vaultName: string;
+  autoInjectContext: boolean;
+  contextFiles: string[];
+}
+
+export interface MercuryProjectConfig {
+  agents: AgentConfig[];
+  workDir?: string;
+  obsidian?: ObsidianConfig;
+}
+
+export async function getConfig(): Promise<MercuryProjectConfig> {
+  return invoke<MercuryProjectConfig>("get_config");
+}
+
+export async function updateConfig(
+  config: MercuryProjectConfig,
+): Promise<{ ok: true }> {
+  return invoke("update_config", { config });
+}
+
+// ─── Knowledge Base Operations (optional, requires obsidian enabled) ───
+
+export async function kbRead(file: string): Promise<{ content: string }> {
+  return invoke("kb_read", { file });
+}
+
+export async function kbSearch(
+  query: string,
+): Promise<Array<{ file: string; matches: string[] }>> {
+  return invoke("kb_search", { query });
+}
+
+export async function kbList(
+  folder?: string,
+): Promise<Array<{ path: string; name: string; folder: string }>> {
+  return invoke("kb_list", { folder: folder ?? null });
+}
+
+export async function kbWrite(
+  name: string,
+  content: string,
+): Promise<{ ok: true }> {
+  return invoke("kb_write", { name, content });
+}
+
+export async function kbAppend(
+  file: string,
+  content: string,
+): Promise<{ ok: true }> {
+  return invoke("kb_append", { file, content });
+}
+
 // Events (sidecar → Rust → frontend)
 
 export interface AgentMessageEvent {

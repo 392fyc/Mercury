@@ -31,7 +31,7 @@ function appendMessage(agentId: string, msg: DisplayMessage) {
 }
 
 async function sendPrompt(agentId: string, prompt: string) {
-  const { setStatus } = useAgentStore();
+  const { setStatus, setSession } = useAgentStore();
 
   // Optimistic: add user message immediately
   appendMessage(agentId, {
@@ -43,7 +43,10 @@ async function sendPrompt(agentId: string, prompt: string) {
   setStatus(agentId, "active");
 
   try {
-    await bridgeSendPrompt(agentId, prompt);
+    const result = await bridgeSendPrompt(agentId, prompt);
+    if (result?.sessionId) {
+      setSession(agentId, result.sessionId);
+    }
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
     appendMessage(agentId, {
