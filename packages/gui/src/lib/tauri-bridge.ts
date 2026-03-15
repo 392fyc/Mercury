@@ -69,7 +69,7 @@ export async function dispatchTask(
   toAgentId: string,
   prompt: string,
 ): Promise<{ sessionId: string; taskId: string }> {
-  return invoke("dispatch_task", { fromAgentId, toAgentId, prompt });
+  return invoke("dispatch_task", { params: { fromAgentId, toAgentId, prompt } });
 }
 
 // ─── Config Operations ───
@@ -95,6 +95,129 @@ export async function updateConfig(
   config: MercuryProjectConfig,
 ): Promise<{ ok: true }> {
   return invoke("update_config", { config });
+}
+
+// ─── Task Orchestration Operations ───
+
+export type TaskPriority = "sev-0" | "sev-1" | "sev-2" | "sev-3";
+export type TaskStatus =
+  | "drafted" | "dispatched" | "in_progress" | "implementation_done"
+  | "acceptance" | "verified" | "closed" | "failed" | "blocked";
+export type AcceptanceVerdict = "pass" | "partial" | "fail" | "blocked";
+
+export interface TaskBundle {
+  taskId: string;
+  title: string;
+  phaseId?: string;
+  priority: TaskPriority;
+  status: TaskStatus;
+  assignedTo: string;
+  branch?: string;
+  codeScope: { include: string[]; exclude: string[] };
+  readScope: { requiredDocs: string[]; optionalDocs: string[] };
+  allowedWriteScope: { codePaths: string[]; kbPaths: string[] };
+  docsMustUpdate: string[];
+  docsMustNotTouch: string[];
+  definitionOfDone: string[];
+  requiredEvidence: string[];
+  context: string;
+  handoffToAcceptance?: {
+    acceptanceBundleId: string;
+    blindInputPolicy: { allowed: string[]; forbidden: string[] };
+    acceptanceFocus: string[];
+  };
+  implementationReceipt?: {
+    implementer: string;
+    branch: string;
+    summary: string;
+    changedFiles: string[];
+    evidence: string[];
+    docsUpdated: string[];
+    residualRisks: string[];
+    completedAt: number;
+  };
+  reworkCount: number;
+  maxReworks: number;
+  linkedIssueIds: string[];
+}
+
+export interface CreateTaskParams {
+  title: string;
+  phaseId?: string;
+  priority: TaskPriority;
+  assignedTo: string;
+  branch?: string;
+  codeScope: { include: string[]; exclude: string[] };
+  readScope: { requiredDocs: string[]; optionalDocs: string[] };
+  allowedWriteScope: { codePaths: string[]; kbPaths: string[] };
+  docsMustUpdate?: string[];
+  docsMustNotTouch?: string[];
+  definitionOfDone: string[];
+  requiredEvidence?: string[];
+  context: string;
+  maxReworks?: number;
+}
+
+export async function createTask(params: CreateTaskParams): Promise<TaskBundle> {
+  return invoke<TaskBundle>("create_task", { params });
+}
+
+export async function getTask(taskId: string): Promise<TaskBundle | null> {
+  return invoke<TaskBundle | null>("get_task", { taskId });
+}
+
+export async function listTasks(
+  status?: TaskStatus,
+  assignedTo?: string,
+): Promise<TaskBundle[]> {
+  return invoke<TaskBundle[]>("list_tasks", { status: status ?? null, assignedTo: assignedTo ?? null });
+}
+
+export async function dispatchBundleTask(
+  taskId: string,
+): Promise<{ sessionId: string; taskId: string }> {
+  return invoke("dispatch_task", { params: { taskId } });
+}
+
+export async function recordReceipt(
+  taskId: string,
+  receipt: Record<string, unknown>,
+): Promise<TaskBundle> {
+  return invoke<TaskBundle>("record_receipt", { taskId, receipt });
+}
+
+export async function createAcceptance(
+  taskId: string,
+  acceptorId: string,
+): Promise<{ acceptanceId: string; sessionId: string }> {
+  return invoke("create_acceptance", { taskId, acceptorId });
+}
+
+export async function recordAcceptanceResult(
+  acceptanceId: string,
+  results: { verdict: AcceptanceVerdict; findings: string[]; recommendations: string[] },
+): Promise<{ verdict: AcceptanceVerdict; reworkTriggered: boolean; newSession: boolean }> {
+  return invoke("record_acceptance_result", { acceptanceId, results });
+}
+
+export async function createIssue(
+  params: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  return invoke("create_issue", { params });
+}
+
+export async function resolveIssue(
+  issueId: string,
+  resolution: { resolvedBy: string; summary: string; resolvedAt: number },
+): Promise<Record<string, unknown>> {
+  return invoke("resolve_issue", { issueId, resolution });
+}
+
+export async function summarizeSession(
+  agentId: string,
+  summary: string,
+): Promise<{ newSessionId: string }> {
+  return invoke("summarize_session", { agentId, summary });
 }
 
 // ─── Knowledge Base Operations (optional, requires obsidian enabled) ───

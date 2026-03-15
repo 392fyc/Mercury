@@ -68,6 +68,14 @@ export type EventType =
   | "orchestrator.task.dispatch"
   | "orchestrator.task.complete"
   | "orchestrator.task.fail"
+  | "orchestrator.task.created"
+  | "orchestrator.task.status_change"
+  | "orchestrator.task.rework"
+  | "orchestrator.acceptance.created"
+  | "orchestrator.acceptance.completed"
+  | "orchestrator.issue.created"
+  | "orchestrator.issue.resolved"
+  | "orchestrator.session.summarize"
   | "orchestrator.context.compact"
   | "orchestrator.session.handoff"
   | "human.intervention";
@@ -82,7 +90,7 @@ export interface MercuryEvent<T = unknown> {
   parentEventId?: string;
 }
 
-// ─── Task Bundle (from SoT) ───
+// ─── Task Orchestration (SoT Pattern) ───
 
 export type TaskStatus =
   | "drafted"
@@ -92,28 +100,107 @@ export type TaskStatus =
   | "acceptance"
   | "verified"
   | "closed"
-  | "failed";
+  | "failed"
+  | "blocked";
 
 export interface TaskBundle {
   taskId: string;
   title: string;
+  phaseId?: string;
   priority: "sev-0" | "sev-1" | "sev-2" | "sev-3";
-  assignedTo: string; // agent id
-  branch?: string;
-  input: {
-    readScope: string[];
-    designRefs: string[];
-    context: string;
-  };
-  constraints: {
-    allowedWriteScope: string[];
-    docsMustNotTouch: string[];
-  };
-  definitionOfDone: string[];
   status: TaskStatus;
-  receipt?: {
-    commits: string[];
-    notes: string;
+  assignedTo: string;
+  branch?: string;
+
+  // Scope controls
+  codeScope: { include: string[]; exclude: string[] };
+  readScope: { requiredDocs: string[]; optionalDocs: string[] };
+  allowedWriteScope: { codePaths: string[]; kbPaths: string[] };
+  docsMustUpdate: string[];
+  docsMustNotTouch: string[];
+
+  // Completion criteria
+  definitionOfDone: string[];
+  requiredEvidence: string[];
+  context: string;
+
+  // Acceptance handoff
+  handoffToAcceptance?: {
+    acceptanceBundleId: string;
+    blindInputPolicy: { allowed: string[]; forbidden: string[] };
+    acceptanceFocus: string[];
+  };
+
+  // Implementation receipt (filled by dev agent)
+  implementationReceipt?: ImplementationReceipt;
+
+  // Rework tracking
+  reworkCount: number;
+  maxReworks: number;
+  linkedIssueIds: string[];
+}
+
+export interface ImplementationReceipt {
+  implementer: string;
+  branch: string;
+  summary: string;
+  changedFiles: string[];
+  evidence: string[];
+  docsUpdated: string[];
+  residualRisks: string[];
+  completedAt: number;
+}
+
+// ─── Acceptance Bundle ───
+
+export type AcceptanceVerdict = "pass" | "partial" | "fail" | "blocked";
+
+export interface AcceptanceBundle {
+  acceptanceId: string;
+  linkedTaskId: string;
+  status: "pending" | "in_progress" | "completed";
+  acceptor: string;
+  scope: {
+    filesToReview: string[];
+    docsToCheck: string[];
+    runtimeChecks: string[];
+  };
+  blindInputPolicy: {
+    allowed: string[];
+    forbidden: string[];
+  };
+  results?: {
+    verdict: AcceptanceVerdict;
+    findings: string[];
+    recommendations: string[];
+  };
+  completedAt?: number;
+}
+
+// ─── Issue Bundle ───
+
+export type IssueType = "bug" | "scope_creep" | "blocker" | "question";
+
+export interface IssueBundle {
+  issueId: string;
+  title: string;
+  status: "open" | "resolved" | "deferred";
+  type: IssueType;
+  priority: "sev-0" | "sev-1" | "sev-2" | "sev-3";
+  source: {
+    reporterType: AgentRole;
+    reporterId: string;
+  };
+  description: {
+    summary: string;
+    details: string;
+    evidence: string[];
+  };
+  linkedTaskIds: string[];
+  resolution?: {
+    resolvedBy: string;
+    summary: string;
+    resolvedAt: number;
   };
 }
 

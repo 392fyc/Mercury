@@ -74,20 +74,10 @@ pub async fn configure_agent(
 #[tauri::command]
 pub async fn dispatch_task(
     sidecar: State<'_, SharedSidecar>,
-    from_agent_id: String,
-    to_agent_id: String,
-    prompt: String,
+    params: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
     let mgr = get_sidecar(&sidecar).await?;
-    mgr.send_request(
-        "dispatch_task",
-        serde_json::json!({
-            "fromAgentId": from_agent_id,
-            "toAgentId": to_agent_id,
-            "prompt": prompt,
-        }),
-    )
-    .await
+    mgr.send_request("dispatch_task", params).await
 }
 
 // ─── Config Commands ───
@@ -107,6 +97,102 @@ pub async fn update_config(
 ) -> Result<serde_json::Value, String> {
     let mgr = get_sidecar(&sidecar).await?;
     mgr.send_request("update_config", serde_json::json!({ "config": config }))
+        .await
+}
+
+// ─── Task Orchestration Commands ───
+
+#[tauri::command]
+pub async fn create_task(
+    sidecar: State<'_, SharedSidecar>,
+    params: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let mgr = get_sidecar(&sidecar).await?;
+    mgr.send_request("create_task", params).await
+}
+
+#[tauri::command]
+pub async fn get_task(
+    sidecar: State<'_, SharedSidecar>,
+    task_id: String,
+) -> Result<serde_json::Value, String> {
+    let mgr = get_sidecar(&sidecar).await?;
+    mgr.send_request("get_task", serde_json::json!({ "taskId": task_id }))
+        .await
+}
+
+#[tauri::command]
+pub async fn list_tasks(
+    sidecar: State<'_, SharedSidecar>,
+    status: Option<String>,
+    assigned_to: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let mgr = get_sidecar(&sidecar).await?;
+    mgr.send_request("list_tasks", serde_json::json!({ "status": status, "assignedTo": assigned_to }))
+        .await
+}
+
+#[tauri::command]
+pub async fn record_receipt(
+    sidecar: State<'_, SharedSidecar>,
+    task_id: String,
+    receipt: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let mgr = get_sidecar(&sidecar).await?;
+    mgr.send_request("record_receipt", serde_json::json!({ "taskId": task_id, "receipt": receipt }))
+        .await
+}
+
+#[tauri::command]
+pub async fn create_acceptance(
+    sidecar: State<'_, SharedSidecar>,
+    task_id: String,
+    acceptor_id: String,
+) -> Result<serde_json::Value, String> {
+    let mgr = get_sidecar(&sidecar).await?;
+    mgr.send_request("create_acceptance", serde_json::json!({ "taskId": task_id, "acceptorId": acceptor_id }))
+        .await
+}
+
+#[tauri::command]
+pub async fn record_acceptance_result(
+    sidecar: State<'_, SharedSidecar>,
+    acceptance_id: String,
+    results: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let mgr = get_sidecar(&sidecar).await?;
+    mgr.send_request("record_acceptance_result", serde_json::json!({ "acceptanceId": acceptance_id, "results": results }))
+        .await
+}
+
+#[tauri::command]
+pub async fn create_issue(
+    sidecar: State<'_, SharedSidecar>,
+    params: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let mgr = get_sidecar(&sidecar).await?;
+    mgr.send_request("create_issue", params).await
+}
+
+#[tauri::command]
+pub async fn resolve_issue(
+    sidecar: State<'_, SharedSidecar>,
+    issue_id: String,
+    resolution: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let mgr = get_sidecar(&sidecar).await?;
+    mgr.send_request("resolve_issue", serde_json::json!({ "issueId": issue_id, "resolution": resolution }))
+        .await
+}
+
+#[tauri::command]
+pub async fn summarize_session(
+    sidecar: State<'_, SharedSidecar>,
+    agent_id: String,
+    summary: String,
+) -> Result<serde_json::Value, String> {
+    let mgr = get_sidecar(&sidecar).await?;
+    mgr.send_request("summarize_session", serde_json::json!({ "agentId": agent_id, "summary": summary }))
         .await
 }
 

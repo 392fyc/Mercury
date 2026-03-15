@@ -1,11 +1,16 @@
 export { EventBus } from "./event-bus.js";
 export type {
+  AcceptanceBundle,
+  AcceptanceVerdict,
   AgentAdapter,
   AgentConfig,
   AgentMessage,
   AgentRole,
   EventType,
+  ImplementationReceipt,
   IntegrationType,
+  IssueBundle,
+  IssueType,
   KBFileInfo,
   KBSearchResult,
   MercuryConfig,

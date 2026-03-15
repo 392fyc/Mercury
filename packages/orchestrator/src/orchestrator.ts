@@ -3,10 +3,25 @@
  */
 
 import { EventBus } from "@mercury/core";
-import type { AgentConfig, SessionInfo, AgentMessage, MercuryConfig } from "@mercury/core";
+import type {
+  AgentConfig,
+  SessionInfo,
+  AgentMessage,
+  MercuryConfig,
+  AcceptanceVerdict,
+  ImplementationReceipt,
+  TaskStatus,
+} from "@mercury/core";
 import { AgentRegistry } from "./agent-registry.js";
 import type { KnowledgeService } from "./knowledge-service.js";
 import type { RpcTransport } from "./rpc-transport.js";
+import {
+  TaskManager,
+  buildDevPrompt,
+  buildAcceptancePrompt,
+  buildReworkPrompt,
+} from "./task-manager.js";
+import type { CreateTaskParams, CreateIssueParams } from "./task-manager.js";
 
 export class Orchestrator {
   private bus: EventBus;
@@ -16,6 +31,7 @@ export class Orchestrator {
   private agentSessions = new Map<string, string>(); // agentId → active sessionId
   private kb: KnowledgeService | null = null;
   private projectConfig: MercuryConfig | null = null;
+  private taskManager: TaskManager;
 
   constructor(
     registry: AgentRegistry,
@@ -25,6 +41,7 @@ export class Orchestrator {
     this.registry = registry;
     this.transport = transport;
     this.bus = bus ?? new EventBus();
+    this.taskManager = new TaskManager(this.bus);
 
     // Forward all EventBus events as RPC notifications
     this.bus.on("*", (event) => {
@@ -72,10 +89,47 @@ export class Orchestrator {
       case "configure_agent":
         return this.configureAgent(params.config as AgentConfig);
       case "dispatch_task":
+        // Bundle-aware: if taskId present, use bundle flow
+        if (params.taskId) {
+          return this.dispatchBundleTask(params.taskId as string);
+        }
         return this.dispatchTask(
           params.fromAgentId as string,
           params.toAgentId as string,
           params.prompt as string,
+        );
+      case "create_task":
+        return this.taskManager.createTask(params as unknown as CreateTaskParams);
+      case "get_task":
+        return this.taskManager.getTask(params.taskId as string) ?? null;
+      case "list_tasks":
+        return this.taskManager.listTasks(params as { status?: TaskStatus; assignedTo?: string });
+      case "record_receipt":
+        return this.taskManager.recordReceipt(
+          params.taskId as string,
+          params.receipt as ImplementationReceipt,
+        );
+      case "create_acceptance":
+        return this.createAcceptanceFlow(
+          params.taskId as string,
+          params.acceptorId as string,
+        );
+      case "record_acceptance_result":
+        return this.recordAcceptanceFlow(
+          params.acceptanceId as string,
+          params.results as { verdict: AcceptanceVerdict; findings: string[]; recommendations: string[] },
+        );
+      case "create_issue":
+        return this.taskManager.createIssue(params as unknown as CreateIssueParams);
+      case "resolve_issue":
+        return this.taskManager.resolveIssue(
+          params.issueId as string,
+          params.resolution as { resolvedBy: string; summary: string; resolvedAt: number },
+        );
+      case "summarize_session":
+        return this.summarizeSession(
+          params.agentId as string,
+          params.summary as string,
         );
       case "get_config":
         return this.getConfig();
@@ -213,7 +267,7 @@ export class Orchestrator {
     const fromSessionId = this.agentSessions.get(fromAgentId) ?? "orchestrator";
     const taskId = `TASK-${Date.now()}`;
 
-    const taskEvent = this.bus.emit(
+    this.bus.emit(
       "orchestrator.task.dispatch",
       fromAgentId,
       fromSessionId,
@@ -228,6 +282,128 @@ export class Orchestrator {
     const result = await this.sendPrompt(toAgentId, prompt);
 
     return { sessionId: result.sessionId, taskId };
+  }
+
+  // ─── Bundle-Aware Task Dispatch ───
+
+  private async dispatchBundleTask(
+    taskId: string,
+  ): Promise<{ sessionId: string; taskId: string }> {
+    const task = this.taskManager.getTask(taskId);
+    if (!task) throw new Error(`Task not found: ${taskId}`);
+
+    // Build dev prompt from bundle (optionally include KB context)
+    let kbContext: string | undefined;
+    if (this.kb?.isEnabled() && task.readScope.requiredDocs.length > 0) {
+      try {
+        kbContext = await this.kb.buildContext(task.readScope.requiredDocs);
+      } catch {
+        // KB context is best-effort
+      }
+    }
+
+    const prompt = buildDevPrompt(task, kbContext);
+
+    // Transition: drafted → dispatched → in_progress
+    if (task.status === "drafted") {
+      this.taskManager.transitionTask(taskId, "dispatched", "orchestrator");
+    }
+
+    // Start session for assigned agent
+    const session = await this.startSession(task.assignedTo);
+    this.taskManager.bindSession(taskId, session.sessionId);
+
+    // Transition to in_progress (only if not already there)
+    if (task.status === "dispatched") {
+      this.taskManager.transitionTask(taskId, "in_progress", task.assignedTo);
+    }
+
+    // Send the prompt
+    await this.sendPrompt(task.assignedTo, prompt);
+
+    return { sessionId: session.sessionId, taskId };
+  }
+
+  private async createAcceptanceFlow(
+    taskId: string,
+    acceptorId: string,
+  ): Promise<{ acceptanceId: string; sessionId: string }> {
+    const task = this.taskManager.getTask(taskId);
+    if (!task) throw new Error(`Task not found: ${taskId}`);
+
+    // Transition to acceptance if currently implementation_done
+    if (task.status === "implementation_done") {
+      this.taskManager.transitionTask(taskId, "acceptance", "orchestrator");
+    }
+
+    // Create acceptance bundle
+    const acceptance = this.taskManager.createAcceptance(taskId, acceptorId);
+
+    // Build acceptance prompt and dispatch to acceptor agent
+    const prompt = buildAcceptancePrompt(task, acceptance);
+    const session = await this.startSession(acceptorId);
+    this.taskManager.bindSession(taskId, session.sessionId);
+
+    await this.sendPrompt(acceptorId, prompt);
+
+    return { acceptanceId: acceptance.acceptanceId, sessionId: session.sessionId };
+  }
+
+  private async recordAcceptanceFlow(
+    acceptanceId: string,
+    results: { verdict: AcceptanceVerdict; findings: string[]; recommendations: string[] },
+  ): Promise<{ verdict: AcceptanceVerdict; reworkTriggered: boolean; newSession: boolean }> {
+    const acceptance = this.taskManager.recordAcceptanceResult(acceptanceId, results);
+    const task = this.taskManager.getTask(acceptance.linkedTaskId);
+    if (!task) throw new Error(`Linked task not found: ${acceptance.linkedTaskId}`);
+
+    if (results.verdict === "pass") {
+      // Acceptance passed → verified → closed
+      this.taskManager.transitionTask(task.taskId, "verified", acceptance.acceptor);
+      this.taskManager.transitionTask(task.taskId, "closed", "orchestrator");
+      return { verdict: "pass", reworkTriggered: false, newSession: false };
+    }
+
+    if (results.verdict === "fail" || results.verdict === "partial") {
+      // Trigger rework
+      const { newSession } = this.taskManager.triggerRework(
+        task.taskId,
+        results.findings.join("\n"),
+      );
+
+      if (!newSession) {
+        // Send rework prompt to existing dev session
+        const reworkPrompt = buildReworkPrompt(task, acceptance);
+        await this.sendPrompt(task.assignedTo, reworkPrompt);
+      }
+      // If newSession is true, caller decides whether to start new session or switch agent
+
+      return { verdict: results.verdict, reworkTriggered: true, newSession };
+    }
+
+    // verdict === "blocked" → create issue (caller handles specifics)
+    if (results.verdict === "blocked") {
+      this.taskManager.transitionTask(task.taskId, "blocked", acceptance.acceptor);
+      return { verdict: "blocked", reworkTriggered: false, newSession: false };
+    }
+
+    return { verdict: results.verdict, reworkTriggered: false, newSession: false };
+  }
+
+  private async summarizeSession(
+    agentId: string,
+    summary: string,
+  ): Promise<{ newSessionId: string }> {
+    // End current session
+    const currentSessionId = this.agentSessions.get(agentId);
+    if (currentSessionId) {
+      this.bus.emit("orchestrator.session.summarize", agentId, currentSessionId, { summary });
+      await this.stopSession(agentId, currentSessionId);
+    }
+
+    // Start fresh session
+    const newSession = await this.startSession(agentId);
+    return { newSessionId: newSession.sessionId };
   }
 
   // ─── Config RPC ───
