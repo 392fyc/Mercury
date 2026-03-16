@@ -23,6 +23,7 @@ interface CliPreset {
   capabilities: string[];
   restrictions: string[];
   maxSessions: number;
+  disabled?: boolean; // true = adapter not yet implemented
 }
 
 const CLI_PRESETS: CliPreset[] = [
@@ -45,10 +46,10 @@ const CLI_PRESETS: CliPreset[] = [
     restrictions: ["no_kb_write", "isolated_branch_only"], maxSessions: 3,
   },
   {
-    cli: "gemini", label: "Gemini CLI",
+    cli: "gemini", label: "Gemini CLI (coming soon)",
     id: "gemini-cli", integration: "pty",
     capabilities: ["code", "analysis", "multimodal"],
-    restrictions: [], maxSessions: 2,
+    restrictions: [], maxSessions: 2, disabled: true,
   },
 ];
 
@@ -248,7 +249,7 @@ function handleKeydown(e: KeyboardEvent) {
               <label>
                 <span>CLI Tool</span>
                 <select v-model="agent.cli" class="field-input" @change="onCliChange(agent)">
-                  <option v-for="p in CLI_PRESETS" :key="p.cli" :value="p.cli">{{ p.label }}</option>
+                  <option v-for="p in CLI_PRESETS" :key="p.cli" :value="p.cli" :disabled="p.disabled">{{ p.label }}</option>
                 </select>
               </label>
               <label>

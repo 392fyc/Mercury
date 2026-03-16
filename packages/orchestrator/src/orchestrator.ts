@@ -533,21 +533,33 @@ export class Orchestrator {
       this.registry.register(agentConfig);
     }
 
-    // Re-inject shared context if obsidian settings changed
+    // Re-apply shared context to all (potentially new) adapters.
+    // Adapters are recreated on register(), so they lose systemPrompt.
+    // Always re-inject if we have context, regardless of obsidian config changes.
     const newAutoInject = config.obsidian?.autoInjectContext;
     const newContextFiles = config.obsidian?.contextFiles?.join(",");
-    if (newAutoInject !== prevAutoInject || newContextFiles !== prevContextFiles) {
-      if (newAutoInject) {
-        await this.buildAndInjectContext();
-      } else if (this.sharedContext) {
-        // autoInject was disabled — clear shared context from all adapters
-        this.sharedContext = "";
-        for (const agent of this.registry.listAgents()) {
-          try {
-            this.registry.getAdapter(agent.id).setSystemPrompt("");
-          } catch { /* non-critical */ }
-        }
+    const obsidianChanged = newAutoInject !== prevAutoInject || newContextFiles !== prevContextFiles;
+
+    if (obsidianChanged && !newAutoInject && this.sharedContext) {
+      // autoInject was disabled — clear shared context
+      this.sharedContext = "";
+      for (const agent of this.registry.listAgents()) {
+        try {
+          this.registry.getAdapter(agent.id).setSystemPrompt("");
+        } catch { /* non-critical */ }
       }
+    } else if (this.sharedContext) {
+      // Re-apply existing shared context to fresh adapter instances
+      for (const agent of this.registry.listAgents()) {
+        try {
+          this.registry.getAdapter(agent.id).setSystemPrompt(this.sharedContext);
+        } catch { /* non-critical */ }
+      }
+    }
+
+    // Rebuild context from KB if obsidian settings changed and autoInject is on
+    if (obsidianChanged && newAutoInject) {
+      await this.buildAndInjectContext();
     }
 
     return { ok: true };

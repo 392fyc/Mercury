@@ -175,6 +175,8 @@ const roleColor = computed(() => {
     case "dev": return "var(--accent-sub)";
     case "acceptance": return "var(--accent-warn)";
     case "research": return "var(--accent-success)";
+    case "design": return "var(--accent-info, #a78bfa)";
+    default: return "var(--text-muted)";
   }
 });
 
