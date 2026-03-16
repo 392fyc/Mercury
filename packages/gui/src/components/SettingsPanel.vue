@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, watch } from "vue";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useConfigStore } from "../stores/config";
 import type { AgentConfig, ObsidianConfig } from "../lib/tauri-bridge";
 
@@ -61,6 +62,13 @@ function addCapability(agent: AgentConfig) {
 
 function removeCapability(agent: AgentConfig, index: number) {
   agent.capabilities.splice(index, 1);
+}
+
+async function browseWorkDir() {
+  const selected = await open({ directory: true, title: "Select Working Directory" });
+  if (selected && typeof selected === "string") {
+    editWorkDir.value = selected;
+  }
 }
 
 function addContextFile() {
@@ -189,14 +197,20 @@ function handleKeydown(e: KeyboardEvent) {
         <div v-if="activeTab === 'project'" class="tab-content">
           <div class="section">
             <h3>Working Directory</h3>
-            <input v-model="editWorkDir" class="field-input full-width" />
+            <div class="dir-input-row">
+              <input v-model="editWorkDir" class="field-input dir-field" />
+              <button class="browse-btn" @click="browseWorkDir" title="Browse...">Browse</button>
+            </div>
           </div>
 
           <div class="section">
             <h3>Knowledge Base (Obsidian CLI)</h3>
             <p class="hint">Optional. When disabled, agents can still use their own MCP servers, mem0, or other knowledge tools.</p>
             <label class="toggle-row">
-              <input type="checkbox" v-model="editObsidian.enabled" />
+              <span class="toggle-switch">
+                <input type="checkbox" v-model="editObsidian.enabled" />
+                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+              </span>
               <span>Enable Obsidian CLI integration</span>
             </label>
 
@@ -206,8 +220,11 @@ function handleKeydown(e: KeyboardEvent) {
                 <input v-model="editObsidian.vaultName" class="field-input full-width" placeholder="Mercury-KB" />
               </label>
               <label class="toggle-row">
-                <input type="checkbox" v-model="editObsidian.autoInjectContext" />
-                <span>Auto-inject KB context into agent system prompts</span>
+                <span class="toggle-switch">
+                  <input type="checkbox" v-model="editObsidian.autoInjectContext" />
+                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                </span>
+                <span>Auto-inject KB context into agent prompts</span>
               </label>
               <div class="context-files" v-if="editObsidian.autoInjectContext">
                 <span class="cap-label">Context Files:</span>
@@ -256,7 +273,7 @@ function handleKeydown(e: KeyboardEvent) {
 
 .settings-panel {
   width: 640px;
-  max-height: 80vh;
+  height: 520px;
   background: var(--bg-primary);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -507,18 +524,86 @@ function handleKeydown(e: KeyboardEvent) {
   margin: 0 0 8px 0;
 }
 
+/* Directory input with browse button */
+.dir-input-row {
+  display: flex;
+  gap: 6px;
+}
+
+.dir-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.browse-btn {
+  padding: 4px 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.browse-btn:hover {
+  border-color: var(--accent-main);
+  color: var(--accent-main);
+}
+
+/* Toggle switch */
 .toggle-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   font-size: 12px;
   color: var(--text-secondary);
   cursor: pointer;
   margin: 4px 0;
 }
 
-.toggle-row input[type="checkbox"] {
-  accent-color: var(--accent-main);
+.toggle-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 32px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.toggle-switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-track {
+  position: absolute;
+  inset: 0;
+  background: var(--border);
+  border-radius: 9px;
+  transition: background 0.2s;
+}
+
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  background: var(--text-muted);
+  border-radius: 50%;
+  transition: transform 0.2s, background 0.2s;
+}
+
+.toggle-switch input:checked + .toggle-track {
+  background: var(--accent-main);
+}
+
+.toggle-switch input:checked + .toggle-track .toggle-thumb {
+  transform: translateX(14px);
+  background: var(--bg-primary);
 }
 
 .kb-config {
