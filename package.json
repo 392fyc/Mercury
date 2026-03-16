@@ -5,6 +5,9 @@
   "description": "Multi-Agent GUI Orchestrator",
   "type": "module",
   "scripts": {
+    "dev": "pnpm --filter @mercury/gui tauri dev",
+    "build": "pnpm --filter @mercury/gui tauri build",
+    "typecheck": "tsc --noEmit -p packages/orchestrator/tsconfig.json && cd packages/gui && npx vue-tsc --noEmit",
     "poc:claude": "tsx packages/poc/src/claude-sdk-test.ts",
     "poc:codex": "tsx packages/poc/src/codex-sdk-test.ts",
     "poc:opencode": "tsx packages/poc/src/opencode-test.ts",

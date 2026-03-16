@@ -82,10 +82,21 @@ if (config.obsidian?.enabled) {
   transport.log("Knowledge service disabled (obsidian not configured or not enabled)");
 }
 
-transport.start((method, params) => orchestrator.handleRpc(method, params));
+// Wire agent config lookup for Agents First assignee.model (works with or without KB)
+orchestrator.setAgentConfigLookup();
 
-// Signal ready
-transport.sendNotification("ready", {
-  agents: registry.listAgents().map((a) => a.id),
-  timestamp: Date.now(),
+// Rehydrate task state from KB (no-op if KB disabled), then start RPC + signal ready
+orchestrator.init().then(() => {
+  transport.start((method, params) => orchestrator.handleRpc(method, params));
+  transport.sendNotification("ready", {
+    agents: registry.listAgents().map((a) => a.id),
+    timestamp: Date.now(),
+  });
+}).catch((err) => {
+  transport.log(`Init warning: ${err instanceof Error ? err.message : err}`);
+  transport.start((method, params) => orchestrator.handleRpc(method, params));
+  transport.sendNotification("ready", {
+    agents: registry.listAgents().map((a) => a.id),
+    timestamp: Date.now(),
+  });
 });

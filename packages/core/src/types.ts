@@ -18,6 +18,7 @@ export interface AgentConfig {
   id: string;
   displayName: string;
   cli: string; // e.g. "claude", "codex", "opencode"
+  model?: string; // e.g. "claude-opus-4-6", "o3", "gemini-2.5-pro"
   role: AgentRole;
   integration: IntegrationType;
   capabilities: string[];
@@ -85,12 +86,20 @@ export interface MercuryEvent<T = unknown> {
   type: EventType;
   timestamp: number;
   agentId: string;
+  modelId?: string;
   sessionId: string;
   payload: T;
   parentEventId?: string;
 }
 
 // ─── Task Orchestration (SoT Pattern) ───
+
+/** Agents First: structured agent identity for inter-agent communication */
+export interface TaskAssignee {
+  agentId: string;
+  model?: string;
+  sessionId?: string; // populated when task is dispatched
+}
 
 export type TaskStatus =
   | "drafted"
@@ -110,6 +119,7 @@ export interface TaskBundle {
   priority: "sev-0" | "sev-1" | "sev-2" | "sev-3";
   status: TaskStatus;
   assignedTo: string;
+  assignee?: TaskAssignee; // Agents First: structured agent+model+session metadata
   branch?: string;
 
   // Scope controls

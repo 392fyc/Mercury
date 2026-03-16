@@ -10,6 +10,7 @@ export interface AgentConfig {
   id: string;
   displayName: string;
   cli: string;
+  model?: string; // e.g. "claude-opus-4-6", "o3"
   role: "main" | "dev" | "acceptance" | "research";
   integration: string;
   capabilities: string[];
@@ -29,6 +30,7 @@ export interface MercuryEvent {
   type: string;
   timestamp: number;
   agentId: string;
+  modelId?: string;
   sessionId: string;
   payload: Record<string, unknown>;
   parentEventId?: string;
@@ -105,6 +107,12 @@ export type TaskStatus =
   | "acceptance" | "verified" | "closed" | "failed" | "blocked";
 export type AcceptanceVerdict = "pass" | "partial" | "fail" | "blocked";
 
+export interface TaskAssignee {
+  agentId: string;
+  model?: string;
+  sessionId?: string;
+}
+
 export interface TaskBundle {
   taskId: string;
   title: string;
@@ -112,6 +120,7 @@ export interface TaskBundle {
   priority: TaskPriority;
   status: TaskStatus;
   assignedTo: string;
+  assignee?: TaskAssignee;
   branch?: string;
   codeScope: { include: string[]; exclude: string[] };
   readScope: { requiredDocs: string[]; optionalDocs: string[] };

@@ -19,6 +19,7 @@ export type {
   SessionInfo,
   SlashCommand,
   SlashCommandArg,
+  TaskAssignee,
   TaskBundle,
   TaskStatus,
 } from "./types.js";

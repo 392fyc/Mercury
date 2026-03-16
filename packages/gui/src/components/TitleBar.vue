@@ -2,7 +2,8 @@
 import { computed } from "vue";
 import { useAgentStore } from "../stores/agents";
 
-const emit = defineEmits<{ "open-settings": [] }>();
+const props = defineProps<{ activeView: "agents" | "tasks" }>();
+const emit = defineEmits<{ "open-settings": []; "switch-view": [view: "agents" | "tasks"] }>();
 
 const { sidecarReady, anyActive, anyError } = useAgentStore();
 
@@ -27,6 +28,18 @@ const statusText = computed(() => {
       <span class="logo">☿</span>
       <span class="title">Mercury</span>
       <span class="badge">v0.1.0</span>
+      <div class="view-tabs">
+        <button
+          class="tab-btn"
+          :class="{ active: props.activeView === 'agents' }"
+          @click="emit('switch-view', 'agents')"
+        >Agents</button>
+        <button
+          class="tab-btn"
+          :class="{ active: props.activeView === 'tasks' }"
+          @click="emit('switch-view', 'tasks')"
+        >Tasks</button>
+      </div>
     </div>
     <div class="titlebar-center" data-tauri-drag-region>
       <span class="status-dot" :class="statusClass"></span>
@@ -74,6 +87,32 @@ const statusText = computed(() => {
   border-radius: 3px;
   background: var(--bg-panel);
   color: var(--text-muted);
+}
+
+.view-tabs {
+  display: flex;
+  gap: 2px;
+  margin-left: 8px;
+}
+
+.tab-btn {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 2px 8px 4px;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.tab-btn:hover {
+  color: var(--text-secondary);
+}
+
+.tab-btn.active {
+  color: var(--text-primary);
+  border-bottom-color: var(--accent-main);
 }
 
 .titlebar-center {

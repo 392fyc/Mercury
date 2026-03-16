@@ -1,6 +1,8 @@
-use serde::{Deserialize, Serialize};
+// Mirrors @mercury/core types for Tauri IPC.
+// Not all types are used yet — they exist to keep Rust in sync with TS definitions.
+#![allow(dead_code)]
 
-// Mirrors @mercury/core types for IPC
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {

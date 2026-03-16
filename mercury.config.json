@@ -4,6 +4,7 @@
       "id": "claude-code",
       "displayName": "Claude Code",
       "cli": "claude",
+      "model": "claude-opus-4-6",
       "role": "main",
       "integration": "sdk",
       "capabilities": ["code", "review", "orchestration"],
@@ -14,6 +15,7 @@
       "id": "codex-cli",
       "displayName": "Codex CLI",
       "cli": "codex",
+      "model": "o3",
       "role": "dev",
       "integration": "sdk",
       "capabilities": ["code", "test"],
@@ -24,6 +26,7 @@
       "id": "opencode",
       "displayName": "opencode",
       "cli": "opencode",
+      "model": "",
       "role": "dev",
       "integration": "http",
       "capabilities": ["code"],
@@ -33,8 +36,8 @@
   ],
   "workDir": ".",
   "obsidian": {
-    "enabled": false,
-    "vaultName": "",
+    "enabled": true,
+    "vaultName": "Mercury_KB",
     "autoInjectContext": false,
     "contextFiles": []
   }

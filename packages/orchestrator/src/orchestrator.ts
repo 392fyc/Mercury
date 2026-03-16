@@ -23,6 +23,7 @@ import {
   buildReworkPrompt,
 } from "./task-manager.js";
 import type { CreateTaskParams, CreateIssueParams } from "./task-manager.js";
+import { TaskPersistenceKB } from "./task-persistence-kb.js";
 
 export class Orchestrator {
   private bus: EventBus;
@@ -58,9 +59,30 @@ export class Orchestrator {
     });
   }
 
-  /** Inject optional knowledge service. */
+  /** Inject optional knowledge service + wire up task persistence. */
   setKnowledgeService(kb: KnowledgeService) {
     this.kb = kb;
+    // Wire KB persistence into TaskManager
+    const persistence = new TaskPersistenceKB(kb, (msg) =>
+      this.transport.sendNotification("log", { message: msg }),
+    );
+    this.taskManager.setPersistence(persistence);
+    // Wire agent config lookup for Agents First assignee.model
+    this.taskManager.setAgentConfigLookup((agentId) =>
+      this.registry.listAgents().find((a) => a.id === agentId),
+    );
+  }
+
+  /** Wire agent config lookup for Agents First assignee.model (works with or without KB). */
+  setAgentConfigLookup(): void {
+    this.taskManager.setAgentConfigLookup((agentId) =>
+      this.registry.listAgents().find((a) => a.id === agentId),
+    );
+  }
+
+  /** Rehydrate task state from KB persistence. Call after setKnowledgeService, before RPC. */
+  async init(): Promise<void> {
+    await this.taskManager.init();
   }
 
   /** Store project config for get_config/update_config RPC. */

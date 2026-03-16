@@ -20,20 +20,21 @@ impl SidecarManager {
         app_handle: tauri::AppHandle,
         project_dir: String,
     ) -> Result<Self, String> {
-        // In dev mode, use npx tsx to run the orchestrator.
-        // On Windows, npx is a .cmd script so we must run via cmd.exe.
+        // In dev mode, use pnpm exec tsx to run the orchestrator.
+        // Using pnpm instead of npx avoids npm warn noise from inherited env vars.
+        // On Windows, pnpm is a .cmd script so we must run via cmd.exe.
         #[cfg(target_os = "windows")]
         let mut cmd = {
             let mut c = Command::new("cmd");
-            c.args(["/c", "npx", "tsx", "packages/orchestrator/src/index.ts"]);
+            c.args(["/c", "pnpm", "exec", "tsx", "packages/orchestrator/src/index.ts"]);
             c.creation_flags(0x08000000); // CREATE_NO_WINDOW
             c
         };
 
         #[cfg(not(target_os = "windows"))]
         let mut cmd = {
-            let mut c = Command::new("npx");
-            c.args(["tsx", "packages/orchestrator/src/index.ts"]);
+            let mut c = Command::new("pnpm");
+            c.args(["exec", "tsx", "packages/orchestrator/src/index.ts"]);
             c
         };
 

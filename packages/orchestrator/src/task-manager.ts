@@ -1,7 +1,7 @@
 /**
  * Task Manager — state machine, stores, and prompt builders for SoT-pattern task orchestration.
  *
- * All task state is in-memory (Map-based). No persistence — acceptable for prototype.
+ * State is in-memory (Map-based) with optional KB persistence via TaskPersistence.
  * The Orchestrator calls into TaskManager; TaskManager emits events via the injected EventBus.
  */
 
@@ -10,13 +10,16 @@ import type { EventBus } from "@mercury/core";
 import type {
   TaskBundle,
   TaskStatus,
+  TaskAssignee,
   ImplementationReceipt,
   AcceptanceBundle,
   AcceptanceVerdict,
   IssueBundle,
   IssueType,
   AgentRole,
+  AgentConfig,
 } from "@mercury/core";
+import type { TaskPersistence } from "./task-persistence-kb.js";
 
 // ─── State Machine ───
 
@@ -76,7 +79,46 @@ export class TaskManager {
   private sessionToTask = new Map<string, string>();
   private taskToSessions = new Map<string, string[]>();
 
+  private persistence: TaskPersistence | null = null;
+  private agentConfigLookup: ((agentId: string) => AgentConfig | undefined) | null = null;
+
   constructor(private bus: EventBus) {}
+
+  /** Inject persistence layer (optional — KB-backed). */
+  setPersistence(persistence: TaskPersistence): void {
+    this.persistence = persistence;
+  }
+
+  /** Inject agent config lookup for populating assignee.model. */
+  setAgentConfigLookup(lookup: (agentId: string) => AgentConfig | undefined): void {
+    this.agentConfigLookup = lookup;
+  }
+
+  /** Rehydrate task state from persistence (call before RPC starts). */
+  async init(): Promise<void> {
+    if (!this.persistence) return;
+    try {
+      const { tasks, acceptances, issues } = await this.persistence.loadAll();
+      for (const t of tasks) this.tasks.set(t.taskId, t);
+      for (const a of acceptances) this.acceptances.set(a.acceptanceId, a);
+      for (const i of issues) this.issues.set(i.issueId, i);
+    } catch {
+      // Persistence failure on init is non-fatal — start with empty state
+    }
+  }
+
+  /** Fire-and-forget persist — never blocks state machine. */
+  private persistTask(task: TaskBundle): void {
+    this.persistence?.saveTask(task).catch(() => {});
+  }
+
+  private persistAcceptance(acc: AcceptanceBundle): void {
+    this.persistence?.saveAcceptance(acc).catch(() => {});
+  }
+
+  private persistIssue(issue: IssueBundle): void {
+    this.persistence?.saveIssue(issue).catch(() => {});
+  }
 
   // ─── Task CRUD ───
 
@@ -103,7 +145,16 @@ export class TaskManager {
       maxReworks: params.maxReworks ?? 3,
       linkedIssueIds: [],
     };
+
+    // Agents First: populate structured assignee from agent config
+    const agentCfg = this.agentConfigLookup?.(params.assignedTo);
+    task.assignee = {
+      agentId: params.assignedTo,
+      model: agentCfg?.model,
+    };
+
     this.tasks.set(taskId, task);
+    this.persistTask(task);
 
     this.bus.emit(
       "orchestrator.task.created",
@@ -160,6 +211,7 @@ export class TaskManager {
       this.bus.emit("orchestrator.task.fail", agentId, "orchestrator", { taskId });
     }
 
+    this.persistTask(task);
     return task;
   }
 
@@ -170,6 +222,7 @@ export class TaskManager {
     if (!task) throw new Error(`Task not found: ${taskId}`);
 
     task.implementationReceipt = receipt;
+    this.persistTask(task);
 
     // Auto-transition to implementation_done if currently in_progress
     if (task.status === "in_progress") {
@@ -208,6 +261,7 @@ export class TaskManager {
       },
     );
 
+    this.persistTask(task);
     return { reworked: true, newSession: needsNewSession };
   }
 
@@ -241,6 +295,7 @@ export class TaskManager {
       },
     };
     this.acceptances.set(acceptanceId, acceptance);
+    this.persistAcceptance(acceptance);
 
     // Link acceptance to task
     if (task.handoffToAcceptance) {
@@ -260,6 +315,7 @@ export class TaskManager {
       { acceptanceId, linkedTaskId: taskId, acceptor: acceptorId },
     );
 
+    this.persistTask(task);
     return acceptance;
   }
 
@@ -285,6 +341,7 @@ export class TaskManager {
       { acceptanceId, verdict: results.verdict, linkedTaskId: acceptance.linkedTaskId },
     );
 
+    this.persistAcceptance(acceptance);
     return acceptance;
   }
 
@@ -303,6 +360,7 @@ export class TaskManager {
       linkedTaskIds: params.linkedTaskIds,
     };
     this.issues.set(issueId, issue);
+    this.persistIssue(issue);
 
     // Link issues to tasks
     for (const taskId of params.linkedTaskIds) {
@@ -343,6 +401,7 @@ export class TaskManager {
       { issueId },
     );
 
+    this.persistIssue(issue);
     return issue;
   }
 
@@ -353,6 +412,13 @@ export class TaskManager {
     const sessions = this.taskToSessions.get(taskId) ?? [];
     sessions.push(sessionId);
     this.taskToSessions.set(taskId, sessions);
+
+    // Agents First: update assignee.sessionId
+    const task = this.tasks.get(taskId);
+    if (task?.assignee) {
+      task.assignee.sessionId = sessionId;
+      this.persistTask(task);
+    }
   }
 
   getTaskForSession(sessionId: string): string | undefined {
@@ -375,54 +441,29 @@ export function buildDevPrompt(task: TaskBundle, kbContext?: string): string {
   const lines: string[] = [];
 
   lines.push(`# Task: ${task.title} [${task.taskId}]`);
-  lines.push(`Priority: ${task.priority} | Branch: ${task.branch ?? "create new branch"}`);
   lines.push("");
 
-  if (task.readScope.requiredDocs.length > 0) {
-    lines.push("## Required Reading");
-    for (const doc of task.readScope.requiredDocs) {
-      lines.push(`- ${doc}`);
-    }
-    lines.push("");
-  }
-
-  lines.push("## Code Scope");
-  lines.push(`Include: ${task.codeScope.include.join(", ") || "(all)"}`);
-  if (task.codeScope.exclude.length > 0) {
-    lines.push(`Exclude: ${task.codeScope.exclude.join(", ")}`);
-  }
+  // Agents First: structured JSON block for machine-readable task metadata
+  const bundleMeta = {
+    taskId: task.taskId,
+    assignee: task.assignee ?? { agentId: task.assignedTo },
+    priority: task.priority,
+    branch: task.branch ?? null,
+    codeScope: task.codeScope,
+    readScope: task.readScope,
+    allowedWriteScope: task.allowedWriteScope,
+    docsMustUpdate: task.docsMustUpdate,
+    docsMustNotTouch: task.docsMustNotTouch,
+    definitionOfDone: task.definitionOfDone,
+    requiredEvidence: task.requiredEvidence,
+    reworkCount: task.reworkCount,
+    maxReworks: task.maxReworks,
+  };
+  lines.push("## Task Bundle (machine-readable)");
+  lines.push("```json");
+  lines.push(JSON.stringify(bundleMeta, null, 2));
+  lines.push("```");
   lines.push("");
-
-  if (task.allowedWriteScope.codePaths.length > 0) {
-    lines.push("## Allowed Write Paths");
-    lines.push(`Code: ${task.allowedWriteScope.codePaths.join(", ")}`);
-    if (task.allowedWriteScope.kbPaths.length > 0) {
-      lines.push(`KB: ${task.allowedWriteScope.kbPaths.join(", ")}`);
-    }
-    lines.push("");
-  }
-
-  if (task.docsMustNotTouch.length > 0) {
-    lines.push("## Do NOT Touch");
-    for (const doc of task.docsMustNotTouch) {
-      lines.push(`- ${doc}`);
-    }
-    lines.push("");
-  }
-
-  lines.push("## Definition of Done");
-  task.definitionOfDone.forEach((item, i) => {
-    lines.push(`${i + 1}. ${item}`);
-  });
-  lines.push("");
-
-  if (task.requiredEvidence.length > 0) {
-    lines.push("## Required Evidence");
-    for (const ev of task.requiredEvidence) {
-      lines.push(`- ${ev}`);
-    }
-    lines.push("");
-  }
 
   lines.push("## Context");
   lines.push(task.context);
@@ -454,7 +495,21 @@ export function buildAcceptancePrompt(
   const lines: string[] = [];
 
   lines.push(`# Acceptance Review: ${task.title} [${acceptance.acceptanceId}]`);
-  lines.push(`Linked Task: ${task.taskId}`);
+  lines.push("");
+
+  // Agents First: structured acceptance metadata
+  const acceptanceMeta = {
+    acceptanceId: acceptance.acceptanceId,
+    linkedTaskId: acceptance.linkedTaskId,
+    acceptor: acceptance.acceptor,
+    scope: acceptance.scope,
+    blindInputPolicy: acceptance.blindInputPolicy,
+    definitionOfDone: task.definitionOfDone,
+  };
+  lines.push("## Acceptance Bundle (machine-readable)");
+  lines.push("```json");
+  lines.push(JSON.stringify(acceptanceMeta, null, 2));
+  lines.push("```");
   lines.push("");
 
   if (task.implementationReceipt) {
@@ -465,30 +520,8 @@ export function buildAcceptancePrompt(
     lines.push("");
   }
 
-  lines.push("## Review Scope");
-  if (acceptance.scope.filesToReview.length > 0) {
-    lines.push(`Files: ${acceptance.scope.filesToReview.join(", ")}`);
-  }
-  if (acceptance.scope.docsToCheck.length > 0) {
-    lines.push(`Docs: ${acceptance.scope.docsToCheck.join(", ")}`);
-  }
-  if (acceptance.scope.runtimeChecks.length > 0) {
-    lines.push(`Runtime: ${acceptance.scope.runtimeChecks.join(", ")}`);
-  }
-  lines.push("");
-
-  lines.push("## Definition of Done (verify these)");
-  task.definitionOfDone.forEach((item, i) => {
-    lines.push(`${i + 1}. ${item}`);
-  });
-  lines.push("");
-
-  lines.push("## Blind Input Policy");
-  lines.push(`Allowed: ${acceptance.blindInputPolicy.allowed.join(", ")}`);
-  lines.push(`Forbidden: ${acceptance.blindInputPolicy.forbidden.join(", ")}`);
-  lines.push("");
-
   lines.push("## Instructions");
+  lines.push("Review the implementation against the definition of done and scope above.");
   lines.push("Provide your review as JSON:");
   lines.push("```json");
   lines.push(JSON.stringify(
@@ -507,24 +540,25 @@ export function buildReworkPrompt(
 ): string {
   const lines: string[] = [];
 
-  lines.push(`# Rework Required [${task.taskId}] (attempt ${task.reworkCount}/${task.maxReworks})`);
+  lines.push(`# Rework Required [${task.taskId}]`);
   lines.push("");
 
-  if (acceptance.results) {
-    lines.push("## Acceptance Findings");
-    for (const finding of acceptance.results.findings) {
-      lines.push(`- ${finding}`);
-    }
-    lines.push("");
-
-    if (acceptance.results.recommendations.length > 0) {
-      lines.push("## Recommendations");
-      for (const rec of acceptance.results.recommendations) {
-        lines.push(`- ${rec}`);
-      }
-      lines.push("");
-    }
-  }
+  // Agents First: structured rework metadata
+  const reworkMeta = {
+    taskId: task.taskId,
+    assignee: task.assignee ?? { agentId: task.assignedTo },
+    reworkCount: task.reworkCount,
+    maxReworks: task.maxReworks,
+    acceptanceId: acceptance.acceptanceId,
+    verdict: acceptance.results?.verdict,
+    findings: acceptance.results?.findings ?? [],
+    recommendations: acceptance.results?.recommendations ?? [],
+  };
+  lines.push("## Rework Bundle (machine-readable)");
+  lines.push("```json");
+  lines.push(JSON.stringify(reworkMeta, null, 2));
+  lines.push("```");
+  lines.push("");
 
   lines.push("## Instructions");
   lines.push("Address the findings above within your current scope. Do not start from scratch.");
