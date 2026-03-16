@@ -16,6 +16,10 @@ function shortId(id: string): string {
   return id.slice(0, 12);
 }
 
+function hasLegacyRoleConfig(session: SessionListItem): boolean {
+  return Boolean((session as SessionListItem & { legacyRoleConfig?: boolean }).legacyRoleConfig);
+}
+
 function handleSelect(session: SessionListItem) {
   pickSession(session.sessionId);
 }
@@ -30,12 +34,17 @@ function handleBackdrop() {
     <div v-if="visible" class="session-picker-overlay" @click.self="handleBackdrop">
       <div class="session-picker">
         <div class="picker-header">
-          <span class="picker-title">Resume Session</span>
+          <span
+            class="picker-title"
+            title="Resumable sessions (same role, same agent)"
+          >
+            Resumable sessions (same role, same agent)
+          </span>
           <button class="picker-close" @click="dismissSessionPick">&times;</button>
         </div>
         <div class="picker-list">
           <div v-if="sessions.length === 0" class="picker-empty">
-            No saved sessions
+            No resumable sessions
           </div>
           <button
             v-for="s in sessions"
@@ -47,6 +56,13 @@ function handleBackdrop() {
             <div class="session-main">
               <span class="session-name">{{ s.sessionName || shortId(s.sessionId) }}</span>
               <span class="session-role" v-if="s.role">{{ s.role }}</span>
+              <span
+                v-if="hasLegacyRoleConfig(s)"
+                class="session-badge"
+                title="This session keeps its original frozen role prompt. Resume is still allowed."
+              >
+                Legacy Role Config
+              </span>
               <span class="session-status" :class="s.active ? 'live' : 'saved'">
                 {{ s.active ? 'active' : s.status }}
               </span>
@@ -171,6 +187,15 @@ function handleBackdrop() {
   border-radius: 3px;
   text-transform: uppercase;
   margin-left: auto;
+}
+
+.session-badge {
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: rgba(255, 184, 77, 0.12);
+  color: var(--accent-warn);
+  border: 1px solid rgba(255, 184, 77, 0.22);
 }
 
 .session-status.live {

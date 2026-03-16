@@ -23,7 +23,7 @@ function shortId(id: string): string {
     <div v-if="visible" class="history-overlay" @click.self="dismissHistoryView">
       <div class="history-panel">
         <div class="history-header">
-          <span class="history-title">History</span>
+          <span class="history-title">Session history (read-only)</span>
           <button class="history-close" @click="dismissHistoryView">&times;</button>
         </div>
         <div class="history-body">

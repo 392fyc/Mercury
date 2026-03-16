@@ -30,6 +30,7 @@ const messages = computed(() => getMessages(props.panelKey));
 const sessionId = computed(() => getSession(props.panelKey));
 const sessionInfo = computed(() => getSessionInfo(props.panelKey));
 const sessionTitle = computed(() => sessionInfo.value?.sessionName ?? null);
+const hasLegacyRoleConfig = computed(() => sessionInfo.value?.legacyRoleConfig === true);
 const sessionShortId = computed(() => {
   const id = sessionId.value;
   return id ? id.slice(0, 8) : null;
@@ -327,9 +328,20 @@ watch(
         <span class="session-id" v-if="sessionShortId" :title="sessionId">
           {{ sessionShortId }}
         </span>
+        <span
+          v-if="hasLegacyRoleConfig"
+          class="session-flag"
+          title="Role prompt configuration changed after this session started. Mercury still resumes this session with its original frozen prompt."
+        >
+          Legacy Role Config
+        </span>
       </div>
       <div class="panel-status">
-        <button class="history-button" @click="openSessionPicker(panelKey)">
+        <button
+          class="history-button"
+          title="Resumable sessions (same role, same agent)"
+          @click="openSessionPicker(panelKey)"
+        >
           Resume
         </button>
         <button class="history-button" @click="openHistory(panelKey)">
@@ -499,6 +511,16 @@ watch(
   border-radius: 3px;
   cursor: default;
   opacity: 0.7;
+}
+
+.session-flag {
+  font-size: 9px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 184, 77, 0.22);
+  background: rgba(255, 184, 77, 0.12);
+  color: var(--accent-warn);
+  white-space: nowrap;
 }
 
 .status-badge {

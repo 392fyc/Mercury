@@ -140,6 +140,36 @@ export class Orchestrator {
     return info?.frozenRole ?? info?.role;
   }
 
+  private isTaskScopedPrompt(info: SessionInfo): boolean {
+    const prompt = info.frozenSystemPrompt ?? "";
+    return prompt.includes("## Task Scope") || prompt.includes("## Review Scope");
+  }
+
+  private getCurrentPromptHash(info: SessionInfo): string | undefined {
+    if (!info.frozenRole || !info.promptHash || this.isTaskScopedPrompt(info)) {
+      return undefined;
+    }
+    const currentPrompt = buildRoleSystemPrompt(
+      info.frozenRole,
+      undefined,
+      this.sharedContext || undefined,
+    );
+    return this.hashPrompt(currentPrompt);
+  }
+
+  private getLegacyRoleConfigState(
+    info: SessionInfo,
+  ): { currentPromptHash?: string; legacyRoleConfig: boolean } {
+    const currentPromptHash = this.getCurrentPromptHash(info);
+    return {
+      currentPromptHash,
+      legacyRoleConfig:
+        Boolean(info.promptHash) &&
+        Boolean(currentPromptHash) &&
+        info.promptHash !== currentPromptHash,
+    };
+  }
+
   private appendTranscriptMessage(sessionId: string, message: TranscriptMessage): void {
     if (!this.transcripts) return;
     try {
@@ -647,8 +677,10 @@ export class Orchestrator {
     agentId?: string,
     role?: AgentRole,
     includeTerminal = false,
-  ): Array<SessionInfo & { active: boolean }> {
-    const result: Array<SessionInfo & { active: boolean }> = [];
+  ): Array<SessionInfo & { active: boolean; currentPromptHash?: string; legacyRoleConfig?: boolean }> {
+    const result: Array<
+      SessionInfo & { active: boolean; currentPromptHash?: string; legacyRoleConfig?: boolean }
+    > = [];
     const activeSessionIds = new Set(this.roleSessions.values());
 
     // In-memory sessions
@@ -658,10 +690,12 @@ export class Orchestrator {
       if (role && sessionRole !== role) continue;
       if (!includeTerminal && !info.frozenRole) continue;
       if (!includeTerminal && (info.status === "completed" || info.status === "overflow")) continue;
+      const promptState = this.getLegacyRoleConfigState(info);
       result.push({
         ...info,
         role: sessionRole,
         active: activeSessionIds.has(info.sessionId),
+        ...promptState,
       });
     }
 
@@ -676,10 +710,12 @@ export class Orchestrator {
           if (role && sessionRole !== role) continue;
           if (!includeTerminal && !info.frozenRole) continue;
           if (!includeTerminal && (info.status === "completed" || info.status === "overflow")) continue;
+          const promptState = this.getLegacyRoleConfigState(info);
           result.push({
             ...info,
             role: sessionRole,
             active: false,
+            ...promptState,
           });
         }
       }
@@ -736,6 +772,13 @@ export class Orchestrator {
     resumed.role = info.frozenRole;
     resumed.frozenRole = info.frozenRole;
     this.sessions.set(sessionId, resumed);
+    const promptState = this.getLegacyRoleConfigState(resumed);
+    const resumedWithPromptState = resumed as SessionInfo & {
+      currentPromptHash?: string;
+      legacyRoleConfig?: boolean;
+    };
+    resumedWithPromptState.currentPromptHash = promptState.currentPromptHash;
+    resumedWithPromptState.legacyRoleConfig = promptState.legacyRoleConfig;
 
     const slotKey = makeRoleSlotKey(info.frozenRole, agentId);
     this.roleSessions.set(slotKey, sessionId);
@@ -744,10 +787,13 @@ export class Orchestrator {
       role: info.frozenRole,
       sessionName: resumed.sessionName,
       resumed: true,
+      promptHash: resumed.promptHash,
+      currentPromptHash: promptState.currentPromptHash,
+      legacyRoleConfig: promptState.legacyRoleConfig,
     });
 
     this.persistState(true);
-    return resumed;
+    return resumedWithPromptState;
   }
 
   private async startRoleSession(
@@ -786,6 +832,9 @@ export class Orchestrator {
     this.bus.emit("agent.session.start", agentId, session.sessionId, {
       role: effectiveRole,
       sessionName: session.sessionName,
+      promptHash: session.promptHash,
+      currentPromptHash: session.promptHash,
+      legacyRoleConfig: false,
     });
 
     this.persistState(true);

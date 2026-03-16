@@ -30,7 +30,12 @@ export interface SessionMeta {
   sessionName?: string;
   status?: "active" | "paused" | "completed" | "overflow";
   lastActiveAt?: number;
+  promptHash?: string;
+  currentPromptHash?: string;
+  legacyRoleConfig?: boolean;
 }
+
+type SessionPromptState = Pick<SessionMeta, "promptHash" | "currentPromptHash" | "legacyRoleConfig">;
 
 const SESSIONS_STORAGE_KEY = "mercury:sessions";
 
@@ -38,6 +43,7 @@ const agents = ref<AgentConfig[]>([]);
 const statuses = ref<Map<string, "idle" | "active" | "error">>(new Map()); // panelKey → status
 const sessions = ref<Map<string, string>>(new Map()); // panelKey → sessionId
 const sessionMeta = ref<Map<string, SessionMeta>>(new Map()); // panelKey → session metadata
+const sessionPromptState = ref<Map<string, SessionPromptState>>(new Map()); // sessionId → prompt metadata
 const workDirs = ref<Map<string, string>>(new Map()); // panelKey → cwd
 const gitBranches = ref<Map<string, string | null>>(new Map()); // panelKey → branch
 const defaultWorkDir = ref("");
@@ -106,9 +112,40 @@ function setSession(panelKey: string, sessionId: string) {
   saveSessions();
 }
 
+function extractPromptState(info: Partial<SessionMeta>): SessionPromptState {
+  return {
+    promptHash: info.promptHash,
+    currentPromptHash: info.currentPromptHash,
+    legacyRoleConfig: info.legacyRoleConfig,
+  };
+}
+
+function updateSessionPromptState(sessionId: string, info: Partial<SessionMeta>) {
+  const nextState = extractPromptState(info);
+  if (
+    nextState.promptHash === undefined &&
+    nextState.currentPromptHash === undefined &&
+    nextState.legacyRoleConfig === undefined
+  ) {
+    return;
+  }
+  const existing = sessionPromptState.value.get(sessionId);
+  sessionPromptState.value = new Map(sessionPromptState.value).set(sessionId, {
+    ...existing,
+    ...nextState,
+  });
+}
+
 function setSessionInfo(panelKey: string, info: SessionMeta) {
   setSession(panelKey, info.sessionId);
-  sessionMeta.value = new Map(sessionMeta.value).set(panelKey, info);
+  updateSessionPromptState(info.sessionId, info);
+  const existing = sessionMeta.value.get(panelKey);
+  const promptState = sessionPromptState.value.get(info.sessionId);
+  const merged =
+    existing?.sessionId === info.sessionId
+      ? { ...existing, ...info, ...promptState }
+      : { ...info, ...promptState };
+  sessionMeta.value = new Map(sessionMeta.value).set(panelKey, merged);
 }
 
 function getSession(panelKey: string): string | undefined {
@@ -179,6 +216,9 @@ async function hydrateSessionMeta(): Promise<void> {
           sessionName: match.sessionName,
           status: match.status,
           lastActiveAt: match.lastActiveAt,
+          promptHash: match.promptHash,
+          currentPromptHash: (match as typeof match & { currentPromptHash?: string }).currentPromptHash,
+          legacyRoleConfig: (match as typeof match & { legacyRoleConfig?: boolean }).legacyRoleConfig,
         });
       }
     } catch {
@@ -232,7 +272,13 @@ async function initAgents() {
 
   await onMercuryEvent((event: MercuryEvent) => {
     if (event.type === "agent.session.start") {
-      const payload = event.payload as { role?: string; sessionName?: string };
+      const payload = event.payload as {
+        role?: string;
+        sessionName?: string;
+        promptHash?: string;
+        currentPromptHash?: string;
+        legacyRoleConfig?: boolean;
+      };
       if (!payload.role) return;
       const panelKey = `${payload.role}:${event.agentId}`;
       setSessionInfo(panelKey, {
@@ -240,6 +286,9 @@ async function initAgents() {
         sessionName: payload.sessionName,
         status: "active",
         lastActiveAt: event.timestamp,
+        promptHash: payload.promptHash,
+        currentPromptHash: payload.currentPromptHash,
+        legacyRoleConfig: payload.legacyRoleConfig,
       });
       setStatus(panelKey, "idle");
       return;

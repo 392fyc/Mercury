@@ -10,6 +10,12 @@ import { writeFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
+  RunResult as CodexRunResult,
+  Thread as CodexThread,
+  ThreadEvent as CodexThreadEvent,
+  ThreadItem as CodexThreadItem,
+} from "@openai/codex-sdk";
+import type {
   AgentAdapter,
   AgentConfig,
   AgentMessage,
@@ -25,6 +31,9 @@ type InputEntry =
   | { type: "local_image"; path: string };
 
 type InputArg = string | InputEntry[];
+
+const CODEX_COMPACTION_NOTICE =
+  "Context compaction triggered — role boundary instructions from earlier turns may have been summarized. Current turn still carries full role context via prepend.";
 
 export class CodexAdapter implements AgentAdapter {
   readonly agentId: string;
@@ -67,8 +76,8 @@ export class CodexAdapter implements AgentAdapter {
       }
     }
     return this.codexInstance as {
-      startThread(opts?: { workingDirectory?: string }): unknown;
-      resumeThread(id: string, opts?: { workingDirectory?: string }): unknown;
+      startThread(opts?: { workingDirectory?: string }): CodexThread;
+      resumeThread(id: string, opts?: { workingDirectory?: string }): CodexThread;
     };
   }
 
@@ -123,6 +132,103 @@ export class CodexAdapter implements AgentAdapter {
       ...imageEntries,
     ];
     return entries;
+  }
+
+  private normalizeCompactionText(text: string): string {
+    return text.toLowerCase().replace(/\s+/g, " ").trim();
+  }
+
+  private isCompactionSignal(text?: string): boolean {
+    if (!text) return false;
+    const normalized = this.normalizeCompactionText(text);
+    const hasDirectCue =
+      normalized.includes("compaction") ||
+      normalized.includes("compact conversation") ||
+      normalized.includes("context compact") ||
+      normalized.includes("conversation compact");
+    const hasSummaryCue =
+      (normalized.includes("summarized") ||
+        normalized.includes("summarised") ||
+        normalized.includes("summary")) &&
+      (normalized.includes("context") ||
+        normalized.includes("conversation") ||
+        normalized.includes("history") ||
+        normalized.includes("earlier turns"));
+    const hasTruncationCue =
+      normalized.includes("truncat") &&
+      (normalized.includes("context") || normalized.includes("conversation"));
+    return hasDirectCue || hasSummaryCue || hasTruncationCue;
+  }
+
+  private buildCompactionNotice(): AgentMessage {
+    return {
+      role: "system",
+      content: CODEX_COMPACTION_NOTICE,
+      timestamp: Date.now(),
+      metadata: { messageType: "context_compaction_notice", adapter: this.agentId },
+    };
+  }
+
+  private getItemText(item: CodexThreadItem): string | undefined {
+    switch (item.type) {
+      case "agent_message":
+      case "reasoning":
+        return item.text;
+      case "error":
+        return item.message;
+      case "command_execution":
+        return item.aggregated_output;
+      default:
+        return undefined;
+    }
+  }
+
+  private getEventCompactionText(event: CodexThreadEvent): string | undefined {
+    switch (event.type) {
+      case "item.started":
+      case "item.updated":
+      case "item.completed":
+        return this.getItemText(event.item);
+      case "turn.failed":
+        return event.error.message;
+      case "error":
+        return event.message;
+      default:
+        return undefined;
+    }
+  }
+
+  private mapCompletedItemToMessage(item: CodexThreadItem): AgentMessage | null {
+    switch (item.type) {
+      case "agent_message":
+      case "reasoning":
+        return {
+          role: "assistant",
+          content: item.text,
+          timestamp: Date.now(),
+          metadata: {
+            itemId: item.id,
+            itemType: item.type,
+          },
+        };
+      case "error":
+        return {
+          role: "system",
+          content: item.message,
+          timestamp: Date.now(),
+          metadata: {
+            itemId: item.id,
+            itemType: item.type,
+          },
+        };
+      default:
+        return null;
+    }
+  }
+
+  private resultHasCompactionSignal(result: CodexRunResult): boolean {
+    return result.items.some((item) => this.isCompactionSignal(this.getItemText(item))) ||
+      this.isCompactionSignal(result.finalResponse);
   }
 
   async startSession(cwd: string): Promise<SessionInfo> {
@@ -274,24 +380,7 @@ export class CodexAdapter implements AgentAdapter {
       if (handled) return;
     }
 
-    const thread = this.threads.get(sessionId) as {
-      id: string | null;
-      run(
-        input: string | Array<{ type: string; text?: string; path?: string }>,
-        options?: { outputSchema?: unknown; workingDirectory?: string; skipGitRepoCheck?: boolean },
-      ): Promise<{
-        items: Array<{ id: string; type: string; text?: string }>;
-        finalResponse: string;
-        usage: { input_tokens: number; output_tokens: number };
-      }>;
-      runStreamed?(
-        input: string | Array<{ type: string; text?: string; path?: string }>,
-      ): AsyncIterable<{
-        type: string;
-        text?: string;
-        item?: { id: string; type: string; text?: string };
-      }>;
-    };
+    const thread = this.threads.get(sessionId) as CodexThread | undefined;
 
     if (!thread) throw new Error(`Thread ${sessionId} not found`);
 
@@ -339,36 +428,29 @@ export class CodexAdapter implements AgentAdapter {
       // Prefer streaming if available
       if (thread.runStreamed) {
         let yieldedAny = false;
+        let compactionNotified = false;
         try {
-          for await (const event of thread.runStreamed(input)) {
+          const { events } = await thread.runStreamed(input);
+          for await (const event of events) {
             if (session) session.lastActiveAt = Date.now();
 
-            if (event.type === "text" && event.text) {
+            const compactionText = this.getEventCompactionText(event);
+            if (!compactionNotified && this.isCompactionSignal(compactionText)) {
+              compactionNotified = true;
               yieldedAny = true;
-              yield {
-                role: "assistant" as const,
-                content: event.text,
-                timestamp: Date.now(),
-              };
-            } else if (event.type === "item" && event.item?.text) {
+              yield this.buildCompactionNotice();
+            }
+
+            if (event.type === "item.completed") {
+              const message = this.mapCompletedItemToMessage(event.item);
+              if (!message) continue;
               yieldedAny = true;
-              yield {
-                role: "assistant" as const,
-                content: event.item.text,
-                timestamp: Date.now(),
-                metadata: {
-                  itemId: event.item.id,
-                  itemType: event.item.type,
-                },
-              };
-            } else if (event.type === "result" && event.text) {
-              yieldedAny = true;
-              yield {
-                role: "assistant" as const,
-                content: event.text,
-                timestamp: Date.now(),
-                metadata: { isResult: true },
-              };
+              yield message;
+              continue;
+            }
+
+            if (event.type === "turn.failed") {
+              throw new Error(event.error.message);
             }
           }
           return;
@@ -381,19 +463,22 @@ export class CodexAdapter implements AgentAdapter {
 
       // Fallback: non-streaming run()
       const result = await thread.run(input);
+      let yieldedFinalResponse = false;
 
-      for (const item of result.items) {
-        if (item.text) {
-          yield {
-            role: "assistant" as const,
-            content: item.text,
-            timestamp: Date.now(),
-            metadata: { itemId: item.id, itemType: item.type },
-          };
-        }
+      if (this.resultHasCompactionSignal(result)) {
+        yield this.buildCompactionNotice();
       }
 
-      if (result.finalResponse) {
+      for (const item of result.items) {
+        const message = this.mapCompletedItemToMessage(item);
+        if (!message) continue;
+        if (item.type === "agent_message" && item.text === result.finalResponse) {
+          yieldedFinalResponse = true;
+        }
+        yield message;
+      }
+
+      if (result.finalResponse && !yieldedFinalResponse) {
         yield {
           role: "assistant" as const,
           content: result.finalResponse,
