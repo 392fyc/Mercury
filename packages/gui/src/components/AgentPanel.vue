@@ -2,9 +2,10 @@
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useAgentStore } from "../stores/agents";
 import { useMessageStore } from "../stores/messages";
-import { getSlashCommands } from "../lib/tauri-bridge";
+import { getSlashCommands, getGitInfo, setAgentCwd, stopSession } from "../lib/tauri-bridge";
 import type { SlashCommand, ImageAttachment, ImageMediaType } from "../lib/tauri-bridge";
 import SlashCommandPalette from "./SlashCommandPalette.vue";
 
@@ -14,8 +15,8 @@ const props = defineProps<{
   role: "main" | "dev" | "acceptance" | "research" | "design";
 }>();
 
-const { getStatus, getSession } = useAgentStore();
-const { getMessages, sendPrompt } = useMessageStore();
+const { getStatus, getSession, getWorkDir, setWorkDir, getGitBranch, setGitBranch, clearSession, defaultWorkDir } = useAgentStore();
+const { getMessages, sendPrompt, clearMessages } = useMessageStore();
 
 const inputText = ref("");
 const messagesEl = ref<HTMLDivElement>();
@@ -29,6 +30,53 @@ const sessionShortId = computed(() => {
   const id = sessionId.value;
   return id ? id.slice(0, 8) : null;
 });
+
+// ─── Workspace ───
+
+// Explicitly reference defaultWorkDir.value so Vue tracks it as a dependency
+const workDir = computed(() => getWorkDir(props.agentId) || defaultWorkDir.value);
+const gitBranch = computed(() => getGitBranch(props.agentId));
+const shortWorkDir = computed(() => {
+  const dir = workDir.value;
+  if (!dir) return "";
+  const parts = dir.replace(/\\/g, "/").split("/");
+  return parts[parts.length - 1] || parts[parts.length - 2] || dir;
+});
+
+async function refreshGitBranch(path: string) {
+  try {
+    const info = await getGitInfo(path);
+    setGitBranch(props.agentId, info.gitBranch);
+  } catch {
+    setGitBranch(props.agentId, null);
+  }
+}
+
+// Refresh git branch when workDir becomes available (may resolve async)
+watch(workDir, (dir) => {
+  if (dir) refreshGitBranch(dir);
+}, { immediate: true });
+
+async function handleChangeDir() {
+  if (status.value === "active") return;
+  const selected = await open({ directory: true, title: "Select workspace directory" });
+  if (!selected || typeof selected !== "string") return;
+
+  // Stop current session if active
+  const sid = sessionId.value;
+  if (sid) {
+    try { await stopSession(props.agentId, sid); } catch { /* best-effort */ }
+    clearSession(props.agentId);
+  }
+
+  // Clear message history for fresh start
+  clearMessages(props.agentId);
+
+  // Update cwd in store and orchestrator
+  setWorkDir(props.agentId, selected);
+  await setAgentCwd(props.agentId, selected);
+  await refreshGitBranch(selected);
+}
 
 // ─── Image Attachments ───
 
@@ -301,6 +349,16 @@ watch(
         <img :src="imageDataUri(img)" :alt="img.filename || 'pending'" />
         <button class="remove-btn" @click="removeImage(i)" title="Remove">&times;</button>
       </div>
+    </div>
+
+    <!-- Workspace bar (above input, like Claude Desktop) -->
+    <div class="workspace-bar" v-if="workDir">
+      <button class="workspace-dir" @click="handleChangeDir" :title="workDir" :disabled="status === 'active'">
+        {{ shortWorkDir }}
+      </button>
+      <span class="workspace-branch" v-if="gitBranch">
+        <span class="branch-icon">&#9095;</span>{{ gitBranch }}
+      </span>
     </div>
 
     <div class="panel-input" style="position: relative;">
@@ -610,9 +668,54 @@ watch(
   color: var(--text-secondary);
 }
 
+/* Workspace bar above input */
+.workspace-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-top: 1px solid var(--border);
+  font-size: 10px;
+}
+
+.workspace-dir {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 6px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.workspace-dir:hover:not(:disabled) {
+  border-color: var(--accent-main);
+  color: var(--text-primary);
+}
+
+.workspace-dir:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.workspace-branch {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--accent-main);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.workspace-branch .branch-icon {
+  font-size: 12px;
+  line-height: 1;
+}
+
 .panel-input {
   padding: 8px;
-  border-top: 1px solid var(--border);
 }
 
 .panel-input textarea {

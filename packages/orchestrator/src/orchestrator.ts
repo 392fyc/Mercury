@@ -32,6 +32,7 @@ export class Orchestrator {
   private transport: RpcTransport;
   private sessions = new Map<string, SessionInfo>();
   private agentSessions = new Map<string, string>(); // agentId → active sessionId
+  private agentCwds = new Map<string, string>(); // agentId → working directory
   private kb: KnowledgeService | null = null;
   private projectConfig: MercuryConfig | null = null;
   private taskManager: TaskManager;
@@ -226,6 +227,8 @@ export class Orchestrator {
         return this.kbAppend(params.file as string, params.content as string);
       case "get_slash_commands":
         return this.getSlashCommands(params.agentId as string);
+      case "set_agent_cwd":
+        return this.setAgentCwd(params.agentId as string, params.cwd as string);
       case "refresh_context":
         return this.buildAndInjectContext();
       case "get_context_status":
@@ -246,9 +249,15 @@ export class Orchestrator {
     return this.registry.listAgents();
   }
 
+  private setAgentCwd(agentId: string, cwd: string): { ok: true } {
+    this.agentCwds.set(agentId, cwd);
+    return { ok: true };
+  }
+
   private async startSession(agentId: string): Promise<SessionInfo> {
     const adapter = this.registry.getAdapter(agentId);
-    const session = await adapter.startSession(process.cwd());
+    const cwd = this.agentCwds.get(agentId) ?? process.cwd();
+    const session = await adapter.startSession(cwd);
 
     this.sessions.set(session.sessionId, session);
     this.agentSessions.set(agentId, session.sessionId);

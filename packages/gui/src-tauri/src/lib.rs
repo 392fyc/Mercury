@@ -72,6 +72,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_project_info,
+            commands::get_git_info,
             commands::get_agents,
             commands::send_prompt,
             commands::start_session,
@@ -95,6 +96,7 @@ pub fn run() {
             commands::kb_list,
             commands::kb_write,
             commands::kb_append,
+            commands::set_agent_cwd,
             commands::refresh_context,
             commands::get_context_status,
         ])

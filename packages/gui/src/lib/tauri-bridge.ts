@@ -58,6 +58,26 @@ export async function getProjectInfo(): Promise<ProjectInfo> {
   return invoke<ProjectInfo>("get_project_info");
 }
 
+// Git info for arbitrary directory (frontend → Rust directly, no sidecar)
+
+export interface GitInfo {
+  path: string;
+  gitBranch: string | null;
+}
+
+export async function getGitInfo(path: string): Promise<GitInfo> {
+  return invoke<GitInfo>("get_git_info", { path });
+}
+
+// Agent workspace (frontend → Rust → sidecar)
+
+export async function setAgentCwd(
+  agentId: string,
+  cwd: string,
+): Promise<{ ok: true }> {
+  return invoke("set_agent_cwd", { agentId, cwd });
+}
+
 // Commands (frontend → Rust → sidecar)
 
 export async function getAgents(): Promise<AgentConfig[]> {

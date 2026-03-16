@@ -6,6 +6,7 @@ import { ref, computed } from "vue";
 import type { AgentConfig } from "../lib/tauri-bridge";
 import {
   getAgents as fetchAgents,
+  getProjectInfo,
   onSidecarReady,
   onSidecarError,
 } from "../lib/tauri-bridge";
@@ -13,6 +14,9 @@ import {
 const agents = ref<AgentConfig[]>([]);
 const statuses = ref<Map<string, "idle" | "active" | "error">>(new Map());
 const sessions = ref<Map<string, string>>(new Map()); // agentId → sessionId
+const workDirs = ref<Map<string, string>>(new Map()); // agentId → cwd
+const gitBranches = ref<Map<string, string | null>>(new Map()); // agentId → branch
+const defaultWorkDir = ref("");
 const sidecarReady = ref(false);
 const sidecarError = ref<string | null>(null);
 
@@ -38,6 +42,28 @@ function getSession(agentId: string): string | undefined {
   return sessions.value.get(agentId);
 }
 
+function clearSession(agentId: string) {
+  const next = new Map(sessions.value);
+  next.delete(agentId);
+  sessions.value = next;
+}
+
+function setWorkDir(agentId: string, cwd: string) {
+  workDirs.value = new Map(workDirs.value).set(agentId, cwd);
+}
+
+function getWorkDir(agentId: string): string {
+  return workDirs.value.get(agentId) ?? defaultWorkDir.value;
+}
+
+function setGitBranch(agentId: string, branch: string | null) {
+  gitBranches.value = new Map(gitBranches.value).set(agentId, branch);
+}
+
+function getGitBranch(agentId: string): string | null {
+  return gitBranches.value.get(agentId) ?? null;
+}
+
 const anyActive = computed(() =>
   [...statuses.value.values()].some((s) => s === "active"),
 );
@@ -60,6 +86,14 @@ async function loadAgents() {
 }
 
 async function initAgents() {
+  // Load default project directory
+  try {
+    const info = await getProjectInfo();
+    defaultWorkDir.value = info.projectRoot;
+  } catch {
+    // non-critical
+  }
+
   // Listen for sidecar ready event
   await onSidecarReady(() => loadAgents());
 
@@ -96,7 +130,13 @@ export function useAgentStore() {
     getStatus,
     setSession,
     getSession,
+    clearSession,
     sessions,
+    setWorkDir,
+    getWorkDir,
+    setGitBranch,
+    getGitBranch,
+    defaultWorkDir,
     initAgents,
   };
 }

@@ -6,6 +6,7 @@ import { ref } from "vue";
 import type { ImageAttachment } from "../lib/tauri-bridge";
 import {
   sendPrompt as bridgeSendPrompt,
+  stopSession as bridgeStopSession,
   onAgentMessage,
   onAgentStreamEnd,
   onAgentError,
@@ -31,8 +32,25 @@ function appendMessage(agentId: string, msg: DisplayMessage) {
   messages.value = new Map(messages.value).set(agentId, [...current, msg]);
 }
 
+function clearMessages(agentId: string) {
+  messages.value = new Map(messages.value).set(agentId, []);
+}
+
 async function sendPrompt(agentId: string, prompt: string, images?: ImageAttachment[]) {
-  const { setStatus, setSession } = useAgentStore();
+  const { setStatus, setSession, clearSession } = useAgentStore();
+
+  // Handle /clear and /new — clear frontend messages and end backend session
+  const trimmed = prompt.trim().toLowerCase();
+  if (trimmed === "/clear" || trimmed === "/new") {
+    const sid = useAgentStore().getSession(agentId);
+    if (sid) {
+      try { await bridgeStopSession(agentId, sid); } catch { /* best-effort */ }
+    }
+    clearMessages(agentId);
+    clearSession(agentId);
+    setStatus(agentId, "idle");
+    return;
+  }
 
   // Optimistic: add user message immediately
   appendMessage(agentId, {
@@ -92,6 +110,7 @@ export function useMessageStore() {
     messages,
     getMessages,
     appendMessage,
+    clearMessages,
     sendPrompt,
     initMessageListeners,
   };

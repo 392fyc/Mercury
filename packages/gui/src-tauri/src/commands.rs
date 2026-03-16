@@ -32,6 +32,28 @@ pub fn get_project_info(
     }))
 }
 
+/// Get git branch for an arbitrary directory (no sidecar needed).
+#[tauri::command]
+pub fn get_git_info(path: String) -> Result<serde_json::Value, String> {
+    let git_branch = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(&path)
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+            } else {
+                None
+            }
+        });
+
+    Ok(serde_json::json!({
+        "path": path,
+        "gitBranch": git_branch,
+    }))
+}
+
 /// Clone the sidecar manager out of the shared state, or error if not ready.
 async fn get_sidecar(shared: &SharedSidecar) -> Result<SidecarManager, String> {
     let guard = shared.lock().await;
@@ -289,6 +311,19 @@ pub async fn kb_append(
 ) -> Result<serde_json::Value, String> {
     let mgr = get_sidecar(&sidecar).await?;
     mgr.send_request("kb_append", serde_json::json!({ "file": file, "content": content }))
+        .await
+}
+
+// ─── Agent Workspace Commands ───
+
+#[tauri::command]
+pub async fn set_agent_cwd(
+    sidecar: State<'_, SharedSidecar>,
+    agent_id: String,
+    cwd: String,
+) -> Result<serde_json::Value, String> {
+    let mgr = get_sidecar(&sidecar).await?;
+    mgr.send_request("set_agent_cwd", serde_json::json!({ "agentId": agent_id, "cwd": cwd }))
         .await
 }
 
