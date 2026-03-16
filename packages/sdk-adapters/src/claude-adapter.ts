@@ -303,7 +303,7 @@ export class ClaudeAdapter implements AgentAdapter {
     }
 
     let sdkSessionId: string | undefined;
-    let lastYieldedContent: string | undefined;
+    let hasYieldedAssistant = false;
 
     // sdk.query() accepts string | AsyncIterable<SDKUserMessage> — both paths converge here
     for await (const message of sdk.query(queryArgs as { prompt: string; options: Record<string, unknown> })) {
@@ -327,7 +327,7 @@ export class ClaudeAdapter implements AgentAdapter {
           : extractTextFromBlocks(msg.content);
 
         if (content) {
-          lastYieldedContent = content;
+          hasYieldedAssistant = true;
           yield {
             role: "assistant",
             content,
@@ -337,13 +337,15 @@ export class ClaudeAdapter implements AgentAdapter {
         }
       }
 
-      // Result messages — final output (skip if identical to last assistant message)
-      if (msg.type === "result") {
+      // Result messages — only yield if no assistant messages were emitted.
+      // SDK streams content via assistant messages (possibly chunked), then emits
+      // a result with the full concatenated text. Showing both causes duplication.
+      if (msg.type === "result" && !hasYieldedAssistant) {
         const resultText =
           typeof msg.result === "string"
             ? msg.result
             : extractTextFromBlocks(msg.result);
-        if (resultText && resultText !== lastYieldedContent) {
+        if (resultText) {
           yield {
             role: "assistant",
             content: resultText,
