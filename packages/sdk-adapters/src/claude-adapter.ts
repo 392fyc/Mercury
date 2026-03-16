@@ -176,8 +176,10 @@ export class ClaudeAdapter implements AgentAdapter {
       case "logout":
       case "doctor":
       case "config":
+      case "settings":
       case "terminal-setup":
       case "permissions":
+      case "allowed-tools":
       case "sandbox":
       case "vim":
       case "theme":
@@ -189,21 +191,67 @@ export class ClaudeAdapter implements AgentAdapter {
       case "install-github-app":
       case "install-slack-app":
       case "remote-control":
+      case "rc":
       case "remote-env":
       case "desktop":
+      case "app":
       case "mobile":
+      case "ios":
+      case "android":
       case "stickers":
-      case "passes": {
+      case "passes":
+      case "skills":
+      case "plugin":
+      case "reload-plugins":
+      case "agents":
+      case "tasks":
+      case "compact":
+      case "model":
+      case "effort":
+      case "fast":
+      case "cost":
+      case "usage":
+      case "extra-usage":
+      case "stats":
+      case "context":
+      case "diff":
+      case "copy":
+      case "export":
+      case "fork":
+      case "rename":
+      case "rewind":
+      case "checkpoint":
+      case "resume":
+      case "continue":
+      case "review":
+      case "security-review":
+      case "plan":
+      case "add-dir":
+      case "init":
+      case "memory":
+      case "hooks":
+      case "mcp":
+      case "ide":
+      case "chrome":
+      case "pr-comments":
+      case "btw":
+      case "feedback":
+      case "bug":
+      case "release-notes":
+      case "insights": {
+        const cliCmd = cmd === "login" || cmd === "logout" ? `auth ${cmd}` : cmd;
         yield infoMsg(
           `**/${cmd}** requires the Claude Code CLI terminal.\n\n` +
-          `Run in your terminal:\n\`\`\`\nclaude ${cmd === "login" || cmd === "logout" ? `auth ${cmd}` : cmd}\n\`\`\``,
+          `Run in your terminal:\n\`\`\`\nclaude ${cliCmd}\n\`\`\``,
         );
         return;
       }
 
       default:
-        // All other commands: pass through to SDK.
-        // The model/SDK will handle them naturally or respond appropriately.
+        // Unknown command — inform user rather than sending as prompt
+        yield infoMsg(
+          `Unknown command **/${cmd}**. Type **/help** to see available commands.`,
+        );
         return;
     }
   }
