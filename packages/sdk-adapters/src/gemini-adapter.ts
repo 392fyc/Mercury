@@ -22,6 +22,7 @@ import type {
   AgentAdapter,
   AgentConfig,
   AgentMessage,
+  AgentSendHooks,
   ImageAttachment,
   SessionInfo,
   SlashCommand,
@@ -39,9 +40,7 @@ export class GeminiAdapter implements AgentAdapter {
   readonly agentId: string;
   readonly config: AgentConfig;
   private sessions = new Map<string, GeminiSession>();
-  private systemPrompt?: string;
-  private systemPromptFile?: string; // temp file for GEMINI_SYSTEM_MD
-  private systemPromptSentSessions = new Set<string>();
+  private sharedSystemPrompt?: string;
 
   constructor(config?: Partial<AgentConfig>) {
     this.config = {
@@ -60,27 +59,19 @@ export class GeminiAdapter implements AgentAdapter {
 
   /** Set shared context as system prompt via GEMINI_SYSTEM_MD env var. */
   setSystemPrompt(prompt: string) {
-    this.systemPrompt = prompt;
-    this.systemPromptSentSessions.clear();
-    // Synchronously invalidate old file reference before async cleanup to prevent race
-    const oldFile = this.systemPromptFile;
-    this.systemPromptFile = undefined;
-    if (oldFile) this.cleanupFile(oldFile);
+    this.sharedSystemPrompt = prompt;
   }
 
   /**
    * Ensure system prompt is written to a temp file.
    * Gemini CLI reads GEMINI_SYSTEM_MD env var for system prompt override.
    */
-  private async ensureSystemPromptFile(): Promise<string | undefined> {
-    if (!this.systemPrompt) return undefined;
-
-    if (!this.systemPromptFile) {
-      const dir = await mkdtemp(join(tmpdir(), "mercury-gemini-"));
-      this.systemPromptFile = join(dir, "SYSTEM.md");
-      await writeFile(this.systemPromptFile, this.systemPrompt, "utf-8");
-    }
-    return this.systemPromptFile;
+  private async ensureSystemPromptFile(prompt: string | undefined): Promise<string | undefined> {
+    if (!prompt) return undefined;
+    const dir = await mkdtemp(join(tmpdir(), "mercury-gemini-"));
+    const filePath = join(dir, "SYSTEM.md");
+    await writeFile(filePath, prompt, "utf-8");
+    return filePath;
   }
 
   /** Best-effort removal of a single file and its parent directory. */
@@ -94,19 +85,12 @@ export class GeminiAdapter implements AgentAdapter {
     }
   }
 
-  private async cleanupSystemPromptFile(): Promise<void> {
-    if (this.systemPromptFile) {
-      const f = this.systemPromptFile;
-      this.systemPromptFile = undefined;
-      await this.cleanupFile(f);
-    }
-  }
-
   async startSession(cwd: string): Promise<SessionInfo> {
     const sessionId = randomUUID();
     const info: SessionInfo = {
       sessionId,
       agentId: this.agentId,
+      cwd,
       startedAt: Date.now(),
       lastActiveAt: Date.now(),
       status: "active",
@@ -298,6 +282,7 @@ export class GeminiAdapter implements AgentAdapter {
     sessionId: string,
     prompt: string,
     images?: ImageAttachment[],
+    _hooks?: AgentSendHooks,
   ): AsyncGenerator<AgentMessage> {
     // Intercept slash commands
     const trimmed = prompt.trim();
@@ -325,18 +310,14 @@ export class GeminiAdapter implements AgentAdapter {
     }
 
     try {
-      // Build effective prompt with system context (first message only)
-      let effectivePrompt = prompt;
-      if (this.systemPrompt && !this.systemPromptSentSessions.has(sessionId)) {
-        // System prompt is injected via GEMINI_SYSTEM_MD env var, not prompt prepending.
-        // But for first message, we also need to prepare the env var.
-        this.systemPromptSentSessions.add(sessionId);
-      }
-
       // Add image @file references to the prompt
-      effectivePrompt = this.buildPromptWithImages(effectivePrompt, imagePaths);
+      const effectivePrompt = this.buildPromptWithImages(prompt, imagePaths);
 
-      const result = await this.runGeminiCli(session, effectivePrompt);
+      const result = await this.runGeminiCli(
+        session,
+        effectivePrompt,
+        session.info.frozenSystemPrompt ?? this.sharedSystemPrompt,
+      );
 
       yield {
         role: "assistant",
@@ -354,6 +335,7 @@ export class GeminiAdapter implements AgentAdapter {
       // Track Gemini session ID for future --resume
       if (result.geminiSessionId && !session.geminiSessionId) {
         session.geminiSessionId = result.geminiSessionId;
+        session.info.resumeToken = result.geminiSessionId;
       }
     } finally {
       await this.cleanupTempFiles(tempFiles);
@@ -368,6 +350,7 @@ export class GeminiAdapter implements AgentAdapter {
   private async runGeminiCli(
     session: GeminiSession,
     prompt: string,
+    systemPrompt?: string,
   ): Promise<{
     response: string;
     stats?: Record<string, unknown>;
@@ -383,7 +366,7 @@ export class GeminiAdapter implements AgentAdapter {
 
     // Build environment with system prompt file
     const env: Record<string, string> = { ...process.env } as Record<string, string>;
-    const sysPromptFile = await this.ensureSystemPromptFile();
+    const sysPromptFile = await this.ensureSystemPromptFile(systemPrompt);
     if (sysPromptFile) {
       env["GEMINI_SYSTEM_MD"] = sysPromptFile;
     }
@@ -415,6 +398,9 @@ export class GeminiAdapter implements AgentAdapter {
       });
 
       proc.on("close", (code) => {
+        if (sysPromptFile) {
+          void this.cleanupFile(sysPromptFile);
+        }
         if (code === 0 || stdout.length > 0) {
           try {
             const parsed = JSON.parse(stdout);
@@ -441,6 +427,9 @@ export class GeminiAdapter implements AgentAdapter {
       });
 
       proc.on("error", (err) => {
+        if (sysPromptFile) {
+          void this.cleanupFile(sysPromptFile);
+        }
         reject(
           new Error(
             `Failed to run 'gemini': ${err.message}. Is Gemini CLI installed? (npm i -g @google/gemini-cli)`,
@@ -450,17 +439,37 @@ export class GeminiAdapter implements AgentAdapter {
     });
   }
 
-  async resumeSession(sessionId: string): Promise<SessionInfo> {
-    const session = this.sessions.get(sessionId);
-    if (!session) throw new Error(`Session ${sessionId} not found`);
+  async resumeSession(
+    sessionId: string,
+    persistedInfo?: SessionInfo,
+    cwd?: string,
+  ): Promise<SessionInfo> {
+    let session = this.sessions.get(sessionId);
+    if (!session) {
+      if (!persistedInfo?.resumeToken) {
+        throw new Error(`Session ${sessionId} not found`);
+      }
+      const restored: GeminiSession = {
+        info: {
+          ...persistedInfo,
+          sessionId,
+          agentId: this.agentId,
+          cwd: persistedInfo.cwd ?? cwd ?? process.cwd(),
+        },
+        cwd: persistedInfo.cwd ?? cwd ?? process.cwd(),
+        geminiSessionId: persistedInfo.resumeToken,
+      };
+      this.sessions.set(sessionId, restored);
+      session = restored;
+    }
     session.info.status = "active";
+    session.info.lastActiveAt = Date.now();
     return session.info;
   }
 
   async endSession(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (session) session.info.status = "completed";
-    this.sessions.delete(sessionId);
   }
 
   async handoffSession(
@@ -482,6 +491,10 @@ export class GeminiAdapter implements AgentAdapter {
     }
 
     newSession.parentSessionId = oldSessionId;
+    newSession.role = oldSession?.info.role;
+    newSession.frozenRole = oldSession?.info.frozenRole;
+    newSession.frozenSystemPrompt = oldSession?.info.frozenSystemPrompt;
+    newSession.promptHash = oldSession?.info.promptHash;
     return newSession;
   }
 
@@ -489,7 +502,6 @@ export class GeminiAdapter implements AgentAdapter {
    * Cleanup: remove system prompt temp file.
    */
   async shutdown(): Promise<void> {
-    await this.cleanupSystemPromptFile();
     this.sessions.clear();
   }
 

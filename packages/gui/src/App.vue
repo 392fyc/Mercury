@@ -5,7 +5,11 @@ import AgentPanel from "./components/AgentPanel.vue";
 import EventLog from "./components/EventLog.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
 import TaskDashboard from "./components/TaskDashboard.vue";
+import SessionPicker from "./components/SessionPicker.vue";
+import HistoryPanel from "./components/HistoryPanel.vue";
+import ApprovalQueue from "./components/ApprovalQueue.vue";
 import { useAgentStore } from "./stores/agents";
+import { useApprovalStore } from "./stores/approvals";
 import { useMessageStore } from "./stores/messages";
 import { useEventStore } from "./stores/events";
 import { useTaskStore } from "./stores/tasks";
@@ -13,6 +17,7 @@ import { useTaskStore } from "./stores/tasks";
 const { agents, mainAgent, rolePanels, sidecarReady, sidecarError, initAgents } =
   useAgentStore();
 const { initMessageListeners } = useMessageStore();
+const { initApprovalStore } = useApprovalStore();
 const { initEventListeners } = useEventStore();
 const { loadTasks, initTaskListeners } = useTaskStore();
 
@@ -22,6 +27,7 @@ const activeView = ref<"agents" | "tasks">("agents");
 onMounted(async () => {
   await initAgents();
   await initMessageListeners();
+  await initApprovalStore();
   await initEventListeners();
   await initTaskListeners();
   await loadTasks();
@@ -74,6 +80,10 @@ onMounted(async () => {
 
       <EventLog />
     </div>
+
+    <SessionPicker />
+    <HistoryPanel />
+    <ApprovalQueue />
   </div>
 </template>
 

@@ -8,6 +8,7 @@ import { useMessageStore } from "../stores/messages";
 import { getSlashCommands, getGitInfo, setAgentCwd, stopSession } from "../lib/tauri-bridge";
 import type { SlashCommand, ImageAttachment, ImageMediaType } from "../lib/tauri-bridge";
 import SlashCommandPalette from "./SlashCommandPalette.vue";
+import ApprovalCard from "./ApprovalCard.vue";
 
 const props = defineProps<{
   agentId: string;
@@ -16,8 +17,8 @@ const props = defineProps<{
   panelKey: string;
 }>();
 
-const { getStatus, getSession, getWorkDir, setWorkDir, getGitBranch, setGitBranch, clearSession, defaultWorkDir } = useAgentStore();
-const { getMessages, sendPrompt, clearMessages } = useMessageStore();
+const { getStatus, getSession, getSessionInfo, getWorkDir, setWorkDir, getGitBranch, setGitBranch, clearSession, defaultWorkDir } = useAgentStore();
+const { getMessages, sendPrompt, clearMessages, openSessionPicker, openHistory } = useMessageStore();
 
 const inputText = ref("");
 const messagesEl = ref<HTMLDivElement>();
@@ -27,6 +28,8 @@ const paletteRef = ref<InstanceType<typeof SlashCommandPalette>>();
 const status = computed(() => getStatus(props.panelKey));
 const messages = computed(() => getMessages(props.panelKey));
 const sessionId = computed(() => getSession(props.panelKey));
+const sessionInfo = computed(() => getSessionInfo(props.panelKey));
+const sessionTitle = computed(() => sessionInfo.value?.sessionName ?? null);
 const sessionShortId = computed(() => {
   const id = sessionId.value;
   return id ? id.slice(0, 8) : null;
@@ -186,6 +189,11 @@ function imageDataUri(img: ImageAttachment): string {
   return `data:${img.mediaType};base64,${img.data}`;
 }
 
+function getApprovalRequestId(metadata?: Record<string, unknown>): string | null {
+  if (metadata?.messageType !== "approval_request") return null;
+  return typeof metadata.approvalRequestId === "string" ? metadata.approvalRequestId : null;
+}
+
 // ─── Slash Commands ───
 
 const slashCommands = ref<SlashCommand[]>([]);
@@ -313,11 +321,20 @@ watch(
         <span class="agent-dot" :style="{ background: roleColor }"></span>
         <span class="agent-name">{{ agentName }}</span>
         <span class="agent-role">{{ role }}</span>
+        <span class="session-title" v-if="sessionTitle" :title="sessionTitle">
+          {{ sessionTitle }}
+        </span>
         <span class="session-id" v-if="sessionShortId" :title="sessionId">
           {{ sessionShortId }}
         </span>
       </div>
       <div class="panel-status">
+        <button class="history-button" @click="openSessionPicker(panelKey)">
+          Resume
+        </button>
+        <button class="history-button" @click="openHistory(panelKey)">
+          History
+        </button>
         <span class="status-badge" :class="status">{{ status }}</span>
       </div>
     </div>
@@ -333,8 +350,12 @@ watch(
         class="message"
         :class="msg.role"
       >
+        <ApprovalCard
+          v-if="getApprovalRequestId(msg.metadata)"
+          :requestId="getApprovalRequestId(msg.metadata)!"
+        />
         <!-- Inline images -->
-        <div v-if="msg.images && msg.images.length > 0" class="message-images">
+        <div v-else-if="msg.images && msg.images.length > 0" class="message-images">
           <img
             v-for="(img, j) in msg.images"
             :key="j"
@@ -344,7 +365,7 @@ watch(
           />
         </div>
         <div
-          v-if="msg.role === 'assistant'"
+          v-else-if="msg.role === 'assistant'"
           class="message-content markdown-body"
           v-html="renderMarkdown(msg.content)"
         ></div>
@@ -428,10 +449,17 @@ watch(
   border-bottom: 1px solid var(--border);
 }
 
+.panel-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .agent-info {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 
 .agent-dot {
@@ -452,6 +480,16 @@ watch(
   letter-spacing: 0.5px;
 }
 
+.session-title {
+  min-width: 0;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
 .session-id {
   font-size: 9px;
   font-family: var(--font-mono);
@@ -468,6 +506,27 @@ watch(
   padding: 2px 6px;
   border-radius: 3px;
   text-transform: uppercase;
+}
+
+.history-button {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  padding: 2px 6px;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.history-button:hover:not(:disabled) {
+  border-color: var(--accent-main);
+  color: var(--text-primary);
+}
+
+.history-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .status-badge.idle {

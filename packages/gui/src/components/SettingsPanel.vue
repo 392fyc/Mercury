@@ -57,6 +57,16 @@ function getPreset(cli: string): CliPreset | undefined {
   return CLI_PRESETS.find(p => p.cli === cli);
 }
 
+function getInstructionPersistenceLabel(agent: AgentConfig): string | null {
+  if (agent.cli === "claude") {
+    return "System-level prompt (every request, survives compaction)";
+  }
+  if (agent.cli === "codex") {
+    return "Turn-level prepend (every turn, early turns may be summarized)";
+  }
+  return null;
+}
+
 // ─── Role Definitions ───
 interface RoleDef {
   value: string;
@@ -278,6 +288,9 @@ function handleKeydown(e: KeyboardEvent) {
                 class="cap-tag"
               >{{ cap }}</span>
             </div>
+            <p v-if="getInstructionPersistenceLabel(agent)" class="role-hint">
+              Prompt persistence: {{ getInstructionPersistenceLabel(agent) }}
+            </p>
             <p class="role-hint">{{ agent.roles?.map(r => ROLE_DEFS.find(d => d.value === r)?.hint).filter(Boolean).join(' | ') ?? '' }}</p>
           </div>
           <button class="add-agent-btn" @click="addAgent">+ Add Agent</button>

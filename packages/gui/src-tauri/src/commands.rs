@@ -7,9 +7,7 @@ use crate::{ProjectRoot, SharedSidecar};
 // ─── Project Info (direct, no sidecar) ───
 
 #[tauri::command]
-pub fn get_project_info(
-    root: State<'_, ProjectRoot>,
-) -> Result<serde_json::Value, String> {
+pub fn get_project_info(root: State<'_, ProjectRoot>) -> Result<serde_json::Value, String> {
     let project_root = &root.0;
 
     // Detect git branch via `git rev-parse --abbrev-ref HEAD`
@@ -64,9 +62,7 @@ async fn get_sidecar(shared: &SharedSidecar) -> Result<SidecarManager, String> {
 }
 
 #[tauri::command]
-pub async fn get_agents(
-    sidecar: State<'_, SharedSidecar>,
-) -> Result<serde_json::Value, String> {
+pub async fn get_agents(sidecar: State<'_, SharedSidecar>) -> Result<serde_json::Value, String> {
     let mgr = get_sidecar(&sidecar).await?;
     mgr.send_request("get_agents", serde_json::json!({})).await
 }
@@ -93,11 +89,8 @@ pub async fn start_session(
     agent_id: String,
 ) -> Result<serde_json::Value, String> {
     let mgr = get_sidecar(&sidecar).await?;
-    mgr.send_request(
-        "start_session",
-        serde_json::json!({ "agentId": agent_id }),
-    )
-    .await
+    mgr.send_request("start_session", serde_json::json!({ "agentId": agent_id }))
+        .await
 }
 
 #[tauri::command]
@@ -136,9 +129,7 @@ pub async fn dispatch_task(
 // ─── Config Commands ───
 
 #[tauri::command]
-pub async fn get_config(
-    sidecar: State<'_, SharedSidecar>,
-) -> Result<serde_json::Value, String> {
+pub async fn get_config(sidecar: State<'_, SharedSidecar>) -> Result<serde_json::Value, String> {
     let mgr = get_sidecar(&sidecar).await?;
     mgr.send_request("get_config", serde_json::json!({})).await
 }
@@ -181,8 +172,11 @@ pub async fn list_tasks(
     assigned_to: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let mgr = get_sidecar(&sidecar).await?;
-    mgr.send_request("list_tasks", serde_json::json!({ "status": status, "assignedTo": assigned_to }))
-        .await
+    mgr.send_request(
+        "list_tasks",
+        serde_json::json!({ "status": status, "assignedTo": assigned_to }),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -192,8 +186,11 @@ pub async fn record_receipt(
     receipt: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
     let mgr = get_sidecar(&sidecar).await?;
-    mgr.send_request("record_receipt", serde_json::json!({ "taskId": task_id, "receipt": receipt }))
-        .await
+    mgr.send_request(
+        "record_receipt",
+        serde_json::json!({ "taskId": task_id, "receipt": receipt }),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -203,8 +200,11 @@ pub async fn create_acceptance(
     acceptor_id: String,
 ) -> Result<serde_json::Value, String> {
     let mgr = get_sidecar(&sidecar).await?;
-    mgr.send_request("create_acceptance", serde_json::json!({ "taskId": task_id, "acceptorId": acceptor_id }))
-        .await
+    mgr.send_request(
+        "create_acceptance",
+        serde_json::json!({ "taskId": task_id, "acceptorId": acceptor_id }),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -214,8 +214,11 @@ pub async fn record_acceptance_result(
     results: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
     let mgr = get_sidecar(&sidecar).await?;
-    mgr.send_request("record_acceptance_result", serde_json::json!({ "acceptanceId": acceptance_id, "results": results }))
-        .await
+    mgr.send_request(
+        "record_acceptance_result",
+        serde_json::json!({ "acceptanceId": acceptance_id, "results": results }),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -234,8 +237,11 @@ pub async fn resolve_issue(
     resolution: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
     let mgr = get_sidecar(&sidecar).await?;
-    mgr.send_request("resolve_issue", serde_json::json!({ "issueId": issue_id, "resolution": resolution }))
-        .await
+    mgr.send_request(
+        "resolve_issue",
+        serde_json::json!({ "issueId": issue_id, "resolution": resolution }),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -245,8 +251,11 @@ pub async fn summarize_session(
     summary: String,
 ) -> Result<serde_json::Value, String> {
     let mgr = get_sidecar(&sidecar).await?;
-    mgr.send_request("summarize_session", serde_json::json!({ "agentId": agent_id, "summary": summary }))
-        .await
+    mgr.send_request(
+        "summarize_session",
+        serde_json::json!({ "agentId": agent_id, "summary": summary }),
+    )
+    .await
 }
 
 // ─── Slash Commands ───
@@ -257,8 +266,11 @@ pub async fn get_slash_commands(
     agent_id: String,
 ) -> Result<serde_json::Value, String> {
     let mgr = get_sidecar(&sidecar).await?;
-    mgr.send_request("get_slash_commands", serde_json::json!({ "agentId": agent_id }))
-        .await
+    mgr.send_request(
+        "get_slash_commands",
+        serde_json::json!({ "agentId": agent_id }),
+    )
+    .await
 }
 
 // ─── Knowledge Base Commands (optional) ───
@@ -300,8 +312,11 @@ pub async fn kb_write(
     content: String,
 ) -> Result<serde_json::Value, String> {
     let mgr = get_sidecar(&sidecar).await?;
-    mgr.send_request("kb_write", serde_json::json!({ "name": name, "content": content }))
-        .await
+    mgr.send_request(
+        "kb_write",
+        serde_json::json!({ "name": name, "content": content }),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -311,8 +326,11 @@ pub async fn kb_append(
     content: String,
 ) -> Result<serde_json::Value, String> {
     let mgr = get_sidecar(&sidecar).await?;
-    mgr.send_request("kb_append", serde_json::json!({ "file": file, "content": content }))
-        .await
+    mgr.send_request(
+        "kb_append",
+        serde_json::json!({ "file": file, "content": content }),
+    )
+    .await
 }
 
 // ─── Agent Workspace Commands ───
@@ -324,8 +342,132 @@ pub async fn set_agent_cwd(
     cwd: String,
 ) -> Result<serde_json::Value, String> {
     let mgr = get_sidecar(&sidecar).await?;
-    mgr.send_request("set_agent_cwd", serde_json::json!({ "agentId": agent_id, "cwd": cwd }))
+    mgr.send_request(
+        "set_agent_cwd",
+        serde_json::json!({ "agentId": agent_id, "cwd": cwd }),
+    )
+    .await
+}
+
+// ─── Session Resume Commands ───
+
+#[tauri::command]
+pub async fn list_sessions(
+    sidecar: State<'_, SharedSidecar>,
+    agent_id: Option<String>,
+    role: Option<String>,
+    include_terminal: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    let mgr = get_sidecar(&sidecar).await?;
+    mgr.send_request(
+        "list_sessions",
+        serde_json::json!({
+            "agentId": agent_id,
+            "role": role,
+            "includeTerminal": include_terminal
+        }),
+    )
         .await
+}
+
+#[tauri::command]
+pub async fn resume_session(
+    sidecar: State<'_, SharedSidecar>,
+    agent_id: String,
+    session_id: String,
+    expected_role: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let mgr = get_sidecar(&sidecar).await?;
+    mgr.send_request(
+        "resume_session",
+        serde_json::json!({
+            "agentId": agent_id,
+            "sessionId": session_id,
+            "expectedRole": expected_role
+        }),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn get_session_messages(
+    sidecar: State<'_, SharedSidecar>,
+    session_id: String,
+    offset: Option<usize>,
+    limit: Option<usize>,
+) -> Result<serde_json::Value, String> {
+    let mgr = get_sidecar(&sidecar).await?;
+    mgr.send_request(
+        "get_session_messages",
+        serde_json::json!({
+            "sessionId": session_id,
+            "offset": offset,
+            "limit": limit
+        }),
+    )
+    .await
+}
+
+// ─── Approval Control Plane Commands ───
+
+#[tauri::command]
+pub async fn get_approval_mode(
+    sidecar: State<'_, SharedSidecar>,
+) -> Result<serde_json::Value, String> {
+    let mgr = get_sidecar(&sidecar).await?;
+    mgr.send_request("get_approval_mode", serde_json::json!({}))
+        .await
+}
+
+#[tauri::command]
+pub async fn set_approval_mode(
+    sidecar: State<'_, SharedSidecar>,
+    mode: String,
+) -> Result<serde_json::Value, String> {
+    let mgr = get_sidecar(&sidecar).await?;
+    mgr.send_request("set_approval_mode", serde_json::json!({ "mode": mode }))
+        .await
+}
+
+#[tauri::command]
+pub async fn list_approval_requests(
+    sidecar: State<'_, SharedSidecar>,
+    status: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let mgr = get_sidecar(&sidecar).await?;
+    mgr.send_request(
+        "list_approval_requests",
+        serde_json::json!({ "status": status }),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn approve_request(
+    sidecar: State<'_, SharedSidecar>,
+    request_id: String,
+    reason: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let mgr = get_sidecar(&sidecar).await?;
+    mgr.send_request(
+        "approve_request",
+        serde_json::json!({ "requestId": request_id, "reason": reason }),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn deny_request(
+    sidecar: State<'_, SharedSidecar>,
+    request_id: String,
+    reason: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let mgr = get_sidecar(&sidecar).await?;
+    mgr.send_request(
+        "deny_request",
+        serde_json::json!({ "requestId": request_id, "reason": reason }),
+    )
+    .await
 }
 
 // ─── Shared Context Commands ───
@@ -335,7 +477,8 @@ pub async fn refresh_context(
     sidecar: State<'_, SharedSidecar>,
 ) -> Result<serde_json::Value, String> {
     let mgr = get_sidecar(&sidecar).await?;
-    mgr.send_request("refresh_context", serde_json::json!({})).await
+    mgr.send_request("refresh_context", serde_json::json!({}))
+        .await
 }
 
 #[tauri::command]
@@ -343,5 +486,6 @@ pub async fn get_context_status(
     sidecar: State<'_, SharedSidecar>,
 ) -> Result<serde_json::Value, String> {
     let mgr = get_sidecar(&sidecar).await?;
-    mgr.send_request("get_context_status", serde_json::json!({})).await
+    mgr.send_request("get_context_status", serde_json::json!({}))
+        .await
 }

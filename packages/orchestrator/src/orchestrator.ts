@@ -2,17 +2,23 @@
  * Mercury Orchestrator — core class managing agent sessions, prompts, and event flow.
  */
 
+import { createHash, randomUUID } from "node:crypto";
 import { EventBus, makeRoleSlotKey } from "@mercury/core";
 import type {
   AgentConfig,
+  AgentSendHooks,
   AgentRole,
-  RoleSlotKey,
-  SessionInfo,
-  AgentMessage,
+  ApprovalDecision,
+  ApprovalMode,
+  ApprovalRequest,
+  ApprovalRequestStatus,
   ImageAttachment,
   MercuryConfig,
+  AgentMessage,
   AcceptanceVerdict,
   ImplementationReceipt,
+  RoleSlotKey,
+  SessionInfo,
   SlashCommand,
   TaskBundle,
   TaskStatus,
@@ -23,6 +29,7 @@ import type { RpcTransport } from "./rpc-transport.js";
 import {
   TaskManager,
   buildDevPrompt,
+  buildReferencePrompt,
   buildAcceptancePrompt,
   buildReworkPrompt,
   buildMainReviewPrompt,
@@ -30,17 +37,34 @@ import {
 import type { CreateTaskParams, CreateIssueParams } from "./task-manager.js";
 import { TaskPersistenceKB } from "./task-persistence-kb.js";
 import { buildRoleSystemPrompt, buildAcceptanceRolePrompt } from "./role-prompt-builder.js";
+import { SessionPersistence } from "./session-persistence.js";
+import type { PersistedSessionState } from "./session-persistence.js";
+import { TranscriptPersistence } from "./transcript-persistence.js";
+import type { TranscriptMessage } from "./transcript-persistence.js";
 
 export class Orchestrator {
+  private static readonly APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;
   private bus: EventBus;
   private registry: AgentRegistry;
   private transport: RpcTransport;
   private sessions = new Map<string, SessionInfo>();
   private roleSessions = new Map<RoleSlotKey, string>(); // roleSlotKey → active sessionId
   private agentCwds = new Map<string, string>(); // agentId → working directory
+  private approvalMode: ApprovalMode = "main_agent_review";
+  private approvalRequests = new Map<string, ApprovalRequest>();
+  private approvalWaiters = new Map<
+    string,
+    {
+      resolve: (decision: ApprovalDecision) => void;
+      timeout: ReturnType<typeof setTimeout>;
+    }
+  >();
   private kb: KnowledgeService | null = null;
   private projectConfig: MercuryConfig | null = null;
   private taskManager: TaskManager;
+  private persistence: SessionPersistence | null = null;
+  private transcripts: TranscriptPersistence | null = null;
+  private persistDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   /** Cached shared context (built from KB contextFiles). Injected into all adapters. */
   private sharedContext: string = "";
 
@@ -89,9 +113,10 @@ export class Orchestrator {
     );
   }
 
-  /** Rehydrate task state from KB persistence + build shared context. */
+  /** Rehydrate task state from KB persistence + build shared context + restore sessions. */
   async init(): Promise<void> {
     await this.taskManager.init();
+    await this.restoreSessions();
     // Build and inject shared context from KB if autoInjectContext is enabled
     await this.buildAndInjectContext();
   }
@@ -99,6 +124,141 @@ export class Orchestrator {
   /** Store project config for get_config/update_config RPC. */
   setProjectConfig(config: MercuryConfig) {
     this.projectConfig = config;
+  }
+
+  /** Enable session persistence to disk. */
+  setPersistencePath(basePath: string): void {
+    this.persistence = new SessionPersistence(basePath);
+    this.transcripts = new TranscriptPersistence(basePath);
+  }
+
+  private hashPrompt(prompt: string): string {
+    return createHash("sha256").update(prompt).digest("hex");
+  }
+
+  private getSessionRole(info: SessionInfo | undefined): AgentRole | undefined {
+    return info?.frozenRole ?? info?.role;
+  }
+
+  private appendTranscriptMessage(sessionId: string, message: TranscriptMessage): void {
+    if (!this.transcripts) return;
+    try {
+      this.transcripts.append(sessionId, message);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.transport.sendNotification("log", {
+        message: `[transcript] append failed for ${sessionId}: ${msg}`,
+      });
+    }
+  }
+
+  private saveStateToDisk(): void {
+    if (!this.persistence) return;
+    const state: PersistedSessionState = {
+      roleSessions: Object.fromEntries(this.roleSessions),
+      sessions: Object.fromEntries(this.sessions),
+      agentCwds: Object.fromEntries(this.agentCwds),
+      approvalMode: this.approvalMode,
+      approvalRequests: Object.fromEntries(this.approvalRequests),
+      savedAt: Date.now(),
+    };
+    this.persistence.save(state);
+  }
+
+  /** Debounced save of session state to disk (500ms trailing). */
+  private persistState(immediate = false): void {
+    if (!this.persistence) return;
+    if (this.persistDebounceTimer) clearTimeout(this.persistDebounceTimer);
+    if (immediate) {
+      try {
+        this.saveStateToDisk();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.transport.sendNotification("log", { message: `[persist] save failed: ${msg}` });
+      }
+      return;
+    }
+
+    this.persistDebounceTimer = setTimeout(() => {
+      try {
+        this.saveStateToDisk();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.transport.sendNotification("log", { message: `[persist] save failed: ${msg}` });
+      }
+    }, 500);
+  }
+
+  /** Restore sessions from disk on startup. */
+  private async restoreSessions(): Promise<void> {
+    if (!this.persistence) return;
+    const state = this.persistence.load();
+    if (!state) return;
+
+    this.approvalMode = state.approvalMode ?? "main_agent_review";
+
+    let approvalsChanged = false;
+    for (const [requestId, request] of Object.entries(state.approvalRequests ?? {})) {
+      if (request.status === "pending") {
+        this.approvalRequests.set(requestId, {
+          ...request,
+          status: "cancelled",
+          resolvedAt: Date.now(),
+          decisionBy: "system",
+          decisionReason: "Mercury restarted while waiting for approval",
+        });
+        approvalsChanged = true;
+        continue;
+      }
+      this.approvalRequests.set(requestId, request);
+    }
+
+    // Restore agentCwds
+    for (const [agentId, cwd] of Object.entries(state.agentCwds)) {
+      this.agentCwds.set(agentId, cwd);
+    }
+
+    // Restore sessions and try to resume each
+    for (const [sessionId, info] of Object.entries(state.sessions)) {
+      if (info.status === "completed" || info.status === "overflow") {
+        continue;
+      }
+      if (!info.frozenRole) {
+        continue;
+      }
+      try {
+        const adapter = this.registry.getAdapter(info.agentId);
+        const resumed = await adapter.resumeSession(
+          sessionId,
+          info,
+          info.cwd ?? state.agentCwds[info.agentId],
+        );
+        if (resumed.status === "completed" || resumed.status === "overflow") {
+          continue; // Skip dead sessions
+        }
+        this.sessions.set(sessionId, resumed);
+      } catch {
+        // Session no longer valid — skip silently
+        continue;
+      }
+    }
+
+    // Restore roleSessions (only for sessions that survived resume)
+    for (const [key, sessionId] of Object.entries(state.roleSessions)) {
+      if (this.sessions.has(sessionId)) {
+        this.roleSessions.set(key as RoleSlotKey, sessionId);
+      }
+    }
+
+    const restored = this.sessions.size;
+    if (restored > 0) {
+      this.transport.sendNotification("log", {
+        message: `[persist] Restored ${restored} session(s) from disk`,
+      });
+    }
+    if (approvalsChanged) {
+      this.persistState(true);
+    }
   }
 
   /**
@@ -237,6 +397,44 @@ export class Orchestrator {
         return this.getSlashCommands(params.agentId as string);
       case "set_agent_cwd":
         return this.setAgentCwd(params.agentId as string, params.cwd as string);
+      case "list_sessions":
+        return this.listSessions(
+          params.agentId as string | undefined,
+          (params.role as AgentRole | null) ?? undefined,
+          (params.includeTerminal as boolean | null) ?? undefined,
+        );
+      case "resume_session":
+        return this.resumeExistingSession(
+          params.agentId as string,
+          params.sessionId as string,
+          (params.expectedRole as AgentRole | null) ?? undefined,
+        );
+      case "get_session_messages":
+        return this.getSessionMessages(
+          params.sessionId as string,
+          (params.offset as number | null) ?? undefined,
+          (params.limit as number | null) ?? undefined,
+        );
+      case "get_approval_mode":
+        return { mode: this.approvalMode };
+      case "set_approval_mode":
+        return this.setApprovalMode(params.mode as ApprovalMode);
+      case "list_approval_requests":
+        return this.listApprovalRequests(params.status as ApprovalRequestStatus | undefined);
+      case "approve_request":
+        return this.resolveApprovalRequest(
+          params.requestId as string,
+          "approve",
+          "main_agent",
+          (params.reason as string | null) ?? undefined,
+        );
+      case "deny_request":
+        return this.resolveApprovalRequest(
+          params.requestId as string,
+          "deny",
+          "main_agent",
+          (params.reason as string | null) ?? undefined,
+        );
       case "refresh_context":
         return this.buildAndInjectContext();
       case "get_context_status":
@@ -246,6 +444,17 @@ export class Orchestrator {
           autoInject: this.projectConfig?.obsidian?.autoInjectContext ?? false,
           contextFiles: this.projectConfig?.obsidian?.contextFiles ?? [],
         };
+      case "build_reference_prompt": {
+        const refTask = this.taskManager.getTask(params.taskId as string);
+        if (!refTask) throw new Error(`Task not found: ${params.taskId}`);
+        return {
+          prompt: buildReferencePrompt(
+            refTask,
+            params.taskFilePath as string,
+            (params.handoffFilePath as string | null) ?? undefined,
+          ),
+        };
+      }
       case "ping":
         return { pong: true, timestamp: Date.now() };
       default:
@@ -259,7 +468,286 @@ export class Orchestrator {
 
   private setAgentCwd(agentId: string, cwd: string): { ok: true } {
     this.agentCwds.set(agentId, cwd);
+    this.persistState(true);
     return { ok: true };
+  }
+
+  private setApprovalMode(mode: ApprovalMode): { mode: ApprovalMode } {
+    this.approvalMode = mode;
+    this.persistState(true);
+    return { mode };
+  }
+
+  private listApprovalRequests(status?: ApprovalRequestStatus): ApprovalRequest[] {
+    const result = [...this.approvalRequests.values()];
+    const filtered = status ? result.filter((request) => request.status === status) : result;
+    filtered.sort((a, b) => b.createdAt - a.createdAt);
+    return filtered;
+  }
+
+  private buildApprovalCardSummary(request: ApprovalRequest): string {
+    const parts = [
+      `Approval needed for ${request.role ?? "sub"}:${request.agentId}`,
+      request.toolName ? `tool ${request.toolName}` : request.kind,
+      request.summary,
+    ].filter(Boolean);
+    return parts.join(" — ");
+  }
+
+  private notifyApprovalRequest(request: ApprovalRequest): void {
+    const mainAgentId = this.findMainAgentId();
+    if (!mainAgentId) return;
+
+    const mainSessionId =
+      this.roleSessions.get(makeRoleSlotKey("main", mainAgentId)) ?? "orchestrator";
+    const content = this.buildApprovalCardSummary(request);
+
+    this.appendTranscriptMessage(mainSessionId, {
+      role: "system",
+      content,
+      timestamp: Date.now(),
+      metadata: {
+        messageType: "approval_request",
+        approvalRequestId: request.id,
+      },
+    });
+
+    this.transport.sendNotification("agent_message", {
+      agentId: mainAgentId,
+      sessionId: mainSessionId,
+      message: {
+        role: "system",
+        content,
+        timestamp: Date.now(),
+        metadata: {
+          messageType: "approval_request",
+          approvalRequestId: request.id,
+        },
+      },
+    });
+  }
+
+  private async requestApproval(
+    agentId: string,
+    sessionId: string,
+    adapter: string,
+    request: {
+      kind: ApprovalRequest["kind"];
+      toolName?: string;
+      summary: string;
+      rawRequest?: Record<string, unknown>;
+    },
+  ): Promise<ApprovalDecision> {
+    const session = this.sessions.get(sessionId);
+    const approval: ApprovalRequest = {
+      id: randomUUID(),
+      agentId,
+      sessionId,
+      role: this.getSessionRole(session),
+      adapter,
+      kind: request.kind,
+      toolName: request.toolName,
+      summary: request.summary,
+      rawRequest: request.rawRequest,
+      cwd: session?.cwd ?? this.agentCwds.get(agentId),
+      createdAt: Date.now(),
+      status: "pending",
+    };
+
+    this.approvalRequests.set(approval.id, approval);
+    this.bus.emit("agent.approval.requested", agentId, sessionId, approval);
+    this.notifyApprovalRequest(approval);
+
+    if (this.approvalMode === "auto_accept" || approval.role === "main") {
+      return this.resolveApprovalRequest(
+        approval.id,
+        "approve",
+        "system",
+        this.approvalMode === "auto_accept" ? "Auto Accept enabled" : "Main agent bypass",
+      );
+    }
+
+    this.persistState(true);
+
+    return new Promise<ApprovalDecision>((resolve) => {
+      const timeout = setTimeout(() => {
+        void this.resolveApprovalRequest(
+          approval.id,
+          "deny",
+          "system",
+          "Approval request timed out",
+          "timed_out",
+        );
+      }, Orchestrator.APPROVAL_TIMEOUT_MS);
+
+      this.approvalWaiters.set(approval.id, { resolve, timeout });
+    });
+  }
+
+  private resolveApprovalRequest(
+    requestId: string,
+    action: ApprovalDecision["action"],
+    decisionBy: ApprovalRequest["decisionBy"],
+    reason?: string,
+    terminalStatus?: Extract<ApprovalRequestStatus, "approved" | "denied" | "timed_out" | "cancelled">,
+  ): ApprovalDecision {
+    const request = this.approvalRequests.get(requestId);
+    if (!request) {
+      throw new Error(`Approval request not found: ${requestId}`);
+    }
+
+    const resolvedStatus =
+      terminalStatus ?? (action === "approve" ? "approved" : "denied");
+    const updated: ApprovalRequest = {
+      ...request,
+      status: resolvedStatus,
+      resolvedAt: Date.now(),
+      decisionBy,
+      decisionReason: reason,
+    };
+    this.approvalRequests.set(requestId, updated);
+    this.bus.emit("agent.approval.resolved", updated.agentId, updated.sessionId, updated);
+
+    const waiter = this.approvalWaiters.get(requestId);
+    if (waiter) {
+      clearTimeout(waiter.timeout);
+      this.approvalWaiters.delete(requestId);
+      waiter.resolve(
+        action === "approve"
+          ? { action: "approve", reason }
+          : { action: "deny", reason },
+      );
+    }
+
+    this.persistState(true);
+    return action === "approve"
+      ? { action: "approve", reason }
+      : { action: "deny", reason };
+  }
+
+  private cancelPendingApprovalsForSession(sessionId: string, reason: string): void {
+    for (const request of this.approvalRequests.values()) {
+      if (request.sessionId !== sessionId || request.status !== "pending") continue;
+      this.resolveApprovalRequest(request.id, "deny", "system", reason, "cancelled");
+    }
+  }
+
+  private getSessionMessages(
+    sessionId: string,
+    offset?: number,
+    limit?: number,
+  ): { messages: TranscriptMessage[]; total: number } {
+    if (!this.transcripts) {
+      return { messages: [], total: 0 };
+    }
+    return this.transcripts.read(sessionId, offset, limit);
+  }
+
+  private listSessions(
+    agentId?: string,
+    role?: AgentRole,
+    includeTerminal = false,
+  ): Array<SessionInfo & { active: boolean }> {
+    const result: Array<SessionInfo & { active: boolean }> = [];
+    const activeSessionIds = new Set(this.roleSessions.values());
+
+    // In-memory sessions
+    for (const [, info] of this.sessions) {
+      if (agentId && info.agentId !== agentId) continue;
+      const sessionRole = this.getSessionRole(info);
+      if (role && sessionRole !== role) continue;
+      if (!includeTerminal && !info.frozenRole) continue;
+      if (!includeTerminal && (info.status === "completed" || info.status === "overflow")) continue;
+      result.push({
+        ...info,
+        role: sessionRole,
+        active: activeSessionIds.has(info.sessionId),
+      });
+    }
+
+    // Also include persisted-but-not-in-memory sessions
+    if (this.persistence) {
+      const persisted = this.persistence.load();
+      if (persisted) {
+        for (const [sessionId, info] of Object.entries(persisted.sessions)) {
+          if (this.sessions.has(sessionId)) continue; // Already included
+          if (agentId && info.agentId !== agentId) continue;
+          const sessionRole = this.getSessionRole(info);
+          if (role && sessionRole !== role) continue;
+          if (!includeTerminal && !info.frozenRole) continue;
+          if (!includeTerminal && (info.status === "completed" || info.status === "overflow")) continue;
+          result.push({
+            ...info,
+            role: sessionRole,
+            active: false,
+          });
+        }
+      }
+    }
+
+    result.sort((a, b) => b.lastActiveAt - a.lastActiveAt);
+    return result;
+  }
+
+  private async resumeExistingSession(
+    agentId: string,
+    sessionId: string,
+    expectedRole?: AgentRole,
+  ): Promise<SessionInfo> {
+    // Check in-memory first
+    let info = this.sessions.get(sessionId);
+
+    // Try persisted sessions
+    if (!info && this.persistence) {
+      const persisted = this.persistence.load();
+      if (persisted?.sessions[sessionId]) {
+        info = persisted.sessions[sessionId];
+      }
+    }
+
+    if (!info) throw new Error(`Session not found: ${sessionId}`);
+    if (info.agentId !== agentId) {
+      throw new Error(`Session ${sessionId} belongs to agent ${info.agentId}, not ${agentId}`);
+    }
+    if (!info.frozenRole) {
+      throw new Error(`Session ${sessionId} is legacy and can only be viewed in History`);
+    }
+    if (expectedRole && expectedRole !== info.frozenRole) {
+      throw new Error(
+        `Role mismatch: session ${sessionId} belongs to role "${info.frozenRole}", not "${expectedRole}"`,
+      );
+    }
+    if (info.status === "completed" || info.status === "overflow") {
+      throw new Error(`Session ${sessionId} is ${info.status} and cannot be resumed`);
+    }
+
+    // Attempt to resume in the adapter
+    const adapter = this.registry.getAdapter(agentId);
+    const resumed = await adapter.resumeSession(
+      sessionId,
+      info,
+      info.cwd ?? this.agentCwds.get(agentId),
+    );
+    if (resumed.status === "completed" || resumed.status === "overflow") {
+      throw new Error(`Session ${sessionId} is ${resumed.status} and cannot be resumed`);
+    }
+
+    // Restore into active state
+    resumed.role = info.frozenRole;
+    resumed.frozenRole = info.frozenRole;
+    this.sessions.set(sessionId, resumed);
+
+    const slotKey = makeRoleSlotKey(info.frozenRole, agentId);
+    this.roleSessions.set(slotKey, sessionId);
+
+    this.bus.emit("agent.session.start", agentId, sessionId, {
+      role: info.frozenRole,
+      sessionName: resumed.sessionName,
+      resumed: true,
+    });
+
+    this.persistState(true);
+    return resumed;
   }
 
   private async startRoleSession(
@@ -276,11 +764,9 @@ export class Orchestrator {
 
     // Enrich session with role and naming convention
     session.role = effectiveRole;
+    session.frozenRole = effectiveRole;
     session.sessionName = `${effectiveRole}-${config.cli}-${taskName ?? "default"}`;
-
-    this.sessions.set(session.sessionId, session);
-    const slotKey = makeRoleSlotKey(effectiveRole, agentId);
-    this.roleSessions.set(slotKey, session.sessionId);
+    session.cwd = cwd;
 
     // Inject role-specific system prompt (includes shared KB context)
     const rolePrompt =
@@ -290,17 +776,19 @@ export class Orchestrator {
         undefined,
         this.sharedContext || undefined,
       );
-    try {
-      adapter.setSystemPrompt(rolePrompt);
-    } catch {
-      // Non-critical — some adapters may not support system prompts
-    }
+    session.frozenSystemPrompt = rolePrompt;
+    session.promptHash = this.hashPrompt(rolePrompt);
+
+    this.sessions.set(session.sessionId, session);
+    const slotKey = makeRoleSlotKey(effectiveRole, agentId);
+    this.roleSessions.set(slotKey, session.sessionId);
 
     this.bus.emit("agent.session.start", agentId, session.sessionId, {
       role: effectiveRole,
       sessionName: session.sessionName,
     });
 
+    this.persistState(true);
     return session;
   }
 
@@ -310,7 +798,7 @@ export class Orchestrator {
     images?: ImageAttachment[],
     role?: AgentRole,
     taskName?: string,
-  ): Promise<{ sessionId: string }> {
+  ): Promise<{ sessionId: string; role?: AgentRole; sessionName?: string; status?: SessionInfo["status"] }> {
     const adapter = this.registry.getAdapter(agentId);
     const config = this.registry.getConfig(agentId);
     const effectiveRole = role ?? config.roles[0];
@@ -326,7 +814,12 @@ export class Orchestrator {
     // Validate that the adapter still knows about this session and it's usable.
     let needNewSession = false;
     try {
-      const sessionInfo = await adapter.resumeSession(sessionId);
+      const currentInfo = this.sessions.get(sessionId);
+      const sessionInfo = await adapter.resumeSession(
+        sessionId,
+        currentInfo,
+        currentInfo?.cwd ?? this.agentCwds.get(agentId),
+      );
       if (sessionInfo.status === "completed" || sessionInfo.status === "overflow") {
         needNewSession = true;
       }
@@ -334,7 +827,11 @@ export class Orchestrator {
       needNewSession = true;
     }
     if (needNewSession) {
-      this.sessions.delete(sessionId);
+      const staleSession = this.sessions.get(sessionId);
+      if (staleSession) {
+        staleSession.status = "completed";
+        staleSession.lastActiveAt = Date.now();
+      }
       this.roleSessions.delete(slotKey);
       const session = await this.startRoleSession(agentId, effectiveRole, taskName);
       sessionId = session.sessionId;
@@ -345,11 +842,30 @@ export class Orchestrator {
       hasImages: images ? images.length : 0,
       role: effectiveRole,
     });
+    this.appendTranscriptMessage(sessionId, {
+      role: "user",
+      content: prompt,
+      timestamp: Date.now(),
+      images,
+    });
 
     // Stream messages asynchronously
-    this.streamMessages(adapter, agentId, sessionId, prompt, images);
+    const hooks: AgentSendHooks | undefined =
+      effectiveRole === "main"
+        ? undefined
+        : {
+            onApprovalRequest: (request) =>
+              this.requestApproval(agentId, sessionId, adapter.config.cli, request),
+          };
+    this.streamMessages(adapter, agentId, sessionId, prompt, images, hooks);
 
-    return { sessionId };
+    const session = this.sessions.get(sessionId);
+    return {
+      sessionId,
+      role: session?.role,
+      sessionName: session?.sessionName,
+      status: session?.status,
+    };
   }
 
   private async streamMessages(
@@ -358,11 +874,19 @@ export class Orchestrator {
     sessionId: string,
     prompt: string,
     images?: ImageAttachment[],
+    hooks?: AgentSendHooks,
   ): Promise<void> {
     try {
-      for await (const message of adapter.sendPrompt(sessionId, prompt, images)) {
+      for await (const message of adapter.sendPrompt(sessionId, prompt, images, hooks)) {
         this.bus.emit("agent.message.receive", agentId, sessionId, {
           contentPreview: message.content.slice(0, 200),
+        });
+        this.appendTranscriptMessage(sessionId, {
+          role: message.role,
+          content: message.content,
+          timestamp: message.timestamp,
+          images: message.images,
+          metadata: message.metadata,
         });
 
         this.transport.sendNotification("agent_message", {
@@ -376,6 +900,7 @@ export class Orchestrator {
             metadata: message.metadata,
           },
         });
+        this.persistState();
       }
 
       // Signal stream complete
@@ -383,8 +908,14 @@ export class Orchestrator {
         agentId,
         sessionId,
       });
+      const session = this.sessions.get(sessionId);
+      if (session) {
+        session.lastActiveAt = Date.now();
+      }
+      this.persistState();
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
+      this.cancelPendingApprovalsForSession(sessionId, "Session failed while approval was pending");
       this.bus.emit("agent.error", agentId, sessionId, { error: errorMsg });
       this.transport.sendNotification("agent_error", {
         agentId,
@@ -392,16 +923,20 @@ export class Orchestrator {
         error: errorMsg,
       });
 
-      // Clean up failed session so next sendPrompt auto-creates a fresh one
-      this.sessions.delete(sessionId);
+      // Keep failed sessions in history, but detach them from active role routing.
+      const session = this.sessions.get(sessionId);
+      if (session) {
+        session.status = "completed";
+        session.lastActiveAt = Date.now();
+      }
       for (const [key, sid] of this.roleSessions) {
         if (sid === sessionId) {
           this.roleSessions.delete(key);
           break;
         }
       }
-      // Also end it in the adapter to avoid stale references
       try { await adapter.endSession(sessionId); } catch { /* best-effort */ }
+      this.persistState(true);
     }
   }
 
@@ -409,10 +944,15 @@ export class Orchestrator {
     agentId: string,
     sessionId: string,
   ): Promise<void> {
+    this.cancelPendingApprovalsForSession(sessionId, "Session stopped while approval was pending");
     const adapter = this.registry.getAdapter(agentId);
     await adapter.endSession(sessionId);
 
-    this.sessions.delete(sessionId);
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      session.status = "completed";
+      session.lastActiveAt = Date.now();
+    }
     for (const [key, sid] of this.roleSessions) {
       if (sid === sessionId) {
         this.roleSessions.delete(key);
@@ -421,6 +961,7 @@ export class Orchestrator {
     }
 
     this.bus.emit("agent.session.end", agentId, sessionId, {});
+    this.persistState(true);
   }
 
   private configureAgent(config: AgentConfig): { ok: true } {

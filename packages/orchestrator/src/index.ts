@@ -85,6 +85,9 @@ const orchestrator = new Orchestrator(registry, transport);
 // Store full config for get_config/update_config RPC
 orchestrator.setProjectConfig(config);
 
+// Enable session persistence
+orchestrator.setPersistencePath(process.cwd());
+
 // Initialize optional Knowledge Service (Obsidian CLI)
 if (config.obsidian?.enabled) {
   const kb = new KnowledgeService(config.obsidian);

@@ -13,8 +13,10 @@
 import { randomUUID } from "node:crypto";
 import type {
   AgentAdapter,
+  AgentApprovalRequest,
   AgentConfig,
   AgentMessage,
+  AgentSendHooks,
   ImageAttachment,
   SessionInfo,
   SlashCommand,
@@ -37,7 +39,7 @@ export class ClaudeAdapter implements AgentAdapter {
   private sessionCwd = new Map<string, string>();
   private queryModule: typeof import("@anthropic-ai/claude-agent-sdk") | null =
     null;
-  private systemPrompt?: string;
+  private sharedSystemPrompt?: string;
 
   constructor(config?: Partial<AgentConfig>) {
     this.config = {
@@ -62,7 +64,7 @@ export class ClaudeAdapter implements AgentAdapter {
 
   /** Set the system prompt (e.g. project context from KB). */
   setSystemPrompt(prompt: string) {
-    this.systemPrompt = prompt;
+    this.sharedSystemPrompt = prompt;
   }
 
   private async loadSdk() {
@@ -83,6 +85,7 @@ export class ClaudeAdapter implements AgentAdapter {
     const info: SessionInfo = {
       sessionId,
       agentId: this.agentId,
+      cwd,
       startedAt: Date.now(),
       lastActiveAt: Date.now(),
       status: "active",
@@ -260,6 +263,7 @@ export class ClaudeAdapter implements AgentAdapter {
     sessionId: string,
     prompt: string,
     images?: ImageAttachment[],
+    hooks?: AgentSendHooks,
   ): AsyncGenerator<AgentMessage> {
     // Intercept slash commands before sending to SDK
     const trimmed = prompt.trim();
@@ -278,8 +282,6 @@ export class ClaudeAdapter implements AgentAdapter {
     if (!session) throw new Error(`Session ${sessionId} not found`);
 
     const cwd = this.sessionCwd.get(sessionId) ?? process.cwd();
-    const isResume = session.parentSessionId != null;
-
     const options: Record<string, unknown> = {
       allowedTools: [
         "Read",
@@ -295,13 +297,61 @@ export class ClaudeAdapter implements AgentAdapter {
       cwd,
     };
 
-    if (this.systemPrompt) {
-      options.systemPrompt = this.systemPrompt;
+    const onApprovalRequest = hooks?.onApprovalRequest;
+    if (onApprovalRequest) {
+      options.canUseTool = async (
+        toolName: string,
+        input: Record<string, unknown>,
+        requestOptions: {
+          blockedPath?: string;
+          decisionReason?: string;
+          toolUseID: string;
+          agentID?: string;
+        },
+      ) => {
+        const summaryParts = [
+          toolName,
+          requestOptions.decisionReason,
+          requestOptions.blockedPath,
+        ].filter((part): part is string => Boolean(part && part.trim()));
+
+        const approvalRequest: AgentApprovalRequest = {
+          kind: "tool_use",
+          toolName,
+          summary: summaryParts.join(" — ") || `Approve ${toolName}`,
+          rawRequest: {
+            input,
+            blockedPath: requestOptions.blockedPath,
+            decisionReason: requestOptions.decisionReason,
+            toolUseID: requestOptions.toolUseID,
+            agentID: requestOptions.agentID,
+          },
+        };
+
+        const decision = await onApprovalRequest(approvalRequest);
+        if (decision.action === "approve") {
+          return {
+            behavior: "allow",
+            updatedInput: decision.updatedInput,
+            toolUseID: requestOptions.toolUseID,
+          };
+        }
+        return {
+          behavior: "deny",
+          message: decision.reason ?? `Mercury denied ${toolName}`,
+          interrupt: true,
+          toolUseID: requestOptions.toolUseID,
+        };
+      };
     }
 
-    // If resuming from a previous SDK session, pass the resume id
-    if (isResume && session.parentSessionId) {
-      options.resume = session.parentSessionId;
+    const effectiveSystemPrompt = session.frozenSystemPrompt ?? this.sharedSystemPrompt;
+    if (effectiveSystemPrompt) {
+      options.systemPrompt = effectiveSystemPrompt;
+    }
+
+    if (session.resumeToken) {
+      options.resume = session.resumeToken;
     }
 
     // Build the effective prompt — with or without images.
@@ -408,15 +458,31 @@ export class ClaudeAdapter implements AgentAdapter {
       }
     }
 
-    // Store SDK session ID for potential resume
+    // Store SDK session ID for future resume after restart.
     if (sdkSessionId) {
-      session.parentSessionId = sdkSessionId;
+      session.resumeToken = sdkSessionId;
     }
   }
 
-  async resumeSession(sessionId: string): Promise<SessionInfo> {
-    const session = this.sessions.get(sessionId);
-    if (!session) throw new Error(`Session ${sessionId} not found`);
+  async resumeSession(
+    sessionId: string,
+    persistedInfo?: SessionInfo,
+    cwd?: string,
+  ): Promise<SessionInfo> {
+    let session = this.sessions.get(sessionId);
+    if (!session) {
+      if (!persistedInfo?.resumeToken) {
+        throw new Error(`Session ${sessionId} not found`);
+      }
+      session = {
+        ...persistedInfo,
+        sessionId,
+        agentId: this.agentId,
+        cwd: persistedInfo.cwd ?? cwd ?? process.cwd(),
+      };
+      this.sessions.set(sessionId, session);
+      this.sessionCwd.set(sessionId, session.cwd ?? process.cwd());
+    }
     session.status = "active";
     session.lastActiveAt = Date.now();
     return session;
@@ -450,6 +516,10 @@ export class ClaudeAdapter implements AgentAdapter {
       lastActiveAt: Date.now(),
       status: "active",
       parentSessionId: oldSessionId,
+      role: oldSession?.role,
+      frozenRole: oldSession?.frozenRole,
+      frozenSystemPrompt: oldSession?.frozenSystemPrompt,
+      promptHash: oldSession?.promptHash,
     };
     this.sessions.set(newSessionId, newSession);
 

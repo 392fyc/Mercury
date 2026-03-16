@@ -30,7 +30,22 @@ fn find_project_root(start: PathBuf) -> Option<PathBuf> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    #[cfg(not(debug_assertions))]
+    let builder = {
+        // Keep single-instance enforcement out of `tauri dev`, which may restart/spawn
+        // the app process during development.
+        tauri::Builder::default().plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+            }
+        }))
+    };
+
+    #[cfg(debug_assertions)]
+    let builder = tauri::Builder::default();
+
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
@@ -60,10 +75,7 @@ pub fn run() {
                     }
                     Err(e) => {
                         eprintln!("[tauri] Failed to start orchestrator: {}", e);
-                        let _ = app_handle.emit(
-                            "sidecar-error",
-                            serde_json::json!({ "error": e }),
-                        );
+                        let _ = app_handle.emit("sidecar-error", serde_json::json!({ "error": e }));
                     }
                 }
             });
@@ -97,6 +109,14 @@ pub fn run() {
             commands::kb_write,
             commands::kb_append,
             commands::set_agent_cwd,
+            commands::list_sessions,
+            commands::resume_session,
+            commands::get_session_messages,
+            commands::get_approval_mode,
+            commands::set_approval_mode,
+            commands::list_approval_requests,
+            commands::approve_request,
+            commands::deny_request,
             commands::refresh_context,
             commands::get_context_status,
         ])

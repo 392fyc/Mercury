@@ -13,6 +13,7 @@ import type {
   AgentAdapter,
   AgentConfig,
   AgentMessage,
+  AgentSendHooks,
   ImageAttachment,
   SessionInfo,
   SlashCommand,
@@ -32,8 +33,7 @@ export class CodexAdapter implements AgentAdapter {
   private sessionCwd = new Map<string, string>();
   private threads = new Map<string, unknown>();
   private codexInstance: unknown = null;
-  private systemPrompt?: string;
-  private systemPromptSentSessions = new Set<string>();
+  private sharedSystemPrompt?: string;
 
   constructor(config?: Partial<AgentConfig>) {
     this.config = {
@@ -52,9 +52,7 @@ export class CodexAdapter implements AgentAdapter {
 
   /** Set shared context as system prompt (injected by Orchestrator). */
   setSystemPrompt(prompt: string) {
-    this.systemPrompt = prompt;
-    // Reset tracking so context is re-injected on next message in each session
-    this.systemPromptSentSessions.clear();
+    this.sharedSystemPrompt = prompt;
   }
 
   private async loadSdk() {
@@ -70,7 +68,7 @@ export class CodexAdapter implements AgentAdapter {
     }
     return this.codexInstance as {
       startThread(opts?: { workingDirectory?: string }): unknown;
-      resumeThread(id: string): unknown;
+      resumeThread(id: string, opts?: { workingDirectory?: string }): unknown;
     };
   }
 
@@ -137,6 +135,7 @@ export class CodexAdapter implements AgentAdapter {
     const info: SessionInfo = {
       sessionId,
       agentId: this.agentId,
+      cwd,
       startedAt: Date.now(),
       lastActiveAt: Date.now(),
       status: "active",
@@ -262,6 +261,7 @@ export class CodexAdapter implements AgentAdapter {
     sessionId: string,
     prompt: string,
     images?: ImageAttachment[],
+    hooks?: AgentSendHooks,
   ): AsyncGenerator<AgentMessage> {
     // Intercept slash commands before sending to SDK
     const trimmed = prompt.trim();
@@ -275,6 +275,7 @@ export class CodexAdapter implements AgentAdapter {
     }
 
     const thread = this.threads.get(sessionId) as {
+      id: string | null;
       run(
         input: string | Array<{ type: string; text?: string; path?: string }>,
         options?: { outputSchema?: unknown; workingDirectory?: string; skipGitRepoCheck?: boolean },
@@ -297,12 +298,31 @@ export class CodexAdapter implements AgentAdapter {
     const session = this.sessions.get(sessionId);
     if (session) session.lastActiveAt = Date.now();
 
-    // Prepend shared context only on the first message of each session (avoids token waste)
-    let effectivePrompt = prompt;
-    if (this.systemPrompt && !this.systemPromptSentSessions.has(sessionId)) {
-      effectivePrompt = `[System Context]\n${this.systemPrompt}\n\n[User Prompt]\n${prompt}`;
-      this.systemPromptSentSessions.add(sessionId);
+    if (hooks?.onApprovalRequest) {
+      const decision = await hooks.onApprovalRequest({
+        kind: "permission",
+        toolName: "codex_turn",
+        summary: "Approve Codex turn execution",
+        rawRequest: {
+          promptPreview: prompt.slice(0, 200),
+          sessionId,
+        },
+      });
+      if (decision.action !== "approve") {
+        yield {
+          role: "system",
+          content: decision.reason ?? "Mercury denied this Codex execution request.",
+          timestamp: Date.now(),
+          metadata: { deniedByMercury: true },
+        };
+        return;
+      }
     }
+
+    const promptContext = session?.frozenSystemPrompt ?? this.sharedSystemPrompt;
+    const effectivePrompt = promptContext
+      ? `[Mercury Role Context]\n${promptContext}\n\n[User Prompt]\n${prompt}`
+      : prompt;
 
     // Prepare image temp files if images are provided
     let imageEntries: InputEntry[] | undefined;
@@ -386,14 +406,49 @@ export class CodexAdapter implements AgentAdapter {
       }
     } finally {
       // Clean up temp image files regardless of success or failure
+      if (thread.id) {
+        if (session) {
+          session.resumeToken = thread.id;
+        }
+      }
       await this.cleanupTempFiles(tempFiles);
     }
   }
 
-  async resumeSession(sessionId: string): Promise<SessionInfo> {
-    const session = this.sessions.get(sessionId);
-    if (!session) throw new Error(`Session ${sessionId} not found`);
+  async resumeSession(
+    sessionId: string,
+    persistedInfo?: SessionInfo,
+    cwd?: string,
+  ): Promise<SessionInfo> {
+    let session = this.sessions.get(sessionId);
+    const effectiveCwd = session?.cwd ?? persistedInfo?.cwd ?? cwd ?? process.cwd();
+
+    if (!session) {
+      if (!persistedInfo?.resumeToken) {
+        throw new Error(`Session ${sessionId} not found`);
+      }
+      session = {
+        ...persistedInfo,
+        sessionId,
+        agentId: this.agentId,
+        cwd: effectiveCwd,
+      };
+      this.sessions.set(sessionId, session);
+      this.sessionCwd.set(sessionId, effectiveCwd);
+    }
+
+    if (!this.threads.has(sessionId)) {
+      if (!session.resumeToken) {
+        throw new Error(`Session ${sessionId} is missing a Codex resume token`);
+      }
+      const codex = await this.loadSdk();
+      const thread = codex.resumeThread(session.resumeToken, { workingDirectory: effectiveCwd });
+      this.threads.set(sessionId, thread);
+      this.sessionCwd.set(sessionId, effectiveCwd);
+    }
+
     session.status = "active";
+    session.lastActiveAt = Date.now();
     return session;
   }
 
@@ -413,6 +468,10 @@ export class CodexAdapter implements AgentAdapter {
     const cwd = this.sessionCwd.get(oldSessionId) ?? process.cwd();
     const newSession = await this.startSession(cwd);
     newSession.parentSessionId = oldSessionId;
+    newSession.role = oldSession?.role;
+    newSession.frozenRole = oldSession?.frozenRole;
+    newSession.frozenSystemPrompt = oldSession?.frozenSystemPrompt;
+    newSession.promptHash = oldSession?.promptHash;
     return newSession;
   }
 

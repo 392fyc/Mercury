@@ -47,6 +47,38 @@ export interface MercuryEvent {
   parentEventId?: string;
 }
 
+export type ApprovalMode = "main_agent_review" | "auto_accept";
+export type ApprovalRequestStatus =
+  | "pending"
+  | "approved"
+  | "denied"
+  | "timed_out"
+  | "cancelled";
+export type ApprovalRequestKind =
+  | "permission"
+  | "tool_use"
+  | "command_execution"
+  | "file_change"
+  | "user_input";
+
+export interface ApprovalRequest {
+  id: string;
+  agentId: string;
+  sessionId: string;
+  role?: string;
+  adapter: string;
+  kind: ApprovalRequestKind;
+  toolName?: string;
+  summary: string;
+  rawRequest?: Record<string, unknown>;
+  cwd?: string;
+  createdAt: number;
+  resolvedAt?: number;
+  status: ApprovalRequestStatus;
+  decisionBy?: "main_agent" | "system";
+  decisionReason?: string;
+}
+
 // Project info (frontend → Rust directly, no sidecar)
 
 export interface ProjectInfo {
@@ -89,13 +121,13 @@ export async function sendPrompt(
   prompt: string,
   images?: ImageAttachment[],
   role?: string,
-): Promise<{ sessionId: string }> {
+): Promise<{ sessionId: string; role?: string; sessionName?: string; status?: string }> {
   return invoke("send_prompt", { agentId, prompt, images: images ?? null, role: role ?? null });
 }
 
 export async function startSession(
   agentId: string,
-): Promise<{ sessionId: string }> {
+): Promise<{ sessionId: string; role?: string; sessionName?: string; status?: string }> {
   return invoke("start_session", { agentId });
 }
 
@@ -324,6 +356,96 @@ export async function kbAppend(
   content: string,
 ): Promise<{ ok: true }> {
   return invoke("kb_append", { file, content });
+}
+
+// ─── Session Resume Operations ───
+
+export interface SessionListItem {
+  sessionId: string;
+  agentId: string;
+  role?: string;
+  frozenRole?: string;
+  sessionName?: string;
+  startedAt: number;
+  lastActiveAt: number;
+  status: "active" | "paused" | "completed" | "overflow";
+  active: boolean;
+  parentSessionId?: string;
+  promptHash?: string;
+}
+
+export async function listSessions(
+  agentId?: string,
+  role?: string,
+  includeTerminal?: boolean,
+): Promise<SessionListItem[]> {
+  return invoke<SessionListItem[]>("list_sessions", {
+    agentId: agentId ?? null,
+    role: role ?? null,
+    includeTerminal: includeTerminal ?? null,
+  });
+}
+
+export async function resumeSession(
+  agentId: string,
+  sessionId: string,
+  expectedRole?: string,
+): Promise<{ sessionId: string; role?: string; sessionName?: string; status?: string }> {
+  return invoke("resume_session", {
+    agentId,
+    sessionId,
+    expectedRole: expectedRole ?? null,
+  });
+}
+
+export interface TranscriptMessage {
+  role: "user" | "assistant" | "system";
+  content: string;
+  timestamp: number;
+  images?: ImageAttachment[];
+  metadata?: Record<string, unknown>;
+}
+
+export async function getSessionMessages(
+  sessionId: string,
+  offset?: number,
+  limit?: number,
+): Promise<{ messages: TranscriptMessage[]; total: number }> {
+  return invoke("get_session_messages", {
+    sessionId,
+    offset: offset ?? null,
+    limit: limit ?? null,
+  });
+}
+
+// ─── Approval Control Plane ───
+
+export async function getApprovalMode(): Promise<{ mode: ApprovalMode }> {
+  return invoke<{ mode: ApprovalMode }>("get_approval_mode");
+}
+
+export async function setApprovalMode(mode: ApprovalMode): Promise<{ mode: ApprovalMode }> {
+  return invoke<{ mode: ApprovalMode }>("set_approval_mode", { mode });
+}
+
+export async function listApprovalRequests(
+  status?: ApprovalRequestStatus,
+): Promise<ApprovalRequest[]> {
+  return invoke<ApprovalRequest[]>("list_approval_requests", { status: status ?? null });
+}
+
+export async function approveRequest(
+  requestId: string,
+  reason?: string,
+): Promise<{ action: "approve" | "deny"; reason?: string }> {
+  return invoke("approve_request", { requestId, reason: reason ?? null });
+}
+
+export async function denyRequest(
+  requestId: string,
+  reason?: string,
+): Promise<{ action: "approve" | "deny"; reason?: string }> {
+  return invoke("deny_request", { requestId, reason: reason ?? null });
 }
 
 // ─── Shared Context Operations ───

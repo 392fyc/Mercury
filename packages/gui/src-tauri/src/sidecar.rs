@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tauri::Emitter;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::{Mutex, oneshot};
+use tokio::sync::{oneshot, Mutex};
 
 use crate::types::RpcRequest;
 
@@ -16,17 +16,20 @@ pub struct SidecarManager {
 }
 
 impl SidecarManager {
-    pub async fn spawn(
-        app_handle: tauri::AppHandle,
-        project_dir: String,
-    ) -> Result<Self, String> {
+    pub async fn spawn(app_handle: tauri::AppHandle, project_dir: String) -> Result<Self, String> {
         // In dev mode, use pnpm exec tsx to run the orchestrator.
         // Using pnpm instead of npx avoids npm warn noise from inherited env vars.
         // On Windows, pnpm is a .cmd script so we must run via cmd.exe.
         #[cfg(target_os = "windows")]
         let mut cmd = {
             let mut c = Command::new("cmd");
-            c.args(["/c", "pnpm", "exec", "tsx", "packages/orchestrator/src/index.ts"]);
+            c.args([
+                "/c",
+                "pnpm",
+                "exec",
+                "tsx",
+                "packages/orchestrator/src/index.ts",
+            ]);
             c.creation_flags(0x08000000); // CREATE_NO_WINDOW
             c
         };
@@ -43,7 +46,9 @@ impl SidecarManager {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
 
-        let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn orchestrator: {}", e))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("Failed to spawn orchestrator: {}", e))?;
 
         let stdin = child.stdin.take().ok_or("Failed to get stdin")?;
         let stdout = child.stdout.take().ok_or("Failed to get stdout")?;
@@ -77,7 +82,10 @@ impl SidecarManager {
                             }
                         } else if let Some(method) = msg.get("method").and_then(|m| m.as_str()) {
                             // Notification — forward as Tauri event
-                            let params = msg.get("params").cloned().unwrap_or(serde_json::Value::Null);
+                            let params = msg
+                                .get("params")
+                                .cloned()
+                                .unwrap_or(serde_json::Value::Null);
                             let event_name = method.replace('_', "-");
                             let _ = app_clone.emit(&event_name, params);
                         }
@@ -155,7 +163,10 @@ impl SidecarManager {
             return Err(msg.to_string());
         }
 
-        Ok(response.get("result").cloned().unwrap_or(serde_json::Value::Null))
+        Ok(response
+            .get("result")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null))
     }
 
     pub async fn send_notification(
