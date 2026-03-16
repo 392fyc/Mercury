@@ -78,6 +78,14 @@ async function handleChangeDir() {
   await refreshGitBranch(selected);
 }
 
+async function handleChangeBranch() {
+  if (status.value === "active") return;
+  const dir = workDir.value;
+  if (!dir) return;
+  // Refresh branch info (re-detect from filesystem)
+  await refreshGitBranch(dir);
+}
+
 // ─── Image Attachments ───
 
 const pendingImages = ref<ImageAttachment[]>([]);
@@ -356,9 +364,9 @@ watch(
       <button class="workspace-dir" @click="handleChangeDir" :title="workDir" :disabled="status === 'active'">
         {{ shortWorkDir }}
       </button>
-      <span class="workspace-branch" v-if="gitBranch">
-        <span class="branch-icon">&#9095;</span>{{ gitBranch }}
-      </span>
+      <button class="workspace-branch" @click="handleChangeBranch" :disabled="status === 'active'" :title="gitBranch || 'No branch detected'">
+        <span class="branch-icon">&#9095;</span>{{ gitBranch || '—' }}
+      </button>
     </div>
 
     <div class="panel-input" style="position: relative;">
@@ -707,6 +715,22 @@ watch(
   color: var(--accent-main);
   font-family: var(--font-mono);
   font-size: 10px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  padding: 1px 6px;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.workspace-branch:hover:not(:disabled) {
+  border-color: var(--accent-main);
+  background: var(--bg-panel);
+}
+
+.workspace-branch:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .workspace-branch .branch-icon {

@@ -14,7 +14,12 @@ function addEvent(event: MercuryEvent) {
   events.value = [...events.value, event];
 }
 
+let eventListenersInitialized = false;
+
 async function initEventListeners() {
+  if (eventListenersInitialized) return;
+  eventListenersInitialized = true;
+
   await onMercuryEvent((event) => {
     addEvent(event);
   });

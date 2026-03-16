@@ -64,7 +64,12 @@ async function refreshTask(taskId: string) {
   }
 }
 
+let taskListenersInitialized = false;
+
 async function initTaskListeners() {
+  if (taskListenersInitialized) return;
+  taskListenersInitialized = true;
+
   await onMercuryEvent((event: MercuryEvent) => {
     if (event.type.startsWith("orchestrator.task.") || event.type.startsWith("orchestrator.acceptance.")) {
       const taskId =

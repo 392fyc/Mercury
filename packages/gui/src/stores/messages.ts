@@ -78,7 +78,12 @@ async function sendPrompt(agentId: string, prompt: string, images?: ImageAttachm
   }
 }
 
+let messageListenersInitialized = false;
+
 async function initMessageListeners() {
+  if (messageListenersInitialized) return;
+  messageListenersInitialized = true;
+
   const { setStatus } = useAgentStore();
 
   await onAgentMessage((data) => {

@@ -76,12 +76,6 @@ const statusText = computed(() => {
       </div>
     </div>
     <div class="titlebar-center" data-tauri-drag-region>
-      <span class="project-info" v-if="projectName" :title="projectRoot">
-        <span class="project-name">{{ projectName }}</span>
-        <span class="git-branch" v-if="gitBranch">
-          <span class="branch-icon">&#9095;</span>{{ gitBranch }}
-        </span>
-      </span>
       <span class="status-dot" :class="statusClass"></span>
       <span class="status-text">{{ statusText }}</span>
     </div>

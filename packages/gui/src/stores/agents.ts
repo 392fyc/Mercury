@@ -85,7 +85,12 @@ async function loadAgents() {
   }
 }
 
+let agentListenersInitialized = false;
+
 async function initAgents() {
+  if (agentListenersInitialized) return;
+  agentListenersInitialized = true;
+
   // Load default project directory
   try {
     const info = await getProjectInfo();
