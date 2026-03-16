@@ -187,14 +187,33 @@ export class OpencodeAdapter implements AgentAdapter {
   }
 
   getSlashCommands(): SlashCommand[] {
+    // opencode uses keyboard shortcuts (leader key ctrl+x) rather than
+    // traditional "/" slash commands. These are mapped here as slash commands
+    // for Mercury GUI consistency. Source: opencode.ai/docs/keybinds/
     return [
-      { name: "/help", description: "Show available commands", category: "general" },
-      { name: "/compact", description: "Compact conversation context", category: "session" },
-      { name: "/clear", description: "Clear conversation history", category: "session" },
-      { name: "/model", description: "Change the model", category: "config", args: [{ name: "model", description: "Model name", required: false, type: "string" }] },
-      { name: "/diff", description: "Show pending changes", category: "code" },
+      // ── Session ──
+      { name: "/new", description: "Start a new session", category: "session" },
+      { name: "/sessions", description: "List and switch sessions", category: "session" },
+      { name: "/compact", description: "Summarize session and create a new one with summary", category: "session" },
+      { name: "/timeline", description: "Show session timeline", category: "session" },
+      { name: "/export", description: "Export session data", category: "session" },
+      { name: "/quit", description: "Exit opencode", category: "session" },
+      // ── Code ──
       { name: "/undo", description: "Undo last change", category: "code" },
-      { name: "/exit", description: "Exit the CLI", category: "general" },
+      { name: "/redo", description: "Redo last undone change", category: "code" },
+      { name: "/copy", description: "Copy messages to clipboard", category: "code" },
+      { name: "/editor", description: "Open external editor", category: "code" },
+      // ── Model & Agent ──
+      { name: "/model", description: "List and select AI model", category: "model" },
+      { name: "/agent", description: "List and select agent", category: "model" },
+      // ── Config & Display ──
+      { name: "/init", description: "Create/update OpenCode.md memory file", category: "config" },
+      { name: "/theme", description: "Choose a color theme", category: "config" },
+      { name: "/help", description: "Show keyboard shortcuts", category: "config" },
+      { name: "/conceal", description: "Toggle tool output visibility", category: "config" },
+      { name: "/sidebar", description: "Toggle sidebar visibility", category: "config" },
+      // ── Sharing ──
+      { name: "/share", description: "Create a shareable link for the session", category: "sharing" },
     ];
   }
 }

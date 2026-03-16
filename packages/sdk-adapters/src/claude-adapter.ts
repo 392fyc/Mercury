@@ -231,45 +231,78 @@ export class ClaudeAdapter implements AgentAdapter {
 
   getSlashCommands(): SlashCommand[] {
     return [
-      // General
-      { name: "/help", description: "Show help and available commands", category: "general" },
-      { name: "/feedback", description: "Submit feedback about Claude Code", category: "general" },
-      { name: "/exit", description: "Exit the CLI", category: "general" },
-      // Session
+      // ── Help & Info ──
+      { name: "/help", description: "Show help and available commands", category: "help" },
+      { name: "/doctor", description: "Diagnose and verify installation", category: "help" },
+      { name: "/release-notes", description: "View the full changelog", category: "help" },
+      { name: "/insights", description: "Generate a report analyzing your sessions", category: "help" },
+      // ── Session ──
       { name: "/clear", description: "Clear conversation history and free up context", category: "session" },
       { name: "/compact", description: "Compact conversation with optional focus instructions", category: "session", args: [{ name: "instructions", description: "Optional focus instructions", required: false, type: "string" }] },
       { name: "/resume", description: "Resume a conversation by ID or name", category: "session", args: [{ name: "session", description: "Session ID or name", required: false, type: "string" }] },
       { name: "/fork", description: "Create a fork of the current conversation", category: "session", args: [{ name: "name", description: "Fork name", required: false, type: "string" }] },
       { name: "/rename", description: "Rename the current session", category: "session", args: [{ name: "name", description: "New name", required: false, type: "string" }] },
+      { name: "/rewind", description: "Rewind conversation and/or code to a previous point", category: "session" },
       { name: "/export", description: "Export the current conversation as plain text", category: "session", args: [{ name: "filename", description: "Output filename", required: false, type: "string" }] },
-      // Config
+      { name: "/exit", description: "Exit the CLI", category: "session" },
+      // ── Code & Files ──
+      { name: "/diff", description: "Open interactive diff viewer for uncommitted changes", category: "code" },
+      { name: "/review", description: "Review code changes (deprecated, use plugin)", category: "code" },
+      { name: "/security-review", description: "Analyze pending changes for security vulnerabilities", category: "code" },
+      { name: "/plan", description: "Enter plan mode directly from prompt", category: "code" },
+      { name: "/add-dir", description: "Add a new working directory", category: "code", args: [{ name: "path", description: "Directory path", required: true, type: "string" }] },
+      { name: "/copy", description: "Copy last assistant response to clipboard", category: "code" },
+      // ── Config & Preferences ──
       { name: "/init", description: "Initialize project with CLAUDE.md guide", category: "config" },
       { name: "/config", description: "Open the Settings interface", category: "config" },
       { name: "/model", description: "Select or change the AI model", category: "config", args: [{ name: "model", description: "Model name", required: false, type: "string" }] },
       { name: "/permissions", description: "View or update permissions", category: "config" },
       { name: "/memory", description: "Edit CLAUDE.md memory files", category: "config" },
-      { name: "/mcp", description: "Manage MCP server connections", category: "config" },
-      { name: "/login", description: "Sign in to your Anthropic account", category: "config" },
-      { name: "/logout", description: "Sign out from your Anthropic account", category: "config" },
-      // Code
-      { name: "/diff", description: "Open interactive diff viewer for uncommitted changes", category: "code" },
-      { name: "/review", description: "Review code changes", category: "code" },
-      { name: "/plan", description: "Enter plan mode directly from prompt", category: "code" },
-      { name: "/rewind", description: "Rewind conversation and/or code to a previous point", category: "code" },
-      { name: "/add-dir", description: "Add a new working directory", category: "code", args: [{ name: "path", description: "Directory path", required: true, type: "string" }] },
-      // Debug
-      { name: "/cost", description: "Show token usage statistics", category: "debug" },
-      { name: "/doctor", description: "Diagnose and verify installation", category: "debug" },
-      { name: "/context", description: "Visualize current context usage", category: "debug" },
-      { name: "/usage", description: "Show plan usage limits and rate limit status", category: "debug" },
-      { name: "/stats", description: "Visualize daily usage and session history", category: "debug" },
-      // Display
-      { name: "/copy", description: "Copy last assistant response to clipboard", category: "display" },
-      { name: "/theme", description: "Change the color theme", category: "display" },
-      { name: "/color", description: "Set the prompt bar color", category: "display", args: [{ name: "color", description: "Color name or 'default'", required: false, type: "string" }] },
-      { name: "/vim", description: "Toggle between Vim and Normal editing modes", category: "display" },
-      { name: "/effort", description: "Set the model effort level", category: "display", args: [{ name: "level", description: "low|medium|high|max|auto", required: false, type: "string" }] },
-      { name: "/fast", description: "Toggle fast mode on or off", category: "display", args: [{ name: "toggle", description: "on|off", required: false, type: "string" }] },
+      { name: "/hooks", description: "View hook configurations for tool events", category: "config" },
+      { name: "/keybindings", description: "Open or create keybindings configuration", category: "config" },
+      { name: "/theme", description: "Change the color theme", category: "config" },
+      { name: "/color", description: "Set the prompt bar color", category: "config", args: [{ name: "color", description: "Color name or 'default'", required: false, type: "string" }] },
+      { name: "/vim", description: "Toggle between Vim and Normal editing modes", category: "config" },
+      { name: "/statusline", description: "Configure the status line display", category: "config" },
+      { name: "/terminal-setup", description: "Configure terminal keybindings", category: "config" },
+      { name: "/sandbox", description: "Toggle sandbox mode", category: "config" },
+      { name: "/effort", description: "Set the model effort level", category: "config", args: [{ name: "level", description: "low|medium|high|max|auto", required: false, type: "string" }] },
+      { name: "/fast", description: "Toggle fast mode on or off", category: "config", args: [{ name: "toggle", description: "on|off", required: false, type: "string" }] },
+      { name: "/privacy-settings", description: "View and update privacy settings", category: "config" },
+      // ── Account ──
+      { name: "/login", description: "Sign in to your Anthropic account", category: "account" },
+      { name: "/logout", description: "Sign out from your Anthropic account", category: "account" },
+      { name: "/status", description: "Show version, model, account, and connectivity", category: "account" },
+      { name: "/usage", description: "Show plan usage limits and rate limit status", category: "account" },
+      { name: "/cost", description: "Show token usage statistics", category: "account" },
+      { name: "/stats", description: "Visualize daily usage, session history, and streaks", category: "account" },
+      { name: "/extra-usage", description: "Configure extra usage when rate limits are hit", category: "account" },
+      { name: "/upgrade", description: "Open the upgrade page for higher plan tier", category: "account" },
+      // ── Integrations ──
+      { name: "/mcp", description: "Manage MCP server connections and OAuth", category: "integrations" },
+      { name: "/ide", description: "Manage IDE integrations and show status", category: "integrations" },
+      { name: "/chrome", description: "Configure Claude in Chrome settings", category: "integrations" },
+      { name: "/install-github-app", description: "Set up the Claude GitHub Actions app", category: "integrations" },
+      { name: "/install-slack-app", description: "Install the Claude Slack app", category: "integrations" },
+      { name: "/pr-comments", description: "Fetch and display comments from a GitHub PR", category: "integrations", args: [{ name: "PR", description: "PR number or URL", required: false, type: "string" }] },
+      // ── Plugins & Skills ──
+      { name: "/plugin", description: "Manage Claude Code plugins", category: "plugins" },
+      { name: "/reload-plugins", description: "Reload all active plugins", category: "plugins" },
+      { name: "/skills", description: "List available skills", category: "plugins" },
+      // ── Agents & Tasks ──
+      { name: "/agents", description: "Manage agent (subagent) configurations", category: "agents" },
+      { name: "/tasks", description: "List and manage background tasks", category: "agents" },
+      { name: "/btw", description: "Ask a quick side question without adding to history", category: "agents", args: [{ name: "question", description: "Side question", required: true, type: "string" }] },
+      // ── Remote & Mobile ──
+      { name: "/remote-control", description: "Make session available for remote control from claude.ai", category: "remote" },
+      { name: "/remote-env", description: "Configure default remote environment for web sessions", category: "remote" },
+      { name: "/desktop", description: "Continue session in Claude Code Desktop app", category: "remote" },
+      { name: "/mobile", description: "Show QR code to download the Claude mobile app", category: "remote" },
+      // ── Feedback ──
+      { name: "/feedback", description: "Submit feedback about Claude Code", category: "feedback", args: [{ name: "report", description: "Feedback text", required: false, type: "string" }] },
+      { name: "/context", description: "Visualize current context usage as a colored grid", category: "help" },
+      { name: "/stickers", description: "Order Claude Code stickers", category: "feedback" },
+      { name: "/passes", description: "Share a free week of Claude Code with friends", category: "feedback" },
     ];
   }
 }

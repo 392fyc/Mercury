@@ -188,13 +188,50 @@ export class CodexAdapter implements AgentAdapter {
 
   getSlashCommands(): SlashCommand[] {
     return [
-      { name: "/help", description: "Show available commands", category: "general" },
-      { name: "/model", description: "Change the model", category: "config", args: [{ name: "model", description: "Model name", required: false, type: "string" }] },
-      { name: "/approval", description: "Change approval mode (suggest, auto-edit, full-auto)", category: "config", args: [{ name: "mode", description: "suggest|auto-edit|full-auto", required: false, type: "string" }] },
-      { name: "/undo", description: "Undo last file change", category: "code" },
-      { name: "/diff", description: "Show pending changes", category: "code" },
-      { name: "/clear", description: "Clear conversation context", category: "session" },
-      { name: "/exit", description: "Exit the CLI", category: "general" },
+      // ── Session & Navigation ──
+      { name: "/new", description: "Start a new chat during a conversation", category: "session" },
+      { name: "/resume", description: "Resume a saved chat", category: "session" },
+      { name: "/fork", description: "Fork the current chat into a new thread", category: "session" },
+      { name: "/clear", description: "Clear the terminal and start a new chat", category: "session" },
+      { name: "/rename", description: "Rename the current thread", category: "session" },
+      { name: "/compact", description: "Summarize conversation to prevent hitting context limit", category: "session" },
+      { name: "/quit", description: "Exit Codex", category: "session" },
+      // ── Model & Mode ──
+      { name: "/model", description: "Choose what model and reasoning effort to use", category: "model" },
+      { name: "/fast", description: "Toggle Fast mode for fastest inference at 2X plan usage", category: "model" },
+      { name: "/plan", description: "Switch to Plan mode", category: "model" },
+      { name: "/collab", description: "Change collaboration mode (experimental)", category: "model" },
+      // ── Permissions & Sandbox ──
+      { name: "/approvals", description: "Choose what Codex is allowed to do", category: "permissions" },
+      { name: "/setup-default-sandbox", description: "Set up elevated agent sandbox", category: "permissions" },
+      { name: "/sandbox-add-read-dir", description: "Let sandbox read a directory", category: "permissions", args: [{ name: "path", description: "Absolute directory path", required: true, type: "string" }] },
+      // ── Tools & Integrations ──
+      { name: "/mcp", description: "List configured MCP tools", category: "integrations" },
+      { name: "/apps", description: "Manage apps (connectors)", category: "integrations" },
+      { name: "/skills", description: "Use skills to improve how Codex performs tasks", category: "integrations" },
+      { name: "/mention", description: "Mention/attach a file", category: "integrations" },
+      // ── Agent & Threads ──
+      { name: "/agent", description: "Switch the active agent thread", category: "agents" },
+      // ── Code & Review ──
+      { name: "/review", description: "Review current changes and find issues", category: "code" },
+      { name: "/diff", description: "Show git diff including untracked files", category: "code" },
+      { name: "/copy", description: "Copy the latest Codex output to clipboard", category: "code" },
+      { name: "/init", description: "Create an AGENTS.md file with instructions for Codex", category: "code" },
+      // ── Config & Display ──
+      { name: "/status", description: "Show current session configuration and token usage", category: "config" },
+      { name: "/statusline", description: "Configure which items appear in the status line", category: "config" },
+      { name: "/theme", description: "Choose a syntax highlighting theme", category: "config" },
+      { name: "/personality", description: "Choose a communication style for Codex", category: "config" },
+      { name: "/settings", description: "Configure realtime microphone/speaker", category: "config" },
+      { name: "/experimental", description: "Toggle experimental features", category: "config" },
+      // ── Experimental ──
+      { name: "/realtime", description: "Toggle realtime voice mode (experimental)", category: "experimental" },
+      // ── Background Processes ──
+      { name: "/ps", description: "List background terminals", category: "processes" },
+      { name: "/clean", description: "Stop all background terminals", category: "processes" },
+      // ── Account ──
+      { name: "/logout", description: "Log out of Codex", category: "account" },
+      { name: "/feedback", description: "Send logs to maintainers", category: "account" },
     ];
   }
 }
