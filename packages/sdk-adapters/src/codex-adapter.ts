@@ -216,8 +216,43 @@ export class CodexAdapter implements AgentAdapter {
         return;
       }
 
+      // CLI-only commands that require interactive Codex terminal
+      case "agent":
+      case "apps":
+      case "compact":
+      case "copy":
+      case "debug-config":
+      case "diff":
+      case "experimental":
+      case "feedback":
+      case "fork":
+      case "init":
+      case "logout":
+      case "mcp":
+      case "mention":
+      case "model":
+      case "permissions":
+      case "approvals":
+      case "personality":
+      case "plan":
+      case "ps":
+      case "resume":
+      case "review":
+      case "sandbox-add-read-dir":
+      case "skills":
+      case "statusline": {
+        yield infoMsg(
+          `**/${cmd}** requires the Codex CLI terminal.\n\n` +
+          `Run in your terminal:\n\`\`\`\ncodex /${cmd}\n\`\`\``,
+        );
+        return;
+      }
+
       default:
-        // All other commands: pass through to SDK/model
+        // Unknown command — inform user rather than sending as prompt
+        yield infoMsg(
+          `Unknown command **/${cmd}**. Type **/help** to see available commands.`,
+        );
         return;
     }
   }

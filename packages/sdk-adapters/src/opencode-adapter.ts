@@ -180,8 +180,38 @@ export class OpencodeAdapter implements AgentAdapter {
         return;
       }
 
+      // CLI-only commands that require interactive opencode terminal
+      case "clear":
+      case "compact":
+      case "summarize":
+      case "connect":
+      case "details":
+      case "editor":
+      case "export":
+      case "init":
+      case "models":
+      case "redo":
+      case "sessions":
+      case "resume":
+      case "continue":
+      case "share":
+      case "themes":
+      case "thinking":
+      case "undo":
+      case "unshare":
+      case "upgrade": {
+        yield infoMsg(
+          `**/${cmd}** requires the opencode terminal.\n\n` +
+          `Run in your terminal:\n\`\`\`\nopencode\n\`\`\`\nThen use \`/${cmd}\` inside the TUI.`,
+        );
+        return;
+      }
+
       default:
-        // All other commands: pass through to CLI/model
+        // Unknown command — inform user rather than sending as prompt
+        yield infoMsg(
+          `Unknown command **/${cmd}**. Type **/help** to see available commands.`,
+        );
         return;
     }
   }

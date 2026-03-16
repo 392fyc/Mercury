@@ -189,7 +189,55 @@ export class GeminiAdapter implements AgentAdapter {
         return;
       }
 
+      // CLI-only commands that require interactive Gemini CLI terminal
+      case "about":
+      case "docs":
+      case "privacy":
+      case "bug":
+      case "chat":
+      case "resume":
+      case "rewind":
+      case "compress":
+      case "copy":
+      case "settings":
+      case "model":
+      case "theme":
+      case "auth":
+      case "editor":
+      case "terminal-setup":
+      case "init":
+      case "memory":
+      case "directory":
+      case "dir":
+      case "restore":
+      case "tools":
+      case "mcp":
+      case "extensions":
+      case "commands":
+      case "agents":
+      case "skills":
+      case "hooks":
+      case "plan":
+      case "shells":
+      case "bashes":
+      case "ide":
+      case "setup-github":
+      case "permissions":
+      case "policies":
+      case "upgrade":
+      case "vim": {
+        yield infoMsg(
+          `**/${cmd}** requires the Gemini CLI terminal.\n\n` +
+          `Run in your terminal:\n\`\`\`\ngemini\n\`\`\`\nThen use \`/${cmd}\` inside the CLI.`,
+        );
+        return;
+      }
+
       default:
+        // Unknown command — inform user rather than sending as prompt
+        yield infoMsg(
+          `Unknown command **/${cmd}**. Type **/help** to see available commands.`,
+        );
         return;
     }
   }
