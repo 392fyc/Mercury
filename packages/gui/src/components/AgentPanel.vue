@@ -220,7 +220,11 @@ function resizeTextarea() {
   const el = textareaEl.value;
   if (!el) return;
   el.style.height = "auto";
-  el.style.height = Math.min(el.scrollHeight, 120) + "px";
+  const maxH = 120;
+  const rawScrollH = el.scrollHeight; // measure before clamping
+  el.style.height = Math.min(rawScrollH, maxH) + "px";
+  // Show scrollbar when content exceeds max height
+  el.style.overflowY = rawScrollH > maxH ? "auto" : "hidden";
 }
 
 watch(

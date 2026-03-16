@@ -274,6 +274,26 @@ export class Orchestrator {
       sessionId = session.sessionId;
     }
 
+    // Validate that the adapter still knows about this session and it's usable.
+    // Sessions can become stale if the adapter was recreated (e.g. config update),
+    // if a previous stream errored out, or if the user ran /clear or /exit.
+    let needNewSession = false;
+    try {
+      const sessionInfo = await adapter.resumeSession(sessionId);
+      // If session was ended (e.g. /clear, /exit), create a fresh one
+      if (sessionInfo.status === "completed" || sessionInfo.status === "overflow") {
+        needNewSession = true;
+      }
+    } catch {
+      needNewSession = true;
+    }
+    if (needNewSession) {
+      this.sessions.delete(sessionId);
+      this.agentSessions.delete(agentId);
+      const session = await this.startSession(agentId);
+      sessionId = session.sessionId;
+    }
+
     this.bus.emit("agent.message.send", agentId, sessionId, {
       prompt: prompt.slice(0, 200),
       hasImages: images ? images.length : 0,
@@ -325,11 +345,13 @@ export class Orchestrator {
         error: errorMsg,
       });
 
-      // Clean up failed session
+      // Clean up failed session so next sendPrompt auto-creates a fresh one
       this.sessions.delete(sessionId);
       if (this.agentSessions.get(agentId) === sessionId) {
         this.agentSessions.delete(agentId);
       }
+      // Also end it in the adapter to avoid stale references
+      try { await adapter.endSession(sessionId); } catch { /* best-effort */ }
     }
   }
 

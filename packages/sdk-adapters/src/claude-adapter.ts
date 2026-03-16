@@ -171,6 +171,36 @@ export class ClaudeAdapter implements AgentAdapter {
         return;
       }
 
+      // CLI-only commands that require interactive terminal access
+      case "login":
+      case "logout":
+      case "doctor":
+      case "config":
+      case "terminal-setup":
+      case "permissions":
+      case "sandbox":
+      case "vim":
+      case "theme":
+      case "color":
+      case "keybindings":
+      case "statusline":
+      case "privacy-settings":
+      case "upgrade":
+      case "install-github-app":
+      case "install-slack-app":
+      case "remote-control":
+      case "remote-env":
+      case "desktop":
+      case "mobile":
+      case "stickers":
+      case "passes": {
+        yield infoMsg(
+          `**/${cmd}** requires the Claude Code CLI terminal.\n\n` +
+          `Run in your terminal:\n\`\`\`\nclaude ${cmd === "login" || cmd === "logout" ? `auth ${cmd}` : cmd}\n\`\`\``,
+        );
+        return;
+      }
+
       default:
         // All other commands: pass through to SDK.
         // The model/SDK will handle them naturally or respond appropriately.
@@ -273,6 +303,7 @@ export class ClaudeAdapter implements AgentAdapter {
     }
 
     let sdkSessionId: string | undefined;
+    let lastYieldedContent: string | undefined;
 
     // sdk.query() accepts string | AsyncIterable<SDKUserMessage> — both paths converge here
     for await (const message of sdk.query(queryArgs as { prompt: string; options: Record<string, unknown> })) {
@@ -296,6 +327,7 @@ export class ClaudeAdapter implements AgentAdapter {
           : extractTextFromBlocks(msg.content);
 
         if (content) {
+          lastYieldedContent = content;
           yield {
             role: "assistant",
             content,
@@ -305,13 +337,13 @@ export class ClaudeAdapter implements AgentAdapter {
         }
       }
 
-      // Result messages — final output
+      // Result messages — final output (skip if identical to last assistant message)
       if (msg.type === "result") {
         const resultText =
           typeof msg.result === "string"
             ? msg.result
             : extractTextFromBlocks(msg.result);
-        if (resultText) {
+        if (resultText && resultText !== lastYieldedContent) {
           yield {
             role: "assistant",
             content: resultText,
