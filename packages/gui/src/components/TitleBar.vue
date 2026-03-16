@@ -11,11 +11,6 @@ const { sidecarReady, anyActive, anyError } = useAgentStore();
 const projectRoot = ref("");
 const gitBranch = ref<string | null>(null);
 
-const projectName = computed(() => {
-  if (!projectRoot.value) return "";
-  const parts = projectRoot.value.replace(/\\/g, "/").split("/");
-  return parts[parts.length - 1] || parts[parts.length - 2] || "";
-});
 
 async function loadProjectInfo() {
   try {
