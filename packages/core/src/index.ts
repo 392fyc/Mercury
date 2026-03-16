@@ -17,6 +17,8 @@ export type {
   MercuryEvent,
   ObsidianConfig,
   SessionInfo,
+  SlashCommand,
+  SlashCommandArg,
   TaskBundle,
   TaskStatus,
 } from "./types.js";

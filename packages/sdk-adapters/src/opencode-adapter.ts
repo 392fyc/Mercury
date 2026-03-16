@@ -15,6 +15,7 @@ import type {
   AgentConfig,
   AgentMessage,
   SessionInfo,
+  SlashCommand,
 } from "@mercury/core";
 
 export class OpencodeAdapter implements AgentAdapter {
@@ -183,5 +184,17 @@ export class OpencodeAdapter implements AgentAdapter {
       this.serverProcess.kill();
       this.serverProcess = null;
     }
+  }
+
+  getSlashCommands(): SlashCommand[] {
+    return [
+      { name: "/help", description: "Show available commands", category: "general" },
+      { name: "/compact", description: "Compact conversation context", category: "session" },
+      { name: "/clear", description: "Clear conversation history", category: "session" },
+      { name: "/model", description: "Change the model", category: "config", args: [{ name: "model", description: "Model name", required: false, type: "string" }] },
+      { name: "/diff", description: "Show pending changes", category: "code" },
+      { name: "/undo", description: "Undo last change", category: "code" },
+      { name: "/exit", description: "Exit the CLI", category: "general" },
+    ];
   }
 }

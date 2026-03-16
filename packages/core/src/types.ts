@@ -204,6 +204,23 @@ export interface IssueBundle {
   };
 }
 
+// ─── Slash Commands ───
+
+export interface SlashCommandArg {
+  name: string;
+  description: string;
+  required: boolean;
+  type: "string" | "number" | "boolean";
+  defaultValue?: string;
+}
+
+export interface SlashCommand {
+  name: string;          // e.g. "/compact"
+  description: string;   // e.g. "Compact conversation history"
+  args?: SlashCommandArg[];
+  category?: string;     // e.g. "session", "debug", "config"
+}
+
 // ─── Session Management ───
 
 export interface SessionInfo {
@@ -234,6 +251,9 @@ export interface AgentAdapter {
   sendPrompt(sessionId: string, prompt: string): AsyncGenerator<AgentMessage>;
   resumeSession(sessionId: string): Promise<SessionInfo>;
   endSession(sessionId: string): Promise<void>;
+
+  // Slash commands supported by this agent's CLI
+  getSlashCommands(): SlashCommand[];
 
   // Session continuity: when context overflows, create new session inheriting context
   handoffSession(

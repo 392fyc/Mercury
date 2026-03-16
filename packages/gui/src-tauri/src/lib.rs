@@ -83,6 +83,7 @@ pub fn run() {
             commands::create_issue,
             commands::resolve_issue,
             commands::summarize_session,
+            commands::get_slash_commands,
             commands::kb_read,
             commands::kb_search,
             commands::kb_list,

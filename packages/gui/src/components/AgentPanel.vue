@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { useAgentStore } from "../stores/agents";
 import { useMessageStore } from "../stores/messages";
+import { getSlashCommands } from "../lib/tauri-bridge";
+import type { SlashCommand } from "../lib/tauri-bridge";
+import SlashCommandPalette from "./SlashCommandPalette.vue";
 
 const props = defineProps<{
   agentId: string;
@@ -17,9 +20,57 @@ const { getMessages, sendPrompt } = useMessageStore();
 const inputText = ref("");
 const messagesEl = ref<HTMLDivElement>();
 const textareaEl = ref<HTMLTextAreaElement>();
+const paletteRef = ref<InstanceType<typeof SlashCommandPalette>>();
 
 const status = computed(() => getStatus(props.agentId));
 const messages = computed(() => getMessages(props.agentId));
+
+// Slash command state
+const slashCommands = ref<SlashCommand[]>([]);
+const slashCommandSelected = ref(false); // true after user picks a command from palette
+const showSlashPalette = computed(() =>
+  inputText.value.startsWith("/") && !slashCommandSelected.value,
+);
+const slashQuery = computed(() => {
+  if (!showSlashPalette.value) return "";
+  // Extract text after "/" up to first space (for filtering)
+  const text = inputText.value.slice(1);
+  const spaceIdx = text.indexOf(" ");
+  return spaceIdx === -1 ? text : text.slice(0, spaceIdx);
+});
+
+// Reset selection state when input no longer starts with "/"
+watch(inputText, (val) => {
+  if (!val.startsWith("/")) {
+    slashCommandSelected.value = false;
+  }
+});
+
+// Load slash commands (with retry if sidecar not ready)
+async function loadSlashCommands() {
+  if (slashCommands.value.length > 0) return;
+  try {
+    slashCommands.value = await getSlashCommands(props.agentId);
+  } catch {
+    slashCommands.value = [];
+  }
+}
+
+onMounted(loadSlashCommands);
+
+function handleSlashSelect(cmd: SlashCommand) {
+  slashCommandSelected.value = true;
+  const hasArgs = cmd.args && cmd.args.length > 0;
+  if (hasArgs) {
+    // Has args (required or optional) — let user type them
+    inputText.value = cmd.name + " ";
+    nextTick(() => textareaEl.value?.focus());
+  } else {
+    // No args at all — send immediately
+    inputText.value = cmd.name;
+    handleSend();
+  }
+}
 
 const roleColor = computed(() => {
   switch (props.role) {
@@ -48,6 +99,18 @@ async function handleSend() {
 }
 
 function handleKeydown(e: KeyboardEvent) {
+  // Forward navigation keys to slash palette when visible
+  if (showSlashPalette.value && ["ArrowUp", "ArrowDown", "Tab", "Escape"].includes(e.key)) {
+    paletteRef.value?.handleKeydown(e);
+    return;
+  }
+  if (showSlashPalette.value && e.key === "Enter" && !e.shiftKey) {
+    // Only forward to palette if there are matching commands
+    if (slashCommands.value.length > 0) {
+      paletteRef.value?.handleKeydown(e);
+      return;
+    }
+  }
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
     handleSend();
@@ -106,7 +169,15 @@ watch(
       </div>
     </div>
 
-    <div class="panel-input">
+    <div class="panel-input" style="position: relative;">
+      <SlashCommandPalette
+        ref="paletteRef"
+        :commands="slashCommands"
+        :query="slashQuery"
+        :visible="showSlashPalette"
+        @select="handleSlashSelect"
+        @close="inputText = ''"
+      />
       <textarea
         ref="textareaEl"
         v-model="inputText"
@@ -115,6 +186,7 @@ watch(
         rows="1"
         @keydown="handleKeydown"
         @input="resizeTextarea"
+        @focus="loadSlashCommands"
       ></textarea>
     </div>
   </div>

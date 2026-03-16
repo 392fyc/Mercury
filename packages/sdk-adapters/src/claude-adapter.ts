@@ -16,6 +16,7 @@ import type {
   AgentConfig,
   AgentMessage,
   SessionInfo,
+  SlashCommand,
 } from "@mercury/core";
 
 /** Extract text content from SDK message content blocks. */
@@ -226,5 +227,49 @@ export class ClaudeAdapter implements AgentAdapter {
     // The first prompt to the new session will include the summary
     // so the agent has context from the previous session
     return newSession;
+  }
+
+  getSlashCommands(): SlashCommand[] {
+    return [
+      // General
+      { name: "/help", description: "Show help and available commands", category: "general" },
+      { name: "/feedback", description: "Submit feedback about Claude Code", category: "general" },
+      { name: "/exit", description: "Exit the CLI", category: "general" },
+      // Session
+      { name: "/clear", description: "Clear conversation history and free up context", category: "session" },
+      { name: "/compact", description: "Compact conversation with optional focus instructions", category: "session", args: [{ name: "instructions", description: "Optional focus instructions", required: false, type: "string" }] },
+      { name: "/resume", description: "Resume a conversation by ID or name", category: "session", args: [{ name: "session", description: "Session ID or name", required: false, type: "string" }] },
+      { name: "/fork", description: "Create a fork of the current conversation", category: "session", args: [{ name: "name", description: "Fork name", required: false, type: "string" }] },
+      { name: "/rename", description: "Rename the current session", category: "session", args: [{ name: "name", description: "New name", required: false, type: "string" }] },
+      { name: "/export", description: "Export the current conversation as plain text", category: "session", args: [{ name: "filename", description: "Output filename", required: false, type: "string" }] },
+      // Config
+      { name: "/init", description: "Initialize project with CLAUDE.md guide", category: "config" },
+      { name: "/config", description: "Open the Settings interface", category: "config" },
+      { name: "/model", description: "Select or change the AI model", category: "config", args: [{ name: "model", description: "Model name", required: false, type: "string" }] },
+      { name: "/permissions", description: "View or update permissions", category: "config" },
+      { name: "/memory", description: "Edit CLAUDE.md memory files", category: "config" },
+      { name: "/mcp", description: "Manage MCP server connections", category: "config" },
+      { name: "/login", description: "Sign in to your Anthropic account", category: "config" },
+      { name: "/logout", description: "Sign out from your Anthropic account", category: "config" },
+      // Code
+      { name: "/diff", description: "Open interactive diff viewer for uncommitted changes", category: "code" },
+      { name: "/review", description: "Review code changes", category: "code" },
+      { name: "/plan", description: "Enter plan mode directly from prompt", category: "code" },
+      { name: "/rewind", description: "Rewind conversation and/or code to a previous point", category: "code" },
+      { name: "/add-dir", description: "Add a new working directory", category: "code", args: [{ name: "path", description: "Directory path", required: true, type: "string" }] },
+      // Debug
+      { name: "/cost", description: "Show token usage statistics", category: "debug" },
+      { name: "/doctor", description: "Diagnose and verify installation", category: "debug" },
+      { name: "/context", description: "Visualize current context usage", category: "debug" },
+      { name: "/usage", description: "Show plan usage limits and rate limit status", category: "debug" },
+      { name: "/stats", description: "Visualize daily usage and session history", category: "debug" },
+      // Display
+      { name: "/copy", description: "Copy last assistant response to clipboard", category: "display" },
+      { name: "/theme", description: "Change the color theme", category: "display" },
+      { name: "/color", description: "Set the prompt bar color", category: "display", args: [{ name: "color", description: "Color name or 'default'", required: false, type: "string" }] },
+      { name: "/vim", description: "Toggle between Vim and Normal editing modes", category: "display" },
+      { name: "/effort", description: "Set the model effort level", category: "display", args: [{ name: "level", description: "low|medium|high|max|auto", required: false, type: "string" }] },
+      { name: "/fast", description: "Toggle fast mode on or off", category: "display", args: [{ name: "toggle", description: "on|off", required: false, type: "string" }] },
+    ];
   }
 }

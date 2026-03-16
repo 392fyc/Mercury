@@ -1,0 +1,29 @@
+# Mercury Project Rules
+
+## MUST
+
+- **Commit at every checkpoint**: Every major milestone MUST be committed and pushed to the remote repository to maintain clear progress history.
+- **Code review before commit**: Each milestone MUST be code-reviewed BEFORE committing, not after. Quality gates are enforced pre-commit.
+- **Research from live sources**: All research MUST be based on actual web queries and verified sources, not training data. The agent ecosystem evolves rapidly.
+- **Main Agent is user-configurable**: The Main Agent MUST be user-configurable via UI/config. Any agent (Claude Code, Codex, opencode, Gemini CLI, etc.) can be assigned as Main Agent.
+- **Install to D drive**: Install software to `D:\Program Files`, not C drive, when possible.
+- **Obsidian CLI is optional**: KB/Obsidian features MUST be opt-in. Agents retain their own MCP/mem0/knowledge architecture independently. Never make agents depend on KnowledgeService.
+- **Use Chinese for milestone summaries**: Return phase/milestone completion messages in Chinese.
+
+## DO NOT
+
+- DO NOT hardcode any specific agent as the Main Agent.
+- DO NOT make Obsidian/KB a required dependency — agents keep their own MCP/SDK architecture.
+- DO NOT commit without running code review first.
+- DO NOT guess or assume SDK/CLI APIs from training data — verify via web search or actual source code.
+- DO NOT install software to the C drive when D drive is available.
+- DO NOT interfere with agent-level architecture, MCP connections, or mem0 configurations — Mercury is a CLI-to-GUI wrapper, not an API platform.
+
+## Architecture
+
+Mercury is a **CLI-to-GUI wrapper** for multi-agent collaboration:
+- Tauri 2 (Rust) + Vue 3 frontend
+- Node.js sidecar orchestrator (JSON-RPC 2.0 over stdio)
+- SDK adapters wrap existing CLIs (Claude Code, Codex, opencode)
+- SoT (Ship of Theseus) task orchestration pattern
+- Flow: Vue → Tauri Rust → Node.js Orchestrator → SDK Adapters → Agent CLIs

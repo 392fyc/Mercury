@@ -220,6 +220,27 @@ export async function summarizeSession(
   return invoke("summarize_session", { agentId, summary });
 }
 
+// ─── Slash Commands ───
+
+export interface SlashCommandArg {
+  name: string;
+  description: string;
+  required: boolean;
+  type: string;
+  defaultValue?: string;
+}
+
+export interface SlashCommand {
+  name: string;
+  description: string;
+  args?: SlashCommandArg[];
+  category?: string;
+}
+
+export async function getSlashCommands(agentId: string): Promise<SlashCommand[]> {
+  return invoke<SlashCommand[]>("get_slash_commands", { agentId });
+}
+
 // ─── Knowledge Base Operations (optional, requires obsidian enabled) ───
 
 export async function kbRead(file: string): Promise<{ content: string }> {

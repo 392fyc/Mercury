@@ -10,6 +10,7 @@ import type {
   MercuryConfig,
   AcceptanceVerdict,
   ImplementationReceipt,
+  SlashCommand,
   TaskStatus,
 } from "@mercury/core";
 import { AgentRegistry } from "./agent-registry.js";
@@ -145,6 +146,8 @@ export class Orchestrator {
         return this.kbWrite(params.name as string, params.content as string);
       case "kb_append":
         return this.kbAppend(params.file as string, params.content as string);
+      case "get_slash_commands":
+        return this.getSlashCommands(params.agentId as string);
       case "ping":
         return { pong: true, timestamp: Date.now() };
       default:
@@ -404,6 +407,13 @@ export class Orchestrator {
     // Start fresh session
     const newSession = await this.startSession(agentId);
     return { newSessionId: newSession.sessionId };
+  }
+
+  // ─── Slash Commands ───
+
+  private getSlashCommands(agentId: string): SlashCommand[] {
+    const adapter = this.registry.getAdapter(agentId);
+    return adapter.getSlashCommands();
   }
 
   // ─── Config RPC ───

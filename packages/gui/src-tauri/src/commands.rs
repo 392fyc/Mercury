@@ -196,6 +196,18 @@ pub async fn summarize_session(
         .await
 }
 
+// ─── Slash Commands ───
+
+#[tauri::command]
+pub async fn get_slash_commands(
+    sidecar: State<'_, SharedSidecar>,
+    agent_id: String,
+) -> Result<serde_json::Value, String> {
+    let mgr = get_sidecar(&sidecar).await?;
+    mgr.send_request("get_slash_commands", serde_json::json!({ "agentId": agent_id }))
+        .await
+}
+
 // ─── Knowledge Base Commands (optional) ───
 
 #[tauri::command]

@@ -11,6 +11,7 @@ import type {
   AgentConfig,
   AgentMessage,
   SessionInfo,
+  SlashCommand,
 } from "@mercury/core";
 
 export class CodexAdapter implements AgentAdapter {
@@ -183,5 +184,17 @@ export class CodexAdapter implements AgentAdapter {
     const newSession = await this.startSession(cwd);
     newSession.parentSessionId = oldSessionId;
     return newSession;
+  }
+
+  getSlashCommands(): SlashCommand[] {
+    return [
+      { name: "/help", description: "Show available commands", category: "general" },
+      { name: "/model", description: "Change the model", category: "config", args: [{ name: "model", description: "Model name", required: false, type: "string" }] },
+      { name: "/approval", description: "Change approval mode (suggest, auto-edit, full-auto)", category: "config", args: [{ name: "mode", description: "suggest|auto-edit|full-auto", required: false, type: "string" }] },
+      { name: "/undo", description: "Undo last file change", category: "code" },
+      { name: "/diff", description: "Show pending changes", category: "code" },
+      { name: "/clear", description: "Clear conversation context", category: "session" },
+      { name: "/exit", description: "Exit the CLI", category: "general" },
+    ];
   }
 }
