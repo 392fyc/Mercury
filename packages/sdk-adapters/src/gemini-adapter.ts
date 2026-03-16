@@ -314,7 +314,8 @@ export class GeminiAdapter implements AgentAdapter {
 
   /**
    * Execute Gemini CLI in headless mode.
-   * `gemini -p "prompt" --output-format json [-y] [--resume UUID]`
+   * Uses stdin piping (`echo prompt | gemini --output-format json -y`) to avoid
+   * shell injection when shell: true is required on Windows for .cmd resolution.
    */
   private async runGeminiCli(
     session: GeminiSession,
@@ -324,7 +325,8 @@ export class GeminiAdapter implements AgentAdapter {
     stats?: Record<string, unknown>;
     geminiSessionId?: string;
   }> {
-    const args = ["-p", prompt, "--output-format", "json", "-y"];
+    // Pass prompt via stdin (not -p flag) to avoid shell injection when shell: true
+    const args = ["--output-format", "json", "-y"];
 
     // Resume existing Gemini session if available
     if (session.geminiSessionId) {
@@ -339,11 +341,20 @@ export class GeminiAdapter implements AgentAdapter {
     }
 
     return new Promise((resolve, reject) => {
+      // On Windows, npm-installed CLIs create .cmd wrappers that require
+      // shell: true for spawn to find them. Prompt is passed via stdin
+      // (not as CLI arg) to prevent shell injection.
+      const isWindows = process.platform === "win32";
       const proc = spawn("gemini", args, {
         stdio: ["pipe", "pipe", "pipe"],
         cwd: session.cwd,
         env,
+        shell: isWindows,
       });
+
+      // Write prompt to stdin and close it to signal EOF
+      proc.stdin?.write(prompt);
+      proc.stdin?.end();
 
       let stdout = "";
       let stderr = "";

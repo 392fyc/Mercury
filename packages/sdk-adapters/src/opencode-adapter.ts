@@ -70,10 +70,11 @@ export class OpencodeAdapter implements AgentAdapter {
       // Not running, start it
     }
 
+    // shell: true only on Windows for .cmd wrapper resolution (no user input in args here)
     this.serverProcess = spawn("opencode", ["serve", "--port", String(this.port)], {
       stdio: "pipe",
       detached: false,
-      shell: true,
+      shell: process.platform === "win32",
     });
 
     // Wait for server to be ready (with proper cleanup of polling timer)
@@ -335,14 +336,21 @@ export class OpencodeAdapter implements AgentAdapter {
   }
 
   /**
-   * One-shot execution: opencode run --format json "prompt"
+   * One-shot execution via stdin piping to avoid shell injection.
+   * On Windows, shell: true is needed for .cmd wrapper resolution;
+   * prompt is piped via stdin (not as a CLI arg) for safety.
    */
   private async runOneShot(prompt: string): Promise<string> {
     return new Promise((resolve, reject) => {
-      const proc = spawn("opencode", ["run", "--format", "json", prompt], {
+      const isWindows = process.platform === "win32";
+      const proc = spawn("opencode", ["run", "--format", "json"], {
         stdio: ["pipe", "pipe", "pipe"],
-        shell: true,
+        shell: isWindows,
       });
+
+      // Pipe prompt via stdin to prevent shell metacharacter injection
+      proc.stdin?.write(prompt);
+      proc.stdin?.end();
 
       let stdout = "";
       let stderr = "";

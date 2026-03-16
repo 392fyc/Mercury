@@ -281,7 +281,11 @@ export interface AgentAdapter {
 
   /**
    * Inject shared context as system prompt.
-   * Uses SDK-level system instructions (does NOT consume conversation context window).
+   * Adapters use SDK-native system instructions where available (Claude SDK
+   * `options.systemPrompt`, opencode HTTP `system` field, Gemini `GEMINI_SYSTEM_MD`
+   * env var). For adapters without native support (Codex, opencode CLI fallback),
+   * the context is prepended to the first user prompt of each session, which
+   * does consume conversation context window tokens.
    * Called by Orchestrator when KB context is built/refreshed.
    */
   setSystemPrompt(prompt: string): void;
