@@ -575,16 +575,16 @@ function handleKeydown(e: KeyboardEvent) {
 }
 
 .role-checkboxes {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 4px;
   margin-top: 2px;
 }
 
 .role-checkbox {
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
   font-size: 11px;
   color: var(--text-secondary);
   cursor: pointer;

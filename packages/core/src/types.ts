@@ -99,6 +99,7 @@ export const ROLE_CARDS: Record<AgentRole, RoleCard> = {
 export interface ObsidianConfig {
   enabled: boolean;
   vaultName: string;
+  vaultPath?: string; // filesystem path to vault root (for git sync)
   autoInjectContext: boolean;
   contextFiles: string[]; // files to inject as system prompt context
 }
@@ -147,6 +148,9 @@ export type EventType =
   | "orchestrator.session.summarize"
   | "orchestrator.context.compact"
   | "orchestrator.session.handoff"
+  | "orchestrator.task.main_review"
+  | "orchestrator.task.callback"
+  | "orchestrator.scope.violation"
   | "human.intervention";
 
 export interface MercuryEvent<T = unknown> {
@@ -174,6 +178,7 @@ export type TaskStatus =
   | "dispatched"
   | "in_progress"
   | "implementation_done"
+  | "main_review"
   | "acceptance"
   | "verified"
   | "closed"
@@ -216,6 +221,20 @@ export interface TaskBundle {
   reworkCount: number;
   maxReworks: number;
   linkedIssueIds: string[];
+
+  // Callback routing: Main Agent session that dispatched this task
+  originatorSessionId?: string;
+
+  // Rework history: accumulated across attempts for iterative context
+  reworkHistory: ReworkHistoryEntry[];
+}
+
+export interface ReworkHistoryEntry {
+  attempt: number;
+  receipt: ImplementationReceipt;
+  acceptanceId: string;
+  findings: string[];
+  timestamp: number;
 }
 
 export interface ImplementationReceipt {
@@ -227,6 +246,12 @@ export interface ImplementationReceipt {
   docsUpdated: string[];
   residualRisks: string[];
   completedAt: number;
+  scopeViolations?: ScopeViolation[];
+}
+
+export interface ScopeViolation {
+  file: string;
+  reason: string;
 }
 
 // ─── Acceptance Bundle ───

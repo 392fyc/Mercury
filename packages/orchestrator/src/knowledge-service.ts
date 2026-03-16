@@ -15,11 +15,13 @@ const execFileAsync = promisify(execFile);
 
 export class KnowledgeService {
   private vaultName: string;
+  private vaultPath: string | undefined;
   private enabled: boolean;
   private obsidianBin: string;
 
   constructor(config: ObsidianConfig, obsidianBin = "obsidian") {
     this.vaultName = config.vaultName;
+    this.vaultPath = config.vaultPath;
     this.enabled = config.enabled;
     this.obsidianBin = obsidianBin;
   }
@@ -90,6 +92,27 @@ export class KnowledgeService {
       return JSON.parse(raw) as Record<string, unknown>;
     } catch {
       return {};
+    }
+  }
+
+  /**
+   * Git sync the KB vault — fire-and-forget commit.
+   * Failures are logged but never block the caller.
+   */
+  async gitSync(message: string): Promise<void> {
+    if (!this.enabled) return;
+
+    try {
+      await execFileAsync("git", ["add", "-A"], {
+        cwd: this.vaultPath,
+        timeout: 10_000,
+      });
+      await execFileAsync("git", ["commit", "-m", message, "--allow-empty"], {
+        cwd: this.vaultPath,
+        timeout: 10_000,
+      });
+    } catch {
+      // Fire-and-forget: log but never throw
     }
   }
 

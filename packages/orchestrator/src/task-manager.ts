@@ -18,6 +18,8 @@ import type {
   IssueType,
   AgentRole,
   AgentConfig,
+  ReworkHistoryEntry,
+  ScopeViolation,
 } from "@mercury/core";
 import type { TaskPersistence } from "./task-persistence-kb.js";
 
@@ -27,7 +29,8 @@ const VALID_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
   drafted: ["dispatched"],
   dispatched: ["in_progress"],
   in_progress: ["implementation_done", "failed", "blocked"],
-  implementation_done: ["acceptance", "verified", "in_progress"],
+  implementation_done: ["main_review"],
+  main_review: ["acceptance", "in_progress"],
   acceptance: ["verified", "in_progress"],
   verified: ["closed"],
   blocked: ["in_progress", "failed"],
@@ -144,6 +147,7 @@ export class TaskManager {
       reworkCount: 0,
       maxReworks: params.maxReworks ?? 3,
       linkedIssueIds: [],
+      reworkHistory: [],
     };
 
     // Agents First: populate structured assignee from agent config
@@ -166,7 +170,25 @@ export class TaskManager {
     return task;
   }
 
+  /** Get task — in-memory first, KB fallback. */
   getTask(taskId: string): TaskBundle | undefined {
+    return this.tasks.get(taskId);
+  }
+
+  /** Async get task — KB first, in-memory fallback. Use when freshness matters (e.g., dashboard). */
+  async getTaskAsync(taskId: string): Promise<TaskBundle | undefined> {
+    if (this.persistence) {
+      try {
+        const fromKb = await this.persistence.loadTask(taskId);
+        if (fromKb) {
+          // Update write-through cache
+          this.tasks.set(taskId, fromKb);
+          return fromKb;
+        }
+      } catch {
+        // KB read failed — fall through to in-memory
+      }
+    }
     return this.tasks.get(taskId);
   }
 
@@ -181,7 +203,34 @@ export class TaskManager {
     return result;
   }
 
+  /** Async list tasks — KB first, in-memory fallback. */
+  async listTasksAsync(filter?: { status?: TaskStatus; assignedTo?: string }): Promise<TaskBundle[]> {
+    if (this.persistence) {
+      try {
+        const fromKb = await this.persistence.loadTaskList(filter);
+        if (fromKb.length > 0) {
+          // Update write-through cache
+          for (const t of fromKb) this.tasks.set(t.taskId, t);
+          return fromKb;
+        }
+      } catch {
+        // KB read failed — fall through to in-memory
+      }
+    }
+    return this.listTasks(filter);
+  }
+
   // ─── State Machine ───
+
+  /** Git sync triggers on key state transitions. */
+  private static readonly GIT_SYNC_STATES: Set<TaskStatus> = new Set([
+    "dispatched",
+    "implementation_done",
+    "main_review",
+    "acceptance",
+    "verified",
+    "closed",
+  ]);
 
   transitionTask(taskId: string, newStatus: TaskStatus, agentId: string): TaskBundle {
     const task = this.tasks.get(taskId);
@@ -212,6 +261,12 @@ export class TaskManager {
     }
 
     this.persistTask(task);
+
+    // Fire-and-forget git sync on key transitions
+    if (TaskManager.GIT_SYNC_STATES.has(newStatus)) {
+      this.persistence?.gitSync(`[mercury] ${taskId}: ${from} → ${newStatus}`).catch(() => {});
+    }
+
     return task;
   }
 
@@ -222,6 +277,19 @@ export class TaskManager {
     if (!task) throw new Error(`Task not found: ${taskId}`);
 
     task.implementationReceipt = receipt;
+
+    // Post-hoc scope validation (advisory — does not block state machine)
+    const scopeResult = this.validateScope(task);
+    if (!scopeResult.valid) {
+      receipt.scopeViolations = scopeResult.violations;
+      this.bus.emit(
+        "orchestrator.scope.violation",
+        receipt.implementer,
+        this.getLatestSession(taskId) ?? "orchestrator",
+        { taskId, violations: scopeResult.violations },
+      );
+    }
+
     this.persistTask(task);
 
     // Auto-transition to implementation_done if currently in_progress
@@ -232,20 +300,60 @@ export class TaskManager {
     return task;
   }
 
+  // ─── Scope Validation ───
+
+  validateScope(task: TaskBundle): { valid: boolean; violations: ScopeViolation[] } {
+    const violations: ScopeViolation[] = [];
+    const receipt = task.implementationReceipt;
+    if (!receipt) return { valid: true, violations };
+
+    // Check changedFiles against allowedWriteScope.codePaths
+    for (const file of receipt.changedFiles) {
+      const allowed = task.allowedWriteScope.codePaths.some((prefix) =>
+        file.startsWith(prefix),
+      );
+      if (!allowed) {
+        violations.push({ file, reason: "Outside allowedWriteScope.codePaths" });
+      }
+    }
+
+    // Check docsUpdated against docsMustNotTouch
+    for (const doc of receipt.docsUpdated) {
+      if (task.docsMustNotTouch.includes(doc)) {
+        violations.push({ file: doc, reason: "Listed in docsMustNotTouch" });
+      }
+    }
+
+    return { valid: violations.length === 0, violations };
+  }
+
   // ─── Rework ───
 
   triggerRework(
     taskId: string,
     _feedback: string,
+    acceptanceId?: string,
+    findings?: string[],
   ): { reworked: boolean; newSession: boolean } {
     const task = this.tasks.get(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
+
+    // Push current receipt + acceptance findings into rework history
+    if (task.implementationReceipt) {
+      task.reworkHistory.push({
+        attempt: task.reworkCount + 1,
+        receipt: { ...task.implementationReceipt },
+        acceptanceId: acceptanceId ?? "",
+        findings: findings ?? [],
+        timestamp: Date.now(),
+      });
+    }
 
     task.reworkCount += 1;
     const needsNewSession = task.reworkCount > task.maxReworks;
 
     // Transition back to in_progress via state machine
-    if (task.status === "acceptance" || task.status === "implementation_done") {
+    if (task.status === "acceptance" || task.status === "main_review") {
       this.transitionTask(taskId, "in_progress", task.assignedTo);
     }
 
@@ -271,10 +379,10 @@ export class TaskManager {
     const task = this.tasks.get(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
 
-    const validForAcceptance: TaskStatus[] = ["implementation_done", "acceptance"];
+    const validForAcceptance: TaskStatus[] = ["implementation_done", "main_review", "acceptance"];
     if (!validForAcceptance.includes(task.status)) {
       throw new Error(
-        `Cannot create acceptance for task in status "${task.status}" (must be implementation_done or acceptance)`,
+        `Cannot create acceptance for task in status "${task.status}" (must be implementation_done, main_review, or acceptance)`,
       );
     }
 
@@ -512,15 +620,24 @@ export function buildAcceptancePrompt(
   lines.push("```");
   lines.push("");
 
+  // Blind review: only expose changedFiles and branch — NOT summary/evidence/residualRisks
   if (task.implementationReceipt) {
-    lines.push("## Implementation Receipt");
+    const blindReceipt = {
+      branch: task.implementationReceipt.branch,
+      changedFiles: task.implementationReceipt.changedFiles,
+      docsUpdated: task.implementationReceipt.docsUpdated,
+    };
+    lines.push("## Implementation (blind — changed files only)");
     lines.push("```json");
-    lines.push(JSON.stringify(task.implementationReceipt, null, 2));
+    lines.push(JSON.stringify(blindReceipt, null, 2));
     lines.push("```");
     lines.push("");
   }
 
   lines.push("## Instructions");
+  lines.push("BLIND REVIEW: You are FORBIDDEN from referencing the developer's self-assessment,");
+  lines.push("evidence descriptions, or risk evaluations. Evaluate ONLY from code, tests, and runtime output.");
+  lines.push("");
   lines.push("Review the implementation against the definition of done and scope above.");
   lines.push("Provide your review as JSON:");
   lines.push("```json");
@@ -541,9 +658,10 @@ export function buildReworkPrompt(
   const lines: string[] = [];
 
   lines.push(`# Rework Required [${task.taskId}]`);
+  lines.push(`This is attempt **${task.reworkCount}/${task.maxReworks}**.`);
   lines.push("");
 
-  // Agents First: structured rework metadata
+  // Current failure context
   const reworkMeta = {
     taskId: task.taskId,
     assignee: task.assignee ?? { agentId: task.assignedTo },
@@ -554,15 +672,79 @@ export function buildReworkPrompt(
     findings: acceptance.results?.findings ?? [],
     recommendations: acceptance.results?.recommendations ?? [],
   };
-  lines.push("## Rework Bundle (machine-readable)");
+  lines.push("## Current Failure (machine-readable)");
   lines.push("```json");
   lines.push(JSON.stringify(reworkMeta, null, 2));
   lines.push("```");
   lines.push("");
 
+  // Previous receipt (what was rejected)
+  if (task.implementationReceipt) {
+    lines.push("## Rejected Implementation Receipt");
+    lines.push("```json");
+    lines.push(JSON.stringify(task.implementationReceipt, null, 2));
+    lines.push("```");
+    lines.push("");
+  }
+
+  // Full rework history for iterative learning
+  if (task.reworkHistory.length > 0) {
+    lines.push("## Rework History");
+    for (const entry of task.reworkHistory) {
+      lines.push(`### Attempt ${entry.attempt}`);
+      lines.push(`- Acceptance: ${entry.acceptanceId}`);
+      lines.push(`- Findings: ${entry.findings.join("; ") || "none"}`);
+      lines.push(`- Timestamp: ${new Date(entry.timestamp).toISOString()}`);
+    }
+    lines.push("");
+  }
+
   lines.push("## Instructions");
   lines.push("Address the findings above within your current scope. Do not start from scratch.");
+  lines.push("Learn from previous attempts listed in the rework history — do not repeat the same mistakes.");
   lines.push("When complete, output an updated JSON receipt.");
+
+  return lines.join("\n");
+}
+
+// ─── Main Review Prompt (Phase 4: two-stage verification) ───
+
+export function buildMainReviewPrompt(task: TaskBundle): string {
+  const lines: string[] = [];
+
+  lines.push(`# Main Agent Review: ${task.title} [${task.taskId}]`);
+  lines.push("");
+
+  // Full receipt (Main Agent is the originator — not blind)
+  if (task.implementationReceipt) {
+    lines.push("## Implementation Receipt");
+    lines.push("```json");
+    lines.push(JSON.stringify(task.implementationReceipt, null, 2));
+    lines.push("```");
+    lines.push("");
+  }
+
+  // Scope violations (if any)
+  if (task.implementationReceipt?.scopeViolations?.length) {
+    lines.push("## ⚠ Scope Violations Detected");
+    for (const v of task.implementationReceipt.scopeViolations) {
+      lines.push(`- **${v.file}**: ${v.reason}`);
+    }
+    lines.push("");
+  }
+
+  // Definition of done checklist
+  lines.push("## Definition of Done");
+  for (const item of task.definitionOfDone) {
+    lines.push(`- [ ] ${item}`);
+  }
+  lines.push("");
+
+  lines.push("## Instructions");
+  lines.push("Quick review: Does this implementation satisfy the definition of done?");
+  lines.push("Reply with one of:");
+  lines.push("- `APPROVE_FOR_ACCEPTANCE` — proceed to blind acceptance review");
+  lines.push("- `SEND_BACK` followed by reasons — return to dev agent for rework");
 
   return lines.join("\n");
 }

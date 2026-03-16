@@ -8,9 +8,12 @@
  *
  * Each file is a complete JSON snapshot of the entity.
  * Writes are fire-and-forget — errors are logged, never block the state machine.
+ *
+ * KB is the authoritative source. TaskManager reads from KB first,
+ * falls back to in-memory Map as write-through cache.
  */
 
-import type { TaskBundle, AcceptanceBundle, IssueBundle } from "@mercury/core";
+import type { TaskBundle, AcceptanceBundle, IssueBundle, TaskStatus } from "@mercury/core";
 import type { KnowledgeService } from "./knowledge-service.js";
 
 export interface TaskPersistence {
@@ -22,6 +25,9 @@ export interface TaskPersistence {
     acceptances: AcceptanceBundle[];
     issues: IssueBundle[];
   }>;
+  loadTask(taskId: string): Promise<TaskBundle | null>;
+  loadTaskList(filter?: { status?: TaskStatus; assignedTo?: string }): Promise<TaskBundle[]>;
+  gitSync(message: string): Promise<void>;
 }
 
 export class TaskPersistenceKB implements TaskPersistence {
@@ -58,6 +64,37 @@ export class TaskPersistenceKB implements TaskPersistence {
     );
 
     return { tasks, acceptances, issues };
+  }
+
+  /** Load a single task from KB by ID. */
+  async loadTask(taskId: string): Promise<TaskBundle | null> {
+    try {
+      const raw = await this.kb.read(`tasks/${taskId}`);
+      return JSON.parse(raw) as TaskBundle;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Load task list from KB with optional filtering. */
+  async loadTaskList(filter?: { status?: TaskStatus; assignedTo?: string }): Promise<TaskBundle[]> {
+    let tasks = await this.loadFolder<TaskBundle>("tasks");
+    if (filter?.status) {
+      tasks = tasks.filter((t) => t.status === filter.status);
+    }
+    if (filter?.assignedTo) {
+      tasks = tasks.filter((t) => t.assignedTo === filter.assignedTo);
+    }
+    return tasks;
+  }
+
+  /** Delegate git sync to KnowledgeService. Fire-and-forget. */
+  async gitSync(message: string): Promise<void> {
+    try {
+      await this.kb.gitSync(message);
+    } catch {
+      this.log(`[persistence] Git sync failed: ${message}`);
+    }
   }
 
   private async writeJson(name: string, data: unknown): Promise<void> {

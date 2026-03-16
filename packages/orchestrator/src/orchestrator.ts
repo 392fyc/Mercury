@@ -14,6 +14,7 @@ import type {
   AcceptanceVerdict,
   ImplementationReceipt,
   SlashCommand,
+  TaskBundle,
   TaskStatus,
 } from "@mercury/core";
 import { AgentRegistry } from "./agent-registry.js";
@@ -24,9 +25,11 @@ import {
   buildDevPrompt,
   buildAcceptancePrompt,
   buildReworkPrompt,
+  buildMainReviewPrompt,
 } from "./task-manager.js";
 import type { CreateTaskParams, CreateIssueParams } from "./task-manager.js";
 import { TaskPersistenceKB } from "./task-persistence-kb.js";
+import { buildRoleSystemPrompt, buildAcceptanceRolePrompt } from "./role-prompt-builder.js";
 
 export class Orchestrator {
   private bus: EventBus;
@@ -123,22 +126,12 @@ export class Orchestrator {
 
       this.sharedContext = context;
 
-      // Inject into all registered adapters
-      const agents = this.registry.listAgents();
-      for (const agent of agents) {
-        try {
-          const adapter = this.registry.getAdapter(agent.id);
-          adapter.setSystemPrompt(context);
-        } catch {
-          // Adapter instantiation may fail — non-critical
-        }
-      }
-
+      // Context is stored — role-specific prompts are injected per-session via startRoleSession()
       this.transport.sendNotification("log", {
-        message: `[context] Shared context injected into ${agents.length} agents (${context.length} chars from ${obsConfig.contextFiles.length} files)`,
+        message: `[context] Shared context loaded (${context.length} chars from ${obsConfig.contextFiles.length} files). Will inject per-session with role constraints.`,
       });
 
-      return { injected: true, agentCount: agents.length, contextLength: context.length };
+      return { injected: true, agentCount: 0, contextLength: context.length };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.transport.sendNotification("log", {
@@ -189,13 +182,20 @@ export class Orchestrator {
       case "create_task":
         return this.taskManager.createTask(params as unknown as CreateTaskParams);
       case "get_task":
-        return this.taskManager.getTask(params.taskId as string) ?? null;
+        return (await this.taskManager.getTaskAsync(params.taskId as string)) ?? null;
       case "list_tasks":
-        return this.taskManager.listTasks(params as { status?: TaskStatus; assignedTo?: string });
+        return this.taskManager.listTasksAsync(params as { status?: TaskStatus; assignedTo?: string });
       case "record_receipt":
-        return this.taskManager.recordReceipt(
+        return this.recordReceiptAndTriggerReview(
           params.taskId as string,
           params.receipt as ImplementationReceipt,
+        );
+      case "main_review_result":
+        return this.handleMainReviewResult(
+          params.taskId as string,
+          params.decision as string,
+          (params.reason as string | null) ?? undefined,
+          (params.acceptorId as string | null) ?? undefined,
         );
       case "create_acceptance":
         return this.createAcceptanceFlow(
@@ -280,6 +280,19 @@ export class Orchestrator {
     this.sessions.set(session.sessionId, session);
     const slotKey = makeRoleSlotKey(effectiveRole, agentId);
     this.roleSessions.set(slotKey, session.sessionId);
+
+    // Inject role-specific system prompt (includes shared KB context)
+    const boundTask = this.findBoundTask(session.sessionId);
+    const rolePrompt = buildRoleSystemPrompt(
+      effectiveRole,
+      boundTask,
+      this.sharedContext || undefined,
+    );
+    try {
+      adapter.setSystemPrompt(rolePrompt);
+    } catch {
+      // Non-critical — some adapters may not support system prompts
+    }
 
     this.bus.emit("agent.session.start", agentId, session.sessionId, {
       role: effectiveRole,
@@ -445,6 +458,13 @@ export class Orchestrator {
     return { sessionId: result.sessionId, taskId };
   }
 
+  /** Find a TaskBundle bound to the given session (if any). */
+  private findBoundTask(sessionId: string): TaskBundle | undefined {
+    const taskId = this.taskManager.getTaskForSession(sessionId);
+    if (!taskId) return undefined;
+    return this.taskManager.getTask(taskId);
+  }
+
   // ─── Bundle-Aware Task Dispatch ───
 
   private async dispatchBundleTask(
@@ -452,6 +472,13 @@ export class Orchestrator {
   ): Promise<{ sessionId: string; taskId: string }> {
     const task = this.taskManager.getTask(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
+
+    // Store originator session for callback routing
+    const mainAgentId = this.findMainAgentId();
+    if (mainAgentId) {
+      const mainSlot = makeRoleSlotKey("main", mainAgentId);
+      task.originatorSessionId = this.roleSessions.get(mainSlot);
+    }
 
     // Build dev prompt from bundle (optionally include KB context)
     let kbContext: string | undefined;
@@ -474,6 +501,12 @@ export class Orchestrator {
     const session = await this.startRoleSession(task.assignedTo, "dev", task.title);
     this.taskManager.bindSession(taskId, session.sessionId);
 
+    // Inject dev-role system prompt with task scope constraints
+    const devRolePrompt = buildRoleSystemPrompt("dev", task, this.sharedContext || undefined);
+    try {
+      this.registry.getAdapter(task.assignedTo).setSystemPrompt(devRolePrompt);
+    } catch { /* non-critical */ }
+
     // Transition to in_progress (only if not already there)
     if (task.status === "dispatched") {
       this.taskManager.transitionTask(taskId, "in_progress", task.assignedTo);
@@ -485,6 +518,17 @@ export class Orchestrator {
     return { sessionId: session.sessionId, taskId };
   }
 
+  /** Find the agent currently assigned to the "main" role. */
+  private findMainAgentId(): string | undefined {
+    for (const [key] of this.roleSessions) {
+      if (key.startsWith("main:")) {
+        return key.slice(5);
+      }
+    }
+    // Fallback: find first agent with main role in config
+    return this.registry.listAgents().find((a) => a.roles.includes("main"))?.id;
+  }
+
   private async createAcceptanceFlow(
     taskId: string,
     acceptorId: string,
@@ -492,18 +536,28 @@ export class Orchestrator {
     const task = this.taskManager.getTask(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
 
-    // Transition to acceptance if currently implementation_done
-    if (task.status === "implementation_done") {
+    // Transition to acceptance (must come from main_review now)
+    if (task.status === "main_review") {
       this.taskManager.transitionTask(taskId, "acceptance", "orchestrator");
     }
 
     // Create acceptance bundle
     const acceptance = this.taskManager.createAcceptance(taskId, acceptorId);
 
-    // Build acceptance prompt and dispatch to acceptor agent
+    // Build blind acceptance prompt (filtered — no dev narrative)
     const prompt = buildAcceptancePrompt(task, acceptance);
     const session = await this.startRoleSession(acceptorId, "acceptance", task.title);
     this.taskManager.bindSession(taskId, session.sessionId);
+
+    // Inject acceptance-role system prompt with blind review policy
+    const acceptanceRolePrompt = buildAcceptanceRolePrompt(
+      task,
+      acceptance,
+      this.sharedContext || undefined,
+    );
+    try {
+      this.registry.getAdapter(acceptorId).setSystemPrompt(acceptanceRolePrompt);
+    } catch { /* non-critical */ }
 
     await this.sendPrompt(acceptorId, prompt, undefined, "acceptance", task.title);
 
@@ -522,14 +576,29 @@ export class Orchestrator {
       // Acceptance passed → verified → closed
       this.taskManager.transitionTask(task.taskId, "verified", acceptance.acceptor);
       this.taskManager.transitionTask(task.taskId, "closed", "orchestrator");
+
+      // Callback to Main Agent
+      this.bus.emit(
+        "orchestrator.task.callback",
+        acceptance.acceptor,
+        "orchestrator",
+        {
+          taskId: task.taskId,
+          originatorSessionId: task.originatorSessionId,
+          verdict: "pass",
+        },
+      );
+
       return { verdict: "pass", reworkTriggered: false, newSession: false };
     }
 
     if (results.verdict === "fail" || results.verdict === "partial") {
-      // Trigger rework
+      // Trigger rework with full context
       const { newSession } = this.taskManager.triggerRework(
         task.taskId,
         results.findings.join("\n"),
+        acceptanceId,
+        results.findings,
       );
 
       if (!newSession) {
@@ -537,7 +606,6 @@ export class Orchestrator {
         const reworkPrompt = buildReworkPrompt(task, acceptance);
         await this.sendPrompt(task.assignedTo, reworkPrompt);
       }
-      // If newSession is true, caller decides whether to start new session or switch agent
 
       return { verdict: results.verdict, reworkTriggered: true, newSession };
     }
@@ -549,6 +617,94 @@ export class Orchestrator {
     }
 
     return { verdict: results.verdict, reworkTriggered: false, newSession: false };
+  }
+
+  // ─── Two-Stage Verification ───
+
+  /**
+   * Record receipt → scope validation → auto-trigger Main Agent review.
+   */
+  private async recordReceiptAndTriggerReview(
+    taskId: string,
+    receipt: ImplementationReceipt,
+  ): Promise<TaskBundle> {
+    const task = this.taskManager.recordReceipt(taskId, receipt);
+
+    // Auto-trigger main review step
+    await this.mainReviewStep(taskId);
+
+    return task;
+  }
+
+  /**
+   * Main Agent quick review step: implementation_done → main_review.
+   * Sends review prompt to Main Agent session (originator or new).
+   */
+  private async mainReviewStep(taskId: string): Promise<void> {
+    const task = this.taskManager.getTask(taskId);
+    if (!task || task.status !== "implementation_done") return;
+
+    // Transition to main_review
+    this.taskManager.transitionTask(taskId, "main_review", "orchestrator");
+
+    this.bus.emit(
+      "orchestrator.task.main_review",
+      "orchestrator",
+      task.originatorSessionId ?? "orchestrator",
+      { taskId, title: task.title },
+    );
+
+    // Send review prompt to Main Agent
+    const mainAgentId = this.findMainAgentId();
+    if (!mainAgentId) return;
+
+    const reviewPrompt = buildMainReviewPrompt(task);
+    await this.sendPrompt(mainAgentId, reviewPrompt, undefined, "main", task.title);
+  }
+
+  /**
+   * Handle Main Agent's review decision.
+   * APPROVE_FOR_ACCEPTANCE → create acceptance flow.
+   * SEND_BACK → trigger rework.
+   */
+  private async handleMainReviewResult(
+    taskId: string,
+    decision: string,
+    reason?: string,
+    acceptorId?: string,
+  ): Promise<{ decision: string; nextAction: string }> {
+    const task = this.taskManager.getTask(taskId);
+    if (!task) throw new Error(`Task not found: ${taskId}`);
+
+    if (decision === "APPROVE_FOR_ACCEPTANCE") {
+      // Find or use provided acceptor
+      const effectiveAcceptorId = acceptorId ?? this.findAcceptorAgentId();
+      if (!effectiveAcceptorId) {
+        throw new Error("No acceptance agent available. Configure an agent with acceptance role.");
+      }
+      await this.createAcceptanceFlow(taskId, effectiveAcceptorId);
+      return { decision, nextAction: "acceptance_created" };
+    }
+
+    if (decision === "SEND_BACK") {
+      this.taskManager.triggerRework(
+        taskId,
+        reason ?? "Main Agent review: sent back for rework",
+      );
+
+      // Send rework directive to dev agent
+      const reworkPrompt = `# Rework Required [${task.taskId}]\n\nMain Agent review returned this task for rework.\n\n**Reason:** ${reason ?? "Unspecified"}\n\nPlease address and resubmit.`;
+      await this.sendPrompt(task.assignedTo, reworkPrompt, undefined, "dev", task.title);
+
+      return { decision, nextAction: "rework_triggered" };
+    }
+
+    throw new Error(`Invalid review decision: "${decision}". Expected APPROVE_FOR_ACCEPTANCE or SEND_BACK.`);
+  }
+
+  /** Find an agent with the "acceptance" role. */
+  private findAcceptorAgentId(): string | undefined {
+    return this.registry.listAgents().find((a) => a.roles.includes("acceptance"))?.id;
   }
 
   private async summarizeSession(
@@ -619,19 +775,9 @@ export class Orchestrator {
     if (obsidianChanged && !newAutoInject && this.sharedContext) {
       // autoInject was disabled — clear shared context
       this.sharedContext = "";
-      for (const agent of this.registry.listAgents()) {
-        try {
-          this.registry.getAdapter(agent.id).setSystemPrompt("");
-        } catch { /* non-critical */ }
-      }
-    } else if (this.sharedContext) {
-      // Re-apply existing shared context to fresh adapter instances
-      for (const agent of this.registry.listAgents()) {
-        try {
-          this.registry.getAdapter(agent.id).setSystemPrompt(this.sharedContext);
-        } catch { /* non-critical */ }
-      }
     }
+    // Note: role-specific prompts are injected per-session via startRoleSession(),
+    // so no need to re-inject into all adapters here.
 
     // Rebuild context from KB if obsidian settings changed and autoInject is on
     if (obsidianChanged && newAutoInject) {
