@@ -226,16 +226,16 @@ export class ClaudeAdapter implements AgentAdapter {
       options.resume = session.parentSessionId;
     }
 
-    // Build the effective prompt — with or without images
-    // KNOWN IMPROVEMENT (verified 2026-03-16): The Claude Agent SDK actually supports
-    // multimodal input via `prompt: AsyncIterable<SDKUserMessage>` where SDKUserMessage
-    // contains `message: MessageParam` (Anthropic SDK type with content array support).
-    // V2 Preview also supports `session.send(SDKUserMessage)` with content arrays.
+    // Build the effective prompt — with or without images.
+    // When images are present, use native multimodal via AsyncIterable<SDKUserMessage>
+    // which passes content arrays (ImageBlockParam + TextBlockParam) directly to the SDK.
     // Ref: https://platform.claude.com/docs/en/agent-sdk/typescript
+    // SDKUserMessage.message is MessageParam from Anthropic SDK — supports content arrays.
     //
-    // Current approach: JSON.stringify as best-effort workaround using string prompt.
-    // TODO: Migrate to AsyncIterable<SDKUserMessage> or V2 send() for native multimodal.
-    let effectivePrompt: string = prompt;
+    // query() signature: prompt: string | AsyncIterable<SDKUserMessage>
+    // We use `unknown` to avoid importing SDK types, then pass to query() which accepts both.
+    let queryArgs: { prompt: unknown; options: Record<string, unknown> };
+
     if (images && images.length > 0) {
       const contentBlocks: unknown[] = [];
       for (const img of images) {
@@ -248,19 +248,34 @@ export class ClaudeAdapter implements AgentAdapter {
           },
         });
       }
-      // Only add text block if user actually typed something
-      if (prompt) {
-        contentBlocks.push({ type: "text", text: prompt });
-      } else {
-        // SDK requires at least one text block alongside images
-        contentBlocks.push({ type: "text", text: "Please analyze these images." });
+      contentBlocks.push({
+        type: "text",
+        text: prompt || "Please analyze these images.",
+      });
+
+      // Yield a single SDKUserMessage with the multimodal content array.
+      // session_id is filled by the SDK at runtime — we provide a placeholder UUID.
+      const placeholderId = randomUUID();
+      async function* makeUserMessageStream() {
+        yield {
+          type: "user" as const,
+          session_id: placeholderId,
+          message: {
+            role: "user" as const,
+            content: contentBlocks,
+          },
+          parent_tool_use_id: null,
+        };
       }
-      effectivePrompt = JSON.stringify(contentBlocks);
+      queryArgs = { prompt: makeUserMessageStream() as unknown, options };
+    } else {
+      queryArgs = { prompt, options };
     }
 
     let sdkSessionId: string | undefined;
 
-    for await (const message of sdk.query({ prompt: effectivePrompt, options })) {
+    // sdk.query() accepts string | AsyncIterable<SDKUserMessage> — both paths converge here
+    for await (const message of sdk.query(queryArgs as { prompt: string; options: Record<string, unknown> })) {
       session.lastActiveAt = Date.now();
 
       if (typeof message !== "object" || message === null || !("type" in message)) {

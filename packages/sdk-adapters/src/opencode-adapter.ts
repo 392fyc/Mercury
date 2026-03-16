@@ -23,10 +23,15 @@ export class OpencodeAdapter implements AgentAdapter {
   readonly agentId: string;
   readonly config: AgentConfig;
   private sessions = new Map<string, SessionInfo>();
+  private sessionCwd = new Map<string, string>();
   private serverProcess: ChildProcess | null = null;
   private port: number;
   private systemPrompt?: string;
   private systemPromptSentSessions = new Set<string>();
+  /** Maps Mercury sessionId → opencode server session ID */
+  private serverSessions = new Map<string, string>();
+  /** Tracks whether the HTTP server is confirmed available (with TTL) */
+  private httpServerAvailableUntil = 0; // timestamp — 0 means not cached
 
   constructor(port = 4096, config?: Partial<AgentConfig>) {
     this.port = port;
@@ -71,13 +76,21 @@ export class OpencodeAdapter implements AgentAdapter {
       shell: true,
     });
 
-    // Wait for server to be ready
+    // Wait for server to be ready (with proper cleanup of polling timer)
     await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error("opencode server startup timeout")), 15000);
+      let settled = false;
+      let pollTimer: ReturnType<typeof setTimeout> | null = null;
+      const timeout = setTimeout(() => {
+        settled = true;
+        if (pollTimer) clearTimeout(pollTimer);
+        reject(new Error("opencode server startup timeout"));
+      }, 15000);
       const check = async () => {
+        if (settled) return;
         try {
           const resp = await fetch(`http://localhost:${this.port}/health`);
           if (resp.ok) {
+            settled = true;
             clearTimeout(timeout);
             resolve();
             return;
@@ -85,7 +98,9 @@ export class OpencodeAdapter implements AgentAdapter {
         } catch {
           // Not ready yet
         }
-        setTimeout(check, 500);
+        if (!settled) {
+          pollTimer = setTimeout(check, 500);
+        }
       };
       check();
     });
@@ -103,6 +118,7 @@ export class OpencodeAdapter implements AgentAdapter {
       status: "active",
     };
     this.sessions.set(sessionId, info);
+    this.sessionCwd.set(sessionId, cwd);
     return info;
   }
 
@@ -169,10 +185,104 @@ export class OpencodeAdapter implements AgentAdapter {
     }
   }
 
+  /**
+   * Check if the HTTP server is reachable.
+   */
+  private async isHttpServerAvailable(): Promise<boolean> {
+    // Use cached result if within TTL (30 seconds)
+    if (Date.now() < this.httpServerAvailableUntil) return true;
+    try {
+      const resp = await fetch(`http://localhost:${this.port}/health`);
+      if (resp.ok) {
+        this.httpServerAvailableUntil = Date.now() + 30_000;
+        return true;
+      }
+    } catch {
+      // Server not reachable
+    }
+    this.httpServerAvailableUntil = 0;
+    return false;
+  }
+
+  /**
+   * Send prompt via opencode HTTP server API.
+   * Uses native system prompt field and FilePartInput for images.
+   */
+  private async sendPromptHttp(
+    sessionId: string,
+    prompt: string,
+    images?: ImageAttachment[],
+  ): Promise<string> {
+    // Get or create an opencode server session for this Mercury session
+    let ocSessionId = this.serverSessions.get(sessionId);
+    if (!ocSessionId) {
+      const resp = await fetch(`http://localhost:${this.port}/session`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: `Mercury-${sessionId.slice(0, 8)}` }),
+      });
+      if (!resp.ok) {
+        throw new Error(`Failed to create opencode session: ${resp.status} ${resp.statusText}`);
+      }
+      const data = await resp.json();
+      ocSessionId = data.id as string;
+      this.serverSessions.set(sessionId, ocSessionId);
+    }
+
+    // Build parts array (TextPartInput + FilePartInput for images)
+    const parts: Array<{ type: string; [key: string]: unknown }> = [];
+    parts.push({ type: "text", text: prompt });
+
+    if (images) {
+      for (const img of images) {
+        parts.push({
+          type: "file",
+          mime: img.mediaType,
+          filename: img.filename || "image.png",
+          url: `data:${img.mediaType};base64,${img.data}`,
+        });
+      }
+    }
+
+    // Send message with native system prompt — only on first message per session
+    // to avoid wasting tokens on repeated system context injection
+    const includeSystemPrompt =
+      this.systemPrompt && !this.systemPromptSentSessions.has(sessionId);
+    const resp = await fetch(
+      `http://localhost:${this.port}/session/${ocSessionId}/message`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system: includeSystemPrompt ? this.systemPrompt : undefined,
+          parts,
+        }),
+      },
+    );
+    if (includeSystemPrompt) {
+      this.systemPromptSentSessions.add(sessionId);
+    }
+
+    if (!resp.ok) {
+      throw new Error(`opencode HTTP message failed: ${resp.status} ${resp.statusText}`);
+    }
+
+    const data = await resp.json();
+    // Extract text content from response parts
+    if (data.parts && Array.isArray(data.parts)) {
+      const textParts = data.parts
+        .filter((p: { type: string }) => p.type === "text")
+        .map((p: { text: string }) => p.text);
+      if (textParts.length > 0) return textParts.join("\n");
+    }
+    // Fallback: return raw response or content field
+    return data.response || data.content || JSON.stringify(data);
+  }
+
   async *sendPrompt(
     sessionId: string,
     prompt: string,
-    _images?: ImageAttachment[],
+    images?: ImageAttachment[],
   ): AsyncGenerator<AgentMessage> {
     // Intercept slash commands before sending to CLI
     const trimmed = prompt.trim();
@@ -190,15 +300,31 @@ export class OpencodeAdapter implements AgentAdapter {
 
     session.lastActiveAt = Date.now();
 
-    // Prepend shared context only on the first message of each session (avoids token waste)
-    let effectivePrompt = prompt;
-    if (this.systemPrompt && !this.systemPromptSentSessions.has(sessionId)) {
-      effectivePrompt = `[System Context]\n${this.systemPrompt}\n\n[User Prompt]\n${prompt}`;
-      this.systemPromptSentSessions.add(sessionId);
+    // Try HTTP server path first (supports native system prompt + images)
+    let result: string | null = null;
+    if (await this.isHttpServerAvailable()) {
+      try {
+        // HTTP mode: system prompt is sent natively via the `system` field,
+        // and images are sent as FilePartInput with data: URIs.
+        // No need for prompt prepending workaround.
+        result = await this.sendPromptHttp(sessionId, prompt, images);
+        // systemPromptSentSessions is tracked inside sendPromptHttp()
+      } catch {
+        // HTTP path failed — fall back to CLI one-shot mode
+        this.httpServerAvailableUntil = 0;
+        result = null;
+      }
     }
 
-    // Use one-shot mode as the simpler integration path
-    const result = await this.runOneShot(effectivePrompt);
+    if (result === null) {
+      // Fallback: CLI one-shot mode (no image support, uses prompt prepending for system context)
+      let effectivePrompt = prompt;
+      if (this.systemPrompt && !this.systemPromptSentSessions.has(sessionId)) {
+        effectivePrompt = `[System Context]\n${this.systemPrompt}\n\n[User Prompt]\n${prompt}`;
+        this.systemPromptSentSessions.add(sessionId);
+      }
+      result = await this.runOneShot(effectivePrompt);
+    }
 
     yield {
       role: "assistant",
@@ -257,15 +383,19 @@ export class OpencodeAdapter implements AgentAdapter {
   async endSession(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (session) session.status = "completed";
+    this.serverSessions.delete(sessionId);
   }
 
   async handoffSession(
     oldSessionId: string,
-    summary: string,
+    _summary: string,
   ): Promise<SessionInfo> {
     const oldSession = this.sessions.get(oldSessionId);
     if (oldSession) oldSession.status = "overflow";
-    return this.startSession(process.cwd());
+    const cwd = this.sessionCwd.get(oldSessionId) ?? process.cwd();
+    const newSession = await this.startSession(cwd);
+    newSession.parentSessionId = oldSessionId;
+    return newSession;
   }
 
   /**
@@ -276,6 +406,8 @@ export class OpencodeAdapter implements AgentAdapter {
       this.serverProcess.kill();
       this.serverProcess = null;
     }
+    this.serverSessions.clear();
+    this.httpServerAvailableUntil = 0;
   }
 
   getSlashCommands(): SlashCommand[] {

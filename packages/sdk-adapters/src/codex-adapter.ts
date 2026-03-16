@@ -6,6 +6,9 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { writeFile, unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
   AgentAdapter,
   AgentConfig,
@@ -14,6 +17,13 @@ import type {
   SessionInfo,
   SlashCommand,
 } from "@mercury/core";
+
+/** SDK InputEntry union — text or local_image */
+type InputEntry =
+  | { type: "text"; text: string }
+  | { type: "local_image"; path: string };
+
+type InputArg = string | InputEntry[];
 
 export class CodexAdapter implements AgentAdapter {
   readonly agentId: string;
@@ -62,6 +72,59 @@ export class CodexAdapter implements AgentAdapter {
       startThread(opts?: { workingDirectory?: string }): unknown;
       resumeThread(id: string): unknown;
     };
+  }
+
+  /**
+   * Write base64-encoded images to temp files and return InputEntry[] with
+   * local_image entries. Caller is responsible for cleanup via cleanupTempFiles().
+   */
+  private async imagesToTempFiles(
+    images: ImageAttachment[],
+  ): Promise<{ entries: InputEntry[]; tempFiles: string[] }> {
+    const entries: InputEntry[] = [];
+    const tempFiles: string[] = [];
+
+    for (const img of images) {
+      const EXT_MAP: Record<string, string> = { jpeg: "jpg", "svg+xml": "svg", tiff: "tif" };
+      const rawExt = img.mediaType.split("/")[1] || "png";
+      const ext = EXT_MAP[rawExt] ?? rawExt;
+      const tempPath = join(tmpdir(), `mercury-img-${randomUUID()}.${ext}`);
+      await writeFile(tempPath, Buffer.from(img.data, "base64"));
+      tempFiles.push(tempPath);
+      entries.push({ type: "local_image", path: tempPath });
+    }
+
+    return { entries, tempFiles };
+  }
+
+  /** Best-effort removal of temp image files. */
+  private async cleanupTempFiles(tempFiles: string[]): Promise<void> {
+    for (const f of tempFiles) {
+      try {
+        await unlink(f);
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+  }
+
+  /**
+   * Build the input argument for thread.run / thread.runStreamed.
+   * When images are present, returns an InputEntry[] with text + local_image entries.
+   * Otherwise returns a plain string (preserving the original code path).
+   */
+  private buildInput(
+    effectivePrompt: string,
+    imageEntries?: InputEntry[],
+  ): InputArg {
+    if (!imageEntries || imageEntries.length === 0) {
+      return effectivePrompt;
+    }
+    const entries: InputEntry[] = [
+      { type: "text", text: effectivePrompt },
+      ...imageEntries,
+    ];
+    return entries;
   }
 
   async startSession(cwd: string): Promise<SessionInfo> {
@@ -162,7 +225,7 @@ export class CodexAdapter implements AgentAdapter {
   async *sendPrompt(
     sessionId: string,
     prompt: string,
-    _images?: ImageAttachment[],
+    images?: ImageAttachment[],
   ): AsyncGenerator<AgentMessage> {
     // Intercept slash commands before sending to SDK
     const trimmed = prompt.trim();
@@ -176,13 +239,16 @@ export class CodexAdapter implements AgentAdapter {
     }
 
     const thread = this.threads.get(sessionId) as {
-      run(prompt: string): Promise<{
+      run(
+        input: string | Array<{ type: string; text?: string; path?: string }>,
+        options?: { outputSchema?: unknown; workingDirectory?: string; skipGitRepoCheck?: boolean },
+      ): Promise<{
         items: Array<{ id: string; type: string; text?: string }>;
         finalResponse: string;
         usage: { input_tokens: number; output_tokens: number };
       }>;
       runStreamed?(
-        prompt: string,
+        input: string | Array<{ type: string; text?: string; path?: string }>,
       ): AsyncIterable<{
         type: string;
         text?: string;
@@ -202,67 +268,89 @@ export class CodexAdapter implements AgentAdapter {
       this.systemPromptSentSessions.add(sessionId);
     }
 
-    // Prefer streaming if available
-    if (thread.runStreamed) {
-      try {
-        for await (const event of thread.runStreamed(effectivePrompt)) {
-          if (session) session.lastActiveAt = Date.now();
-
-          if (event.type === "text" && event.text) {
-            yield {
-              role: "assistant" as const,
-              content: event.text,
-              timestamp: Date.now(),
-            };
-          } else if (event.type === "item" && event.item?.text) {
-            yield {
-              role: "assistant" as const,
-              content: event.item.text,
-              timestamp: Date.now(),
-              metadata: {
-                itemId: event.item.id,
-                itemType: event.item.type,
-              },
-            };
-          } else if (event.type === "result" && event.text) {
-            yield {
-              role: "assistant" as const,
-              content: event.text,
-              timestamp: Date.now(),
-              metadata: { isResult: true },
-            };
-          }
-        }
-        return;
-      } catch {
-        // Fall through to non-streaming mode
-      }
+    // Prepare image temp files if images are provided
+    let imageEntries: InputEntry[] | undefined;
+    const tempFiles: string[] = [];
+    if (images && images.length > 0) {
+      const result = await this.imagesToTempFiles(images);
+      imageEntries = result.entries;
+      tempFiles.push(...result.tempFiles);
     }
 
-    // Fallback: non-streaming run()
-    const result = await thread.run(effectivePrompt);
+    const input = this.buildInput(effectivePrompt, imageEntries);
 
-    for (const item of result.items) {
-      if (item.text) {
+    try {
+      // Prefer streaming if available
+      if (thread.runStreamed) {
+        let yieldedAny = false;
+        try {
+          for await (const event of thread.runStreamed(input)) {
+            if (session) session.lastActiveAt = Date.now();
+
+            if (event.type === "text" && event.text) {
+              yieldedAny = true;
+              yield {
+                role: "assistant" as const,
+                content: event.text,
+                timestamp: Date.now(),
+              };
+            } else if (event.type === "item" && event.item?.text) {
+              yieldedAny = true;
+              yield {
+                role: "assistant" as const,
+                content: event.item.text,
+                timestamp: Date.now(),
+                metadata: {
+                  itemId: event.item.id,
+                  itemType: event.item.type,
+                },
+              };
+            } else if (event.type === "result" && event.text) {
+              yieldedAny = true;
+              yield {
+                role: "assistant" as const,
+                content: event.text,
+                timestamp: Date.now(),
+                metadata: { isResult: true },
+              };
+            }
+          }
+          return;
+        } catch {
+          // Only fall through to non-streaming if no events were yielded yet.
+          // If we already yielded partial output, re-throw to avoid duplicate messages.
+          if (yieldedAny) return;
+        }
+      }
+
+      // Fallback: non-streaming run()
+      const result = await thread.run(input);
+
+      for (const item of result.items) {
+        if (item.text) {
+          yield {
+            role: "assistant" as const,
+            content: item.text,
+            timestamp: Date.now(),
+            metadata: { itemId: item.id, itemType: item.type },
+          };
+        }
+      }
+
+      if (result.finalResponse) {
         yield {
           role: "assistant" as const,
-          content: item.text,
+          content: result.finalResponse,
           timestamp: Date.now(),
-          metadata: { itemId: item.id, itemType: item.type },
+          metadata: {
+            isResult: true,
+            usage: result.usage,
+          },
         };
       }
-    }
-
-    if (result.finalResponse) {
-      yield {
-        role: "assistant" as const,
-        content: result.finalResponse,
-        timestamp: Date.now(),
-        metadata: {
-          isResult: true,
-          usage: result.usage,
-        },
-      };
+    } finally {
+      // Clean up temp image files regardless of success or failure
+      await this.cleanupTempFiles(tempFiles);
     }
   }
 
