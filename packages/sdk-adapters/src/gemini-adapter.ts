@@ -189,7 +189,7 @@ export class GeminiAdapter implements AgentAdapter {
         return;
       }
 
-      // CLI-only commands that require interactive Gemini CLI terminal
+      // CLI-only commands — rewritten as terminal guidance in Mercury GUI
       case "about":
       case "docs":
       case "privacy":

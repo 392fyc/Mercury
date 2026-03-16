@@ -115,9 +115,9 @@ export class ClaudeAdapter implements AgentAdapter {
       metadata: { isSlashCommandResponse: true, command: `/${cmd}` },
     });
 
-    // Strategy: only intercept commands we can ACTUALLY implement in Mercury.
-    // Everything else passes through to SDK — the model will handle it or
-    // the user gets a real response rather than a useless "not supported" message.
+    // Strategy: commands Mercury can natively implement are handled here.
+    // CLI-only commands are rewritten as guidance messages pointing users
+    // to the original CLI. Mercury is a CLI-to-GUI bridge, not a replacement.
     switch (cmd) {
       case "help": {
         const cmds = this.getSlashCommands();
@@ -171,7 +171,7 @@ export class ClaudeAdapter implements AgentAdapter {
         return;
       }
 
-      // CLI-only commands that require interactive terminal access
+      // CLI-only commands — rewritten as terminal guidance in Mercury GUI
       case "login":
       case "logout":
       case "doctor":

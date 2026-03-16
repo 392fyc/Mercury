@@ -145,7 +145,8 @@ export class OpencodeAdapter implements AgentAdapter {
       metadata: { isSlashCommandResponse: true, command: `/${cmd}` },
     });
 
-    // Only intercept commands we can actually implement. Everything else passes through.
+    // Commands Mercury can natively implement are handled here.
+    // CLI-only commands are rewritten as guidance pointing users to the original CLI.
     switch (cmd) {
       case "help": {
         const cmds = this.getSlashCommands();
@@ -180,7 +181,7 @@ export class OpencodeAdapter implements AgentAdapter {
         return;
       }
 
-      // CLI-only commands that require interactive opencode terminal
+      // CLI-only commands — rewritten as terminal guidance in Mercury GUI
       case "clear":
       case "compact":
       case "summarize":
