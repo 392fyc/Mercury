@@ -3,7 +3,7 @@
  */
 
 import type { AgentConfig, AgentAdapter } from "@mercury/core";
-import { ClaudeAdapter, CodexAdapter, OpencodeAdapter } from "@mercury/sdk-adapters";
+import { ClaudeAdapter, CodexAdapter, GeminiAdapter, OpencodeAdapter } from "@mercury/sdk-adapters";
 
 export class AgentRegistry {
   private adapters = new Map<string, AgentAdapter>();
@@ -53,8 +53,10 @@ export class AgentRegistry {
         return new CodexAdapter(config);
       case "opencode":
         return new OpencodeAdapter(undefined, config);
+      case "gemini":
+        return new GeminiAdapter(config);
       default:
-        throw new Error(`Unknown CLI agent: ${config.cli}. Supported: claude, codex, opencode`);
+        throw new Error(`Unknown CLI agent: ${config.cli}. Supported: claude, codex, opencode, gemini`);
     }
   }
 }

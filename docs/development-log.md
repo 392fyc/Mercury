@@ -200,6 +200,35 @@ export interface ImageAttachment {
 
 ---
 
+## Phase 8 — Gemini CLI 适配器
+
+**提交**: (pending)
+
+### 实现内容
+- `GeminiAdapter` 完整实现（CLI 进程模式，无官方 SDK）
+- 集成模式：`gemini -p "prompt" --output-format json -y`（无 shell injection — spawn 不使用 shell: true）
+- 系统 prompt：`GEMINI_SYSTEM_MD` 环境变量指向临时文件（自动创建/清理）
+- 图片支持：base64 → 临时文件 → `@./path` 语法内联到 prompt
+- 会话恢复：`--resume <UUID>`，handoff 时继承 Gemini session ID
+- Slash commands：22 个命令声明（chat/compress/restore/memory/tools 等）
+- Settings UI：Gemini CLI preset 已启用（移除 "coming soon" / disabled 标记）
+- AgentRegistry：新增 `gemini` case
+
+### 技术决策
+- **CLI 进程模式**：Gemini CLI 无官方 SDK（Issue #15539 跟踪中），也无 HTTP serve 模式。使用 spawn + JSON 输出解析。
+- **不使用 `shell: true`**：防止用户 prompt 中的 shell 元字符导致命令注入（Code Review Issue #1）。
+- **GEMINI_SYSTEM_MD 环境变量**：Gemini CLI 无 `--system-prompt` 标志，仅支持文件方式注入。写入临时文件并通过 env var 传递。
+- **`@file` 图片语法**：Gemini CLI 的 headless 模式使用 `@./path` 引用文件，与 Codex 的 `local_image` 路径模式类似。
+
+### Code Review 修复
+1. (Score 90) 移除 `shell: true` 防止命令注入
+2. (Score 85) 修复 `setSystemPrompt` 异步竞态 — 同步清空文件引用后再异步删除
+3. (Score 82) `endSession` 从 Map 中删除 session 防止内存泄漏
+4. (Score 78) `mkdtemp` 创建的临时目录在 cleanup 时一并删除
+5. (Score 76) `/new`/`/clear` 命令清除 geminiSessionId 确保新对话
+
+---
+
 ## 已知限制与待解决
 
 | 问题 | 严重度 | 状态 | 备注（联网查证 2026-03-16） |
@@ -210,7 +239,7 @@ export interface ImageAttachment {
 | opencode 系统 prompt | Low | **已修复** | HTTP 模式下使用 SDK 原生 `system` 字段（SessionPromptData.body.system）。CLI 回退仍用 prepending。[Ref](https://opencode.ai/docs/sdk/) |
 | opencode 图片 | Low | **已修复** | HTTP 模式下使用 `FilePartInput` + `data:` URI 传递图片。[Ref](https://github.com/sst/opencode) |
 | `buildAndInjectContext` agentCount 可能偏高 | Low | 已知 | 仅 UI 显示问题 |
-| Gemini CLI 适配器尚未实现 | Medium | 待开发 | preset 已标记 disabled |
+| Gemini CLI 适配器 | Medium | **已实现** | CLI 进程模式（`gemini -p --output-format json`），GEMINI_SYSTEM_MD 系统 prompt，`@file` 图片，`--resume` 会话恢复。[Ref](https://github.com/google-gemini/gemini-cli) |
 | Cargo（Rust 侧）未在 CI 中验证 | Low | 待配置 | 本地开发环境缺 cargo |
 
 ---
@@ -223,7 +252,7 @@ export interface ImageAttachment {
 | Node.js sidecar（JSON-RPC 2.0 over stdio） | 1 | ✅ |
 | AgentPanel 聊天界面 | 1 | ✅ |
 | EventLog 事件流面板 | 1 | ✅ |
-| SDK 适配器（Claude/Codex/opencode） | 2-3 | ✅ |
+| SDK 适配器（Claude/Codex/opencode/Gemini） | 2-3 → 8 | ✅ |
 | KB（Obsidian CLI）集成 | 2-3 | ✅ |
 | Settings 面板（CLI 预设 + 角色系统） | 2-3 → 7 | ✅ |
 | TaskBundle 完整类型系统 | 4 | ✅ |

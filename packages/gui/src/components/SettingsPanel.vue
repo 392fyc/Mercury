@@ -46,10 +46,10 @@ const CLI_PRESETS: CliPreset[] = [
     restrictions: ["no_kb_write", "isolated_branch_only"], maxSessions: 3,
   },
   {
-    cli: "gemini", label: "Gemini CLI (coming soon)",
-    id: "gemini-cli", integration: "pty",
-    capabilities: ["code", "analysis", "multimodal"],
-    restrictions: [], maxSessions: 2, disabled: true,
+    cli: "gemini", label: "Gemini CLI",
+    id: "gemini-cli", integration: "sdk",
+    capabilities: ["code", "multimodal", "research"],
+    restrictions: ["no_kb_write", "isolated_branch_only"], maxSessions: 3,
   },
 ];
 
