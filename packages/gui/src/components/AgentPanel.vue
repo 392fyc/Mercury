@@ -14,7 +14,7 @@ const props = defineProps<{
   role: "main" | "dev" | "acceptance" | "research" | "design";
 }>();
 
-const { getStatus } = useAgentStore();
+const { getStatus, getSession } = useAgentStore();
 const { getMessages, sendPrompt } = useMessageStore();
 
 const inputText = ref("");
@@ -24,6 +24,11 @@ const paletteRef = ref<InstanceType<typeof SlashCommandPalette>>();
 
 const status = computed(() => getStatus(props.agentId));
 const messages = computed(() => getMessages(props.agentId));
+const sessionId = computed(() => getSession(props.agentId));
+const sessionShortId = computed(() => {
+  const id = sessionId.value;
+  return id ? id.slice(0, 8) : null;
+});
 
 // ─── Image Attachments ───
 
@@ -251,6 +256,9 @@ watch(
         <span class="agent-dot" :style="{ background: roleColor }"></span>
         <span class="agent-name">{{ agentName }}</span>
         <span class="agent-role">{{ role }}</span>
+        <span class="session-id" v-if="sessionShortId" :title="sessionId">
+          {{ sessionShortId }}
+        </span>
       </div>
       <div class="panel-status">
         <span class="status-badge" :class="status">{{ status }}</span>
@@ -375,6 +383,17 @@ watch(
   text-transform: uppercase;
   color: var(--text-muted);
   letter-spacing: 0.5px;
+}
+
+.session-id {
+  font-size: 9px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  background: var(--bg-panel);
+  padding: 1px 4px;
+  border-radius: 3px;
+  cursor: default;
+  opacity: 0.7;
 }
 
 .status-badge {
