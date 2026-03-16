@@ -202,10 +202,12 @@ export interface ImageAttachment {
 
 ## 已知限制与待解决
 
-| 问题 | 严重度 | 状态 | 备注 |
+| 问题 | 严重度 | 状态 | 备注（联网查证 2026-03-16） |
 |------|--------|------|------|
-| Claude SDK 不支持原生多模态 content array | Medium | 已知 | 待 SDK 更新后升级 |
-| Codex/opencode 系统 prompt 通过 prompt prepending 实现 | Low | 已知 | 无原生替代方案 |
+| Claude SDK 多模态：当前用 `JSON.stringify` workaround | Medium | **可修复** | SDK 实际支持 `SDKUserMessage` content array（含图片 block）。需改用 `AsyncIterable<SDKUserMessage>` 或 V2 `send(SDKUserMessage)`。[Ref](https://platform.claude.com/docs/en/agent-sdk/typescript) |
+| Codex 系统 prompt 通过 prompt prepending 实现 | Low | 已知（正确） | SDK 无运行时 systemPrompt API。仅 AGENTS.md 文件方式。`--system-prompt` flag 仍是 [Feature Request](https://github.com/openai/codex/issues/11588)。[Ref](https://developers.openai.com/codex/sdk/) |
+| opencode 系统 prompt 通过 prompt prepending 实现 | Low | 已知（正确） | SDK 无运行时注入 API。仅 agent/mode 配置文件 `prompt` 字段。[Ref](https://opencode.ai/docs/sdk/) |
+| Codex 图片：当前用 base64 注入 | Low | **可优化** | SDK 实际支持 `{ type: "local_image", path }` 本地文件路径模式，非 base64。[Ref](https://developers.openai.com/codex/sdk/) |
 | `buildAndInjectContext` agentCount 可能偏高 | Low | 已知 | 仅 UI 显示问题 |
 | Gemini CLI 适配器尚未实现 | Medium | 待开发 | preset 已标记 disabled |
 | Cargo（Rust 侧）未在 CI 中验证 | Low | 待配置 | 本地开发环境缺 cargo |

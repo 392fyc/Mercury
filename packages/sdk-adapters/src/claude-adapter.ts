@@ -227,9 +227,14 @@ export class ClaudeAdapter implements AgentAdapter {
     }
 
     // Build the effective prompt — with or without images
-    // Note: Claude SDK query() accepts `prompt: string`. For multimodal input,
-    // we pass a JSON-serialized content blocks array. The SDK may also accept
-    // content block arrays directly depending on version — the cast handles both.
+    // KNOWN IMPROVEMENT (verified 2026-03-16): The Claude Agent SDK actually supports
+    // multimodal input via `prompt: AsyncIterable<SDKUserMessage>` where SDKUserMessage
+    // contains `message: MessageParam` (Anthropic SDK type with content array support).
+    // V2 Preview also supports `session.send(SDKUserMessage)` with content arrays.
+    // Ref: https://platform.claude.com/docs/en/agent-sdk/typescript
+    //
+    // Current approach: JSON.stringify as best-effort workaround using string prompt.
+    // TODO: Migrate to AsyncIterable<SDKUserMessage> or V2 send() for native multimodal.
     let effectivePrompt: string = prompt;
     if (images && images.length > 0) {
       const contentBlocks: unknown[] = [];
@@ -250,10 +255,6 @@ export class ClaudeAdapter implements AgentAdapter {
         // SDK requires at least one text block alongside images
         contentBlocks.push({ type: "text", text: "Please analyze these images." });
       }
-      // NOTE: Claude Agent SDK query() accepts string prompt only. Multimodal content
-      // blocks are JSON-stringified here as a best-effort approach. When the SDK adds
-      // native content-array support (e.g. query({ content: [...] })), update this
-      // to use that API directly. Until then, image data is base64 in JSON text.
       effectivePrompt = JSON.stringify(contentBlocks);
     }
 
