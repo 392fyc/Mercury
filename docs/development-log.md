@@ -202,7 +202,7 @@ export interface ImageAttachment {
 
 ## Phase 8 — Gemini CLI 适配器
 
-**提交**: (pending)
+**提交**: `7b148dd`
 
 ### 实现内容
 - `GeminiAdapter` 完整实现（CLI 进程模式，无官方 SDK）
@@ -240,7 +240,7 @@ export interface ImageAttachment {
 | opencode 图片 | Low | **已修复** | HTTP 模式下使用 `FilePartInput` + `data:` URI 传递图片。[Ref](https://github.com/sst/opencode) |
 | `buildAndInjectContext` agentCount 可能偏高 | Low | 已知 | 仅 UI 显示问题 |
 | Gemini CLI 适配器 | Medium | **已实现** | CLI 进程模式（`gemini -p --output-format json`），GEMINI_SYSTEM_MD 系统 prompt，`@file` 图片，`--resume` 会话恢复。[Ref](https://github.com/google-gemini/gemini-cli) |
-| Cargo（Rust 侧）未在 CI 中验证 | Low | 待配置 | 本地开发环境缺 cargo |
+| Cargo（Rust 侧）验证 | Low | **已通过** | Rust 1.94.0 安装于 D:/Rust，`cargo check` 编译全部通过 |
 
 ---
 
@@ -300,7 +300,7 @@ export interface ImageAttachment {
 │       │        │(JSON files)  │                    │         │
 │       │        └──────────────┘                    │         │
 │  ┌────┴────────────────────────────────────────────┴────┐   │
-│  │  SDK Adapters (Claude / Codex / opencode)            │   │
+│  │  SDK Adapters (Claude / Codex / opencode / Gemini)   │   │
 │  │  - sendPrompt (+ images, slash cmd intercept)        │   │
 │  │  - setSystemPrompt (context injection)               │   │
 │  │  - getSlashCommands (command list)                   │   │
