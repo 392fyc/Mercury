@@ -3,7 +3,7 @@
  */
 
 import { ref } from "vue";
-import type { AgentMessage, ImageAttachment } from "../lib/tauri-bridge";
+import type { ImageAttachment } from "../lib/tauri-bridge";
 import {
   sendPrompt as bridgeSendPrompt,
   onAgentMessage,

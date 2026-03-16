@@ -73,26 +73,26 @@
 
 ---
 
-## Phase 6 — Agents First + Task Dashboard UI（类型层）
+## Phase 6 — Agents First + Task Persistence + Task Dashboard UI
 
 **提交**: `414fead`
 
 ### 实现内容
 - `AgentConfig.model` 字段（e.g. "claude-opus-4-6", "o3"）
 - `MercuryEvent.modelId` 字段
+- `TaskAssignee` 结构化元数据（agentId + model + sessionId）
+- TaskManager 完整实现（~569 行）：状态机、CRUD、验收、Issue、会话绑定、prompt 构建
+- TaskPersistenceKB（~89 行）：KB JSON 文件持久化（tasks/、acceptances/、issues/）
+- Task Store（~95 行）：前端状态管理 + MercuryEvent 监听自动刷新
+- TaskDashboard.vue（~481 行）：完整 UI — Summary Bar + Task List + Detail Panel + 操作按钮
 - TitleBar Agents/Tasks 视图切换 Tab
-- TaskDashboard.vue 占位组件
-
-### 遗留
-- TaskManager 服务（状态机 + prompt 构建）
-- Task 持久化层（KB JSON 文件）
-- TaskDashboard 完整 UI
+- App.vue 视图切换逻辑 + Task Store 初始化
 
 ---
 
 ## Phase 7（当前）— Slash Command 拦截 + 图片传输 + 跨 Agent 上下文共享 + Settings UI 重构
 
-**提交**: `39c3eb2` → *待提交*
+**提交**: `39c3eb2` → `f3763d7`
 
 ### 7.1 Slash Command 适配器拦截
 
@@ -202,43 +202,76 @@ export interface ImageAttachment {
 
 ## 已知限制与待解决
 
-| 问题 | 严重度 | 状态 | 计划 |
+| 问题 | 严重度 | 状态 | 备注 |
 |------|--------|------|------|
 | Claude SDK 不支持原生多模态 content array | Medium | 已知 | 待 SDK 更新后升级 |
 | Codex/opencode 系统 prompt 通过 prompt prepending 实现 | Low | 已知 | 无原生替代方案 |
-| TaskManager 状态机未实现（类型已定义） | High | 待开发 | Phase 7 下一步 |
-| SlashCommandPalette.vue 弹出面板未实现 | Medium | 待开发 | Phase 8 |
-| Task 持久化（KB JSON 文件）未实现 | Medium | 待开发 | Phase 8 |
-| TaskDashboard.vue 仅为占位组件 | Medium | 待开发 | Phase 8 |
 | `buildAndInjectContext` agentCount 可能偏高 | Low | 已知 | 仅 UI 显示问题 |
+| Gemini CLI 适配器尚未实现 | Medium | 待开发 | preset 已标记 disabled |
+| Cargo（Rust 侧）未在 CI 中验证 | Low | 待配置 | 本地开发环境缺 cargo |
+
+---
+
+## 已完成功能总览
+
+| 功能 | Phase | 状态 |
+|------|-------|------|
+| Tauri 2 + Vue 3 项目脚手架 | 1 | ✅ |
+| Node.js sidecar（JSON-RPC 2.0 over stdio） | 1 | ✅ |
+| AgentPanel 聊天界面 | 1 | ✅ |
+| EventLog 事件流面板 | 1 | ✅ |
+| SDK 适配器（Claude/Codex/opencode） | 2-3 | ✅ |
+| KB（Obsidian CLI）集成 | 2-3 | ✅ |
+| Settings 面板（CLI 预设 + 角色系统） | 2-3 → 7 | ✅ |
+| TaskBundle 完整类型系统 | 4 | ✅ |
+| TaskManager 状态机 + CRUD + prompt 构建 | 4 | ✅ |
+| Task 持久化（KB JSON 文件） | 6 | ✅ |
+| Slash Command 适配器声明 + RPC | 5 | ✅ |
+| Slash Command 拦截（最小原则 + 透传） | 7 | ✅ |
+| SlashCommandPalette.vue 弹出面板 | 7 | ✅ |
+| 图片传输管道（7 层全链路） | 7 | ✅ |
+| 跨 Agent 上下文共享（系统 prompt 注入） | 7 | ✅ |
+| TitleBar 增强（项目名 + git 分支 + 视图 Tab） | 7 | ✅ |
+| Settings UI 重构（CLI 下拉 + 5 角色） | 7 | ✅ |
+| Agents First 元数据（agentId + model + sessionId） | 6 | ✅ |
+| TaskDashboard.vue 完整 UI（列表 + 详情 + 操作） | 6 | ✅ |
+| Task Store（前端状态管理 + 事件监听） | 6 | ✅ |
 
 ---
 
 ## 架构概览
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  Vue 3 Frontend (Tauri WebView)                         │
-│  ┌──────────┐ ┌──────────┐ ┌────────────┐ ┌──────────┐│
-│  │AgentPanel│ │TitleBar  │ │SettingsPanel│ │EventLog  ││
-│  │(chat+img)│ │(info+tab)│ │(preset+ctx) │ │(events)  ││
-│  └────┬─────┘ └──────────┘ └─────┬──────┘ └──────────┘│
-│       │ tauri-bridge (invoke)     │                     │
-├───────┼───────────────────────────┼─────────────────────┤
-│  Rust │ Tauri Commands (thin passthrough)               │
-│       │ commands.rs → JSON-RPC over stdio               │
-├───────┼───────────────────────────┼─────────────────────┤
-│  Node.js Sidecar (Orchestrator)   │                     │
-│  ┌──────────┐ ┌──────────┐ ┌─────┴────┐ ┌───────────┐ │
-│  │Orchestr. │ │TaskMgr   │ │KBService │ │AgentReg.  │ │
-│  │(RPC hub) │ │(TODO)    │ │(Obsidian)│ │(adapters) │ │
-│  └────┬─────┘ └──────────┘ └──────────┘ └─────┬─────┘ │
-│       │                                        │       │
-│  ┌────┴────────────────────────────────────────┴────┐  │
-│  │  SDK Adapters (Claude / Codex / opencode)        │  │
-│  │  - sendPrompt (+ images, slash cmd intercept)    │  │
-│  │  - setSystemPrompt (context injection)           │  │
-│  │  - getSlashCommands (command list)               │  │
-│  └──────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│  Vue 3 Frontend (Tauri WebView)                              │
+│  ┌──────────┐ ┌──────────┐ ┌────────────┐ ┌──────────────┐ │
+│  │AgentPanel│ │TitleBar  │ │SettingsPanel│ │TaskDashboard │ │
+│  │(chat+img)│ │(info+tab)│ │(preset+ctx) │ │(list+detail) │ │
+│  └────┬─────┘ └──────────┘ └─────┬──────┘ └──────┬───────┘ │
+│       │                           │                │         │
+│  ┌────┴───┐ ┌──────────┐ ┌───────┴──────┐ ┌──────┴───────┐ │
+│  │SlashCmd│ │ EventLog │ │ agents store │ │ tasks store  │ │
+│  │Palette │ │ (events) │ │ messages st. │ │ events store │ │
+│  └────────┘ └──────────┘ └──────────────┘ └──────────────┘ │
+│       │ tauri-bridge (invoke + listen)                       │
+├───────┼──────────────────────────────────────────────────────┤
+│  Rust │ Tauri Commands (thin passthrough)                    │
+│       │ commands.rs → JSON-RPC over stdio                    │
+├───────┼──────────────────────────────────────────────────────┤
+│  Node.js Sidecar (Orchestrator)                              │
+│  ┌──────────┐ ┌──────────────┐ ┌──────────┐ ┌───────────┐  │
+│  │Orchestr. │ │TaskManager   │ │KBService │ │AgentReg.  │  │
+│  │(RPC hub) │ │(state+prompt)│ │(Obsidian)│ │(adapters) │  │
+│  └────┬─────┘ └──────┬───────┘ └──────────┘ └─────┬─────┘  │
+│       │        ┌──────┴───────┐                    │         │
+│       │        │Persistence KB│                    │         │
+│       │        │(JSON files)  │                    │         │
+│       │        └──────────────┘                    │         │
+│  ┌────┴────────────────────────────────────────────┴────┐   │
+│  │  SDK Adapters (Claude / Codex / opencode)            │   │
+│  │  - sendPrompt (+ images, slash cmd intercept)        │   │
+│  │  - setSystemPrompt (context injection)               │   │
+│  │  - getSlashCommands (command list)                   │   │
+│  └──────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────┘
 ```
