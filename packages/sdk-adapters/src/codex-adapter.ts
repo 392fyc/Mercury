@@ -40,7 +40,7 @@ export class CodexAdapter implements AgentAdapter {
       id: "codex-cli",
       displayName: "Codex CLI",
       cli: "codex",
-      role: "dev",
+      roles: ["dev"],
       integration: "sdk",
       capabilities: ["code", "batch_json", "test"],
       restrictions: ["no_kb_write", "isolated_branch_only"],

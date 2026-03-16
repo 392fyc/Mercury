@@ -7,11 +7,22 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import type { MercuryConfig } from "@mercury/core";
+import type { MercuryConfig, AgentConfig } from "@mercury/core";
 import { RpcTransport } from "./rpc-transport.js";
 import { AgentRegistry } from "./agent-registry.js";
 import { Orchestrator } from "./orchestrator.js";
 import { KnowledgeService } from "./knowledge-service.js";
+
+/** Migrate legacy config: `role: "main"` → `roles: ["main"]` */
+function migrateAgentConfig(agents: Record<string, unknown>[]): AgentConfig[] {
+  for (const agent of agents) {
+    if ("role" in agent && !("roles" in agent)) {
+      agent.roles = [agent.role as string];
+      delete agent.role;
+    }
+  }
+  return agents as unknown as AgentConfig[];
+}
 
 function loadConfig(configPath?: string): MercuryConfig {
   const paths = [
@@ -23,9 +34,10 @@ function loadConfig(configPath?: string): MercuryConfig {
   for (const p of paths) {
     try {
       const raw = readFileSync(p, "utf-8");
-      const config = JSON.parse(raw) as MercuryConfig;
+      const config = JSON.parse(raw);
+      config.agents = migrateAgentConfig(config.agents ?? []);
       transport.log(`Loaded config from ${p} (${config.agents.length} agents)`);
-      return config;
+      return config as MercuryConfig;
     } catch {
       // try next
     }
@@ -38,7 +50,7 @@ function loadConfig(configPath?: string): MercuryConfig {
         id: "claude-code",
         displayName: "Claude Code",
         cli: "claude",
-        role: "main",
+        roles: ["main"],
         integration: "sdk",
         capabilities: ["code", "review", "orchestration"],
         restrictions: [],
@@ -48,7 +60,7 @@ function loadConfig(configPath?: string): MercuryConfig {
         id: "codex-cli",
         displayName: "Codex CLI",
         cli: "codex",
-        role: "dev",
+        roles: ["dev"],
         integration: "sdk",
         capabilities: ["code", "test"],
         restrictions: [],

@@ -1,5 +1,8 @@
 /**
  * Agent configuration and session state store.
+ *
+ * All per-panel state (status, sessions, workDir, gitBranch) is keyed by
+ * panelKey (roleSlotKey = "{role}:{agentId}"), NOT by raw agentId.
  */
 
 import { ref, computed } from "vue";
@@ -11,57 +14,84 @@ import {
   onSidecarError,
 } from "../lib/tauri-bridge";
 
+// ─── Role Panel ───
+
+export interface RolePanel {
+  agentId: string;
+  role: "main" | "dev" | "acceptance" | "research" | "design";
+  displayName: string;
+  panelKey: string; // "{role}:{agentId}"
+}
+
 const agents = ref<AgentConfig[]>([]);
-const statuses = ref<Map<string, "idle" | "active" | "error">>(new Map());
-const sessions = ref<Map<string, string>>(new Map()); // agentId → sessionId
-const workDirs = ref<Map<string, string>>(new Map()); // agentId → cwd
-const gitBranches = ref<Map<string, string | null>>(new Map()); // agentId → branch
+const statuses = ref<Map<string, "idle" | "active" | "error">>(new Map()); // panelKey → status
+const sessions = ref<Map<string, string>>(new Map()); // panelKey → sessionId
+const workDirs = ref<Map<string, string>>(new Map()); // panelKey → cwd
+const gitBranches = ref<Map<string, string | null>>(new Map()); // panelKey → branch
 const defaultWorkDir = ref("");
 const sidecarReady = ref(false);
 const sidecarError = ref<string | null>(null);
 
-const mainAgent = computed(() => agents.value.find((a) => a.role === "main"));
+const mainAgent = computed(() => agents.value.find((a) => a.roles.includes("main")));
 
+/** Expand each agent's non-main roles into individual panels. */
+const rolePanels = computed<RolePanel[]>(() => {
+  const panels: RolePanel[] = [];
+  for (const agent of agents.value) {
+    for (const role of agent.roles) {
+      if (role === "main") continue;
+      panels.push({
+        agentId: agent.id,
+        role,
+        displayName: `${agent.displayName} (${role})`,
+        panelKey: `${role}:${agent.id}`,
+      });
+    }
+  }
+  return panels;
+});
+
+// Legacy compat: subAgents = unique agents with non-main roles
 const subAgents = computed(() =>
-  agents.value.filter((a) => a.role !== "main"),
+  agents.value.filter((a) => !a.roles.includes("main") || a.roles.length > 1),
 );
 
-function setStatus(agentId: string, status: "idle" | "active" | "error") {
-  statuses.value = new Map(statuses.value).set(agentId, status);
+function setStatus(panelKey: string, status: "idle" | "active" | "error") {
+  statuses.value = new Map(statuses.value).set(panelKey, status);
 }
 
-function getStatus(agentId: string): "idle" | "active" | "error" {
-  return statuses.value.get(agentId) ?? "idle";
+function getStatus(panelKey: string): "idle" | "active" | "error" {
+  return statuses.value.get(panelKey) ?? "idle";
 }
 
-function setSession(agentId: string, sessionId: string) {
-  sessions.value = new Map(sessions.value).set(agentId, sessionId);
+function setSession(panelKey: string, sessionId: string) {
+  sessions.value = new Map(sessions.value).set(panelKey, sessionId);
 }
 
-function getSession(agentId: string): string | undefined {
-  return sessions.value.get(agentId);
+function getSession(panelKey: string): string | undefined {
+  return sessions.value.get(panelKey);
 }
 
-function clearSession(agentId: string) {
+function clearSession(panelKey: string) {
   const next = new Map(sessions.value);
-  next.delete(agentId);
+  next.delete(panelKey);
   sessions.value = next;
 }
 
-function setWorkDir(agentId: string, cwd: string) {
-  workDirs.value = new Map(workDirs.value).set(agentId, cwd);
+function setWorkDir(panelKey: string, cwd: string) {
+  workDirs.value = new Map(workDirs.value).set(panelKey, cwd);
 }
 
-function getWorkDir(agentId: string): string {
-  return workDirs.value.get(agentId) ?? defaultWorkDir.value;
+function getWorkDir(panelKey: string): string {
+  return workDirs.value.get(panelKey) ?? defaultWorkDir.value;
 }
 
-function setGitBranch(agentId: string, branch: string | null) {
-  gitBranches.value = new Map(gitBranches.value).set(agentId, branch);
+function setGitBranch(panelKey: string, branch: string | null) {
+  gitBranches.value = new Map(gitBranches.value).set(panelKey, branch);
 }
 
-function getGitBranch(agentId: string): string | null {
-  return gitBranches.value.get(agentId) ?? null;
+function getGitBranch(panelKey: string): string | null {
+  return gitBranches.value.get(panelKey) ?? null;
 }
 
 const anyActive = computed(() =>
@@ -77,8 +107,14 @@ async function loadAgents() {
     agents.value = await fetchAgents();
     sidecarReady.value = true;
     sidecarError.value = null;
+    // Initialize status for each role panel
     for (const agent of agents.value) {
-      statuses.value.set(agent.id, "idle");
+      for (const role of agent.roles) {
+        const key = `${role}:${agent.id}`;
+        if (!statuses.value.has(key)) {
+          statuses.value.set(key, "idle");
+        }
+      }
     }
   } catch (e) {
     console.error("Failed to fetch agents:", e);
@@ -126,6 +162,7 @@ export function useAgentStore() {
     agents,
     mainAgent,
     subAgents,
+    rolePanels,
     statuses,
     sidecarReady,
     sidecarError,

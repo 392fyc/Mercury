@@ -13,6 +13,7 @@ const props = defineProps<{
   agentId: string;
   agentName: string;
   role: "main" | "dev" | "acceptance" | "research" | "design";
+  panelKey: string;
 }>();
 
 const { getStatus, getSession, getWorkDir, setWorkDir, getGitBranch, setGitBranch, clearSession, defaultWorkDir } = useAgentStore();
@@ -23,9 +24,9 @@ const messagesEl = ref<HTMLDivElement>();
 const textareaEl = ref<HTMLTextAreaElement>();
 const paletteRef = ref<InstanceType<typeof SlashCommandPalette>>();
 
-const status = computed(() => getStatus(props.agentId));
-const messages = computed(() => getMessages(props.agentId));
-const sessionId = computed(() => getSession(props.agentId));
+const status = computed(() => getStatus(props.panelKey));
+const messages = computed(() => getMessages(props.panelKey));
+const sessionId = computed(() => getSession(props.panelKey));
 const sessionShortId = computed(() => {
   const id = sessionId.value;
   return id ? id.slice(0, 8) : null;
@@ -34,8 +35,8 @@ const sessionShortId = computed(() => {
 // ─── Workspace ───
 
 // Explicitly reference defaultWorkDir.value so Vue tracks it as a dependency
-const workDir = computed(() => getWorkDir(props.agentId) || defaultWorkDir.value);
-const gitBranch = computed(() => getGitBranch(props.agentId));
+const workDir = computed(() => getWorkDir(props.panelKey) || defaultWorkDir.value);
+const gitBranch = computed(() => getGitBranch(props.panelKey));
 const shortWorkDir = computed(() => {
   const dir = workDir.value;
   if (!dir) return "";
@@ -46,9 +47,9 @@ const shortWorkDir = computed(() => {
 async function refreshGitBranch(path: string) {
   try {
     const info = await getGitInfo(path);
-    setGitBranch(props.agentId, info.gitBranch);
+    setGitBranch(props.panelKey, info.gitBranch);
   } catch {
-    setGitBranch(props.agentId, null);
+    setGitBranch(props.panelKey, null);
   }
 }
 
@@ -66,14 +67,14 @@ async function handleChangeDir() {
   const sid = sessionId.value;
   if (sid) {
     try { await stopSession(props.agentId, sid); } catch { /* best-effort */ }
-    clearSession(props.agentId);
+    clearSession(props.panelKey);
   }
 
   // Clear message history for fresh start
-  clearMessages(props.agentId);
+  clearMessages(props.panelKey);
 
   // Update cwd in store and orchestrator
-  setWorkDir(props.agentId, selected);
+  setWorkDir(props.panelKey, selected);
   await setAgentCwd(props.agentId, selected);
   await refreshGitBranch(selected);
 }
@@ -257,7 +258,7 @@ async function handleSend() {
   pendingImages.value = [];
   resizeTextarea();
   // Use empty prompt for image-only sends — adapter handles content block construction
-  await sendPrompt(props.agentId, prompt, images);
+  await sendPrompt(props.panelKey, prompt, images);
 }
 
 function handleKeydown(e: KeyboardEvent) {

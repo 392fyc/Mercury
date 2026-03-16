@@ -2,9 +2,11 @@
  * Mercury Orchestrator — core class managing agent sessions, prompts, and event flow.
  */
 
-import { EventBus } from "@mercury/core";
+import { EventBus, makeRoleSlotKey } from "@mercury/core";
 import type {
   AgentConfig,
+  AgentRole,
+  RoleSlotKey,
   SessionInfo,
   AgentMessage,
   ImageAttachment,
@@ -31,7 +33,7 @@ export class Orchestrator {
   private registry: AgentRegistry;
   private transport: RpcTransport;
   private sessions = new Map<string, SessionInfo>();
-  private agentSessions = new Map<string, string>(); // agentId → active sessionId
+  private roleSessions = new Map<RoleSlotKey, string>(); // roleSlotKey → active sessionId
   private agentCwds = new Map<string, string>(); // agentId → working directory
   private kb: KnowledgeService | null = null;
   private projectConfig: MercuryConfig | null = null;
@@ -154,12 +156,18 @@ export class Orchestrator {
       case "get_agents":
         return this.getAgents();
       case "start_session":
-        return this.startSession(params.agentId as string);
+        return this.startRoleSession(
+          params.agentId as string,
+          (params.role as AgentRole | null) ?? undefined,
+          (params.taskName as string | null) ?? undefined,
+        );
       case "send_prompt":
         return this.sendPrompt(
           params.agentId as string,
           params.prompt as string,
           (params.images as ImageAttachment[] | null) ?? undefined,
+          (params.role as AgentRole | null) ?? undefined,
+          (params.taskName as string | null) ?? undefined,
         );
       case "stop_session":
         return this.stopSession(
@@ -254,16 +262,28 @@ export class Orchestrator {
     return { ok: true };
   }
 
-  private async startSession(agentId: string): Promise<SessionInfo> {
+  private async startRoleSession(
+    agentId: string,
+    role?: AgentRole,
+    taskName?: string,
+  ): Promise<SessionInfo> {
     const adapter = this.registry.getAdapter(agentId);
+    const config = this.registry.getConfig(agentId);
+    const effectiveRole = role ?? config.roles[0];
     const cwd = this.agentCwds.get(agentId) ?? process.cwd();
     const session = await adapter.startSession(cwd);
 
+    // Enrich session with role and naming convention
+    session.role = effectiveRole;
+    session.sessionName = `${effectiveRole}-${config.cli}-${taskName ?? "default"}`;
+
     this.sessions.set(session.sessionId, session);
-    this.agentSessions.set(agentId, session.sessionId);
+    const slotKey = makeRoleSlotKey(effectiveRole, agentId);
+    this.roleSessions.set(slotKey, session.sessionId);
 
     this.bus.emit("agent.session.start", agentId, session.sessionId, {
-      role: this.registry.getConfig(agentId).role,
+      role: effectiveRole,
+      sessionName: session.sessionName,
     });
 
     return session;
@@ -273,23 +293,25 @@ export class Orchestrator {
     agentId: string,
     prompt: string,
     images?: ImageAttachment[],
+    role?: AgentRole,
+    taskName?: string,
   ): Promise<{ sessionId: string }> {
     const adapter = this.registry.getAdapter(agentId);
+    const config = this.registry.getConfig(agentId);
+    const effectiveRole = role ?? config.roles[0];
+    const slotKey = makeRoleSlotKey(effectiveRole, agentId);
 
-    // Auto-start session if none exists
-    let sessionId = this.agentSessions.get(agentId);
+    // Auto-start session if none exists for this role slot
+    let sessionId = this.roleSessions.get(slotKey);
     if (!sessionId) {
-      const session = await this.startSession(agentId);
+      const session = await this.startRoleSession(agentId, effectiveRole, taskName);
       sessionId = session.sessionId;
     }
 
     // Validate that the adapter still knows about this session and it's usable.
-    // Sessions can become stale if the adapter was recreated (e.g. config update),
-    // if a previous stream errored out, or if the user ran /clear or /exit.
     let needNewSession = false;
     try {
       const sessionInfo = await adapter.resumeSession(sessionId);
-      // If session was ended (e.g. /clear, /exit), create a fresh one
       if (sessionInfo.status === "completed" || sessionInfo.status === "overflow") {
         needNewSession = true;
       }
@@ -298,14 +320,15 @@ export class Orchestrator {
     }
     if (needNewSession) {
       this.sessions.delete(sessionId);
-      this.agentSessions.delete(agentId);
-      const session = await this.startSession(agentId);
+      this.roleSessions.delete(slotKey);
+      const session = await this.startRoleSession(agentId, effectiveRole, taskName);
       sessionId = session.sessionId;
     }
 
     this.bus.emit("agent.message.send", agentId, sessionId, {
       prompt: prompt.slice(0, 200),
       hasImages: images ? images.length : 0,
+      role: effectiveRole,
     });
 
     // Stream messages asynchronously
@@ -356,8 +379,11 @@ export class Orchestrator {
 
       // Clean up failed session so next sendPrompt auto-creates a fresh one
       this.sessions.delete(sessionId);
-      if (this.agentSessions.get(agentId) === sessionId) {
-        this.agentSessions.delete(agentId);
+      for (const [key, sid] of this.roleSessions) {
+        if (sid === sessionId) {
+          this.roleSessions.delete(key);
+          break;
+        }
       }
       // Also end it in the adapter to avoid stale references
       try { await adapter.endSession(sessionId); } catch { /* best-effort */ }
@@ -372,8 +398,11 @@ export class Orchestrator {
     await adapter.endSession(sessionId);
 
     this.sessions.delete(sessionId);
-    if (this.agentSessions.get(agentId) === sessionId) {
-      this.agentSessions.delete(agentId);
+    for (const [key, sid] of this.roleSessions) {
+      if (sid === sessionId) {
+        this.roleSessions.delete(key);
+        break;
+      }
     }
 
     this.bus.emit("agent.session.end", agentId, sessionId, {});
@@ -389,7 +418,14 @@ export class Orchestrator {
     toAgentId: string,
     prompt: string,
   ): Promise<{ sessionId: string; taskId: string }> {
-    const fromSessionId = this.agentSessions.get(fromAgentId) ?? "orchestrator";
+    // Find any active session for fromAgent
+    let fromSessionId = "orchestrator";
+    for (const [key, sid] of this.roleSessions) {
+      if (key.endsWith(`:${fromAgentId}`)) {
+        fromSessionId = sid;
+        break;
+      }
+    }
     const taskId = `TASK-${Date.now()}`;
 
     this.bus.emit(
@@ -434,8 +470,8 @@ export class Orchestrator {
       this.taskManager.transitionTask(taskId, "dispatched", "orchestrator");
     }
 
-    // Start session for assigned agent
-    const session = await this.startSession(task.assignedTo);
+    // Start role-scoped session for assigned agent
+    const session = await this.startRoleSession(task.assignedTo, "dev", task.title);
     this.taskManager.bindSession(taskId, session.sessionId);
 
     // Transition to in_progress (only if not already there)
@@ -443,8 +479,8 @@ export class Orchestrator {
       this.taskManager.transitionTask(taskId, "in_progress", task.assignedTo);
     }
 
-    // Send the prompt
-    await this.sendPrompt(task.assignedTo, prompt);
+    // Send the prompt with role context
+    await this.sendPrompt(task.assignedTo, prompt, undefined, "dev", task.title);
 
     return { sessionId: session.sessionId, taskId };
   }
@@ -466,10 +502,10 @@ export class Orchestrator {
 
     // Build acceptance prompt and dispatch to acceptor agent
     const prompt = buildAcceptancePrompt(task, acceptance);
-    const session = await this.startSession(acceptorId);
+    const session = await this.startRoleSession(acceptorId, "acceptance", task.title);
     this.taskManager.bindSession(taskId, session.sessionId);
 
-    await this.sendPrompt(acceptorId, prompt);
+    await this.sendPrompt(acceptorId, prompt, undefined, "acceptance", task.title);
 
     return { acceptanceId: acceptance.acceptanceId, sessionId: session.sessionId };
   }
@@ -519,15 +555,24 @@ export class Orchestrator {
     agentId: string,
     summary: string,
   ): Promise<{ newSessionId: string }> {
-    // End current session
-    const currentSessionId = this.agentSessions.get(agentId);
+    // Find any active session for this agent and preserve its role
+    let currentSessionId: string | undefined;
+    let currentRole: AgentRole | undefined;
+    for (const [key, sid] of this.roleSessions) {
+      if (key.endsWith(`:${agentId}`)) {
+        currentSessionId = sid;
+        const colonIdx = key.indexOf(":");
+        currentRole = key.slice(0, colonIdx) as AgentRole;
+        break;
+      }
+    }
     if (currentSessionId) {
       this.bus.emit("orchestrator.session.summarize", agentId, currentSessionId, { summary });
       await this.stopSession(agentId, currentSessionId);
     }
 
-    // Start fresh session
-    const newSession = await this.startSession(agentId);
+    // Start fresh session with same role
+    const newSession = await this.startRoleSession(agentId, currentRole);
     return { newSessionId: newSession.sessionId };
   }
 

@@ -19,12 +19,80 @@ export interface AgentConfig {
   displayName: string;
   cli: string; // e.g. "claude", "codex", "opencode"
   model?: string; // e.g. "claude-opus-4-6", "o3", "gemini-2.5-pro"
-  role: AgentRole;
+  roles: AgentRole[];
   integration: IntegrationType;
   capabilities: string[];
   restrictions: string[];
   maxConcurrentSessions: number;
 }
+
+// ─── Role Slot ───
+
+/** Composite key for role-scoped sessions: "{role}:{agentId}" */
+export type RoleSlotKey = `${AgentRole}:${string}`;
+
+export function makeRoleSlotKey(role: AgentRole, agentId: string): RoleSlotKey {
+  return `${role}:${agentId}`;
+}
+
+export function parseRoleSlotKey(key: RoleSlotKey): { role: AgentRole; agentId: string } {
+  const idx = key.indexOf(":");
+  return { role: key.slice(0, idx) as AgentRole, agentId: key.slice(idx + 1) };
+}
+
+// ─── Role Cards ───
+
+export interface RoleCard {
+  role: AgentRole;
+  description: string;
+  canExecuteCode: boolean;
+  canDelegateToRoles: AgentRole[];
+  inputBoundary: string[];
+  outputBoundary: string[];
+}
+
+export const ROLE_CARDS: Record<AgentRole, RoleCard> = {
+  main: {
+    role: "main",
+    description: "Orchestrator: reviews, verifies, delegates. Does NOT execute code directly.",
+    canExecuteCode: false,
+    canDelegateToRoles: ["dev", "acceptance", "research", "design"],
+    inputBoundary: ["user prompts", "acceptance results", "research findings"],
+    outputBoundary: ["task bundles", "delegation directives", "final summaries"],
+  },
+  dev: {
+    role: "dev",
+    description: "Worker: receives task bundles, writes code, returns implementation receipts.",
+    canExecuteCode: true,
+    canDelegateToRoles: [],
+    inputBoundary: ["task bundles", "rework directives"],
+    outputBoundary: ["implementation receipts", "code changes"],
+  },
+  acceptance: {
+    role: "acceptance",
+    description: "Reviewer: blind acceptance testing on completed tasks.",
+    canExecuteCode: true,
+    canDelegateToRoles: [],
+    inputBoundary: ["acceptance bundles", "code to review"],
+    outputBoundary: ["acceptance verdicts"],
+  },
+  research: {
+    role: "research",
+    description: "Analyst: reads docs, answers questions, no code writing.",
+    canExecuteCode: false,
+    canDelegateToRoles: [],
+    inputBoundary: ["research questions", "document references"],
+    outputBoundary: ["research findings", "summaries"],
+  },
+  design: {
+    role: "design",
+    description: "Designer: generates specs, mockups, design decisions.",
+    canExecuteCode: false,
+    canDelegateToRoles: [],
+    inputBoundary: ["design requirements"],
+    outputBoundary: ["design specs", "architecture decisions"],
+  },
+};
 
 // ─── Project Configuration ───
 
@@ -236,6 +304,8 @@ export interface SlashCommand {
 export interface SessionInfo {
   sessionId: string;
   agentId: string;
+  role?: AgentRole;
+  sessionName?: string; // "{role}-{cli}-{taskName}"
   startedAt: number;
   lastActiveAt: number;
   tokenUsage?: number;

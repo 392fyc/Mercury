@@ -1,4 +1,5 @@
 export { EventBus } from "./event-bus.js";
+export { makeRoleSlotKey, parseRoleSlotKey, ROLE_CARDS } from "./types.js";
 export type {
   AcceptanceBundle,
   AcceptanceVerdict,
@@ -18,6 +19,8 @@ export type {
   MercuryConfig,
   MercuryEvent,
   ObsidianConfig,
+  RoleCard,
+  RoleSlotKey,
   SessionInfo,
   SlashCommand,
   SlashCommandArg,

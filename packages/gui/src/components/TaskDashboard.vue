@@ -53,7 +53,7 @@ async function handleDispatch(taskId: string) {
 
 async function handleCreateAcceptance(taskId: string) {
   // Find an acceptance-role agent, or fall back to first available
-  const acceptor = agents.value.find((a) => a.role === "acceptance") ?? agents.value[0];
+  const acceptor = agents.value.find((a) => a.roles.includes("acceptance")) ?? agents.value[0];
   if (!acceptor) return;
   try {
     await createAcceptance(taskId, acceptor.id);

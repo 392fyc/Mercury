@@ -105,7 +105,7 @@ function addAgent() {
     id: preset.id,
     displayName: preset.label,
     cli: preset.cli,
-    role: "dev",
+    roles: ["dev"],
     integration: preset.integration,
     capabilities: [...preset.capabilities],
     restrictions: [...preset.restrictions],
@@ -253,10 +253,13 @@ function handleKeydown(e: KeyboardEvent) {
                 </select>
               </label>
               <label>
-                <span>Role</span>
-                <select v-model="agent.role" class="field-input">
-                  <option v-for="r in ROLE_DEFS" :key="r.value" :value="r.value">{{ r.label }}</option>
-                </select>
+                <span>Roles</span>
+                <div class="role-checkboxes">
+                  <label v-for="r in ROLE_DEFS" :key="r.value" class="role-checkbox">
+                    <input type="checkbox" :value="r.value" v-model="agent.roles" />
+                    <span>{{ r.label }}</span>
+                  </label>
+                </div>
               </label>
               <label>
                 <span>Max Sessions</span>
@@ -275,7 +278,7 @@ function handleKeydown(e: KeyboardEvent) {
                 class="cap-tag"
               >{{ cap }}</span>
             </div>
-            <p class="role-hint">{{ ROLE_DEFS.find(r => r.value === agent.role)?.hint ?? '' }}</p>
+            <p class="role-hint">{{ agent.roles?.map(r => ROLE_DEFS.find(d => d.value === r)?.hint).filter(Boolean).join(' | ') ?? '' }}</p>
           </div>
           <button class="add-agent-btn" @click="addAgent">+ Add Agent</button>
         </div>
@@ -569,6 +572,27 @@ function handleKeydown(e: KeyboardEvent) {
   background: rgba(0, 212, 255, 0.1);
   color: var(--accent-main);
   border-radius: 3px;
+}
+
+.role-checkboxes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.role-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.role-checkbox input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
 }
 
 .role-hint {

@@ -11,7 +11,7 @@ export interface AgentConfig {
   displayName: string;
   cli: string;
   model?: string; // e.g. "claude-opus-4-6", "o3"
-  role: "main" | "dev" | "acceptance" | "research" | "design";
+  roles: ("main" | "dev" | "acceptance" | "research" | "design")[];
   integration: string;
   capabilities: string[];
   restrictions: string[];
@@ -88,8 +88,9 @@ export async function sendPrompt(
   agentId: string,
   prompt: string,
   images?: ImageAttachment[],
+  role?: string,
 ): Promise<{ sessionId: string }> {
-  return invoke("send_prompt", { agentId, prompt, images: images ?? null });
+  return invoke("send_prompt", { agentId, prompt, images: images ?? null, role: role ?? null });
 }
 
 export async function startSession(

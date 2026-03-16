@@ -44,7 +44,7 @@ export class ClaudeAdapter implements AgentAdapter {
       id: "claude-code",
       displayName: "Claude Code",
       cli: "claude",
-      role: "main",
+      roles: ["main"],
       integration: "sdk",
       capabilities: [
         "code",

@@ -77,11 +77,12 @@ pub async fn send_prompt(
     agent_id: String,
     prompt: String,
     images: Option<serde_json::Value>,
+    role: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let mgr = get_sidecar(&sidecar).await?;
     mgr.send_request(
         "send_prompt",
-        serde_json::json!({ "agentId": agent_id, "prompt": prompt, "images": images }),
+        serde_json::json!({ "agentId": agent_id, "prompt": prompt, "images": images, "role": role }),
     )
     .await
 }

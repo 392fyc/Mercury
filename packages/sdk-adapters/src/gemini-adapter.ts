@@ -48,7 +48,7 @@ export class GeminiAdapter implements AgentAdapter {
       id: "gemini-cli",
       displayName: "Gemini CLI",
       cli: "gemini",
-      role: "dev",
+      roles: ["dev"],
       integration: "sdk", // closest match — uses CLI spawning
       capabilities: ["code", "multimodal", "research"],
       restrictions: ["no_kb_write", "isolated_branch_only"],

@@ -2,7 +2,7 @@
  * Agent Registry — instantiates the correct SDK adapter for each configured agent.
  */
 
-import type { AgentConfig, AgentAdapter } from "@mercury/core";
+import type { AgentConfig, AgentAdapter, AgentRole } from "@mercury/core";
 import { ClaudeAdapter, CodexAdapter, GeminiAdapter, OpencodeAdapter } from "@mercury/sdk-adapters";
 
 export class AgentRegistry {
@@ -42,7 +42,11 @@ export class AgentRegistry {
   }
 
   getMainAgent(): AgentConfig | undefined {
-    return this.listAgents().find((a) => a.role === "main");
+    return this.listAgents().find((a) => a.roles.includes("main"));
+  }
+
+  getAgentsForRole(role: AgentRole): AgentConfig[] {
+    return this.listAgents().filter((a) => a.roles.includes(role));
   }
 
   private createAdapter(config: AgentConfig): AgentAdapter {

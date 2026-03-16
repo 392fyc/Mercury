@@ -39,7 +39,7 @@ export class OpencodeAdapter implements AgentAdapter {
       id: "opencode",
       displayName: "opencode",
       cli: "opencode",
-      role: "dev",
+      roles: ["dev"],
       integration: "http",
       capabilities: ["code", "parallel", "design_to_code"],
       restrictions: ["no_kb_write", "isolated_branch_only"],

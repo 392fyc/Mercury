@@ -10,7 +10,7 @@ import { useMessageStore } from "./stores/messages";
 import { useEventStore } from "./stores/events";
 import { useTaskStore } from "./stores/tasks";
 
-const { agents, mainAgent, subAgents, sidecarReady, sidecarError, initAgents } =
+const { agents, mainAgent, rolePanels, sidecarReady, sidecarError, initAgents } =
   useAgentStore();
 const { initMessageListeners } = useMessageStore();
 const { initEventListeners } = useEventStore();
@@ -49,15 +49,17 @@ onMounted(async () => {
             v-if="mainAgent"
             :agentId="mainAgent.id"
             :agentName="mainAgent.displayName"
-            :role="mainAgent.role"
+            :role="'main'"
+            :panelKey="`main:${mainAgent.id}`"
           />
-          <div class="sub-agents" v-if="subAgents.length > 0">
+          <div class="sub-agents" v-if="rolePanels.length > 0">
             <AgentPanel
-              v-for="agent in subAgents"
-              :key="agent.id"
-              :agentId="agent.id"
-              :agentName="agent.displayName"
-              :role="agent.role"
+              v-for="panel in rolePanels"
+              :key="panel.panelKey"
+              :agentId="panel.agentId"
+              :agentName="panel.displayName"
+              :role="panel.role"
+              :panelKey="panel.panelKey"
             />
           </div>
         </div>
