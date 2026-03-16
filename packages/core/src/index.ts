@@ -6,6 +6,8 @@ export type {
   AgentConfig,
   AgentMessage,
   AgentRole,
+  ImageAttachment,
+  ImageMediaType,
   EventType,
   ImplementationReceipt,
   IntegrationType,

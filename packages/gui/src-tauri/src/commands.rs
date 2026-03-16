@@ -1,7 +1,36 @@
+use std::process::Command;
 use tauri::State;
 
 use crate::sidecar::SidecarManager;
-use crate::SharedSidecar;
+use crate::{ProjectRoot, SharedSidecar};
+
+// ─── Project Info (direct, no sidecar) ───
+
+#[tauri::command]
+pub fn get_project_info(
+    root: State<'_, ProjectRoot>,
+) -> Result<serde_json::Value, String> {
+    let project_root = &root.0;
+
+    // Detect git branch via `git rev-parse --abbrev-ref HEAD`
+    let git_branch = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(project_root)
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+            } else {
+                None
+            }
+        });
+
+    Ok(serde_json::json!({
+        "projectRoot": project_root,
+        "gitBranch": git_branch,
+    }))
+}
 
 /// Clone the sidecar manager out of the shared state, or error if not ready.
 async fn get_sidecar(shared: &SharedSidecar) -> Result<SidecarManager, String> {
@@ -25,11 +54,12 @@ pub async fn send_prompt(
     sidecar: State<'_, SharedSidecar>,
     agent_id: String,
     prompt: String,
+    images: Option<serde_json::Value>,
 ) -> Result<serde_json::Value, String> {
     let mgr = get_sidecar(&sidecar).await?;
     mgr.send_request(
         "send_prompt",
-        serde_json::json!({ "agentId": agent_id, "prompt": prompt }),
+        serde_json::json!({ "agentId": agent_id, "prompt": prompt, "images": images }),
     )
     .await
 }
@@ -260,4 +290,22 @@ pub async fn kb_append(
     let mgr = get_sidecar(&sidecar).await?;
     mgr.send_request("kb_append", serde_json::json!({ "file": file, "content": content }))
         .await
+}
+
+// ─── Shared Context Commands ───
+
+#[tauri::command]
+pub async fn refresh_context(
+    sidecar: State<'_, SharedSidecar>,
+) -> Result<serde_json::Value, String> {
+    let mgr = get_sidecar(&sidecar).await?;
+    mgr.send_request("refresh_context", serde_json::json!({})).await
+}
+
+#[tauri::command]
+pub async fn get_context_status(
+    sidecar: State<'_, SharedSidecar>,
+) -> Result<serde_json::Value, String> {
+    let mgr = get_sidecar(&sidecar).await?;
+    mgr.send_request("get_context_status", serde_json::json!({})).await
 }

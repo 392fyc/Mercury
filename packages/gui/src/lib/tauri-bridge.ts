@@ -11,17 +11,28 @@ export interface AgentConfig {
   displayName: string;
   cli: string;
   model?: string; // e.g. "claude-opus-4-6", "o3"
-  role: "main" | "dev" | "acceptance" | "research";
+  role: "main" | "dev" | "acceptance" | "research" | "design";
   integration: string;
   capabilities: string[];
   restrictions: string[];
   maxConcurrentSessions: number;
 }
 
+export type ImageMediaType = "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+
+export interface ImageAttachment {
+  data: string; // base64 encoded
+  mediaType: ImageMediaType;
+  filename?: string;
+  width?: number;
+  height?: number;
+}
+
 export interface AgentMessage {
   role: "user" | "assistant" | "system";
   content: string;
   timestamp: number;
+  images?: ImageAttachment[];
   metadata?: Record<string, unknown>;
 }
 
@@ -36,6 +47,17 @@ export interface MercuryEvent {
   parentEventId?: string;
 }
 
+// Project info (frontend → Rust directly, no sidecar)
+
+export interface ProjectInfo {
+  projectRoot: string;
+  gitBranch: string | null;
+}
+
+export async function getProjectInfo(): Promise<ProjectInfo> {
+  return invoke<ProjectInfo>("get_project_info");
+}
+
 // Commands (frontend → Rust → sidecar)
 
 export async function getAgents(): Promise<AgentConfig[]> {
@@ -45,8 +67,9 @@ export async function getAgents(): Promise<AgentConfig[]> {
 export async function sendPrompt(
   agentId: string,
   prompt: string,
+  images?: ImageAttachment[],
 ): Promise<{ sessionId: string }> {
-  return invoke("send_prompt", { agentId, prompt });
+  return invoke("send_prompt", { agentId, prompt, images: images ?? null });
 }
 
 export async function startSession(
@@ -280,6 +303,23 @@ export async function kbAppend(
   content: string,
 ): Promise<{ ok: true }> {
   return invoke("kb_append", { file, content });
+}
+
+// ─── Shared Context Operations ───
+
+export interface ContextStatus {
+  hasContext: boolean;
+  contextLength: number;
+  autoInject: boolean;
+  contextFiles: string[];
+}
+
+export async function refreshContext(): Promise<{ injected: boolean; agentCount: number; contextLength: number }> {
+  return invoke("refresh_context");
+}
+
+export async function getContextStatus(): Promise<ContextStatus> {
+  return invoke<ContextStatus>("get_context_status");
 }
 
 // Events (sidecar → Rust → frontend)

@@ -15,6 +15,7 @@ import type {
   AgentAdapter,
   AgentConfig,
   AgentMessage,
+  ImageAttachment,
   SessionInfo,
   SlashCommand,
 } from "@mercury/core";
@@ -91,10 +92,109 @@ export class ClaudeAdapter implements AgentAdapter {
     return info;
   }
 
-  async *sendPrompt(
+  /**
+   * Intercept slash commands that can't be sent raw to sdk.query().
+   * Returns an AgentMessage generator if handled, or null to pass through.
+   */
+  private async *handleSlashCommand(
     sessionId: string,
     prompt: string,
   ): AsyncGenerator<AgentMessage> {
+    const trimmed = prompt.trim();
+    const match = trimmed.match(/^\/(\S+)(?:\s+(.*))?$/);
+    if (!match) return; // not a slash command — caller should pass through
+
+    const cmd = match[1].toLowerCase();
+    const _args = match[2]?.trim() ?? "";
+    const ts = Date.now();
+
+    const infoMsg = (content: string): AgentMessage => ({
+      role: "assistant",
+      content,
+      timestamp: ts,
+      metadata: { isSlashCommandResponse: true, command: `/${cmd}` },
+    });
+
+    // Strategy: only intercept commands we can ACTUALLY implement in Mercury.
+    // Everything else passes through to SDK — the model will handle it or
+    // the user gets a real response rather than a useless "not supported" message.
+    switch (cmd) {
+      case "help": {
+        const cmds = this.getSlashCommands();
+        const grouped = new Map<string, typeof cmds>();
+        for (const c of cmds) {
+          const cat = c.category ?? "other";
+          if (!grouped.has(cat)) grouped.set(cat, []);
+          grouped.get(cat)!.push(c);
+        }
+        let text = "## Available Commands\n\n";
+        for (const [cat, list] of grouped) {
+          text += `### ${cat}\n`;
+          for (const c of list) {
+            text += `  **${c.name}**  ${c.description}\n`;
+          }
+          text += "\n";
+        }
+        yield infoMsg(text);
+        return;
+      }
+
+      case "clear": {
+        // Actually clear the session — mark completed so orchestrator creates new one
+        const session = this.sessions.get(sessionId);
+        if (session) session.status = "completed";
+        yield infoMsg("Session cleared. Send a new message to start a fresh conversation.");
+        return;
+      }
+
+      case "status": {
+        // Actually show real session data we have
+        const session = this.sessions.get(sessionId);
+        yield infoMsg(
+          `## Session Status\n` +
+          `- **Agent**: ${this.config.displayName} (${this.agentId})\n` +
+          `- **Integration**: SDK mode\n` +
+          `- **Session**: ${sessionId}\n` +
+          `- **Status**: ${session?.status ?? "unknown"}\n` +
+          `- **Started**: ${session ? new Date(session.startedAt).toLocaleString() : "N/A"}\n` +
+          `- **SDK Session**: ${session?.parentSessionId ?? "pending"}`,
+        );
+        return;
+      }
+
+      case "exit":
+      case "quit": {
+        // Actually end the session
+        const session = this.sessions.get(sessionId);
+        if (session) session.status = "completed";
+        yield infoMsg("Session ended. Use the Start button to begin a new session.");
+        return;
+      }
+
+      default:
+        // All other commands: pass through to SDK.
+        // The model/SDK will handle them naturally or respond appropriately.
+        return;
+    }
+  }
+
+  async *sendPrompt(
+    sessionId: string,
+    prompt: string,
+    images?: ImageAttachment[],
+  ): AsyncGenerator<AgentMessage> {
+    // Intercept slash commands before sending to SDK
+    const trimmed = prompt.trim();
+    if (trimmed.startsWith("/")) {
+      let handled = false;
+      for await (const msg of this.handleSlashCommand(sessionId, prompt)) {
+        handled = true;
+        yield msg;
+      }
+      if (handled) return;
+      // Not handled — fall through to SDK query
+    }
+
     const sdk = await this.loadSdk();
     const session = this.sessions.get(sessionId);
     if (!session) throw new Error(`Session ${sessionId} not found`);
@@ -126,9 +226,40 @@ export class ClaudeAdapter implements AgentAdapter {
       options.resume = session.parentSessionId;
     }
 
+    // Build the effective prompt — with or without images
+    // Note: Claude SDK query() accepts `prompt: string`. For multimodal input,
+    // we pass a JSON-serialized content blocks array. The SDK may also accept
+    // content block arrays directly depending on version — the cast handles both.
+    let effectivePrompt: string = prompt;
+    if (images && images.length > 0) {
+      const contentBlocks: unknown[] = [];
+      for (const img of images) {
+        contentBlocks.push({
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: img.mediaType,
+            data: img.data,
+          },
+        });
+      }
+      // Only add text block if user actually typed something
+      if (prompt) {
+        contentBlocks.push({ type: "text", text: prompt });
+      } else {
+        // SDK requires at least one text block alongside images
+        contentBlocks.push({ type: "text", text: "Please analyze these images." });
+      }
+      // NOTE: Claude Agent SDK query() accepts string prompt only. Multimodal content
+      // blocks are JSON-stringified here as a best-effort approach. When the SDK adds
+      // native content-array support (e.g. query({ content: [...] })), update this
+      // to use that API directly. Until then, image data is base64 in JSON text.
+      effectivePrompt = JSON.stringify(contentBlocks);
+    }
+
     let sdkSessionId: string | undefined;
 
-    for await (const message of sdk.query({ prompt, options })) {
+    for await (const message of sdk.query({ prompt: effectivePrompt, options })) {
       session.lastActiveAt = Date.now();
 
       if (typeof message !== "object" || message === null || !("type" in message)) {

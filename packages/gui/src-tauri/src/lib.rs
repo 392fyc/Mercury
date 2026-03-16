@@ -12,6 +12,9 @@ use sidecar::SidecarManager;
 /// Shared sidecar handle — `None` until the sidecar finishes spawning.
 pub type SharedSidecar = Arc<Mutex<Option<SidecarManager>>>;
 
+/// Project root path — available immediately (no sidecar dependency).
+pub struct ProjectRoot(pub String);
+
 /// Walk up from `start` to find the directory containing `mercury.config.json`.
 fn find_project_root(start: PathBuf) -> Option<PathBuf> {
     let mut dir = start;
@@ -44,6 +47,7 @@ pub fn run() {
                 .to_string_lossy()
                 .to_string();
 
+            app.manage(ProjectRoot(project_dir.clone()));
             eprintln!("[tauri] Project root: {}", project_dir);
 
             // Spawn the Node.js orchestrator sidecar
@@ -67,6 +71,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::get_project_info,
             commands::get_agents,
             commands::send_prompt,
             commands::start_session,
@@ -90,6 +95,8 @@ pub fn run() {
             commands::kb_list,
             commands::kb_write,
             commands::kb_append,
+            commands::refresh_context,
+            commands::get_context_status,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

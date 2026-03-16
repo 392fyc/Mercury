@@ -2,6 +2,7 @@
 import { ref, onMounted, watch } from "vue";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useConfigStore } from "../stores/config";
+import { refreshContext, getContextStatus } from "../lib/tauri-bridge";
 import type { AgentConfig, ObsidianConfig } from "../lib/tauri-bridge";
 
 const emit = defineEmits<{ close: [] }>();
@@ -11,6 +12,64 @@ const { config, loading, error, loadConfig, saveConfig } = useConfigStore();
 const activeTab = ref<"agents" | "project" | "display">("agents");
 const saving = ref(false);
 const saveMsg = ref("");
+
+// ─── Supported CLI Presets ───
+// Only CLIs we have adapters for. Selecting a CLI auto-fills derived fields.
+interface CliPreset {
+  cli: string;
+  label: string;
+  id: string;
+  integration: string;
+  capabilities: string[];
+  restrictions: string[];
+  maxSessions: number;
+}
+
+const CLI_PRESETS: CliPreset[] = [
+  {
+    cli: "claude", label: "Claude Code",
+    id: "claude-code", integration: "sdk",
+    capabilities: ["code", "analysis", "mcp", "multimodal"],
+    restrictions: [], maxSessions: 2,
+  },
+  {
+    cli: "codex", label: "Codex CLI",
+    id: "codex-cli", integration: "sdk",
+    capabilities: ["code", "batch_json", "test"],
+    restrictions: ["no_kb_write", "isolated_branch_only"], maxSessions: 3,
+  },
+  {
+    cli: "opencode", label: "opencode",
+    id: "opencode", integration: "http",
+    capabilities: ["code", "parallel", "design_to_code"],
+    restrictions: ["no_kb_write", "isolated_branch_only"], maxSessions: 3,
+  },
+  {
+    cli: "gemini", label: "Gemini CLI",
+    id: "gemini-cli", integration: "pty",
+    capabilities: ["code", "analysis", "multimodal"],
+    restrictions: [], maxSessions: 2,
+  },
+];
+
+function getPreset(cli: string): CliPreset | undefined {
+  return CLI_PRESETS.find(p => p.cli === cli);
+}
+
+// ─── Role Definitions ───
+interface RoleDef {
+  value: string;
+  label: string;
+  hint: string;
+}
+
+const ROLE_DEFS: RoleDef[] = [
+  { value: "main",       label: "Main",       hint: "Orchestrator — user talks to this agent directly, delegates tasks to others" },
+  { value: "dev",        label: "Dev",        hint: "Worker — receives task bundles, writes code, returns implementation receipts" },
+  { value: "acceptance", label: "Acceptance", hint: "Reviewer — performs blind acceptance testing on completed tasks" },
+  { value: "research",   label: "Research",   hint: "Analyst — gathers information, reads docs, answers questions without writing code" },
+  { value: "design",     label: "Design",     hint: "Designer — generates UI/UX mockups, design specs, and visual assets" },
+];
 
 // Local editable copies
 const editAgents = ref<AgentConfig[]>([]);
@@ -25,6 +84,7 @@ const editWorkDir = ref(".");
 onMounted(async () => {
   await loadConfig();
   syncFromConfig();
+  loadContextStatus();
 });
 
 function syncFromConfig() {
@@ -39,15 +99,16 @@ function syncFromConfig() {
 watch(config, syncFromConfig);
 
 function addAgent() {
+  const preset = CLI_PRESETS[0]; // default to Claude Code
   editAgents.value.push({
-    id: `agent-${Date.now()}`,
-    displayName: "New Agent",
-    cli: "",
+    id: preset.id,
+    displayName: preset.label,
+    cli: preset.cli,
     role: "dev",
-    integration: "sdk",
-    capabilities: [],
-    restrictions: [],
-    maxConcurrentSessions: 2,
+    integration: preset.integration,
+    capabilities: [...preset.capabilities],
+    restrictions: [...preset.restrictions],
+    maxConcurrentSessions: preset.maxSessions,
   });
 }
 
@@ -55,13 +116,16 @@ function removeAgent(index: number) {
   editAgents.value.splice(index, 1);
 }
 
-function addCapability(agent: AgentConfig) {
-  const cap = prompt("Capability name:");
-  if (cap) agent.capabilities.push(cap);
-}
-
-function removeCapability(agent: AgentConfig, index: number) {
-  agent.capabilities.splice(index, 1);
+/** When user changes CLI dropdown, auto-fill derived fields from preset. */
+function onCliChange(agent: AgentConfig) {
+  const preset = getPreset(agent.cli);
+  if (!preset) return;
+  agent.id = preset.id;
+  agent.displayName = preset.label;
+  agent.integration = preset.integration;
+  agent.capabilities = [...preset.capabilities];
+  agent.restrictions = [...preset.restrictions];
+  agent.maxConcurrentSessions = preset.maxSessions;
 }
 
 async function browseWorkDir() {
@@ -78,6 +142,38 @@ function addContextFile() {
 
 function removeContextFile(index: number) {
   editObsidian.value.contextFiles.splice(index, 1);
+}
+
+// ─── Context Injection Status ───
+const contextStatus = ref<{ hasContext: boolean; contextLength: number; autoInject: boolean; contextFiles: string[] } | null>(null);
+const refreshing = ref(false);
+const refreshMsg = ref("");
+
+async function loadContextStatus() {
+  try {
+    contextStatus.value = await getContextStatus();
+  } catch {
+    contextStatus.value = null;
+  }
+}
+
+async function handleRefreshContext() {
+  refreshing.value = true;
+  refreshMsg.value = "";
+  try {
+    const result = await refreshContext();
+    if (result.injected) {
+      refreshMsg.value = `Injected ${(result.contextLength / 1024).toFixed(1)}KB into ${result.agentCount} agent(s)`;
+    } else {
+      refreshMsg.value = "No context to inject (check config)";
+    }
+    await loadContextStatus();
+    setTimeout(() => (refreshMsg.value = ""), 4000);
+  } catch (e) {
+    refreshMsg.value = `Error: ${e instanceof Error ? e.message : e}`;
+  } finally {
+    refreshing.value = false;
+  }
 }
 
 async function handleSave() {
@@ -137,45 +233,37 @@ function handleKeydown(e: KeyboardEvent) {
       <div class="settings-body" v-else>
         <!-- Agents Tab -->
         <div v-if="activeTab === 'agents'" class="tab-content">
+          <p class="hint">Configure which AI agents Mercury can orchestrate. Each agent maps to a supported CLI tool.</p>
           <div
             v-for="(agent, i) in editAgents"
             :key="i"
             class="agent-card"
           >
             <div class="card-header">
-              <input v-model="agent.displayName" class="field-input name-input" placeholder="Display Name" />
+              <span class="agent-title">{{ agent.displayName || 'New Agent' }}</span>
+              <span class="agent-meta">{{ agent.id }} / {{ agent.integration }}</span>
               <button class="remove-btn" @click="removeAgent(i)" title="Remove">X</button>
             </div>
             <div class="card-fields">
               <label>
-                <span>ID</span>
-                <input v-model="agent.id" class="field-input" />
-              </label>
-              <label>
-                <span>CLI</span>
-                <input v-model="agent.cli" class="field-input" placeholder="claude, codex, opencode..." />
+                <span>CLI Tool</span>
+                <select v-model="agent.cli" class="field-input" @change="onCliChange(agent)">
+                  <option v-for="p in CLI_PRESETS" :key="p.cli" :value="p.cli">{{ p.label }}</option>
+                </select>
               </label>
               <label>
                 <span>Role</span>
                 <select v-model="agent.role" class="field-input">
-                  <option value="main">Main</option>
-                  <option value="dev">Dev</option>
-                  <option value="acceptance">Acceptance</option>
-                  <option value="research">Research</option>
-                </select>
-              </label>
-              <label>
-                <span>Integration</span>
-                <select v-model="agent.integration" class="field-input">
-                  <option value="sdk">SDK</option>
-                  <option value="mcp">MCP</option>
-                  <option value="http">HTTP</option>
-                  <option value="pty">PTY</option>
+                  <option v-for="r in ROLE_DEFS" :key="r.value" :value="r.value">{{ r.label }}</option>
                 </select>
               </label>
               <label>
                 <span>Max Sessions</span>
-                <input v-model.number="agent.maxConcurrentSessions" type="number" min="1" class="field-input" />
+                <input v-model.number="agent.maxConcurrentSessions" type="number" min="1" max="10" class="field-input" />
+              </label>
+              <label>
+                <span>Display Name</span>
+                <input v-model="agent.displayName" class="field-input" />
               </label>
             </div>
             <div class="capabilities">
@@ -184,11 +272,9 @@ function handleKeydown(e: KeyboardEvent) {
                 v-for="(cap, ci) in agent.capabilities"
                 :key="ci"
                 class="cap-tag"
-                @click="removeCapability(agent, ci)"
-                title="Click to remove"
               >{{ cap }}</span>
-              <button class="cap-add" @click="addCapability(agent)">+</button>
             </div>
+            <p class="role-hint">{{ ROLE_DEFS.find(r => r.value === agent.role)?.hint ?? '' }}</p>
           </div>
           <button class="add-agent-btn" @click="addAgent">+ Add Agent</button>
         </div>
@@ -233,6 +319,31 @@ function handleKeydown(e: KeyboardEvent) {
                   <button class="remove-btn small" @click="removeContextFile(fi)">X</button>
                 </div>
                 <button class="cap-add" @click="addContextFile">+ Add File</button>
+              </div>
+
+              <!-- Shared Context Status & Refresh -->
+              <div class="context-status-section" v-if="editObsidian.autoInjectContext">
+                <div class="context-status-row">
+                  <div class="context-status-info">
+                    <span class="cap-label">Shared Context:</span>
+                    <span v-if="contextStatus?.hasContext" class="status-badge active">
+                      Active ({{ (contextStatus.contextLength / 1024).toFixed(1) }}KB)
+                    </span>
+                    <span v-else class="status-badge inactive">Not injected</span>
+                  </div>
+                  <button
+                    class="refresh-btn"
+                    @click="handleRefreshContext"
+                    :disabled="refreshing"
+                    title="Rebuild and inject KB context into all agents"
+                  >
+                    {{ refreshing ? "Refreshing..." : "Refresh Context" }}
+                  </button>
+                </div>
+                <p v-if="refreshMsg" class="refresh-msg" :class="refreshMsg.startsWith('Error') ? 'error-text' : 'success-text'">
+                  {{ refreshMsg }}
+                </p>
+                <p class="hint">Injects KB files as system-level context. Does not consume agent conversation window.</p>
               </div>
             </div>
           </div>
@@ -379,13 +490,21 @@ function handleKeydown(e: KeyboardEvent) {
 .card-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   margin-bottom: 8px;
 }
 
-.name-input {
+.agent-title {
   font-weight: 600;
-  font-size: 14px;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.agent-meta {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  flex: 1;
 }
 
 .card-fields {
@@ -449,12 +568,14 @@ function handleKeydown(e: KeyboardEvent) {
   background: rgba(0, 212, 255, 0.1);
   color: var(--accent-main);
   border-radius: 3px;
-  cursor: pointer;
 }
 
-.cap-tag:hover {
-  background: rgba(255, 82, 82, 0.15);
-  color: var(--accent-error);
+.role-hint {
+  margin: 6px 0 0 0;
+  font-size: 10px;
+  color: var(--text-muted);
+  font-style: italic;
+  line-height: 1.4;
 }
 
 .cap-add {
@@ -651,6 +772,72 @@ function handleKeydown(e: KeyboardEvent) {
   background: var(--bg-input);
   border-radius: 3px;
   flex: 1;
+}
+
+/* Context Status */
+.context-status-section {
+  margin-top: 8px;
+  padding: 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.context-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.context-status-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+}
+
+.status-badge.active {
+  background: rgba(0, 212, 255, 0.12);
+  color: var(--accent-main);
+}
+
+.status-badge.inactive {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-muted);
+}
+
+.refresh-btn {
+  padding: 4px 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--accent-main);
+  border-radius: var(--radius);
+  color: var(--accent-main);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+
+.refresh-btn:hover {
+  background: rgba(0, 212, 255, 0.1);
+}
+
+.refresh-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.refresh-msg {
+  font-size: 11px;
+  margin: 6px 0 0 0;
 }
 
 /* Footer */

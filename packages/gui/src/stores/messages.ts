@@ -3,7 +3,7 @@
  */
 
 import { ref } from "vue";
-import type { AgentMessage } from "../lib/tauri-bridge";
+import type { AgentMessage, ImageAttachment } from "../lib/tauri-bridge";
 import {
   sendPrompt as bridgeSendPrompt,
   onAgentMessage,
@@ -16,6 +16,7 @@ export interface DisplayMessage {
   role: "user" | "assistant" | "system";
   content: string;
   timestamp: number;
+  images?: ImageAttachment[];
   metadata?: Record<string, unknown>;
 }
 
@@ -30,7 +31,7 @@ function appendMessage(agentId: string, msg: DisplayMessage) {
   messages.value = new Map(messages.value).set(agentId, [...current, msg]);
 }
 
-async function sendPrompt(agentId: string, prompt: string) {
+async function sendPrompt(agentId: string, prompt: string, images?: ImageAttachment[]) {
   const { setStatus, setSession } = useAgentStore();
 
   // Optimistic: add user message immediately
@@ -38,12 +39,13 @@ async function sendPrompt(agentId: string, prompt: string) {
     role: "user",
     content: prompt,
     timestamp: Date.now(),
+    images,
   });
 
   setStatus(agentId, "active");
 
   try {
-    const result = await bridgeSendPrompt(agentId, prompt);
+    const result = await bridgeSendPrompt(agentId, prompt, images);
     if (result?.sessionId) {
       setSession(agentId, result.sessionId);
     }
@@ -66,6 +68,7 @@ async function initMessageListeners() {
       role: data.message.role as "user" | "assistant" | "system",
       content: data.message.content,
       timestamp: data.message.timestamp,
+      images: data.message.images,
       metadata: data.message.metadata,
     });
   });

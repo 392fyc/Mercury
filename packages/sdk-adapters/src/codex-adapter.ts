@@ -10,6 +10,7 @@ import type {
   AgentAdapter,
   AgentConfig,
   AgentMessage,
+  ImageAttachment,
   SessionInfo,
   SlashCommand,
 } from "@mercury/core";
@@ -21,6 +22,8 @@ export class CodexAdapter implements AgentAdapter {
   private sessionCwd = new Map<string, string>();
   private threads = new Map<string, unknown>();
   private codexInstance: unknown = null;
+  private systemPrompt?: string;
+  private systemPromptSentSessions = new Set<string>();
 
   constructor(config?: Partial<AgentConfig>) {
     this.config = {
@@ -35,6 +38,13 @@ export class CodexAdapter implements AgentAdapter {
       ...config,
     };
     this.agentId = this.config.id;
+  }
+
+  /** Set shared context as system prompt (injected by Orchestrator). */
+  setSystemPrompt(prompt: string) {
+    this.systemPrompt = prompt;
+    // Reset tracking so context is re-injected on next message in each session
+    this.systemPromptSentSessions.clear();
   }
 
   private async loadSdk() {
@@ -72,10 +82,99 @@ export class CodexAdapter implements AgentAdapter {
     return info;
   }
 
-  async *sendPrompt(
+  /**
+   * Intercept slash commands that can't be sent raw to the Codex SDK.
+   * Returns AgentMessage(s) if handled, or yields nothing to fall through.
+   */
+  private async *handleSlashCommand(
     sessionId: string,
     prompt: string,
   ): AsyncGenerator<AgentMessage> {
+    const trimmed = prompt.trim();
+    const match = trimmed.match(/^\/(\S+)(?:\s+(.*))?$/);
+    if (!match) return;
+
+    const cmd = match[1].toLowerCase();
+    const ts = Date.now();
+
+    const infoMsg = (content: string): AgentMessage => ({
+      role: "assistant",
+      content,
+      timestamp: ts,
+      metadata: { isSlashCommandResponse: true, command: `/${cmd}` },
+    });
+
+    // Only intercept commands we can actually implement. Everything else passes through.
+    switch (cmd) {
+      case "help": {
+        const cmds = this.getSlashCommands();
+        const grouped = new Map<string, typeof cmds>();
+        for (const c of cmds) {
+          const cat = c.category ?? "other";
+          if (!grouped.has(cat)) grouped.set(cat, []);
+          grouped.get(cat)!.push(c);
+        }
+        let text = "## Available Commands\n\n";
+        for (const [cat, list] of grouped) {
+          text += `### ${cat}\n`;
+          for (const c of list) text += `  **${c.name}**  ${c.description}\n`;
+          text += "\n";
+        }
+        yield infoMsg(text);
+        return;
+      }
+
+      case "clear":
+      case "new": {
+        const session = this.sessions.get(sessionId);
+        if (session) session.status = "completed";
+        yield infoMsg("Session cleared. Send a new message to start a fresh conversation.");
+        return;
+      }
+
+      case "status": {
+        const session = this.sessions.get(sessionId);
+        yield infoMsg(
+          `## Session Status\n` +
+          `- **Agent**: ${this.config.displayName} (${this.agentId})\n` +
+          `- **Integration**: SDK mode\n` +
+          `- **Session**: ${sessionId}\n` +
+          `- **Status**: ${session?.status ?? "unknown"}\n` +
+          `- **Started**: ${session ? new Date(session.startedAt).toLocaleString() : "N/A"}`,
+        );
+        return;
+      }
+
+      case "exit":
+      case "quit": {
+        const session = this.sessions.get(sessionId);
+        if (session) session.status = "completed";
+        yield infoMsg("Session ended. Use the Start button to begin a new session.");
+        return;
+      }
+
+      default:
+        // All other commands: pass through to SDK/model
+        return;
+    }
+  }
+
+  async *sendPrompt(
+    sessionId: string,
+    prompt: string,
+    _images?: ImageAttachment[],
+  ): AsyncGenerator<AgentMessage> {
+    // Intercept slash commands before sending to SDK
+    const trimmed = prompt.trim();
+    if (trimmed.startsWith("/")) {
+      let handled = false;
+      for await (const msg of this.handleSlashCommand(sessionId, prompt)) {
+        handled = true;
+        yield msg;
+      }
+      if (handled) return;
+    }
+
     const thread = this.threads.get(sessionId) as {
       run(prompt: string): Promise<{
         items: Array<{ id: string; type: string; text?: string }>;
@@ -96,10 +195,17 @@ export class CodexAdapter implements AgentAdapter {
     const session = this.sessions.get(sessionId);
     if (session) session.lastActiveAt = Date.now();
 
+    // Prepend shared context only on the first message of each session (avoids token waste)
+    let effectivePrompt = prompt;
+    if (this.systemPrompt && !this.systemPromptSentSessions.has(sessionId)) {
+      effectivePrompt = `[System Context]\n${this.systemPrompt}\n\n[User Prompt]\n${prompt}`;
+      this.systemPromptSentSessions.add(sessionId);
+    }
+
     // Prefer streaming if available
     if (thread.runStreamed) {
       try {
-        for await (const event of thread.runStreamed(prompt)) {
+        for await (const event of thread.runStreamed(effectivePrompt)) {
           if (session) session.lastActiveAt = Date.now();
 
           if (event.type === "text" && event.text) {
@@ -134,7 +240,7 @@ export class CodexAdapter implements AgentAdapter {
     }
 
     // Fallback: non-streaming run()
-    const result = await thread.run(prompt);
+    const result = await thread.run(effectivePrompt);
 
     for (const item of result.items) {
       if (item.text) {

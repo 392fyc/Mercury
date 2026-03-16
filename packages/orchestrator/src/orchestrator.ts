@@ -7,6 +7,7 @@ import type {
   AgentConfig,
   SessionInfo,
   AgentMessage,
+  ImageAttachment,
   MercuryConfig,
   AcceptanceVerdict,
   ImplementationReceipt,
@@ -34,6 +35,8 @@ export class Orchestrator {
   private kb: KnowledgeService | null = null;
   private projectConfig: MercuryConfig | null = null;
   private taskManager: TaskManager;
+  /** Cached shared context (built from KB contextFiles). Injected into all adapters. */
+  private sharedContext: string = "";
 
   constructor(
     registry: AgentRegistry,
@@ -80,14 +83,66 @@ export class Orchestrator {
     );
   }
 
-  /** Rehydrate task state from KB persistence. Call after setKnowledgeService, before RPC. */
+  /** Rehydrate task state from KB persistence + build shared context. */
   async init(): Promise<void> {
     await this.taskManager.init();
+    // Build and inject shared context from KB if autoInjectContext is enabled
+    await this.buildAndInjectContext();
   }
 
   /** Store project config for get_config/update_config RPC. */
   setProjectConfig(config: MercuryConfig) {
     this.projectConfig = config;
+  }
+
+  /**
+   * Build shared context from KB contextFiles and inject into all adapters.
+   * Uses systemPrompt — does NOT consume conversation context window.
+   */
+  private async buildAndInjectContext(): Promise<{ injected: boolean; agentCount: number; contextLength: number }> {
+    const obsConfig = this.projectConfig?.obsidian;
+    if (!obsConfig?.autoInjectContext || !obsConfig.contextFiles?.length) {
+      return { injected: false, agentCount: 0, contextLength: 0 };
+    }
+
+    if (!this.kb?.isEnabled()) {
+      this.transport.sendNotification("log", {
+        message: "[context] autoInjectContext enabled but KB not available — skipping",
+      });
+      return { injected: false, agentCount: 0, contextLength: 0 };
+    }
+
+    try {
+      const context = await this.kb.buildContext(obsConfig.contextFiles);
+      if (!context) {
+        return { injected: false, agentCount: 0, contextLength: 0 };
+      }
+
+      this.sharedContext = context;
+
+      // Inject into all registered adapters
+      const agents = this.registry.listAgents();
+      for (const agent of agents) {
+        try {
+          const adapter = this.registry.getAdapter(agent.id);
+          adapter.setSystemPrompt(context);
+        } catch {
+          // Adapter instantiation may fail — non-critical
+        }
+      }
+
+      this.transport.sendNotification("log", {
+        message: `[context] Shared context injected into ${agents.length} agents (${context.length} chars from ${obsConfig.contextFiles.length} files)`,
+      });
+
+      return { injected: true, agentCount: agents.length, contextLength: context.length };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.transport.sendNotification("log", {
+        message: `[context] Failed to build shared context: ${msg}`,
+      });
+      return { injected: false, agentCount: 0, contextLength: 0 };
+    }
   }
 
   async handleRpc(
@@ -103,6 +158,7 @@ export class Orchestrator {
         return this.sendPrompt(
           params.agentId as string,
           params.prompt as string,
+          (params.images as ImageAttachment[] | null) ?? undefined,
         );
       case "stop_session":
         return this.stopSession(
@@ -170,6 +226,15 @@ export class Orchestrator {
         return this.kbAppend(params.file as string, params.content as string);
       case "get_slash_commands":
         return this.getSlashCommands(params.agentId as string);
+      case "refresh_context":
+        return this.buildAndInjectContext();
+      case "get_context_status":
+        return {
+          hasContext: this.sharedContext.length > 0,
+          contextLength: this.sharedContext.length,
+          autoInject: this.projectConfig?.obsidian?.autoInjectContext ?? false,
+          contextFiles: this.projectConfig?.obsidian?.contextFiles ?? [],
+        };
       case "ping":
         return { pong: true, timestamp: Date.now() };
       default:
@@ -198,6 +263,7 @@ export class Orchestrator {
   private async sendPrompt(
     agentId: string,
     prompt: string,
+    images?: ImageAttachment[],
   ): Promise<{ sessionId: string }> {
     const adapter = this.registry.getAdapter(agentId);
 
@@ -210,10 +276,11 @@ export class Orchestrator {
 
     this.bus.emit("agent.message.send", agentId, sessionId, {
       prompt: prompt.slice(0, 200),
+      hasImages: images ? images.length : 0,
     });
 
     // Stream messages asynchronously
-    this.streamMessages(adapter, agentId, sessionId, prompt);
+    this.streamMessages(adapter, agentId, sessionId, prompt, images);
 
     return { sessionId };
   }
@@ -223,9 +290,10 @@ export class Orchestrator {
     agentId: string,
     sessionId: string,
     prompt: string,
+    images?: ImageAttachment[],
   ): Promise<void> {
     try {
-      for await (const message of adapter.sendPrompt(sessionId, prompt)) {
+      for await (const message of adapter.sendPrompt(sessionId, prompt, images)) {
         this.bus.emit("agent.message.receive", agentId, sessionId, {
           contentPreview: message.content.slice(0, 200),
         });
@@ -237,6 +305,7 @@ export class Orchestrator {
             role: message.role,
             content: message.content,
             timestamp: message.timestamp,
+            images: message.images,
             metadata: message.metadata,
           },
         });
@@ -445,6 +514,9 @@ export class Orchestrator {
   }
 
   private async updateConfig(config: MercuryConfig): Promise<{ ok: true }> {
+    const prevAutoInject = this.projectConfig?.obsidian?.autoInjectContext;
+    const prevContextFiles = this.projectConfig?.obsidian?.contextFiles?.join(",");
+
     this.projectConfig = config;
 
     // Hot-reload agents from new config
@@ -459,6 +531,23 @@ export class Orchestrator {
     // Add/update agents
     for (const agentConfig of config.agents) {
       this.registry.register(agentConfig);
+    }
+
+    // Re-inject shared context if obsidian settings changed
+    const newAutoInject = config.obsidian?.autoInjectContext;
+    const newContextFiles = config.obsidian?.contextFiles?.join(",");
+    if (newAutoInject !== prevAutoInject || newContextFiles !== prevContextFiles) {
+      if (newAutoInject) {
+        await this.buildAndInjectContext();
+      } else if (this.sharedContext) {
+        // autoInject was disabled — clear shared context from all adapters
+        this.sharedContext = "";
+        for (const agent of this.registry.listAgents()) {
+          try {
+            this.registry.getAdapter(agent.id).setSystemPrompt("");
+          } catch { /* non-critical */ }
+        }
+      }
     }
 
     return { ok: true };

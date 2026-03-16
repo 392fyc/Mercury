@@ -10,7 +10,7 @@
 
 // ─── Agent Identity ───
 
-export type AgentRole = "main" | "dev" | "acceptance" | "research";
+export type AgentRole = "main" | "dev" | "acceptance" | "research" | "design";
 
 export type IntegrationType = "sdk" | "mcp" | "http" | "pty";
 
@@ -244,12 +244,29 @@ export interface SessionInfo {
   parentSessionId?: string; // for session continuity on overflow
 }
 
+// ─── Image Attachments ───
+
+export type ImageMediaType = "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+
+export interface ImageAttachment {
+  /** Base64-encoded image data (no data URI prefix) */
+  data: string;
+  mediaType: ImageMediaType;
+  /** Optional filename for display */
+  filename?: string;
+  /** Width/height if known (for display) */
+  width?: number;
+  height?: number;
+}
+
 // ─── Agent Adapter Interface ───
 
 export interface AgentMessage {
   role: "user" | "assistant" | "system";
   content: string;
   timestamp: number;
+  /** Attached images (user messages: input images; assistant messages: generated images) */
+  images?: ImageAttachment[];
   metadata?: Record<string, unknown>;
 }
 
@@ -258,9 +275,16 @@ export interface AgentAdapter {
   readonly config: AgentConfig;
 
   startSession(cwd: string): Promise<SessionInfo>;
-  sendPrompt(sessionId: string, prompt: string): AsyncGenerator<AgentMessage>;
+  sendPrompt(sessionId: string, prompt: string, images?: ImageAttachment[]): AsyncGenerator<AgentMessage>;
   resumeSession(sessionId: string): Promise<SessionInfo>;
   endSession(sessionId: string): Promise<void>;
+
+  /**
+   * Inject shared context as system prompt.
+   * Uses SDK-level system instructions (does NOT consume conversation context window).
+   * Called by Orchestrator when KB context is built/refreshed.
+   */
+  setSystemPrompt(prompt: string): void;
 
   // Slash commands supported by this agent's CLI
   getSlashCommands(): SlashCommand[];

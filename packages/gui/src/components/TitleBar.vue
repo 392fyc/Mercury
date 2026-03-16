@@ -1,11 +1,45 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useAgentStore } from "../stores/agents";
+import { getProjectInfo } from "../lib/tauri-bridge";
 
 const props = defineProps<{ activeView: "agents" | "tasks" }>();
 const emit = defineEmits<{ "open-settings": []; "switch-view": [view: "agents" | "tasks"] }>();
 
 const { sidecarReady, anyActive, anyError } = useAgentStore();
+
+const projectRoot = ref("");
+const gitBranch = ref<string | null>(null);
+
+const projectName = computed(() => {
+  if (!projectRoot.value) return "";
+  const parts = projectRoot.value.replace(/\\/g, "/").split("/");
+  return parts[parts.length - 1] || parts[parts.length - 2] || "";
+});
+
+async function loadProjectInfo() {
+  try {
+    const info = await getProjectInfo();
+    projectRoot.value = info.projectRoot;
+    gitBranch.value = info.gitBranch;
+  } catch {
+    // Project info unavailable — not critical
+  }
+}
+
+function handleVisibilityChange() {
+  if (document.visibilityState === "visible") loadProjectInfo();
+}
+
+onMounted(() => {
+  loadProjectInfo();
+  // Refresh git branch when user returns to the window (not on every element focus)
+  document.addEventListener("visibilitychange", handleVisibilityChange);
+});
+
+onUnmounted(() => {
+  document.removeEventListener("visibilitychange", handleVisibilityChange);
+});
 
 const statusClass = computed(() => {
   if (anyError.value) return "error";
@@ -42,6 +76,12 @@ const statusText = computed(() => {
       </div>
     </div>
     <div class="titlebar-center" data-tauri-drag-region>
+      <span class="project-info" v-if="projectName" :title="projectRoot">
+        <span class="project-name">{{ projectName }}</span>
+        <span class="git-branch" v-if="gitBranch">
+          <span class="branch-icon">&#9095;</span>{{ gitBranch }}
+        </span>
+      </span>
       <span class="status-dot" :class="statusClass"></span>
       <span class="status-text">{{ statusText }}</span>
     </div>
@@ -118,7 +158,36 @@ const statusText = computed(() => {
 .titlebar-center {
   display: flex;
   align-items: center;
+  gap: 8px;
+}
+
+.project-info {
+  display: flex;
+  align-items: center;
   gap: 6px;
+  font-size: 11px;
+  padding-right: 8px;
+  border-right: 1px solid var(--border);
+  margin-right: 2px;
+}
+
+.project-name {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.git-branch {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--accent-main);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.branch-icon {
+  font-size: 12px;
+  line-height: 1;
 }
 
 .status-dot {
