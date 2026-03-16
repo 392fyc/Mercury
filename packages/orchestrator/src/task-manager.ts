@@ -175,6 +175,19 @@ export class TaskManager {
     return this.tasks.get(taskId);
   }
 
+  updateTaskField<K extends keyof TaskBundle>(
+    taskId: string,
+    field: K,
+    value: TaskBundle[K],
+  ): TaskBundle {
+    const task = this.tasks.get(taskId);
+    if (!task) throw new Error(`Task not found: ${taskId}`);
+
+    task[field] = value;
+    this.persistTask(task);
+    return task;
+  }
+
   /** Async get task — KB first, in-memory fallback. Use when freshness matters (e.g., dashboard). */
   async getTaskAsync(taskId: string): Promise<TaskBundle | undefined> {
     if (this.persistence) {
@@ -308,12 +321,13 @@ export class TaskManager {
     if (!receipt) return { valid: true, violations };
 
     // Check changedFiles against allowedWriteScope.codePaths
-    for (const file of receipt.changedFiles) {
-      const allowed = task.allowedWriteScope.codePaths.some((prefix) =>
-        file.startsWith(prefix),
-      );
-      if (!allowed) {
-        violations.push({ file, reason: "Outside allowedWriteScope.codePaths" });
+    const codePaths = task.allowedWriteScope.codePaths;
+    if (codePaths.length > 0) {
+      for (const file of receipt.changedFiles) {
+        const allowed = codePaths.some((prefix) => file.startsWith(prefix));
+        if (!allowed) {
+          violations.push({ file, reason: "Outside allowedWriteScope.codePaths" });
+        }
       }
     }
 
@@ -337,6 +351,16 @@ export class TaskManager {
   ): { reworked: boolean; newSession: boolean } {
     const task = this.tasks.get(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
+
+    const canTriggerRework =
+      task.status === "in_progress" ||
+      task.status === "main_review" ||
+      task.status === "acceptance";
+    if (!canTriggerRework) {
+      throw new Error(
+        `Cannot trigger rework for task in status "${task.status}" (must be in_progress, main_review, or acceptance)`,
+      );
+    }
 
     // Push current receipt + acceptance findings into rework history
     if (task.implementationReceipt) {

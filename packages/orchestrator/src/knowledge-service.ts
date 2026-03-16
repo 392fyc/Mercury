@@ -101,14 +101,19 @@ export class KnowledgeService {
    */
   async gitSync(message: string): Promise<void> {
     if (!this.enabled) return;
+    const vaultPath = this.vaultPath?.trim();
+    if (!vaultPath) {
+      console.warn("[knowledge] gitSync skipped: vaultPath is not configured.");
+      return;
+    }
 
     try {
       await execFileAsync("git", ["add", "-A"], {
-        cwd: this.vaultPath,
+        cwd: vaultPath,
         timeout: 10_000,
       });
       await execFileAsync("git", ["commit", "-m", message, "--allow-empty"], {
-        cwd: this.vaultPath,
+        cwd: vaultPath,
         timeout: 10_000,
       });
     } catch {

@@ -266,6 +266,7 @@ export class Orchestrator {
     agentId: string,
     role?: AgentRole,
     taskName?: string,
+    systemPrompt?: string,
   ): Promise<SessionInfo> {
     const adapter = this.registry.getAdapter(agentId);
     const config = this.registry.getConfig(agentId);
@@ -282,12 +283,13 @@ export class Orchestrator {
     this.roleSessions.set(slotKey, session.sessionId);
 
     // Inject role-specific system prompt (includes shared KB context)
-    const boundTask = this.findBoundTask(session.sessionId);
-    const rolePrompt = buildRoleSystemPrompt(
-      effectiveRole,
-      boundTask,
-      this.sharedContext || undefined,
-    );
+    const rolePrompt =
+      systemPrompt ??
+      buildRoleSystemPrompt(
+        effectiveRole,
+        undefined,
+        this.sharedContext || undefined,
+      );
     try {
       adapter.setSystemPrompt(rolePrompt);
     } catch {
@@ -458,13 +460,6 @@ export class Orchestrator {
     return { sessionId: result.sessionId, taskId };
   }
 
-  /** Find a TaskBundle bound to the given session (if any). */
-  private findBoundTask(sessionId: string): TaskBundle | undefined {
-    const taskId = this.taskManager.getTaskForSession(sessionId);
-    if (!taskId) return undefined;
-    return this.taskManager.getTask(taskId);
-  }
-
   // ─── Bundle-Aware Task Dispatch ───
 
   private async dispatchBundleTask(
@@ -477,7 +472,11 @@ export class Orchestrator {
     const mainAgentId = this.findMainAgentId();
     if (mainAgentId) {
       const mainSlot = makeRoleSlotKey("main", mainAgentId);
-      task.originatorSessionId = this.roleSessions.get(mainSlot);
+      this.taskManager.updateTaskField(
+        taskId,
+        "originatorSessionId",
+        this.roleSessions.get(mainSlot),
+      );
     }
 
     // Build dev prompt from bundle (optionally include KB context)
@@ -498,14 +497,9 @@ export class Orchestrator {
     }
 
     // Start role-scoped session for assigned agent
-    const session = await this.startRoleSession(task.assignedTo, "dev", task.title);
-    this.taskManager.bindSession(taskId, session.sessionId);
-
-    // Inject dev-role system prompt with task scope constraints
     const devRolePrompt = buildRoleSystemPrompt("dev", task, this.sharedContext || undefined);
-    try {
-      this.registry.getAdapter(task.assignedTo).setSystemPrompt(devRolePrompt);
-    } catch { /* non-critical */ }
+    const session = await this.startRoleSession(task.assignedTo, "dev", task.title, devRolePrompt);
+    this.taskManager.bindSession(taskId, session.sessionId);
 
     // Transition to in_progress (only if not already there)
     if (task.status === "dispatched") {
@@ -546,18 +540,18 @@ export class Orchestrator {
 
     // Build blind acceptance prompt (filtered — no dev narrative)
     const prompt = buildAcceptancePrompt(task, acceptance);
-    const session = await this.startRoleSession(acceptorId, "acceptance", task.title);
-    this.taskManager.bindSession(taskId, session.sessionId);
-
-    // Inject acceptance-role system prompt with blind review policy
     const acceptanceRolePrompt = buildAcceptanceRolePrompt(
       task,
       acceptance,
       this.sharedContext || undefined,
     );
-    try {
-      this.registry.getAdapter(acceptorId).setSystemPrompt(acceptanceRolePrompt);
-    } catch { /* non-critical */ }
+    const session = await this.startRoleSession(
+      acceptorId,
+      "acceptance",
+      task.title,
+      acceptanceRolePrompt,
+    );
+    this.taskManager.bindSession(taskId, session.sessionId);
 
     await this.sendPrompt(acceptorId, prompt, undefined, "acceptance", task.title);
 
@@ -687,13 +681,23 @@ export class Orchestrator {
     }
 
     if (decision === "SEND_BACK") {
-      this.taskManager.triggerRework(
+      const { newSession } = this.taskManager.triggerRework(
         taskId,
         reason ?? "Main Agent review: sent back for rework",
       );
 
       // Send rework directive to dev agent
       const reworkPrompt = `# Rework Required [${task.taskId}]\n\nMain Agent review returned this task for rework.\n\n**Reason:** ${reason ?? "Unspecified"}\n\nPlease address and resubmit.`;
+      if (newSession) {
+        const devRolePrompt = buildRoleSystemPrompt("dev", task, this.sharedContext || undefined);
+        const session = await this.startRoleSession(
+          task.assignedTo,
+          "dev",
+          task.title,
+          devRolePrompt,
+        );
+        this.taskManager.bindSession(taskId, session.sessionId);
+      }
       await this.sendPrompt(task.assignedTo, reworkPrompt, undefined, "dev", task.title);
 
       return { decision, nextAction: "rework_triggered" };
