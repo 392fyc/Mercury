@@ -8,10 +8,17 @@
  */
 
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { delimiter, join } from "node:path";
 import { promisify } from "node:util";
 import type { KBSearchResult, KBFileInfo, ObsidianConfig } from "@mercury/core";
 
 const execFileAsync = promisify(execFile);
+type KBEntryKind = KBFileInfo["kind"];
+const WINDOWS_OBSIDIAN_BIN_CANDIDATES = [
+  "D:/Programs/Obsidian/Obsidian.exe",
+  process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, "Obsidian", "Obsidian.exe") : undefined,
+].filter((candidate): candidate is string => Boolean(candidate));
 
 export class KnowledgeService {
   private vaultName: string;
@@ -19,11 +26,159 @@ export class KnowledgeService {
   private enabled: boolean;
   private obsidianBin: string;
 
-  constructor(config: ObsidianConfig, obsidianBin = "obsidian") {
+  constructor(config: ObsidianConfig) {
     this.vaultName = config.vaultName;
     this.vaultPath = config.vaultPath;
     this.enabled = config.enabled;
-    this.obsidianBin = obsidianBin;
+    this.obsidianBin = this.resolveObsidianBin(config.obsidianBin);
+  }
+
+  /**
+   * Attempt to find the Obsidian binary on PATH.
+   * On Windows, `execFile` does not perform PATHEXT resolution, so we
+   * manually search PATH directories for Obsidian.exe / obsidian.exe.
+   * Falls back to bare "obsidian" (works on Linux/macOS where shell-level
+   * resolution handles it).
+   */
+  private resolveObsidianBin(configuredBin?: string): string {
+    const explicitBin = configuredBin?.trim();
+    if (explicitBin) {
+      return explicitBin;
+    }
+
+    if (process.platform === "win32") {
+      const pathDirs = (process.env.PATH ?? "").split(delimiter);
+      const candidates = ["Obsidian.exe", "obsidian.exe"];
+      for (const dir of pathDirs) {
+        for (const name of candidates) {
+          const full = join(dir, name);
+          if (existsSync(full)) {
+            return full;
+          }
+        }
+      }
+
+      for (const candidate of WINDOWS_OBSIDIAN_BIN_CANDIDATES) {
+        if (existsSync(candidate)) {
+          return candidate;
+        }
+      }
+    }
+    return "obsidian";
+  }
+
+  private parsePlainTextList(raw: string): string[] {
+    return raw
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+  }
+
+  private toFileInfo(path: string, kind: KBEntryKind): KBFileInfo {
+    const normalizedPath = path.replace(/\\/g, "/").replace(/\/+$/, "");
+    const parts = normalizedPath.split("/").filter((part) => part.length > 0);
+    const name = parts.at(-1) ?? normalizedPath;
+    const folder = parts.slice(0, -1).join("/");
+
+    return {
+      path: normalizedPath,
+      name,
+      folder,
+      kind,
+    };
+  }
+
+  private parseListOutput(raw: string, kind: KBEntryKind): KBFileInfo[] {
+    return this.parsePlainTextList(raw).map((entryPath) => this.toFileInfo(entryPath, kind));
+  }
+
+  private isRecord(value: unknown): value is Record<string, unknown> {
+    return value !== null && typeof value === "object";
+  }
+
+  private asString(value: unknown): string | undefined {
+    return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+  }
+
+  private asStringArray(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value
+      .filter((entry): entry is string => typeof entry === "string")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+  }
+
+  private extractSearchItems(payload: unknown): unknown[] {
+    if (Array.isArray(payload)) {
+      return payload;
+    }
+
+    if (!this.isRecord(payload)) {
+      return [];
+    }
+
+    if ("file" in payload || "path" in payload || "matches" in payload || "snippet" in payload) {
+      return [payload];
+    }
+
+    for (const key of ["results", "items", "matches"]) {
+      const candidate = payload[key];
+      if (Array.isArray(candidate)) {
+        return candidate;
+      }
+    }
+
+    return [];
+  }
+
+  private normalizeSearchResult(item: unknown): KBSearchResult | null {
+    if (typeof item === "string") {
+      const match = item.trim();
+      return match ? { file: "search", matches: [match] } : null;
+    }
+
+    if (!this.isRecord(item)) {
+      return null;
+    }
+
+    const file =
+      this.asString(item.file) ??
+      this.asString(item.path) ??
+      this.asString(item.note) ??
+      this.asString(item.title);
+    const matches = [
+      ...this.asStringArray(item.matches),
+      ...this.asStringArray(item.snippets),
+      ...this.asStringArray(item.lines),
+    ];
+    const singleMatch =
+      this.asString(item.snippet) ?? this.asString(item.match) ?? this.asString(item.content);
+
+    if (singleMatch && !matches.includes(singleMatch)) {
+      matches.push(singleMatch);
+    }
+
+    if (!file && matches.length === 0) {
+      return null;
+    }
+
+    return {
+      file: file ?? "search",
+      matches,
+      score: typeof item.score === "number" ? item.score : undefined,
+    };
+  }
+
+  private parseSearchResults(raw: string): KBSearchResult[] {
+    const parsed = JSON.parse(raw) as unknown;
+    const results = this.extractSearchItems(parsed)
+      .map((item) => this.normalizeSearchResult(item))
+      .filter((item): item is KBSearchResult => item !== null);
+
+    return results;
   }
 
   isEnabled(): boolean {
@@ -68,7 +223,8 @@ export class KnowledgeService {
   async search(query: string): Promise<KBSearchResult[]> {
     const raw = await this.exec(["search", `query="${query}"`, "format=json"]);
     try {
-      return JSON.parse(raw) as KBSearchResult[];
+      const parsed = this.parseSearchResults(raw);
+      return parsed.length > 0 ? parsed : [{ file: "search", matches: [raw] }];
     } catch {
       // Non-JSON output — wrap as single result
       return [{ file: "search", matches: [raw] }];
@@ -76,14 +232,23 @@ export class KnowledgeService {
   }
 
   async list(folder?: string): Promise<KBFileInfo[]> {
-    const args = ["files", "format=json"];
-    if (folder) args.push(`folder="${folder}"`);
-    const raw = await this.exec(args);
-    try {
-      return JSON.parse(raw) as KBFileInfo[];
-    } catch {
-      return [];
+    const scopedArg = folder ? [`folder="${folder}"`] : [];
+    const [filesRaw, foldersRaw] = await Promise.all([
+      this.exec(["files", ...scopedArg]),
+      this.exec(["folders", ...scopedArg]),
+    ]);
+
+    const entries = [
+      ...this.parseListOutput(foldersRaw, "folder"),
+      ...this.parseListOutput(filesRaw, "file"),
+    ];
+
+    const deduped = new Map<string, KBFileInfo>();
+    for (const entry of entries) {
+      deduped.set(`${entry.kind}:${entry.path}`, entry);
     }
+
+    return Array.from(deduped.values());
   }
 
   async properties(file: string): Promise<Record<string, unknown>> {

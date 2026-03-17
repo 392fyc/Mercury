@@ -100,6 +100,7 @@ export interface ObsidianConfig {
   enabled: boolean;
   vaultName: string;
   vaultPath?: string; // filesystem path to vault root (for git sync)
+  obsidianBin?: string; // explicit path to Obsidian binary (auto-detected if omitted)
   autoInjectContext: boolean;
   contextFiles: string[]; // files to inject as system prompt context
 }
@@ -173,10 +174,13 @@ export interface KBSearchResult {
   score?: number;
 }
 
+export type KBEntryKind = "file" | "folder";
+
 export interface KBFileInfo {
   path: string;
   name: string;
   folder: string;
+  kind: KBEntryKind;
   modified?: number;
 }
 
