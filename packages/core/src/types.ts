@@ -12,7 +12,7 @@
 
 export type AgentRole = "main" | "dev" | "acceptance" | "research" | "design";
 
-export type IntegrationType = "sdk" | "mcp" | "http" | "pty";
+export type IntegrationType = "sdk" | "mcp" | "http" | "pty" | "rpc";
 
 export interface AgentConfig {
   id: string;
@@ -110,6 +110,61 @@ export interface MercuryConfig {
   obsidian?: ObsidianConfig;
 }
 
+// ─── Approval Control Plane ───
+
+export type ApprovalMode = "main_agent_review" | "auto_accept";
+
+export type ApprovalRequestStatus =
+  | "pending"
+  | "approved"
+  | "denied"
+  | "timed_out"
+  | "cancelled";
+
+export type ApprovalRequestKind =
+  | "permission"
+  | "tool_use"
+  | "command_execution"
+  | "file_change"
+  | "user_input";
+
+export type ApprovalDecisionSource = "main_agent" | "system";
+
+export interface ApprovalRequest {
+  id: string;
+  agentId: string;
+  sessionId: string;
+  role?: AgentRole;
+  adapter: string;
+  kind: ApprovalRequestKind;
+  toolName?: string;
+  summary: string;
+  rawRequest?: Record<string, unknown>;
+  cwd?: string;
+  createdAt: number;
+  resolvedAt?: number;
+  status: ApprovalRequestStatus;
+  decisionBy?: ApprovalDecisionSource;
+  decisionReason?: string;
+}
+
+export interface ApprovalDecision {
+  action: "approve" | "deny";
+  reason?: string;
+  updatedInput?: Record<string, unknown>;
+}
+
+export interface AgentApprovalRequest {
+  kind: ApprovalRequestKind;
+  toolName?: string;
+  summary: string;
+  rawRequest?: Record<string, unknown>;
+}
+
+export interface AgentSendHooks {
+  onApprovalRequest?: (request: AgentApprovalRequest) => Promise<ApprovalDecision>;
+}
+
 // ─── Knowledge Base Types ───
 
 export interface KBSearchResult {
@@ -132,6 +187,8 @@ export type EventType =
   | "agent.session.end"
   | "agent.message.send"
   | "agent.message.receive"
+  | "agent.approval.requested"
+  | "agent.approval.resolved"
   | "agent.tool.use"
   | "agent.tool.result"
   | "agent.error"
@@ -330,13 +387,19 @@ export interface SessionInfo {
   sessionId: string;
   agentId: string;
   role?: AgentRole;
+  frozenRole?: AgentRole;
   sessionName?: string; // "{role}-{cli}-{taskName}"
+  cwd?: string;
   startedAt: number;
   lastActiveAt: number;
   tokenUsage?: number;
   tokenLimit?: number;
   status: "active" | "paused" | "completed" | "overflow";
   parentSessionId?: string; // for session continuity on overflow
+  resumeToken?: string; // adapter-specific token for restoring a persisted session
+  frozenSystemPrompt?: string;
+  baseRolePromptHash?: string;
+  promptHash?: string;
 }
 
 // ─── Image Attachments ───
@@ -370,8 +433,13 @@ export interface AgentAdapter {
   readonly config: AgentConfig;
 
   startSession(cwd: string): Promise<SessionInfo>;
-  sendPrompt(sessionId: string, prompt: string, images?: ImageAttachment[]): AsyncGenerator<AgentMessage>;
-  resumeSession(sessionId: string): Promise<SessionInfo>;
+  sendPrompt(
+    sessionId: string,
+    prompt: string,
+    images?: ImageAttachment[],
+    hooks?: AgentSendHooks,
+  ): AsyncGenerator<AgentMessage>;
+  resumeSession(sessionId: string, persistedInfo?: SessionInfo, cwd?: string): Promise<SessionInfo>;
   endSession(sessionId: string): Promise<void>;
 
   /**

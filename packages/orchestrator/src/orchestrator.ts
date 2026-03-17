@@ -2,17 +2,18 @@
  * Mercury Orchestrator — core class managing agent sessions, prompts, and event flow.
  */
 
+import { randomUUID } from "node:crypto";
 import { EventBus, makeRoleSlotKey } from "@mercury/core";
 import type {
   AgentConfig,
+  AgentMessage,
+  AcceptanceVerdict,
   AgentRole,
+  ImageAttachment,
+  ImplementationReceipt,
+  MercuryConfig,
   RoleSlotKey,
   SessionInfo,
-  AgentMessage,
-  ImageAttachment,
-  MercuryConfig,
-  AcceptanceVerdict,
-  ImplementationReceipt,
   SlashCommand,
   TaskBundle,
   TaskStatus,
@@ -31,13 +32,71 @@ import type { CreateTaskParams, CreateIssueParams } from "./task-manager.js";
 import { TaskPersistenceKB } from "./task-persistence-kb.js";
 import { buildRoleSystemPrompt, buildAcceptanceRolePrompt } from "./role-prompt-builder.js";
 
+type NativeSessionBridge = {
+  listNativeSessions?: (cwd?: string) => Promise<SessionInfo[]>;
+  getNativeSessionInfo?: (sessionId: string, cwd?: string) => Promise<SessionInfo | null>;
+  readNativeMessages?: (sessionId: string) => Promise<AgentMessage[]>;
+  setSessionName?: (sessionId: string, name: string) => Promise<void>;
+};
+
+type ApprovalMode = "main_agent_review" | "auto_accept";
+type ApprovalRequestStatus =
+  | "pending"
+  | "approved"
+  | "denied"
+  | "timed_out"
+  | "cancelled";
+type ApprovalRequestKind =
+  | "permission"
+  | "tool_use"
+  | "command_execution"
+  | "file_change"
+  | "user_input";
+type ApprovalDecision = { action: "approve" | "deny"; reason?: string };
+type AgentApprovalRequest = {
+  kind: ApprovalRequestKind;
+  toolName?: string;
+  summary: string;
+  rawRequest?: Record<string, unknown>;
+};
+type AgentSendHooks = {
+  onApprovalRequest?: (request: AgentApprovalRequest) => Promise<ApprovalDecision>;
+};
+type ApprovalRequest = {
+  id: string;
+  agentId: string;
+  sessionId: string;
+  role?: AgentRole;
+  adapter: string;
+  kind: ApprovalRequestKind;
+  toolName?: string;
+  summary: string;
+  rawRequest?: Record<string, unknown>;
+  cwd?: string;
+  createdAt: number;
+  resolvedAt?: number;
+  status: ApprovalRequestStatus;
+  decisionBy?: "main_agent" | "system";
+  decisionReason?: string;
+};
+
 export class Orchestrator {
+  private static readonly APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;
   private bus: EventBus;
   private registry: AgentRegistry;
   private transport: RpcTransport;
   private sessions = new Map<string, SessionInfo>();
   private roleSessions = new Map<RoleSlotKey, string>(); // roleSlotKey → active sessionId
   private agentCwds = new Map<string, string>(); // agentId → working directory
+  private approvalMode: ApprovalMode = "main_agent_review";
+  private approvalRequests = new Map<string, ApprovalRequest>();
+  private approvalWaiters = new Map<
+    string,
+    {
+      resolve: (decision: ApprovalDecision) => void;
+      timeout: ReturnType<typeof setTimeout>;
+    }
+  >();
   private kb: KnowledgeService | null = null;
   private projectConfig: MercuryConfig | null = null;
   private taskManager: TaskManager;
@@ -237,6 +296,37 @@ export class Orchestrator {
         return this.getSlashCommands(params.agentId as string);
       case "set_agent_cwd":
         return this.setAgentCwd(params.agentId as string, params.cwd as string);
+      case "list_sessions":
+        return this.listSessions(
+          params.agentId as string | undefined,
+          (params.role as AgentRole | null) ?? undefined,
+        );
+      case "resume_session":
+        return this.resumeExistingSession(
+          params.agentId as string,
+          params.sessionId as string,
+          (params.expectedRole as AgentRole | null) ?? undefined,
+        );
+      case "get_approval_mode":
+        return { mode: this.approvalMode };
+      case "set_approval_mode":
+        return this.setApprovalMode(params.mode as ApprovalMode);
+      case "list_approval_requests":
+        return this.listApprovalRequests(params.status as ApprovalRequestStatus | undefined);
+      case "approve_request":
+        return this.resolveApprovalRequest(
+          params.requestId as string,
+          "approve",
+          "main_agent",
+          (params.reason as string | null) ?? undefined,
+        );
+      case "deny_request":
+        return this.resolveApprovalRequest(
+          params.requestId as string,
+          "deny",
+          "main_agent",
+          (params.reason as string | null) ?? undefined,
+        );
       case "refresh_context":
         return this.buildAndInjectContext();
       case "get_context_status":
@@ -262,6 +352,229 @@ export class Orchestrator {
     return { ok: true };
   }
 
+  private setApprovalMode(mode: ApprovalMode): { mode: ApprovalMode } {
+    this.approvalMode = mode;
+    return { mode };
+  }
+
+  private listApprovalRequests(status?: ApprovalRequestStatus): ApprovalRequest[] {
+    const result = [...this.approvalRequests.values()];
+    const filtered = status ? result.filter((request) => request.status === status) : result;
+    filtered.sort((a, b) => b.createdAt - a.createdAt);
+    return filtered;
+  }
+
+  private notifyApprovalRequest(request: ApprovalRequest): void {
+    this.transport.sendNotification("approval_request", request);
+  }
+
+  private async requestApproval(
+    agentId: string,
+    sessionId: string,
+    adapter: string,
+    request: AgentApprovalRequest,
+  ): Promise<ApprovalDecision> {
+    const session = this.sessions.get(sessionId);
+    const approval: ApprovalRequest = {
+      id: randomUUID(),
+      agentId,
+      sessionId,
+      role: session?.frozenRole ?? session?.role,
+      adapter,
+      kind: request.kind,
+      toolName: request.toolName,
+      summary: request.summary,
+      rawRequest: request.rawRequest,
+      cwd: session?.cwd ?? this.agentCwds.get(agentId),
+      createdAt: Date.now(),
+      status: "pending",
+    };
+
+    this.approvalRequests.set(approval.id, approval);
+    this.bus.emit(
+      "agent.approval.requested",
+      agentId,
+      sessionId,
+      approval as unknown as Record<string, unknown>,
+    );
+    this.notifyApprovalRequest(approval);
+
+    if (this.approvalMode === "auto_accept" || approval.role === "main") {
+      return this.resolveApprovalRequest(
+        approval.id,
+        "approve",
+        "system",
+        this.approvalMode === "auto_accept" ? "Auto Accept enabled" : "Main agent bypass",
+      );
+    }
+
+    return new Promise<ApprovalDecision>((resolve) => {
+      const timeout = setTimeout(() => {
+        void this.resolveApprovalRequest(
+          approval.id,
+          "deny",
+          "system",
+          "Approval request timed out",
+          "timed_out",
+        );
+      }, Orchestrator.APPROVAL_TIMEOUT_MS);
+
+      this.approvalWaiters.set(approval.id, { resolve, timeout });
+    });
+  }
+
+  private resolveApprovalRequest(
+    requestId: string,
+    action: ApprovalDecision["action"],
+    decisionBy: ApprovalRequest["decisionBy"],
+    reason?: string,
+    terminalStatus?: Extract<ApprovalRequestStatus, "approved" | "denied" | "timed_out" | "cancelled">,
+  ): ApprovalDecision {
+    const request = this.approvalRequests.get(requestId);
+    if (!request) {
+      throw new Error(`Approval request not found: ${requestId}`);
+    }
+
+    const resolvedStatus =
+      terminalStatus ?? (action === "approve" ? "approved" : "denied");
+    const updated: ApprovalRequest = {
+      ...request,
+      status: resolvedStatus,
+      resolvedAt: Date.now(),
+      decisionBy,
+      decisionReason: reason,
+    };
+    this.approvalRequests.set(requestId, updated);
+    this.bus.emit(
+      "agent.approval.resolved",
+      updated.agentId,
+      updated.sessionId,
+      updated as unknown as Record<string, unknown>,
+    );
+    this.transport.sendNotification("approval_resolved", updated);
+
+    const waiter = this.approvalWaiters.get(requestId);
+    if (waiter) {
+      clearTimeout(waiter.timeout);
+      this.approvalWaiters.delete(requestId);
+      waiter.resolve(
+        action === "approve"
+          ? { action: "approve", reason }
+          : { action: "deny", reason },
+      );
+    }
+
+    return action === "approve"
+      ? { action: "approve", reason }
+      : { action: "deny", reason };
+  }
+
+  private cancelPendingApprovalsForSession(sessionId: string, reason: string): void {
+    for (const request of this.approvalRequests.values()) {
+      if (request.sessionId !== sessionId || request.status !== "pending") continue;
+      this.resolveApprovalRequest(request.id, "deny", "system", reason, "cancelled");
+    }
+  }
+
+  private asNativeSessionBridge(agentId: string): NativeSessionBridge {
+    return this.registry.getAdapter(agentId) as NativeSessionBridge;
+  }
+
+  private async listSessions(
+    agentId?: string,
+    role?: AgentRole,
+  ): Promise<Array<SessionInfo & { active: boolean }>> {
+    const result: Array<SessionInfo & { active: boolean }> = [];
+    const activeSessionIds = new Set(this.roleSessions.values());
+    const seenResumeTokens = new Set<string>();
+
+    for (const [, info] of this.sessions) {
+      if (agentId && info.agentId !== agentId) continue;
+      const sessionRole = info.frozenRole ?? info.role;
+      if (role && sessionRole !== role) continue;
+      result.push({
+        ...info,
+        role: sessionRole,
+        active: activeSessionIds.has(info.sessionId),
+      });
+      if (info.resumeToken) {
+        seenResumeTokens.add(info.resumeToken);
+      }
+    }
+
+    if (agentId) {
+      const nativeAdapter = this.asNativeSessionBridge(agentId);
+      if (nativeAdapter.listNativeSessions) {
+        try {
+          const nativeSessions = await nativeAdapter.listNativeSessions(
+            this.agentCwds.get(agentId),
+          );
+          for (const session of nativeSessions) {
+            const sessionRole = session.frozenRole ?? session.role;
+            if (role && sessionRole !== role) continue;
+            if (session.resumeToken && seenResumeTokens.has(session.resumeToken)) continue;
+            result.push({
+              ...session,
+              role: sessionRole,
+              active: false,
+            });
+          }
+        } catch {
+          // Native listing is best effort.
+        }
+      }
+    }
+
+    result.sort((a, b) => b.lastActiveAt - a.lastActiveAt);
+    return result;
+  }
+
+  private async resumeExistingSession(
+    agentId: string,
+    sessionId: string,
+    expectedRole?: AgentRole,
+  ): Promise<SessionInfo> {
+    const adapter = this.registry.getAdapter(agentId);
+    let info = this.sessions.get(sessionId);
+
+    if (!info) {
+      const nativeAdapter = this.asNativeSessionBridge(agentId);
+      if (nativeAdapter.getNativeSessionInfo) {
+        info = await nativeAdapter.getNativeSessionInfo(
+          sessionId,
+          this.agentCwds.get(agentId),
+        ) ?? undefined;
+      }
+    }
+
+    if (!info) throw new Error(`Session not found: ${sessionId}`);
+    if (info.agentId !== agentId) {
+      throw new Error(`Session ${sessionId} belongs to agent ${info.agentId}, not ${agentId}`);
+    }
+
+    const sessionRole = info.frozenRole ?? info.role;
+    if (expectedRole && sessionRole && expectedRole !== sessionRole) {
+      throw new Error(
+        `Role mismatch: session ${sessionId} belongs to role "${sessionRole}", not "${expectedRole}"`,
+      );
+    }
+
+    const resumed = await adapter.resumeSession(
+      sessionId,
+      info,
+      info.cwd ?? this.agentCwds.get(agentId),
+    );
+    resumed.role = sessionRole;
+    resumed.frozenRole = sessionRole;
+    this.sessions.set(sessionId, resumed);
+
+    if (sessionRole) {
+      this.roleSessions.set(makeRoleSlotKey(sessionRole, agentId), sessionId);
+    }
+
+    return resumed;
+  }
+
   private async startRoleSession(
     agentId: string,
     role?: AgentRole,
@@ -276,7 +589,9 @@ export class Orchestrator {
 
     // Enrich session with role and naming convention
     session.role = effectiveRole;
+    session.frozenRole = effectiveRole;
     session.sessionName = `${effectiveRole}-${config.cli}-${taskName ?? "default"}`;
+    session.cwd = cwd;
 
     this.sessions.set(session.sessionId, session);
     const slotKey = makeRoleSlotKey(effectiveRole, agentId);
@@ -290,10 +605,17 @@ export class Orchestrator {
         undefined,
         this.sharedContext || undefined,
       );
+    session.frozenSystemPrompt = rolePrompt;
     try {
       adapter.setSystemPrompt(rolePrompt);
     } catch {
       // Non-critical — some adapters may not support system prompts
+    }
+    const nativeAdapter = this.asNativeSessionBridge(agentId);
+    try {
+      await nativeAdapter.setSessionName?.(session.sessionId, session.sessionName);
+    } catch {
+      // Naming is best effort.
     }
 
     this.bus.emit("agent.session.start", agentId, session.sessionId, {
@@ -310,7 +632,7 @@ export class Orchestrator {
     images?: ImageAttachment[],
     role?: AgentRole,
     taskName?: string,
-  ): Promise<{ sessionId: string }> {
+  ): Promise<{ sessionId: string; role?: AgentRole; sessionName?: string; status?: SessionInfo["status"] }> {
     const adapter = this.registry.getAdapter(agentId);
     const config = this.registry.getConfig(agentId);
     const effectiveRole = role ?? config.roles[0];
@@ -326,7 +648,12 @@ export class Orchestrator {
     // Validate that the adapter still knows about this session and it's usable.
     let needNewSession = false;
     try {
-      const sessionInfo = await adapter.resumeSession(sessionId);
+      const currentInfo = this.sessions.get(sessionId);
+      const sessionInfo = await adapter.resumeSession(
+        sessionId,
+        currentInfo,
+        currentInfo?.cwd ?? this.agentCwds.get(agentId),
+      );
       if (sessionInfo.status === "completed" || sessionInfo.status === "overflow") {
         needNewSession = true;
       }
@@ -334,7 +661,11 @@ export class Orchestrator {
       needNewSession = true;
     }
     if (needNewSession) {
-      this.sessions.delete(sessionId);
+      const staleSession = this.sessions.get(sessionId);
+      if (staleSession) {
+        staleSession.status = "completed";
+        staleSession.lastActiveAt = Date.now();
+      }
       this.roleSessions.delete(slotKey);
       const session = await this.startRoleSession(agentId, effectiveRole, taskName);
       sessionId = session.sessionId;
@@ -347,9 +678,22 @@ export class Orchestrator {
     });
 
     // Stream messages asynchronously
-    this.streamMessages(adapter, agentId, sessionId, prompt, images);
+    const hooks: AgentSendHooks | undefined =
+      effectiveRole === "main"
+        ? undefined
+        : {
+            onApprovalRequest: (request) =>
+              this.requestApproval(agentId, sessionId, adapter.config.cli, request),
+          };
+    this.streamMessages(adapter, agentId, sessionId, prompt, images, hooks);
 
-    return { sessionId };
+    const session = this.sessions.get(sessionId);
+    return {
+      sessionId,
+      role: session?.role,
+      sessionName: session?.sessionName,
+      status: session?.status,
+    };
   }
 
   private async streamMessages(
@@ -358,9 +702,10 @@ export class Orchestrator {
     sessionId: string,
     prompt: string,
     images?: ImageAttachment[],
+    hooks?: AgentSendHooks,
   ): Promise<void> {
     try {
-      for await (const message of adapter.sendPrompt(sessionId, prompt, images)) {
+      for await (const message of adapter.sendPrompt(sessionId, prompt, images, hooks)) {
         this.bus.emit("agent.message.receive", agentId, sessionId, {
           contentPreview: message.content.slice(0, 200),
         });
@@ -383,8 +728,13 @@ export class Orchestrator {
         agentId,
         sessionId,
       });
+      const session = this.sessions.get(sessionId);
+      if (session) {
+        session.lastActiveAt = Date.now();
+      }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
+      this.cancelPendingApprovalsForSession(sessionId, "Session failed while approval was pending");
       this.bus.emit("agent.error", agentId, sessionId, { error: errorMsg });
       this.transport.sendNotification("agent_error", {
         agentId,
@@ -393,7 +743,11 @@ export class Orchestrator {
       });
 
       // Clean up failed session so next sendPrompt auto-creates a fresh one
-      this.sessions.delete(sessionId);
+      const session = this.sessions.get(sessionId);
+      if (session) {
+        session.status = "completed";
+        session.lastActiveAt = Date.now();
+      }
       for (const [key, sid] of this.roleSessions) {
         if (sid === sessionId) {
           this.roleSessions.delete(key);
@@ -409,10 +763,15 @@ export class Orchestrator {
     agentId: string,
     sessionId: string,
   ): Promise<void> {
+    this.cancelPendingApprovalsForSession(sessionId, "Session stopped while approval was pending");
     const adapter = this.registry.getAdapter(agentId);
     await adapter.endSession(sessionId);
 
-    this.sessions.delete(sessionId);
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      session.status = "completed";
+      session.lastActiveAt = Date.now();
+    }
     for (const [key, sid] of this.roleSessions) {
       if (sid === sessionId) {
         this.roleSessions.delete(key);
