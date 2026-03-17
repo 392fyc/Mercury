@@ -24,7 +24,7 @@ function migrateAgentConfig(agents: Record<string, unknown>[]): AgentConfig[] {
   return agents as unknown as AgentConfig[];
 }
 
-function loadConfig(configPath?: string): MercuryConfig {
+function loadConfig(configPath?: string): { config: MercuryConfig; resolvedPath: string | null } {
   const paths = [
     configPath,
     resolve(process.cwd(), "mercury.config.json"),
@@ -37,7 +37,7 @@ function loadConfig(configPath?: string): MercuryConfig {
       const config = JSON.parse(raw);
       config.agents = migrateAgentConfig(config.agents ?? []);
       transport.log(`Loaded config from ${p} (${config.agents.length} agents)`);
-      return config as MercuryConfig;
+      return { config: config as MercuryConfig, resolvedPath: p };
     } catch {
       // try next
     }
@@ -45,35 +45,38 @@ function loadConfig(configPath?: string): MercuryConfig {
 
   transport.log("No config found, using defaults");
   return {
-    agents: [
-      {
-        id: "claude-code",
-        displayName: "Claude Code",
-        cli: "claude",
-        roles: ["main"],
-        integration: "sdk",
-        capabilities: ["code", "review", "orchestration"],
-        restrictions: [],
-        maxConcurrentSessions: 3,
-      },
-      {
-        id: "codex-cli",
-        displayName: "Codex CLI",
-        cli: "codex",
-        roles: ["dev"],
-        integration: "sdk",
-        capabilities: ["code", "test"],
-        restrictions: [],
-        maxConcurrentSessions: 2,
-      },
-    ],
+    config: {
+      agents: [
+        {
+          id: "claude-code",
+          displayName: "Claude Code",
+          cli: "claude",
+          roles: ["main"],
+          integration: "sdk",
+          capabilities: ["code", "review", "orchestration"],
+          restrictions: [],
+          maxConcurrentSessions: 3,
+        },
+        {
+          id: "codex-cli",
+          displayName: "Codex CLI",
+          cli: "codex",
+          roles: ["dev"],
+          integration: "sdk",
+          capabilities: ["code", "test"],
+          restrictions: [],
+          maxConcurrentSessions: 2,
+        },
+      ],
+    },
+    resolvedPath: null,
   };
 }
 
 // Bootstrap
 const transport = new RpcTransport();
 const configPath = process.argv[2];
-const config = loadConfig(configPath);
+const { config, resolvedPath: configFilePath } = loadConfig(configPath);
 
 if (config.workDir) {
   process.chdir(resolve(process.cwd(), config.workDir));
@@ -82,8 +85,8 @@ if (config.workDir) {
 const registry = new AgentRegistry(config.agents);
 const orchestrator = new Orchestrator(registry, transport);
 
-// Store full config for get_config/update_config RPC
-orchestrator.setProjectConfig(config);
+// Store full config for get_config/update_config RPC (with file path for persistence)
+orchestrator.setProjectConfig(config, configFilePath);
 
 // Enable session persistence
 orchestrator.setPersistencePath(process.cwd());

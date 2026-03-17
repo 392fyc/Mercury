@@ -3,6 +3,8 @@
  */
 
 import { createHash, randomUUID } from "node:crypto";
+import { writeFile, rename, unlink } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { EventBus, makeRoleSlotKey } from "@mercury/core";
 import type {
   AgentConfig,
@@ -68,6 +70,7 @@ export class Orchestrator {
   >();
   private kb: KnowledgeService | null = null;
   private projectConfig: MercuryConfig | null = null;
+  private configFilePath: string | null = null;
   private taskManager: TaskManager;
   private persistence: SessionPersistence | null = null;
   private transcripts: TranscriptPersistence | null = null;
@@ -129,8 +132,11 @@ export class Orchestrator {
   }
 
   /** Store project config for get_config/update_config RPC. */
-  setProjectConfig(config: MercuryConfig) {
+  setProjectConfig(config: MercuryConfig, configFilePath?: string | null) {
     this.projectConfig = config;
+    if (configFilePath !== undefined) {
+      this.configFilePath = configFilePath ?? null;
+    }
   }
 
   /** Enable session persistence to disk. */
@@ -1433,6 +1439,28 @@ export class Orchestrator {
     return this.projectConfig;
   }
 
+  /**
+   * Persist the current projectConfig to disk using atomic write (write tmp + rename).
+   * Errors are logged but never thrown — config persistence is best-effort.
+   */
+  private async persistConfigToDisk(): Promise<void> {
+    if (!this.configFilePath || !this.projectConfig) return;
+
+    const tmpPath = join(dirname(this.configFilePath), `.mercury.config.tmp.${Date.now()}.json`);
+    try {
+      const json = JSON.stringify(this.projectConfig, null, 2) + "\n";
+      await writeFile(tmpPath, json, "utf-8");
+      await rename(tmpPath, this.configFilePath);
+    } catch (err) {
+      // Clean up tmp file on failure
+      try { await unlink(tmpPath); } catch { /* ignore */ }
+      const msg = err instanceof Error ? err.message : String(err);
+      this.transport.sendNotification("log", {
+        message: `[config] Warning: failed to persist config to ${this.configFilePath}: ${msg}`,
+      });
+    }
+  }
+
   private async updateConfig(config: MercuryConfig): Promise<{ ok: true }> {
     const prevAutoInject = this.projectConfig?.obsidian?.autoInjectContext;
     const prevContextFiles = this.projectConfig?.obsidian?.contextFiles?.join(",");
@@ -1471,6 +1499,9 @@ export class Orchestrator {
     if (obsidianChanged && newAutoInject) {
       await this.buildAndInjectContext();
     }
+
+    // Persist updated config to disk so changes survive restarts
+    await this.persistConfigToDisk();
 
     return { ok: true };
   }
