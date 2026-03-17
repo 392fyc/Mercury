@@ -101,6 +101,11 @@ export interface ObsidianConfig {
   vaultName: string;
   vaultPath?: string; // filesystem path to vault root (for git sync)
   obsidianBin?: string; // explicit path to Obsidian binary (auto-detected if omitted)
+  kbPaths?: {
+    tasks?: string;
+    acceptances?: string;
+    issues?: string;
+  };
   autoInjectContext: boolean;
   contextFiles: string[]; // files to inject as system prompt context
 }

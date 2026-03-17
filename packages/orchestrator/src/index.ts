@@ -7,7 +7,7 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import type { MercuryConfig, AgentConfig } from "@mercury/core";
+import type { MercuryConfig, AgentConfig, ObsidianConfig } from "@mercury/core";
 import { RpcTransport } from "./rpc-transport.js";
 import { AgentRegistry } from "./agent-registry.js";
 import { Orchestrator } from "./orchestrator.js";
@@ -73,6 +73,26 @@ function loadConfig(configPath?: string): { config: MercuryConfig; resolvedPath:
   };
 }
 
+type ResolvedKBPaths = {
+  tasks: string;
+  acceptances: string;
+  issues: string;
+};
+
+const DEFAULT_KB_PATHS: ResolvedKBPaths = {
+  tasks: "tasks",
+  acceptances: "acceptances",
+  issues: "issues",
+};
+
+function resolveKbPaths(obsidian?: ObsidianConfig): ResolvedKBPaths {
+  return {
+    tasks: obsidian?.kbPaths?.tasks ?? DEFAULT_KB_PATHS.tasks,
+    acceptances: obsidian?.kbPaths?.acceptances ?? DEFAULT_KB_PATHS.acceptances,
+    issues: obsidian?.kbPaths?.issues ?? DEFAULT_KB_PATHS.issues,
+  };
+}
+
 // Bootstrap
 const transport = new RpcTransport();
 const configPath = process.argv[2];
@@ -94,6 +114,7 @@ orchestrator.setPersistencePath(process.cwd());
 // Initialize optional Knowledge Service (Obsidian CLI)
 if (config.obsidian?.enabled) {
   const kb = new KnowledgeService(config.obsidian);
+  (kb as KnowledgeService & { kbPaths?: ResolvedKBPaths }).kbPaths = resolveKbPaths(config.obsidian);
   orchestrator.setKnowledgeService(kb);
   transport.log(`Knowledge service enabled: vault="${config.obsidian.vaultName}"`);
 } else {

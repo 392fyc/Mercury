@@ -30,22 +30,62 @@ export interface TaskPersistence {
   gitSync(message: string): Promise<void>;
 }
 
+export interface TaskPersistenceKBPaths {
+  tasks: string;
+  acceptances: string;
+  issues: string;
+}
+
+type TaskPersistenceLog = (msg: string) => void;
+type KnowledgeServiceWithKBPaths = KnowledgeService & {
+  kbPaths?: Partial<TaskPersistenceKBPaths>;
+};
+
+const DEFAULT_KB_PATHS: TaskPersistenceKBPaths = {
+  tasks: "tasks",
+  acceptances: "acceptances",
+  issues: "issues",
+};
+
+function resolveKbPaths(paths?: Partial<TaskPersistenceKBPaths>): TaskPersistenceKBPaths {
+  return {
+    tasks: paths?.tasks ?? DEFAULT_KB_PATHS.tasks,
+    acceptances: paths?.acceptances ?? DEFAULT_KB_PATHS.acceptances,
+    issues: paths?.issues ?? DEFAULT_KB_PATHS.issues,
+  };
+}
+
 export class TaskPersistenceKB implements TaskPersistence {
+  private kb: KnowledgeService;
+  private kbPaths: TaskPersistenceKBPaths;
+  private log: TaskPersistenceLog;
+
   constructor(
-    private kb: KnowledgeService,
-    private log: (msg: string) => void = () => {},
-  ) {}
+    kb: KnowledgeService,
+    kbPathsOrLog: Partial<TaskPersistenceKBPaths> | TaskPersistenceLog = {},
+    log: TaskPersistenceLog = () => {},
+  ) {
+    this.kb = kb;
+    if (typeof kbPathsOrLog === "function") {
+      this.kbPaths = resolveKbPaths((kb as KnowledgeServiceWithKBPaths).kbPaths);
+      this.log = kbPathsOrLog;
+      return;
+    }
+
+    this.kbPaths = resolveKbPaths(kbPathsOrLog);
+    this.log = log;
+  }
 
   async saveTask(task: TaskBundle): Promise<void> {
-    await this.writeJson(`tasks/${task.taskId}`, task);
+    await this.writeJson(`${this.kbPaths.tasks}/${task.taskId}`, task);
   }
 
   async saveAcceptance(acc: AcceptanceBundle): Promise<void> {
-    await this.writeJson(`acceptances/${acc.acceptanceId}`, acc);
+    await this.writeJson(`${this.kbPaths.acceptances}/${acc.acceptanceId}`, acc);
   }
 
   async saveIssue(issue: IssueBundle): Promise<void> {
-    await this.writeJson(`issues/${issue.issueId}`, issue);
+    await this.writeJson(`${this.kbPaths.issues}/${issue.issueId}`, issue);
   }
 
   async loadAll(): Promise<{
@@ -54,9 +94,9 @@ export class TaskPersistenceKB implements TaskPersistence {
     issues: IssueBundle[];
   }> {
     const [tasks, acceptances, issues] = await Promise.all([
-      this.loadFolder<TaskBundle>("tasks"),
-      this.loadFolder<AcceptanceBundle>("acceptances"),
-      this.loadFolder<IssueBundle>("issues"),
+      this.loadFolder<TaskBundle>(this.kbPaths.tasks),
+      this.loadFolder<AcceptanceBundle>(this.kbPaths.acceptances),
+      this.loadFolder<IssueBundle>(this.kbPaths.issues),
     ]);
 
     this.log(
@@ -69,7 +109,7 @@ export class TaskPersistenceKB implements TaskPersistence {
   /** Load a single task from KB by ID. */
   async loadTask(taskId: string): Promise<TaskBundle | null> {
     try {
-      const raw = await this.kb.read(`tasks/${taskId}`);
+      const raw = await this.kb.read(`${this.kbPaths.tasks}/${taskId}`);
       return JSON.parse(raw) as TaskBundle;
     } catch {
       return null;
@@ -78,7 +118,7 @@ export class TaskPersistenceKB implements TaskPersistence {
 
   /** Load task list from KB with optional filtering. */
   async loadTaskList(filter?: { status?: TaskStatus; assignedTo?: string }): Promise<TaskBundle[]> {
-    let tasks = await this.loadFolder<TaskBundle>("tasks");
+    let tasks = await this.loadFolder<TaskBundle>(this.kbPaths.tasks);
     if (filter?.status) {
       tasks = tasks.filter((t) => t.status === filter.status);
     }

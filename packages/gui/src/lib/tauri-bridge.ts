@@ -155,6 +155,12 @@ export async function dispatchTask(
 export interface ObsidianConfig {
   enabled: boolean;
   vaultName: string;
+  obsidianBin?: string;
+  kbPaths?: {
+    tasks?: string;
+    acceptances?: string;
+    issues?: string;
+  };
   autoInjectContext: boolean;
   contextFiles: string[];
 }
