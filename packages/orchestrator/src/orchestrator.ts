@@ -38,7 +38,11 @@ import {
 } from "./task-manager.js";
 import type { CreateTaskParams, CreateIssueParams } from "./task-manager.js";
 import { TaskPersistenceKB } from "./task-persistence-kb.js";
-import { buildRoleSystemPrompt, buildAcceptanceRolePrompt } from "./role-prompt-builder.js";
+import {
+  buildRoleSystemPrompt,
+  buildAcceptanceRolePrompt,
+  loadRoleInstructions,
+} from "./role-prompt-builder.js";
 import { SessionPersistence } from "./session-persistence.js";
 import type { PersistedSessionState } from "./session-persistence.js";
 import { TranscriptPersistence } from "./transcript-persistence.js";
@@ -149,6 +153,40 @@ export class Orchestrator {
     return createHash("sha256").update(prompt).digest("hex");
   }
 
+  private getProjectRoot(): string {
+    if (this.configFilePath) {
+      return dirname(this.configFilePath);
+    }
+    if (this.projectConfig?.workDir) {
+      return resolve(this.projectConfig.workDir);
+    }
+    return process.cwd();
+  }
+
+  private getRoleInstructions(role: AgentRole): string | undefined {
+    const projectRoot = this.getProjectRoot();
+
+    try {
+      return loadRoleInstructions(role, projectRoot);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const instructionsPath = join(projectRoot, ".mercury", "roles", `${role}.md`);
+      this.transport.sendNotification("log", {
+        message: `[role-prompt] Failed to load ${instructionsPath}: ${msg}`,
+      });
+      return undefined;
+    }
+  }
+
+  private buildSystemRolePrompt(role: AgentRole, task?: TaskBundle): string {
+    return buildRoleSystemPrompt(
+      role,
+      task,
+      this.sharedContext || undefined,
+      this.getRoleInstructions(role),
+    );
+  }
+
   private getDefaultRole(agentId: string | undefined): AgentRole | undefined {
     if (!agentId) return undefined;
     try {
@@ -224,11 +262,7 @@ export class Orchestrator {
     if (!info.frozenRole || !this.getComparableRolePromptHash(info)) {
       return undefined;
     }
-    const currentPrompt = buildRoleSystemPrompt(
-      info.frozenRole,
-      undefined,
-      this.sharedContext || undefined,
-    );
+    const currentPrompt = this.buildSystemRolePrompt(info.frozenRole);
     return this.hashPrompt(currentPrompt);
   }
 
@@ -958,11 +992,7 @@ export class Orchestrator {
     session.cwd = cwd;
 
     // Inject role-specific system prompt (includes shared KB context)
-    const baseRolePrompt = buildRoleSystemPrompt(
-      effectiveRole,
-      undefined,
-      this.sharedContext || undefined,
-    );
+    const baseRolePrompt = this.buildSystemRolePrompt(effectiveRole);
     const rolePrompt =
       systemPrompt ??
       baseRolePrompt;
@@ -1239,7 +1269,7 @@ export class Orchestrator {
     }
 
     // Start role-scoped session for assigned agent
-    const devRolePrompt = buildRoleSystemPrompt("dev", task, this.sharedContext || undefined);
+    const devRolePrompt = this.buildSystemRolePrompt("dev", task);
     const session = await this.startRoleSession(task.assignedTo, "dev", task.title, devRolePrompt);
     this.taskManager.bindSession(taskId, session.sessionId);
 
@@ -1431,7 +1461,7 @@ export class Orchestrator {
       // Send rework directive to dev agent
       const reworkPrompt = `# Rework Required [${task.taskId}]\n\nMain Agent review returned this task for rework.\n\n**Reason:** ${reason ?? "Unspecified"}\n\nPlease address and resubmit.`;
       if (newSession) {
-        const devRolePrompt = buildRoleSystemPrompt("dev", task, this.sharedContext || undefined);
+        const devRolePrompt = this.buildSystemRolePrompt("dev", task);
         const session = await this.startRoleSession(
           task.assignedTo,
           "dev",

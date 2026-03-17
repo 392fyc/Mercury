@@ -9,12 +9,37 @@
  * - Blind acceptance policy (for acceptance role)
  */
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   ROLE_CARDS,
   type AgentRole,
   type TaskBundle,
   type AcceptanceBundle,
 } from "@mercury/core";
+
+export function loadRoleInstructions(
+  role: AgentRole,
+  basePath = process.cwd(),
+): string | undefined {
+  const instructionsPath = resolve(basePath, ".mercury", "roles", `${role}.md`);
+
+  try {
+    const content = readFileSync(instructionsPath, "utf-8").trim();
+    return content || undefined;
+  } catch (error) {
+    if (
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error.code === "ENOENT" || error.code === "ENOTDIR")
+    ) {
+      return undefined;
+    }
+
+    throw error;
+  }
+}
 
 /**
  * Build a role-scoped system prompt for dev/main/research/design sessions.
@@ -23,6 +48,7 @@ export function buildRoleSystemPrompt(
   role: AgentRole,
   task?: TaskBundle,
   sharedContext?: string,
+  roleInstructions?: string,
 ): string {
   const card = ROLE_CARDS[role];
   const lines: string[] = [];
@@ -57,6 +83,12 @@ export function buildRoleSystemPrompt(
   lines.push("## Output Boundary");
   lines.push(`You produce: ${card.outputBoundary.join(", ")}`);
   lines.push("");
+
+  if (roleInstructions) {
+    lines.push("## Role-Specific Instructions");
+    lines.push(roleInstructions);
+    lines.push("");
+  }
 
   // Task-specific scope constraints
   if (task) {
