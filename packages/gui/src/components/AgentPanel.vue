@@ -446,6 +446,8 @@ watch(
   border-radius: var(--radius);
   overflow: hidden;
   min-height: 0;
+  min-width: 0;
+  height: 100%;
   position: relative;
 }
 
@@ -461,15 +463,20 @@ watch(
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   padding: 8px 12px;
   background: var(--bg-primary);
   border-bottom: 1px solid var(--border);
+  min-width: 0;
 }
 
 .panel-status {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .agent-info {
@@ -477,6 +484,8 @@ watch(
   align-items: center;
   gap: 8px;
   min-width: 0;
+  flex-wrap: wrap;
+  flex: 1 1 auto;
 }
 
 .agent-dot {
@@ -576,6 +585,7 @@ watch(
   overflow-y: auto;
   padding: 12px;
   min-height: 0;
+  overscroll-behavior: contain;
 }
 
 .empty-state {
@@ -827,6 +837,7 @@ watch(
 
 .panel-input {
   padding: 8px;
+  flex-shrink: 0;
 }
 
 .panel-input textarea {
@@ -856,5 +867,22 @@ watch(
 .panel-input textarea:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+@media (max-width: 720px) {
+  .panel-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .panel-status {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .session-title {
+    max-width: none;
+    flex: 1 1 100%;
+  }
 }
 </style>

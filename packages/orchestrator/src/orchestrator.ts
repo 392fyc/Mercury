@@ -4,7 +4,7 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { writeFile, rename, unlink } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { EventBus, makeRoleSlotKey } from "@mercury/core";
 import type {
   AgentConfig,
@@ -149,8 +149,60 @@ export class Orchestrator {
     return createHash("sha256").update(prompt).digest("hex");
   }
 
-  private getSessionRole(info: SessionInfo | undefined): AgentRole | undefined {
-    return info?.frozenRole ?? info?.role;
+  private getDefaultRole(agentId: string | undefined): AgentRole | undefined {
+    if (!agentId) return undefined;
+    try {
+      return this.registry.getConfig(agentId).roles[0];
+    } catch {
+      return undefined;
+    }
+  }
+
+  private getSessionRole(
+    info: SessionInfo | undefined,
+    fallbackAgentId?: string,
+  ): AgentRole | undefined {
+    return info?.frozenRole ?? info?.role ?? this.getDefaultRole(info?.agentId ?? fallbackAgentId);
+  }
+
+  private normalizeCwd(cwd: string): string {
+    const normalized = resolve(cwd).replace(/[\\/]+$/, "");
+    return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+  }
+
+  private isRelatedCwd(sessionCwd: string | undefined, expectedCwd: string): boolean {
+    if (!sessionCwd) return false;
+    const normalizedSession = this.normalizeCwd(sessionCwd);
+    const normalizedExpected = this.normalizeCwd(expectedCwd);
+    if (normalizedSession === normalizedExpected) {
+      return true;
+    }
+    const sessionRelative = relative(normalizedExpected, normalizedSession);
+    if (sessionRelative && !sessionRelative.startsWith("..") && !sessionRelative.includes(":")) {
+      return true;
+    }
+    const expectedRelative = relative(normalizedSession, normalizedExpected);
+    return (
+      Boolean(expectedRelative) &&
+      !expectedRelative.startsWith("..") &&
+      !expectedRelative.includes(":")
+    );
+  }
+
+  private async listNativeSessionsWithFallback(
+    agentId: string,
+    nativeAdapter: NativeSessionBridge,
+  ): Promise<SessionInfo[]> {
+    if (!nativeAdapter.listNativeSessions) {
+      return [];
+    }
+    const agentCwd = this.agentCwds.get(agentId);
+    const scopedSessions = await nativeAdapter.listNativeSessions(agentCwd);
+    if (scopedSessions.length > 0 || !agentCwd) {
+      return scopedSessions;
+    }
+    const allSessions = await nativeAdapter.listNativeSessions();
+    return allSessions.filter((info) => this.isRelatedCwd(info.cwd, agentCwd));
   }
 
   private isTaskScopedPrompt(info: SessionInfo): boolean {
@@ -735,9 +787,9 @@ export class Orchestrator {
     // In-memory sessions
     for (const [, info] of this.sessions) {
       if (agentId && info.agentId !== agentId) continue;
-      const sessionRole = this.getSessionRole(info);
+      const sessionRole = this.getSessionRole(info, info.agentId);
       if (role && sessionRole !== role) continue;
-      if (!includeTerminal && !info.frozenRole) continue;
+      if (!includeTerminal && !sessionRole) continue;
       if (!includeTerminal && (info.status === "completed" || info.status === "overflow")) continue;
       const promptState = this.getLegacyRoleConfigState(info);
       result.push({
@@ -758,9 +810,9 @@ export class Orchestrator {
         for (const [sessionId, info] of Object.entries(persisted.sessions)) {
           if (this.sessions.has(sessionId)) continue; // Already included
           if (agentId && info.agentId !== agentId) continue;
-          const sessionRole = this.getSessionRole(info);
+          const sessionRole = this.getSessionRole(info, info.agentId);
           if (role && sessionRole !== role) continue;
-          if (!includeTerminal && !info.frozenRole) continue;
+          if (!includeTerminal && !sessionRole) continue;
           if (!includeTerminal && (info.status === "completed" || info.status === "overflow")) continue;
           const promptState = this.getLegacyRoleConfigState(info);
           result.push({
@@ -780,12 +832,12 @@ export class Orchestrator {
       const nativeAdapter = this.asNativeSessionBridge(agentId);
       if (nativeAdapter.listNativeSessions) {
         try {
-          const nativeSessions = await nativeAdapter.listNativeSessions(this.agentCwds.get(agentId));
+          const nativeSessions = await this.listNativeSessionsWithFallback(agentId, nativeAdapter);
           for (const info of nativeSessions) {
             if (info.resumeToken && seenResumeTokens.has(info.resumeToken)) continue;
-            const sessionRole = this.getSessionRole(info);
+            const sessionRole = this.getSessionRole(info, agentId);
             if (role && sessionRole !== role) continue;
-            if (!includeTerminal && !info.frozenRole) continue;
+            if (!includeTerminal && !sessionRole) continue;
             if (!includeTerminal && (info.status === "completed" || info.status === "overflow")) continue;
             const promptState = this.getLegacyRoleConfigState(info);
             result.push({

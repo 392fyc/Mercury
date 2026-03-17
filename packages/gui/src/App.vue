@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import TitleBar from "./components/TitleBar.vue";
 import AgentPanel from "./components/AgentPanel.vue";
 import EventLog from "./components/EventLog.vue";
@@ -23,6 +23,8 @@ const { loadTasks, initTaskListeners } = useTaskStore();
 
 const showSettings = ref(false);
 const activeView = ref<"agents" | "tasks">("agents");
+const hasMainAgent = computed(() => Boolean(mainAgent.value));
+const subAgentCount = computed(() => rolePanels.value.length);
 
 onMounted(async () => {
   await initAgents();
@@ -50,7 +52,16 @@ onMounted(async () => {
     <div class="workspace">
       <!-- Agents View -->
       <template v-if="activeView === 'agents'">
-        <div class="agents-area" v-if="agents.length > 0">
+        <div
+          v-if="agents.length > 0"
+          class="agents-area"
+          :class="{
+            'main-only': hasMainAgent && subAgentCount === 0,
+            'single-sub-agent': subAgentCount === 1,
+            'multi-sub-agents': subAgentCount > 1,
+            'sub-agents-only': !hasMainAgent && subAgentCount > 0,
+          }"
+        >
           <AgentPanel
             v-if="mainAgent"
             :agentId="mainAgent.id"
@@ -58,7 +69,14 @@ onMounted(async () => {
             :role="'main'"
             :panelKey="`main:${mainAgent.id}`"
           />
-          <div class="sub-agents" v-if="rolePanels.length > 0">
+          <div
+            v-if="subAgentCount > 0"
+            class="sub-agents"
+            :class="{
+              'single-panel': subAgentCount === 1,
+              'multi-panel': subAgentCount > 1,
+            }"
+          >
             <AgentPanel
               v-for="panel in rolePanels"
               :key="panel.panelKey"
@@ -105,24 +123,52 @@ onMounted(async () => {
 .workspace {
   flex: 1;
   display: grid;
-  grid-template-rows: 1fr 180px;
+  grid-template-rows: minmax(0, 1fr) clamp(120px, 18vh, 152px);
   gap: var(--panel-gap);
   padding: var(--panel-gap);
   min-height: 0;
 }
 
 .agents-area {
+  --agent-panel-min-height: 280px;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
   gap: var(--panel-gap);
   min-height: 0;
+  align-items: stretch;
+}
+
+.agents-area :deep(.agent-panel) {
+  min-height: var(--agent-panel-min-height);
+  height: 100%;
+}
+
+.agents-area.single-sub-agent {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.agents-area.main-only,
+.agents-area.sub-agents-only {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .sub-agents {
   display: grid;
-  grid-template-rows: repeat(auto-fit, minmax(0, 1fr));
   gap: var(--panel-gap);
   min-height: 0;
+  min-width: 0;
+  align-content: stretch;
+}
+
+.sub-agents.single-panel {
+  grid-template-rows: minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.sub-agents.multi-panel {
+  grid-auto-rows: minmax(var(--agent-panel-min-height), 1fr);
+  overflow-y: auto;
+  padding-right: 2px;
 }
 
 .loading-state {
@@ -131,5 +177,27 @@ onMounted(async () => {
   justify-content: center;
   color: var(--text-muted);
   font-size: 14px;
+}
+
+@media (max-width: 1180px) {
+  .workspace {
+    grid-template-rows: minmax(0, 1fr) clamp(112px, 16vh, 136px);
+  }
+
+  .agents-area,
+  .agents-area.single-sub-agent {
+    grid-template-columns: 1fr;
+    grid-auto-rows: minmax(var(--agent-panel-min-height), auto);
+    overflow-y: auto;
+    align-content: start;
+  }
+
+  .sub-agents.single-panel,
+  .sub-agents.multi-panel {
+    grid-template-rows: none;
+    grid-auto-rows: minmax(var(--agent-panel-min-height), auto);
+    overflow: visible;
+    padding-right: 0;
+  }
 }
 </style>
