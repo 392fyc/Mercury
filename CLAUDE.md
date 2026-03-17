@@ -102,6 +102,19 @@ Each agent CLI has its own instruction file in the project root. These files def
 
 **Maintenance rule**: When updating role boundaries, task workflow, or KB structure in CLAUDE.md, the corresponding sections in ALL agent instruction files MUST be updated in the same commit to stay consistent.
 
+## Git Branching (GitHub Flow)
+
+| Branch | Purpose | Who merges |
+|--------|---------|------------|
+| `master` | Stable — only via PR from `develop` | Human / Main Agent |
+| `develop` | Integration — daily baseline | Main Agent (ff-merge from feature) |
+| `feature/TASK-XXX` | Per-task work branch | Dev Agent works here; Main Agent creates & merges |
+
+- Main Agent creates `feature/TASK-XXX` from `develop`, checks it out, then dispatches to Dev Agent
+- Dev Agent works on the checked-out branch, commits + pushes. **Never switches branches.**
+- After Main Review PASS → Main Agent merges feature into `develop` and pushes
+- Milestone releases: PR `develop` → `master`
+
 ## Architecture
 
 Mercury is a **CLI-to-GUI wrapper** for multi-agent collaboration:

@@ -79,11 +79,15 @@ KB 正本: Obsidian Vault `D:\Mercury\Mercury_KB\`
 
 ## Git Rules
 
-- 分支命名: `codex/{task-name}` (从 `master` 创建)
-- **禁止**直接操作 `master` 分支（除非 TaskBundle 明确允许）
-- Commit message 格式: `{type}({task_id}): {summary}`
-  - feat = 功能实现, fix = 修复, refactor = 重构, chore = 配置
-- 任务完成后**必须** commit，push 由人工决定
+- **NEVER** run `git switch`, `git checkout <branch>`, `git branch -d`, `git reset`, `git stash`, `git rebase`, `git merge`. Branch management is Main Agent only.
+- **NEVER** switch away from the current branch. Work on whatever branch is checked out when you start.
+- 分支命名: `codex/{task-name}`（Main Agent 从 `develop` 创建并 checkout 后交给你）
+- **禁止**直接操作 `master` 或 `develop` 分支
+- Commit message: `{type}({task_id}): {summary}` — feat/fix/refactor/chore
+- Commit 后**必须** `git push origin <branch>`
+- MAY: `git add`/`git commit`（仅 allowedWriteScope 内文件）, `git diff`/`git status`/`git log`（只读）
+- 若 `Cargo.lock` 等生成文件因依赖变更而改动，一并提交
+- 分支状态异常 → **停止工作，上报 Main Agent**
 
 ---
 
