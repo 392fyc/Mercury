@@ -16,6 +16,7 @@
         "title": "Mercury — Multi-Agent Orchestrator",
         "width": 1280,
         "height": 800,
+        "maximized": true,
         "minWidth": 900,
         "minHeight": 600
       }
