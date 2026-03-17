@@ -479,6 +479,11 @@ export class Orchestrator {
           params.toAgentId as string,
           params.prompt as string,
         );
+      case "execute_task":
+        return this.executeTask(
+          params.taskId as string,
+          (params.oneShot as boolean | null) ?? undefined,
+        );
       case "create_task":
         return this.taskManager.createTask(params as unknown as CreateTaskParams);
       case "get_task":
@@ -988,7 +993,7 @@ export class Orchestrator {
     // Enrich session with role and naming convention
     session.role = effectiveRole;
     session.frozenRole = effectiveRole;
-    session.sessionName = `${effectiveRole}-${config.cli}-${taskName ?? "default"}`;
+    session.sessionName = this.buildRoleSessionName(agentId, effectiveRole, taskName);
     session.cwd = cwd;
 
     // Inject role-specific system prompt (includes shared KB context)
@@ -1234,13 +1239,27 @@ export class Orchestrator {
 
   // ─── Bundle-Aware Task Dispatch ───
 
-  private async dispatchBundleTask(
-    taskId: string,
-  ): Promise<{ sessionId: string; taskId: string }> {
-    const task = this.taskManager.getTask(taskId);
+  private buildRoleSessionName(agentId: string, role: AgentRole, taskName?: string): string {
+    const config = this.registry.getConfig(agentId);
+    return `${role}-${config.cli}-${taskName ?? "default"}`;
+  }
+
+  private wrapPromptWithRoleContext(prompt: string, promptContext?: string): string {
+    if (!promptContext) {
+      return prompt;
+    }
+    return `[Mercury Role Context]\n${promptContext}\n\n[User Prompt]\n${prompt}`;
+  }
+
+  private async prepareBundleTaskExecution(taskId: string): Promise<{
+    task: TaskBundle;
+    prompt: string;
+    devRolePrompt: string;
+    baseRolePrompt: string;
+  }> {
+    const task = await this.taskManager.getTaskAsync(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
 
-    // Store originator session for callback routing
     const mainAgentId = this.findMainAgentId();
     if (mainAgentId) {
       const mainSlot = makeRoleSlotKey("main", mainAgentId);
@@ -1251,7 +1270,6 @@ export class Orchestrator {
       );
     }
 
-    // Build dev prompt from bundle (optionally include KB context)
     let kbContext: string | undefined;
     if (this.kb?.isEnabled() && task.readScope.requiredDocs.length > 0) {
       try {
@@ -1261,7 +1279,153 @@ export class Orchestrator {
       }
     }
 
-    const prompt = buildDevPrompt(task, kbContext);
+    return {
+      task,
+      prompt: buildDevPrompt(task, kbContext),
+      devRolePrompt: this.buildSystemRolePrompt("dev", task),
+      baseRolePrompt: this.buildSystemRolePrompt("dev"),
+    };
+  }
+
+  private async executeTask(
+    taskId: string,
+    oneShot = false,
+  ): Promise<{
+    taskId: string;
+    sessionId: string;
+    threadId?: string;
+    messages: AgentMessage[];
+    finalMessage?: string;
+  }> {
+    if (!oneShot) {
+      const result = await this.dispatchBundleTask(taskId);
+      const session = this.sessions.get(result.sessionId);
+      return {
+        ...result,
+        threadId: session?.resumeToken,
+        messages: [],
+      };
+    }
+
+    const { task, prompt, devRolePrompt, baseRolePrompt } =
+      await this.prepareBundleTaskExecution(taskId);
+    const agentId = task.assignedTo;
+    const adapter = this.registry.getAdapter(agentId);
+    if (!adapter.executeOneShot) {
+      throw new Error(`Agent ${agentId} does not support executeOneShot()`);
+    }
+
+    if (task.status === "drafted") {
+      this.taskManager.transitionTask(taskId, "dispatched", "orchestrator");
+    }
+    if (task.status === "dispatched") {
+      this.taskManager.transitionTask(taskId, "in_progress", agentId);
+    }
+
+    const cwd = this.agentCwds.get(agentId) ?? process.cwd();
+    const startedAt = Date.now();
+    const sessionName = this.buildRoleSessionName(agentId, "dev", task.title);
+    const result = await adapter.executeOneShot(
+      this.wrapPromptWithRoleContext(prompt, devRolePrompt),
+      cwd,
+    );
+
+    const nativeAdapter = this.asNativeSessionBridge(agentId);
+    try {
+      await nativeAdapter.setSessionName?.(result.threadId, sessionName);
+    } catch {
+      // Naming native sessions is best effort.
+    }
+
+    const nativeInfo = await nativeAdapter.getNativeSessionInfo?.(result.threadId, cwd) ?? null;
+    const sessionId = result.threadId;
+    const session: SessionInfo = {
+      sessionId,
+      agentId,
+      role: "dev",
+      frozenRole: "dev",
+      sessionName,
+      cwd: nativeInfo?.cwd ?? cwd,
+      startedAt: nativeInfo?.startedAt ?? startedAt,
+      lastActiveAt: Date.now(),
+      tokenUsage: nativeInfo?.tokenUsage,
+      tokenLimit: nativeInfo?.tokenLimit,
+      status: "completed",
+      resumeToken: result.threadId,
+      frozenSystemPrompt: devRolePrompt,
+      baseRolePromptHash: this.hashPrompt(baseRolePrompt),
+      promptHash: this.hashPrompt(devRolePrompt),
+    };
+
+    this.sessions.set(sessionId, session);
+    this.taskManager.bindSession(taskId, sessionId);
+
+    this.bus.emit("agent.session.start", agentId, sessionId, {
+      role: "dev",
+      sessionName,
+      promptHash: session.promptHash,
+      currentPromptHash: undefined,
+      legacyRoleConfig: false,
+      oneShot: true,
+    });
+    this.bus.emit("agent.message.send", agentId, sessionId, {
+      prompt: prompt.slice(0, 200),
+      hasImages: 0,
+      role: "dev",
+      oneShot: true,
+    });
+
+    this.appendTranscriptMessage(sessionId, {
+      role: "user",
+      content: prompt,
+      timestamp: startedAt,
+    });
+
+    for (const message of result.messages) {
+      this.bus.emit("agent.message.receive", agentId, sessionId, {
+        contentPreview: message.content.slice(0, 200),
+        oneShot: true,
+      });
+      this.appendTranscriptMessage(sessionId, {
+        role: message.role,
+        content: message.content,
+        timestamp: message.timestamp,
+        images: message.images,
+        metadata: message.metadata,
+      });
+      this.transport.sendNotification("agent_message", {
+        agentId,
+        sessionId,
+        message: {
+          role: message.role,
+          content: message.content,
+          timestamp: message.timestamp,
+          images: message.images,
+          metadata: message.metadata,
+        },
+      });
+    }
+
+    this.transport.sendNotification("agent_stream_end", {
+      agentId,
+      sessionId,
+    });
+    this.bus.emit("agent.session.end", agentId, sessionId, { oneShot: true, taskId });
+    this.persistState(true);
+
+    return {
+      taskId,
+      sessionId,
+      threadId: result.threadId,
+      messages: result.messages,
+      finalMessage: result.finalMessage,
+    };
+  }
+
+  private async dispatchBundleTask(
+    taskId: string,
+  ): Promise<{ sessionId: string; taskId: string }> {
+    const { task, prompt, devRolePrompt } = await this.prepareBundleTaskExecution(taskId);
 
     // Transition: drafted → dispatched → in_progress
     if (task.status === "drafted") {
@@ -1269,7 +1433,6 @@ export class Orchestrator {
     }
 
     // Start role-scoped session for assigned agent
-    const devRolePrompt = this.buildSystemRolePrompt("dev", task);
     const session = await this.startRoleSession(task.assignedTo, "dev", task.title, devRolePrompt);
     this.taskManager.bindSession(taskId, session.sessionId);
 

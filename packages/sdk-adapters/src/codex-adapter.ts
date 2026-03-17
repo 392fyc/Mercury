@@ -30,6 +30,7 @@ import type {
   CommandExecutionRequestApprovalParams,
   FileChangeApprovalDecision,
   FileChangeRequestApprovalParams,
+  SandboxMode,
   Thread,
   ThreadListResponse,
   ThreadItem,
@@ -343,6 +344,89 @@ export class CodexAdapter implements AgentAdapter {
 
     this.threadSessions.delete(record.threadId);
     this.sessions.delete(sessionId);
+  }
+
+  async executeOneShot(
+    prompt: string,
+    cwd: string,
+    options?: { model?: string; sandbox?: string; approvalPolicy?: unknown },
+  ): Promise<{ messages: AgentMessage[]; finalMessage: string; threadId: string }> {
+    const transport = await this.ensureTransport();
+    const response = await transport.request("thread/start", {
+      model: options?.model ?? this.config.model ?? null,
+      cwd,
+      approvalPolicy: (options?.approvalPolicy as AskForApproval | undefined) ?? DEFAULT_APPROVAL_POLICY,
+      sandbox: (options?.sandbox as SandboxMode | undefined) ?? DEFAULT_SANDBOX_MODE,
+      experimentalRawEvents: false,
+      persistExtendedHistory: false,
+    });
+
+    const threadId = response.thread.id;
+    const sessionId = threadId;
+    const record: NativeSession = {
+      info: {
+        sessionId,
+        agentId: this.agentId,
+        cwd: response.cwd ?? cwd,
+        startedAt: response.thread.createdAt * 1000,
+        lastActiveAt: Date.now(),
+        status: "active",
+        resumeToken: threadId,
+        sessionName: response.thread.name ?? undefined,
+      },
+      cwd: response.cwd ?? cwd,
+      threadId,
+      loaded: true,
+      activeTurn: null,
+    };
+    this.bindSession(sessionId, record);
+
+    const stream = new MessageStream();
+    record.activeTurn = stream;
+    const messages: AgentMessage[] = [];
+
+    try {
+      const turnResponse = await transport.request("turn/start", {
+        threadId,
+        input: [{ type: "text", text: prompt, text_elements: [] }],
+        cwd: record.cwd,
+        approvalPolicy: (options?.approvalPolicy as AskForApproval | undefined) ?? DEFAULT_APPROVAL_POLICY,
+        model: options?.model ?? this.config.model ?? null,
+      });
+      stream.setTurnId(turnResponse.turn.id);
+
+      if (turnResponse.turn.status === "failed" && turnResponse.turn.error) {
+        stream.fail(new Error(turnResponse.turn.error.message));
+      }
+      if (
+        turnResponse.turn.status === "completed" ||
+        turnResponse.turn.status === "interrupted"
+      ) {
+        stream.finish();
+      }
+
+      for await (const message of stream.iterate()) {
+        messages.push(message);
+      }
+
+      record.info.lastActiveAt = Date.now();
+      record.info.status = "completed";
+
+      return {
+        messages,
+        finalMessage: this.findFinalAssistantMessage(messages),
+        threadId,
+      };
+    } finally {
+      record.activeTurn = null;
+      try {
+        await transport.request("thread/unsubscribe", { threadId });
+      } catch {
+        // Best effort only.
+      }
+      this.threadSessions.delete(threadId);
+      this.sessions.delete(sessionId);
+    }
   }
 
   async handoffSession(oldSessionId: string, _summary: string): Promise<SessionInfo> {
@@ -808,6 +892,31 @@ export class CodexAdapter implements AgentAdapter {
       default:
         return null;
     }
+  }
+
+  private findFinalAssistantMessage(messages: AgentMessage[]): string {
+    const finalPhaseMessage = [...messages]
+      .reverse()
+      .find(
+        (message) =>
+          message.role === "assistant" &&
+          message.metadata?.phase === "final" &&
+          typeof message.content === "string" &&
+          message.content.trim().length > 0,
+      );
+    if (finalPhaseMessage) {
+      return finalPhaseMessage.content;
+    }
+
+    const lastAssistantMessage = [...messages]
+      .reverse()
+      .find(
+        (message) =>
+          message.role === "assistant" &&
+          typeof message.content === "string" &&
+          message.content.trim().length > 0,
+      );
+    return lastAssistantMessage?.content ?? "";
   }
 
   private normalizeCompactionText(text: string): string {

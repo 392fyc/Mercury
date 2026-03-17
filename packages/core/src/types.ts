@@ -432,6 +432,18 @@ export interface AgentMessage {
   metadata?: Record<string, unknown>;
 }
 
+export interface AgentOneShotOptions {
+  model?: string;
+  sandbox?: string;
+  approvalPolicy?: unknown;
+}
+
+export interface AgentOneShotResult {
+  messages: AgentMessage[];
+  finalMessage: string;
+  threadId: string;
+}
+
 export interface AgentAdapter {
   readonly agentId: string;
   readonly config: AgentConfig;
@@ -445,6 +457,11 @@ export interface AgentAdapter {
   ): AsyncGenerator<AgentMessage>;
   resumeSession(sessionId: string, persistedInfo?: SessionInfo, cwd?: string): Promise<SessionInfo>;
   endSession(sessionId: string): Promise<void>;
+  executeOneShot?(
+    prompt: string,
+    cwd: string,
+    options?: AgentOneShotOptions,
+  ): Promise<AgentOneShotResult>;
 
   /**
    * Inject shared context as system prompt.
