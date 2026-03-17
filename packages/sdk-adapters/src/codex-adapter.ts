@@ -146,18 +146,10 @@ export class CodexAdapter implements AgentAdapter {
       normalized.includes("compact conversation") ||
       normalized.includes("context compact") ||
       normalized.includes("conversation compact");
-    const hasSummaryCue =
-      (normalized.includes("summarized") ||
-        normalized.includes("summarised") ||
-        normalized.includes("summary")) &&
-      (normalized.includes("context") ||
-        normalized.includes("conversation") ||
-        normalized.includes("history") ||
-        normalized.includes("earlier turns"));
     const hasTruncationCue =
       normalized.includes("truncat") &&
       (normalized.includes("context") || normalized.includes("conversation"));
-    return hasDirectCue || hasSummaryCue || hasTruncationCue;
+    return hasDirectCue || hasTruncationCue;
   }
 
   private buildCompactionNotice(): AgentMessage {
@@ -556,6 +548,7 @@ export class CodexAdapter implements AgentAdapter {
     newSession.role = oldSession?.role;
     newSession.frozenRole = oldSession?.frozenRole;
     newSession.frozenSystemPrompt = oldSession?.frozenSystemPrompt;
+    newSession.baseRolePromptHash = oldSession?.baseRolePromptHash;
     newSession.promptHash = oldSession?.promptHash;
     return newSession;
   }

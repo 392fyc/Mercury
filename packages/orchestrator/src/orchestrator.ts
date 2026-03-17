@@ -145,8 +145,18 @@ export class Orchestrator {
     return prompt.includes("## Task Scope") || prompt.includes("## Review Scope");
   }
 
+  private getComparableRolePromptHash(info: SessionInfo): string | undefined {
+    if (info.baseRolePromptHash) {
+      return info.baseRolePromptHash;
+    }
+    if (this.isTaskScopedPrompt(info)) {
+      return undefined;
+    }
+    return info.promptHash;
+  }
+
   private getCurrentPromptHash(info: SessionInfo): string | undefined {
-    if (!info.frozenRole || !info.promptHash || this.isTaskScopedPrompt(info)) {
+    if (!info.frozenRole || !this.getComparableRolePromptHash(info)) {
       return undefined;
     }
     const currentPrompt = buildRoleSystemPrompt(
@@ -160,13 +170,14 @@ export class Orchestrator {
   private getLegacyRoleConfigState(
     info: SessionInfo,
   ): { currentPromptHash?: string; legacyRoleConfig: boolean } {
+    const comparablePromptHash = this.getComparableRolePromptHash(info);
     const currentPromptHash = this.getCurrentPromptHash(info);
     return {
       currentPromptHash,
       legacyRoleConfig:
-        Boolean(info.promptHash) &&
+        Boolean(comparablePromptHash) &&
         Boolean(currentPromptHash) &&
-        info.promptHash !== currentPromptHash,
+        comparablePromptHash !== currentPromptHash,
     };
   }
 
@@ -815,15 +826,18 @@ export class Orchestrator {
     session.cwd = cwd;
 
     // Inject role-specific system prompt (includes shared KB context)
+    const baseRolePrompt = buildRoleSystemPrompt(
+      effectiveRole,
+      undefined,
+      this.sharedContext || undefined,
+    );
     const rolePrompt =
       systemPrompt ??
-      buildRoleSystemPrompt(
-        effectiveRole,
-        undefined,
-        this.sharedContext || undefined,
-      );
+      baseRolePrompt;
+    session.baseRolePromptHash = this.hashPrompt(baseRolePrompt);
     session.frozenSystemPrompt = rolePrompt;
     session.promptHash = this.hashPrompt(rolePrompt);
+    const promptState = this.getLegacyRoleConfigState(session);
 
     this.sessions.set(session.sessionId, session);
     const slotKey = makeRoleSlotKey(effectiveRole, agentId);
@@ -833,8 +847,8 @@ export class Orchestrator {
       role: effectiveRole,
       sessionName: session.sessionName,
       promptHash: session.promptHash,
-      currentPromptHash: session.promptHash,
-      legacyRoleConfig: false,
+      currentPromptHash: promptState.currentPromptHash,
+      legacyRoleConfig: promptState.legacyRoleConfig,
     });
 
     this.persistState(true);

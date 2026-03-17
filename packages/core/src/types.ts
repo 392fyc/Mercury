@@ -398,6 +398,7 @@ export interface SessionInfo {
   parentSessionId?: string; // for session continuity on overflow
   resumeToken?: string; // adapter-specific token for restoring a persisted session
   frozenSystemPrompt?: string;
+  baseRolePromptHash?: string;
   promptHash?: string;
 }
 
