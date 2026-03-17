@@ -92,6 +92,38 @@ export class KnowledgeService {
     return this.parsePlainTextList(raw).map((entryPath) => this.toFileInfo(entryPath, kind));
   }
 
+  private normalizeFolderPath(folder?: string): string | undefined {
+    const normalized = folder?.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+    return normalized && normalized.length > 0 ? normalized : undefined;
+  }
+
+  private filterImmediateChildren(entries: KBFileInfo[], folder?: string): KBFileInfo[] {
+    const normalizedFolder = this.normalizeFolderPath(folder);
+
+    return entries
+      .filter((entry) => {
+        if (normalizedFolder) {
+          return entry.folder === normalizedFolder;
+        }
+
+        if (entry.kind === "folder") {
+          return entry.folder === "" && entry.path.length > 0;
+        }
+
+        return entry.folder === "";
+      })
+      .map((entry) => {
+        if (entry.kind !== "folder") {
+          return entry;
+        }
+
+        return {
+          ...entry,
+          name: entry.path.split("/").filter((part) => part.length > 0).at(-1) ?? entry.name,
+        };
+      });
+  }
+
   private isRecord(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === "object";
   }
@@ -248,7 +280,7 @@ export class KnowledgeService {
       deduped.set(`${entry.kind}:${entry.path}`, entry);
     }
 
-    return Array.from(deduped.values());
+    return this.filterImmediateChildren(Array.from(deduped.values()), folder);
   }
 
   async properties(file: string): Promise<Record<string, unknown>> {
