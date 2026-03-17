@@ -9,6 +9,7 @@ import { ref, computed } from "vue";
 import type { AgentConfig, MercuryEvent } from "../lib/tauri-bridge";
 import {
   getAgents as fetchAgents,
+  getConfig,
   getProjectInfo,
   listSessions as fetchSessions,
   onMercuryEvent,
@@ -229,7 +230,9 @@ async function hydrateSessionMeta(): Promise<void> {
 
 async function loadAgents() {
   try {
-    agents.value = await fetchAgents();
+    const [fetchedAgents, config] = await Promise.all([fetchAgents(), getConfig()]);
+    const configuredAgentIds = new Set(config.agents.map((agent) => agent.id));
+    agents.value = fetchedAgents.filter((agent) => configuredAgentIds.has(agent.id));
     sidecarReady.value = true;
     sidecarError.value = null;
     // Initialize status for each role panel

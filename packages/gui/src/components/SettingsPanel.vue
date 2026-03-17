@@ -148,7 +148,14 @@ async function browseWorkDir() {
 
 // ─── Vault Browser State ───
 const showVaultBrowser = ref(false);
-const vaultFiles = ref<Array<{ path: string; name: string; folder: string }>>([]);
+type VaultEntry = {
+  path: string;
+  name: string;
+  folder: string;
+  kind: "file" | "folder";
+};
+
+const vaultFiles = ref<VaultEntry[]>([]);
 const vaultCurrentFolder = ref("");
 const vaultLoading = ref(false);
 const vaultError = ref("");
@@ -168,11 +175,11 @@ async function fetchVaultListing() {
   vaultLoading.value = true;
   vaultError.value = "";
   try {
-    const results = await kbList(vaultCurrentFolder.value || undefined);
+    const results = await kbList(vaultCurrentFolder.value || undefined) as VaultEntry[];
     // Sort: folders first, then alphabetically by name
     vaultFiles.value = results.sort((a, b) => {
-      const aIsFolder = a.folder === "true" || a.folder === true as unknown as string;
-      const bIsFolder = b.folder === "true" || b.folder === true as unknown as string;
+      const aIsFolder = a.kind === "folder";
+      const bIsFolder = b.kind === "folder";
       if (aIsFolder && !bIsFolder) return -1;
       if (!aIsFolder && bIsFolder) return 1;
       return a.name.localeCompare(b.name);
@@ -185,8 +192,8 @@ async function fetchVaultListing() {
   }
 }
 
-function isFolder(entry: { folder: string }): boolean {
-  return entry.folder === "true" || entry.folder === true as unknown as string;
+function isFolder(entry: VaultEntry): boolean {
+  return entry.kind === "folder";
 }
 
 async function navigateVaultFolder(folderPath: string) {

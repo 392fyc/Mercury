@@ -224,7 +224,17 @@ async function loadSlashCommands() {
   }
 }
 
-onMounted(loadSlashCommands);
+async function scrollMessagesToBottom() {
+  await nextTick();
+  if (messagesEl.value) {
+    messagesEl.value.scrollTop = messagesEl.value.scrollHeight;
+  }
+}
+
+onMounted(async () => {
+  await loadSlashCommands();
+  await scrollMessagesToBottom();
+});
 
 function handleSlashSelect(cmd: SlashCommand) {
   slashCommandSelected.value = true;
@@ -300,12 +310,7 @@ function resizeTextarea() {
 
 watch(
   () => messages.value.length,
-  async () => {
-    await nextTick();
-    if (messagesEl.value) {
-      messagesEl.value.scrollTop = messagesEl.value.scrollHeight;
-    }
-  },
+  scrollMessagesToBottom,
 );
 </script>
 
