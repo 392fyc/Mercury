@@ -45,3 +45,7 @@ $RECYCLE.BIN/
 .claude/hooks/state/
 .claude/settings.local.json
 CLAUDE.md
+
+# Mercury runtime state
+.mercury/sessions.json
+.mercury/transcripts/
