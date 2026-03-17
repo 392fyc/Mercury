@@ -491,6 +491,13 @@ export interface AgentStreamEndEvent {
   sessionId: string;
 }
 
+export interface AgentWorkingEvent {
+  agentId: string;
+  sessionId: string;
+  role?: string;
+  startedAt: number;
+}
+
 export interface AgentErrorEvent {
   agentId: string;
   sessionId: string;
@@ -514,6 +521,14 @@ export function onAgentStreamEnd(
   handler: (data: AgentStreamEndEvent) => void,
 ): Promise<UnlistenFn> {
   return listen<AgentStreamEndEvent>("agent-stream-end", (event) =>
+    handler(event.payload),
+  );
+}
+
+export function onAgentWorking(
+  handler: (data: AgentWorkingEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<AgentWorkingEvent>("agent-working", (event) =>
     handler(event.payload),
   );
 }

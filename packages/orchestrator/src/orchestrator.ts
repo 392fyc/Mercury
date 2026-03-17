@@ -1150,6 +1150,12 @@ export class Orchestrator {
       hasImages: images ? images.length : 0,
       role: effectiveRole,
     });
+    this.transport.sendNotification("agent_working", {
+      agentId,
+      sessionId,
+      role: effectiveRole,
+      startedAt: Date.now(),
+    });
     this.appendTranscriptMessage(sessionId, {
       role: "user",
       content: prompt,
@@ -1449,6 +1455,13 @@ export class Orchestrator {
       prompt: prompt.slice(0, 200),
       hasImages: 0,
       role: "dev",
+      oneShot: true,
+    });
+    this.transport.sendNotification("agent_working", {
+      agentId,
+      sessionId,
+      role: "dev",
+      startedAt,
       oneShot: true,
     });
 

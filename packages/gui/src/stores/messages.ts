@@ -14,6 +14,7 @@ import {
   resumeSession as bridgeResumeSession,
   getSessionMessages as bridgeGetSessionMessages,
   onAgentMessage,
+  onAgentWorking,
   onAgentStreamEnd,
   onAgentError,
 } from "../lib/tauri-bridge";
@@ -251,6 +252,12 @@ async function initMessageListeners() {
       images: data.message.images,
       metadata: data.message.metadata,
     });
+  });
+
+  await onAgentWorking((data) => {
+    const panelKey = resolvePanelKey(data.agentId, data.sessionId);
+    if (!panelKey) return;
+    setStatus(panelKey, "active");
   });
 
   await onAgentStreamEnd((data) => {

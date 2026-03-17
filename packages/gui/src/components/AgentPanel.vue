@@ -352,7 +352,13 @@ watch(
         <button class="history-button" @click="openHistory(panelKey)">
           History
         </button>
-        <span class="status-badge" :class="status">{{ status }}</span>
+        <span class="status-badge" :class="status">
+          <span v-if="status === 'active'" class="status-indicator" aria-hidden="true">
+            <span class="status-pulse"></span>
+            <span class="status-spinner"></span>
+          </span>
+          <span>{{ status }}</span>
+        </span>
       </div>
     </div>
 
@@ -538,10 +544,43 @@ watch(
 }
 
 .status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 10px;
   padding: 2px 6px;
   border-radius: 3px;
   text-transform: uppercase;
+  line-height: 1;
+}
+
+.status-indicator {
+  position: relative;
+  width: 11px;
+  height: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.status-spinner {
+  position: relative;
+  z-index: 1;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  animation: status-spin 0.85s linear infinite;
+}
+
+.status-pulse {
+  position: absolute;
+  inset: -3px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.16;
+  animation: status-pulse 1.5s ease-out infinite;
 }
 
 .history-button {
@@ -573,11 +612,35 @@ watch(
 .status-badge.active {
   background: rgba(0, 212, 255, 0.15);
   color: var(--accent-main);
+  box-shadow: inset 0 0 0 1px rgba(0, 212, 255, 0.08);
 }
 
 .status-badge.error {
   background: rgba(255, 82, 82, 0.15);
   color: var(--accent-error);
+}
+
+@keyframes status-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes status-pulse {
+  0% {
+    transform: scale(0.72);
+    opacity: 0.2;
+  }
+
+  70% {
+    transform: scale(1.3);
+    opacity: 0;
+  }
+
+  100% {
+    transform: scale(1.3);
+    opacity: 0;
+  }
 }
 
 .panel-messages {
@@ -883,6 +946,13 @@ watch(
   .session-title {
     max-width: none;
     flex: 1 1 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-spinner,
+  .status-pulse {
+    animation: none;
   }
 }
 </style>
