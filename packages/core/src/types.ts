@@ -113,6 +113,7 @@ export interface ObsidianConfig {
 export interface MercuryConfig {
   agents: AgentConfig[];
   workDir?: string;
+  rpcPort?: number;
   obsidian?: ObsidianConfig;
 }
 
