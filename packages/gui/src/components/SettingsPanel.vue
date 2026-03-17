@@ -3,7 +3,7 @@ import { ref, onMounted, watch } from "vue";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useConfigStore } from "../stores/config";
 import { refreshContext, getContextStatus, kbList } from "../lib/tauri-bridge";
-import type { AgentConfig, ObsidianConfig } from "../lib/tauri-bridge";
+import type { AgentConfig, ContextStatus, ObsidianConfig } from "../lib/tauri-bridge";
 
 const emit = defineEmits<{ close: [] }>();
 
@@ -12,9 +12,11 @@ const { config, loading, error, loadConfig, saveConfig } = useConfigStore();
 const activeTab = ref<"agents" | "project" | "display">("agents");
 const saving = ref(false);
 const saveMsg = ref("");
+const roleContextExpanded = ref(true);
 
-// ─── Supported CLI Presets ───
-// Only CLIs we have adapters for. Selecting a CLI auto-fills derived fields.
+type RoleContextKey = "main" | "dev" | "acceptance";
+type ContextTarget = "global" | RoleContextKey;
+
 interface CliPreset {
   cli: string;
   label: string;
@@ -23,7 +25,7 @@ interface CliPreset {
   capabilities: string[];
   restrictions: string[];
   maxSessions: number;
-  disabled?: boolean; // true = adapter not yet implemented
+  disabled?: boolean;
 }
 
 const CLI_PRESETS: CliPreset[] = [
@@ -54,7 +56,7 @@ const CLI_PRESETS: CliPreset[] = [
 ];
 
 function getPreset(cli: string): CliPreset | undefined {
-  return CLI_PRESETS.find(p => p.cli === cli);
+  return CLI_PRESETS.find((preset) => preset.cli === cli);
 }
 
 function getInstructionPersistenceLabel(agent: AgentConfig): string | null {
@@ -67,7 +69,6 @@ function getInstructionPersistenceLabel(agent: AgentConfig): string | null {
   return null;
 }
 
-// ─── Role Definitions ───
 interface RoleDef {
   value: string;
   label: string;
@@ -75,42 +76,79 @@ interface RoleDef {
 }
 
 const ROLE_DEFS: RoleDef[] = [
-  { value: "main",       label: "Main",       hint: "Orchestrator — user talks to this agent directly, delegates tasks to others" },
-  { value: "dev",        label: "Dev",        hint: "Worker — receives task bundles, writes code, returns implementation receipts" },
+  { value: "main", label: "Main", hint: "Orchestrator — user talks to this agent directly, delegates tasks to others" },
+  { value: "dev", label: "Dev", hint: "Worker — receives task bundles, writes code, returns implementation receipts" },
   { value: "acceptance", label: "Acceptance", hint: "Reviewer — performs blind acceptance testing on completed tasks" },
-  { value: "research",   label: "Research",   hint: "Analyst — gathers information, reads docs, answers questions without writing code" },
-  { value: "design",     label: "Design",     hint: "Designer — generates UI/UX mockups, design specs, and visual assets" },
+  { value: "research", label: "Research", hint: "Analyst — gathers information, reads docs, answers questions without writing code" },
+  { value: "design", label: "Design", hint: "Designer — generates UI/UX mockups, design specs, and visual assets" },
 ];
 
-// Local editable copies
+const ROLE_CONTEXT_DEFS: Array<{ value: RoleContextKey; label: string; hint: string }> = [
+  { value: "main", label: "Main", hint: "Added only to main/orchestrator prompts." },
+  { value: "dev", label: "Dev", hint: "Added only to implementation agent prompts." },
+  { value: "acceptance", label: "Acceptance", hint: "Added only to blind review and verification prompts." },
+];
+
+function createEmptyRoleContextFiles(): NonNullable<ObsidianConfig["roleContextFiles"]> {
+  return {
+    main: [],
+    dev: [],
+    acceptance: [],
+  };
+}
+
+function createEmptyObsidianConfig(): ObsidianConfig {
+  return {
+    enabled: false,
+    vaultName: "",
+    obsidianBin: "",
+    autoInjectContext: false,
+    contextFiles: [],
+    roleContextFiles: createEmptyRoleContextFiles(),
+  };
+}
+
+function normalizeObsidianConfig(source?: ObsidianConfig | null): ObsidianConfig {
+  const roleContextFiles = createEmptyRoleContextFiles();
+  if (source?.roleContextFiles) {
+    roleContextFiles.main = [...(source.roleContextFiles.main ?? [])];
+    roleContextFiles.dev = [...(source.roleContextFiles.dev ?? [])];
+    roleContextFiles.acceptance = [...(source.roleContextFiles.acceptance ?? [])];
+  }
+
+  return {
+    ...createEmptyObsidianConfig(),
+    ...source,
+    kbPaths: source?.kbPaths ? { ...source.kbPaths } : undefined,
+    contextFiles: [...(source?.contextFiles ?? [])],
+    roleContextFiles,
+  };
+}
+
 const editAgents = ref<AgentConfig[]>([]);
-const editObsidian = ref<ObsidianConfig>({
-  enabled: false,
-  vaultName: "",
-  autoInjectContext: false,
-  contextFiles: [],
-});
+const editObsidian = ref<ObsidianConfig>(createEmptyObsidianConfig());
 const editWorkDir = ref(".");
 
 onMounted(async () => {
   await loadConfig();
   syncFromConfig();
-  loadContextStatus();
+  await loadContextStatus();
 });
 
 function syncFromConfig() {
-  if (!config.value) return;
+  if (!config.value) {
+    return;
+  }
+
   editAgents.value = JSON.parse(JSON.stringify(config.value.agents));
-  editObsidian.value = config.value.obsidian
-    ? JSON.parse(JSON.stringify(config.value.obsidian))
-    : { enabled: false, vaultName: "", autoInjectContext: false, contextFiles: [] };
+  editObsidian.value = normalizeObsidianConfig(config.value.obsidian);
   editWorkDir.value = config.value.workDir ?? ".";
 }
 
 watch(config, syncFromConfig);
 
 function addAgent() {
-  const preset = CLI_PRESETS[0]; // default to Claude Code
+  const preset = CLI_PRESETS[0];
   editAgents.value.push({
     id: preset.id,
     displayName: preset.label,
@@ -127,10 +165,12 @@ function removeAgent(index: number) {
   editAgents.value.splice(index, 1);
 }
 
-/** When user changes CLI dropdown, auto-fill derived fields from preset. */
 function onCliChange(agent: AgentConfig) {
   const preset = getPreset(agent.cli);
-  if (!preset) return;
+  if (!preset) {
+    return;
+  }
+
   agent.id = preset.id;
   agent.displayName = preset.label;
   agent.integration = preset.integration;
@@ -146,8 +186,6 @@ async function browseWorkDir() {
   }
 }
 
-// ─── Vault Browser State ───
-const showVaultBrowser = ref(false);
 type VaultEntry = {
   path: string;
   name: string;
@@ -155,17 +193,49 @@ type VaultEntry = {
   kind: "file" | "folder";
 };
 
+const showVaultBrowser = ref(false);
 const vaultFiles = ref<VaultEntry[]>([]);
 const vaultCurrentFolder = ref("");
 const vaultLoading = ref(false);
 const vaultError = ref("");
+const vaultTarget = ref<ContextTarget>("global");
 
-async function browseVaultFiles() {
+function ensureRoleContextFiles(): NonNullable<ObsidianConfig["roleContextFiles"]> {
+  if (!editObsidian.value.roleContextFiles) {
+    editObsidian.value.roleContextFiles = createEmptyRoleContextFiles();
+  }
+  return editObsidian.value.roleContextFiles;
+}
+
+function getContextFilesForTarget(target: ContextTarget): string[] {
+  if (target === "global") {
+    return editObsidian.value.contextFiles;
+  }
+
+  const roleContextFiles = ensureRoleContextFiles();
+  if (!roleContextFiles[target]) {
+    roleContextFiles[target] = [];
+  }
+  return roleContextFiles[target] ?? [];
+}
+
+function getContextTargetLabel(target: ContextTarget = vaultTarget.value): string {
+  if (target === "global") {
+    return "Global Context";
+  }
+
+  return ROLE_CONTEXT_DEFS.find((role) => role.value === target)?.label ?? target;
+}
+
+async function browseVaultFiles(target: ContextTarget = "global") {
+  vaultTarget.value = target;
+
   if (!editObsidian.value.enabled || !editObsidian.value.vaultName) {
     vaultError.value = "Please enable and configure Knowledge Base first";
     showVaultBrowser.value = true;
     return;
   }
+
   showVaultBrowser.value = true;
   vaultCurrentFolder.value = "";
   await fetchVaultListing();
@@ -174,9 +244,9 @@ async function browseVaultFiles() {
 async function fetchVaultListing() {
   vaultLoading.value = true;
   vaultError.value = "";
+
   try {
     const results = await kbList(vaultCurrentFolder.value || undefined) as VaultEntry[];
-    // Sort: folders first, then alphabetically by name
     vaultFiles.value = results.sort((a, b) => {
       const aIsFolder = a.kind === "folder";
       const bIsFolder = b.kind === "folder";
@@ -209,8 +279,9 @@ async function navigateVaultUp() {
 }
 
 function selectVaultFile(filePath: string) {
-  if (!editObsidian.value.contextFiles.includes(filePath)) {
-    editObsidian.value.contextFiles.push(filePath);
+  const targetFiles = getContextFilesForTarget(vaultTarget.value);
+  if (!targetFiles.includes(filePath)) {
+    targetFiles.push(filePath);
   }
   showVaultBrowser.value = false;
 }
@@ -219,12 +290,12 @@ function closeVaultBrowser() {
   showVaultBrowser.value = false;
 }
 
-function removeContextFile(index: number) {
-  editObsidian.value.contextFiles.splice(index, 1);
+function removeContextFile(index: number, target: ContextTarget = "global") {
+  const targetFiles = getContextFilesForTarget(target);
+  targetFiles.splice(index, 1);
 }
 
-// ─── Context Injection Status ───
-const contextStatus = ref<{ hasContext: boolean; contextLength: number; autoInject: boolean; contextFiles: string[] } | null>(null);
+const contextStatus = ref<ContextStatus | null>(null);
 const refreshing = ref(false);
 const refreshMsg = ref("");
 
@@ -239,15 +310,16 @@ async function loadContextStatus() {
 async function handleRefreshContext() {
   refreshing.value = true;
   refreshMsg.value = "";
+
   try {
     const result = await refreshContext();
-    if (result.injected) {
-      refreshMsg.value = `Injected ${(result.contextLength / 1024).toFixed(1)}KB into ${result.agentCount} agent(s)`;
-    } else {
-      refreshMsg.value = "No context to inject (check config)";
-    }
+    refreshMsg.value = result.injected
+      ? `Rebuilt ${(result.contextLength / 1024).toFixed(1)}KB of prompt context`
+      : "No context to inject (check config)";
     await loadContextStatus();
-    setTimeout(() => (refreshMsg.value = ""), 4000);
+    setTimeout(() => {
+      refreshMsg.value = "";
+    }, 4000);
   } catch (e) {
     refreshMsg.value = `Error: ${e instanceof Error ? e.message : e}`;
   } finally {
@@ -258,14 +330,17 @@ async function handleRefreshContext() {
 async function handleSave() {
   saving.value = true;
   saveMsg.value = "";
+
   try {
     await saveConfig({
       agents: editAgents.value,
       workDir: editWorkDir.value,
-      obsidian: editObsidian.value,
+      obsidian: normalizeObsidianConfig(editObsidian.value),
     });
     saveMsg.value = "Saved";
-    setTimeout(() => (saveMsg.value = ""), 2000);
+    setTimeout(() => {
+      saveMsg.value = "";
+    }, 2000);
   } catch (e) {
     saveMsg.value = `Error: ${e instanceof Error ? e.message : e}`;
   } finally {
@@ -273,8 +348,10 @@ async function handleSave() {
   }
 }
 
-function handleKeydown(e: KeyboardEvent) {
-  if (e.key === "Escape") emit("close");
+function handleKeydown(event: KeyboardEvent) {
+  if (event.key === "Escape") {
+    emit("close");
+  }
 }
 </script>
 
@@ -282,44 +359,36 @@ function handleKeydown(e: KeyboardEvent) {
   <div class="settings-overlay" @keydown="handleKeydown" tabindex="0">
     <div class="settings-panel">
       <div class="settings-header">
-        <h2>Settings</h2>
+        <div>
+          <h2>Settings</h2>
+          <p class="header-subtitle">Agent routing, KB injection, and project runtime defaults.</p>
+        </div>
         <button class="close-btn" @click="emit('close')" title="Close">X</button>
       </div>
 
       <div class="settings-tabs">
-        <button
-          :class="{ active: activeTab === 'agents' }"
-          @click="activeTab = 'agents'"
-        >Agents</button>
-        <button
-          :class="{ active: activeTab === 'project' }"
-          @click="activeTab = 'project'"
-        >Project</button>
-        <button
-          :class="{ active: activeTab === 'display' }"
-          @click="activeTab = 'display'"
-        >Display</button>
+        <button :class="{ active: activeTab === 'agents' }" @click="activeTab = 'agents'">Agents</button>
+        <button :class="{ active: activeTab === 'project' }" @click="activeTab = 'project'">Project</button>
+        <button :class="{ active: activeTab === 'display' }" @click="activeTab = 'display'">Display</button>
       </div>
 
-      <div class="settings-body" v-if="loading">
+      <div v-if="loading" class="settings-body">
         <p class="loading-text">Loading configuration...</p>
       </div>
 
-      <div class="settings-body" v-else-if="error && !config">
+      <div v-else-if="error && !config" class="settings-body">
         <p class="error-text">{{ error }}</p>
       </div>
 
       <div class="settings-body" v-else>
-        <!-- Agents Tab -->
         <div v-if="activeTab === 'agents'" class="tab-content">
-          <p class="hint">Configure which AI agents Mercury can orchestrate. Each agent maps to a supported CLI tool.</p>
-          <div
-            v-for="(agent, i) in editAgents"
-            :key="i"
-            class="agent-card"
-          >
+          <p class="hint">
+            Configure which AI agents Mercury can orchestrate. Each agent maps to a supported CLI tool.
+          </p>
+
+          <div v-for="(agent, i) in editAgents" :key="i" class="agent-card">
             <div class="card-header">
-              <span class="agent-title">{{ agent.displayName || 'New Agent' }}</span>
+              <span class="agent-title">{{ agent.displayName || "New Agent" }}</span>
               <span class="agent-meta">{{ agent.id }} / {{ agent.integration }}</span>
               <button class="remove-btn" @click="removeAgent(i)" title="Remove">X</button>
             </div>
@@ -327,7 +396,9 @@ function handleKeydown(e: KeyboardEvent) {
               <label>
                 <span>CLI Tool</span>
                 <select v-model="agent.cli" class="field-input" @change="onCliChange(agent)">
-                  <option v-for="p in CLI_PRESETS" :key="p.cli" :value="p.cli" :disabled="p.disabled">{{ p.label }}</option>
+                  <option v-for="p in CLI_PRESETS" :key="p.cli" :value="p.cli" :disabled="p.disabled">
+                    {{ p.label }}
+                  </option>
                 </select>
               </label>
               <label>
@@ -359,24 +430,28 @@ function handleKeydown(e: KeyboardEvent) {
             <p v-if="getInstructionPersistenceLabel(agent)" class="role-hint">
               Prompt persistence: {{ getInstructionPersistenceLabel(agent) }}
             </p>
-            <p class="role-hint">{{ agent.roles?.map(r => ROLE_DEFS.find(d => d.value === r)?.hint).filter(Boolean).join(' | ') ?? '' }}</p>
+            <p class="role-hint">
+              {{ agent.roles?.map((r) => ROLE_DEFS.find((d) => d.value === r)?.hint).filter(Boolean).join(" | ") ?? "" }}
+            </p>
           </div>
           <button class="add-agent-btn" @click="addAgent">+ Add Agent</button>
         </div>
 
-        <!-- Project Tab -->
         <div v-if="activeTab === 'project'" class="tab-content">
           <div class="section">
             <h3>Working Directory</h3>
+            <p class="hint compact">Default workspace for agent sessions and sidecar operations.</p>
             <div class="dir-input-row">
               <input v-model="editWorkDir" class="field-input dir-field" />
-              <button class="browse-btn" @click="browseWorkDir" title="Browse...">Browse</button>
+              <button class="browse-btn" @click="browseWorkDir" title="Browse working directory">Browse</button>
             </div>
           </div>
 
           <div class="section">
             <h3>Knowledge Base (Obsidian CLI)</h3>
-            <p class="hint">Optional. When disabled, agents can still use their own MCP servers, mem0, or other knowledge tools.</p>
+            <p class="hint compact">
+              Optional. When disabled, agents can still use their own MCP servers, mem0, or other knowledge tools.
+            </p>
             <label class="toggle-row">
               <span class="toggle-switch">
                 <input type="checkbox" v-model="editObsidian.enabled" />
@@ -390,6 +465,10 @@ function handleKeydown(e: KeyboardEvent) {
                 <span>Vault Name</span>
                 <input v-model="editObsidian.vaultName" class="field-input full-width" placeholder="Mercury-KB" />
               </label>
+              <label>
+                <span>Obsidian Binary Path</span>
+                <input v-model="editObsidian.obsidianBin" class="field-input full-width" placeholder="auto-detect" />
+              </label>
               <label class="toggle-row">
                 <span class="toggle-switch">
                   <input type="checkbox" v-model="editObsidian.autoInjectContext" />
@@ -397,95 +476,99 @@ function handleKeydown(e: KeyboardEvent) {
                 </span>
                 <span>Auto-inject KB context into agent prompts</span>
               </label>
-              <div class="context-files" v-if="editObsidian.autoInjectContext">
-                <span class="cap-label">Context Files:</span>
-                <div v-for="(f, fi) in editObsidian.contextFiles" :key="fi" class="context-file-row">
-                  <span class="context-file">{{ f }}</span>
-                  <button class="remove-btn small" @click="removeContextFile(fi)">X</button>
-                </div>
-                <button class="cap-add" @click="browseVaultFiles">+ Add File</button>
-              </div>
 
-              <!-- Vault Browser Modal -->
-              <div v-if="showVaultBrowser" class="vault-browser-overlay" @click.self="closeVaultBrowser">
-                <div class="vault-browser">
-                  <div class="vault-browser-header">
-                    <h3>Select File from Vault</h3>
-                    <button class="close-btn" @click="closeVaultBrowser" title="Close">X</button>
+              <template v-if="editObsidian.autoInjectContext">
+                <div class="context-group">
+                  <div class="context-group-header">
+                    <div>
+                      <span class="cap-label">Context Files</span>
+                      <p class="hint compact">These files are injected into every role.</p>
+                    </div>
+                    <button class="cap-add" @click="browseVaultFiles('global')">+ Add File</button>
                   </div>
-                  <div class="vault-browser-breadcrumb">
-                    <button class="breadcrumb-segment" @click="navigateVaultFolder('')">vault</button>
-                    <template v-for="(seg, si) in vaultCurrentFolder.split('/').filter(Boolean)" :key="si">
-                      <span class="breadcrumb-sep">/</span>
-                      <button
-                        class="breadcrumb-segment"
-                        @click="navigateVaultFolder(vaultCurrentFolder.split('/').filter(Boolean).slice(0, si + 1).join('/'))"
-                      >{{ seg }}</button>
-                    </template>
-                  </div>
-                  <div class="vault-browser-body">
-                    <p v-if="vaultLoading" class="loading-text">Loading...</p>
-                    <p v-else-if="vaultError" class="error-text">{{ vaultError }}</p>
-                    <template v-else>
-                      <button
-                        v-if="vaultCurrentFolder"
-                        class="vault-entry vault-folder"
-                        @click="navigateVaultUp"
-                      >
-                        <span class="vault-icon">..</span>
-                        <span class="vault-name">(parent folder)</span>
-                      </button>
-                      <button
-                        v-for="entry in vaultFiles"
-                        :key="entry.path"
-                        class="vault-entry"
-                        :class="isFolder(entry) ? 'vault-folder' : 'vault-file'"
-                        @click="isFolder(entry) ? navigateVaultFolder(entry.path) : selectVaultFile(entry.path)"
-                      >
-                        <span class="vault-icon">{{ isFolder(entry) ? '\uD83D\uDCC1' : '\uD83D\uDCC4' }}</span>
-                        <span class="vault-name">{{ entry.name }}</span>
-                      </button>
-                      <p v-if="!vaultLoading && !vaultError && vaultFiles.length === 0" class="loading-text">
-                        No files found in this folder.
-                      </p>
-                    </template>
-                  </div>
-                </div>
-              </div>
 
-              <!-- Shared Context Status & Refresh -->
-              <div class="context-status-section" v-if="editObsidian.autoInjectContext">
-                <div class="context-status-row">
-                  <div class="context-status-info">
-                    <span class="cap-label">Shared Context:</span>
-                    <span v-if="contextStatus?.hasContext" class="status-badge active">
-                      Active ({{ (contextStatus.contextLength / 1024).toFixed(1) }}KB)
-                    </span>
-                    <span v-else class="status-badge inactive">Not injected</span>
+                  <div v-if="editObsidian.contextFiles.length > 0" class="context-file-list">
+                    <div v-for="(f, fi) in editObsidian.contextFiles" :key="`global-${fi}`" class="context-file-row">
+                      <span class="context-file">{{ f }}</span>
+                      <button class="remove-btn small" @click="removeContextFile(fi, 'global')">X</button>
+                    </div>
                   </div>
-                  <button
-                    class="refresh-btn"
-                    @click="handleRefreshContext"
-                    :disabled="refreshing"
-                    title="Rebuild and inject KB context into all agents"
-                  >
-                    {{ refreshing ? "Refreshing..." : "Refresh Context" }}
+                  <p v-else class="empty-state">No global context files selected.</p>
+                </div>
+
+                <div class="role-context-shell">
+                  <button class="section-toggle" @click="roleContextExpanded = !roleContextExpanded">
+                    <span>Role-Specific Context</span>
+                    <span class="section-toggle-state">{{ roleContextExpanded ? "Hide" : "Show" }}</span>
                   </button>
+                  <p class="hint compact">
+                    These files are merged with global Context Files only for the selected role.
+                  </p>
+
+                  <div v-if="roleContextExpanded" class="role-context-grid">
+                    <div v-for="role in ROLE_CONTEXT_DEFS" :key="role.value" class="role-context-card">
+                      <div class="role-context-card-header">
+                        <div>
+                          <h4>{{ role.label }}</h4>
+                          <p class="hint compact">{{ role.hint }}</p>
+                        </div>
+                        <button class="cap-add" @click="browseVaultFiles(role.value)">+ Add File</button>
+                      </div>
+
+                      <div v-if="getContextFilesForTarget(role.value).length > 0" class="context-file-list">
+                        <div
+                          v-for="(file, fileIndex) in getContextFilesForTarget(role.value)"
+                          :key="`${role.value}-${fileIndex}`"
+                          class="context-file-row"
+                        >
+                          <span class="context-file">{{ file }}</span>
+                          <button class="remove-btn small" @click="removeContextFile(fileIndex, role.value)">X</button>
+                        </div>
+                      </div>
+                      <p v-else class="empty-state">No role-specific files selected.</p>
+                    </div>
+                  </div>
                 </div>
-                <p v-if="refreshMsg" class="refresh-msg" :class="refreshMsg.startsWith('Error') ? 'error-text' : 'success-text'">
-                  {{ refreshMsg }}
-                </p>
-                <p class="hint">Injects KB files as system-level context. Does not consume agent conversation window.</p>
-              </div>
+
+                <div class="context-status-section">
+                  <div class="context-status-row">
+                    <div class="context-status-info">
+                      <span class="cap-label">Prompt Context Cache</span>
+                      <span v-if="contextStatus?.hasContext" class="status-badge active">
+                        Active ({{ (contextStatus.contextLength / 1024).toFixed(1) }}KB)
+                      </span>
+                      <span v-else class="status-badge inactive">Not built</span>
+                    </div>
+                    <button
+                      class="refresh-btn"
+                      @click="handleRefreshContext"
+                      :disabled="refreshing"
+                      title="Rebuild global and role-specific KB prompt context"
+                    >
+                      {{ refreshing ? "Refreshing..." : "Refresh Context" }}
+                    </button>
+                  </div>
+                  <p
+                    v-if="refreshMsg"
+                    class="refresh-msg"
+                    :class="refreshMsg.startsWith('Error') ? 'error-text' : 'success-text'"
+                  >
+                    {{ refreshMsg }}
+                  </p>
+                  <p class="hint compact">
+                    Rebuilds the prompt cache for global and role-specific files. Acceptance sessions only receive
+                    acceptance-scoped additions.
+                  </p>
+                </div>
+              </template>
             </div>
           </div>
         </div>
 
-        <!-- Display Tab -->
         <div v-if="activeTab === 'display'" class="tab-content">
           <div class="section">
             <h3>Theme</h3>
-            <p class="hint">Dark mode only (more themes coming soon)</p>
+            <p class="hint compact">Dark mode only (more themes coming soon).</p>
           </div>
         </div>
       </div>
@@ -499,6 +582,51 @@ function handleKeydown(e: KeyboardEvent) {
         </button>
       </div>
     </div>
+
+    <div v-if="showVaultBrowser" class="vault-browser-overlay" @click.self="closeVaultBrowser">
+      <div class="vault-browser">
+        <div class="vault-browser-header">
+          <div>
+            <h3>Select File</h3>
+            <p class="hint compact">Target: {{ getContextTargetLabel() }}</p>
+          </div>
+          <button class="close-btn" @click="closeVaultBrowser" title="Close">X</button>
+        </div>
+        <div class="vault-browser-breadcrumb">
+          <button class="breadcrumb-segment" @click="navigateVaultFolder('')">vault</button>
+          <template v-for="(seg, si) in vaultCurrentFolder.split('/').filter(Boolean)" :key="si">
+            <span class="breadcrumb-sep">/</span>
+            <button
+              class="breadcrumb-segment"
+              @click="navigateVaultFolder(vaultCurrentFolder.split('/').filter(Boolean).slice(0, si + 1).join('/'))"
+            >
+              {{ seg }}
+            </button>
+          </template>
+        </div>
+        <div class="vault-browser-body">
+          <p v-if="vaultLoading" class="loading-text">Loading...</p>
+          <p v-else-if="vaultError" class="error-text">{{ vaultError }}</p>
+          <template v-else>
+            <button v-if="vaultCurrentFolder" class="vault-entry vault-folder" @click="navigateVaultUp">
+              <span class="vault-icon">..</span>
+              <span class="vault-name">(parent folder)</span>
+            </button>
+            <button
+              v-for="entry in vaultFiles"
+              :key="entry.path"
+              class="vault-entry"
+              :class="isFolder(entry) ? 'vault-folder' : 'vault-file'"
+              @click="isFolder(entry) ? navigateVaultFolder(entry.path) : selectVaultFile(entry.path)"
+            >
+              <span class="vault-icon">{{ isFolder(entry) ? "\uD83D\uDCC1" : "\uD83D\uDCC4" }}</span>
+              <span class="vault-name">{{ entry.name }}</span>
+            </button>
+            <p v-if="vaultFiles.length === 0" class="loading-text">No files found in this folder.</p>
+          </template>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -506,7 +634,7 @@ function handleKeydown(e: KeyboardEvent) {
 .settings-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, 0.64);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -515,28 +643,37 @@ function handleKeydown(e: KeyboardEvent) {
 }
 
 .settings-panel {
-  width: 640px;
-  height: 520px;
+  width: min(1200px, 90vw);
+  height: min(85vh, 960px);
+  max-height: 85vh;
   background: var(--bg-primary);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 14px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
 }
 
 .settings-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  padding: 12px 16px;
+  gap: 16px;
+  padding: 20px 24px 16px;
   border-bottom: 1px solid var(--border);
 }
 
 .settings-header h2 {
-  font-size: 16px;
-  font-weight: 600;
   margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.header-subtitle {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 .close-btn {
@@ -545,7 +682,7 @@ function handleKeydown(e: KeyboardEvent) {
   color: var(--text-secondary);
   font-size: 14px;
   cursor: pointer;
-  padding: 4px 8px;
+  padding: 6px 10px;
   border-radius: var(--radius);
 }
 
@@ -556,22 +693,22 @@ function handleKeydown(e: KeyboardEvent) {
 
 .settings-tabs {
   display: flex;
-  gap: 0;
   border-bottom: 1px solid var(--border);
+  padding: 0 12px;
 }
 
 .settings-tabs button {
   flex: 1;
-  padding: 8px 16px;
+  padding: 12px 18px;
   background: none;
   border: none;
   border-bottom: 2px solid transparent;
   color: var(--text-secondary);
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.6px;
 }
 
 .settings-tabs button.active {
@@ -586,13 +723,13 @@ function handleKeydown(e: KeyboardEvent) {
 .settings-body {
   flex: 1;
   overflow-y: auto;
-  padding: 16px;
+  padding: 24px;
 }
 
 .tab-content {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 20px;
 }
 
 .loading-text {
@@ -611,19 +748,45 @@ function handleKeydown(e: KeyboardEvent) {
   font-size: 12px;
 }
 
-/* Agent Cards */
+.hint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.hint.compact {
+  margin-top: 0;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.section h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
 .agent-card {
   background: var(--bg-secondary);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 12px;
+  border-radius: 12px;
+  padding: 14px;
 }
 
 .card-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
+  margin-bottom: 12px;
 }
 
 .agent-title {
@@ -641,17 +804,19 @@ function handleKeydown(e: KeyboardEvent) {
 
 .card-fields {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
 }
 
-.card-fields label {
+.card-fields label,
+.kb-config label {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
 }
 
-.card-fields label span {
+.card-fields label span,
+.kb-config label > span {
   font-size: 10px;
   text-transform: uppercase;
   color: var(--text-muted);
@@ -659,7 +824,7 @@ function handleKeydown(e: KeyboardEvent) {
 }
 
 .field-input {
-  padding: 4px 8px;
+  padding: 7px 10px;
   background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -679,19 +844,19 @@ function handleKeydown(e: KeyboardEvent) {
 }
 
 .capabilities {
-  margin-top: 8px;
+  margin-top: 10px;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 6px;
 }
 
 .cap-label {
+  margin-right: 4px;
   font-size: 10px;
   text-transform: uppercase;
   color: var(--text-muted);
   letter-spacing: 0.5px;
-  margin-right: 4px;
 }
 
 .cap-tag {
@@ -704,8 +869,8 @@ function handleKeydown(e: KeyboardEvent) {
 
 .role-checkboxes {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 4px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
   margin-top: 2px;
 }
 
@@ -713,8 +878,8 @@ function handleKeydown(e: KeyboardEvent) {
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
   color: var(--text-secondary);
+  font-size: 11px;
   cursor: pointer;
 }
 
@@ -724,21 +889,24 @@ function handleKeydown(e: KeyboardEvent) {
 }
 
 .role-hint {
-  margin: 6px 0 0 0;
+  margin: 8px 0 0;
   font-size: 10px;
   color: var(--text-muted);
   font-style: italic;
-  line-height: 1.4;
+  line-height: 1.45;
 }
 
-.cap-add {
-  font-size: 12px;
-  padding: 1px 6px;
+.cap-add,
+.browse-btn,
+.refresh-btn {
+  padding: 6px 12px;
   background: var(--bg-panel);
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: var(--radius);
   color: var(--text-secondary);
+  font-size: 12px;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .cap-add:hover {
@@ -767,10 +935,10 @@ function handleKeydown(e: KeyboardEvent) {
 }
 
 .add-agent-btn {
-  padding: 8px;
+  padding: 10px 12px;
   background: var(--bg-secondary);
   border: 1px dashed var(--border);
-  border-radius: var(--radius);
+  border-radius: 12px;
   color: var(--text-secondary);
   font-size: 12px;
   cursor: pointer;
@@ -781,27 +949,14 @@ function handleKeydown(e: KeyboardEvent) {
   color: var(--accent-main);
 }
 
-/* Project Tab */
-.section {
-  margin-bottom: 16px;
-}
-
-.section h3 {
-  font-size: 13px;
-  font-weight: 600;
-  margin: 0 0 8px 0;
-}
-
-.hint {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin: 0 0 8px 0;
-}
-
-/* Directory input with browse button */
-.dir-input-row {
+.dir-input-row,
+.context-status-row,
+.context-group-header,
+.role-context-card-header {
   display: flex;
-  gap: 6px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .dir-field {
@@ -809,31 +964,18 @@ function handleKeydown(e: KeyboardEvent) {
   min-width: 0;
 }
 
-.browse-btn {
-  padding: 4px 12px;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  color: var(--text-secondary);
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
 .browse-btn:hover {
   border-color: var(--accent-main);
   color: var(--accent-main);
 }
 
-/* Toggle switch */
 .toggle-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 12px;
   color: var(--text-secondary);
+  font-size: 12px;
   cursor: pointer;
-  margin: 4px 0;
 }
 
 .toggle-switch {
@@ -881,78 +1023,118 @@ function handleKeydown(e: KeyboardEvent) {
 }
 
 .kb-config {
-  margin-top: 12px;
-  padding: 12px;
-  background: var(--bg-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.02);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: 12px;
+}
+
+.context-group,
+.role-context-shell,
+.context-status-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.context-file-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-
-.kb-config label {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.kb-config label > span {
-  font-size: 10px;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  letter-spacing: 0.5px;
-}
-
-.context-files {
-  margin-top: 4px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
 }
 
 .context-file-row {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
 }
 
 .context-file {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 11px;
   font-family: var(--font-mono);
   color: var(--text-secondary);
-  padding: 2px 6px;
-  background: var(--bg-input);
-  border-radius: 3px;
-  flex: 1;
+  padding: 7px 9px;
+  background: rgba(0, 0, 0, 0.16);
+  border-radius: 6px;
 }
 
-/* Context Status */
-.context-status-section {
-  margin-top: 8px;
-  padding: 10px;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+.empty-state {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 11px;
 }
 
-.context-status-row {
+.section-toggle {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 12px;
+  width: 100%;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+
+.section-toggle-state {
+  color: var(--accent-main);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.role-context-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.role-context-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.role-context-card h4 {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .context-status-info {
   display: flex;
   align-items: center;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .status-badge {
   font-size: 11px;
   padding: 2px 8px;
-  border-radius: 3px;
+  border-radius: 4px;
   font-family: var(--font-mono);
 }
 
@@ -967,15 +1149,9 @@ function handleKeydown(e: KeyboardEvent) {
 }
 
 .refresh-btn {
-  padding: 4px 12px;
-  background: var(--bg-panel);
   border: 1px solid var(--accent-main);
-  border-radius: var(--radius);
   color: var(--accent-main);
-  font-size: 11px;
   font-weight: 500;
-  cursor: pointer;
-  white-space: nowrap;
   transition: background 0.15s;
 }
 
@@ -990,21 +1166,20 @@ function handleKeydown(e: KeyboardEvent) {
 
 .refresh-msg {
   font-size: 11px;
-  margin: 6px 0 0 0;
+  margin: 0;
 }
 
-/* Footer */
 .settings-footer {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 12px;
-  padding: 12px 16px;
+  padding: 16px 24px 20px;
   border-top: 1px solid var(--border);
 }
 
 .save-btn {
-  padding: 6px 20px;
+  padding: 8px 22px;
   background: var(--accent-main);
   color: var(--bg-primary);
   border: none;
@@ -1015,7 +1190,7 @@ function handleKeydown(e: KeyboardEvent) {
 }
 
 .save-btn:hover {
-  opacity: 0.9;
+  opacity: 0.92;
 }
 
 .save-btn:disabled {
@@ -1023,7 +1198,6 @@ function handleKeydown(e: KeyboardEvent) {
   cursor: not-allowed;
 }
 
-/* Vault Browser */
 .vault-browser-overlay {
   position: fixed;
   inset: 0;
@@ -1035,11 +1209,11 @@ function handleKeydown(e: KeyboardEvent) {
 }
 
 .vault-browser {
-  width: 480px;
-  max-height: 420px;
+  width: min(720px, 84vw);
+  max-height: min(72vh, 640px);
   background: var(--bg-primary);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 12px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1047,23 +1221,24 @@ function handleKeydown(e: KeyboardEvent) {
 
 .vault-browser-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  padding: 10px 14px;
+  gap: 12px;
+  padding: 14px 16px;
   border-bottom: 1px solid var(--border);
 }
 
 .vault-browser-header h3 {
+  margin: 0 0 6px;
   font-size: 13px;
   font-weight: 600;
-  margin: 0;
 }
 
 .vault-browser-breadcrumb {
   display: flex;
   align-items: center;
   gap: 0;
-  padding: 6px 14px;
+  padding: 8px 16px;
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border);
   font-size: 11px;
@@ -1103,7 +1278,7 @@ function handleKeydown(e: KeyboardEvent) {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 14px;
+  padding: 8px 16px;
   background: none;
   border: none;
   text-align: left;
@@ -1140,5 +1315,45 @@ function handleKeydown(e: KeyboardEvent) {
 .vault-file .vault-name {
   color: var(--text-secondary);
   font-family: var(--font-mono);
+}
+
+@media (max-width: 900px) {
+  .settings-panel {
+    width: 94vw;
+    height: 90vh;
+    max-height: 90vh;
+  }
+
+  .card-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .role-checkboxes {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dir-input-row,
+  .context-status-row,
+  .context-group-header,
+  .role-context-card-header {
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 640px) {
+  .settings-body,
+  .settings-header,
+  .settings-footer {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .settings-tabs {
+    padding: 0;
+  }
+
+  .settings-tabs button {
+    padding: 10px 12px;
+  }
 }
 </style>

@@ -155,6 +155,7 @@ export async function dispatchTask(
 export interface ObsidianConfig {
   enabled: boolean;
   vaultName: string;
+  vaultPath?: string;
   obsidianBin?: string;
   kbPaths?: {
     tasks?: string;
@@ -163,6 +164,11 @@ export interface ObsidianConfig {
   };
   autoInjectContext: boolean;
   contextFiles: string[];
+  roleContextFiles?: {
+    main?: string[];
+    dev?: string[];
+    acceptance?: string[];
+  };
 }
 
 export interface MercuryProjectConfig {
@@ -346,7 +352,7 @@ export async function kbSearch(
 
 export async function kbList(
   folder?: string,
-): Promise<Array<{ path: string; name: string; folder: string }>> {
+): Promise<Array<{ path: string; name: string; folder: string; kind: "file" | "folder" }>> {
   return invoke("kb_list", { folder: folder ?? null });
 }
 
@@ -461,6 +467,7 @@ export interface ContextStatus {
   contextLength: number;
   autoInject: boolean;
   contextFiles: string[];
+  roleContextFiles?: ObsidianConfig["roleContextFiles"];
 }
 
 export async function refreshContext(): Promise<{ injected: boolean; agentCount: number; contextLength: number }> {

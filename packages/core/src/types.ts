@@ -108,6 +108,11 @@ export interface ObsidianConfig {
   };
   autoInjectContext: boolean;
   contextFiles: string[]; // files to inject as system prompt context
+  roleContextFiles?: {
+    main?: string[];
+    dev?: string[];
+    acceptance?: string[];
+  };
 }
 
 export interface MercuryConfig {

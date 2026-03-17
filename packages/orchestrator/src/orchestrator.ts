@@ -19,6 +19,7 @@ import type {
   AgentMessage,
   AcceptanceVerdict,
   ImplementationReceipt,
+  ObsidianConfig,
   RoleSlotKey,
   SessionInfo,
   SlashCommand,
@@ -55,6 +56,9 @@ type NativeSessionBridge = {
   setSessionName?: (sessionId: string, name: string) => Promise<void>;
 };
 
+const ROLE_CONTEXT_ROLES = ["main", "dev", "acceptance"] as const;
+type RoleContextKey = (typeof ROLE_CONTEXT_ROLES)[number];
+
 export class Orchestrator {
   private static readonly APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;
   private bus: EventBus;
@@ -79,8 +83,10 @@ export class Orchestrator {
   private persistence: SessionPersistence | null = null;
   private transcripts: TranscriptPersistence | null = null;
   private persistDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-  /** Cached shared context (built from KB contextFiles). Injected into all adapters. */
+  /** Cached global context built from obsidian.contextFiles. */
   private sharedContext: string = "";
+  /** Cached role-only context built from obsidian.roleContextFiles[role]. */
+  private roleContexts: Partial<Record<RoleContextKey, string>> = {};
 
   constructor(
     registry: AgentRegistry,
@@ -183,8 +189,36 @@ export class Orchestrator {
       role,
       task,
       this.sharedContext || undefined,
+      this.getRoleSpecificContext(role),
       this.getRoleInstructions(role),
     );
+  }
+
+  private clearContextCache(): void {
+    this.sharedContext = "";
+    this.roleContexts = {};
+  }
+
+  private getRoleSpecificFiles(
+    role: RoleContextKey,
+    obsConfig: ObsidianConfig | null | undefined = this.projectConfig?.obsidian,
+  ): string[] {
+    return obsConfig?.roleContextFiles?.[role] ?? [];
+  }
+
+  private getRoleSpecificContext(role: AgentRole): string | undefined {
+    if (ROLE_CONTEXT_ROLES.includes(role as RoleContextKey)) {
+      const roleSpecificContext = this.roleContexts[role as RoleContextKey];
+      if (roleSpecificContext) {
+        return roleSpecificContext;
+      }
+    }
+    return undefined;
+  }
+
+  private getContextCacheLength(): number {
+    return this.sharedContext.length +
+      Object.values(this.roleContexts).reduce((total, context) => total + (context?.length ?? 0), 0);
   }
 
   private getDefaultRole(agentId: string | undefined): AgentRole | undefined {
@@ -402,16 +436,27 @@ export class Orchestrator {
   }
 
   /**
-   * Build shared context from KB contextFiles and inject into all adapters.
-   * Uses systemPrompt — does NOT consume conversation context window.
+   * Build cached KB context from global + role-specific config.
+   * Prompts consume this per-session via startRoleSession().
    */
   private async buildAndInjectContext(): Promise<{ injected: boolean; agentCount: number; contextLength: number }> {
     const obsConfig = this.projectConfig?.obsidian;
-    if (!obsConfig?.autoInjectContext || !obsConfig.contextFiles?.length) {
+    const hasRoleSpecificFiles = ROLE_CONTEXT_ROLES.some(
+      (role) => this.getRoleSpecificFiles(role, obsConfig).length > 0,
+    );
+
+    if (!obsConfig?.autoInjectContext) {
+      this.clearContextCache();
+      return { injected: false, agentCount: 0, contextLength: 0 };
+    }
+
+    if (!obsConfig.contextFiles?.length && !hasRoleSpecificFiles) {
+      this.clearContextCache();
       return { injected: false, agentCount: 0, contextLength: 0 };
     }
 
     if (!this.kb?.isEnabled()) {
+      this.clearContextCache();
       this.transport.sendNotification("log", {
         message: "[context] autoInjectContext enabled but KB not available — skipping",
       });
@@ -419,23 +464,48 @@ export class Orchestrator {
     }
 
     try {
-      const context = await this.kb.buildContext(obsConfig.contextFiles);
-      if (!context) {
+      const nextSharedContext = obsConfig.contextFiles?.length
+        ? await this.kb.buildContext([...new Set(obsConfig.contextFiles)])
+        : "";
+      const nextRoleContexts: Partial<Record<RoleContextKey, string>> = {};
+
+      for (const role of ROLE_CONTEXT_ROLES) {
+        const roleSpecificFiles = this.getRoleSpecificFiles(role, obsConfig);
+        if (roleSpecificFiles.length === 0) {
+          continue;
+        }
+
+        const context = await this.kb.buildContext([...new Set(roleSpecificFiles)]);
+        if (context) {
+          nextRoleContexts[role] = context;
+        }
+      }
+
+      const totalContextLength = nextSharedContext.length +
+        Object.values(nextRoleContexts).reduce((total, context) => total + (context?.length ?? 0), 0);
+      if (totalContextLength === 0) {
+        this.clearContextCache();
         return { injected: false, agentCount: 0, contextLength: 0 };
       }
 
-      this.sharedContext = context;
+      this.sharedContext = nextSharedContext;
+      this.roleContexts = nextRoleContexts;
 
-      // Context is stored — role-specific prompts are injected per-session via startRoleSession()
+      const roleSummaries = ROLE_CONTEXT_ROLES
+        .filter((role) => Boolean(nextRoleContexts[role]))
+        .map((role) => `${role}=${nextRoleContexts[role]!.length} chars`)
+        .join(", ");
+
       this.transport.sendNotification("log", {
-        message: `[context] Shared context loaded (${context.length} chars from ${obsConfig.contextFiles.length} files). Will inject per-session with role constraints.`,
+        message: `[context] Cached prompt context: global=${nextSharedContext.length} chars from ${(obsConfig.contextFiles ?? []).length} files${roleSummaries ? `; role-specific ${roleSummaries}` : ""}.`,
       });
 
-      return { injected: true, agentCount: 0, contextLength: context.length };
+      return { injected: true, agentCount: 0, contextLength: totalContextLength };
     } catch (err) {
+      this.clearContextCache();
       const msg = err instanceof Error ? err.message : String(err);
       this.transport.sendNotification("log", {
-        message: `[context] Failed to build shared context: ${msg}`,
+        message: `[context] Failed to build prompt context: ${msg}`,
       });
       return { injected: false, agentCount: 0, contextLength: 0 };
     }
@@ -584,10 +654,11 @@ export class Orchestrator {
         return this.buildAndInjectContext();
       case "get_context_status":
         return {
-          hasContext: this.sharedContext.length > 0,
-          contextLength: this.sharedContext.length,
+          hasContext: this.getContextCacheLength() > 0,
+          contextLength: this.getContextCacheLength(),
           autoInject: this.projectConfig?.obsidian?.autoInjectContext ?? false,
           contextFiles: this.projectConfig?.obsidian?.contextFiles ?? [],
+          roleContextFiles: this.projectConfig?.obsidian?.roleContextFiles ?? {},
         };
       case "build_reference_prompt": {
         const refTask = this.taskManager.getTask(params.taskId as string);
@@ -996,7 +1067,7 @@ export class Orchestrator {
     session.sessionName = this.buildRoleSessionName(agentId, effectiveRole, taskName);
     session.cwd = cwd;
 
-    // Inject role-specific system prompt (includes shared KB context)
+    // Inject role-specific system prompt (global + per-role KB context)
     const baseRolePrompt = this.buildSystemRolePrompt(effectiveRole);
     const rolePrompt =
       systemPrompt ??
@@ -1034,6 +1105,7 @@ export class Orchestrator {
     images?: ImageAttachment[],
     role?: AgentRole,
     taskName?: string,
+    systemPrompt?: string,
   ): Promise<{ sessionId: string; role?: AgentRole; sessionName?: string; status?: SessionInfo["status"] }> {
     const adapter = this.registry.getAdapter(agentId);
     const config = this.registry.getConfig(agentId);
@@ -1043,7 +1115,7 @@ export class Orchestrator {
     // Auto-start session if none exists for this role slot
     let sessionId = this.roleSessions.get(slotKey);
     if (!sessionId) {
-      const session = await this.startRoleSession(agentId, effectiveRole, taskName);
+      const session = await this.startRoleSession(agentId, effectiveRole, taskName, systemPrompt);
       sessionId = session.sessionId;
     }
 
@@ -1069,7 +1141,7 @@ export class Orchestrator {
         staleSession.lastActiveAt = Date.now();
       }
       this.roleSessions.delete(slotKey);
-      const session = await this.startRoleSession(agentId, effectiveRole, taskName);
+      const session = await this.startRoleSession(agentId, effectiveRole, taskName, systemPrompt);
       sessionId = session.sessionId;
     }
 
@@ -1260,6 +1332,11 @@ export class Orchestrator {
     const task = await this.taskManager.getTaskAsync(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
 
+    // Normalize assignedTo: KB bundles may use {agentId, model, sessionId} object
+    if (typeof task.assignedTo === "object" && task.assignedTo !== null) {
+      task.assignedTo = (task.assignedTo as unknown as { agentId: string }).agentId;
+    }
+
     const mainAgentId = this.findMainAgentId();
     if (mainAgentId) {
       const mainSlot = makeRoleSlotKey("main", mainAgentId);
@@ -1442,7 +1519,7 @@ export class Orchestrator {
     }
 
     // Send the prompt with role context
-    await this.sendPrompt(task.assignedTo, prompt, undefined, "dev", task.title);
+    await this.sendPrompt(task.assignedTo, prompt, undefined, "dev", task.title, devRolePrompt);
 
     return { sessionId: session.sessionId, taskId };
   }
@@ -1479,6 +1556,7 @@ export class Orchestrator {
       task,
       acceptance,
       this.sharedContext || undefined,
+      this.getRoleSpecificContext("acceptance"),
     );
     const session = await this.startRoleSession(
       acceptorId,
@@ -1488,7 +1566,7 @@ export class Orchestrator {
     );
     this.taskManager.bindSession(taskId, session.sessionId);
 
-    await this.sendPrompt(acceptorId, prompt, undefined, "acceptance", task.title);
+    await this.sendPrompt(acceptorId, prompt, undefined, "acceptance", task.title, acceptanceRolePrompt);
 
     return { acceptanceId: acceptance.acceptanceId, sessionId: session.sessionId };
   }
@@ -1533,7 +1611,14 @@ export class Orchestrator {
       if (!newSession) {
         // Send rework prompt to existing dev session
         const reworkPrompt = buildReworkPrompt(task, acceptance);
-        await this.sendPrompt(task.assignedTo, reworkPrompt);
+        await this.sendPrompt(
+          task.assignedTo,
+          reworkPrompt,
+          undefined,
+          "dev",
+          task.title,
+          this.buildSystemRolePrompt("dev", task),
+        );
       }
 
       return { verdict: results.verdict, reworkTriggered: true, newSession };
@@ -1633,7 +1718,14 @@ export class Orchestrator {
         );
         this.taskManager.bindSession(taskId, session.sessionId);
       }
-      await this.sendPrompt(task.assignedTo, reworkPrompt, undefined, "dev", task.title);
+      await this.sendPrompt(
+        task.assignedTo,
+        reworkPrompt,
+        undefined,
+        "dev",
+        task.title,
+        this.buildSystemRolePrompt("dev", task),
+      );
 
       return { decision, nextAction: "rework_triggered" };
     }
@@ -1709,6 +1801,7 @@ export class Orchestrator {
   private async updateConfig(config: MercuryConfig): Promise<{ ok: true }> {
     const prevAutoInject = this.projectConfig?.obsidian?.autoInjectContext;
     const prevContextFiles = this.projectConfig?.obsidian?.contextFiles?.join(",");
+    const prevRoleContextFiles = JSON.stringify(this.projectConfig?.obsidian?.roleContextFiles ?? {});
 
     this.projectConfig = config;
 
@@ -1731,11 +1824,14 @@ export class Orchestrator {
     // Always re-inject if we have context, regardless of obsidian config changes.
     const newAutoInject = config.obsidian?.autoInjectContext;
     const newContextFiles = config.obsidian?.contextFiles?.join(",");
-    const obsidianChanged = newAutoInject !== prevAutoInject || newContextFiles !== prevContextFiles;
+    const newRoleContextFiles = JSON.stringify(config.obsidian?.roleContextFiles ?? {});
+    const obsidianChanged =
+      newAutoInject !== prevAutoInject ||
+      newContextFiles !== prevContextFiles ||
+      newRoleContextFiles !== prevRoleContextFiles;
 
-    if (obsidianChanged && !newAutoInject && this.sharedContext) {
-      // autoInject was disabled — clear shared context
-      this.sharedContext = "";
+    if (obsidianChanged && !newAutoInject && this.getContextCacheLength() > 0) {
+      this.clearContextCache();
     }
     // Note: role-specific prompts are injected per-session via startRoleSession(),
     // so no need to re-inject into all adapters here.

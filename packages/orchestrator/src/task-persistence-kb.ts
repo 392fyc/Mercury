@@ -77,15 +77,15 @@ export class TaskPersistenceKB implements TaskPersistence {
   }
 
   async saveTask(task: TaskBundle): Promise<void> {
-    await this.writeJson(`${this.kbPaths.tasks}/${task.taskId}`, task);
+    await this.writeJson(`${this.kbPaths.tasks}/${task.taskId}.json`, task);
   }
 
   async saveAcceptance(acc: AcceptanceBundle): Promise<void> {
-    await this.writeJson(`${this.kbPaths.acceptances}/${acc.acceptanceId}`, acc);
+    await this.writeJson(`${this.kbPaths.acceptances}/${acc.acceptanceId}.json`, acc);
   }
 
   async saveIssue(issue: IssueBundle): Promise<void> {
-    await this.writeJson(`${this.kbPaths.issues}/${issue.issueId}`, issue);
+    await this.writeJson(`${this.kbPaths.issues}/${issue.issueId}.json`, issue);
   }
 
   async loadAll(): Promise<{
@@ -109,7 +109,7 @@ export class TaskPersistenceKB implements TaskPersistence {
   /** Load a single task from KB by ID. */
   async loadTask(taskId: string): Promise<TaskBundle | null> {
     try {
-      const raw = await this.kb.read(`${this.kbPaths.tasks}/${taskId}`);
+      const raw = await this.kb.read(`${this.kbPaths.tasks}/${taskId}.json`);
       return JSON.parse(raw) as TaskBundle;
     } catch {
       return null;

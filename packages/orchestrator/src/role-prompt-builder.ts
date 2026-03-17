@@ -47,7 +47,8 @@ export function loadRoleInstructions(
 export function buildRoleSystemPrompt(
   role: AgentRole,
   task?: TaskBundle,
-  sharedContext?: string,
+  sharedProjectContext?: string,
+  roleProjectContext?: string,
   roleInstructions?: string,
 ): string {
   const card = ROLE_CARDS[role];
@@ -114,10 +115,15 @@ export function buildRoleSystemPrompt(
     }
   }
 
-  // Shared KB context
-  if (sharedContext) {
-    lines.push("## Project Context");
-    lines.push(sharedContext);
+  if (sharedProjectContext) {
+    lines.push("## Shared Project Context");
+    lines.push(sharedProjectContext);
+    lines.push("");
+  }
+
+  if (roleProjectContext) {
+    lines.push("## Role-Specific Project Context");
+    lines.push(roleProjectContext);
     lines.push("");
   }
 
@@ -131,7 +137,8 @@ export function buildRoleSystemPrompt(
 export function buildAcceptanceRolePrompt(
   task: TaskBundle,
   acceptance: AcceptanceBundle,
-  sharedContext?: string,
+  sharedProjectContext?: string,
+  roleProjectContext?: string,
 ): string {
   const card = ROLE_CARDS.acceptance;
   const lines: string[] = [];
@@ -189,10 +196,15 @@ export function buildAcceptanceRolePrompt(
   }
   lines.push("");
 
-  // Shared KB context
-  if (sharedContext) {
-    lines.push("## Project Context");
-    lines.push(sharedContext);
+  if (sharedProjectContext) {
+    lines.push("## Shared Project Context");
+    lines.push(sharedProjectContext);
+    lines.push("");
+  }
+
+  if (roleProjectContext) {
+    lines.push("## Role-Specific Project Context");
+    lines.push(roleProjectContext);
     lines.push("");
   }
 
