@@ -1,39 +1,155 @@
 /**
- * Codex CLI SDK Adapter
+ * Codex app-server adapter.
  *
- * Uses @openai/codex-sdk to programmatically control Codex CLI.
- * Role: Dev Sub Agent — receives tasks from Main Agent, returns results.
+ * Uses `codex app-server` over stdio JSON-RPC instead of the deprecated SDK
+ * thread API.
  */
 
 import { randomUUID } from "node:crypto";
-import { writeFile, unlink } from "node:fs/promises";
+import { unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
   AgentAdapter,
   AgentConfig,
   AgentMessage,
+  AgentRole,
   ImageAttachment,
   SessionInfo,
   SlashCommand,
 } from "@mercury/core";
+import { CodexAppServerTransport } from "./codex-app-server-transport.js";
+import type {
+  AskForApproval,
+  CodexAppServerNotificationMap,
+  CodexAppServerNotificationMethod,
+  CodexAppServerServerRequestMap,
+  CodexAppServerServerRequestMethod,
+  CommandAction,
+  CommandExecutionApprovalDecision,
+  CommandExecutionRequestApprovalParams,
+  FileChangeApprovalDecision,
+  FileChangeRequestApprovalParams,
+  Thread,
+  ThreadListResponse,
+  ThreadItem,
+  ThreadStatus,
+  UserInput,
+} from "./codex-app-server-types.js";
 
-/** SDK InputEntry union — text or local_image */
-type InputEntry =
-  | { type: "text"; text: string }
-  | { type: "local_image"; path: string };
+const CODEX_COMPACTION_NOTICE =
+  "Context compaction triggered — role boundary instructions from earlier turns may have been summarized. Current turn still carries full role context via prepend.";
+const DEFAULT_APPROVAL_POLICY: AskForApproval = "on-request";
+const DEFAULT_SANDBOX_MODE = "workspace-write";
+const END_OF_STREAM = Symbol("codex-turn-end");
+const NOTIFICATION_OPTOUTS: string[] = [
+  "item/agentMessage/delta",
+  "item/reasoning/textDelta",
+  "item/reasoning/summaryTextDelta",
+  "item/reasoning/summaryPartAdded",
+  "item/commandExecution/outputDelta",
+  "item/fileChange/outputDelta",
+];
 
-type InputArg = string | InputEntry[];
+type InputEntry = UserInput;
+type LocalAgentApprovalRequest = {
+  kind: "permission" | "tool_use" | "command_execution" | "file_change" | "user_input";
+  toolName?: string;
+  summary: string;
+  rawRequest?: Record<string, unknown>;
+};
+type LocalApprovalDecision = {
+  action: "approve" | "deny";
+  reason?: string;
+};
+type LocalAgentSendHooks = {
+  onApprovalRequest?: (request: LocalAgentApprovalRequest) => Promise<LocalApprovalDecision>;
+};
+
+interface NativeSession {
+  info: SessionInfo;
+  cwd: string;
+  threadId: string;
+  loaded: boolean;
+  activeTurn: MessageStream | null;
+}
+
+class MessageStream {
+  private queue: Array<AgentMessage | Error | typeof END_OF_STREAM> = [];
+  private waiters: Array<(value: AgentMessage | Error | typeof END_OF_STREAM) => void> = [];
+  private ended = false;
+  private compactionNotified = false;
+  readonly hooks?: LocalAgentSendHooks;
+  turnId?: string;
+
+  constructor(hooks?: LocalAgentSendHooks) {
+    this.hooks = hooks;
+  }
+
+  setTurnId(turnId: string): void {
+    this.turnId = turnId;
+  }
+
+  push(message: AgentMessage): void {
+    if (this.ended) return;
+    this.deliver(message);
+  }
+
+  pushCompactionNotice(buildNotice: () => AgentMessage): void {
+    if (this.compactionNotified || this.ended) return;
+    this.compactionNotified = true;
+    this.push(buildNotice());
+  }
+
+  fail(error: Error): void {
+    if (this.ended) return;
+    this.ended = true;
+    this.deliver(error);
+  }
+
+  finish(): void {
+    if (this.ended) return;
+    this.ended = true;
+    this.deliver(END_OF_STREAM);
+  }
+
+  async *iterate(): AsyncGenerator<AgentMessage> {
+    while (true) {
+      const next = await this.next();
+      if (next === END_OF_STREAM) return;
+      if (next instanceof Error) throw next;
+      yield next;
+    }
+  }
+
+  private next(): Promise<AgentMessage | Error | typeof END_OF_STREAM> {
+    const item = this.queue.shift();
+    if (item !== undefined) {
+      return Promise.resolve(item);
+    }
+    return new Promise((resolve) => {
+      this.waiters.push(resolve);
+    });
+  }
+
+  private deliver(item: AgentMessage | Error | typeof END_OF_STREAM): void {
+    const waiter = this.waiters.shift();
+    if (waiter) {
+      waiter(item);
+      return;
+    }
+    this.queue.push(item);
+  }
+}
 
 export class CodexAdapter implements AgentAdapter {
   readonly agentId: string;
   readonly config: AgentConfig;
-  private sessions = new Map<string, SessionInfo>();
-  private sessionCwd = new Map<string, string>();
-  private threads = new Map<string, unknown>();
-  private codexInstance: unknown = null;
-  private systemPrompt?: string;
-  private systemPromptSentSessions = new Set<string>();
+
+  private sessions = new Map<string, NativeSession>();
+  private threadSessions = new Map<string, string>();
+  private sharedSystemPrompt?: string;
+  private transport: CodexAppServerTransport | null = null;
 
   constructor(config?: Partial<AgentConfig>) {
     this.config = {
@@ -41,7 +157,7 @@ export class CodexAdapter implements AgentAdapter {
       displayName: "Codex CLI",
       cli: "codex",
       roles: ["dev"],
-      integration: "sdk",
+      integration: "rpc",
       capabilities: ["code", "batch_json", "test"],
       restrictions: ["no_kb_write", "isolated_branch_only"],
       maxConcurrentSessions: 3,
@@ -50,105 +166,762 @@ export class CodexAdapter implements AgentAdapter {
     this.agentId = this.config.id;
   }
 
-  /** Set shared context as system prompt (injected by Orchestrator). */
-  setSystemPrompt(prompt: string) {
-    this.systemPrompt = prompt;
-    // Reset tracking so context is re-injected on next message in each session
-    this.systemPromptSentSessions.clear();
+  setSystemPrompt(prompt: string): void {
+    this.sharedSystemPrompt = prompt;
   }
 
-  private async loadSdk() {
-    if (!this.codexInstance) {
-      try {
-        const { Codex } = await import("@openai/codex-sdk");
-        this.codexInstance = new Codex();
-      } catch {
-        throw new Error(
-          "Codex SDK not available. Ensure @openai/codex-sdk is installed and 'codex' CLI is on PATH.",
-        );
+  async startSession(cwd: string): Promise<SessionInfo> {
+    const transport = await this.ensureTransport();
+    const response = await transport.request("thread/start", {
+      model: this.config.model ?? null,
+      cwd,
+      approvalPolicy: DEFAULT_APPROVAL_POLICY,
+      sandbox: DEFAULT_SANDBOX_MODE,
+      experimentalRawEvents: false,
+      persistExtendedHistory: true,
+    });
+
+    const sessionId = randomUUID();
+    const info: SessionInfo = {
+      sessionId,
+      agentId: this.agentId,
+      cwd: response.cwd ?? cwd,
+      startedAt: response.thread.createdAt * 1000,
+      lastActiveAt: Date.now(),
+      status: "active",
+      resumeToken: response.thread.id,
+      sessionName: response.thread.name ?? undefined,
+    };
+
+    this.bindSession(sessionId, {
+      info,
+      cwd: info.cwd ?? cwd,
+      threadId: response.thread.id,
+      loaded: true,
+      activeTurn: null,
+    });
+
+    return info;
+  }
+
+  async *sendPrompt(
+    sessionId: string,
+    prompt: string,
+    images?: ImageAttachment[],
+    hooks?: LocalAgentSendHooks,
+  ): AsyncGenerator<AgentMessage> {
+    const trimmed = prompt.trim();
+    if (trimmed.startsWith("/")) {
+      let handled = false;
+      for await (const message of this.handleSlashCommand(sessionId, prompt)) {
+        handled = true;
+        yield message;
+      }
+      if (handled) return;
+    }
+
+    const record = await this.ensureSession(sessionId, this.sessions.get(sessionId)?.info);
+    if (record.activeTurn) {
+      throw new Error(`Codex session ${sessionId} already has an active turn`);
+    }
+
+    record.info.lastActiveAt = Date.now();
+
+    const promptContext = record.info.frozenSystemPrompt ?? this.sharedSystemPrompt;
+    const effectivePrompt = promptContext
+      ? `[Mercury Role Context]\n${promptContext}\n\n[User Prompt]\n${prompt}`
+      : prompt;
+
+    let input: InputEntry[] = [{ type: "text", text: effectivePrompt, text_elements: [] }];
+    const tempFiles: string[] = [];
+    if (images && images.length > 0) {
+      const prepared = await this.imagesToTempFiles(images);
+      input = input.concat(prepared.entries);
+      tempFiles.push(...prepared.tempFiles);
+    }
+
+    const stream = new MessageStream(hooks);
+    record.activeTurn = stream;
+
+    try {
+      const response = await (await this.ensureTransport()).request("turn/start", {
+        threadId: record.threadId,
+        input,
+        cwd: record.cwd,
+        approvalPolicy: DEFAULT_APPROVAL_POLICY,
+        model: this.config.model ?? null,
+      });
+      stream.setTurnId(response.turn.id);
+
+      if (response.turn.status === "failed" && response.turn.error) {
+        stream.fail(new Error(response.turn.error.message));
+      }
+      if (response.turn.status === "completed" || response.turn.status === "interrupted") {
+        stream.finish();
+      }
+
+      for await (const message of stream.iterate()) {
+        yield message;
+      }
+    } finally {
+      await this.cleanupTempFiles(tempFiles);
+      record.info.lastActiveAt = Date.now();
+      if (record.activeTurn === stream) {
+        record.activeTurn = null;
       }
     }
-    return this.codexInstance as {
-      startThread(opts?: { workingDirectory?: string }): unknown;
-      resumeThread(id: string): unknown;
+  }
+
+  async resumeSession(
+    sessionId: string,
+    persistedInfo?: SessionInfo,
+    cwd?: string,
+  ): Promise<SessionInfo> {
+    const existing = this.sessions.get(sessionId);
+    if (existing?.loaded) {
+      existing.info.status = "active";
+      existing.info.lastActiveAt = Date.now();
+      return existing.info;
+    }
+
+    let info = existing?.info ?? persistedInfo;
+    if (!info) {
+      info = await this.getNativeSessionInfo(sessionId, cwd) ?? undefined;
+    }
+    if (!info?.resumeToken) {
+      throw new Error(`Session ${sessionId} is missing a Codex thread id`);
+    }
+
+    const effectiveCwd = existing?.cwd ?? info.cwd ?? cwd ?? process.cwd();
+    const response = await (await this.ensureTransport()).request("thread/resume", {
+      threadId: info.resumeToken,
+      model: this.config.model ?? null,
+      cwd: effectiveCwd,
+      approvalPolicy: DEFAULT_APPROVAL_POLICY,
+      sandbox: DEFAULT_SANDBOX_MODE,
+      persistExtendedHistory: true,
+    });
+
+    const mergedInfo: SessionInfo = {
+      ...info,
+      sessionId,
+      agentId: this.agentId,
+      cwd: response.cwd ?? effectiveCwd,
+      startedAt: info.startedAt ?? response.thread.createdAt * 1000,
+      lastActiveAt: Date.now(),
+      status: "active",
+      resumeToken: response.thread.id,
+      sessionName: info.sessionName ?? response.thread.name ?? undefined,
+    };
+
+    this.bindSession(sessionId, {
+      info: mergedInfo,
+      cwd: mergedInfo.cwd ?? effectiveCwd,
+      threadId: response.thread.id,
+      loaded: true,
+      activeTurn: existing?.activeTurn ?? null,
+    });
+
+    return mergedInfo;
+  }
+
+  async endSession(sessionId: string): Promise<void> {
+    const record = this.sessions.get(sessionId);
+    if (!record) return;
+
+    record.info.status = "completed";
+    record.info.lastActiveAt = Date.now();
+    record.activeTurn?.fail(new Error("Codex session ended"));
+    record.activeTurn = null;
+
+    try {
+      const transport = await this.ensureTransport();
+      await transport.request("thread/unsubscribe", { threadId: record.threadId });
+    } catch {
+      // Best effort only.
+    }
+
+    this.threadSessions.delete(record.threadId);
+    this.sessions.delete(sessionId);
+  }
+
+  async handoffSession(oldSessionId: string, _summary: string): Promise<SessionInfo> {
+    const oldSession = this.sessions.get(oldSessionId)?.info;
+    if (oldSession) {
+      oldSession.status = "overflow";
+    }
+
+    const cwd = this.sessions.get(oldSessionId)?.cwd ?? oldSession?.cwd ?? process.cwd();
+    const nextSession = await this.startSession(cwd);
+    nextSession.parentSessionId = oldSessionId;
+    nextSession.role = oldSession?.role;
+    nextSession.frozenRole = oldSession?.frozenRole;
+    nextSession.frozenSystemPrompt = oldSession?.frozenSystemPrompt;
+    nextSession.baseRolePromptHash = oldSession?.baseRolePromptHash;
+    nextSession.promptHash = oldSession?.promptHash;
+    return nextSession;
+  }
+
+  async listNativeSessions(cwd?: string): Promise<SessionInfo[]> {
+    const transport = await this.ensureTransport();
+    const sessions: SessionInfo[] = [];
+    const seen = new Set<string>();
+    let cursor: string | null = null;
+
+    do {
+      const response: ThreadListResponse = await transport.request("thread/list", {
+        cursor,
+        limit: 50,
+        sourceKinds: ["appServer"],
+        cwd: cwd ?? null,
+        archived: false,
+      });
+      for (const thread of response.data) {
+        if (seen.has(thread.id)) continue;
+        seen.add(thread.id);
+        sessions.push(this.buildSessionInfoFromThread(thread, thread.id));
+      }
+      cursor = response.nextCursor;
+    } while (cursor);
+
+    return sessions;
+  }
+
+  async getNativeSessionInfo(sessionId: string, cwd?: string): Promise<SessionInfo | null> {
+    const threadId = this.resolveThreadId(sessionId);
+    const response = await (await this.ensureTransport()).request("thread/read", {
+      threadId,
+      includeTurns: false,
+    });
+
+    if (cwd && response.thread.cwd !== cwd) {
+      return null;
+    }
+
+    const session = this.buildSessionInfoFromThread(response.thread, sessionId);
+    session.resumeToken = response.thread.id;
+    return session;
+  }
+
+  async readNativeMessages(sessionId: string): Promise<AgentMessage[]> {
+    const threadId = this.resolveThreadId(sessionId);
+    const response = await (await this.ensureTransport()).request("thread/read", {
+      threadId,
+      includeTurns: true,
+    });
+
+    const messages: AgentMessage[] = [];
+    let compactionNotified = false;
+    for (const turn of response.thread.turns) {
+      for (const item of turn.items) {
+        if (item.type === "contextCompaction") {
+          if (!compactionNotified) {
+            messages.push(this.buildCompactionNotice());
+            compactionNotified = true;
+          }
+          continue;
+        }
+        if (!compactionNotified && this.isCompactionSignal(this.getCompactionSignalText(item))) {
+          messages.push(this.buildCompactionNotice());
+          compactionNotified = true;
+        }
+        const message = this.mapThreadItemToMessage(item);
+        if (message) {
+          messages.push(message);
+        }
+      }
+    }
+
+    return messages;
+  }
+
+  async setSessionName(sessionId: string, name: string): Promise<void> {
+    const threadId = this.resolveThreadId(sessionId);
+    await (await this.ensureTransport()).request("thread/name/set", {
+      threadId,
+      name,
+    });
+    const record = this.sessions.get(sessionId);
+    if (record) {
+      record.info.sessionName = name;
+    }
+  }
+
+  getSlashCommands(): SlashCommand[] {
+    return [
+      { name: "/new", description: "Start a new chat during a conversation", category: "session" },
+      { name: "/resume", description: "Resume a saved chat", category: "session" },
+      { name: "/fork", description: "Fork the current chat into a new thread", category: "session" },
+      { name: "/clear", description: "Clear the terminal and start a new chat", category: "session" },
+      { name: "/rename", description: "Rename the current thread", category: "session" },
+      { name: "/compact", description: "Summarize conversation to prevent hitting context limit", category: "session" },
+      { name: "/quit", description: "Exit Codex", category: "session" },
+      { name: "/model", description: "Choose what model and reasoning effort to use", category: "model" },
+      { name: "/fast", description: "Toggle Fast mode for fastest inference at 2X plan usage", category: "model" },
+      { name: "/plan", description: "Switch to Plan mode", category: "model" },
+      { name: "/collab", description: "Change collaboration mode (experimental)", category: "model" },
+      { name: "/approvals", description: "Choose what Codex is allowed to do", category: "permissions" },
+      { name: "/setup-default-sandbox", description: "Set up elevated agent sandbox", category: "permissions" },
+      { name: "/sandbox-add-read-dir", description: "Let sandbox read a directory", category: "permissions", args: [{ name: "path", description: "Absolute directory path", required: true, type: "string" }] },
+      { name: "/mcp", description: "List configured MCP tools", category: "integrations" },
+      { name: "/apps", description: "Manage apps (connectors)", category: "integrations" },
+      { name: "/skills", description: "Use skills to improve how Codex performs tasks", category: "integrations" },
+      { name: "/mention", description: "Mention or attach a file", category: "integrations" },
+      { name: "/agent", description: "Switch the active agent thread", category: "agents" },
+      { name: "/review", description: "Review current changes and find issues", category: "code" },
+      { name: "/diff", description: "Show git diff including untracked files", category: "code" },
+      { name: "/copy", description: "Copy the latest Codex output to clipboard", category: "code" },
+      { name: "/init", description: "Create an AGENTS.md file with instructions for Codex", category: "code" },
+      { name: "/status", description: "Show current session configuration and token usage", category: "config" },
+      { name: "/statusline", description: "Configure which items appear in the status line", category: "config" },
+      { name: "/theme", description: "Choose a syntax highlighting theme", category: "config" },
+      { name: "/personality", description: "Choose a communication style for Codex", category: "config" },
+      { name: "/settings", description: "Configure realtime microphone and speaker", category: "config" },
+      { name: "/experimental", description: "Toggle experimental features", category: "config" },
+      { name: "/realtime", description: "Toggle realtime voice mode (experimental)", category: "experimental" },
+      { name: "/ps", description: "List background terminals", category: "processes" },
+      { name: "/clean", description: "Stop all background terminals", category: "processes" },
+      { name: "/logout", description: "Log out of Codex", category: "account" },
+      { name: "/feedback", description: "Send logs to maintainers", category: "account" },
+    ];
+  }
+
+  private async ensureTransport(): Promise<CodexAppServerTransport> {
+    if (!this.transport) {
+      this.transport = new CodexAppServerTransport({
+        clientInfo: {
+          name: "mercury",
+          title: "Mercury",
+          version: "0.1.0",
+        },
+        capabilities: {
+          experimentalApi: true,
+          optOutNotificationMethods: NOTIFICATION_OPTOUTS,
+        },
+        onNotification: (method, params) => this.handleNotification(method, params),
+        onServerRequest: (method, params) => this.handleServerRequest(method, params),
+        onTransportError: (error) => this.handleTransportError(error),
+      });
+    }
+    await this.transport.ensureStarted();
+    return this.transport;
+  }
+
+  private bindSession(sessionId: string, record: NativeSession): void {
+    this.sessions.set(sessionId, record);
+    this.threadSessions.set(record.threadId, sessionId);
+  }
+
+  private resolveThreadId(sessionId: string): string {
+    return this.sessions.get(sessionId)?.threadId ?? sessionId;
+  }
+
+  private async ensureSession(sessionId: string, persistedInfo?: SessionInfo): Promise<NativeSession> {
+    await this.resumeSession(sessionId, persistedInfo, persistedInfo?.cwd);
+    const record = this.sessions.get(sessionId);
+    if (!record) {
+      throw new Error(`Codex session ${sessionId} not found`);
+    }
+    return record;
+  }
+
+  private handleTransportError(error: Error): void {
+    for (const session of this.sessions.values()) {
+      session.loaded = false;
+      session.activeTurn?.fail(error);
+      session.activeTurn = null;
+    }
+    this.transport = null;
+  }
+
+  private async handleNotification(
+    method: CodexAppServerNotificationMethod,
+    params: CodexAppServerNotificationMap[CodexAppServerNotificationMethod],
+  ): Promise<void> {
+    switch (method) {
+      case "thread/started": {
+        const payload = params as CodexAppServerNotificationMap["thread/started"];
+        const sessionId = this.threadSessions.get(payload.thread.id);
+        if (!sessionId) return;
+        const record = this.sessions.get(sessionId);
+        if (!record) return;
+        record.loaded = true;
+        record.info.resumeToken = payload.thread.id;
+        record.info.sessionName = payload.thread.name ?? record.info.sessionName;
+        return;
+      }
+      case "thread/status/changed": {
+        const payload = params as CodexAppServerNotificationMap["thread/status/changed"];
+        const record = this.getSessionByThreadId(payload.threadId);
+        if (!record) return;
+        record.info.status = this.mapThreadStatus(payload.status);
+        return;
+      }
+      case "thread/closed": {
+        const payload = params as CodexAppServerNotificationMap["thread/closed"];
+        const record = this.getSessionByThreadId(payload.threadId);
+        if (!record) return;
+        record.loaded = false;
+        record.info.status = "completed";
+        record.activeTurn?.finish();
+        record.activeTurn = null;
+        return;
+      }
+      case "thread/tokenUsage/updated": {
+        const payload = params as CodexAppServerNotificationMap["thread/tokenUsage/updated"];
+        const record = this.getSessionByThreadId(payload.threadId);
+        if (!record) return;
+        record.info.tokenUsage = payload.tokenUsage.total.totalTokens;
+        record.info.tokenLimit = payload.tokenUsage.modelContextWindow ?? undefined;
+        record.info.lastActiveAt = Date.now();
+        return;
+      }
+      case "turn/started": {
+        const payload = params as CodexAppServerNotificationMap["turn/started"];
+        const turn = this.getTurnStream(payload.threadId, payload.turn.id);
+        turn?.setTurnId(payload.turn.id);
+        return;
+      }
+      case "item/completed": {
+        const payload = params as CodexAppServerNotificationMap["item/completed"];
+        const turn = this.getTurnStream(payload.threadId, payload.turnId);
+        if (!turn) return;
+        if (payload.item.type === "contextCompaction") {
+          turn.pushCompactionNotice(() => this.buildCompactionNotice());
+          return;
+        }
+        if (this.isCompactionSignal(this.getCompactionSignalText(payload.item))) {
+          turn.pushCompactionNotice(() => this.buildCompactionNotice());
+        }
+        const message = this.mapThreadItemToMessage(payload.item);
+        if (message) {
+          turn.push(message);
+        }
+        return;
+      }
+      case "thread/compacted": {
+        const payload = params as CodexAppServerNotificationMap["thread/compacted"];
+        const turn = this.getTurnStream(payload.threadId, payload.turnId);
+        turn?.pushCompactionNotice(() => this.buildCompactionNotice());
+        return;
+      }
+      case "turn/completed": {
+        const payload = params as CodexAppServerNotificationMap["turn/completed"];
+        const record = this.getSessionByThreadId(payload.threadId);
+        if (record) {
+          record.info.lastActiveAt = Date.now();
+        }
+        const turn = this.getTurnStream(payload.threadId, payload.turn.id);
+        if (!turn) return;
+        turn.setTurnId(payload.turn.id);
+        if (payload.turn.status === "failed" && payload.turn.error) {
+          turn.fail(new Error(payload.turn.error.message));
+          return;
+        }
+        turn.finish();
+        return;
+      }
+      case "error": {
+        const payload = params as CodexAppServerNotificationMap["error"];
+        if (payload.willRetry) return;
+        const turn = this.getTurnStream(payload.threadId, payload.turnId);
+        turn?.fail(new Error(payload.error.message));
+        return;
+      }
+      case "item/started":
+      case "turn/plan/updated":
+      case "turn/diff/updated":
+      case "serverRequest/resolved":
+        return;
+      default:
+        return;
+    }
+  }
+
+  private async handleServerRequest<M extends CodexAppServerServerRequestMethod>(
+    method: M,
+    params: CodexAppServerServerRequestMap[M]["params"],
+  ): Promise<CodexAppServerServerRequestMap[M]["result"]> {
+    switch (method) {
+      case "item/commandExecution/requestApproval":
+        return {
+          decision: await this.resolveCommandApproval(params),
+        } as CodexAppServerServerRequestMap[M]["result"];
+      case "item/fileChange/requestApproval":
+        return {
+          decision: await this.resolveFileChangeApproval(params),
+        } as CodexAppServerServerRequestMap[M]["result"];
+      default:
+        throw new Error(`Unsupported Codex server request: ${method}`);
+    }
+  }
+
+  private async resolveCommandApproval(
+    params: CommandExecutionRequestApprovalParams,
+  ): Promise<CommandExecutionApprovalDecision> {
+    const decision = await this.requestApproval(params.threadId, {
+      kind: "command_execution",
+      toolName: "codex.command_execution",
+      summary: this.buildCommandApprovalSummary(params),
+      rawRequest: params as unknown as Record<string, unknown>,
+    });
+    return decision.action === "approve" ? "accept" : "decline";
+  }
+
+  private async resolveFileChangeApproval(
+    params: FileChangeRequestApprovalParams,
+  ): Promise<FileChangeApprovalDecision> {
+    const decision = await this.requestApproval(params.threadId, {
+      kind: "file_change",
+      toolName: "codex.file_change",
+      summary: this.buildFileApprovalSummary(params),
+      rawRequest: params as unknown as Record<string, unknown>,
+    });
+    return decision.action === "approve" ? "accept" : "decline";
+  }
+
+  private async requestApproval(
+    threadId: string,
+    request: LocalAgentApprovalRequest,
+  ): Promise<{ action: "approve" | "deny" }> {
+    const turn = this.getTurnStream(threadId);
+    const callback = turn?.hooks?.onApprovalRequest;
+    if (!callback) {
+      return { action: "approve" };
+    }
+
+    try {
+      return await callback(request);
+    } catch {
+      return { action: "deny" };
+    }
+  }
+
+  private getSessionByThreadId(threadId: string): NativeSession | undefined {
+    const sessionId = this.threadSessions.get(threadId);
+    return sessionId ? this.sessions.get(sessionId) : undefined;
+  }
+
+  private getTurnStream(threadId: string, turnId?: string): MessageStream | undefined {
+    const record = this.getSessionByThreadId(threadId);
+    const stream = record?.activeTurn;
+    if (!stream) return undefined;
+    if (turnId && stream.turnId && stream.turnId !== turnId) {
+      return undefined;
+    }
+    if (turnId && !stream.turnId) {
+      stream.setTurnId(turnId);
+    }
+    return stream;
+  }
+
+  private buildSessionInfoFromThread(thread: Thread, sessionId: string): SessionInfo {
+    const role = this.inferRoleFromThread(thread);
+    return {
+      sessionId,
+      agentId: this.agentId,
+      role,
+      frozenRole: role,
+      sessionName: thread.name ?? undefined,
+      cwd: thread.cwd,
+      startedAt: thread.createdAt * 1000,
+      lastActiveAt: thread.updatedAt * 1000,
+      tokenUsage: undefined,
+      tokenLimit: undefined,
+      status: this.mapThreadStatus(thread.status),
+      resumeToken: thread.id,
     };
   }
 
-  /**
-   * Write base64-encoded images to temp files and return InputEntry[] with
-   * local_image entries. Caller is responsible for cleanup via cleanupTempFiles().
-   */
+  private inferRoleFromThread(thread: Thread): AgentRole | undefined {
+    const candidate = thread.name?.split("-", 1)[0] ?? thread.agentRole ?? undefined;
+    if (
+      candidate === "main" ||
+      candidate === "dev" ||
+      candidate === "acceptance" ||
+      candidate === "research" ||
+      candidate === "design"
+    ) {
+      return candidate;
+    }
+    return undefined;
+  }
+
+  private mapThreadStatus(status: ThreadStatus): SessionInfo["status"] {
+    switch (status.type) {
+      case "active":
+      case "idle":
+        return "active";
+      case "notLoaded":
+        return "paused";
+      case "systemError":
+        return "completed";
+      default:
+        return "active";
+    }
+  }
+
+  private mapThreadItemToMessage(item: ThreadItem): AgentMessage | null {
+    const timestamp = Date.now();
+
+    switch (item.type) {
+      case "userMessage": {
+        const content = item.content
+          .filter((entry): entry is Extract<UserInput, { type: "text" }> => entry.type === "text")
+          .map((entry) => entry.text)
+          .join("\n")
+          .trim();
+        return content
+          ? {
+              role: "user",
+              content,
+              timestamp,
+              metadata: { itemId: item.id, itemType: item.type },
+            }
+          : null;
+      }
+      case "agentMessage":
+        return {
+          role: "assistant",
+          content: item.text,
+          timestamp,
+          metadata: { itemId: item.id, itemType: item.type, phase: item.phase },
+        };
+      case "reasoning": {
+        const content = item.content.join("\n").trim() || item.summary.join("\n").trim();
+        return content
+          ? {
+              role: "assistant",
+              content,
+              timestamp,
+              metadata: { itemId: item.id, itemType: item.type },
+            }
+          : null;
+      }
+      case "plan":
+        return {
+          role: "system",
+          content: item.text,
+          timestamp,
+          metadata: { itemId: item.id, itemType: item.type, messageType: "plan_update" },
+        };
+      default:
+        return null;
+    }
+  }
+
+  private normalizeCompactionText(text: string): string {
+    return text.toLowerCase().replace(/\s+/g, " ").trim();
+  }
+
+  private isCompactionSignal(text?: string): boolean {
+    if (!text) return false;
+    const normalized = this.normalizeCompactionText(text);
+    const hasDirectCue =
+      normalized.includes("compaction") ||
+      normalized.includes("compact conversation") ||
+      normalized.includes("context compact") ||
+      normalized.includes("conversation compact");
+    const hasTruncationCue =
+      normalized.includes("truncat") &&
+      (normalized.includes("context") || normalized.includes("conversation"));
+    return hasDirectCue || hasTruncationCue;
+  }
+
+  private getCompactionSignalText(item: ThreadItem): string | undefined {
+    switch (item.type) {
+      case "agentMessage":
+        return item.text;
+      case "reasoning":
+        return item.content.join("\n").trim() || item.summary.join("\n").trim();
+      default:
+        return undefined;
+    }
+  }
+
+  private buildCompactionNotice(): AgentMessage {
+    return {
+      role: "system",
+      content: CODEX_COMPACTION_NOTICE,
+      timestamp: Date.now(),
+      metadata: {
+        messageType: "context_compaction_notice",
+        adapter: this.agentId,
+      },
+    };
+  }
+
+  private buildCommandApprovalSummary(params: CommandExecutionRequestApprovalParams): string {
+    if (params.networkApprovalContext) {
+      return "Approve Codex network access request";
+    }
+    if (params.command) {
+      return `Approve Codex command: ${params.command}`;
+    }
+    const action = this.describeCommandActions(params.commandActions ?? []);
+    return action ? `Approve Codex command (${action})` : "Approve Codex command execution";
+  }
+
+  private buildFileApprovalSummary(params: FileChangeRequestApprovalParams): string {
+    if (params.grantRoot) {
+      return `Approve Codex file changes under ${params.grantRoot}`;
+    }
+    if (params.reason) {
+      return `Approve Codex file changes: ${params.reason}`;
+    }
+    return "Approve Codex file changes";
+  }
+
+  private describeCommandActions(actions: CommandAction[]): string | undefined {
+    if (actions.length === 0) return undefined;
+    const labels = actions.map((action) => {
+      switch (action.type) {
+        case "read":
+          return `read ${action.path}`;
+        case "listFiles":
+          return `list ${action.path ?? "."}`;
+        case "search":
+          return `search ${action.path ?? "."}`;
+        default:
+          return "shell";
+      }
+    });
+    return labels.slice(0, 3).join(", ");
+  }
+
   private async imagesToTempFiles(
     images: ImageAttachment[],
   ): Promise<{ entries: InputEntry[]; tempFiles: string[] }> {
     const entries: InputEntry[] = [];
     const tempFiles: string[] = [];
 
-    for (const img of images) {
-      const EXT_MAP: Record<string, string> = { jpeg: "jpg", "svg+xml": "svg", tiff: "tif" };
-      const rawExt = img.mediaType.split("/")[1] || "png";
-      const ext = EXT_MAP[rawExt] ?? rawExt;
+    for (const image of images) {
+      const extMap: Record<string, string> = {
+        jpeg: "jpg",
+        "svg+xml": "svg",
+        tiff: "tif",
+      };
+      const rawExt = image.mediaType.split("/")[1] || "png";
+      const ext = extMap[rawExt] ?? rawExt;
       const tempPath = join(tmpdir(), `mercury-img-${randomUUID()}.${ext}`);
-      await writeFile(tempPath, Buffer.from(img.data, "base64"));
+      await writeFile(tempPath, Buffer.from(image.data, "base64"));
       tempFiles.push(tempPath);
-      entries.push({ type: "local_image", path: tempPath });
+      entries.push({ type: "localImage", path: tempPath });
     }
 
     return { entries, tempFiles };
   }
 
-  /** Best-effort removal of temp image files. */
   private async cleanupTempFiles(tempFiles: string[]): Promise<void> {
-    for (const f of tempFiles) {
+    for (const file of tempFiles) {
       try {
-        await unlink(f);
+        await unlink(file);
       } catch {
-        // Ignore cleanup errors
+        // Ignore cleanup failures.
       }
     }
   }
 
-  /**
-   * Build the input argument for thread.run / thread.runStreamed.
-   * When images are present, returns an InputEntry[] with text + local_image entries.
-   * Otherwise returns a plain string (preserving the original code path).
-   */
-  private buildInput(
-    effectivePrompt: string,
-    imageEntries?: InputEntry[],
-  ): InputArg {
-    if (!imageEntries || imageEntries.length === 0) {
-      return effectivePrompt;
-    }
-    const entries: InputEntry[] = [
-      { type: "text", text: effectivePrompt },
-      ...imageEntries,
-    ];
-    return entries;
-  }
-
-  async startSession(cwd: string): Promise<SessionInfo> {
-    const codex = await this.loadSdk();
-    const thread = codex.startThread({ workingDirectory: cwd });
-    const sessionId = randomUUID();
-
-    this.threads.set(sessionId, thread);
-    this.sessionCwd.set(sessionId, cwd);
-    const info: SessionInfo = {
-      sessionId,
-      agentId: this.agentId,
-      startedAt: Date.now(),
-      lastActiveAt: Date.now(),
-      status: "active",
-    };
-    this.sessions.set(sessionId, info);
-    return info;
-  }
-
-  /**
-   * Intercept slash commands that can't be sent raw to the Codex SDK.
-   * Returns AgentMessage(s) if handled, or yields nothing to fall through.
-   */
   private async *handleSlashCommand(
     sessionId: string,
     prompt: string,
@@ -167,57 +940,53 @@ export class CodexAdapter implements AgentAdapter {
       metadata: { isSlashCommandResponse: true, command: `/${cmd}` },
     });
 
-    // Commands Mercury can natively implement are handled here.
-    // CLI-only commands are rewritten as guidance pointing users to the original CLI.
     switch (cmd) {
       case "help": {
-        const cmds = this.getSlashCommands();
-        const grouped = new Map<string, typeof cmds>();
-        for (const c of cmds) {
-          const cat = c.category ?? "other";
-          if (!grouped.has(cat)) grouped.set(cat, []);
-          grouped.get(cat)!.push(c);
+        const commands = this.getSlashCommands();
+        const grouped = new Map<string, typeof commands>();
+        for (const command of commands) {
+          const category = command.category ?? "other";
+          if (!grouped.has(category)) grouped.set(category, []);
+          grouped.get(category)!.push(command);
         }
         let text = "## Available Commands\n\n";
-        for (const [cat, list] of grouped) {
-          text += `### ${cat}\n`;
-          for (const c of list) text += `  **${c.name}**  ${c.description}\n`;
+        for (const [category, commandsInCategory] of grouped) {
+          text += `### ${category}\n`;
+          for (const command of commandsInCategory) {
+            text += `  **${command.name}**  ${command.description}\n`;
+          }
           text += "\n";
         }
         yield infoMsg(text);
         return;
       }
-
       case "clear":
       case "new": {
-        const session = this.sessions.get(sessionId);
+        const session = this.sessions.get(sessionId)?.info;
         if (session) session.status = "completed";
         yield infoMsg("Session cleared. Send a new message to start a fresh conversation.");
         return;
       }
-
       case "status": {
-        const session = this.sessions.get(sessionId);
+        const session = this.sessions.get(sessionId)?.info;
         yield infoMsg(
           `## Session Status\n` +
-          `- **Agent**: ${this.config.displayName} (${this.agentId})\n` +
-          `- **Integration**: SDK mode\n` +
-          `- **Session**: ${sessionId}\n` +
-          `- **Status**: ${session?.status ?? "unknown"}\n` +
-          `- **Started**: ${session ? new Date(session.startedAt).toLocaleString() : "N/A"}`,
+            `- **Agent**: ${this.config.displayName} (${this.agentId})\n` +
+            `- **Integration**: app-server JSON-RPC (stdio)\n` +
+            `- **Session**: ${sessionId}\n` +
+            `- **Thread**: ${session?.resumeToken ?? "unknown"}\n` +
+            `- **Status**: ${session?.status ?? "unknown"}\n` +
+            `- **Started**: ${session ? new Date(session.startedAt).toLocaleString() : "N/A"}`,
         );
         return;
       }
-
       case "exit":
       case "quit": {
-        const session = this.sessions.get(sessionId);
+        const session = this.sessions.get(sessionId)?.info;
         if (session) session.status = "completed";
         yield infoMsg("Session ended. Use the Start button to begin a new session.");
         return;
       }
-
-      // CLI-only commands — rewritten as terminal guidance in Mercury GUI
       case "agent":
       case "apps":
       case "compact":
@@ -244,224 +1013,12 @@ export class CodexAdapter implements AgentAdapter {
       case "statusline": {
         yield infoMsg(
           `**/${cmd}** requires the Codex CLI terminal.\n\n` +
-          `Run in your terminal:\n\`\`\`\ncodex /${cmd}\n\`\`\``,
+            `Run in your terminal:\n\`\`\`\ncodex /${cmd}\n\`\`\``,
         );
         return;
       }
-
       default:
-        // Unknown command — inform user rather than sending as prompt
-        yield infoMsg(
-          `Unknown command **/${cmd}**. Type **/help** to see available commands.`,
-        );
-        return;
+        yield infoMsg(`Unknown command **/${cmd}**. Type **/help** to see available commands.`);
     }
-  }
-
-  async *sendPrompt(
-    sessionId: string,
-    prompt: string,
-    images?: ImageAttachment[],
-  ): AsyncGenerator<AgentMessage> {
-    // Intercept slash commands before sending to SDK
-    const trimmed = prompt.trim();
-    if (trimmed.startsWith("/")) {
-      let handled = false;
-      for await (const msg of this.handleSlashCommand(sessionId, prompt)) {
-        handled = true;
-        yield msg;
-      }
-      if (handled) return;
-    }
-
-    const thread = this.threads.get(sessionId) as {
-      run(
-        input: string | Array<{ type: string; text?: string; path?: string }>,
-        options?: { outputSchema?: unknown; workingDirectory?: string; skipGitRepoCheck?: boolean },
-      ): Promise<{
-        items: Array<{ id: string; type: string; text?: string }>;
-        finalResponse: string;
-        usage: { input_tokens: number; output_tokens: number };
-      }>;
-      runStreamed?(
-        input: string | Array<{ type: string; text?: string; path?: string }>,
-      ): AsyncIterable<{
-        type: string;
-        text?: string;
-        item?: { id: string; type: string; text?: string };
-      }>;
-    };
-
-    if (!thread) throw new Error(`Thread ${sessionId} not found`);
-
-    const session = this.sessions.get(sessionId);
-    if (session) session.lastActiveAt = Date.now();
-
-    // Prepend shared context only on the first message of each session (avoids token waste)
-    let effectivePrompt = prompt;
-    if (this.systemPrompt && !this.systemPromptSentSessions.has(sessionId)) {
-      effectivePrompt = `[System Context]\n${this.systemPrompt}\n\n[User Prompt]\n${prompt}`;
-      this.systemPromptSentSessions.add(sessionId);
-    }
-
-    // Prepare image temp files if images are provided
-    let imageEntries: InputEntry[] | undefined;
-    const tempFiles: string[] = [];
-    if (images && images.length > 0) {
-      const result = await this.imagesToTempFiles(images);
-      imageEntries = result.entries;
-      tempFiles.push(...result.tempFiles);
-    }
-
-    const input = this.buildInput(effectivePrompt, imageEntries);
-
-    try {
-      // Prefer streaming if available
-      if (thread.runStreamed) {
-        let yieldedAny = false;
-        try {
-          for await (const event of thread.runStreamed(input)) {
-            if (session) session.lastActiveAt = Date.now();
-
-            if (event.type === "text" && event.text) {
-              yieldedAny = true;
-              yield {
-                role: "assistant" as const,
-                content: event.text,
-                timestamp: Date.now(),
-              };
-            } else if (event.type === "item" && event.item?.text) {
-              yieldedAny = true;
-              yield {
-                role: "assistant" as const,
-                content: event.item.text,
-                timestamp: Date.now(),
-                metadata: {
-                  itemId: event.item.id,
-                  itemType: event.item.type,
-                },
-              };
-            } else if (event.type === "result" && event.text) {
-              yieldedAny = true;
-              yield {
-                role: "assistant" as const,
-                content: event.text,
-                timestamp: Date.now(),
-                metadata: { isResult: true },
-              };
-            }
-          }
-          return;
-        } catch {
-          // Only fall through to non-streaming if no events were yielded yet.
-          // If we already yielded partial output, re-throw to avoid duplicate messages.
-          if (yieldedAny) return;
-        }
-      }
-
-      // Fallback: non-streaming run()
-      const result = await thread.run(input);
-
-      for (const item of result.items) {
-        if (item.text) {
-          yield {
-            role: "assistant" as const,
-            content: item.text,
-            timestamp: Date.now(),
-            metadata: { itemId: item.id, itemType: item.type },
-          };
-        }
-      }
-
-      if (result.finalResponse) {
-        yield {
-          role: "assistant" as const,
-          content: result.finalResponse,
-          timestamp: Date.now(),
-          metadata: {
-            isResult: true,
-            usage: result.usage,
-          },
-        };
-      }
-    } finally {
-      // Clean up temp image files regardless of success or failure
-      await this.cleanupTempFiles(tempFiles);
-    }
-  }
-
-  async resumeSession(sessionId: string): Promise<SessionInfo> {
-    const session = this.sessions.get(sessionId);
-    if (!session) throw new Error(`Session ${sessionId} not found`);
-    session.status = "active";
-    return session;
-  }
-
-  async endSession(sessionId: string): Promise<void> {
-    const session = this.sessions.get(sessionId);
-    if (session) session.status = "completed";
-    this.threads.delete(sessionId);
-  }
-
-  async handoffSession(
-    oldSessionId: string,
-    _summary: string,
-  ): Promise<SessionInfo> {
-    const oldSession = this.sessions.get(oldSessionId);
-    if (oldSession) oldSession.status = "overflow";
-
-    const cwd = this.sessionCwd.get(oldSessionId) ?? process.cwd();
-    const newSession = await this.startSession(cwd);
-    newSession.parentSessionId = oldSessionId;
-    return newSession;
-  }
-
-  getSlashCommands(): SlashCommand[] {
-    return [
-      // ── Session & Navigation ──
-      { name: "/new", description: "Start a new chat during a conversation", category: "session" },
-      { name: "/resume", description: "Resume a saved chat", category: "session" },
-      { name: "/fork", description: "Fork the current chat into a new thread", category: "session" },
-      { name: "/clear", description: "Clear the terminal and start a new chat", category: "session" },
-      { name: "/rename", description: "Rename the current thread", category: "session" },
-      { name: "/compact", description: "Summarize conversation to prevent hitting context limit", category: "session" },
-      { name: "/quit", description: "Exit Codex", category: "session" },
-      // ── Model & Mode ──
-      { name: "/model", description: "Choose what model and reasoning effort to use", category: "model" },
-      { name: "/fast", description: "Toggle Fast mode for fastest inference at 2X plan usage", category: "model" },
-      { name: "/plan", description: "Switch to Plan mode", category: "model" },
-      { name: "/collab", description: "Change collaboration mode (experimental)", category: "model" },
-      // ── Permissions & Sandbox ──
-      { name: "/approvals", description: "Choose what Codex is allowed to do", category: "permissions" },
-      { name: "/setup-default-sandbox", description: "Set up elevated agent sandbox", category: "permissions" },
-      { name: "/sandbox-add-read-dir", description: "Let sandbox read a directory", category: "permissions", args: [{ name: "path", description: "Absolute directory path", required: true, type: "string" }] },
-      // ── Tools & Integrations ──
-      { name: "/mcp", description: "List configured MCP tools", category: "integrations" },
-      { name: "/apps", description: "Manage apps (connectors)", category: "integrations" },
-      { name: "/skills", description: "Use skills to improve how Codex performs tasks", category: "integrations" },
-      { name: "/mention", description: "Mention/attach a file", category: "integrations" },
-      // ── Agent & Threads ──
-      { name: "/agent", description: "Switch the active agent thread", category: "agents" },
-      // ── Code & Review ──
-      { name: "/review", description: "Review current changes and find issues", category: "code" },
-      { name: "/diff", description: "Show git diff including untracked files", category: "code" },
-      { name: "/copy", description: "Copy the latest Codex output to clipboard", category: "code" },
-      { name: "/init", description: "Create an AGENTS.md file with instructions for Codex", category: "code" },
-      // ── Config & Display ──
-      { name: "/status", description: "Show current session configuration and token usage", category: "config" },
-      { name: "/statusline", description: "Configure which items appear in the status line", category: "config" },
-      { name: "/theme", description: "Choose a syntax highlighting theme", category: "config" },
-      { name: "/personality", description: "Choose a communication style for Codex", category: "config" },
-      { name: "/settings", description: "Configure realtime microphone/speaker", category: "config" },
-      { name: "/experimental", description: "Toggle experimental features", category: "config" },
-      // ── Experimental ──
-      { name: "/realtime", description: "Toggle realtime voice mode (experimental)", category: "experimental" },
-      // ── Background Processes ──
-      { name: "/ps", description: "List background terminals", category: "processes" },
-      { name: "/clean", description: "Stop all background terminals", category: "processes" },
-      // ── Account ──
-      { name: "/logout", description: "Log out of Codex", category: "account" },
-      { name: "/feedback", description: "Send logs to maintainers", category: "account" },
-    ];
   }
 }

@@ -620,6 +620,39 @@ export function buildDevPrompt(task: TaskBundle, kbContext?: string): string {
   return lines.join("\n");
 }
 
+/**
+ * Build a lightweight dispatch prompt using file references instead of embedded data.
+ * Used for manual handoff or when the sub-agent can read local files directly.
+ *
+ * Follows Mercury's prompt+reference protocol:
+ *   - Natural language intent + action
+ *   - Pointers to structured files (TaskBundle, Handoff)
+ *   - Return format specification
+ */
+export function buildReferencePrompt(
+  task: TaskBundle,
+  taskFilePath: string,
+  handoffFilePath?: string,
+): string {
+  const lines: string[] = [];
+
+  lines.push(`实现任务 ${task.taskId}: ${task.title}`);
+  lines.push("");
+  lines.push(`任务详情: 读取 ${taskFilePath}`);
+  if (handoffFilePath) {
+    lines.push(`项目上下文: 读取 ${handoffFilePath}`);
+  }
+  lines.push("");
+  lines.push("完成后:");
+  lines.push(`1. 将 implementation receipt 写入 ${taskFilePath} 的 implementationReceipt 字段`);
+  lines.push('2. 返回一句话总结 + receipt 文件路径');
+  lines.push("");
+  lines.push(`允许修改的文件: ${task.allowedWriteScope.codePaths.join(", ") || "无限制"}`);
+  lines.push(`禁止修改: ${task.docsMustNotTouch.join(", ") || "无"}`);
+
+  return lines.join("\n");
+}
+
 export function buildAcceptancePrompt(
   task: TaskBundle,
   acceptance: AcceptanceBundle,

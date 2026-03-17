@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Mercury — Multi-Agent Orchestrator",
         "width": 1280,
         "height": 800,

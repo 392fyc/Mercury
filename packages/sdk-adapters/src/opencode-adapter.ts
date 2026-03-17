@@ -14,6 +14,7 @@ import type {
   AgentAdapter,
   AgentConfig,
   AgentMessage,
+  AgentSendHooks,
   ImageAttachment,
   SessionInfo,
   SlashCommand,
@@ -26,8 +27,7 @@ export class OpencodeAdapter implements AgentAdapter {
   private sessionCwd = new Map<string, string>();
   private serverProcess: ChildProcess | null = null;
   private port: number;
-  private systemPrompt?: string;
-  private systemPromptSentSessions = new Set<string>();
+  private sharedSystemPrompt?: string;
   /** Maps Mercury sessionId → opencode server session ID */
   private serverSessions = new Map<string, string>();
   /** Tracks whether the HTTP server is confirmed available (with TTL) */
@@ -51,9 +51,7 @@ export class OpencodeAdapter implements AgentAdapter {
 
   /** Set shared context as system prompt (injected by Orchestrator). */
   setSystemPrompt(prompt: string) {
-    this.systemPrompt = prompt;
-    // Reset tracking so context is re-injected on next message in each session
-    this.systemPromptSentSessions.clear();
+    this.sharedSystemPrompt = prompt;
   }
 
   /**
@@ -114,6 +112,7 @@ export class OpencodeAdapter implements AgentAdapter {
     const info: SessionInfo = {
       sessionId,
       agentId: this.agentId,
+      cwd,
       startedAt: Date.now(),
       lastActiveAt: Date.now(),
       status: "active",
@@ -276,24 +275,20 @@ export class OpencodeAdapter implements AgentAdapter {
       }
     }
 
-    // Send message with native system prompt — only on first message per session
-    // to avoid wasting tokens on repeated system context injection
-    const includeSystemPrompt =
-      this.systemPrompt && !this.systemPromptSentSessions.has(sessionId);
+    const session = this.sessions.get(sessionId);
+    const effectiveSystemPrompt = session?.frozenSystemPrompt ?? this.sharedSystemPrompt;
     const resp = await fetch(
       `http://localhost:${this.port}/session/${ocSessionId}/message`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          system: includeSystemPrompt ? this.systemPrompt : undefined,
+          system: effectiveSystemPrompt,
           parts,
         }),
       },
     );
-    if (includeSystemPrompt) {
-      this.systemPromptSentSessions.add(sessionId);
-    }
+    if (session) session.resumeToken = ocSessionId;
 
     if (!resp.ok) {
       throw new Error(`opencode HTTP message failed: ${resp.status} ${resp.statusText}`);
@@ -315,6 +310,7 @@ export class OpencodeAdapter implements AgentAdapter {
     sessionId: string,
     prompt: string,
     images?: ImageAttachment[],
+    _hooks?: AgentSendHooks,
   ): AsyncGenerator<AgentMessage> {
     // Intercept slash commands before sending to CLI
     const trimmed = prompt.trim();
@@ -340,7 +336,6 @@ export class OpencodeAdapter implements AgentAdapter {
         // and images are sent as FilePartInput with data: URIs.
         // No need for prompt prepending workaround.
         result = await this.sendPromptHttp(sessionId, prompt, images);
-        // systemPromptSentSessions is tracked inside sendPromptHttp()
       } catch {
         // HTTP path failed — fall back to CLI one-shot mode
         this.httpServerAvailableUntil = 0;
@@ -350,11 +345,10 @@ export class OpencodeAdapter implements AgentAdapter {
 
     if (result === null) {
       // Fallback: CLI one-shot mode (no image support, uses prompt prepending for system context)
-      let effectivePrompt = prompt;
-      if (this.systemPrompt && !this.systemPromptSentSessions.has(sessionId)) {
-        effectivePrompt = `[System Context]\n${this.systemPrompt}\n\n[User Prompt]\n${prompt}`;
-        this.systemPromptSentSessions.add(sessionId);
-      }
+      const promptContext = session.frozenSystemPrompt ?? this.sharedSystemPrompt;
+      const effectivePrompt = promptContext
+        ? `[System Context]\n${promptContext}\n\n[User Prompt]\n${prompt}`
+        : prompt;
       result = await this.runOneShot(effectivePrompt);
     }
 
@@ -412,10 +406,27 @@ export class OpencodeAdapter implements AgentAdapter {
     });
   }
 
-  async resumeSession(sessionId: string): Promise<SessionInfo> {
+  async resumeSession(
+    sessionId: string,
+    persistedInfo?: SessionInfo,
+    cwd?: string,
+  ): Promise<SessionInfo> {
     const session = this.sessions.get(sessionId);
-    if (!session) throw new Error(`Session ${sessionId} not found`);
+    if (!session) {
+      if (!persistedInfo) throw new Error(`Session ${sessionId} not found`);
+      this.sessions.set(sessionId, {
+        ...persistedInfo,
+        sessionId,
+        agentId: this.agentId,
+        cwd: persistedInfo.cwd ?? cwd ?? process.cwd(),
+      });
+      if (persistedInfo.resumeToken) {
+        this.serverSessions.set(sessionId, persistedInfo.resumeToken);
+      }
+      return this.resumeSession(sessionId);
+    }
     session.status = "active";
+    session.lastActiveAt = Date.now();
     return session;
   }
 
@@ -434,6 +445,10 @@ export class OpencodeAdapter implements AgentAdapter {
     const cwd = this.sessionCwd.get(oldSessionId) ?? process.cwd();
     const newSession = await this.startSession(cwd);
     newSession.parentSessionId = oldSessionId;
+    newSession.role = oldSession?.role;
+    newSession.frozenRole = oldSession?.frozenRole;
+    newSession.frozenSystemPrompt = oldSession?.frozenSystemPrompt;
+    newSession.promptHash = oldSession?.promptHash;
     return newSession;
   }
 

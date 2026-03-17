@@ -2,11 +2,13 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useAgentStore } from "../stores/agents";
 import { getProjectInfo } from "../lib/tauri-bridge";
+import { useApprovalStore } from "../stores/approvals";
 
 const props = defineProps<{ activeView: "agents" | "tasks" }>();
 const emit = defineEmits<{ "open-settings": []; "switch-view": [view: "agents" | "tasks"] }>();
 
 const { sidecarReady, anyActive, anyError } = useAgentStore();
+const { approvalMode, pendingCount, openQueue, setMode } = useApprovalStore();
 
 const projectRoot = ref("");
 const gitBranch = ref<string | null>(null);
@@ -49,6 +51,11 @@ const statusText = computed(() => {
   if (sidecarReady.value) return "Ready";
   return "Connecting...";
 });
+
+function handleApprovalModeChange(event: Event) {
+  const target = event.target as HTMLSelectElement;
+  void setMode(target.value as "main_agent_review" | "auto_accept");
+}
 </script>
 
 <template>
@@ -73,6 +80,26 @@ const statusText = computed(() => {
     <div class="titlebar-center" data-tauri-drag-region>
       <span class="status-dot" :class="statusClass"></span>
       <span class="status-text">{{ statusText }}</span>
+      <div class="approval-control">
+        <label class="approval-label" for="approval-mode">Approval</label>
+        <select
+          id="approval-mode"
+          class="approval-select"
+          :value="approvalMode"
+          @change="handleApprovalModeChange"
+        >
+          <option value="main_agent_review">Main Agent Review</option>
+          <option value="auto_accept">Auto Accept</option>
+        </select>
+        <button
+          v-if="pendingCount > 0"
+          class="approval-badge"
+          title="Open approval queue"
+          @click="openQueue"
+        >
+          {{ pendingCount }}
+        </button>
+      </div>
     </div>
     <div class="titlebar-right">
       <button class="titlebar-btn" title="Event Log">⚡</button>
@@ -148,6 +175,43 @@ const statusText = computed(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.approval-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 10px;
+  -webkit-app-region: no-drag;
+}
+
+.approval-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.approval-select {
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  font-size: 11px;
+  padding: 0 8px;
+}
+
+.approval-badge {
+  min-width: 22px;
+  height: 22px;
+  border: 1px solid rgba(255, 184, 77, 0.4);
+  border-radius: 999px;
+  background: rgba(255, 184, 77, 0.15);
+  color: #ffb84d;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 .project-info {
