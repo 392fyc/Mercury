@@ -12,7 +12,7 @@
 
 export type AgentRole = "main" | "dev" | "acceptance" | "research" | "design";
 
-export type IntegrationType = "sdk" | "mcp" | "http" | "pty";
+export type IntegrationType = "sdk" | "mcp" | "http" | "pty" | "rpc";
 
 export interface AgentConfig {
   id: string;

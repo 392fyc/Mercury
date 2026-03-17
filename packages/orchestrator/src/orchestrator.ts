@@ -42,6 +42,13 @@ import type { PersistedSessionState } from "./session-persistence.js";
 import { TranscriptPersistence } from "./transcript-persistence.js";
 import type { TranscriptMessage } from "./transcript-persistence.js";
 
+type NativeSessionBridge = {
+  listNativeSessions?: (cwd?: string) => Promise<SessionInfo[]>;
+  getNativeSessionInfo?: (sessionId: string, cwd?: string) => Promise<SessionInfo | null>;
+  readNativeMessages?: (sessionId: string) => Promise<AgentMessage[]>;
+  setSessionName?: (sessionId: string, name: string) => Promise<void>;
+};
+
 export class Orchestrator {
   private static readonly APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;
   private bus: EventBus;
@@ -673,26 +680,51 @@ export class Orchestrator {
     }
   }
 
-  private getSessionMessages(
+  private asNativeSessionBridge(agentId: string): NativeSessionBridge {
+    return this.registry.getAdapter(agentId) as NativeSessionBridge;
+  }
+
+  private async getSessionMessages(
     sessionId: string,
     offset?: number,
     limit?: number,
-  ): { messages: TranscriptMessage[]; total: number } {
-    if (!this.transcripts) {
-      return { messages: [], total: 0 };
+  ): Promise<{ messages: TranscriptMessage[]; total: number }> {
+    const safeOffset = Math.max(0, offset ?? 0);
+
+    if (this.transcripts) {
+      const transcript = this.transcripts.read(sessionId, safeOffset, limit);
+      if (transcript.total > 0) {
+        return transcript;
+      }
     }
-    return this.transcripts.read(sessionId, offset, limit);
+
+    for (const agent of this.registry.listAgents()) {
+      const nativeAdapter = this.asNativeSessionBridge(agent.id);
+      if (!nativeAdapter.readNativeMessages) continue;
+      try {
+        const messages = await nativeAdapter.readNativeMessages(sessionId);
+        const paged = typeof limit === "number"
+          ? messages.slice(safeOffset, safeOffset + Math.max(0, limit))
+          : messages.slice(safeOffset);
+        return { messages: paged, total: messages.length };
+      } catch {
+        continue;
+      }
+    }
+
+    return { messages: [], total: 0 };
   }
 
-  private listSessions(
+  private async listSessions(
     agentId?: string,
     role?: AgentRole,
     includeTerminal = false,
-  ): Array<SessionInfo & { active: boolean; currentPromptHash?: string; legacyRoleConfig?: boolean }> {
+  ): Promise<Array<SessionInfo & { active: boolean; currentPromptHash?: string; legacyRoleConfig?: boolean }>> {
     const result: Array<
       SessionInfo & { active: boolean; currentPromptHash?: string; legacyRoleConfig?: boolean }
     > = [];
     const activeSessionIds = new Set(this.roleSessions.values());
+    const seenResumeTokens = new Set<string>();
 
     // In-memory sessions
     for (const [, info] of this.sessions) {
@@ -708,6 +740,9 @@ export class Orchestrator {
         active: activeSessionIds.has(info.sessionId),
         ...promptState,
       });
+      if (info.resumeToken) {
+        seenResumeTokens.add(info.resumeToken);
+      }
     }
 
     // Also include persisted-but-not-in-memory sessions
@@ -728,6 +763,34 @@ export class Orchestrator {
             active: false,
             ...promptState,
           });
+          if (info.resumeToken) {
+            seenResumeTokens.add(info.resumeToken);
+          }
+        }
+      }
+    }
+
+    if (agentId) {
+      const nativeAdapter = this.asNativeSessionBridge(agentId);
+      if (nativeAdapter.listNativeSessions) {
+        try {
+          const nativeSessions = await nativeAdapter.listNativeSessions(this.agentCwds.get(agentId));
+          for (const info of nativeSessions) {
+            if (info.resumeToken && seenResumeTokens.has(info.resumeToken)) continue;
+            const sessionRole = this.getSessionRole(info);
+            if (role && sessionRole !== role) continue;
+            if (!includeTerminal && !info.frozenRole) continue;
+            if (!includeTerminal && (info.status === "completed" || info.status === "overflow")) continue;
+            const promptState = this.getLegacyRoleConfigState(info);
+            result.push({
+              ...info,
+              role: sessionRole,
+              active: activeSessionIds.has(info.sessionId),
+              ...promptState,
+            });
+          }
+        } catch {
+          // Native session discovery is best effort.
         }
       }
     }
@@ -752,16 +815,27 @@ export class Orchestrator {
       }
     }
 
+    if (!info) {
+      const nativeAdapter = this.asNativeSessionBridge(agentId);
+      if (nativeAdapter.getNativeSessionInfo) {
+        info = await nativeAdapter.getNativeSessionInfo(
+          sessionId,
+          this.agentCwds.get(agentId),
+        ) ?? undefined;
+      }
+    }
+
     if (!info) throw new Error(`Session not found: ${sessionId}`);
     if (info.agentId !== agentId) {
       throw new Error(`Session ${sessionId} belongs to agent ${info.agentId}, not ${agentId}`);
     }
-    if (!info.frozenRole) {
+    const sessionRole = this.getSessionRole(info);
+    if (!sessionRole) {
       throw new Error(`Session ${sessionId} is legacy and can only be viewed in History`);
     }
-    if (expectedRole && expectedRole !== info.frozenRole) {
+    if (expectedRole && expectedRole !== sessionRole) {
       throw new Error(
-        `Role mismatch: session ${sessionId} belongs to role "${info.frozenRole}", not "${expectedRole}"`,
+        `Role mismatch: session ${sessionId} belongs to role "${sessionRole}", not "${expectedRole}"`,
       );
     }
     if (info.status === "completed" || info.status === "overflow") {
@@ -780,8 +854,8 @@ export class Orchestrator {
     }
 
     // Restore into active state
-    resumed.role = info.frozenRole;
-    resumed.frozenRole = info.frozenRole;
+    resumed.role = sessionRole;
+    resumed.frozenRole = sessionRole;
     this.sessions.set(sessionId, resumed);
     const promptState = this.getLegacyRoleConfigState(resumed);
     const resumedWithPromptState = resumed as SessionInfo & {
@@ -791,11 +865,11 @@ export class Orchestrator {
     resumedWithPromptState.currentPromptHash = promptState.currentPromptHash;
     resumedWithPromptState.legacyRoleConfig = promptState.legacyRoleConfig;
 
-    const slotKey = makeRoleSlotKey(info.frozenRole, agentId);
+    const slotKey = makeRoleSlotKey(sessionRole, agentId);
     this.roleSessions.set(slotKey, sessionId);
 
     this.bus.emit("agent.session.start", agentId, sessionId, {
-      role: info.frozenRole,
+      role: sessionRole,
       sessionName: resumed.sessionName,
       resumed: true,
       promptHash: resumed.promptHash,
@@ -842,6 +916,12 @@ export class Orchestrator {
     this.sessions.set(session.sessionId, session);
     const slotKey = makeRoleSlotKey(effectiveRole, agentId);
     this.roleSessions.set(slotKey, session.sessionId);
+    const nativeAdapter = this.asNativeSessionBridge(agentId);
+    try {
+      await nativeAdapter.setSessionName?.(session.sessionId, session.sessionName);
+    } catch {
+      // Naming native sessions is best effort.
+    }
 
     this.bus.emit("agent.session.start", agentId, session.sessionId, {
       role: effectiveRole,
