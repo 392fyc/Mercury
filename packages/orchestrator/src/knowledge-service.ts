@@ -190,7 +190,7 @@ export class KnowledgeService {
       throw new Error("Knowledge service is disabled. Enable obsidian in mercury.config.json.");
     }
 
-    const fullArgs = [`vault="${this.vaultName}"`, ...args];
+    const fullArgs = [`vault=${this.vaultName}`, ...args];
 
     try {
       const { stdout } = await execFileAsync(this.obsidianBin, fullArgs, {
@@ -209,19 +209,19 @@ export class KnowledgeService {
   }
 
   async read(file: string): Promise<string> {
-    return this.exec(["read", `file="${file}"`]);
+    return this.exec(["read", `file=${file}`]);
   }
 
   async write(name: string, content: string): Promise<void> {
-    await this.exec(["create", `name="${name}"`, `content="${content}"`]);
+    await this.exec(["create", `name=${name}`, `content=${content}`]);
   }
 
   async append(file: string, content: string): Promise<void> {
-    await this.exec(["append", `file="${file}"`, `content="${content}"`]);
+    await this.exec(["append", `file=${file}`, `content=${content}`]);
   }
 
   async search(query: string): Promise<KBSearchResult[]> {
-    const raw = await this.exec(["search", `query="${query}"`, "format=json"]);
+    const raw = await this.exec(["search", `query=${query}`, "format=json"]);
     try {
       const parsed = this.parseSearchResults(raw);
       return parsed.length > 0 ? parsed : [{ file: "search", matches: [raw] }];
@@ -232,7 +232,7 @@ export class KnowledgeService {
   }
 
   async list(folder?: string): Promise<KBFileInfo[]> {
-    const scopedArg = folder ? [`folder="${folder}"`] : [];
+    const scopedArg = folder ? [`folder=${folder}`] : [];
     const [filesRaw, foldersRaw] = await Promise.all([
       this.exec(["files", ...scopedArg]),
       this.exec(["folders", ...scopedArg]),
@@ -252,7 +252,7 @@ export class KnowledgeService {
   }
 
   async properties(file: string): Promise<Record<string, unknown>> {
-    const raw = await this.exec(["properties", `file="${file}"`, "format=json"]);
+    const raw = await this.exec(["properties", `file=${file}`, "format=json"]);
     try {
       return JSON.parse(raw) as Record<string, unknown>;
     } catch {
