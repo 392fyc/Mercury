@@ -2,7 +2,7 @@
 import { ref, onMounted, watch } from "vue";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useConfigStore } from "../stores/config";
-import { refreshContext, getContextStatus } from "../lib/tauri-bridge";
+import { refreshContext, getContextStatus, kbList } from "../lib/tauri-bridge";
 import type { AgentConfig, ObsidianConfig } from "../lib/tauri-bridge";
 
 const emit = defineEmits<{ close: [] }>();
@@ -146,9 +146,70 @@ async function browseWorkDir() {
   }
 }
 
-function addContextFile() {
-  const file = prompt("Context file path (relative to vault):");
-  if (file) editObsidian.value.contextFiles.push(file);
+// ─── Vault Browser State ───
+const showVaultBrowser = ref(false);
+const vaultFiles = ref<Array<{ path: string; name: string; folder: string }>>([]);
+const vaultCurrentFolder = ref("");
+const vaultLoading = ref(false);
+const vaultError = ref("");
+
+async function browseVaultFiles() {
+  if (!editObsidian.value.enabled || !editObsidian.value.vaultName) {
+    vaultError.value = "Please enable and configure Knowledge Base first";
+    showVaultBrowser.value = true;
+    return;
+  }
+  showVaultBrowser.value = true;
+  vaultCurrentFolder.value = "";
+  await fetchVaultListing();
+}
+
+async function fetchVaultListing() {
+  vaultLoading.value = true;
+  vaultError.value = "";
+  try {
+    const results = await kbList(vaultCurrentFolder.value || undefined);
+    // Sort: folders first, then alphabetically by name
+    vaultFiles.value = results.sort((a, b) => {
+      const aIsFolder = a.folder === "true" || a.folder === true as unknown as string;
+      const bIsFolder = b.folder === "true" || b.folder === true as unknown as string;
+      if (aIsFolder && !bIsFolder) return -1;
+      if (!aIsFolder && bIsFolder) return 1;
+      return a.name.localeCompare(b.name);
+    });
+  } catch (e) {
+    vaultError.value = e instanceof Error ? e.message : String(e);
+    vaultFiles.value = [];
+  } finally {
+    vaultLoading.value = false;
+  }
+}
+
+function isFolder(entry: { folder: string }): boolean {
+  return entry.folder === "true" || entry.folder === true as unknown as string;
+}
+
+async function navigateVaultFolder(folderPath: string) {
+  vaultCurrentFolder.value = folderPath;
+  await fetchVaultListing();
+}
+
+async function navigateVaultUp() {
+  const parts = vaultCurrentFolder.value.split("/").filter(Boolean);
+  parts.pop();
+  vaultCurrentFolder.value = parts.join("/");
+  await fetchVaultListing();
+}
+
+function selectVaultFile(filePath: string) {
+  if (!editObsidian.value.contextFiles.includes(filePath)) {
+    editObsidian.value.contextFiles.push(filePath);
+  }
+  showVaultBrowser.value = false;
+}
+
+function closeVaultBrowser() {
+  showVaultBrowser.value = false;
 }
 
 function removeContextFile(index: number) {
@@ -335,7 +396,54 @@ function handleKeydown(e: KeyboardEvent) {
                   <span class="context-file">{{ f }}</span>
                   <button class="remove-btn small" @click="removeContextFile(fi)">X</button>
                 </div>
-                <button class="cap-add" @click="addContextFile">+ Add File</button>
+                <button class="cap-add" @click="browseVaultFiles">+ Add File</button>
+              </div>
+
+              <!-- Vault Browser Modal -->
+              <div v-if="showVaultBrowser" class="vault-browser-overlay" @click.self="closeVaultBrowser">
+                <div class="vault-browser">
+                  <div class="vault-browser-header">
+                    <h3>Select File from Vault</h3>
+                    <button class="close-btn" @click="closeVaultBrowser" title="Close">X</button>
+                  </div>
+                  <div class="vault-browser-breadcrumb">
+                    <button class="breadcrumb-segment" @click="navigateVaultFolder('')">vault</button>
+                    <template v-for="(seg, si) in vaultCurrentFolder.split('/').filter(Boolean)" :key="si">
+                      <span class="breadcrumb-sep">/</span>
+                      <button
+                        class="breadcrumb-segment"
+                        @click="navigateVaultFolder(vaultCurrentFolder.split('/').filter(Boolean).slice(0, si + 1).join('/'))"
+                      >{{ seg }}</button>
+                    </template>
+                  </div>
+                  <div class="vault-browser-body">
+                    <p v-if="vaultLoading" class="loading-text">Loading...</p>
+                    <p v-else-if="vaultError" class="error-text">{{ vaultError }}</p>
+                    <template v-else>
+                      <button
+                        v-if="vaultCurrentFolder"
+                        class="vault-entry vault-folder"
+                        @click="navigateVaultUp"
+                      >
+                        <span class="vault-icon">..</span>
+                        <span class="vault-name">(parent folder)</span>
+                      </button>
+                      <button
+                        v-for="entry in vaultFiles"
+                        :key="entry.path"
+                        class="vault-entry"
+                        :class="isFolder(entry) ? 'vault-folder' : 'vault-file'"
+                        @click="isFolder(entry) ? navigateVaultFolder(entry.path) : selectVaultFile(entry.path)"
+                      >
+                        <span class="vault-icon">{{ isFolder(entry) ? '\uD83D\uDCC1' : '\uD83D\uDCC4' }}</span>
+                        <span class="vault-name">{{ entry.name }}</span>
+                      </button>
+                      <p v-if="!vaultLoading && !vaultError && vaultFiles.length === 0" class="loading-text">
+                        No files found in this folder.
+                      </p>
+                    </template>
+                  </div>
+                </div>
               </div>
 
               <!-- Shared Context Status & Refresh -->
@@ -906,5 +1014,124 @@ function handleKeydown(e: KeyboardEvent) {
 .save-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* Vault Browser */
+.vault-browser-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+.vault-browser {
+  width: 480px;
+  max-height: 420px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.vault-browser-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.vault-browser-header h3 {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.vault-browser-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 6px 14px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  overflow-x: auto;
+}
+
+.breadcrumb-segment {
+  background: none;
+  border: none;
+  color: var(--accent-main);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  cursor: pointer;
+  padding: 1px 2px;
+  border-radius: 2px;
+}
+
+.breadcrumb-segment:hover {
+  background: rgba(0, 212, 255, 0.1);
+}
+
+.breadcrumb-sep {
+  color: var(--text-muted);
+  margin: 0 1px;
+}
+
+.vault-browser-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.vault-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  background: none;
+  border: none;
+  text-align: left;
+  font-size: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+  width: 100%;
+}
+
+.vault-entry:hover {
+  background: var(--bg-panel);
+}
+
+.vault-icon {
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+  font-size: 13px;
+}
+
+.vault-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vault-folder .vault-name {
+  color: var(--accent-main);
+  font-weight: 500;
+}
+
+.vault-file .vault-name {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
 }
 </style>
