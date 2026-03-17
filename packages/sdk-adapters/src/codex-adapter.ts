@@ -28,6 +28,7 @@ import type {
   CommandAction,
   CommandExecutionApprovalDecision,
   CommandExecutionRequestApprovalParams,
+  FileUpdateChange,
   FileChangeApprovalDecision,
   FileChangeRequestApprovalParams,
   SandboxMode,
@@ -500,7 +501,7 @@ export class CodexAdapter implements AgentAdapter {
       for (const item of turn.items) {
         if (item.type === "contextCompaction") {
           if (!compactionNotified) {
-            messages.push(this.buildCompactionNotice());
+            messages.push(this.buildCompactionNotice({ itemId: item.id, itemType: item.type }));
             compactionNotified = true;
           }
           continue;
@@ -671,7 +672,9 @@ export class CodexAdapter implements AgentAdapter {
         const turn = this.getTurnStream(payload.threadId, payload.turnId);
         if (!turn) return;
         if (payload.item.type === "contextCompaction") {
-          turn.pushCompactionNotice(() => this.buildCompactionNotice());
+          turn.pushCompactionNotice(() =>
+            this.buildCompactionNotice({ itemId: payload.item.id, itemType: payload.item.type }),
+          );
           return;
         }
         if (this.isCompactionSignal(this.getCompactionSignalText(payload.item))) {
@@ -686,7 +689,7 @@ export class CodexAdapter implements AgentAdapter {
       case "thread/compacted": {
         const payload = params as CodexAppServerNotificationMap["thread/compacted"];
         const turn = this.getTurnStream(payload.threadId, payload.turnId);
-        turn?.pushCompactionNotice(() => this.buildCompactionNotice());
+        turn?.pushCompactionNotice(() => this.buildCompactionNotice({ itemType: "contextCompaction" }));
         return;
       }
       case "turn/completed": {
@@ -846,52 +849,213 @@ export class CodexAdapter implements AgentAdapter {
   }
 
   private mapThreadItemToMessage(item: ThreadItem): AgentMessage | null {
-    const timestamp = Date.now();
-
     switch (item.type) {
       case "userMessage": {
         const content = item.content
-          .filter((entry): entry is Extract<UserInput, { type: "text" }> => entry.type === "text")
-          .map((entry) => entry.text)
+          .map((entry) => this.describeUserInput(entry))
+          .filter((entry): entry is string => Boolean(entry))
           .join("\n")
           .trim();
-        return content
-          ? {
-              role: "user",
-              content,
-              timestamp,
-              metadata: { itemId: item.id, itemType: item.type },
-            }
-          : null;
+        return this.createThreadItemMessage(
+          item,
+          "user",
+          content || "User input received.",
+          { inputTypes: item.content.map((entry) => entry.type) },
+        );
       }
       case "agentMessage":
-        return {
-          role: "assistant",
-          content: item.text,
-          timestamp,
-          metadata: { itemId: item.id, itemType: item.type, phase: item.phase },
-        };
+        return this.createThreadItemMessage(
+          item,
+          "assistant",
+          item.text || "Assistant message received.",
+          { phase: item.phase },
+        );
       case "reasoning": {
         const content = item.content.join("\n").trim() || item.summary.join("\n").trim();
-        return content
-          ? {
-              role: "assistant",
-              content,
-              timestamp,
-              metadata: { itemId: item.id, itemType: item.type },
-            }
-          : null;
+        return this.createThreadItemMessage(
+          item,
+          "assistant",
+          content || "Reasoning update received.",
+          {
+            summary: item.summary,
+            contentParts: item.content.length,
+          },
+        );
       }
       case "plan":
+        return this.createThreadItemMessage(
+          item,
+          "system",
+          item.text || "Plan updated.",
+          { messageType: "plan_update" },
+        );
+      case "commandExecution": {
+        const actions = this.describeCommandActions(item.commandActions);
+        const lines = [
+          `Command: ${item.command}`,
+          `Status: ${item.status}`,
+          `Exit code: ${item.exitCode ?? "pending"}`,
+          `Working directory: ${item.cwd}`,
+          item.processId ? `Process ID: ${item.processId}` : null,
+          item.durationMs !== null ? `Duration: ${item.durationMs} ms` : null,
+          actions ? `Actions: ${actions}` : null,
+          this.formatLabeledBlock("Output", this.truncateText(item.aggregatedOutput ?? "", 2000)),
+        ].filter((line): line is string => Boolean(line));
+        return this.createThreadItemMessage(
+          item,
+          "system",
+          lines.join("\n"),
+          {
+            status: item.status,
+            command: item.command,
+            cwd: item.cwd,
+            processId: item.processId,
+            exitCode: item.exitCode,
+            durationMs: item.durationMs,
+            commandActions: item.commandActions,
+          },
+        );
+      }
+      case "fileChange": {
+        const changes = item.changes.map((change) => this.describeFileChange(change));
+        const content =
+          changes.length > 0
+            ? changes.map((change) => `- ${change}`).join("\n")
+            : "No file paths reported.";
+        return this.createThreadItemMessage(
+          item,
+          "system",
+          `File changes (${item.status})\n${content}`,
+          {
+            status: item.status,
+            changeCount: item.changes.length,
+            changes: item.changes.map((change) => this.buildFileChangeMetadata(change)),
+          },
+        );
+      }
+      case "mcpToolCall": {
+        const lines = [
+          `MCP tool: ${item.server}.${item.tool}`,
+          `Status: ${item.status}`,
+          item.durationMs !== null ? `Duration: ${item.durationMs} ms` : null,
+          this.formatLabeledBlock("Arguments", this.serializeForMessage(item.arguments, 1000)),
+          item.error !== null
+            ? this.formatLabeledBlock("Error", this.serializeForMessage(item.error, 1000))
+            : this.formatLabeledBlock("Result", this.serializeForMessage(item.result, 1000)),
+        ].filter((line): line is string => Boolean(line));
+        return this.createThreadItemMessage(
+          item,
+          "system",
+          lines.join("\n"),
+          {
+            server: item.server,
+            tool: item.tool,
+            status: item.status,
+            durationMs: item.durationMs,
+            hasError: item.error !== null,
+          },
+        );
+      }
+      case "dynamicToolCall": {
+        const lines = [
+          `Dynamic tool: ${item.tool}`,
+          `Status: ${item.status}`,
+          item.success !== null ? `Success: ${item.success}` : null,
+          item.durationMs !== null ? `Duration: ${item.durationMs} ms` : null,
+          this.formatLabeledBlock("Arguments", this.serializeForMessage(item.arguments, 1000)),
+          this.formatLabeledBlock("Content", this.serializeForMessage(item.contentItems, 1000)),
+        ].filter((line): line is string => Boolean(line));
+        return this.createThreadItemMessage(
+          item,
+          "system",
+          lines.join("\n"),
+          {
+            tool: item.tool,
+            status: item.status,
+            success: item.success,
+            durationMs: item.durationMs,
+          },
+        );
+      }
+      case "webSearch": {
+        const lines = [
+          `Web search: ${item.query}`,
+          this.formatLabeledBlock("Action", this.serializeForMessage(item.action, 1000)),
+        ].filter((line): line is string => Boolean(line));
+        return this.createThreadItemMessage(item, "system", lines.join("\n"), {
+          query: item.query,
+        });
+      }
+      case "imageView":
+        return this.createThreadItemMessage(
+          item,
+          "system",
+          `Image viewed: ${item.path}`,
+          { path: item.path },
+        );
+      case "imageGeneration": {
+        const lines = [
+          `Image generation status: ${item.status}`,
+          item.revisedPrompt ? `Revised prompt: ${item.revisedPrompt}` : null,
+          this.formatLabeledBlock("Result", this.serializeForMessage(item.result, 1000)),
+        ].filter((line): line is string => Boolean(line));
+        return this.createThreadItemMessage(
+          item,
+          "assistant",
+          lines.join("\n"),
+          {
+            status: item.status,
+            revisedPrompt: item.revisedPrompt,
+            result: item.result,
+          },
+        );
+      }
+      case "enteredReviewMode":
+        return this.createThreadItemMessage(
+          item,
+          "system",
+          item.review ? `Entered review mode: ${item.review}` : "Entered review mode.",
+          { review: item.review },
+        );
+      case "exitedReviewMode":
+        return this.createThreadItemMessage(
+          item,
+          "system",
+          item.review ? `Exited review mode: ${item.review}` : "Exited review mode.",
+          { review: item.review },
+        );
+      case "contextCompaction": {
+        const notice = this.buildCompactionNotice({ itemId: item.id, itemType: item.type });
         return {
-          role: "system",
-          content: item.text,
-          timestamp,
-          metadata: { itemId: item.id, itemType: item.type, messageType: "plan_update" },
+          ...notice,
+          metadata: {
+            ...notice.metadata,
+            itemId: item.id,
+            itemType: item.type,
+          },
         };
+      }
       default:
         return null;
     }
+  }
+
+  private createThreadItemMessage(
+    item: ThreadItem,
+    role: AgentMessage["role"],
+    content: string,
+    metadata?: Record<string, unknown>,
+  ): AgentMessage {
+    return {
+      role,
+      content: content.trim() || `${item.type} event`,
+      timestamp: Date.now(),
+      metadata: {
+        itemId: item.id,
+        itemType: item.type,
+        ...metadata,
+      },
+    };
   }
 
   private findFinalAssistantMessage(messages: AgentMessage[]): string {
@@ -948,14 +1112,81 @@ export class CodexAdapter implements AgentAdapter {
     }
   }
 
-  private buildCompactionNotice(): AgentMessage {
+  private describeUserInput(entry: UserInput): string | null {
+    switch (entry.type) {
+      case "text":
+        return entry.text.trim() || null;
+      case "localImage":
+        return `[Local image] ${entry.path}`;
+      case "image":
+        return `[Image] ${entry.url}`;
+      case "skill":
+        return `[Skill] ${entry.name} (${entry.path})`;
+      case "mention":
+        return `[Mention] ${entry.name} (${entry.path})`;
+      default:
+        return null;
+    }
+  }
+
+  private describeFileChange(change: FileUpdateChange): string {
+    switch (change.kind.type) {
+      case "add":
+        return `add ${change.path}`;
+      case "delete":
+        return `delete ${change.path}`;
+      case "update":
+        if (change.kind.move_path) {
+          return `move ${change.path} -> ${change.kind.move_path}`;
+        }
+        return `update ${change.path}`;
+      default:
+        return `change ${change.path}`;
+    }
+  }
+
+  private buildFileChangeMetadata(change: FileUpdateChange): Record<string, unknown> {
+    return {
+      path: change.path,
+      actionType: change.kind.type,
+      movePath: change.kind.type === "update" ? change.kind.move_path : null,
+    };
+  }
+
+  private truncateText(text: string, maxLength = 1200): string {
+    const normalized = text.trim();
+    if (!normalized) return "";
+    if (normalized.length <= maxLength) return normalized;
+    return `${normalized.slice(0, maxLength - 16)}\n...[truncated]`;
+  }
+
+  private serializeForMessage(value: unknown, maxLength = 1200): string | undefined {
+    if (value === null || value === undefined) return undefined;
+    if (typeof value === "string") {
+      return this.truncateText(value, maxLength);
+    }
+    try {
+      return this.truncateText(JSON.stringify(value, null, 2), maxLength);
+    } catch {
+      return this.truncateText(String(value), maxLength);
+    }
+  }
+
+  private formatLabeledBlock(label: string, value?: string): string | null {
+    if (!value) return null;
+    return value.includes("\n") ? `${label}:\n${value}` : `${label}: ${value}`;
+  }
+
+  private buildCompactionNotice(metadata?: Record<string, unknown>): AgentMessage {
     return {
       role: "system",
       content: CODEX_COMPACTION_NOTICE,
       timestamp: Date.now(),
       metadata: {
+        itemType: "contextCompaction",
         messageType: "context_compaction_notice",
         adapter: this.agentId,
+        ...metadata,
       },
     };
   }
