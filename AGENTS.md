@@ -2,8 +2,9 @@
 
 ## Identity
 
-Agent: codex-cli | 默认角色: dev（可通过 mercury.config.json 或 Settings UI 更改）
-当前 session 的实际角色由 orchestrator 在派发时分配，以 session role 为准。
+Agent: codex-cli
+你的角色由 orchestrator 在 session 开始时通过 system prompt 注入（`# Role Assignment: {role}`）。
+如果没有收到角色分配，参考 dispatch prompt 或 handoff packet 中的角色声明。
 
 At task start, declare:
 ```
