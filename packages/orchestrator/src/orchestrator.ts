@@ -56,6 +56,11 @@ type NativeSessionBridge = {
   setSessionName?: (sessionId: string, name: string) => Promise<void>;
 };
 
+type StreamCompletion = {
+  completed: boolean;
+  lastAssistantMessage?: AgentMessage;
+};
+
 const ROLE_CONTEXT_ROLES = ["main", "dev", "acceptance"] as const;
 type RoleContextKey = (typeof ROLE_CONTEXT_ROLES)[number];
 
@@ -1165,6 +1170,7 @@ export class Orchestrator {
     role?: AgentRole,
     taskName?: string,
     systemPrompt?: string,
+    taskId?: string,
   ): Promise<{ sessionId: string; role?: AgentRole; sessionName?: string; status?: SessionInfo["status"] }> {
     const adapter = this.registry.getAdapter(agentId);
     const config = this.registry.getConfig(agentId);
@@ -1203,6 +1209,9 @@ export class Orchestrator {
       const session = await this.startRoleSession(agentId, effectiveRole, taskName, systemPrompt);
       sessionId = session.sessionId;
     }
+    if (taskId && effectiveRole !== "main") {
+      this.taskManager.bindSession(taskId, sessionId);
+    }
 
     this.bus.emit("agent.message.send", agentId, sessionId, {
       prompt: prompt.slice(0, 200),
@@ -1230,7 +1239,14 @@ export class Orchestrator {
             onApprovalRequest: (request) =>
               this.requestApproval(agentId, sessionId, adapter.config.cli, request),
           };
-    this.streamMessages(adapter, agentId, sessionId, prompt, images, hooks);
+    void this.streamMessages(adapter, agentId, sessionId, prompt, images, hooks)
+      .then((result) => this.handleStreamCompletion(agentId, sessionId, effectiveRole, taskId, result))
+      .catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        this.transport.sendNotification("log", {
+          message: `[stream] completion handler failed for ${sessionId}: ${message}`,
+        });
+      });
 
     const session = this.sessions.get(sessionId);
     return {
@@ -1248,9 +1264,14 @@ export class Orchestrator {
     prompt: string,
     images?: ImageAttachment[],
     hooks?: AgentSendHooks,
-  ): Promise<void> {
+  ): Promise<StreamCompletion> {
+    let lastAssistantMessage: AgentMessage | undefined;
+
     try {
       for await (const message of adapter.sendPrompt(sessionId, prompt, images, hooks)) {
+        if (message.role === "assistant" && message.content.trim().length > 0) {
+          lastAssistantMessage = message;
+        }
         this.bus.emit("agent.message.receive", agentId, sessionId, {
           contentPreview: message.content.slice(0, 200),
         });
@@ -1286,6 +1307,7 @@ export class Orchestrator {
         session.lastActiveAt = Date.now();
       }
       this.persistState();
+      return { completed: true, lastAssistantMessage };
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       this.cancelPendingApprovalsForSession(sessionId, "Session failed while approval was pending");
@@ -1310,7 +1332,208 @@ export class Orchestrator {
       }
       try { await adapter.endSession(sessionId); } catch { /* best-effort */ }
       this.persistState(true);
+      return { completed: false };
     }
+  }
+
+  private async handleStreamCompletion(
+    agentId: string,
+    sessionId: string,
+    role: AgentRole,
+    taskId: string | undefined,
+    result: StreamCompletion,
+  ): Promise<void> {
+    const completedAt = Date.now();
+    const effectiveTaskId = taskId ?? this.taskManager.getTaskForSession(sessionId);
+    this.transport.sendNotification("orchestrator.session.stream_complete", {
+      agentId,
+      sessionId,
+      role,
+      taskId: effectiveTaskId ?? null,
+      completed: result.completed,
+      completedAt,
+    });
+
+    if (!result.completed || !effectiveTaskId) {
+      return;
+    }
+
+    const task = this.taskManager.getTask(effectiveTaskId);
+    if (!task) {
+      return;
+    }
+
+    const finalMessage = result.lastAssistantMessage?.content ?? "";
+    if (role === "dev") {
+      await this.handleDevTaskStreamComplete(task, agentId, finalMessage, completedAt);
+      return;
+    }
+    if (role === "main") {
+      await this.handleMainReviewStreamComplete(task, finalMessage);
+      return;
+    }
+    if (role === "acceptance") {
+      await this.handleAcceptanceStreamComplete(task, finalMessage);
+    }
+  }
+
+  private async handleDevTaskStreamComplete(
+    task: TaskBundle,
+    agentId: string,
+    finalMessage: string,
+    completedAt: number,
+  ): Promise<void> {
+    if (task.status !== "in_progress") {
+      return;
+    }
+    const receipt = this.parseImplementationReceipt(task, agentId, finalMessage, completedAt);
+    await this.recordReceiptAndTriggerReview(task.taskId, receipt);
+  }
+
+  private async handleMainReviewStreamComplete(
+    task: TaskBundle,
+    finalMessage: string,
+  ): Promise<void> {
+    if (task.status !== "main_review") {
+      return;
+    }
+    const review = this.parseMainReviewDecision(finalMessage);
+    if (!review) {
+      this.transport.sendNotification("log", {
+        message: `[task] Unable to parse main review result for ${task.taskId}`,
+      });
+      return;
+    }
+    await this.handleMainReviewResult(task.taskId, review.decision, review.reason);
+  }
+
+  private async handleAcceptanceStreamComplete(
+    task: TaskBundle,
+    finalMessage: string,
+  ): Promise<void> {
+    if (task.status !== "acceptance") {
+      return;
+    }
+    const acceptanceId = task.handoffToAcceptance?.acceptanceBundleId;
+    if (!acceptanceId) {
+      this.transport.sendNotification("log", {
+        message: `[task] Missing acceptance bundle for ${task.taskId}`,
+      });
+      return;
+    }
+    const results = this.parseAcceptanceResult(finalMessage);
+    if (!results) {
+      this.transport.sendNotification("log", {
+        message: `[task] Unable to parse acceptance result for ${task.taskId}`,
+      });
+      return;
+    }
+    await this.recordAcceptanceFlow(acceptanceId, results);
+  }
+
+  private parseImplementationReceipt(
+    task: TaskBundle,
+    agentId: string,
+    finalMessage: string,
+    completedAt: number,
+  ): ImplementationReceipt {
+    const parsed = this.tryParseJsonRecord(finalMessage);
+    const agentConfig = this.registry.getConfig(agentId);
+    const implementerModel = agentConfig.model ?? agentConfig.cli;
+
+    return {
+      implementer: `${agentId} (${implementerModel})`,
+      branch: this.readString(parsed?.branch) ?? task.branch ?? "",
+      summary: this.readString(parsed?.summary) ?? finalMessage.trim(),
+      changedFiles: this.readStringArray(parsed?.changedFiles),
+      evidence: this.readStringArray(parsed?.evidence),
+      docsUpdated: this.readStringArray(parsed?.docsUpdated),
+      residualRisks: this.readStringArray(parsed?.residualRisks),
+      completedAt,
+    };
+  }
+
+  private parseMainReviewDecision(
+    content: string,
+  ): { decision: "APPROVE_FOR_ACCEPTANCE" | "SEND_BACK"; reason?: string } | null {
+    const trimmed = content.trim();
+    if (!trimmed) {
+      return null;
+    }
+    if (trimmed.includes("APPROVE_FOR_ACCEPTANCE")) {
+      return { decision: "APPROVE_FOR_ACCEPTANCE" };
+    }
+    const sendBackIndex = trimmed.indexOf("SEND_BACK");
+    if (sendBackIndex === -1) {
+      return null;
+    }
+    const reason = trimmed.slice(sendBackIndex + "SEND_BACK".length).trim()
+      .replace(/^[:\-\s]+/, "");
+    return {
+      decision: "SEND_BACK",
+      reason: reason || undefined,
+    };
+  }
+
+  private parseAcceptanceResult(
+    content: string,
+  ): { verdict: AcceptanceVerdict; findings: string[]; recommendations: string[] } | null {
+    const parsed = this.tryParseJsonRecord(content);
+    const verdict = this.readString(parsed?.verdict);
+    if (
+      verdict !== "pass" &&
+      verdict !== "partial" &&
+      verdict !== "fail" &&
+      verdict !== "blocked"
+    ) {
+      return null;
+    }
+    return {
+      verdict,
+      findings: this.readStringArray(parsed?.findings),
+      recommendations: this.readStringArray(parsed?.recommendations),
+    };
+  }
+
+  private tryParseJsonRecord(content: string): Record<string, unknown> | null {
+    const trimmed = content.trim();
+    const candidates = [
+      ...trimmed.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi),
+    ]
+      .map((match) => match[1]?.trim())
+      .filter((candidate): candidate is string => Boolean(candidate));
+
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+      candidates.unshift(trimmed);
+    }
+
+    const inlineObject = trimmed.match(/\{[\s\S]*\}/);
+    if (inlineObject?.[0]) {
+      candidates.push(inlineObject[0]);
+    }
+
+    for (const candidate of candidates) {
+      try {
+        const parsed = JSON.parse(candidate) as unknown;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          return parsed as Record<string, unknown>;
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    return null;
+  }
+
+  private readString(value: unknown): string | undefined {
+    return typeof value === "string" ? value : undefined;
+  }
+
+  private readStringArray(value: unknown): string[] {
+    return Array.isArray(value)
+      ? value.filter((entry): entry is string => typeof entry === "string")
+      : [];
   }
 
   private async stopSession(
@@ -1591,7 +1814,15 @@ export class Orchestrator {
     }
 
     // Send the prompt with role context
-    await this.sendPrompt(task.assignedTo, prompt, undefined, "dev", task.title, devRolePrompt);
+    await this.sendPrompt(
+      task.assignedTo,
+      prompt,
+      undefined,
+      "dev",
+      task.title,
+      devRolePrompt,
+      task.taskId,
+    );
 
     return { sessionId: session.sessionId, taskId };
   }
@@ -1638,7 +1869,15 @@ export class Orchestrator {
     );
     this.taskManager.bindSession(taskId, session.sessionId);
 
-    await this.sendPrompt(acceptorId, prompt, undefined, "acceptance", task.title, acceptanceRolePrompt);
+    await this.sendPrompt(
+      acceptorId,
+      prompt,
+      undefined,
+      "acceptance",
+      task.title,
+      acceptanceRolePrompt,
+      task.taskId,
+    );
 
     return { acceptanceId: acceptance.acceptanceId, sessionId: session.sessionId };
   }
@@ -1690,6 +1929,7 @@ export class Orchestrator {
           "dev",
           task.title,
           this.buildSystemRolePrompt("dev", task),
+          task.taskId,
         );
       }
 
@@ -1745,7 +1985,7 @@ export class Orchestrator {
     if (!mainAgentId) return;
 
     const reviewPrompt = buildMainReviewPrompt(task);
-    await this.sendPrompt(mainAgentId, reviewPrompt, undefined, "main", task.title);
+    await this.sendPrompt(mainAgentId, reviewPrompt, undefined, "main", task.title, undefined, taskId);
   }
 
   /**
@@ -1797,6 +2037,7 @@ export class Orchestrator {
         "dev",
         task.title,
         this.buildSystemRolePrompt("dev", task),
+        task.taskId,
       );
 
       return { decision, nextAction: "rework_triggered" };

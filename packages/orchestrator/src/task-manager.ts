@@ -542,7 +542,9 @@ export class TaskManager {
   bindSession(taskId: string, sessionId: string): void {
     this.sessionToTask.set(sessionId, taskId);
     const sessions = this.taskToSessions.get(taskId) ?? [];
-    sessions.push(sessionId);
+    if (!sessions.includes(sessionId)) {
+      sessions.push(sessionId);
+    }
     this.taskToSessions.set(taskId, sessions);
 
     // Agents First: update assignee.sessionId
