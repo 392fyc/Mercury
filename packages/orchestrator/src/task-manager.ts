@@ -58,6 +58,7 @@ export interface CreateTaskParams {
   definitionOfDone: string[];
   requiredEvidence?: string[];
   context: string;
+  reviewConfig?: TaskBundle["reviewConfig"];
   handoffToAcceptance?: TaskBundle["handoffToAcceptance"];
   maxReworks?: number;
 }
@@ -143,6 +144,7 @@ export class TaskManager {
       definitionOfDone: params.definitionOfDone,
       requiredEvidence: params.requiredEvidence ?? [],
       context: params.context,
+      reviewConfig: params.reviewConfig,
       handoffToAcceptance: params.handoffToAcceptance,
       reworkCount: 0,
       maxReworks: params.maxReworks ?? 3,
@@ -783,6 +785,18 @@ export function buildMainReviewPrompt(task: TaskBundle): string {
     lines.push("");
   }
 
+  lines.push("## Pre-check Results");
+  lines.push("```json");
+  lines.push(JSON.stringify(task.mainReview?.preChecks ?? [], null, 2));
+  lines.push("```");
+  lines.push("");
+
+  lines.push("## Git Diff (`develop...HEAD`)");
+  lines.push("```diff");
+  lines.push(task.mainReview?.gitDiff?.trim() || "# No diff captured");
+  lines.push("```");
+  lines.push("");
+
   // Scope violations (if any)
   if (task.implementationReceipt?.scopeViolations?.length) {
     lines.push("## ⚠ Scope Violations Detected");
@@ -800,10 +814,26 @@ export function buildMainReviewPrompt(task: TaskBundle): string {
   lines.push("");
 
   lines.push("## Instructions");
-  lines.push("Quick review: Does this implementation satisfy the definition of done?");
-  lines.push("Reply with one of:");
-  lines.push("- `APPROVE_FOR_ACCEPTANCE` — proceed to blind acceptance review");
-  lines.push("- `SEND_BACK` followed by reasons — return to dev agent for rework");
+  lines.push("Quick review: verify the implementation receipt, pre-check results, git diff, and definition of done.");
+  lines.push("Return JSON in this format:");
+  lines.push("```json");
+  lines.push(JSON.stringify({
+    decision: "APPROVE_FOR_ACCEPTANCE|SEND_BACK",
+    summary: "short summary",
+    reason: "required when sending back or when findings exist",
+    findings: [
+      {
+        severity: "critical|major|minor|info",
+        title: "issue title",
+        detail: "what is wrong or what was verified",
+        file: "optional/path.ts",
+        line: 123,
+      },
+    ],
+  }, null, 2));
+  lines.push("```");
+  lines.push("Any `critical` finding must result in `SEND_BACK`.");
+  lines.push("Legacy fallback is still accepted: `APPROVE_FOR_ACCEPTANCE` or `SEND_BACK: <reason>`.");
 
   return lines.join("\n");
 }
