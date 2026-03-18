@@ -505,6 +505,14 @@ export class GeminiAdapter implements AgentAdapter {
     this.sessions.clear();
   }
 
+  async listModels(): Promise<{ id: string; name: string }[]> {
+    return [];
+  }
+
+  setModel(_model: string): void {
+    this.config.model = _model;
+  }
+
   getSlashCommands(): SlashCommand[] {
     // Gemini CLI commands — ref: https://geminicli.com/docs/cli/commands/
     return [

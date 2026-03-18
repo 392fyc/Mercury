@@ -464,6 +464,14 @@ export class OpencodeAdapter implements AgentAdapter {
     this.httpServerAvailableUntil = 0;
   }
 
+  async listModels(): Promise<{ id: string; name: string }[]> {
+    return [];
+  }
+
+  setModel(_model: string): void {
+    this.config.model = _model;
+  }
+
   getSlashCommands(): SlashCommand[] {
     // opencode uses keyboard shortcuts (leader key ctrl+x) rather than
     // traditional "/" slash commands. These are mapped here as slash commands

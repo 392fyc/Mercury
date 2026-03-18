@@ -5,7 +5,7 @@ import DOMPurify from "dompurify";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useAgentStore } from "../stores/agents";
 import { useMessageStore } from "../stores/messages";
-import { getSlashCommands, getGitInfo, setAgentCwd, stopSession } from "../lib/tauri-bridge";
+import { getSlashCommands, getGitInfo, setAgentCwd, stopSession, listModels, setModel } from "../lib/tauri-bridge";
 import type { SlashCommand, ImageAttachment, ImageMediaType } from "../lib/tauri-bridge";
 import SlashCommandPalette from "./SlashCommandPalette.vue";
 import ApprovalCard from "./ApprovalCard.vue";
@@ -17,7 +17,7 @@ const props = defineProps<{
   panelKey: string;
 }>();
 
-const { getStatus, getSession, getSessionInfo, getWorkDir, setWorkDir, getGitBranch, setGitBranch, clearSession, defaultWorkDir } = useAgentStore();
+const { agents, getStatus, getSession, getSessionInfo, getWorkDir, setWorkDir, getGitBranch, setGitBranch, clearSession, defaultWorkDir } = useAgentStore();
 const { getMessages, sendPrompt, clearMessages, openSessionPicker, openHistory } = useMessageStore();
 
 const inputText = ref("");
@@ -47,6 +47,45 @@ const shortWorkDir = computed(() => {
   const parts = dir.replace(/\\/g, "/").split("/");
   return parts[parts.length - 1] || parts[parts.length - 2] || dir;
 });
+
+const agentModel = computed(() => {
+  const agent = agents.value.find((a) => a.id === props.agentId);
+  return agent?.model || null;
+});
+
+// ─── Model Picker ───
+const showModelPicker = ref(false);
+const availableModels = ref<{ id: string; name: string }[]>([]);
+const modelPickerLoading = ref(false);
+
+async function toggleModelPicker() {
+  if (showModelPicker.value) {
+    showModelPicker.value = false;
+    return;
+  }
+  modelPickerLoading.value = true;
+  showModelPicker.value = true;
+  try {
+    availableModels.value = await listModels(props.agentId);
+  } catch {
+    availableModels.value = [];
+  } finally {
+    modelPickerLoading.value = false;
+  }
+}
+
+async function selectModel(modelId: string) {
+  showModelPicker.value = false;
+  if (modelId === agentModel.value) return;
+  try {
+    await setModel(props.agentId, modelId);
+    // Update local agents store to reflect change immediately
+    const agent = agents.value.find((a) => a.id === props.agentId);
+    if (agent) agent.model = modelId;
+  } catch (err) {
+    console.error("Failed to set model:", err);
+  }
+}
 
 async function refreshGitBranch(path: string) {
   try {
@@ -405,11 +444,29 @@ watch(
     </div>
 
     <!-- Workspace bar (above input, like Claude Desktop) -->
-    <div class="workspace-bar" v-if="workDir">
-      <button class="workspace-dir" @click="handleChangeDir" :title="workDir" :disabled="status === 'active'">
+    <div class="workspace-bar" v-if="workDir || agentModel">
+      <div class="model-picker-wrapper">
+        <button class="workspace-branch" @click="toggleModelPicker" :title="'Model: ' + (agentModel || 'not set')">
+          &#9670; {{ agentModel || 'select model' }}
+        </button>
+        <div v-if="showModelPicker" class="model-picker-dropdown">
+          <div v-if="modelPickerLoading" class="model-picker-item disabled">Loading…</div>
+          <template v-else-if="availableModels.length">
+            <button
+              v-for="m in availableModels"
+              :key="m.id"
+              class="model-picker-item"
+              :class="{ active: m.id === agentModel }"
+              @click="selectModel(m.id)"
+            >{{ m.name || m.id }}</button>
+          </template>
+          <div v-else class="model-picker-item disabled">No models available</div>
+        </div>
+      </div>
+      <button v-if="workDir" class="workspace-dir" @click="handleChangeDir" :title="workDir" :disabled="status === 'active'">
         {{ shortWorkDir }}
       </button>
-      <button class="workspace-branch" @click="handleChangeBranch" :disabled="status === 'active'" :title="gitBranch || 'No branch detected'">
+      <button v-if="workDir" class="workspace-branch" @click="handleChangeBranch" :disabled="status === 'active'" :title="gitBranch || 'No branch detected'">
         <span class="branch-icon">&#9095;</span>{{ gitBranch || '—' }}
       </button>
     </div>
@@ -896,6 +953,69 @@ watch(
 .workspace-branch .branch-icon {
   font-size: 12px;
   line-height: 1;
+}
+
+.workspace-badge {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 6px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 150px;
+}
+
+.model-picker-wrapper {
+  position: relative;
+}
+
+.model-picker-dropdown {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  margin-bottom: 4px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  min-width: 180px;
+  max-height: 240px;
+  overflow-y: auto;
+  z-index: 100;
+  padding: 4px 0;
+}
+
+.model-picker-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.model-picker-item:hover:not(.disabled) {
+  background: var(--bg-panel);
+}
+
+.model-picker-item.active {
+  color: var(--accent-main);
+  font-weight: 600;
+}
+
+.model-picker-item.disabled {
+  color: var(--text-muted);
+  cursor: default;
+  font-style: italic;
 }
 
 .panel-input {
