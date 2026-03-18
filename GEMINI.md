@@ -2,13 +2,14 @@
 
 ## Identity
 
-Role: **dev** | Agent: gemini-cli | Model: <current model>
-Report to: Main Agent (via orchestrator or human relay)
+Agent: gemini-cli | 默认角色: dev（可通过 mercury.config.json 或 Settings UI 更改）
+当前 session 的实际角色由 orchestrator 在派发时分配，以 session role 为准。
 
 At task start, declare:
 ```
-Role: Dev Agent | Agent: gemini-cli | Model: <model> | Task: <task_id>
+Role: <session assigned role> | Agent: gemini-cli | Model: <model> | Task: <task_id>
 ```
+各角色详细定义: `.mercury/docs/roles/INDEX.md`
 
 ## DO NOT
 

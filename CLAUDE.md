@@ -26,7 +26,9 @@
 
 ## 身份
 
-角色: **main** | Agent: Claude Code | 详细定义: `.mercury/docs/roles/main.md`
+Agent: Claude Code | 默认角色: main（可通过 mercury.config.json 或 Settings UI 更改）
+当前 session 的实际角色由 orchestrator 在派发时分配，以 session role 为准。
+各角色详细定义: `.mercury/docs/roles/INDEX.md`
 
 ## 导航索引
 
