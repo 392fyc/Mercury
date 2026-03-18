@@ -1045,8 +1045,11 @@ export class Orchestrator {
         `Role mismatch: session ${sessionId} belongs to role "${sessionRole}", not "${expectedRole}"`,
       );
     }
+    // Completed sessions can only be resumed if they have a native resumeToken
     if (info.status === "completed" || info.status === "overflow") {
-      throw new Error(`Session ${sessionId} is ${info.status} and cannot be resumed`);
+      if (!info.resumeToken) {
+        throw new Error(`Session ${sessionId} is ${info.status} and has no resume token — use History to view`);
+      }
     }
 
     // Attempt to resume in the adapter
