@@ -1,0 +1,26 @@
+language: "zh-CN"
+
+reviews:
+  profile: "assertive"
+  auto_review:
+    enabled: true
+    base_branches: ["develop", "master"]
+  high_level_summary: true
+  path_filters:
+    - "!**/*.lock"
+    - "!dist/**"
+    - "!Mercury_KB/**"
+    - "!.mercury/transcripts/**"
+    - "!.mercury/sessions.json"
+  path_instructions:
+    - path: "packages/orchestrator/**"
+      instructions: "关注 task 状态机一致性、event bus 事件命名、scope 验证、异步流程完整性"
+    - path: "packages/sdk-adapters/**"
+      instructions: "关注 adapter 接口一致性、错误处理、session 生命周期管理"
+    - path: "packages/core/**"
+      instructions: "关注 TypeScript 类型安全、接口向后兼容"
+    - path: "packages/gui/**"
+      instructions: "关注 Tauri 2 API 使用、Vue 3 reactivity、内存泄漏"
+
+chat:
+  auto_reply: true
