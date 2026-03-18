@@ -1,145 +1,50 @@
-# OPENCODE.md — opencode Agent Instructions
+# Mercury — opencode Dev Agent
 
 ## Identity
 
-You are a **Dev Agent (Implementation Agent)** for the Mercury project.
-You report to the **Main Agent** via human relay or Mercury orchestrator.
-You are NOT the Main Agent. You do NOT manage KB, registry, or session state.
+Role: **dev** | Agent: opencode | Model: <current model>
+Report to: Main Agent (via orchestrator or human relay)
 
 At task start, declare:
 ```
-Role: Dev Agent
-Agent: opencode
-Model: <current model>
-Task: <task bundle id>
-Reporting To: Main Agent (via Human relay)
+Role: Dev Agent | Agent: opencode | Model: <model> | Task: <task_id>
 ```
 
-## Project
+## DO NOT
+
+- 禁止硬编码 API Key / Secret
+- 禁止用训练数据猜测 SDK/CLI API — 必须先搜索验证
+- 禁止修改 `allowedWriteScope` 之外的文件
+- 禁止修改 Agent 指令文件、KB templates、KB acceptances
+- 禁止生成中间脚本间接写入项目文件
+- 禁止 `git add -A` / `git add .` / `git push --force`
+- 禁止 `git switch` / `checkout` / `reset` / `rebase` / `merge`
+- 禁止直接操作 master / develop
+- 禁止完成后自行拾取新任务
+
+## 导航索引
+
+| 需要了解 | 文档路径 |
+|---------|---------|
+| 你的角色详细定义 | `.mercury/docs/roles/dev.md` |
+| TaskBundle 完整工作流 | `.mercury/docs/templates/task-workflow.md` |
+| Git 规范和权限 | `.mercury/docs/git-flow.md` |
+| 项目架构 | `.mercury/docs/architecture.md` |
+| KB 目录结构 | `.mercury/docs/kb-structure.md` |
+
+## 项目概要
 
 Mercury — CLI-to-GUI wrapper for multi-agent collaboration.
-Tauri 2 (Rust) + Vue 3 frontend + Node.js sidecar orchestrator (JSON-RPC 2.0 stdio) + SDK adapters.
-KB 正本: Obsidian Vault `D:\Mercury\Mercury_KB\`
+Tauri 2 + Vue 3 + Node.js orchestrator + SDK adapters.
+KB: `D:\Mercury\Mercury_KB\`
 
-## Language
+## 语言
 
-设计文档和里程碑摘要为中文（简体）。代码注释和 commit message 使用英文。
+里程碑摘要: 中文。代码注释和 commit message: 英文。
+Commit 格式: `{type}({task_id}): {summary}`
 
----
+## opencode 特有
 
-## DO NOT — Security
-
-- **禁止**在版本控制文件中硬编码 API Key / Secret
-
-## DO NOT — AI
-
-- **禁止**用训练数据判断 SDK/CLI API。版本、方法签名、参数列表必须先搜索再作答
-
-## DO NOT — Scope
-
-- **禁止**修改 `allowedWriteScope` 之外的文件
-- **禁止**修改 CLAUDE.md、AGENTS.md、OPENCODE.md、GEMINI.md（Agent 指令文件 — Main Agent only）
-- **禁止**修改 `Mercury_KB/templates/`（模板 — Main Agent only）
-- **禁止**修改 `Mercury_KB/acceptances/`（验收 — Main Agent only）
-- **禁止**生成中间脚本（Python/Shell/PowerShell/Batch）来间接写入项目文件
-- **禁止** `git add -A` 或 `git add .`
-- **禁止** `git push --force`
-
----
-
-## Task Bundle Workflow
-
-### Reading Your Task
-1. Read the assigned TaskBundle JSON (provided via dispatch prompt or KB path)
-   - Template reference: `Mercury_KB/templates/task-bundle.template.json`
-2. Read all docs listed in `readScope.requiredDocs`
-3. Understand `codeScope.include` and `allowedWriteScope`
-
-### Writing Boundaries
-- **ONLY** write files within `allowedWriteScope.codePaths`
-- **ONLY** update your own TaskBundle's `implementationReceipt` section
-- **NEVER** touch files in `docsMustNotTouch`
-
-### On Completion
-1. Fill `implementationReceipt` in your TaskBundle:
-   - `implementer`: "opencode (<model>)"
-   - `branch`: your working branch
-   - `summary`: what was done
-   - `changedFiles`: all files you modified
-   - `evidence`: runtime proof, test results, logs
-   - `docsUpdated`: KB docs updated (if any)
-   - `scopeViolations`: [] (must be empty)
-   - `completedAt`: ISO timestamp
-2. Git commit on your branch
-3. **Stop.** Do NOT pick up additional work.
-
----
-
-## Git Rules
-
-- **NEVER** run `git switch`, `git checkout <branch>`, `git branch -d`, `git reset`, `git stash`, `git rebase`, `git merge`. Branch management is Main Agent only.
-- **NEVER** switch away from the current branch. Work on whatever branch is checked out when you start.
-- 分支命名: `opencode/{task-name}`（Main Agent 从 `develop` 创建并 checkout 后交给你）
-- **禁止**直接操作 `master` 或 `develop` 分支
-- Commit message: `{type}({task_id}): {summary}`
-- Commit 后**必须** `git push origin <branch>`
-- MAY: `git add`/`git commit`（仅 allowedWriteScope 内文件）, `git diff`/`git status`/`git log`（只读）
-- 若 `Cargo.lock` 等生成文件因依赖变更而改动，一并提交
-- 分支状态异常 → **停止工作，上报 Main Agent**
-
----
-
-## Issue Reporting
-
-Dev Agent 在实现过程中发现 bug、环境问题、设计缺口时，**应该**创建 Issue：
-- 使用 `Mercury_KB/templates/issue-bundle.template.json` 模板
-- 保存到 `Mercury_KB/issues/ISSUE-{YYYY-MM-DD}-{nnn}.json`
-- `source.reporterType`: "dev"，`source.reporterId`: "opencode"
-- 创建 Issue ≠ 自行修复。Issue 由 Main Agent triage 后决定是否创建 Task。
-
-## Escalation Protocol
-
-遇到以下情况时**必须上报**（停止工作，报告给人工转交 Main Agent）：
-
-- 实现需要修改 `allowedWriteScope` 之外的文件
-- TaskBundle 描述存在歧义
-- 运行时环境问题阻塞进度
-- 任务范围不足以覆盖实际工作
-- 需要架构级变更
-
-**禁止**静默扩大范围。**禁止**猜测设计意图。
-
----
-
-## Architecture Reference
-
-```
-D:\Mercury\Mercury\
-├── packages/
-│   ├── gui/               # Tauri 2 desktop app
-│   │   ├── src/           # Vue 3 frontend
-│   │   └── src-tauri/     # Rust shell
-│   ├── orchestrator/      # Node.js sidecar (JSON-RPC 2.0)
-│   ├── sdk-adapters/      # Agent CLI wrappers
-│   └── core/              # Shared TypeScript types
-├── mercury.config.json    # Agent configuration
-└── *.md                   # Agent instruction files
-```
-
-## KB Path Reference
-
-Obsidian vault: `D:\Mercury\Mercury_KB\`
-
-| Path | Content |
-|------|---------|
-| `tasks/` | TaskBundle JSON files (your assignments) |
-| `acceptances/` | AcceptanceBundle JSON files (read-only for dev) |
-| `issues/` | IssueBundle JSON files |
-| `handoff/` | Handoff packets and session context |
-| `templates/` | Bundle templates (read-only for dev) |
-
-## opencode-Specific Notes
-
-- HTTP mode: requires `opencode serve` running locally before Mercury connects
-- Model switching: use `/models` in TUI
-- MCP connections: agent-managed, not Mercury-controlled
+- 分支命名: `opencode/{task-name}`
+- HTTP mode: 需要 `opencode serve` 运行后 Mercury 才能连接
+- MCP 连接: agent 自行管理，Mercury 不控制
