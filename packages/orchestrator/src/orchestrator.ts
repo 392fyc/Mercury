@@ -61,6 +61,7 @@ type RoleContextKey = (typeof ROLE_CONTEXT_ROLES)[number];
 
 export class Orchestrator {
   private static readonly APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;
+  private static readonly SESSION_HISTORY_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
   private bus: EventBus;
   private registry: AgentRegistry;
   private transport: RpcTransport;
@@ -328,13 +329,43 @@ export class Orchestrator {
 
   private saveStateToDisk(): void {
     if (!this.persistence) return;
+
+    // Merge: preserve completed sessions from disk that may not be in memory
+    const SESSION_HISTORY_TTL_MS = Orchestrator.SESSION_HISTORY_TTL_MS;
+    const now = Date.now();
+    const mergedSessions: Record<string, SessionInfo> = {};
+
+    // First, load existing persisted completed sessions
+    const existing = this.persistence.load();
+    if (existing) {
+      for (const [sid, info] of Object.entries(existing.sessions)) {
+        if (
+          (info.status === "completed" || info.status === "overflow") &&
+          now - info.lastActiveAt < SESSION_HISTORY_TTL_MS
+        ) {
+          mergedSessions[sid] = info;
+        }
+      }
+    }
+
+    // Then overlay current in-memory sessions (overwrite if same sid)
+    for (const [sid, info] of this.sessions) {
+      if (
+        (info.status === "completed" || info.status === "overflow") &&
+        now - info.lastActiveAt >= SESSION_HISTORY_TTL_MS
+      ) {
+        continue; // TTL expired — drop
+      }
+      mergedSessions[sid] = info;
+    }
+
     const state: PersistedSessionState = {
       roleSessions: Object.fromEntries(this.roleSessions),
-      sessions: Object.fromEntries(this.sessions),
+      sessions: mergedSessions,
       agentCwds: Object.fromEntries(this.agentCwds),
       approvalMode: this.approvalMode,
       approvalRequests: Object.fromEntries(this.approvalRequests),
-      savedAt: Date.now(),
+      savedAt: now,
     };
     this.persistence.save(state);
   }
@@ -392,9 +423,15 @@ export class Orchestrator {
       this.agentCwds.set(agentId, cwd);
     }
 
-    // Restore sessions and try to resume each
+    // Restore sessions: keep completed/overflow for history, resume the rest
+    const SESSION_HISTORY_TTL_MS = Orchestrator.SESSION_HISTORY_TTL_MS;
+    const now = Date.now();
     for (const [sessionId, info] of Object.entries(state.sessions)) {
       if (info.status === "completed" || info.status === "overflow") {
+        // Preserve terminal sessions for history (with TTL cleanup)
+        if (now - info.lastActiveAt < SESSION_HISTORY_TTL_MS) {
+          this.sessions.set(sessionId, info);
+        }
         continue;
       }
       if (!info.frozenRole) {
@@ -408,7 +445,9 @@ export class Orchestrator {
           info.cwd ?? state.agentCwds[info.agentId],
         );
         if (resumed.status === "completed" || resumed.status === "overflow") {
-          continue; // Skip dead sessions
+          // Still preserve for history
+          this.sessions.set(sessionId, resumed);
+          continue;
         }
         this.sessions.set(sessionId, resumed);
       } catch {
