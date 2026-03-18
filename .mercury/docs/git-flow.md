@@ -1,33 +1,37 @@
-# Git 分支规范 (GitHub Flow)
+# Git Branching (GitHub Flow)
 
-## 分支结构
+## Branch Structure
 
-| 分支 | 用途 | 合并权限 |
-|------|------|---------|
-| `master` | 稳定版 — 仅通过 PR 从 develop 合并 | Human / Main Agent |
-| `develop` | 集成基线 | Main Agent (从 feature ff-merge) |
-| `feature/TASK-XXX` | 单任务工作分支 | Dev 在此工作；Main 创建和合并 |
+| Branch | Purpose | Merge method |
+|--------|---------|-------------|
+| `master` | Stable — PR from develop only | Human / Main Agent |
+| `develop` | Integration baseline — **PR from feature only** | Main Agent via `gh pr merge` |
+| `feature/TASK-XXX` | Per-task work branch | Dev works here; Main creates, opens PR, and merges |
 
-## 工作流
+## Workflow
 
-1. Main Agent 从 develop 创建 `feature/TASK-XXX`，checkout 后派发给 Dev
-2. Dev Agent 在该分支工作，commit + push。**永不切换分支**
-3. Main Review PASS → Main Agent merge feature → develop，push
-4. Milestone release: PR develop → master
+1. Main Agent creates `feature/TASK-XXX` from develop, checks it out, dispatches to Dev
+2. Dev Agent works on that branch, commits + pushes. **Never switches branches.**
+3. Main Review PASS → Main Agent opens PR: `feature/TASK-XXX` → `develop`
+4. CodeRabbit auto-reviews the PR (async, non-blocking)
+5. Main Agent merges PR via `gh pr merge`
+6. Milestone release: PR `develop` → `master`
 
-## Commit 规范
+**Direct push to develop is forbidden.** All code enters develop through PRs.
 
-格式: `{type}({task_id}): {summary}`
+## Commit Format
+
+`{type}({task_id}): {summary}`
 
 type: feat / fix / refactor / chore / docs
 
-## Dev Agent Git 权限
+## Dev Agent Git Permissions
 
-| 允许 | 禁止 |
-|------|------|
-| `git add`（scope 内文件） | `git switch` / `git checkout <branch>` |
+| Allowed | Forbidden |
+|---------|-----------|
+| `git add` (scope-restricted files) | `git switch` / `git checkout <branch>` |
 | `git commit` | `git branch -d` / `git reset` / `git stash` |
 | `git push origin <branch>` | `git rebase` / `git merge` |
 | `git diff` / `git status` / `git log` | `git add -A` / `git add .` |
 | | `git push --force` |
-| | 操作 master / develop |
+| | Operate on master / develop |

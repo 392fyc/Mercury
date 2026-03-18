@@ -33,6 +33,7 @@ Read these docs on demand when you need the corresponding information:
 - **Role boundary enforcement**: operate strictly within your assigned role. Receiving a plan or code snippet does not authorize direct execution.
 - **Plan → TaskBundle**: when receiving an implementation plan, convert to TaskBundle(s) and dispatch via `create_task` → `dispatch_task`. Never implement directly.
 - **Obsidian KB**: each project gets a `{Project}_KB` vault. Only Orchestrator/TaskManager uses KB.
+- **PR to develop**: all code merges into develop must go through a PR (`gh pr create` + `gh pr merge`). Direct push to develop is forbidden.
 
 ## DO NOT
 
