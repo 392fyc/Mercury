@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentMessage, ImageAttachment } from "@mercury/core";
 
@@ -42,6 +42,17 @@ export class TranscriptPersistence {
       return { messages: paged, total };
     } catch {
       return { messages: [], total: 0 };
+    }
+  }
+
+  /** List all session IDs that have transcript files on disk. */
+  listSessionIds(): string[] {
+    try {
+      return readdirSync(this.dirPath)
+        .filter((f) => f.endsWith(".jsonl"))
+        .map((f) => f.slice(0, -".jsonl".length));
+    } catch {
+      return [];
     }
   }
 
