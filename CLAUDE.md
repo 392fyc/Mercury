@@ -1,46 +1,46 @@
-# Mercury — Main Agent Instructions
+# Mercury — Claude Code
+
+## Identity
+
+Agent: Claude Code
+Your role is injected by the orchestrator at session start via system prompt (`# Role Assignment: {role}`).
+If no role assignment is received, refer to the dispatch prompt or handoff packet.
+Role definitions: `.mercury/docs/roles/INDEX.md`
+
+## Navigation
+
+Read these docs on demand when you need the corresponding information:
+
+| Topic | Path |
+|-------|------|
+| Role definitions & boundaries | `.mercury/docs/roles/INDEX.md` → per-role .md |
+| SoT task workflow | `.mercury/docs/sot-workflow.md` |
+| Git branching rules | `.mercury/docs/git-flow.md` |
+| KB directory structure | `.mercury/docs/kb-structure.md` |
+| Project architecture | `.mercury/docs/architecture.md` |
+| TaskBundle workflow | `.mercury/docs/templates/task-workflow.md` |
+| Bundle templates | `Mercury_KB/99-templates/` |
 
 ## MUST
 
-- **Commit at every checkpoint**: 每个里程碑必须 commit + push。
-- **Code review before commit**: 每个里程碑必须先 code review 再 commit。
-- **Research from live sources**: 所有研究必须基于实际 web 查询，禁止依赖训练数据。包括 SDK/API 签名、CLI 功能列表、Tauri 插件 API。
-- **Main Agent is user-configurable**: Main Agent 必须可通过 UI/config 切换。
-- **Install to D drive**: 软件安装到 `D:\Program Files`，不用 C 盘。
-- **Agents First**: Agent 间通信用 JSON/YAML。所有交互必须包含 agentId, model, sessionId。
-- **Chinese for milestones**: 里程碑完成消息用中文。
-- **Role boundary enforcement**: 严格在分配的角色内操作。收到 plan/代码片段不等于授权直接执行。
-- **Plan → TaskBundle**: 收到实现计划后，必须转为 TaskBundle 通过 `create_task` → `dispatch_task` 派发。Main Agent 绝不直接实现。
-- **Obsidian KB**: 每个项目配 `{Project}_KB` vault。仅 Orchestrator/TaskManager 使用 KB。
+- **Commit at every checkpoint**: every milestone must be committed and pushed.
+- **Code review before commit**: every milestone must be code-reviewed before committing.
+- **Research from live sources**: all research must be based on web queries, never training data. This includes SDK/API signatures, CLI features, Tauri plugin APIs.
+- **Main Agent is user-configurable**: any agent can be assigned as Main Agent via UI/config.
+- **Install to D drive**: install software to `D:\Program Files`, not C drive.
+- **Agents First**: inter-agent communication uses JSON/YAML. All interactions must include agentId, model, sessionId.
+- **Chinese for milestones**: return milestone completion messages in Chinese.
+- **Role boundary enforcement**: operate strictly within your assigned role. Receiving a plan or code snippet does not authorize direct execution.
+- **Plan → TaskBundle**: when receiving an implementation plan, convert to TaskBundle(s) and dispatch via `create_task` → `dispatch_task`. Never implement directly.
+- **Obsidian KB**: each project gets a `{Project}_KB` vault. Only Orchestrator/TaskManager uses KB.
 
 ## DO NOT
 
-- 禁止硬编码特定 agent 为 Main Agent。
-- 禁止让 adapter 依赖 Obsidian/KB。
-- 禁止未经 code review 就 commit。
-- 禁止猜测 SDK/CLI API。
-- 禁止安装软件到 C 盘。
-- 禁止干预 agent 级架构、MCP 连接、mem0 配置。
-- 禁止绕过 SoT 任务流。
-- 禁止执行分配角色之外的工作。
-
-## 身份
-
-Agent: Claude Code
-你的角色由 orchestrator 在 session 开始时通过 system prompt 注入（`# Role Assignment: {role}`）。
-如果没有收到角色分配，参考 dispatch prompt 或 handoff packet 中的角色声明。
-各角色详细定义: `.mercury/docs/roles/INDEX.md`
-
-## 导航索引
-
-当需要以下信息时，读取对应文档：
-
-| 需要了解 | 文档路径 |
-|---------|---------|
-| 角色定义和边界 | `.mercury/docs/roles/INDEX.md` → 各角色详细 .md |
-| SoT 任务流程 | `.mercury/docs/sot-workflow.md` |
-| Git 分支规范 | `.mercury/docs/git-flow.md` |
-| KB 目录结构 | `.mercury/docs/kb-structure.md` |
-| 项目架构 | `.mercury/docs/architecture.md` |
-| TaskBundle 工作流 | `.mercury/docs/templates/task-workflow.md` |
-| Bundle 模板 | `Mercury_KB/99-templates/` |
+- Do not hardcode any specific agent as Main Agent.
+- Do not make adapters depend on Obsidian/KB — agents keep their own MCP/SDK architecture.
+- Do not commit without code review.
+- Do not guess SDK/CLI APIs from training data.
+- Do not install software to C drive.
+- Do not interfere with agent-level architecture, MCP connections, or mem0 configurations.
+- Do not bypass the SoT task flow.
+- Do not execute work outside your assigned role.

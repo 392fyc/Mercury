@@ -1,52 +1,51 @@
-# Mercury — Gemini CLI Dev Agent
+# Mercury — Gemini CLI
 
 ## Identity
 
 Agent: gemini-cli
-你的角色由 orchestrator 在 session 开始时通过 system prompt 注入（`# Role Assignment: {role}`）。
-如果没有收到角色分配，参考 dispatch prompt 或 handoff packet 中的角色声明。
+Your role is injected by the orchestrator at session start via system prompt (`# Role Assignment: {role}`).
+If no role assignment is received, refer to the dispatch prompt or handoff packet.
+Role definitions: `.mercury/docs/roles/INDEX.md`
 
-At task start, declare:
-```
-Role: <session assigned role> | Agent: gemini-cli | Model: <model> | Task: <task_id>
-```
-各角色详细定义: `.mercury/docs/roles/INDEX.md`
+## Navigation
 
-## DO NOT
+Read these docs on demand when you need the corresponding information:
 
-- 禁止硬编码 API Key / Secret
-- 禁止用训练数据猜测 SDK/CLI API — 必须先搜索验证
-- 禁止修改 `allowedWriteScope` 之外的文件
-- 禁止修改 Agent 指令文件、KB templates、KB acceptances
-- 禁止生成中间脚本间接写入项目文件
-- 禁止 `git add -A` / `git add .` / `git push --force`
-- 禁止 `git switch` / `checkout` / `reset` / `rebase` / `merge`
-- 禁止直接操作 master / develop
-- 禁止完成后自行拾取新任务
+| Topic | Path |
+|-------|------|
+| Role definitions & boundaries | `.mercury/docs/roles/INDEX.md` → per-role .md |
+| SoT task workflow | `.mercury/docs/sot-workflow.md` |
+| Git branching rules | `.mercury/docs/git-flow.md` |
+| KB directory structure | `.mercury/docs/kb-structure.md` |
+| Project architecture | `.mercury/docs/architecture.md` |
+| TaskBundle workflow | `.mercury/docs/templates/task-workflow.md` |
+| Bundle templates | `Mercury_KB/99-templates/` |
 
-## 导航索引
+## MUST
 
-| 需要了解 | 文档路径 |
-|---------|---------|
-| 你的角色详细定义 | `.mercury/docs/roles/dev.md` |
-| TaskBundle 完整工作流 | `.mercury/docs/templates/task-workflow.md` |
-| Git 规范和权限 | `.mercury/docs/git-flow.md` |
-| 项目架构 | `.mercury/docs/architecture.md` |
-| KB 目录结构 | `.mercury/docs/kb-structure.md` |
+- **Commit at every checkpoint**: every milestone must be committed and pushed.
+- **Code review before commit**: every milestone must be code-reviewed before committing.
+- **Research from live sources**: all research must be based on web queries, never training data. This includes SDK/API signatures, CLI features, Tauri plugin APIs.
+- **Main Agent is user-configurable**: any agent can be assigned as Main Agent via UI/config.
+- **Install to D drive**: install software to `D:\Program Files`, not C drive.
+- **Agents First**: inter-agent communication uses JSON/YAML. All interactions must include agentId, model, sessionId.
+- **Chinese for milestones**: return milestone completion messages in Chinese.
+- **Role boundary enforcement**: operate strictly within your assigned role. Receiving a plan or code snippet does not authorize direct execution.
+- **Plan → TaskBundle**: when receiving an implementation plan, convert to TaskBundle(s) and dispatch via `create_task` → `dispatch_task`. Never implement directly.
+- **Obsidian KB**: each project gets a `{Project}_KB` vault. Only Orchestrator/TaskManager uses KB.
 
-## 项目概要
+## DONOT
 
-Mercury — CLI-to-GUI wrapper for multi-agent collaboration.
-Tauri 2 + Vue 3 + Node.js orchestrator + SDK adapters.
-KB: `D:\Mercury\Mercury_KB\`
+- Do not hardcode any specific agent as Main Agent.
+- Do not make adapters depend on Obsidian/KB — agents keep their own MCP/SDK architecture.
+- Do not commit without code review.
+- Do not guess SDK/CLI APIs from training data.
+- Do not install software to C drive.
+- Do not interfere with agent-level architecture, MCP connections, or mem0 configurations.
+- Do not bypass the SoT task flow.
+- Do not execute work outside your assigned role.
 
-## 语言
+## Agent-Specific Notes
 
-里程碑摘要: 中文。代码注释和 commit message: 英文。
-Commit 格式: `{type}({task_id}): {summary}`
-
-## Gemini 特有
-
-- 分支命名: `gemini/{task-name}`
-- System prompt 通过 `GEMINI_SYSTEM_MD` env var 注入（文件路径）
-- Session resume: `--resume <UUID>`
+- System prompt injected via `GEMINI_SYSTEM_MD` environment variable (file path).
+- Session resume: `--resume <UUID>`.

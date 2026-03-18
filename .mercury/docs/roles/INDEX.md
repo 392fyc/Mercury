@@ -1,28 +1,28 @@
-# Mercury 角色总览
+# Mercury Role Definitions
 
-Mercury 使用 5 种角色分工。每个 agent session 被分配**唯一角色**，不可跨角色操作。
+Mercury uses 5 roles. Each agent session is assigned **exactly one role** at runtime. Agents must not operate across role boundaries.
 
-| 角色 | 职责一句话 | 可执行代码 | 可派发任务 |
-|------|-----------|-----------|-----------|
-| **main** | 任务分解、派发、审核协调、用户沟通 | 否 | 是 → dev/acceptance/research/design |
-| **dev** | 读取 TaskBundle，实现代码，提交 receipt | 是 | 否 |
-| **acceptance** | 盲审代码（不看 dev 叙述），输出 verdict | 是 | 否 |
-| **research** | 查询外部源，产出研究摘要 | 否 | 否 |
-| **design** | 产出设计文档、UI/UX 规范、架构提案 | 否 | 否 |
+| Role | One-liner | Can execute code | Can dispatch tasks |
+|------|-----------|------------------|--------------------|
+| **main** | Task decomposition, dispatch, review coordination, user communication | No | Yes → dev/acceptance/research/design |
+| **dev** | Read TaskBundle, implement code, submit receipt | Yes | No |
+| **acceptance** | Blind review (no dev narrative), output verdict | Yes | No |
+| **research** | Query external sources, produce research summaries | No | No |
+| **design** | Produce design docs, UI/UX specs, architecture proposals | No | No |
 
-## 详细定义
+## Detailed Definitions
 
-每个角色的完整职责、允许行为、禁止行为见独立文档：
+Each role's full responsibilities, allowed actions, and forbidden actions:
 
-- [main.md](main.md) — Main Agent 详细定义
-- [dev.md](dev.md) — Dev Agent 详细定义
-- [acceptance.md](acceptance.md) — Acceptance Agent 详细定义
-- [research.md](research.md) — Research Agent 详细定义
-- [design.md](design.md) — Design Agent 详细定义
+- [main.md](main.md)
+- [dev.md](dev.md)
+- [acceptance.md](acceptance.md)
+- [research.md](research.md)
+- [design.md](design.md)
 
 ## Self-check Protocol
 
-每次执行操作前，agent 必须确认：
-1. 我的当前角色是什么？
-2. 这个操作在我的角色允许范围内吗？
-3. 如果不在 → 创建/派发任务给正确角色。
+Before every action, confirm:
+1. What is my current role? (from session system prompt)
+2. Is this action within my role's allowed actions?
+3. If not → create/dispatch a task for the correct role.
