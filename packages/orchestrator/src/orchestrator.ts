@@ -463,40 +463,13 @@ export class Orchestrator {
       }
     }
 
-    // Recover orphaned transcripts: sessions with transcript files but no metadata
-    let orphansRecovered = 0;
-    if (this.transcripts) {
-      const transcriptIds = this.transcripts.listSessionIds();
-      for (const sid of transcriptIds) {
-        if (this.sessions.has(sid)) continue;
-        const transcript = this.transcripts.read(sid, 0, 1);
-        if (transcript.total === 0) continue;
-        const firstMsg = transcript.messages[0];
-        const lastRead = this.transcripts.read(sid, transcript.total - 1, 1);
-        const lastMsg = lastRead.messages[0] ?? firstMsg;
-        // Orphans are most likely from the main agent (whose sessions are managed
-        // in-memory and thus most vulnerable to the overwrite-on-restart bug)
-        const mainAgent = this.registry.getMainAgent();
-        const guessedAgentId = mainAgent?.id ?? "unknown";
-        this.sessions.set(sid, {
-          sessionId: sid,
-          agentId: guessedAgentId,
-          cwd: "",
-          startedAt: firstMsg.timestamp,
-          lastActiveAt: lastMsg.timestamp,
-          status: "completed",
-        });
-        orphansRecovered++;
-      }
-    }
-
     const restored = this.sessions.size;
     if (restored > 0) {
       this.transport.sendNotification("log", {
-        message: `[persist] Restored ${restored} session(s) from disk${orphansRecovered > 0 ? ` (${orphansRecovered} recovered from orphaned transcripts)` : ""}`,
+        message: `[persist] Restored ${restored} session(s) from disk`,
       });
     }
-    if (approvalsChanged || orphansRecovered > 0) {
+    if (approvalsChanged) {
       this.persistState(true);
     }
   }
