@@ -164,7 +164,7 @@ async function sendPrompt(panelKey: string, prompt: string, images?: ImageAttach
     } else {
       // Bare /resume — list sessions and show picker
       try {
-        const sessions = await bridgeListSessions(agentId, role, false);
+        const sessions = await bridgeListSessions(agentId, role, true);
         if (sessions.length === 0) {
           appendMessage(panelKey, {
             role: "system",
@@ -322,7 +322,7 @@ async function openSessionPicker(panelKey: string): Promise<void> {
   const agentId = panelKey.slice(colonIdx + 1);
 
   try {
-    const sessions = await bridgeListSessions(agentId, role, false);
+    const sessions = await bridgeListSessions(agentId, role, true);
     if (sessions.length === 0) {
       appendMessage(panelKey, {
         role: "system",
