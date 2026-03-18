@@ -647,6 +647,23 @@ export class Orchestrator {
         return this.kbWrite(params.name as string, params.content as string);
       case "kb_append":
         return this.kbAppend(params.file as string, params.content as string);
+      case "list_models": {
+        const adapter = this.registry.getAdapter(params.agentId as string);
+        return adapter.listModels();
+      }
+      case "set_model": {
+        const adapter = this.registry.getAdapter(params.agentId as string);
+        adapter.setModel(params.model as string);
+        // Also update persisted config
+        const agentCfg = this.projectConfig?.agents?.find(
+          (a: AgentConfig) => a.id === (params.agentId as string),
+        );
+        if (agentCfg) {
+          agentCfg.model = params.model as string;
+          await this.persistConfigToDisk();
+        }
+        return { ok: true };
+      }
       case "get_slash_commands":
         return this.getSlashCommands(params.agentId as string);
       case "set_agent_cwd":

@@ -485,6 +485,10 @@ export interface AgentAdapter {
    */
   setSystemPrompt(prompt: string): void;
 
+  // Runtime model listing and mid-session switching
+  listModels(): Promise<{ id: string; name: string }[]>;
+  setModel(model: string): void;
+
   // Slash commands supported by this agent's CLI
   getSlashCommands(): SlashCommand[];
 

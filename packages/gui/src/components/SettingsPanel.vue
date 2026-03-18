@@ -418,6 +418,10 @@ function handleKeydown(event: KeyboardEvent) {
                 <span>Display Name</span>
                 <input v-model="agent.displayName" class="field-input" />
               </label>
+              <label>
+                <span>Model</span>
+                <input v-model="agent.model" class="field-input" placeholder="e.g. claude-opus-4-6, gpt-5.4" />
+              </label>
             </div>
             <div class="capabilities">
               <span class="cap-label">Capabilities:</span>

@@ -317,6 +317,16 @@ export async function summarizeSession(
   return invoke("summarize_session", { agentId, summary });
 }
 
+// ─── Model Listing & Switching ───
+
+export async function listModels(agentId: string): Promise<{ id: string; name: string }[]> {
+  return invoke<{ id: string; name: string }[]>("list_models", { agentId });
+}
+
+export async function setModel(agentId: string, model: string): Promise<{ ok: boolean }> {
+  return invoke<{ ok: boolean }>("set_model", { agentId, model });
+}
+
 // ─── Slash Commands ───
 
 export interface SlashCommandArg {

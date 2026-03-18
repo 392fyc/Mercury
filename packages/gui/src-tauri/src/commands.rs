@@ -273,6 +273,35 @@ pub async fn get_slash_commands(
     .await
 }
 
+// ─── Model Listing & Switching ───
+
+#[tauri::command]
+pub async fn list_models(
+    sidecar: State<'_, SharedSidecar>,
+    agent_id: String,
+) -> Result<serde_json::Value, String> {
+    let mgr = get_sidecar(&sidecar).await?;
+    mgr.send_request(
+        "list_models",
+        serde_json::json!({ "agentId": agent_id }),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn set_model(
+    sidecar: State<'_, SharedSidecar>,
+    agent_id: String,
+    model: String,
+) -> Result<serde_json::Value, String> {
+    let mgr = get_sidecar(&sidecar).await?;
+    mgr.send_request(
+        "set_model",
+        serde_json::json!({ "agentId": agent_id, "model": model }),
+    )
+    .await
+}
+
 // ─── Knowledge Base Commands (optional) ───
 
 #[tauri::command]
