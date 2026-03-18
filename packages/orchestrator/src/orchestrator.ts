@@ -2,6 +2,7 @@
  * Mercury Orchestrator — core class managing agent sessions, prompts, and event flow.
  */
 
+import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { writeFile, rename, unlink } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
@@ -48,6 +49,7 @@ import { SessionPersistence } from "./session-persistence.js";
 import type { PersistedSessionState } from "./session-persistence.js";
 import { TranscriptPersistence } from "./transcript-persistence.js";
 import type { TranscriptMessage } from "./transcript-persistence.js";
+import { installRTKCommandWrapper, isRTKAvailable } from "./rtk-wrapper.js";
 
 type NativeSessionBridge = {
   listNativeSessions?: (cwd?: string) => Promise<SessionInfo[]>;
@@ -61,12 +63,26 @@ type StreamCompletion = {
   lastAssistantMessage?: AgentMessage;
 };
 
+type TaskMainReview = NonNullable<TaskBundle["mainReview"]>;
+type PreCheckResult = TaskMainReview["preChecks"][number];
+type StructuredReviewResult = NonNullable<TaskMainReview["result"]>;
+type ReviewFinding = StructuredReviewResult["findings"][number];
+type ReviewConfig = NonNullable<TaskBundle["reviewConfig"]>;
+type PreCheckConfig = NonNullable<ReviewConfig["preChecks"]>[number];
+type ParsedMainReviewDecision = {
+  decision: StructuredReviewResult["decision"];
+  reason?: string;
+  structured: StructuredReviewResult;
+};
+
 const ROLE_CONTEXT_ROLES = ["main", "dev", "acceptance"] as const;
 type RoleContextKey = (typeof ROLE_CONTEXT_ROLES)[number];
 
 export class Orchestrator {
   private static readonly APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;
   private static readonly SESSION_HISTORY_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+  private static readonly DEFAULT_PRECHECK_TIMEOUT_MS = 5 * 60 * 1000;
+  private static readonly DEFAULT_REVIEW_DIFF_MAX_CHARS = 12000;
   private bus: EventBus;
   private registry: AgentRegistry;
   private transport: RpcTransport;
@@ -141,6 +157,8 @@ export class Orchestrator {
 
   /** Rehydrate task state from KB persistence + build shared context + restore sessions. */
   async init(): Promise<void> {
+    this.syncRTKCommandWrapper();
+    await this.validateRTKConfiguration();
     await this.taskManager.init();
     await this.restoreSessions();
     // Build and inject shared context from KB if autoInjectContext is enabled
@@ -150,6 +168,7 @@ export class Orchestrator {
   /** Store project config for get_config/update_config RPC. */
   setProjectConfig(config: MercuryConfig, configFilePath?: string | null) {
     this.projectConfig = config;
+    this.syncRTKCommandWrapper(config);
     if (configFilePath !== undefined) {
       this.configFilePath = configFilePath ?? null;
     }
@@ -1404,7 +1423,19 @@ export class Orchestrator {
       });
       return;
     }
-    await this.handleMainReviewResult(task.taskId, review.decision, review.reason);
+    this.taskManager.updateTaskField(task.taskId, "mainReview", {
+      preChecks: task.mainReview?.preChecks ?? [],
+      gitDiff: task.mainReview?.gitDiff ?? "",
+      result: review.structured,
+      reviewedAt: Date.now(),
+    });
+    await this.handleMainReviewResult(
+      task.taskId,
+      review.decision,
+      review.reason,
+      undefined,
+      review.structured,
+    );
   }
 
   private async handleAcceptanceStreamComplete(
@@ -1455,13 +1486,31 @@ export class Orchestrator {
 
   private parseMainReviewDecision(
     content: string,
-  ): { decision: "APPROVE_FOR_ACCEPTANCE" | "SEND_BACK"; reason?: string } | null {
+  ): ParsedMainReviewDecision | null {
     const trimmed = content.trim();
     if (!trimmed) {
       return null;
     }
+    const parsed = this.tryParseJsonRecord(content);
+    const structured = parsed
+      ? this.parseStructuredReviewResult(parsed, trimmed)
+      : null;
+    if (structured) {
+      return {
+        decision: structured.decision,
+        reason: structured.reason,
+        structured,
+      };
+    }
     if (trimmed.includes("APPROVE_FOR_ACCEPTANCE")) {
-      return { decision: "APPROVE_FOR_ACCEPTANCE" };
+      return {
+        decision: "APPROVE_FOR_ACCEPTANCE",
+        structured: {
+          decision: "APPROVE_FOR_ACCEPTANCE",
+          summary: trimmed,
+          findings: [],
+        },
+      };
     }
     const sendBackIndex = trimmed.indexOf("SEND_BACK");
     if (sendBackIndex === -1) {
@@ -1472,6 +1521,12 @@ export class Orchestrator {
     return {
       decision: "SEND_BACK",
       reason: reason || undefined,
+      structured: {
+        decision: "SEND_BACK",
+        summary: reason || "Main review sent the task back for rework.",
+        reason: reason || undefined,
+        findings: [],
+      },
     };
   }
 
@@ -1530,10 +1585,256 @@ export class Orchestrator {
     return typeof value === "string" ? value : undefined;
   }
 
+  private readNumber(value: unknown): number | undefined {
+    return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  }
+
   private readStringArray(value: unknown): string[] {
     return Array.isArray(value)
       ? value.filter((entry): entry is string => typeof entry === "string")
       : [];
+  }
+
+  private readReviewFindings(value: unknown): ReviewFinding[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    const findings: ReviewFinding[] = [];
+    for (const entry of value) {
+      if (typeof entry === "string") {
+        findings.push({
+          severity: "major",
+          title: entry,
+          detail: entry,
+        });
+        continue;
+      }
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        continue;
+      }
+
+      const record = entry as Record<string, unknown>;
+      const severity = this.readString(record.severity);
+      const title = this.readString(record.title) ?? this.readString(record.summary);
+      const detail = this.readString(record.detail) ?? this.readString(record.reason) ?? title;
+
+      if (
+        !title ||
+        !detail ||
+        (severity !== "critical" && severity !== "major" && severity !== "minor" && severity !== "info")
+      ) {
+        continue;
+      }
+
+      findings.push({
+        severity,
+        title,
+        detail,
+        file: this.readString(record.file),
+        line: this.readNumber(record.line),
+      });
+    }
+
+    return findings;
+  }
+
+  private parseStructuredReviewResult(
+    parsed: Record<string, unknown>,
+    fallbackSummary: string,
+  ): StructuredReviewResult | null {
+    const rawDecision = this.readString(parsed.decision);
+    const findings = this.readReviewFindings(parsed.findings);
+    const summary = this.readString(parsed.summary) ?? this.readString(parsed.reason) ?? fallbackSummary;
+    let decision: StructuredReviewResult["decision"] | undefined;
+    if (rawDecision === "APPROVE_FOR_ACCEPTANCE" || rawDecision === "SEND_BACK") {
+      decision = rawDecision;
+    }
+
+    const criticalFindings = findings.filter((finding) => finding.severity === "critical");
+    if (criticalFindings.length > 0) {
+      decision = "SEND_BACK";
+    }
+
+    if (!decision) {
+      return null;
+    }
+
+    return {
+      decision,
+      summary,
+      reason: this.readString(parsed.reason) ?? this.formatCriticalFindingReason(criticalFindings),
+      findings,
+    };
+  }
+
+  private formatCriticalFindingReason(findings: ReviewFinding[]): string | undefined {
+    if (findings.length === 0) {
+      return undefined;
+    }
+    return findings
+      .map((finding) => {
+        const location = finding.file
+          ? `${finding.file}${finding.line !== undefined ? `:${finding.line}` : ""}`
+          : undefined;
+        return location ? `${finding.title} (${location})` : finding.title;
+      })
+      .join("; ");
+  }
+
+  private getReviewConfig(task: TaskBundle): ReviewConfig {
+    return task.reviewConfig ?? {};
+  }
+
+  private async runPreChecks(task: TaskBundle): Promise<PreCheckResult[]> {
+    const configs = this.getReviewConfig(task).preChecks ?? [];
+    const results: PreCheckResult[] = [];
+
+    for (const config of configs) {
+      results.push(await this.runPreCheck(config));
+    }
+
+    return results;
+  }
+
+  private async runPreCheck(config: PreCheckConfig): Promise<PreCheckResult> {
+    const cwd = resolve(this.getProjectRoot(), config.cwd ?? ".");
+    const args = config.args ?? [];
+    const command = [config.command, ...args].join(" ").trim();
+    const result = await this.runCommand(config.command, args, {
+      cwd,
+      shell: config.shell ?? false,
+      timeoutMs: config.timeoutMs ?? Orchestrator.DEFAULT_PRECHECK_TIMEOUT_MS,
+    });
+
+    return {
+      name: config.name,
+      command,
+      cwd,
+      success: result.exitCode === 0 && !result.timedOut,
+      exitCode: result.exitCode,
+      timedOut: result.timedOut,
+      durationMs: result.durationMs,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    };
+  }
+
+  private async getGitDiff(task: TaskBundle): Promise<string> {
+    const reviewConfig = this.getReviewConfig(task);
+    const diffBaseRef = reviewConfig.diffBaseRef ?? "develop...HEAD";
+    const maxChars = reviewConfig.diffMaxChars ?? Orchestrator.DEFAULT_REVIEW_DIFF_MAX_CHARS;
+    const result = await this.runCommand("git", ["diff", "--no-ext-diff", diffBaseRef], {
+      cwd: this.getProjectRoot(),
+      timeoutMs: Orchestrator.DEFAULT_PRECHECK_TIMEOUT_MS,
+    });
+
+    let diff = result.stdout;
+    if (result.exitCode !== 0) {
+      const errorText = result.stderr || `git diff exited with code ${result.exitCode ?? "null"}`;
+      diff = `# git diff ${diffBaseRef} failed\n${errorText}`;
+    }
+    if (!diff.trim()) {
+      diff = "# No diff output";
+    }
+    if (diff.length <= maxChars) {
+      return diff;
+    }
+
+    return `${diff.slice(0, maxChars)}\n\n# Diff truncated at ${maxChars} characters`;
+  }
+
+  private async runCommand(
+    command: string,
+    args: string[],
+    options: { cwd: string; timeoutMs: number; shell?: boolean },
+  ): Promise<{
+    stdout: string;
+    stderr: string;
+    exitCode: number | null;
+    timedOut: boolean;
+    durationMs: number;
+  }> {
+    return await new Promise((resolveResult) => {
+      const startedAt = Date.now();
+      let stdout = "";
+      let stderr = "";
+      let timedOut = false;
+      let settled = false;
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+      const finalize = (result: {
+        stdout: string;
+        stderr: string;
+        exitCode: number | null;
+        timedOut: boolean;
+      }) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+        resolveResult({
+          ...result,
+          stdout: result.stdout.trim(),
+          stderr: result.stderr.trim(),
+          durationMs: Date.now() - startedAt,
+        });
+      };
+
+      let child: ReturnType<typeof spawn>;
+      try {
+        child = spawn(command, args, {
+          cwd: options.cwd,
+          shell: options.shell ?? false,
+          windowsHide: true,
+          env: process.env,
+        });
+      } catch (err) {
+        finalize({
+          stdout,
+          stderr: err instanceof Error ? err.message : String(err),
+          exitCode: null,
+          timedOut: false,
+        });
+        return;
+      }
+
+      timeoutId = setTimeout(() => {
+        timedOut = true;
+        child.kill();
+      }, options.timeoutMs);
+
+      child.stdout?.setEncoding("utf8");
+      child.stdout?.on("data", (chunk: string) => {
+        stdout += chunk;
+      });
+
+      child.stderr?.setEncoding("utf8");
+      child.stderr?.on("data", (chunk: string) => {
+        stderr += chunk;
+      });
+
+      child.on("error", (err) => {
+        finalize({
+          stdout,
+          stderr: [stderr, err.message].filter(Boolean).join("\n"),
+          exitCode: null,
+          timedOut,
+        });
+      });
+
+      child.on("close", (code) => {
+        finalize({
+          stdout,
+          stderr,
+          exitCode: code,
+          timedOut,
+        });
+      });
+    });
   }
 
   private async stopSession(
@@ -1955,11 +2256,18 @@ export class Orchestrator {
     receipt: ImplementationReceipt,
   ): Promise<TaskBundle> {
     const task = this.taskManager.recordReceipt(taskId, receipt);
+    const preChecks = await this.runPreChecks(task);
+    const gitDiff = await this.getGitDiff(task);
+
+    this.taskManager.updateTaskField(taskId, "mainReview", {
+      preChecks,
+      gitDiff,
+    });
 
     // Auto-trigger main review step
     await this.mainReviewStep(taskId);
 
-    return task;
+    return this.taskManager.getTask(taskId) ?? task;
   }
 
   /**
@@ -1998,28 +2306,34 @@ export class Orchestrator {
     decision: string,
     reason?: string,
     acceptorId?: string,
+    structured?: StructuredReviewResult,
   ): Promise<{ decision: string; nextAction: string }> {
     const task = this.taskManager.getTask(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
+    const hasCriticalFinding = structured?.findings.some((finding) => finding.severity === "critical");
+    const effectiveDecision = hasCriticalFinding ? "SEND_BACK" : decision;
+    const effectiveReason = hasCriticalFinding
+      ? reason ?? this.formatCriticalFindingReason(structured?.findings ?? [])
+      : reason;
 
-    if (decision === "APPROVE_FOR_ACCEPTANCE") {
+    if (effectiveDecision === "APPROVE_FOR_ACCEPTANCE") {
       // Find or use provided acceptor
       const effectiveAcceptorId = acceptorId ?? this.findAcceptorAgentId();
       if (!effectiveAcceptorId) {
         throw new Error("No acceptance agent available. Configure an agent with acceptance role.");
       }
       await this.createAcceptanceFlow(taskId, effectiveAcceptorId);
-      return { decision, nextAction: "acceptance_created" };
+      return { decision: effectiveDecision, nextAction: "acceptance_created" };
     }
 
-    if (decision === "SEND_BACK") {
+    if (effectiveDecision === "SEND_BACK") {
       const { newSession } = this.taskManager.triggerRework(
         taskId,
-        reason ?? "Main Agent review: sent back for rework",
+        effectiveReason ?? "Main Agent review: sent back for rework",
       );
 
       // Send rework directive to dev agent
-      const reworkPrompt = `# Rework Required [${task.taskId}]\n\nMain Agent review returned this task for rework.\n\n**Reason:** ${reason ?? "Unspecified"}\n\nPlease address and resubmit.`;
+      const reworkPrompt = `# Rework Required [${task.taskId}]\n\nMain Agent review returned this task for rework.\n\n**Reason:** ${effectiveReason ?? "Unspecified"}\n\nPlease address and resubmit.`;
       if (newSession) {
         const devRolePrompt = this.buildSystemRolePrompt("dev", task);
         const session = await this.startRoleSession(
@@ -2040,7 +2354,7 @@ export class Orchestrator {
         task.taskId,
       );
 
-      return { decision, nextAction: "rework_triggered" };
+      return { decision: effectiveDecision, nextAction: "rework_triggered" };
     }
 
     throw new Error(`Invalid review decision: "${decision}". Expected APPROVE_FOR_ACCEPTANCE or SEND_BACK.`);
@@ -2089,6 +2403,29 @@ export class Orchestrator {
     return this.projectConfig;
   }
 
+  private syncRTKCommandWrapper(config: MercuryConfig | null = this.projectConfig): void {
+    installRTKCommandWrapper(config?.rtk);
+  }
+
+  private async validateRTKConfiguration(
+    config: MercuryConfig | null = this.projectConfig,
+  ): Promise<void> {
+    const rtkConfig = config?.rtk;
+    if (!rtkConfig?.enabled) {
+      return;
+    }
+
+    const available = await isRTKAvailable(rtkConfig);
+    if (!available) {
+      const binary = rtkConfig.binaryPath?.trim() || "rtk";
+      throw new Error(`RTK is enabled but unavailable: ${binary}`);
+    }
+
+    this.transport.sendNotification("log", {
+      message: `[rtk] Enabled for commands: ${rtkConfig.commands.join(", ") || "(none)"}`,
+    });
+  }
+
   /**
    * Persist the current projectConfig to disk using atomic write (write tmp + rename).
    * Errors are logged but never thrown — config persistence is best-effort.
@@ -2112,11 +2449,14 @@ export class Orchestrator {
   }
 
   private async updateConfig(config: MercuryConfig): Promise<{ ok: true }> {
+    await this.validateRTKConfiguration(config);
+
     const prevAutoInject = this.projectConfig?.obsidian?.autoInjectContext;
     const prevContextFiles = this.projectConfig?.obsidian?.contextFiles?.join(",");
     const prevRoleContextFiles = JSON.stringify(this.projectConfig?.obsidian?.roleContextFiles ?? {});
 
     this.projectConfig = config;
+    this.syncRTKCommandWrapper(config);
 
     // Hot-reload agents from new config
     const currentIds = new Set(this.registry.listAgents().map((a) => a.id));
