@@ -1,0 +1,15 @@
+# Mercury — Codex CLI project config
+# Docs: https://developers.openai.com/codex/config-reference
+
+# Ensure web search is always available and live
+web_search = "live"
+
+# Mandatory instructions injected into every session
+developer_instructions = """
+MANDATORY: Before writing ANY code that imports an external SDK/API package or references API signatures:
+1. Use web_search to verify against the vendor's OFFICIAL documentation first
+2. Cross-check npm/PyPI for package version and publish status
+3. GitHub source code alone is NOT sufficient (repos may show dev versions)
+4. Include source URLs when reporting technical findings
+5. If web_search fails, mark claims as UNVERIFIED
+"""
