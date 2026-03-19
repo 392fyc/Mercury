@@ -473,20 +473,13 @@ watch(
         <button class="history-button" @click="openHistory(panelKey)">
           History
         </button>
-        <!-- Active: show spinner badge. Idle/Error: show New Session button -->
-        <span v-if="status === 'active'" class="status-badge active">
-          <span class="status-indicator" aria-hidden="true">
-            <span class="status-pulse"></span>
-            <span class="status-spinner"></span>
-          </span>
-          <span>active</span>
-        </span>
-        <span v-else-if="status === 'error'" class="status-badge error">
+        <!-- Error badge in header; active status moved to inline input area -->
+        <span v-if="status === 'error'" class="status-badge error">
           <span>error</span>
         </span>
-        <!-- v-else: only renders when status is idle (active/error handled above) -->
+        <!-- Idle: show New Session button -->
         <button
-          v-else
+          v-else-if="status === 'idle'"
           class="new-session-btn"
           title="Start new session"
           aria-label="Start new session"
@@ -600,7 +593,7 @@ watch(
         <textarea
           ref="textareaEl"
           v-model="inputText"
-          :placeholder="status === 'active' ? `${agentName} is working... (type to queue)` : `Send to ${agentName}...`"
+          :placeholder="status === 'active' ? 'working... (type to queue)' : `Send to ${agentName}...`"
           rows="1"
           @keydown="handleKeydown"
           @input="resizeTextarea"
@@ -1292,7 +1285,8 @@ watch(
 
 @media (prefers-reduced-motion: reduce) {
   .status-spinner,
-  .status-pulse {
+  .status-pulse,
+  .status-spinner-sm {
     animation: none;
   }
 }
