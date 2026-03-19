@@ -139,6 +139,9 @@ export class TaskManager {
       phaseId: params.phaseId,
       priority: params.priority,
       status: "drafted",
+      createdAt: new Date().toISOString(),
+      closedAt: null,
+      failedAt: null,
       assignedTo: params.assignedTo,
       branch: params.branch,
       codeScope: params.codeScope,
@@ -261,6 +264,11 @@ export class TaskManager {
 
     const from = task.status;
     task.status = newStatus;
+    if (newStatus === "verified" || newStatus === "closed") {
+      task.closedAt = new Date().toISOString();
+    } else if (newStatus === "failed") {
+      task.failedAt = new Date().toISOString();
+    }
 
     this.bus.emit(
       "orchestrator.task.status_change",

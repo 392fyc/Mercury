@@ -207,6 +207,9 @@ export interface TaskBundle {
   phaseId?: string;
   priority: TaskPriority;
   status: TaskStatus;
+  createdAt: string;
+  closedAt: string | null;
+  failedAt: string | null;
   assignedTo: string;
   assignee?: TaskAssignee;
   branch?: string;
