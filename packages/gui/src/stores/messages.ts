@@ -92,16 +92,19 @@ function loadFromStorage(): void {
   }
 }
 
+/** Retrieve messages for a specific panel. */
 function getMessages(panelKey: string): DisplayMessage[] {
   return messages.value.get(panelKey) ?? [];
 }
 
+/** Append a message to a panel's history and persist to localStorage. */
 function appendMessage(panelKey: string, msg: DisplayMessage) {
   const current = messages.value.get(panelKey) ?? [];
   messages.value = new Map(messages.value).set(panelKey, [...current, msg]);
   saveToStorage();
 }
 
+/** Clear all messages for a panel and persist to localStorage. */
 function clearMessages(panelKey: string) {
   messages.value = new Map(messages.value).set(panelKey, []);
   saveToStorage();
@@ -112,24 +115,25 @@ function clearMessages(panelKey: string) {
  * @param panelKey - roleSlotKey "{role}:{agentId}"
  */
 async function sendPrompt(panelKey: string, prompt: string, images?: ImageAttachment[]) {
-  const { setStatus, setSessionInfo, clearSession } = useAgentStore();
+  const { setStatus, setSessionInfo } = useAgentStore();
 
   // Parse panelKey to get role and agentId
   const colonIdx = panelKey.indexOf(":");
   const role = panelKey.slice(0, colonIdx);
   const agentId = panelKey.slice(colonIdx + 1);
 
-  // Handle /clear and /new — clear frontend messages and end backend session
+  // Handle built-in commands — intercepted before reaching the backend
   const trimmed = prompt.trim().toLowerCase();
+
+  // /history — open history panel
+  if (trimmed === "/history") {
+    await openHistory(panelKey);
+    return;
+  }
+
+  // /clear and /new — delegate to newSession
   if (trimmed === "/clear" || trimmed === "/new") {
-    const sid = useAgentStore().getSession(panelKey);
-    if (sid) {
-      try { await bridgeStopSession(agentId, sid); } catch { /* best-effort */ }
-      sessionToPanelKey.delete(sid);
-    }
-    clearMessages(panelKey);
-    clearSession(panelKey);
-    setStatus(panelKey, "idle");
+    await newSession(panelKey);
     return;
   }
 
@@ -234,6 +238,7 @@ function resolvePanelKey(_agentId: string, sessionId: string): string | null {
 
 let messageListenersInitialized = false;
 
+/** Register Tauri event listeners for agent messages, status, and errors. */
 async function initMessageListeners() {
   if (messageListenersInitialized) return;
   messageListenersInitialized = true;
@@ -278,6 +283,7 @@ async function initMessageListeners() {
   });
 }
 
+/** Resume a session selected from the SessionPicker modal. */
 async function pickSession(sessionId: string): Promise<void> {
   const pick = pendingSessionPick.value;
   if (!pick) return;
@@ -312,10 +318,12 @@ async function pickSession(sessionId: string): Promise<void> {
   }
 }
 
+/** Close the session picker modal without selecting a session. */
 function dismissSessionPick(): void {
   pendingSessionPick.value = null;
 }
 
+/** Open the session picker modal listing resumable sessions for this panel. */
 async function openSessionPicker(panelKey: string): Promise<void> {
   const colonIdx = panelKey.indexOf(":");
   const role = panelKey.slice(0, colonIdx);
@@ -342,6 +350,7 @@ async function openSessionPicker(panelKey: string): Promise<void> {
   }
 }
 
+/** Open the history panel showing all sessions for this panel's agent. */
 async function openHistory(panelKey: string): Promise<void> {
   const colonIdx = panelKey.indexOf(":");
   const agentId = panelKey.slice(colonIdx + 1);
@@ -368,19 +377,99 @@ async function openHistory(panelKey: string): Promise<void> {
   }
 }
 
+/** Load transcript messages for a session into the history viewer. */
 async function selectHistorySession(sessionId: string): Promise<void> {
   const current = pendingHistoryView.value;
   if (!current) return;
-  const result = await bridgeGetSessionMessages(sessionId);
-  pendingHistoryView.value = {
-    ...current,
-    selectedSessionId: sessionId,
-    messages: result.messages,
-  };
+
+  // Mark as selected immediately for UI responsiveness
+  pendingHistoryView.value = { ...current, selectedSessionId: sessionId, messages: [] };
+
+  try {
+    const result = await bridgeGetSessionMessages(sessionId);
+    // Guard against stale response: only apply if this session is still selected
+    if (pendingHistoryView.value?.selectedSessionId !== sessionId) return;
+    pendingHistoryView.value = {
+      ...pendingHistoryView.value,
+      messages: result.messages,
+    };
+  } catch (e) {
+    console.debug("selectHistorySession: failed to load transcript", e);
+    if (pendingHistoryView.value?.selectedSessionId !== sessionId) return;
+    pendingHistoryView.value = {
+      ...pendingHistoryView.value,
+      messages: [],
+    };
+  }
 }
 
+/** Close the history viewer modal. */
 function dismissHistoryView(): void {
   pendingHistoryView.value = null;
+}
+
+/**
+ * Archive the current session — stops the backend session via bridgeStopSession,
+ * clears the panel, and shows a "Session archived" confirmation message.
+ *
+ * NOTE: Both archiveSession and newSession call the same bridgeStopSession backend
+ * API. There is no distinct backend "archive" endpoint yet. The difference is
+ * purely frontend UX: Archive shows a confirmation message, New Session does not.
+ * A dedicated archive_session backend API can be added in a future iteration to
+ * persist archive metadata (e.g., completion status, tags).
+ */
+async function archiveSession(panelKey: string): Promise<void> {
+  const { setStatus, clearSession, getSession } = useAgentStore();
+  const colonIdx = panelKey.indexOf(":");
+  const agentId = panelKey.slice(colonIdx + 1);
+
+  const sid = getSession(panelKey);
+  if (sid) {
+    try { await bridgeStopSession(agentId, sid); } catch (e) { console.debug("archiveSession: stop failed (best-effort)", e); }
+    sessionToPanelKey.delete(sid);
+  }
+
+  // Clear first, then show confirmation so user sees it in the fresh panel
+  clearMessages(panelKey);
+  clearSession(panelKey);
+  setStatus(panelKey, "idle");
+
+  appendMessage(panelKey, {
+    role: "system",
+    content: "Session archived",
+    timestamp: Date.now(),
+  });
+}
+
+/**
+ * Start a new session — stops the current backend session and clears the panel.
+ * Uses the same bridgeStopSession call as archiveSession (see note above).
+ */
+async function newSession(panelKey: string): Promise<void> {
+  const { setStatus, clearSession, getSession } = useAgentStore();
+  const colonIdx = panelKey.indexOf(":");
+  const agentId = panelKey.slice(colonIdx + 1);
+
+  const sid = getSession(panelKey);
+  if (sid) {
+    try { await bridgeStopSession(agentId, sid); } catch (e) { console.debug("newSession: stop failed (best-effort)", e); }
+    sessionToPanelKey.delete(sid);
+  }
+
+  clearMessages(panelKey);
+  clearSession(panelKey);
+  setStatus(panelKey, "idle");
+}
+
+/**
+ * Get user message history for a panel (for ↑↓ navigation).
+ * Filters on each call — acceptable for MAX_MESSAGES_PER_PANEL (200).
+ */
+function getUserMessageHistory(panelKey: string): string[] {
+  const msgs = messages.value.get(panelKey) ?? [];
+  return msgs
+    .filter((m) => m.role === "user" && m.content.trim() !== "")
+    .map((m) => m.content);
 }
 
 export function useMessageStore() {
@@ -399,5 +488,8 @@ export function useMessageStore() {
     openHistory,
     selectHistorySession,
     dismissHistoryView,
+    archiveSession,
+    newSession,
+    getUserMessageHistory,
   };
 }

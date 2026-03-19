@@ -18,12 +18,16 @@ const props = defineProps<{
 }>();
 
 const { agents, getStatus, getSession, getSessionInfo, getWorkDir, setWorkDir, getGitBranch, setGitBranch, clearSession, defaultWorkDir } = useAgentStore();
-const { getMessages, sendPrompt, clearMessages, openSessionPicker, openHistory } = useMessageStore();
+const { getMessages, sendPrompt, clearMessages, openSessionPicker, openHistory, archiveSession, newSession, getUserMessageHistory } = useMessageStore();
 
 const inputText = ref("");
 const messagesEl = ref<HTMLDivElement>();
 const textareaEl = ref<HTMLTextAreaElement>();
 const paletteRef = ref<InstanceType<typeof SlashCommandPalette>>();
+
+// ─── Command History Navigation (↑↓) ───
+const historyIndex = ref(-1); // -1 = not browsing history
+const savedInput = ref(""); // saves current input when entering history mode
 
 const status = computed(() => getStatus(props.panelKey));
 const messages = computed(() => getMessages(props.panelKey));
@@ -236,10 +240,29 @@ function getApprovalRequestId(metadata?: Record<string, unknown>): string | null
 
 // ─── Slash Commands ───
 
-const slashCommands = ref<SlashCommand[]>([]);
+/**
+ * Commands registered in the palette but not returned by the backend CLI.
+ * - "built-in": intercepted by Mercury GUI (never reaches backend)
+ * - "passthrough": forwarded to backend CLI as-is (palette entry for discoverability)
+ */
+const BUILTIN_COMMANDS: SlashCommand[] = [
+  { name: "/new", description: "Start a new session (clears current context)", category: "built-in" },
+  { name: "/clear", description: "Clear messages and stop current session", category: "built-in" },
+  { name: "/resume", description: "Resume a previous session", category: "built-in", args: [{ name: "sessionId", description: "Session ID to resume", required: false, type: "string" }] },
+  { name: "/history", description: "View session history", category: "built-in" },
+  { name: "/compact", description: "Compact conversation context", category: "passthrough" },
+];
+
+const backendCommands = ref<SlashCommand[]>([]);
 const slashCommandSelected = ref(false);
+/** Merged command list: built-in first, then backend commands (deduped). */
+const slashCommands = computed(() => {
+  const builtinNames = new Set(BUILTIN_COMMANDS.map((c) => c.name));
+  const deduped = backendCommands.value.filter((c) => !builtinNames.has(c.name));
+  return [...BUILTIN_COMMANDS, ...deduped];
+});
 const showSlashPalette = computed(() =>
-  inputText.value.startsWith("/") && !slashCommandSelected.value,
+  inputText.value.startsWith("/") && !slashCommandSelected.value && historyIndex.value === -1,
 );
 const slashQuery = computed(() => {
   if (!showSlashPalette.value) return "";
@@ -254,13 +277,19 @@ watch(inputText, (val) => {
   }
 });
 
-async function loadSlashCommands() {
-  if (slashCommands.value.length > 0) return;
+/** Fetch backend slash commands. Skips if already loaded unless force is true. */
+async function loadSlashCommands(force = false) {
+  if (!force && backendCommands.value.length > 0) return;
   try {
-    slashCommands.value = await getSlashCommands(props.agentId);
+    backendCommands.value = await getSlashCommands(props.agentId);
   } catch {
-    slashCommands.value = [];
+    backendCommands.value = [];
   }
+}
+
+/** Focus handler for textarea — loads commands on first focus. */
+function handleTextareaFocus() {
+  loadSlashCommands();
 }
 
 async function scrollMessagesToBottom() {
@@ -314,12 +343,15 @@ async function handleSend() {
   const images = pendingImages.value.length > 0 ? [...pendingImages.value] : undefined;
   inputText.value = "";
   pendingImages.value = [];
+  historyIndex.value = -1;
+  savedInput.value = "";
   resizeTextarea();
   // Use empty prompt for image-only sends — adapter handles content block construction
   await sendPrompt(props.panelKey, prompt, images);
 }
 
 function handleKeydown(e: KeyboardEvent) {
+  // Slash palette takes priority for navigation keys
   if (showSlashPalette.value && ["ArrowUp", "ArrowDown", "Tab", "Escape"].includes(e.key)) {
     paletteRef.value?.handleKeydown(e);
     return;
@@ -330,6 +362,48 @@ function handleKeydown(e: KeyboardEvent) {
       return;
     }
   }
+
+  // ↑↓ command history navigation (only when not in slash palette)
+  if (e.key === "ArrowUp" && !showSlashPalette.value) {
+    const history = getUserMessageHistory(props.panelKey);
+    if (history.length === 0) return;
+    // Only activate history nav when cursor is at the start or input is empty
+    const el = textareaEl.value;
+    if (el && el.selectionStart !== 0 && inputText.value !== "") return;
+    e.preventDefault();
+    if (historyIndex.value === -1) {
+      savedInput.value = inputText.value;
+      historyIndex.value = history.length - 1;
+    } else if (historyIndex.value > 0) {
+      historyIndex.value--;
+    }
+    inputText.value = history[historyIndex.value];
+    nextTick(() => resizeTextarea());
+    return;
+  }
+  if (e.key === "ArrowDown" && !showSlashPalette.value && historyIndex.value !== -1) {
+    e.preventDefault();
+    const history = getUserMessageHistory(props.panelKey);
+    // Bounds check: history may have changed since ArrowUp set historyIndex
+    if (history.length === 0) {
+      historyIndex.value = -1;
+      inputText.value = savedInput.value;
+    } else if (historyIndex.value >= history.length) {
+      // Index out of range — clamp to last entry
+      historyIndex.value = history.length - 1;
+      inputText.value = history[historyIndex.value];
+    } else if (historyIndex.value < history.length - 1) {
+      historyIndex.value++;
+      inputText.value = history[historyIndex.value];
+    } else {
+      // At the end of history — back to saved input
+      historyIndex.value = -1;
+      inputText.value = savedInput.value;
+    }
+    nextTick(() => resizeTextarea());
+    return;
+  }
+
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
     handleSend();
@@ -383,6 +457,14 @@ watch(
       <div class="panel-status">
         <button
           class="history-button"
+          title="Archive current session"
+          @click="archiveSession(panelKey)"
+          :disabled="status === 'active' || !sessionId"
+        >
+          Archive
+        </button>
+        <button
+          class="history-button"
           title="Resumable sessions (same role, same agent)"
           @click="openSessionPicker(panelKey)"
         >
@@ -391,13 +473,25 @@ watch(
         <button class="history-button" @click="openHistory(panelKey)">
           History
         </button>
-        <span class="status-badge" :class="status">
-          <span v-if="status === 'active'" class="status-indicator" aria-hidden="true">
+        <!-- Active: show spinner badge. Idle/Error: show New Session button -->
+        <span v-if="status === 'active'" class="status-badge active">
+          <span class="status-indicator" aria-hidden="true">
             <span class="status-pulse"></span>
             <span class="status-spinner"></span>
           </span>
-          <span>{{ status }}</span>
+          <span>active</span>
         </span>
+        <span v-else-if="status === 'error'" class="status-badge error">
+          <span>error</span>
+        </span>
+        <!-- v-else: only renders when status is idle (active/error handled above) -->
+        <button
+          v-else
+          class="new-session-btn"
+          title="Start new session"
+          aria-label="Start new session"
+          @click="newSession(panelKey)"
+        >+</button>
       </div>
     </div>
 
@@ -489,7 +583,7 @@ watch(
         @keydown="handleKeydown"
         @input="resizeTextarea"
         @paste="handlePaste"
-        @focus="loadSlashCommands"
+        @focus="handleTextareaFocus"
       ></textarea>
     </div>
 
@@ -659,6 +753,31 @@ watch(
 .history-button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.new-session-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  padding: 0;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.new-session-btn:hover {
+  border-color: var(--accent-main);
+  color: var(--accent-main);
+  background: rgba(0, 212, 255, 0.08);
 }
 
 .status-badge.idle {
