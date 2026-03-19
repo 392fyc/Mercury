@@ -503,29 +503,47 @@ watch(
       <div
         v-for="(msg, i) in messages"
         :key="i"
-        class="message"
+        class="message-row"
         :class="msg.role"
       >
-        <ApprovalCard
-          v-if="getApprovalRequestId(msg.metadata)"
-          :requestId="getApprovalRequestId(msg.metadata)!"
-        />
-        <!-- Inline images -->
-        <div v-else-if="msg.images && msg.images.length > 0" class="message-images">
-          <img
-            v-for="(img, j) in msg.images"
-            :key="j"
-            :src="imageDataUri(img)"
-            :alt="img.filename || 'attached image'"
-            class="inline-image"
-          />
-        </div>
-        <div
-          v-else-if="msg.role === 'assistant'"
-          class="message-content markdown-body"
-          v-html="renderMarkdown(msg.content)"
-        ></div>
-        <div v-else class="message-content">{{ msg.content }}</div>
+        <!-- System messages: centered, no avatar -->
+        <template v-if="msg.role === 'system'">
+          <div class="system-divider">
+            <span class="system-text">{{ msg.content }}</span>
+          </div>
+        </template>
+
+        <!-- User messages: right-aligned with avatar -->
+        <template v-else-if="msg.role === 'user'">
+          <div class="message-bubble user-bubble">
+            <ApprovalCard
+              v-if="getApprovalRequestId(msg.metadata)"
+              :requestId="getApprovalRequestId(msg.metadata)!"
+            />
+            <div v-else-if="msg.images && msg.images.length > 0" class="message-images">
+              <img
+                v-for="(img, j) in msg.images"
+                :key="j"
+                :src="imageDataUri(img)"
+                :alt="img.filename || 'attached image'"
+                class="inline-image"
+              />
+            </div>
+            <div v-else class="message-content">{{ msg.content }}</div>
+          </div>
+          <span class="msg-avatar user-avatar">U</span>
+        </template>
+
+        <!-- Assistant messages: left-aligned with avatar -->
+        <template v-else>
+          <span class="msg-avatar assistant-avatar">{{ agentName.charAt(0).toUpperCase() }}</span>
+          <div class="message-bubble assistant-bubble">
+            <div
+              class="message-content markdown-body"
+              v-html="renderMarkdown(msg.content)"
+            ></div>
+          </div>
+        </template>
       </div>
     </div>
 
@@ -574,17 +592,22 @@ watch(
         @select="handleSlashSelect"
         @close="inputText = ''"
       />
-      <textarea
-        ref="textareaEl"
-        v-model="inputText"
-        :placeholder="`Send to ${agentName}...`"
-        :disabled="status === 'active'"
-        rows="1"
-        @keydown="handleKeydown"
-        @input="resizeTextarea"
-        @paste="handlePaste"
-        @focus="handleTextareaFocus"
-      ></textarea>
+      <div class="input-row">
+        <!-- Inline status indicator: only shown when active -->
+        <span v-if="status === 'active'" class="inline-status" title="Agent is working...">
+          <span class="status-spinner-sm"></span>
+        </span>
+        <textarea
+          ref="textareaEl"
+          v-model="inputText"
+          :placeholder="status === 'active' ? `${agentName} is working... (type to queue)` : `Send to ${agentName}...`"
+          rows="1"
+          @keydown="handleKeydown"
+          @input="resizeTextarea"
+          @paste="handlePaste"
+          @focus="handleTextareaFocus"
+        ></textarea>
+      </div>
     </div>
 
     <!-- Drag overlay -->
@@ -844,33 +867,89 @@ watch(
   opacity: 0.6;
 }
 
-.message {
-  margin-bottom: 8px;
-  padding: 8px 10px;
-  border-radius: var(--radius);
+/* Message row layout — controls alignment per role */
+.message-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 10px;
   font-size: 12px;
   line-height: 1.5;
   word-break: break-word;
 }
 
-.message.user {
-  background: rgba(0, 212, 255, 0.08);
-  border-left: 2px solid var(--accent-main);
-  font-family: var(--font-mono);
-  white-space: pre-wrap;
+.message-row.user {
+  justify-content: flex-end;
 }
 
-.message.assistant {
-  background: rgba(123, 104, 238, 0.08);
-  border-left: 2px solid var(--accent-sub);
+.message-row.assistant {
+  justify-content: flex-start;
 }
 
-.message.system {
-  background: rgba(255, 82, 82, 0.08);
-  border-left: 2px solid var(--accent-error);
-  color: var(--accent-error);
+.message-row.system {
+  justify-content: center;
+}
+
+/* Avatar badges */
+.msg-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.user-avatar {
+  background: rgba(0, 212, 255, 0.2);
+  color: var(--accent-main);
+}
+
+.assistant-avatar {
+  background: rgba(123, 104, 238, 0.2);
+  color: var(--accent-sub);
+}
+
+/* Message bubbles */
+.message-bubble {
+  max-width: 85%;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+}
+
+.user-bubble {
+  background: rgba(0, 212, 255, 0.1);
+  border: 1px solid rgba(0, 212, 255, 0.15);
   font-family: var(--font-mono);
   white-space: pre-wrap;
+  border-radius: var(--radius) var(--radius) 2px var(--radius);
+}
+
+.assistant-bubble {
+  background: rgba(123, 104, 238, 0.06);
+  border: 1px solid rgba(123, 104, 238, 0.1);
+  border-radius: var(--radius) var(--radius) var(--radius) 2px;
+}
+
+/* System messages — centered divider style */
+.system-divider {
+  width: 100%;
+  text-align: center;
+  padding: 4px 0;
+}
+
+.system-text {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  background: var(--bg-secondary);
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
 }
 
 /* Inline images in messages */
@@ -1142,7 +1221,33 @@ watch(
   flex-shrink: 0;
 }
 
+.input-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.inline-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  margin-bottom: 8px;
+}
+
+.status-spinner-sm {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1.5px solid var(--accent-main);
+  border-right-color: transparent;
+  animation: status-spin 0.85s linear infinite;
+}
+
 .panel-input textarea {
+  flex: 1;
   width: 100%;
   padding: 8px 12px;
   background: var(--bg-input);
@@ -1166,10 +1271,7 @@ watch(
   color: var(--text-muted);
 }
 
-.panel-input textarea:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
+/* Textarea no longer disabled during active — user can queue messages */
 
 @media (max-width: 720px) {
   .panel-header {
