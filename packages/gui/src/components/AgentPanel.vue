@@ -240,13 +240,17 @@ function getApprovalRequestId(metadata?: Record<string, unknown>): string | null
 
 // ─── Slash Commands ───
 
-/** Built-in commands handled by Mercury GUI (not from backend CLI). */
+/**
+ * Commands registered in the palette but not returned by the backend CLI.
+ * - "built-in": intercepted by Mercury GUI (never reaches backend)
+ * - "passthrough": forwarded to backend CLI as-is (palette entry for discoverability)
+ */
 const BUILTIN_COMMANDS: SlashCommand[] = [
   { name: "/new", description: "Start a new session (clears current context)", category: "built-in" },
   { name: "/clear", description: "Clear messages and stop current session", category: "built-in" },
   { name: "/resume", description: "Resume a previous session", category: "built-in", args: [{ name: "sessionId", description: "Session ID to resume", required: false, type: "string" }] },
-  { name: "/compact", description: "Compact conversation context", category: "built-in" },
   { name: "/history", description: "View session history", category: "built-in" },
+  { name: "/compact", description: "Compact conversation context", category: "passthrough" },
 ];
 
 const backendCommands = ref<SlashCommand[]>([]);
@@ -466,6 +470,7 @@ watch(
         <span v-else-if="status === 'error'" class="status-badge error">
           <span>error</span>
         </span>
+        <!-- v-else: only renders when status is idle (active/error handled above) -->
         <button
           v-else
           class="new-session-btn"

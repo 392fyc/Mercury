@@ -385,8 +385,9 @@ function dismissHistoryView(): void {
 }
 
 /**
- * Archive the current session — marks it as complete and clears the panel.
- * Unlike /new which just clears context, Archive signals intentional session completion.
+ * Archive the current session — stops backend, clears the panel, and shows
+ * a confirmation message. Functionally similar to newSession but provides
+ * explicit user feedback that the session was archived.
  */
 async function archiveSession(panelKey: string): Promise<void> {
   const { setStatus, clearSession, getSession } = useAgentStore();
@@ -435,7 +436,9 @@ async function newSession(panelKey: string): Promise<void> {
  */
 function getUserMessageHistory(panelKey: string): string[] {
   const msgs = messages.value.get(panelKey) ?? [];
-  return msgs.filter((m) => m.role === "user").map((m) => m.content);
+  return msgs
+    .filter((m) => m.role === "user" && m.content.trim() !== "")
+    .map((m) => m.content);
 }
 
 export function useMessageStore() {
