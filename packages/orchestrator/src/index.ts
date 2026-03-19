@@ -6,8 +6,8 @@
  */
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, resolve } from "node:path";
 import type { MercuryConfig, AgentConfig, ObsidianConfig } from "@mercury/core";
 import { RpcTransport } from "./rpc-transport.js";
 import { AgentRegistry } from "./agent-registry.js";
@@ -41,52 +41,154 @@ function migrateAgentConfig(agents: Record<string, unknown>[]): AgentConfig[] {
   return agents as unknown as AgentConfig[];
 }
 
-function loadConfig(configPath?: string): { config: MercuryConfig; resolvedPath: string | null } {
-  const paths = [
-    configPath,
-    resolve(process.cwd(), "mercury.config.json"),
-    resolve(process.env.HOME ?? process.env.USERPROFILE ?? "", ".mercury", "config.json"),
-  ].filter(Boolean) as string[];
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
-  for (const p of paths) {
+function mergeConfigDefaults<T>(defaults: T, overrides: unknown): T {
+  if (Array.isArray(defaults)) {
+    return (Array.isArray(overrides) ? overrides : defaults) as T;
+  }
+
+  if (!isPlainObject(defaults) || !isPlainObject(overrides)) {
+    return (overrides ?? defaults) as T;
+  }
+
+  const result: Record<string, unknown> = { ...defaults };
+  for (const [key, defaultValue] of Object.entries(defaults)) {
+    if (!(key in overrides)) {
+      continue;
+    }
+    result[key] = mergeConfigDefaults(defaultValue, overrides[key]);
+  }
+
+  for (const [key, value] of Object.entries(overrides)) {
+    if (!(key in result)) {
+      result[key] = value;
+    }
+  }
+
+  return result as T;
+}
+
+function resolveConfigPaths(config: MercuryConfig, configFilePath: string): MercuryConfig {
+  const configDir = dirname(configFilePath);
+  return {
+    ...config,
+    workDir: config.workDir
+      ? (isAbsolute(config.workDir) ? config.workDir : resolve(configDir, config.workDir))
+      : config.workDir,
+    obsidian: config.obsidian
+      ? {
+          ...config.obsidian,
+          vaultPath: config.obsidian.vaultPath
+            ? (
+                isAbsolute(config.obsidian.vaultPath)
+                  ? config.obsidian.vaultPath
+                  : resolve(configDir, config.obsidian.vaultPath)
+              )
+            : config.obsidian.vaultPath,
+          obsidianBin: config.obsidian.obsidianBin
+            ? (
+                isAbsolute(config.obsidian.obsidianBin)
+                  ? config.obsidian.obsidianBin
+                  : resolve(configDir, config.obsidian.obsidianBin)
+              )
+            : config.obsidian.obsidianBin,
+        }
+      : config.obsidian,
+  };
+}
+
+function readConfigFile(path: string): MercuryConfig {
+  const raw = readFileSync(path, "utf-8");
+  const config = JSON.parse(raw);
+  config.agents = migrateAgentConfig(config.agents ?? []);
+  return config as MercuryConfig;
+}
+
+function loadConfig(configPath?: string): { config: MercuryConfig; resolvedPath: string | null } {
+  const projectConfigPath = configPath ?? resolve(process.cwd(), "mercury.config.json");
+  const projectTemplatePath = resolve(dirname(projectConfigPath), "mercury.config.example.json");
+  const homeConfigPath = resolve(process.env.HOME ?? process.env.USERPROFILE ?? "", ".mercury", "config.json");
+  const defaultConfig: MercuryConfig = {
+    agents: [
+      {
+        id: "claude-code",
+        displayName: "Claude Code",
+        cli: "claude",
+        roles: ["main"],
+        integration: "sdk",
+        capabilities: ["code", "review", "orchestration"],
+        restrictions: [],
+        maxConcurrentSessions: 3,
+      },
+      {
+        id: "codex-cli",
+        displayName: "Codex CLI",
+        cli: "codex",
+        roles: ["dev"],
+        integration: "sdk",
+        capabilities: ["code", "test"],
+        restrictions: [],
+        maxConcurrentSessions: 2,
+      },
+    ],
+  };
+
+  let templateConfig: MercuryConfig | null = null;
+  if (existsSync(projectTemplatePath)) {
     try {
-      const raw = readFileSync(p, "utf-8");
-      const config = JSON.parse(raw);
-      config.agents = migrateAgentConfig(config.agents ?? []);
-      transport.log(`Loaded config from ${p} (${config.agents.length} agents)`);
-      return { config: config as MercuryConfig, resolvedPath: p };
+      templateConfig = readConfigFile(projectTemplatePath);
+      transport.log(`Loaded config template from ${projectTemplatePath}`);
+    } catch {
+      transport.log(`Warning: failed to load config template from ${projectTemplatePath}`);
+    }
+  }
+
+  const localPaths = [configPath, projectConfigPath].filter(Boolean) as string[];
+  for (const p of localPaths) {
+    if (!existsSync(p)) {
+      continue;
+    }
+    try {
+      const localConfig = readConfigFile(p);
+      const merged = templateConfig ? mergeConfigDefaults(templateConfig, localConfig) : localConfig;
+      const resolved = resolveConfigPaths(merged, p);
+      transport.log(`Loaded config from ${p} (${resolved.agents.length} agents)`);
+      return { config: resolved, resolvedPath: p };
     } catch {
       // try next
     }
   }
 
-  transport.log("No config found, using defaults");
+  if (existsSync(homeConfigPath)) {
+    try {
+      const homeConfig = readConfigFile(homeConfigPath);
+      transport.log(`Loaded config from ${homeConfigPath} (${homeConfig.agents.length} agents)`);
+      return {
+        config: resolveConfigPaths(homeConfig, homeConfigPath),
+        resolvedPath: homeConfigPath,
+      };
+    } catch {
+      // ignore and continue to bootstrap
+    }
+  }
+
+  const bootstrappedConfig = templateConfig ?? defaultConfig;
+  try {
+    writeFileSync(projectConfigPath, JSON.stringify(bootstrappedConfig, null, 2) + "\n", "utf-8");
+    transport.log(`Bootstrapped local config at ${projectConfigPath}`);
+  } catch (err) {
+    transport.log(
+      `Warning: failed to bootstrap local config at ${projectConfigPath}: ${err instanceof Error ? err.message : err}`,
+    );
+  }
+
+  transport.log(templateConfig ? "No local config found, using template defaults" : "No config found, using defaults");
   return {
-    config: {
-      agents: [
-        {
-          id: "claude-code",
-          displayName: "Claude Code",
-          cli: "claude",
-          roles: ["main"],
-          integration: "sdk",
-          capabilities: ["code", "review", "orchestration"],
-          restrictions: [],
-          maxConcurrentSessions: 3,
-        },
-        {
-          id: "codex-cli",
-          displayName: "Codex CLI",
-          cli: "codex",
-          roles: ["dev"],
-          integration: "sdk",
-          capabilities: ["code", "test"],
-          restrictions: [],
-          maxConcurrentSessions: 2,
-        },
-      ],
-    },
-    resolvedPath: null,
+    config: resolveConfigPaths(bootstrappedConfig, projectConfigPath),
+    resolvedPath: projectConfigPath,
   };
 }
 

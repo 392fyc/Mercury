@@ -4,7 +4,7 @@
 
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { writeFile, rename, unlink } from "node:fs/promises";
+import { copyFile, mkdir, writeFile, rename, unlink } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { EventBus, makeRoleSlotKey } from "@mercury/core";
 import type {
@@ -2442,6 +2442,16 @@ export class Orchestrator {
 
     const tmpPath = join(dirname(this.configFilePath), `.mercury.config.tmp.${Date.now()}.json`);
     try {
+      const backupDir = join(dirname(this.configFilePath), ".mercury", "backups");
+      await mkdir(backupDir, { recursive: true });
+      const backupStamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const backupPath = join(backupDir, `mercury.config.${backupStamp}.json`);
+      try {
+        await copyFile(this.configFilePath, backupPath);
+      } catch {
+        // Missing source config is expected on first save.
+      }
+
       const json = JSON.stringify(this.projectConfig, null, 2) + "\n";
       await writeFile(tmpPath, json, "utf-8");
       await rename(tmpPath, this.configFilePath);
