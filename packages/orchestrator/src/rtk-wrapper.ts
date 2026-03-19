@@ -53,6 +53,7 @@ function shouldWrapCommand(command: string, config?: RTKConfig): boolean {
   return config.commands.some((candidate) => normalizeCommandName(candidate) === normalizedCommand);
 }
 
+/** Wrap a CLI command with RTK if the command is in the configured list. */
 export function wrapWithRTK(
   command: string,
   args: readonly string[] = [],
@@ -68,6 +69,7 @@ export function wrapWithRTK(
   };
 }
 
+/** Check whether the RTK binary is installed and responds to --version. */
 export async function isRTKAvailable(config?: RTKConfig): Promise<boolean> {
   if (!config?.enabled) {
     return true;
@@ -111,6 +113,7 @@ function normalizeSpawnInvocation(
   return { args: [], options: argsOrOptions as SpawnOptions | undefined };
 }
 
+/** Install a global child_process.spawn wrapper that routes commands through RTK. */
 export function installRTKCommandWrapper(config?: RTKConfig): void {
   activeConfig = config?.enabled
     ? {
