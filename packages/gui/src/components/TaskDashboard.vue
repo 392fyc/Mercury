@@ -30,6 +30,18 @@ const STATUS_LABELS: { status: TaskStatus | null; label: string; color: string }
   { status: "blocked", label: "Blocked", color: "#fb923c" },
 ];
 
+const STATUS_ORDER: Record<string, number> = {
+  drafted: 0,
+  dispatched: 1,
+  blocked: 2,
+  in_progress: 3,
+  implementation_done: 4,
+  acceptance: 5,
+  verified: 6,
+  closed: 7,
+  failed: 8,
+};
+
 function statusColor(status: TaskStatus): string {
   return STATUS_LABELS.find((s) => s.status === status)?.color ?? "var(--text-muted)";
 }
@@ -44,6 +56,20 @@ function formatDate(iso: string): string {
 
 const totalCount = computed(() =>
   Object.values(statusCounts.value).reduce((a, b) => a + (b ?? 0), 0),
+);
+
+const sortedTasks = computed(() =>
+  [...filteredTasks.value].sort((a, b) => {
+    const sa = STATUS_ORDER[a.status] ?? 99;
+    const sb = STATUS_ORDER[b.status] ?? 99;
+    if (sa !== sb) {
+      return sa - sb;
+    }
+
+    const timeA = a.closedAt || a.failedAt || a.createdAt || "";
+    const timeB = b.closedAt || b.failedAt || b.createdAt || "";
+    return timeB.localeCompare(timeA);
+  }),
 );
 
 async function handleDispatch(taskId: string) {
@@ -91,7 +117,7 @@ async function handleCreateAcceptance(taskId: string) {
       <!-- Task List -->
       <div class="task-list">
         <div
-          v-for="task in filteredTasks"
+          v-for="task in sortedTasks"
           :key="task.taskId"
           class="task-row"
           :class="{ selected: selectedTask?.taskId === task.taskId }"
@@ -104,7 +130,7 @@ async function handleCreateAcceptance(taskId: string) {
           <span class="task-priority" :class="task.priority">{{ priorityLabel(task.priority) }}</span>
         </div>
 
-        <div v-if="filteredTasks.length === 0" class="empty-state">
+        <div v-if="sortedTasks.length === 0" class="empty-state">
           No tasks{{ statusFilter ? ` with status "${statusFilter}"` : "" }}
         </div>
       </div>
