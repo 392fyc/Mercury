@@ -770,6 +770,20 @@ export function buildReworkPrompt(
 
 // ─── Main Review Prompt (Phase 4: two-stage verification) ───
 
+const MAX_DIFF_CHARS = 30_000;
+const MAX_PRECHECKS_CHARS = 10_000;
+
+/** Escape triple-backtick sequences to prevent Markdown fence breakout */
+function sanitizeFenceContent(content: string): string {
+  return content.replace(/```/g, "` ` `");
+}
+
+/** Truncate content with a marker if it exceeds maxLen */
+function truncate(content: string, maxLen: number): string {
+  if (content.length <= maxLen) return content;
+  return content.slice(0, maxLen) + "\n...[truncated]";
+}
+
 export function buildMainReviewPrompt(task: TaskBundle): string {
   const lines: string[] = [];
 
@@ -778,22 +792,29 @@ export function buildMainReviewPrompt(task: TaskBundle): string {
 
   // Full receipt (Main Agent is the originator — not blind)
   if (task.implementationReceipt) {
+    const receiptJson = sanitizeFenceContent(
+      JSON.stringify(task.implementationReceipt, null, 2)
+    );
     lines.push("## Implementation Receipt");
     lines.push("```json");
-    lines.push(JSON.stringify(task.implementationReceipt, null, 2));
+    lines.push(receiptJson);
     lines.push("```");
     lines.push("");
   }
 
+  const preChecksRaw = JSON.stringify(task.mainReview?.preChecks ?? [], null, 2);
+  const preChecksSafe = truncate(sanitizeFenceContent(preChecksRaw), MAX_PRECHECKS_CHARS);
   lines.push("## Pre-check Results");
   lines.push("```json");
-  lines.push(JSON.stringify(task.mainReview?.preChecks ?? [], null, 2));
+  lines.push(preChecksSafe);
   lines.push("```");
   lines.push("");
 
+  const diffRaw = task.mainReview?.gitDiff?.trim() || "# No diff captured";
+  const diffSafe = truncate(sanitizeFenceContent(diffRaw), MAX_DIFF_CHARS);
   lines.push("## Git Diff (`develop...HEAD`)");
   lines.push("```diff");
-  lines.push(task.mainReview?.gitDiff?.trim() || "# No diff captured");
+  lines.push(diffSafe);
   lines.push("```");
   lines.push("");
 
