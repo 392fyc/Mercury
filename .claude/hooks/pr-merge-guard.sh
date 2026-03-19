@@ -11,24 +11,36 @@ COMMAND=$(echo "$INPUT" | sed -n 's/.*"command"[[:space:]]*:[[:space:]]*"\([^"]*
 # Only intercept gh pr merge commands
 echo "$COMMAND" | grep -qE 'gh[[:space:]]+pr[[:space:]]+merge' || exit 0
 
-# Extract PR number from command (e.g., "gh pr merge 15 --merge")
-PR_NUMBER=$(echo "$COMMAND" | sed -n 's/.*gh[[:space:]]\+pr[[:space:]]\+merge[[:space:]]\+\([0-9]\+\).*/\1/p')
+# Extract PR selector — first non-flag token after `gh pr merge`
+PR_SELECTOR=$(echo "$COMMAND" | sed -n 's/.*gh[[:space:]]\+pr[[:space:]]\+merge[[:space:]]\+\([^[:space:]]\+\).*/\1/p')
+PR_NUMBER=""
 
-if [ -z "$PR_NUMBER" ]; then
-  PR_NUMBER=$(gh pr view --json number -q '.number' 2>/dev/null)
-fi
+case "$PR_SELECTOR" in
+  ''|--*)
+    # No selector or flag-only; fallback to current branch PR
+    PR_NUMBER=$(gh pr view --json number -q '.number' 2>/dev/null)
+    ;;
+  *[!0-9]*)
+    # URL or branch name selector — resolve via gh
+    PR_NUMBER=$(gh pr view "$PR_SELECTOR" --json number -q '.number' 2>/dev/null)
+    ;;
+  *)
+    # Pure numeric
+    PR_NUMBER="$PR_SELECTOR"
+    ;;
+esac
+
 if [ -z "$PR_NUMBER" ]; then
   echo "BLOCKED: could not determine PR number from command or current branch." >&2
   exit 2
 fi
 
-# Validate PR_NUMBER is numeric only (防止路径遍历)
-case "$PR_NUMBER" in
-  ''|*[!0-9]*) echo "BLOCKED: Invalid PR number: $PR_NUMBER" >&2; exit 2 ;;
-esac
-
 # Allow manual bypass via state flag (e.g., human-approved merge)
 STATE_DIR="$(dirname "$0")/state"
+if ! mkdir -p "$STATE_DIR"; then
+  echo "BLOCKED: cannot create state dir: $STATE_DIR" >&2
+  exit 2
+fi
 FLAG="$STATE_DIR/pr-merge-approved-${PR_NUMBER}"
 if [ -f "$FLAG" ]; then
   rm -f "$FLAG" 2>/dev/null
