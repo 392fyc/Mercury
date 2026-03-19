@@ -50,51 +50,53 @@ onMounted(async () => {
     </div>
 
     <div class="workspace">
-      <!-- Agents View -->
-      <div v-show="activeView === 'agents'" class="workspace-view">
-        <div
-          v-if="agents.length > 0"
-          class="agents-area"
-          :class="{
-            'main-only': hasMainAgent && subAgentCount === 0,
-            'single-sub-agent': subAgentCount === 1,
-            'multi-sub-agents': subAgentCount > 1,
-            'sub-agents-only': !hasMainAgent && subAgentCount > 0,
-          }"
-        >
-          <AgentPanel
-            v-if="mainAgent"
-            :agentId="mainAgent.id"
-            :agentName="mainAgent.displayName"
-            :role="'main'"
-            :panelKey="`main:${mainAgent.id}`"
-          />
+      <div class="workspace-main">
+        <!-- Agents View -->
+        <div v-show="activeView === 'agents'" class="workspace-view">
           <div
-            v-if="subAgentCount > 0"
-            class="sub-agents"
+            v-if="agents.length > 0"
+            class="agents-area"
             :class="{
-              'single-panel': subAgentCount === 1,
-              'multi-panel': subAgentCount > 1,
+              'main-only': hasMainAgent && subAgentCount === 0,
+              'single-sub-agent': subAgentCount === 1,
+              'multi-sub-agents': subAgentCount > 1,
+              'sub-agents-only': !hasMainAgent && subAgentCount > 0,
             }"
           >
             <AgentPanel
-              v-for="panel in rolePanels"
-              :key="panel.panelKey"
-              :agentId="panel.agentId"
-              :agentName="panel.displayName"
-              :role="panel.role"
-              :panelKey="panel.panelKey"
+              v-if="mainAgent"
+              :agentId="mainAgent.id"
+              :agentName="mainAgent.displayName"
+              :role="'main'"
+              :panelKey="`main:${mainAgent.id}`"
             />
+            <div
+              v-if="subAgentCount > 0"
+              class="sub-agents"
+              :class="{
+                'single-panel': subAgentCount === 1,
+                'multi-panel': subAgentCount > 1,
+              }"
+            >
+              <AgentPanel
+                v-for="panel in rolePanels"
+                :key="panel.panelKey"
+                :agentId="panel.agentId"
+                :agentName="panel.displayName"
+                :role="panel.role"
+                :panelKey="panel.panelKey"
+              />
+            </div>
+          </div>
+          <div v-else class="loading-state">
+            <p v-if="!sidecarReady">Connecting to orchestrator...</p>
+            <p v-else>No agents configured</p>
           </div>
         </div>
-        <div v-else class="loading-state">
-          <p v-if="!sidecarReady">Connecting to orchestrator...</p>
-          <p v-else>No agents configured</p>
-        </div>
-      </div>
 
-      <!-- Tasks View -->
-      <TaskDashboard v-show="activeView === 'tasks'" class="workspace-view" />
+        <!-- Tasks View -->
+        <TaskDashboard v-show="activeView === 'tasks'" class="workspace-view" />
+      </div>
 
       <EventLog />
     </div>
@@ -129,8 +131,14 @@ onMounted(async () => {
   min-height: 0;
 }
 
+.workspace-main {
+  min-height: 0;
+  height: 100%;
+}
+
 .workspace-view {
   min-height: 0;
+  height: 100%;
 }
 
 .agents-area {
