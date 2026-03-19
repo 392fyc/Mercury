@@ -58,6 +58,7 @@ function mergeConfigDefaults<T>(defaults: T, overrides: unknown): T {
 
   const result: Record<string, unknown> = { ...defaults };
   for (const [key, defaultValue] of Object.entries(defaults)) {
+    if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
     if (!(key in overrides)) {
       continue;
     }
@@ -65,6 +66,7 @@ function mergeConfigDefaults<T>(defaults: T, overrides: unknown): T {
   }
 
   for (const [key, value] of Object.entries(overrides)) {
+    if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
     if (!(key in result)) {
       result[key] = value;
     }

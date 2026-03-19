@@ -175,6 +175,10 @@ async function handleCreateAcceptance(taskId: string) {
               </span>
             </span>
           </div>
+          <div v-if="selectedTask.createdAt" class="meta-row">
+            <span class="meta-label">Created</span>
+            <span class="meta-value">{{ formatDate(selectedTask.createdAt) }}</span>
+          </div>
           <div v-if="selectedTask.closedAt" class="meta-row">
             <span class="meta-label">Closed</span>
             <span class="meta-value">{{ formatDate(selectedTask.closedAt) }}</span>

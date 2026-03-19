@@ -59,8 +59,8 @@ function resolveKbPaths(paths?: Partial<TaskPersistenceKBPaths>): TaskPersistenc
 /** Default createdAt value for tasks migrated before timestamps were added. */
 const LEGACY_CREATED_AT = "2026-03-18T00:00:00+09:00";
 
-/** Backfill missing timestamp fields for legacy KB data. */
-function backfillTimestamps(task: TaskBundle): void {
+/** Backfill missing timestamp fields for legacy KB data. Mutates and returns the input. */
+function backfillTimestamps(task: TaskBundle): TaskBundle {
   if (!task.createdAt) {
     task.createdAt = LEGACY_CREATED_AT;
   }
@@ -70,6 +70,7 @@ function backfillTimestamps(task: TaskBundle): void {
   if (task.failedAt === undefined) {
     task.failedAt = null;
   }
+  return task;
 }
 
 /** KB-backed task persistence using KnowledgeService for JSON file storage. */
@@ -179,7 +180,7 @@ export class TaskPersistenceKB implements TaskPersistence {
           const raw = await this.kb.read(file.path);
           const parsed = JSON.parse(raw) as T;
           if (isTaskFolder) {
-            backfillTimestamps(parsed as unknown as TaskBundle);
+            backfillTimestamps(parsed as T & TaskBundle);
           }
           results.push(parsed);
         } catch {

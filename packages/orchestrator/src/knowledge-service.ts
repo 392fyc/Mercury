@@ -79,7 +79,14 @@ export class KnowledgeService {
     }
 
     const pathSegments = relativePath.split(/[\\/]+/).filter(Boolean);
-    return path.join(vaultPath, ...pathSegments);
+    const resolved = path.join(vaultPath, ...pathSegments);
+    const normalizedVault = path.resolve(vaultPath);
+    const normalizedResolved = path.resolve(resolved);
+    if (!normalizedResolved.startsWith(normalizedVault + path.sep) && normalizedResolved !== normalizedVault) {
+      console.error(`[knowledge] Path traversal attempt blocked: ${relativePath}`);
+      return null;
+    }
+    return resolved;
   }
 
   /** Split raw CLI output into trimmed, non-empty lines. */
@@ -301,9 +308,25 @@ export class KnowledgeService {
     }
   }
 
-  /** Append content to an existing vault file via CLI. */
+  /** Append content to an existing vault file, falling back to direct fs append if CLI fails. */
   async append(file: string, content: string): Promise<void> {
-    await this.exec(["append", `file=${file}`, `content=${content}`]);
+    try {
+      await this.exec(["append", `file=${file}`, `content=${content}`]);
+    } catch (error) {
+      const filePath = this.resolveVaultFilePath(file);
+      if (!filePath) {
+        console.error("[knowledge] CLI append failed and no vaultPath configured for fallback");
+        throw error;
+      }
+
+      try {
+        await fs.appendFile(filePath, content, "utf-8");
+        console.warn(`[knowledge] CLI append failed, fell back to direct fs append: ${filePath}`);
+      } catch (fsError) {
+        console.error(`[knowledge] Fallback fs append also failed: ${fsError instanceof Error ? fsError.message : fsError}`);
+        throw error;
+      }
+    }
   }
 
   /** Search the vault for notes matching a query, returning parsed results. */
