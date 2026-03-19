@@ -678,13 +678,16 @@ export class Orchestrator {
       case "set_model": {
         const adapter = this.registry.getAdapter(params.agentId as string);
         adapter.setModel(params.model as string);
-        // Also update persisted config
-        const agentCfg = this.projectConfig?.agents?.find(
-          (a: AgentConfig) => a.id === (params.agentId as string),
-        );
-        if (agentCfg) {
-          agentCfg.model = params.model as string;
-          await this.persistConfigToDisk();
+        // Update persisted config with immutable replacement
+        const agents = this.projectConfig?.agents;
+        if (agents) {
+          const idx = agents.findIndex(
+            (a: AgentConfig) => a.id === (params.agentId as string),
+          );
+          if (idx >= 0) {
+            agents[idx] = { ...agents[idx], model: params.model as string };
+            await this.persistConfigToDisk();
+          }
         }
         return { ok: true };
       }
@@ -1804,7 +1807,11 @@ export class Orchestrator {
 
       timeoutId = setTimeout(() => {
         timedOut = true;
-        child.kill();
+        child.kill("SIGTERM");
+        // Escalate to SIGKILL if process survives SIGTERM
+        setTimeout(() => {
+          try { child.kill("SIGKILL"); } catch { /* already exited */ }
+        }, 500);
       }, options.timeoutMs);
 
       child.stdout?.setEncoding("utf8");

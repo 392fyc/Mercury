@@ -74,14 +74,14 @@ export async function isRTKAvailable(config?: RTKConfig): Promise<boolean> {
   }
 
   const binary = getRTKBinary(config);
+  const TIMEOUT_MS = 5_000;
 
   return new Promise<boolean>((resolve) => {
     let settled = false;
     const finish = (value: boolean) => {
-      if (settled) {
-        return;
-      }
+      if (settled) return;
       settled = true;
+      clearTimeout(timer);
       resolve(value);
     };
 
@@ -90,16 +90,13 @@ export async function isRTKAvailable(config?: RTKConfig): Promise<boolean> {
       shell: false,
     });
 
+    const timer = setTimeout(() => {
+      try { child.kill(); } catch { /* already exited */ }
+      finish(false);
+    }, TIMEOUT_MS);
+
     child.once("error", () => finish(false));
-    child.once("spawn", () => {
-      finish(true);
-      try {
-        child.kill();
-      } catch {
-        // Best effort; the process may have already exited.
-      }
-    });
-    child.once("exit", () => finish(true));
+    child.once("exit", (code) => finish(code === 0));
   });
 }
 

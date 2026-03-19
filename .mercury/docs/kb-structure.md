@@ -1,6 +1,6 @@
 # KB 结构
 
-Obsidian vault: `D:\Mercury\Mercury_KB\`
+Obsidian vault 命名约定: `{Project}_KB`（如 `Mercury_KB`）。路径由项目配置决定，不硬编码。
 
 | 路径 | 内容 | 写权限 |
 |------|------|--------|
@@ -10,4 +10,4 @@ Obsidian vault: `D:\Mercury\Mercury_KB\`
 | `13-handoff/` | Handoff packets, session context | Main + 发起方 |
 | `99-templates/` | Bundle 模板（只读参考） | Main only |
 
-路径通过 `mercury.config.json` 的 `obsidian.kbPaths` 配置。
+KB 路径通过 orchestrator 启动配置注入，各 Agent 指令文件中引用相对路径 `Mercury_KB/{子目录}/`。

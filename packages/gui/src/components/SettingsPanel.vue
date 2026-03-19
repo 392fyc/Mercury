@@ -177,6 +177,8 @@ function onCliChange(agent: AgentConfig) {
   agent.capabilities = [...preset.capabilities];
   agent.restrictions = [...preset.restrictions];
   agent.maxConcurrentSessions = preset.maxSessions;
+  // Reset model — old value belongs to previous provider
+  agent.model = "default";
 }
 
 async function browseWorkDir() {
@@ -420,7 +422,7 @@ function handleKeydown(event: KeyboardEvent) {
               </label>
               <label>
                 <span>Model</span>
-                <input v-model="agent.model" class="field-input" placeholder="e.g. claude-opus-4-6, gpt-5.4" />
+                <input v-model="agent.model" class="field-input" placeholder="e.g. claude-opus-4-6, gpt-5.4, gpt-5.3-codex" />
               </label>
             </div>
             <div class="capabilities">
