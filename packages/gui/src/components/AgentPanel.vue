@@ -277,13 +277,19 @@ watch(inputText, (val) => {
   }
 });
 
-async function loadSlashCommands() {
-  if (backendCommands.value.length > 0) return;
+/** Fetch backend slash commands. Skips if already loaded unless force is true. */
+async function loadSlashCommands(force = false) {
+  if (!force && backendCommands.value.length > 0) return;
   try {
     backendCommands.value = await getSlashCommands(props.agentId);
   } catch {
     backendCommands.value = [];
   }
+}
+
+/** Focus handler for textarea — loads commands on first focus. */
+function handleTextareaFocus() {
+  loadSlashCommands();
 }
 
 async function scrollMessagesToBottom() {
@@ -577,7 +583,7 @@ watch(
         @keydown="handleKeydown"
         @input="resizeTextarea"
         @paste="handlePaste"
-        @focus="loadSlashCommands"
+        @focus="handleTextareaFocus"
       ></textarea>
     </div>
 
