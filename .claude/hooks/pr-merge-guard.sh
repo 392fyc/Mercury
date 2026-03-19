@@ -6,16 +6,19 @@
 #   PreToolUse(Bash) → detect "gh pr merge" → check CodeRabbit status → block/allow
 
 INPUT=$(cat)
-COMMAND=$(echo "$INPUT" | grep -oP '"command"\s*:\s*"\K[^"]*')
+COMMAND=$(echo "$INPUT" | sed -n 's/.*"command"\s*:\s*"\([^"]*\)".*/\1/p')
 
 # Only intercept gh pr merge commands
 echo "$COMMAND" | grep -qE 'gh\s+pr\s+merge' || exit 0
 
 # Extract PR number from command (e.g., "gh pr merge 15 --merge")
-PR_NUMBER=$(echo "$COMMAND" | grep -oP 'gh\s+pr\s+merge\s+\K\d+')
+PR_NUMBER=$(echo "$COMMAND" | sed -n 's/.*gh[[:space:]]\+pr[[:space:]]\+merge[[:space:]]\+\([0-9]\+\).*/\1/p')
 
 if [ -z "$PR_NUMBER" ]; then
-  echo "BLOCKED: could not extract PR number from merge command." >&2
+  PR_NUMBER=$(gh pr view --json number -q '.number' 2>/dev/null)
+fi
+if [ -z "$PR_NUMBER" ]; then
+  echo "BLOCKED: could not determine PR number from command or current branch." >&2
   exit 2
 fi
 
@@ -28,9 +31,9 @@ if [ -f "$FLAG" ]; then
 fi
 
 # Check CodeRabbit status via gh pr checks
-CR_STATUS=$(gh pr checks "$PR_NUMBER" 2>/dev/null | grep -i "CodeRabbit" | awk '{print $2}')
+CR_STATUS=$(gh pr checks "$PR_NUMBER" --json name,state -q '.[] | select(.name | test("CodeRabbit";"i")) | .state' 2>/dev/null | tr '[:upper:]' '[:lower:]')
 
-if [ "$CR_STATUS" = "pass" ]; then
+if [ "$CR_STATUS" = "success" ]; then
   exit 0
 fi
 
