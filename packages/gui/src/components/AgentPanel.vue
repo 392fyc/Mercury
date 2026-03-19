@@ -509,6 +509,7 @@ watch(
         <!-- User messages: right-aligned with avatar -->
         <template v-else-if="msg.role === 'user'">
           <div class="message-bubble user-bubble">
+            <!-- getApprovalRequestId is O(1) — two property checks; double-call is acceptable -->
             <ApprovalCard
               v-if="getApprovalRequestId(msg.metadata)"
               :requestId="getApprovalRequestId(msg.metadata)!"
@@ -587,7 +588,7 @@ watch(
       />
       <div class="input-row">
         <!-- Inline status indicator: only shown when active -->
-        <span v-if="status === 'active'" class="inline-status" title="Agent is working...">
+        <span v-if="status === 'active'" class="inline-status" role="status" aria-label="Agent is working" title="Agent is working...">
           <span class="status-spinner-sm"></span>
         </span>
         <textarea
