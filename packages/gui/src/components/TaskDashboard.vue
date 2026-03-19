@@ -38,6 +38,10 @@ function priorityLabel(p: string): string {
   return p.toUpperCase();
 }
 
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleString();
+}
+
 const totalCount = computed(() =>
   Object.values(statusCounts.value).reduce((a, b) => a + (b ?? 0), 0),
 );
@@ -133,6 +137,14 @@ async function handleCreateAcceptance(taskId: string) {
                 {{ selectedTask.assignee.model }}
               </span>
             </span>
+          </div>
+          <div v-if="selectedTask.closedAt" class="meta-row">
+            <span class="meta-label">Closed</span>
+            <span class="meta-value">{{ formatDate(selectedTask.closedAt) }}</span>
+          </div>
+          <div v-else-if="selectedTask.failedAt" class="meta-row">
+            <span class="meta-label">Failed</span>
+            <span class="meta-value">{{ formatDate(selectedTask.failedAt) }}</span>
           </div>
           <div class="meta-row" v-if="selectedTask.branch">
             <span class="meta-label">Branch</span>
