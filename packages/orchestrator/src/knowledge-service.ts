@@ -9,7 +9,8 @@
 
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import { promisify } from "node:util";
 import type { KBSearchResult, KBFileInfo, ObsidianConfig } from "@mercury/core";
 
@@ -17,7 +18,9 @@ const execFileAsync = promisify(execFile);
 type KBEntryKind = KBFileInfo["kind"];
 const WINDOWS_OBSIDIAN_BIN_CANDIDATES = [
   "D:/Programs/Obsidian/Obsidian.exe",
-  process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, "Obsidian", "Obsidian.exe") : undefined,
+  process.env.LOCALAPPDATA
+    ? path.join(process.env.LOCALAPPDATA, "Obsidian", "Obsidian.exe")
+    : undefined,
 ].filter((candidate): candidate is string => Boolean(candidate));
 
 export class KnowledgeService {
@@ -47,11 +50,11 @@ export class KnowledgeService {
     }
 
     if (process.platform === "win32") {
-      const pathDirs = (process.env.PATH ?? "").split(delimiter);
+      const pathDirs = (process.env.PATH ?? "").split(path.delimiter);
       const candidates = ["Obsidian.exe", "obsidian.exe"];
       for (const dir of pathDirs) {
         for (const name of candidates) {
-          const full = join(dir, name);
+          const full = path.join(dir, name);
           if (existsSync(full)) {
             return full;
           }
@@ -65,6 +68,16 @@ export class KnowledgeService {
       }
     }
     return "obsidian";
+  }
+
+  private resolveVaultFilePath(relativePath: string): string | null {
+    const vaultPath = this.vaultPath?.trim();
+    if (!vaultPath) {
+      return null;
+    }
+
+    const pathSegments = relativePath.split(/[\\/]+/).filter(Boolean);
+    return path.join(vaultPath, ...pathSegments);
   }
 
   private parsePlainTextList(raw: string): string[] {
@@ -241,11 +254,35 @@ export class KnowledgeService {
   }
 
   async read(file: string): Promise<string> {
-    return this.exec(["read", `file=${file}`]);
+    try {
+      return await this.exec(["read", `file=${file}`]);
+    } catch (error) {
+      const filePath = this.resolveVaultFilePath(file);
+      if (!filePath) {
+        console.error("[knowledge] CLI read failed and no vaultPath configured for fallback");
+        throw error;
+      }
+
+      const content = await fs.readFile(filePath, "utf-8");
+      console.warn(`[knowledge] CLI read failed, fell back to direct fs read: ${filePath}`);
+      return content;
+    }
   }
 
   async write(name: string, content: string): Promise<void> {
-    await this.exec(["create", `name=${name}`, `content=${content}`]);
+    try {
+      await this.exec(["create", `name=${name}`, `content=${content}`]);
+    } catch (error) {
+      const filePath = this.resolveVaultFilePath(name);
+      if (!filePath) {
+        console.error("[knowledge] CLI write failed and no vaultPath configured for fallback");
+        throw error;
+      }
+
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.writeFile(filePath, content, "utf-8");
+      console.warn(`[knowledge] CLI write failed, fell back to direct fs write: ${filePath}`);
+    }
   }
 
   async append(file: string, content: string): Promise<void> {
