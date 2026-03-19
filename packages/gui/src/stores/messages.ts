@@ -333,6 +333,9 @@ async function pickSession(sessionId: string): Promise<void> {
  * Clears existing messages and backfills from the backend transcript.
  */
 async function loadSessionHistory(panelKey: string, sessionId: string): Promise<void> {
+  // Always clear old messages to prevent cross-session leakage
+  clearMessages(panelKey);
+
   try {
     const result = await bridgeGetSessionMessages(sessionId);
     if (!result.messages || result.messages.length === 0) return;
@@ -348,6 +351,7 @@ async function loadSessionHistory(panelKey: string, sessionId: string): Promise<
     setMessages(panelKey, batch);
   } catch (e) {
     console.debug("loadSessionHistory: failed to load history", e);
+    // Panel is already cleared — empty state is safe
   }
 }
 
