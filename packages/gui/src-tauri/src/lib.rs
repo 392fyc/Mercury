@@ -15,11 +15,14 @@ pub type SharedSidecar = Arc<Mutex<Option<SidecarManager>>>;
 /// Project root path — available immediately (no sidecar dependency).
 pub struct ProjectRoot(pub String);
 
-/// Walk up from `start` to find the directory containing `mercury.config.json`.
+/// Walk up from `start` to find the monorepo root that contains the orchestrator entrypoint.
 fn find_project_root(start: PathBuf) -> Option<PathBuf> {
     let mut dir = start;
     loop {
-        if dir.join("mercury.config.json").exists() {
+        if dir.join("pnpm-workspace.yaml").exists()
+            && dir.join("package.json").exists()
+            && dir.join("packages").join("orchestrator").join("src").join("index.ts").exists()
+        {
             return Some(dir);
         }
         if !dir.pop() {
@@ -58,9 +61,11 @@ pub fn run() {
             app.manage(shared.clone());
 
             // Resolve the monorepo root (where mercury.config.json lives)
-            let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-            let project_dir = find_project_root(cwd.clone())
-                .unwrap_or(cwd)
+            let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            let cwd = std::env::current_dir().unwrap_or_else(|_| manifest_dir.clone());
+            let project_dir = find_project_root(cwd)
+                .or_else(|| find_project_root(manifest_dir.clone()))
+                .unwrap_or(manifest_dir)
                 .to_string_lossy()
                 .to_string();
 
