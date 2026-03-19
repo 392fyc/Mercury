@@ -97,6 +97,7 @@ function createEmptyRoleContextFiles(): NonNullable<ObsidianConfig["roleContextF
   };
 }
 
+/** Return a default ObsidianConfig with all fields initialized to safe empty values. */
 function createEmptyObsidianConfig(): ObsidianConfig {
   return {
     enabled: false,
@@ -189,6 +190,7 @@ async function browseWorkDir() {
   }
 }
 
+/** Open a native directory picker for the KB vault path. */
 async function browseVaultPath() {
   const selected = await open({ directory: true, title: "Select KB vault directory" });
   if (selected && typeof selected === "string") {

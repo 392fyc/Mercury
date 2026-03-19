@@ -98,6 +98,7 @@ export class TaskManager {
     this.agentConfigLookup = lookup;
   }
 
+  /** Build a TaskAssignee struct from agentId, enriching with model from agent config if available. */
   private buildTaskAssignee(agentId: string): TaskAssignee {
     const model = this.agentConfigLookup?.(agentId)?.model;
     return model === undefined ? { agentId } : { agentId, model };
