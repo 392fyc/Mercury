@@ -573,6 +573,7 @@ export class TaskManager {
 
 // ─── Prompt Builders ───
 
+/** Build the dispatch prompt sent to the Dev Agent for implementation. */
 export function buildDevPrompt(task: TaskBundle, kbContext?: string): string {
   const lines: string[] = [];
 
@@ -657,6 +658,7 @@ export function buildReferencePrompt(
   return lines.join("\n");
 }
 
+/** Build the blind-review prompt sent to the Acceptance Agent. */
 export function buildAcceptancePrompt(
   task: TaskBundle,
   acceptance: AcceptanceBundle,
@@ -712,6 +714,7 @@ export function buildAcceptancePrompt(
   return lines.join("\n");
 }
 
+/** Build the rework prompt sent to the Dev Agent after acceptance failure. */
 export function buildReworkPrompt(
   task: TaskBundle,
   acceptance: AcceptanceBundle,
@@ -784,6 +787,7 @@ function truncate(content: string, maxLen: number): string {
   return content.slice(0, maxLen) + "\n...[truncated]";
 }
 
+/** Build the Main Agent review prompt with sanitized pre-checks and diff. */
 export function buildMainReviewPrompt(task: TaskBundle): string {
   const lines: string[] = [];
 
