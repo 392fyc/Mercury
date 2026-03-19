@@ -463,6 +463,7 @@ async function newSession(panelKey: string): Promise<void> {
 
 /**
  * Get user message history for a panel (for ↑↓ navigation).
+ * Filters on each call — acceptable for MAX_MESSAGES_PER_PANEL (200).
  */
 function getUserMessageHistory(panelKey: string): string[] {
   const msgs = messages.value.get(panelKey) ?? [];
