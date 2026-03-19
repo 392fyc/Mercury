@@ -42,13 +42,8 @@ STATE_DIR="$(dirname "$0")/state"
 FLAG="$STATE_DIR/web-researched"
 
 if [ -f "$FLAG" ]; then
-  # Check if flag is recent (within 180 seconds = 3 minutes)
-  if [ "$(uname)" = "Darwin" ] || [ "$(uname)" = "Linux" ]; then
-    FLAG_AGE=$(( $(date +%s) - $(stat -c %Y "$FLAG" 2>/dev/null || stat -f %m "$FLAG" 2>/dev/null || echo 0) ))
-  else
-    # Windows (Git Bash / MSYS) — stat -c %Y works
-    FLAG_AGE=$(( $(date +%s) - $(stat -c %Y "$FLAG" 2>/dev/null || echo 0) ))
-  fi
+  # stat -c %Y for Linux/Windows, stat -f %m for Darwin; fallback to 0 (treat as expired)
+  FLAG_AGE=$(( $(date +%s) - $(stat -c %Y "$FLAG" 2>/dev/null || stat -f %m "$FLAG" 2>/dev/null || echo 0) ))
 
   if [ "$FLAG_AGE" -lt 180 ] 2>/dev/null; then
     exit 0

@@ -12,7 +12,9 @@ TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "done")
 if command -v jq >/dev/null 2>&1; then
   QUERY=$(echo "$INPUT" | jq -r '.tool_input.query // .tool_input.url // empty' 2>/dev/null)
 else
-  QUERY=""
+  # Fallback: try to extract query or url with sed (best effort)
+  QUERY=$(echo "$INPUT" | sed -n 's/.*"query"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+  [ -z "$QUERY" ] && QUERY=$(echo "$INPUT" | sed -n 's/.*"url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
 fi
 
 echo "${TIMESTAMP} ${QUERY}" > "$STATE_DIR/web-researched"
