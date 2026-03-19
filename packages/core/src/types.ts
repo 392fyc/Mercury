@@ -115,11 +115,18 @@ export interface ObsidianConfig {
   };
 }
 
+export interface RTKConfig {
+  enabled: boolean;
+  binaryPath?: string; // explicit path to RTK binary (defaults to "rtk" when omitted)
+  commands: string[]; // command basenames to wrap, e.g. ["codex", "gemini"]
+}
+
 export interface MercuryConfig {
   agents: AgentConfig[];
   workDir?: string;
   rpcPort?: number;
   obsidian?: ObsidianConfig;
+  rtk?: RTKConfig;
 }
 
 // ─── Approval Control Plane ───
@@ -257,6 +264,48 @@ export type TaskStatus =
   | "failed"
   | "blocked";
 
+export interface PreCheckConfig {
+  name: string;
+  command: string;
+  args?: string[];
+  cwd?: string;
+  timeoutMs?: number;
+  shell?: boolean;
+}
+
+export interface PreCheckResult {
+  name: string;
+  command: string;
+  cwd: string;
+  success: boolean;
+  exitCode: number | null;
+  timedOut: boolean;
+  durationMs: number;
+  stdout: string;
+  stderr: string;
+}
+
+export interface ReviewFinding {
+  severity: "critical" | "major" | "minor" | "info";
+  title: string;
+  detail: string;
+  file?: string;
+  line?: number;
+}
+
+export interface StructuredReviewResult {
+  decision: "APPROVE_FOR_ACCEPTANCE" | "SEND_BACK";
+  summary: string;
+  reason?: string;
+  findings: ReviewFinding[];
+}
+
+export interface ReviewConfig {
+  preChecks?: PreCheckConfig[];
+  diffBaseRef?: string;
+  diffMaxChars?: number;
+}
+
 export interface TaskBundle {
   taskId: string;
   title: string;
@@ -278,6 +327,7 @@ export interface TaskBundle {
   definitionOfDone: string[];
   requiredEvidence: string[];
   context: string;
+  reviewConfig?: ReviewConfig;
 
   // Acceptance handoff
   handoffToAcceptance?: {
@@ -288,6 +338,12 @@ export interface TaskBundle {
 
   // Implementation receipt (filled by dev agent)
   implementationReceipt?: ImplementationReceipt;
+  mainReview?: {
+    preChecks: PreCheckResult[];
+    gitDiff: string;
+    result?: StructuredReviewResult;
+    reviewedAt?: number;
+  };
 
   // Rework tracking
   reworkCount: number;
@@ -484,6 +540,10 @@ export interface AgentAdapter {
    * Called by Orchestrator when KB context is built/refreshed.
    */
   setSystemPrompt(prompt: string): void;
+
+  // Runtime model listing and mid-session switching
+  listModels(): Promise<{ id: string; name: string }[]>;
+  setModel(model: string): void;
 
   // Slash commands supported by this agent's CLI
   getSlashCommands(): SlashCommand[];

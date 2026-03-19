@@ -2,6 +2,7 @@
  * Mercury Orchestrator — core class managing agent sessions, prompts, and event flow.
  */
 
+import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { writeFile, rename, unlink } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
@@ -48,6 +49,7 @@ import { SessionPersistence } from "./session-persistence.js";
 import type { PersistedSessionState } from "./session-persistence.js";
 import { TranscriptPersistence } from "./transcript-persistence.js";
 import type { TranscriptMessage } from "./transcript-persistence.js";
+import { installRTKCommandWrapper, isRTKAvailable } from "./rtk-wrapper.js";
 
 type NativeSessionBridge = {
   listNativeSessions?: (cwd?: string) => Promise<SessionInfo[]>;
@@ -56,11 +58,31 @@ type NativeSessionBridge = {
   setSessionName?: (sessionId: string, name: string) => Promise<void>;
 };
 
+type StreamCompletion = {
+  completed: boolean;
+  lastAssistantMessage?: AgentMessage;
+};
+
+type TaskMainReview = NonNullable<TaskBundle["mainReview"]>;
+type PreCheckResult = TaskMainReview["preChecks"][number];
+type StructuredReviewResult = NonNullable<TaskMainReview["result"]>;
+type ReviewFinding = StructuredReviewResult["findings"][number];
+type ReviewConfig = NonNullable<TaskBundle["reviewConfig"]>;
+type PreCheckConfig = NonNullable<ReviewConfig["preChecks"]>[number];
+type ParsedMainReviewDecision = {
+  decision: StructuredReviewResult["decision"];
+  reason?: string;
+  structured: StructuredReviewResult;
+};
+
 const ROLE_CONTEXT_ROLES = ["main", "dev", "acceptance"] as const;
 type RoleContextKey = (typeof ROLE_CONTEXT_ROLES)[number];
 
 export class Orchestrator {
   private static readonly APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;
+  private static readonly SESSION_HISTORY_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+  private static readonly DEFAULT_PRECHECK_TIMEOUT_MS = 5 * 60 * 1000;
+  private static readonly DEFAULT_REVIEW_DIFF_MAX_CHARS = 12000;
   private bus: EventBus;
   private registry: AgentRegistry;
   private transport: RpcTransport;
@@ -135,6 +157,8 @@ export class Orchestrator {
 
   /** Rehydrate task state from KB persistence + build shared context + restore sessions. */
   async init(): Promise<void> {
+    this.syncRTKCommandWrapper();
+    await this.validateRTKConfiguration();
     await this.taskManager.init();
     await this.restoreSessions();
     // Build and inject shared context from KB if autoInjectContext is enabled
@@ -144,6 +168,7 @@ export class Orchestrator {
   /** Store project config for get_config/update_config RPC. */
   setProjectConfig(config: MercuryConfig, configFilePath?: string | null) {
     this.projectConfig = config;
+    this.syncRTKCommandWrapper(config);
     if (configFilePath !== undefined) {
       this.configFilePath = configFilePath ?? null;
     }
@@ -328,13 +353,43 @@ export class Orchestrator {
 
   private saveStateToDisk(): void {
     if (!this.persistence) return;
+
+    // Merge: preserve completed sessions from disk that may not be in memory
+    const SESSION_HISTORY_TTL_MS = Orchestrator.SESSION_HISTORY_TTL_MS;
+    const now = Date.now();
+    const mergedSessions: Record<string, SessionInfo> = {};
+
+    // First, load existing persisted completed sessions
+    const existing = this.persistence.load();
+    if (existing) {
+      for (const [sid, info] of Object.entries(existing.sessions)) {
+        if (
+          (info.status === "completed" || info.status === "overflow") &&
+          now - info.lastActiveAt < SESSION_HISTORY_TTL_MS
+        ) {
+          mergedSessions[sid] = info;
+        }
+      }
+    }
+
+    // Then overlay current in-memory sessions (overwrite if same sid)
+    for (const [sid, info] of this.sessions) {
+      if (
+        (info.status === "completed" || info.status === "overflow") &&
+        now - info.lastActiveAt >= SESSION_HISTORY_TTL_MS
+      ) {
+        continue; // TTL expired — drop
+      }
+      mergedSessions[sid] = info;
+    }
+
     const state: PersistedSessionState = {
       roleSessions: Object.fromEntries(this.roleSessions),
-      sessions: Object.fromEntries(this.sessions),
+      sessions: mergedSessions,
       agentCwds: Object.fromEntries(this.agentCwds),
       approvalMode: this.approvalMode,
       approvalRequests: Object.fromEntries(this.approvalRequests),
-      savedAt: Date.now(),
+      savedAt: now,
     };
     this.persistence.save(state);
   }
@@ -392,9 +447,15 @@ export class Orchestrator {
       this.agentCwds.set(agentId, cwd);
     }
 
-    // Restore sessions and try to resume each
+    // Restore sessions: keep completed/overflow for history, resume the rest
+    const SESSION_HISTORY_TTL_MS = Orchestrator.SESSION_HISTORY_TTL_MS;
+    const now = Date.now();
     for (const [sessionId, info] of Object.entries(state.sessions)) {
       if (info.status === "completed" || info.status === "overflow") {
+        // Preserve terminal sessions for history (with TTL cleanup)
+        if (now - info.lastActiveAt < SESSION_HISTORY_TTL_MS) {
+          this.sessions.set(sessionId, info);
+        }
         continue;
       }
       if (!info.frozenRole) {
@@ -408,7 +469,9 @@ export class Orchestrator {
           info.cwd ?? state.agentCwds[info.agentId],
         );
         if (resumed.status === "completed" || resumed.status === "overflow") {
-          continue; // Skip dead sessions
+          // Still preserve for history
+          this.sessions.set(sessionId, resumed);
+          continue;
         }
         this.sessions.set(sessionId, resumed);
       } catch {
@@ -608,6 +671,26 @@ export class Orchestrator {
         return this.kbWrite(params.name as string, params.content as string);
       case "kb_append":
         return this.kbAppend(params.file as string, params.content as string);
+      case "list_models": {
+        const adapter = this.registry.getAdapter(params.agentId as string);
+        return adapter.listModels();
+      }
+      case "set_model": {
+        const adapter = this.registry.getAdapter(params.agentId as string);
+        adapter.setModel(params.model as string);
+        // Update persisted config with immutable replacement
+        const agents = this.projectConfig?.agents;
+        if (agents) {
+          const idx = agents.findIndex(
+            (a: AgentConfig) => a.id === (params.agentId as string),
+          );
+          if (idx >= 0) {
+            agents[idx] = { ...agents[idx], model: params.model as string };
+            await this.persistConfigToDisk();
+          }
+        }
+        return { ok: true };
+      }
       case "get_slash_commands":
         return this.getSlashCommands(params.agentId as string);
       case "set_agent_cwd":
@@ -1006,8 +1089,11 @@ export class Orchestrator {
         `Role mismatch: session ${sessionId} belongs to role "${sessionRole}", not "${expectedRole}"`,
       );
     }
+    // Completed sessions can only be resumed if they have a native resumeToken
     if (info.status === "completed" || info.status === "overflow") {
-      throw new Error(`Session ${sessionId} is ${info.status} and cannot be resumed`);
+      if (!info.resumeToken) {
+        throw new Error(`Session ${sessionId} is ${info.status} and has no resume token — use History to view`);
+      }
     }
 
     // Attempt to resume in the adapter
@@ -1106,6 +1192,7 @@ export class Orchestrator {
     role?: AgentRole,
     taskName?: string,
     systemPrompt?: string,
+    taskId?: string,
   ): Promise<{ sessionId: string; role?: AgentRole; sessionName?: string; status?: SessionInfo["status"] }> {
     const adapter = this.registry.getAdapter(agentId);
     const config = this.registry.getConfig(agentId);
@@ -1144,6 +1231,9 @@ export class Orchestrator {
       const session = await this.startRoleSession(agentId, effectiveRole, taskName, systemPrompt);
       sessionId = session.sessionId;
     }
+    if (taskId && effectiveRole !== "main") {
+      this.taskManager.bindSession(taskId, sessionId);
+    }
 
     this.bus.emit("agent.message.send", agentId, sessionId, {
       prompt: prompt.slice(0, 200),
@@ -1171,7 +1261,14 @@ export class Orchestrator {
             onApprovalRequest: (request) =>
               this.requestApproval(agentId, sessionId, adapter.config.cli, request),
           };
-    this.streamMessages(adapter, agentId, sessionId, prompt, images, hooks);
+    void this.streamMessages(adapter, agentId, sessionId, prompt, images, hooks)
+      .then((result) => this.handleStreamCompletion(agentId, sessionId, effectiveRole, taskId, result))
+      .catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        this.transport.sendNotification("log", {
+          message: `[stream] completion handler failed for ${sessionId}: ${message}`,
+        });
+      });
 
     const session = this.sessions.get(sessionId);
     return {
@@ -1189,9 +1286,14 @@ export class Orchestrator {
     prompt: string,
     images?: ImageAttachment[],
     hooks?: AgentSendHooks,
-  ): Promise<void> {
+  ): Promise<StreamCompletion> {
+    let lastAssistantMessage: AgentMessage | undefined;
+
     try {
       for await (const message of adapter.sendPrompt(sessionId, prompt, images, hooks)) {
+        if (message.role === "assistant" && message.content.trim().length > 0) {
+          lastAssistantMessage = message;
+        }
         this.bus.emit("agent.message.receive", agentId, sessionId, {
           contentPreview: message.content.slice(0, 200),
         });
@@ -1227,6 +1329,7 @@ export class Orchestrator {
         session.lastActiveAt = Date.now();
       }
       this.persistState();
+      return { completed: true, lastAssistantMessage };
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       this.cancelPendingApprovalsForSession(sessionId, "Session failed while approval was pending");
@@ -1251,7 +1354,494 @@ export class Orchestrator {
       }
       try { await adapter.endSession(sessionId); } catch { /* best-effort */ }
       this.persistState(true);
+      return { completed: false };
     }
+  }
+
+  private async handleStreamCompletion(
+    agentId: string,
+    sessionId: string,
+    role: AgentRole,
+    taskId: string | undefined,
+    result: StreamCompletion,
+  ): Promise<void> {
+    const completedAt = Date.now();
+    const effectiveTaskId = taskId ?? this.taskManager.getTaskForSession(sessionId);
+    this.transport.sendNotification("orchestrator.session.stream_complete", {
+      agentId,
+      sessionId,
+      role,
+      taskId: effectiveTaskId ?? null,
+      completed: result.completed,
+      completedAt,
+    });
+
+    if (!result.completed || !effectiveTaskId) {
+      return;
+    }
+
+    const task = this.taskManager.getTask(effectiveTaskId);
+    if (!task) {
+      return;
+    }
+
+    const finalMessage = result.lastAssistantMessage?.content ?? "";
+    if (role === "dev") {
+      await this.handleDevTaskStreamComplete(task, agentId, finalMessage, completedAt);
+      return;
+    }
+    if (role === "main") {
+      await this.handleMainReviewStreamComplete(task, finalMessage);
+      return;
+    }
+    if (role === "acceptance") {
+      await this.handleAcceptanceStreamComplete(task, finalMessage);
+    }
+  }
+
+  private async handleDevTaskStreamComplete(
+    task: TaskBundle,
+    agentId: string,
+    finalMessage: string,
+    completedAt: number,
+  ): Promise<void> {
+    if (task.status !== "in_progress") {
+      return;
+    }
+    const receipt = this.parseImplementationReceipt(task, agentId, finalMessage, completedAt);
+    await this.recordReceiptAndTriggerReview(task.taskId, receipt);
+  }
+
+  private async handleMainReviewStreamComplete(
+    task: TaskBundle,
+    finalMessage: string,
+  ): Promise<void> {
+    if (task.status !== "main_review") {
+      return;
+    }
+    const review = this.parseMainReviewDecision(finalMessage);
+    if (!review) {
+      this.transport.sendNotification("log", {
+        message: `[task] Unable to parse main review result for ${task.taskId}`,
+      });
+      return;
+    }
+    this.taskManager.updateTaskField(task.taskId, "mainReview", {
+      preChecks: task.mainReview?.preChecks ?? [],
+      gitDiff: task.mainReview?.gitDiff ?? "",
+      result: review.structured,
+      reviewedAt: Date.now(),
+    });
+    await this.handleMainReviewResult(
+      task.taskId,
+      review.decision,
+      review.reason,
+      undefined,
+      review.structured,
+    );
+  }
+
+  private async handleAcceptanceStreamComplete(
+    task: TaskBundle,
+    finalMessage: string,
+  ): Promise<void> {
+    if (task.status !== "acceptance") {
+      return;
+    }
+    const acceptanceId = task.handoffToAcceptance?.acceptanceBundleId;
+    if (!acceptanceId) {
+      this.transport.sendNotification("log", {
+        message: `[task] Missing acceptance bundle for ${task.taskId}`,
+      });
+      return;
+    }
+    const results = this.parseAcceptanceResult(finalMessage);
+    if (!results) {
+      this.transport.sendNotification("log", {
+        message: `[task] Unable to parse acceptance result for ${task.taskId}`,
+      });
+      return;
+    }
+    await this.recordAcceptanceFlow(acceptanceId, results);
+  }
+
+  private parseImplementationReceipt(
+    task: TaskBundle,
+    agentId: string,
+    finalMessage: string,
+    completedAt: number,
+  ): ImplementationReceipt {
+    const parsed = this.tryParseJsonRecord(finalMessage);
+    const agentConfig = this.registry.getConfig(agentId);
+    const implementerModel = agentConfig.model ?? agentConfig.cli;
+
+    return {
+      implementer: `${agentId} (${implementerModel})`,
+      branch: this.readString(parsed?.branch) ?? task.branch ?? "",
+      summary: this.readString(parsed?.summary) ?? finalMessage.trim(),
+      changedFiles: this.readStringArray(parsed?.changedFiles),
+      evidence: this.readStringArray(parsed?.evidence),
+      docsUpdated: this.readStringArray(parsed?.docsUpdated),
+      residualRisks: this.readStringArray(parsed?.residualRisks),
+      completedAt,
+    };
+  }
+
+  private parseMainReviewDecision(
+    content: string,
+  ): ParsedMainReviewDecision | null {
+    const trimmed = content.trim();
+    if (!trimmed) {
+      return null;
+    }
+    const parsed = this.tryParseJsonRecord(content);
+    const structured = parsed
+      ? this.parseStructuredReviewResult(parsed, trimmed)
+      : null;
+    if (structured) {
+      return {
+        decision: structured.decision,
+        reason: structured.reason,
+        structured,
+      };
+    }
+    if (trimmed.includes("APPROVE_FOR_ACCEPTANCE")) {
+      return {
+        decision: "APPROVE_FOR_ACCEPTANCE",
+        structured: {
+          decision: "APPROVE_FOR_ACCEPTANCE",
+          summary: trimmed,
+          findings: [],
+        },
+      };
+    }
+    const sendBackIndex = trimmed.indexOf("SEND_BACK");
+    if (sendBackIndex === -1) {
+      return null;
+    }
+    const reason = trimmed.slice(sendBackIndex + "SEND_BACK".length).trim()
+      .replace(/^[:\-\s]+/, "");
+    return {
+      decision: "SEND_BACK",
+      reason: reason || undefined,
+      structured: {
+        decision: "SEND_BACK",
+        summary: reason || "Main review sent the task back for rework.",
+        reason: reason || undefined,
+        findings: [],
+      },
+    };
+  }
+
+  private parseAcceptanceResult(
+    content: string,
+  ): { verdict: AcceptanceVerdict; findings: string[]; recommendations: string[] } | null {
+    const parsed = this.tryParseJsonRecord(content);
+    const verdict = this.readString(parsed?.verdict);
+    if (
+      verdict !== "pass" &&
+      verdict !== "partial" &&
+      verdict !== "fail" &&
+      verdict !== "blocked"
+    ) {
+      return null;
+    }
+    return {
+      verdict,
+      findings: this.readStringArray(parsed?.findings),
+      recommendations: this.readStringArray(parsed?.recommendations),
+    };
+  }
+
+  private tryParseJsonRecord(content: string): Record<string, unknown> | null {
+    const trimmed = content.trim();
+    const candidates = [
+      ...trimmed.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi),
+    ]
+      .map((match) => match[1]?.trim())
+      .filter((candidate): candidate is string => Boolean(candidate));
+
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+      candidates.unshift(trimmed);
+    }
+
+    const inlineObject = trimmed.match(/\{[\s\S]*\}/);
+    if (inlineObject?.[0]) {
+      candidates.push(inlineObject[0]);
+    }
+
+    for (const candidate of candidates) {
+      try {
+        const parsed = JSON.parse(candidate) as unknown;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          return parsed as Record<string, unknown>;
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    return null;
+  }
+
+  private readString(value: unknown): string | undefined {
+    return typeof value === "string" ? value : undefined;
+  }
+
+  private readNumber(value: unknown): number | undefined {
+    return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  }
+
+  private readStringArray(value: unknown): string[] {
+    return Array.isArray(value)
+      ? value.filter((entry): entry is string => typeof entry === "string")
+      : [];
+  }
+
+  private readReviewFindings(value: unknown): ReviewFinding[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    const findings: ReviewFinding[] = [];
+    for (const entry of value) {
+      if (typeof entry === "string") {
+        findings.push({
+          severity: "major",
+          title: entry,
+          detail: entry,
+        });
+        continue;
+      }
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        continue;
+      }
+
+      const record = entry as Record<string, unknown>;
+      const severity = this.readString(record.severity);
+      const title = this.readString(record.title) ?? this.readString(record.summary);
+      const detail = this.readString(record.detail) ?? this.readString(record.reason) ?? title;
+
+      if (
+        !title ||
+        !detail ||
+        (severity !== "critical" && severity !== "major" && severity !== "minor" && severity !== "info")
+      ) {
+        continue;
+      }
+
+      findings.push({
+        severity,
+        title,
+        detail,
+        file: this.readString(record.file),
+        line: this.readNumber(record.line),
+      });
+    }
+
+    return findings;
+  }
+
+  private parseStructuredReviewResult(
+    parsed: Record<string, unknown>,
+    fallbackSummary: string,
+  ): StructuredReviewResult | null {
+    const rawDecision = this.readString(parsed.decision);
+    const findings = this.readReviewFindings(parsed.findings);
+    const summary = this.readString(parsed.summary) ?? this.readString(parsed.reason) ?? fallbackSummary;
+    let decision: StructuredReviewResult["decision"] | undefined;
+    if (rawDecision === "APPROVE_FOR_ACCEPTANCE" || rawDecision === "SEND_BACK") {
+      decision = rawDecision;
+    }
+
+    const criticalFindings = findings.filter((finding) => finding.severity === "critical");
+    if (criticalFindings.length > 0) {
+      decision = "SEND_BACK";
+    }
+
+    if (!decision) {
+      return null;
+    }
+
+    return {
+      decision,
+      summary,
+      reason: this.readString(parsed.reason) ?? this.formatCriticalFindingReason(criticalFindings),
+      findings,
+    };
+  }
+
+  private formatCriticalFindingReason(findings: ReviewFinding[]): string | undefined {
+    if (findings.length === 0) {
+      return undefined;
+    }
+    return findings
+      .map((finding) => {
+        const location = finding.file
+          ? `${finding.file}${finding.line !== undefined ? `:${finding.line}` : ""}`
+          : undefined;
+        return location ? `${finding.title} (${location})` : finding.title;
+      })
+      .join("; ");
+  }
+
+  private getReviewConfig(task: TaskBundle): ReviewConfig {
+    return task.reviewConfig ?? {};
+  }
+
+  private async runPreChecks(task: TaskBundle): Promise<PreCheckResult[]> {
+    const configs = this.getReviewConfig(task).preChecks ?? [];
+    const results: PreCheckResult[] = [];
+
+    for (const config of configs) {
+      results.push(await this.runPreCheck(config));
+    }
+
+    return results;
+  }
+
+  private async runPreCheck(config: PreCheckConfig): Promise<PreCheckResult> {
+    const cwd = resolve(this.getProjectRoot(), config.cwd ?? ".");
+    const args = config.args ?? [];
+    const command = [config.command, ...args].join(" ").trim();
+    const result = await this.runCommand(config.command, args, {
+      cwd,
+      shell: config.shell ?? false,
+      timeoutMs: config.timeoutMs ?? Orchestrator.DEFAULT_PRECHECK_TIMEOUT_MS,
+    });
+
+    return {
+      name: config.name,
+      command,
+      cwd,
+      success: result.exitCode === 0 && !result.timedOut,
+      exitCode: result.exitCode,
+      timedOut: result.timedOut,
+      durationMs: result.durationMs,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    };
+  }
+
+  private async getGitDiff(task: TaskBundle): Promise<string> {
+    const reviewConfig = this.getReviewConfig(task);
+    const diffBaseRef = reviewConfig.diffBaseRef ?? "develop...HEAD";
+    const maxChars = reviewConfig.diffMaxChars ?? Orchestrator.DEFAULT_REVIEW_DIFF_MAX_CHARS;
+    const result = await this.runCommand("git", ["diff", "--no-ext-diff", diffBaseRef], {
+      cwd: this.getProjectRoot(),
+      timeoutMs: Orchestrator.DEFAULT_PRECHECK_TIMEOUT_MS,
+    });
+
+    let diff = result.stdout;
+    if (result.exitCode !== 0) {
+      const errorText = result.stderr || `git diff exited with code ${result.exitCode ?? "null"}`;
+      diff = `# git diff ${diffBaseRef} failed\n${errorText}`;
+    }
+    if (!diff.trim()) {
+      diff = "# No diff output";
+    }
+    if (diff.length <= maxChars) {
+      return diff;
+    }
+
+    return `${diff.slice(0, maxChars)}\n\n# Diff truncated at ${maxChars} characters`;
+  }
+
+  private async runCommand(
+    command: string,
+    args: string[],
+    options: { cwd: string; timeoutMs: number; shell?: boolean },
+  ): Promise<{
+    stdout: string;
+    stderr: string;
+    exitCode: number | null;
+    timedOut: boolean;
+    durationMs: number;
+  }> {
+    return await new Promise((resolveResult) => {
+      const startedAt = Date.now();
+      let stdout = "";
+      let stderr = "";
+      let timedOut = false;
+      let settled = false;
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+      const finalize = (result: {
+        stdout: string;
+        stderr: string;
+        exitCode: number | null;
+        timedOut: boolean;
+      }) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+        resolveResult({
+          ...result,
+          stdout: result.stdout.trim(),
+          stderr: result.stderr.trim(),
+          durationMs: Date.now() - startedAt,
+        });
+      };
+
+      let child: ReturnType<typeof spawn>;
+      try {
+        child = spawn(command, args, {
+          cwd: options.cwd,
+          shell: options.shell ?? false,
+          windowsHide: true,
+          env: process.env,
+        });
+      } catch (err) {
+        finalize({
+          stdout,
+          stderr: err instanceof Error ? err.message : String(err),
+          exitCode: null,
+          timedOut: false,
+        });
+        return;
+      }
+
+      timeoutId = setTimeout(() => {
+        timedOut = true;
+        child.kill("SIGTERM");
+        // Escalate to SIGKILL if process survives SIGTERM
+        setTimeout(() => {
+          try { child.kill("SIGKILL"); } catch { /* already exited */ }
+        }, 500);
+      }, options.timeoutMs);
+
+      child.stdout?.setEncoding("utf8");
+      child.stdout?.on("data", (chunk: string) => {
+        stdout += chunk;
+      });
+
+      child.stderr?.setEncoding("utf8");
+      child.stderr?.on("data", (chunk: string) => {
+        stderr += chunk;
+      });
+
+      child.on("error", (err) => {
+        finalize({
+          stdout,
+          stderr: [stderr, err.message].filter(Boolean).join("\n"),
+          exitCode: null,
+          timedOut,
+        });
+      });
+
+      child.on("close", (code) => {
+        finalize({
+          stdout,
+          stderr,
+          exitCode: code,
+          timedOut,
+        });
+      });
+    });
   }
 
   private async stopSession(
@@ -1532,7 +2122,15 @@ export class Orchestrator {
     }
 
     // Send the prompt with role context
-    await this.sendPrompt(task.assignedTo, prompt, undefined, "dev", task.title, devRolePrompt);
+    await this.sendPrompt(
+      task.assignedTo,
+      prompt,
+      undefined,
+      "dev",
+      task.title,
+      devRolePrompt,
+      task.taskId,
+    );
 
     return { sessionId: session.sessionId, taskId };
   }
@@ -1579,7 +2177,15 @@ export class Orchestrator {
     );
     this.taskManager.bindSession(taskId, session.sessionId);
 
-    await this.sendPrompt(acceptorId, prompt, undefined, "acceptance", task.title, acceptanceRolePrompt);
+    await this.sendPrompt(
+      acceptorId,
+      prompt,
+      undefined,
+      "acceptance",
+      task.title,
+      acceptanceRolePrompt,
+      task.taskId,
+    );
 
     return { acceptanceId: acceptance.acceptanceId, sessionId: session.sessionId };
   }
@@ -1631,6 +2237,7 @@ export class Orchestrator {
           "dev",
           task.title,
           this.buildSystemRolePrompt("dev", task),
+          task.taskId,
         );
       }
 
@@ -1656,11 +2263,18 @@ export class Orchestrator {
     receipt: ImplementationReceipt,
   ): Promise<TaskBundle> {
     const task = this.taskManager.recordReceipt(taskId, receipt);
+    const preChecks = await this.runPreChecks(task);
+    const gitDiff = await this.getGitDiff(task);
+
+    this.taskManager.updateTaskField(taskId, "mainReview", {
+      preChecks,
+      gitDiff,
+    });
 
     // Auto-trigger main review step
     await this.mainReviewStep(taskId);
 
-    return task;
+    return this.taskManager.getTask(taskId) ?? task;
   }
 
   /**
@@ -1686,7 +2300,7 @@ export class Orchestrator {
     if (!mainAgentId) return;
 
     const reviewPrompt = buildMainReviewPrompt(task);
-    await this.sendPrompt(mainAgentId, reviewPrompt, undefined, "main", task.title);
+    await this.sendPrompt(mainAgentId, reviewPrompt, undefined, "main", task.title, undefined, taskId);
   }
 
   /**
@@ -1699,28 +2313,34 @@ export class Orchestrator {
     decision: string,
     reason?: string,
     acceptorId?: string,
+    structured?: StructuredReviewResult,
   ): Promise<{ decision: string; nextAction: string }> {
     const task = this.taskManager.getTask(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
+    const hasCriticalFinding = structured?.findings.some((finding) => finding.severity === "critical");
+    const effectiveDecision = hasCriticalFinding ? "SEND_BACK" : decision;
+    const effectiveReason = hasCriticalFinding
+      ? reason ?? this.formatCriticalFindingReason(structured?.findings ?? [])
+      : reason;
 
-    if (decision === "APPROVE_FOR_ACCEPTANCE") {
+    if (effectiveDecision === "APPROVE_FOR_ACCEPTANCE") {
       // Find or use provided acceptor
       const effectiveAcceptorId = acceptorId ?? this.findAcceptorAgentId();
       if (!effectiveAcceptorId) {
         throw new Error("No acceptance agent available. Configure an agent with acceptance role.");
       }
       await this.createAcceptanceFlow(taskId, effectiveAcceptorId);
-      return { decision, nextAction: "acceptance_created" };
+      return { decision: effectiveDecision, nextAction: "acceptance_created" };
     }
 
-    if (decision === "SEND_BACK") {
+    if (effectiveDecision === "SEND_BACK") {
       const { newSession } = this.taskManager.triggerRework(
         taskId,
-        reason ?? "Main Agent review: sent back for rework",
+        effectiveReason ?? "Main Agent review: sent back for rework",
       );
 
       // Send rework directive to dev agent
-      const reworkPrompt = `# Rework Required [${task.taskId}]\n\nMain Agent review returned this task for rework.\n\n**Reason:** ${reason ?? "Unspecified"}\n\nPlease address and resubmit.`;
+      const reworkPrompt = `# Rework Required [${task.taskId}]\n\nMain Agent review returned this task for rework.\n\n**Reason:** ${effectiveReason ?? "Unspecified"}\n\nPlease address and resubmit.`;
       if (newSession) {
         const devRolePrompt = this.buildSystemRolePrompt("dev", task);
         const session = await this.startRoleSession(
@@ -1738,9 +2358,10 @@ export class Orchestrator {
         "dev",
         task.title,
         this.buildSystemRolePrompt("dev", task),
+        task.taskId,
       );
 
-      return { decision, nextAction: "rework_triggered" };
+      return { decision: effectiveDecision, nextAction: "rework_triggered" };
     }
 
     throw new Error(`Invalid review decision: "${decision}". Expected APPROVE_FOR_ACCEPTANCE or SEND_BACK.`);
@@ -1789,6 +2410,29 @@ export class Orchestrator {
     return this.projectConfig;
   }
 
+  private syncRTKCommandWrapper(config: MercuryConfig | null = this.projectConfig): void {
+    installRTKCommandWrapper(config?.rtk);
+  }
+
+  private async validateRTKConfiguration(
+    config: MercuryConfig | null = this.projectConfig,
+  ): Promise<void> {
+    const rtkConfig = config?.rtk;
+    if (!rtkConfig?.enabled) {
+      return;
+    }
+
+    const available = await isRTKAvailable(rtkConfig);
+    if (!available) {
+      const binary = rtkConfig.binaryPath?.trim() || "rtk";
+      throw new Error(`RTK is enabled but unavailable: ${binary}`);
+    }
+
+    this.transport.sendNotification("log", {
+      message: `[rtk] Enabled for commands: ${rtkConfig.commands.join(", ") || "(none)"}`,
+    });
+  }
+
   /**
    * Persist the current projectConfig to disk using atomic write (write tmp + rename).
    * Errors are logged but never thrown — config persistence is best-effort.
@@ -1812,11 +2456,14 @@ export class Orchestrator {
   }
 
   private async updateConfig(config: MercuryConfig): Promise<{ ok: true }> {
+    await this.validateRTKConfiguration(config);
+
     const prevAutoInject = this.projectConfig?.obsidian?.autoInjectContext;
     const prevContextFiles = this.projectConfig?.obsidian?.contextFiles?.join(",");
     const prevRoleContextFiles = JSON.stringify(this.projectConfig?.obsidian?.roleContextFiles ?? {});
 
     this.projectConfig = config;
+    this.syncRTKCommandWrapper(config);
 
     // Hot-reload agents from new config
     const currentIds = new Set(this.registry.listAgents().map((a) => a.id));

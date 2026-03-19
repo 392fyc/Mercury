@@ -58,6 +58,7 @@ export interface CreateTaskParams {
   definitionOfDone: string[];
   requiredEvidence?: string[];
   context: string;
+  reviewConfig?: TaskBundle["reviewConfig"];
   handoffToAcceptance?: TaskBundle["handoffToAcceptance"];
   maxReworks?: number;
 }
@@ -143,6 +144,7 @@ export class TaskManager {
       definitionOfDone: params.definitionOfDone,
       requiredEvidence: params.requiredEvidence ?? [],
       context: params.context,
+      reviewConfig: params.reviewConfig,
       handoffToAcceptance: params.handoffToAcceptance,
       reworkCount: 0,
       maxReworks: params.maxReworks ?? 3,
@@ -542,7 +544,9 @@ export class TaskManager {
   bindSession(taskId: string, sessionId: string): void {
     this.sessionToTask.set(sessionId, taskId);
     const sessions = this.taskToSessions.get(taskId) ?? [];
-    sessions.push(sessionId);
+    if (!sessions.includes(sessionId)) {
+      sessions.push(sessionId);
+    }
     this.taskToSessions.set(taskId, sessions);
 
     // Agents First: update assignee.sessionId
@@ -766,6 +770,20 @@ export function buildReworkPrompt(
 
 // ─── Main Review Prompt (Phase 4: two-stage verification) ───
 
+const MAX_DIFF_CHARS = 30_000;
+const MAX_PRECHECKS_CHARS = 10_000;
+
+/** Escape triple-backtick sequences to prevent Markdown fence breakout */
+function sanitizeFenceContent(content: string): string {
+  return content.replace(/```/g, "` ` `");
+}
+
+/** Truncate content with a marker if it exceeds maxLen */
+function truncate(content: string, maxLen: number): string {
+  if (content.length <= maxLen) return content;
+  return content.slice(0, maxLen) + "\n...[truncated]";
+}
+
 export function buildMainReviewPrompt(task: TaskBundle): string {
   const lines: string[] = [];
 
@@ -774,12 +792,31 @@ export function buildMainReviewPrompt(task: TaskBundle): string {
 
   // Full receipt (Main Agent is the originator — not blind)
   if (task.implementationReceipt) {
+    const receiptJson = sanitizeFenceContent(
+      JSON.stringify(task.implementationReceipt, null, 2)
+    );
     lines.push("## Implementation Receipt");
     lines.push("```json");
-    lines.push(JSON.stringify(task.implementationReceipt, null, 2));
+    lines.push(receiptJson);
     lines.push("```");
     lines.push("");
   }
+
+  const preChecksRaw = JSON.stringify(task.mainReview?.preChecks ?? [], null, 2);
+  const preChecksSafe = truncate(sanitizeFenceContent(preChecksRaw), MAX_PRECHECKS_CHARS);
+  lines.push("## Pre-check Results");
+  lines.push("```json");
+  lines.push(preChecksSafe);
+  lines.push("```");
+  lines.push("");
+
+  const diffRaw = task.mainReview?.gitDiff?.trim() || "# No diff captured";
+  const diffSafe = truncate(sanitizeFenceContent(diffRaw), MAX_DIFF_CHARS);
+  lines.push("## Git Diff (`develop...HEAD`)");
+  lines.push("```diff");
+  lines.push(diffSafe);
+  lines.push("```");
+  lines.push("");
 
   // Scope violations (if any)
   if (task.implementationReceipt?.scopeViolations?.length) {
@@ -798,10 +835,26 @@ export function buildMainReviewPrompt(task: TaskBundle): string {
   lines.push("");
 
   lines.push("## Instructions");
-  lines.push("Quick review: Does this implementation satisfy the definition of done?");
-  lines.push("Reply with one of:");
-  lines.push("- `APPROVE_FOR_ACCEPTANCE` — proceed to blind acceptance review");
-  lines.push("- `SEND_BACK` followed by reasons — return to dev agent for rework");
+  lines.push("Quick review: verify the implementation receipt, pre-check results, git diff, and definition of done.");
+  lines.push("Return JSON in this format:");
+  lines.push("```json");
+  lines.push(JSON.stringify({
+    decision: "APPROVE_FOR_ACCEPTANCE|SEND_BACK",
+    summary: "short summary",
+    reason: "required when sending back or when findings exist",
+    findings: [
+      {
+        severity: "critical|major|minor|info",
+        title: "issue title",
+        detail: "what is wrong or what was verified",
+        file: "optional/path.ts",
+        line: 123,
+      },
+    ],
+  }, null, 2));
+  lines.push("```");
+  lines.push("Any `critical` finding must result in `SEND_BACK`.");
+  lines.push("Legacy fallback is still accepted: `APPROVE_FOR_ACCEPTANCE` or `SEND_BACK: <reason>`.");
 
   return lines.join("\n");
 }

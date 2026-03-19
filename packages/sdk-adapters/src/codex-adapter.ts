@@ -6,8 +6,8 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { unlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, unlink, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
   AgentAdapter,
@@ -530,6 +530,32 @@ export class CodexAdapter implements AgentAdapter {
     if (record) {
       record.info.sessionName = name;
     }
+  }
+
+  async listModels(): Promise<{ id: string; name: string }[]> {
+    // Read the model cache that the Codex CLI maintains at ~/.codex/models_cache.json
+    // This ensures the GUI shows exactly the same models as the CLI.
+    try {
+      const cachePath = join(homedir(), ".codex", "models_cache.json");
+      const raw = await readFile(cachePath, "utf8");
+      const data = JSON.parse(raw) as {
+        models: { slug: string; display_name: string; visibility?: string }[];
+      };
+      return data.models
+        .filter((m) => m.visibility === "list")
+        .map((m) => ({ id: m.slug, name: m.display_name }));
+    } catch {
+      // Fallback if cache file is missing or unreadable
+      return [
+        { id: "gpt-5.4", name: "GPT-5.4" },
+        { id: "gpt-5.4-mini", name: "GPT-5.4 Mini" },
+        { id: "gpt-5.3-codex", name: "GPT-5.3 Codex" },
+      ];
+    }
+  }
+
+  setModel(model: string): void {
+    this.config.model = model;
   }
 
   getSlashCommands(): SlashCommand[] {

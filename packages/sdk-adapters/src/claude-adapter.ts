@@ -40,6 +40,8 @@ export class ClaudeAdapter implements AgentAdapter {
   private queryModule: typeof import("@anthropic-ai/claude-agent-sdk") | null =
     null;
   private sharedSystemPrompt?: string;
+  private activeQueries = new Map<string, AsyncGenerator<unknown, void> & { supportedModels?(): Promise<unknown[]>; setModel?(model?: string): Promise<void> }>();
+  private modelsCache: { id: string; name: string }[] | null = null;
 
   constructor(config?: Partial<AgentConfig>) {
     this.config = {
@@ -297,6 +299,10 @@ export class ClaudeAdapter implements AgentAdapter {
       cwd,
     };
 
+    if (this.config.model) {
+      options.model = this.config.model;
+    }
+
     const onApprovalRequest = hooks?.onApprovalRequest;
     if (onApprovalRequest) {
       options.canUseTool = async (
@@ -404,7 +410,9 @@ export class ClaudeAdapter implements AgentAdapter {
     let hasYieldedAssistant = false;
 
     // sdk.query() accepts string | AsyncIterable<SDKUserMessage> — both paths converge here
-    for await (const message of sdk.query(queryArgs as { prompt: string; options: Record<string, unknown> })) {
+    const queryIter = sdk.query(queryArgs as { prompt: string; options: Record<string, unknown> });
+    this.activeQueries.set(sessionId, queryIter as Parameters<typeof this.activeQueries.set>[1]);
+    for await (const message of queryIter) {
       session.lastActiveAt = Date.now();
 
       if (typeof message !== "object" || message === null || !("type" in message)) {
@@ -457,6 +465,8 @@ export class ClaudeAdapter implements AgentAdapter {
         }
       }
     }
+
+    this.activeQueries.delete(sessionId);
 
     // Store SDK session ID for future resume after restart.
     if (sdkSessionId) {
@@ -526,6 +536,68 @@ export class ClaudeAdapter implements AgentAdapter {
     // The first prompt to the new session will include the summary
     // so the agent has context from the previous session
     return newSession;
+  }
+
+  async listModels(): Promise<{ id: string; name: string }[]> {
+    if (this.modelsCache) return this.modelsCache;
+
+    const mapModels = (models: { value: string; displayName: string; description?: string }[]) =>
+      models
+        .filter((m) => m.value)
+        .map((m) => {
+          // description format: "Opus 4.6 with 1M context [NEW] · Most capable..."
+          // extract "Name X.Y" from the part before "·"
+          const beforeDot = m.description?.split("·")[0]?.trim() ?? "";
+          const versionMatch = beforeDot.match(/^([\w][\w\s]*?\s\d+\.\d+)/);
+          const name = versionMatch ? versionMatch[1] : (m.displayName || m.value);
+          return { id: m.value, name };
+        });
+
+    // If there's an active query, use its supportedModels() method
+    const firstActive = this.activeQueries.values().next().value;
+    if (firstActive?.supportedModels) {
+      try {
+        const models = await firstActive.supportedModels();
+        this.modelsCache = mapModels(models as { value: string; displayName: string }[]);
+        return this.modelsCache;
+      } catch {
+        // Fall through to SDK query approach
+      }
+    }
+
+    // No active query — create a lightweight one to retrieve models
+    const sdk = await this.loadSdk();
+    const q = sdk.query({
+      prompt: "Return immediately.",
+      options: { maxTurns: 1, permissionMode: "plan" },
+    }) as AsyncGenerator<unknown, void> & { supportedModels(): Promise<{ value: string; displayName: string }[]> };
+
+    try {
+      const models = await q.supportedModels();
+      this.modelsCache = mapModels(models);
+    } catch {
+      this.modelsCache = [];
+    } finally {
+      // Drain the query so the session ends cleanly
+      try {
+        const interrupt = (q as unknown as { interrupt?(): Promise<void> }).interrupt;
+        if (interrupt) await interrupt.call(q);
+      } catch { /* ignore */ }
+    }
+
+    return this.modelsCache;
+  }
+
+  setModel(model: string): void {
+    this.config.model = model;
+    // Clear cache so next listModels reflects new state
+    this.modelsCache = null;
+    // Switch model on all active queries
+    for (const q of this.activeQueries.values()) {
+      if (q.setModel) {
+        q.setModel(model).catch(() => { /* best-effort */ });
+      }
+    }
   }
 
   getSlashCommands(): SlashCommand[] {
