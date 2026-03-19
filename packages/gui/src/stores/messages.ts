@@ -112,24 +112,25 @@ function clearMessages(panelKey: string) {
  * @param panelKey - roleSlotKey "{role}:{agentId}"
  */
 async function sendPrompt(panelKey: string, prompt: string, images?: ImageAttachment[]) {
-  const { setStatus, setSessionInfo, clearSession } = useAgentStore();
+  const { setStatus, setSessionInfo } = useAgentStore();
 
   // Parse panelKey to get role and agentId
   const colonIdx = panelKey.indexOf(":");
   const role = panelKey.slice(0, colonIdx);
   const agentId = panelKey.slice(colonIdx + 1);
 
-  // Handle /clear and /new — clear frontend messages and end backend session
+  // Handle built-in commands — intercepted before reaching the backend
   const trimmed = prompt.trim().toLowerCase();
+
+  // /history — open history panel
+  if (trimmed === "/history") {
+    await openHistory(panelKey);
+    return;
+  }
+
+  // /clear and /new — delegate to newSession
   if (trimmed === "/clear" || trimmed === "/new") {
-    const sid = useAgentStore().getSession(panelKey);
-    if (sid) {
-      try { await bridgeStopSession(agentId, sid); } catch { /* best-effort */ }
-      sessionToPanelKey.delete(sid);
-    }
-    clearMessages(panelKey);
-    clearSession(panelKey);
-    setStatus(panelKey, "idle");
+    await newSession(panelKey);
     return;
   }
 
@@ -383,6 +384,60 @@ function dismissHistoryView(): void {
   pendingHistoryView.value = null;
 }
 
+/**
+ * Archive the current session — marks it as complete and clears the panel.
+ * Unlike /new which just clears context, Archive signals intentional session completion.
+ */
+async function archiveSession(panelKey: string): Promise<void> {
+  const { setStatus, clearSession, getSession } = useAgentStore();
+  const colonIdx = panelKey.indexOf(":");
+  const agentId = panelKey.slice(colonIdx + 1);
+
+  const sid = getSession(panelKey);
+  if (sid) {
+    try { await bridgeStopSession(agentId, sid); } catch { /* best-effort */ }
+    sessionToPanelKey.delete(sid);
+  }
+
+  // Clear first, then show confirmation so user sees it in the fresh panel
+  clearMessages(panelKey);
+  clearSession(panelKey);
+  setStatus(panelKey, "idle");
+
+  appendMessage(panelKey, {
+    role: "system",
+    content: "Session archived",
+    timestamp: Date.now(),
+  });
+}
+
+/**
+ * Start a new session — clears context without marking previous as complete.
+ */
+async function newSession(panelKey: string): Promise<void> {
+  const { setStatus, clearSession, getSession } = useAgentStore();
+  const colonIdx = panelKey.indexOf(":");
+  const agentId = panelKey.slice(colonIdx + 1);
+
+  const sid = getSession(panelKey);
+  if (sid) {
+    try { await bridgeStopSession(agentId, sid); } catch { /* best-effort */ }
+    sessionToPanelKey.delete(sid);
+  }
+
+  clearMessages(panelKey);
+  clearSession(panelKey);
+  setStatus(panelKey, "idle");
+}
+
+/**
+ * Get user message history for a panel (for ↑↓ navigation).
+ */
+function getUserMessageHistory(panelKey: string): string[] {
+  const msgs = messages.value.get(panelKey) ?? [];
+  return msgs.filter((m) => m.role === "user").map((m) => m.content);
+}
+
 export function useMessageStore() {
   return {
     messages,
@@ -399,5 +454,8 @@ export function useMessageStore() {
     openHistory,
     selectHistorySession,
     dismissHistoryView,
+    archiveSession,
+    newSession,
+    getUserMessageHistory,
   };
 }
