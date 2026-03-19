@@ -97,10 +97,12 @@ function createEmptyRoleContextFiles(): NonNullable<ObsidianConfig["roleContextF
   };
 }
 
+/** Return a default ObsidianConfig with all fields initialized to safe empty values. */
 function createEmptyObsidianConfig(): ObsidianConfig {
   return {
     enabled: false,
     vaultName: "",
+    vaultPath: "",
     obsidianBin: "",
     autoInjectContext: false,
     contextFiles: [],
@@ -185,6 +187,14 @@ async function browseWorkDir() {
   const selected = await open({ directory: true, title: "Select Working Directory" });
   if (selected && typeof selected === "string") {
     editWorkDir.value = selected;
+  }
+}
+
+/** Open a native directory picker for the KB vault path. */
+async function browseVaultPath() {
+  const selected = await open({ directory: true, title: "Select KB vault directory" });
+  if (selected && typeof selected === "string") {
+    editObsidian.value.vaultPath = selected;
   }
 }
 
@@ -470,6 +480,17 @@ function handleKeydown(event: KeyboardEvent) {
               <label>
                 <span>Vault Name</span>
                 <input v-model="editObsidian.vaultName" class="field-input full-width" placeholder="Mercury-KB" />
+              </label>
+              <label>
+                <span>KB Path (vault file system path)</span>
+                <div class="dir-input-row">
+                  <input
+                    v-model="editObsidian.vaultPath"
+                    class="field-input dir-field"
+                    placeholder="D:/Mercury/Mercury_KB"
+                  />
+                  <button type="button" class="browse-btn" @click="browseVaultPath">Browse</button>
+                </div>
               </label>
               <label>
                 <span>Obsidian Binary Path</span>

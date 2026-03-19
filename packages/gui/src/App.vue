@@ -23,7 +23,9 @@ const { loadTasks, initTaskListeners } = useTaskStore();
 
 const showSettings = ref(false);
 const activeView = ref<"agents" | "tasks">("agents");
+/** Whether a main-role agent is configured and available. */
 const hasMainAgent = computed(() => Boolean(mainAgent.value));
+/** Number of non-main (sub) agent panels currently rendered. */
 const subAgentCount = computed(() => rolePanels.value.length);
 
 onMounted(async () => {
@@ -50,51 +52,53 @@ onMounted(async () => {
     </div>
 
     <div class="workspace">
-      <!-- Agents View -->
-      <template v-if="activeView === 'agents'">
-        <div
-          v-if="agents.length > 0"
-          class="agents-area"
-          :class="{
-            'main-only': hasMainAgent && subAgentCount === 0,
-            'single-sub-agent': subAgentCount === 1,
-            'multi-sub-agents': subAgentCount > 1,
-            'sub-agents-only': !hasMainAgent && subAgentCount > 0,
-          }"
-        >
-          <AgentPanel
-            v-if="mainAgent"
-            :agentId="mainAgent.id"
-            :agentName="mainAgent.displayName"
-            :role="'main'"
-            :panelKey="`main:${mainAgent.id}`"
-          />
+      <div class="workspace-main">
+        <!-- Agents View -->
+        <div v-show="activeView === 'agents'" class="workspace-view">
           <div
-            v-if="subAgentCount > 0"
-            class="sub-agents"
+            v-if="agents.length > 0"
+            class="agents-area"
             :class="{
-              'single-panel': subAgentCount === 1,
-              'multi-panel': subAgentCount > 1,
+              'main-only': hasMainAgent && subAgentCount === 0,
+              'single-sub-agent': subAgentCount === 1,
+              'multi-sub-agents': subAgentCount > 1,
+              'sub-agents-only': !hasMainAgent && subAgentCount > 0,
             }"
           >
             <AgentPanel
-              v-for="panel in rolePanels"
-              :key="panel.panelKey"
-              :agentId="panel.agentId"
-              :agentName="panel.displayName"
-              :role="panel.role"
-              :panelKey="panel.panelKey"
+              v-if="mainAgent"
+              :agentId="mainAgent.id"
+              :agentName="mainAgent.displayName"
+              :role="'main'"
+              :panelKey="`main:${mainAgent.id}`"
             />
+            <div
+              v-if="subAgentCount > 0"
+              class="sub-agents"
+              :class="{
+                'single-panel': subAgentCount === 1,
+                'multi-panel': subAgentCount > 1,
+              }"
+            >
+              <AgentPanel
+                v-for="panel in rolePanels"
+                :key="panel.panelKey"
+                :agentId="panel.agentId"
+                :agentName="panel.displayName"
+                :role="panel.role"
+                :panelKey="panel.panelKey"
+              />
+            </div>
+          </div>
+          <div v-else class="loading-state">
+            <p v-if="!sidecarReady">Connecting to orchestrator...</p>
+            <p v-else>No agents configured</p>
           </div>
         </div>
-        <div v-else class="loading-state">
-          <p v-if="!sidecarReady">Connecting to orchestrator...</p>
-          <p v-else>No agents configured</p>
-        </div>
-      </template>
 
-      <!-- Tasks View -->
-      <TaskDashboard v-if="activeView === 'tasks'" />
+        <!-- Tasks View -->
+        <TaskDashboard v-show="activeView === 'tasks'" class="workspace-view" />
+      </div>
 
       <EventLog />
     </div>
@@ -129,13 +133,31 @@ onMounted(async () => {
   min-height: 0;
 }
 
+.workspace-main {
+  position: relative;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.workspace-view {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .agents-area {
   --agent-panel-min-height: 280px;
   display: grid;
   grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
   gap: var(--panel-gap);
   min-height: 0;
+  height: 100%;
   align-items: stretch;
+  flex: 1;
 }
 
 .agents-area :deep(.agent-panel) {
@@ -175,6 +197,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex: 1;
   color: var(--text-muted);
   font-size: 14px;
 }

@@ -190,23 +190,33 @@ export async function updateConfig(
 // ─── Task Orchestration Operations ───
 
 export type TaskPriority = "sev-0" | "sev-1" | "sev-2" | "sev-3";
+/** Task lifecycle status. SYNC: mirrors @mercury/core TaskStatus. */
 export type TaskStatus =
   | "drafted" | "dispatched" | "in_progress" | "implementation_done"
-  | "acceptance" | "verified" | "closed" | "failed" | "blocked";
+  | "main_review" | "acceptance" | "verified" | "closed" | "failed" | "blocked";
 export type AcceptanceVerdict = "pass" | "partial" | "fail" | "blocked";
 
+/** Agent assignment metadata. SYNC: mirrors @mercury/core TaskAssignee. */
 export interface TaskAssignee {
   agentId: string;
   model?: string;
   sessionId?: string;
 }
 
+/**
+ * Frontend representation of a task bundle with lifecycle timestamps.
+ * SYNC: This interface mirrors @mercury/core TaskBundle. Keep in sync when modifying fields.
+ * Separate definition required due to Tauri serialization boundary (Rust <-> JS).
+ */
 export interface TaskBundle {
   taskId: string;
   title: string;
   phaseId?: string;
   priority: TaskPriority;
   status: TaskStatus;
+  createdAt?: string;
+  closedAt: string | null;
+  failedAt: string | null;
   assignedTo: string;
   assignee?: TaskAssignee;
   branch?: string;

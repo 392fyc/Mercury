@@ -49,4 +49,5 @@ CLAUDE.md
 # Mercury runtime state
 .mercury/sessions.json
 .mercury/transcripts/
+.mercury/backups/
 mercury.config.json
