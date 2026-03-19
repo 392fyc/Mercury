@@ -132,13 +132,19 @@ onMounted(async () => {
 }
 
 .workspace-main {
+  position: relative;
   min-height: 0;
   height: 100%;
+  overflow: hidden;
 }
 
 .workspace-view {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
-  height: 100%;
+  overflow: hidden;
 }
 
 .agents-area {
@@ -147,7 +153,9 @@ onMounted(async () => {
   grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
   gap: var(--panel-gap);
   min-height: 0;
+  height: 100%;
   align-items: stretch;
+  flex: 1;
 }
 
 .agents-area :deep(.agent-panel) {
@@ -187,6 +195,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex: 1;
   color: var(--text-muted);
   font-size: 14px;
 }
