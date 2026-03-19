@@ -62,15 +62,17 @@ if [ "$CR_STATUS" = "success" ]; then
   exit 0
 fi
 
-if [ "$CR_STATUS" = "pending" ]; then
-  cat >&2 <<MSG
+case "$CR_STATUS" in
+  pending|queued|in_progress)
+    cat >&2 <<MSG
 BLOCKED: CodeRabbit review still in progress for PR #${PR_NUMBER}.
 Wait for review to complete before merging.
 To check: gh pr checks ${PR_NUMBER}
 To bypass (human-approved): touch ${STATE_DIR}/pr-merge-approved-${PR_NUMBER}
 MSG
-  exit 2
-fi
+    exit 2
+    ;;
+esac
 
 if [ -z "$CR_STATUS" ]; then
   cat >&2 <<MSG
