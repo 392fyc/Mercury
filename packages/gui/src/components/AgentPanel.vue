@@ -509,21 +509,24 @@ watch(
         <!-- User messages: right-aligned with avatar -->
         <template v-else-if="msg.role === 'user'">
           <div class="message-bubble user-bubble">
-            <!-- getApprovalRequestId is O(1) — two property checks; double-call is acceptable -->
+            <!-- ApprovalCard is exclusive — replaces normal content -->
             <ApprovalCard
               v-if="getApprovalRequestId(msg.metadata)"
               :requestId="getApprovalRequestId(msg.metadata)!"
             />
-            <div v-else-if="msg.images && msg.images.length > 0" class="message-images">
-              <img
-                v-for="(img, j) in msg.images"
-                :key="j"
-                :src="imageDataUri(img)"
-                :alt="img.filename || 'attached image'"
-                class="inline-image"
-              />
-            </div>
-            <div v-else class="message-content">{{ msg.content }}</div>
+            <!-- Images and text are independent — both can render for the same message -->
+            <template v-else>
+              <div v-if="msg.images && msg.images.length > 0" class="message-images">
+                <img
+                  v-for="(img, j) in msg.images"
+                  :key="j"
+                  :src="imageDataUri(img)"
+                  :alt="img.filename || 'attached image'"
+                  class="inline-image"
+                />
+              </div>
+              <div v-if="msg.content" class="message-content">{{ msg.content }}</div>
+            </template>
           </div>
           <span class="msg-avatar user-avatar">U</span>
         </template>
