@@ -51,7 +51,7 @@ onMounted(async () => {
 
     <div class="workspace">
       <!-- Agents View -->
-      <template v-if="activeView === 'agents'">
+      <div v-show="activeView === 'agents'" class="workspace-view">
         <div
           v-if="agents.length > 0"
           class="agents-area"
@@ -91,10 +91,10 @@ onMounted(async () => {
           <p v-if="!sidecarReady">Connecting to orchestrator...</p>
           <p v-else>No agents configured</p>
         </div>
-      </template>
+      </div>
 
       <!-- Tasks View -->
-      <TaskDashboard v-if="activeView === 'tasks'" />
+      <TaskDashboard v-show="activeView === 'tasks'" class="workspace-view" />
 
       <EventLog />
     </div>
@@ -126,6 +126,10 @@ onMounted(async () => {
   grid-template-rows: minmax(0, 1fr) clamp(120px, 18vh, 152px);
   gap: var(--panel-gap);
   padding: var(--panel-gap);
+  min-height: 0;
+}
+
+.workspace-view {
   min-height: 0;
 }
 
