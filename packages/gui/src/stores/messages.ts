@@ -152,6 +152,8 @@ async function sendPrompt(panelKey: string, prompt: string, images?: ImageAttach
           lastActiveAt: Date.now(),
         });
         sessionToPanelKey.set(result.sessionId, panelKey);
+        // Backfill history from the resumed session
+        await loadSessionHistory(panelKey, result.sessionId);
         appendMessage(panelKey, {
           role: "system",
           content: `Resumed session ${result.sessionId.slice(0, 8)}`,
@@ -303,6 +305,8 @@ async function pickSession(sessionId: string): Promise<void> {
       lastActiveAt: Date.now(),
     });
     sessionToPanelKey.set(result.sessionId, panelKey);
+    // Backfill history from the resumed session
+    await loadSessionHistory(panelKey, result.sessionId);
     appendMessage(panelKey, {
       role: "system",
       content: `Resumed session ${result.sessionId.slice(0, 8)}`,
@@ -315,6 +319,31 @@ async function pickSession(sessionId: string): Promise<void> {
       content: `Resume failed: ${error}`,
       timestamp: Date.now(),
     });
+  }
+}
+
+/**
+ * Load historical messages from a session into the panel's message store.
+ * Clears existing messages and backfills from the backend transcript.
+ */
+async function loadSessionHistory(panelKey: string, sessionId: string): Promise<void> {
+  try {
+    const result = await bridgeGetSessionMessages(sessionId);
+    if (!result.messages || result.messages.length === 0) return;
+
+    // Clear current messages and backfill with historical ones
+    clearMessages(panelKey);
+    for (const msg of result.messages) {
+      appendMessage(panelKey, {
+        role: msg.role,
+        content: msg.content,
+        timestamp: msg.timestamp,
+        images: msg.images,
+        metadata: msg.metadata,
+      });
+    }
+  } catch (e) {
+    console.debug("loadSessionHistory: failed to load history", e);
   }
 }
 

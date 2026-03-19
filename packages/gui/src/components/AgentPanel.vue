@@ -246,11 +246,19 @@ function getApprovalRequestId(metadata?: Record<string, unknown>): string | null
  * - "passthrough": forwarded to backend CLI as-is (palette entry for discoverability)
  */
 const BUILTIN_COMMANDS: SlashCommand[] = [
+  // GUI-intercepted commands
   { name: "/new", description: "Start a new session (clears current context)", category: "built-in" },
   { name: "/clear", description: "Clear messages and stop current session", category: "built-in" },
   { name: "/resume", description: "Resume a previous session", category: "built-in", args: [{ name: "sessionId", description: "Session ID to resume", required: false, type: "string" }] },
   { name: "/history", description: "View session history", category: "built-in" },
+  // Passthrough: forwarded to backend CLI (palette entry for discoverability)
   { name: "/compact", description: "Compact conversation context", category: "passthrough" },
+  { name: "/doctor", description: "Check CLI installation and configuration", category: "passthrough" },
+  { name: "/status", description: "Show current session status", category: "passthrough" },
+  { name: "/cost", description: "Show token usage and cost for this session", category: "passthrough" },
+  { name: "/config", description: "Show or modify configuration", category: "passthrough" },
+  { name: "/login", description: "Authenticate with the CLI provider", category: "passthrough" },
+  { name: "/logout", description: "Sign out of the CLI provider", category: "passthrough" },
 ];
 
 const backendCommands = ref<SlashCommand[]>([]);
