@@ -92,16 +92,19 @@ function loadFromStorage(): void {
   }
 }
 
+/** Retrieve messages for a specific panel. */
 function getMessages(panelKey: string): DisplayMessage[] {
   return messages.value.get(panelKey) ?? [];
 }
 
+/** Append a message to a panel's history and persist to localStorage. */
 function appendMessage(panelKey: string, msg: DisplayMessage) {
   const current = messages.value.get(panelKey) ?? [];
   messages.value = new Map(messages.value).set(panelKey, [...current, msg]);
   saveToStorage();
 }
 
+/** Clear all messages for a panel and persist to localStorage. */
 function clearMessages(panelKey: string) {
   messages.value = new Map(messages.value).set(panelKey, []);
   saveToStorage();
@@ -235,6 +238,7 @@ function resolvePanelKey(_agentId: string, sessionId: string): string | null {
 
 let messageListenersInitialized = false;
 
+/** Register Tauri event listeners for agent messages, status, and errors. */
 async function initMessageListeners() {
   if (messageListenersInitialized) return;
   messageListenersInitialized = true;
@@ -279,6 +283,7 @@ async function initMessageListeners() {
   });
 }
 
+/** Resume a session selected from the SessionPicker modal. */
 async function pickSession(sessionId: string): Promise<void> {
   const pick = pendingSessionPick.value;
   if (!pick) return;
@@ -313,10 +318,12 @@ async function pickSession(sessionId: string): Promise<void> {
   }
 }
 
+/** Close the session picker modal without selecting a session. */
 function dismissSessionPick(): void {
   pendingSessionPick.value = null;
 }
 
+/** Open the session picker modal listing resumable sessions for this panel. */
 async function openSessionPicker(panelKey: string): Promise<void> {
   const colonIdx = panelKey.indexOf(":");
   const role = panelKey.slice(0, colonIdx);
@@ -343,6 +350,7 @@ async function openSessionPicker(panelKey: string): Promise<void> {
   }
 }
 
+/** Open the history panel showing all sessions for this panel's agent. */
 async function openHistory(panelKey: string): Promise<void> {
   const colonIdx = panelKey.indexOf(":");
   const agentId = panelKey.slice(colonIdx + 1);
@@ -369,6 +377,7 @@ async function openHistory(panelKey: string): Promise<void> {
   }
 }
 
+/** Load transcript messages for a session into the history viewer. */
 async function selectHistorySession(sessionId: string): Promise<void> {
   const current = pendingHistoryView.value;
   if (!current) return;
@@ -380,6 +389,7 @@ async function selectHistorySession(sessionId: string): Promise<void> {
   };
 }
 
+/** Close the history viewer modal. */
 function dismissHistoryView(): void {
   pendingHistoryView.value = null;
 }
@@ -396,7 +406,7 @@ async function archiveSession(panelKey: string): Promise<void> {
 
   const sid = getSession(panelKey);
   if (sid) {
-    try { await bridgeStopSession(agentId, sid); } catch { /* best-effort */ }
+    try { await bridgeStopSession(agentId, sid); } catch (e) { console.debug("archiveSession: stop failed (best-effort)", e); }
     sessionToPanelKey.delete(sid);
   }
 
@@ -422,7 +432,7 @@ async function newSession(panelKey: string): Promise<void> {
 
   const sid = getSession(panelKey);
   if (sid) {
-    try { await bridgeStopSession(agentId, sid); } catch { /* best-effort */ }
+    try { await bridgeStopSession(agentId, sid); } catch (e) { console.debug("newSession: stop failed (best-effort)", e); }
     sessionToPanelKey.delete(sid);
   }
 

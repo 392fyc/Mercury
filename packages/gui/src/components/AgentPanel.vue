@@ -378,11 +378,19 @@ function handleKeydown(e: KeyboardEvent) {
   if (e.key === "ArrowDown" && !showSlashPalette.value && historyIndex.value !== -1) {
     e.preventDefault();
     const history = getUserMessageHistory(props.panelKey);
-    if (historyIndex.value < history.length - 1) {
+    // Bounds check: history may have changed since ArrowUp set historyIndex
+    if (history.length === 0) {
+      historyIndex.value = -1;
+      inputText.value = savedInput.value;
+    } else if (historyIndex.value >= history.length) {
+      // Index out of range — clamp to last entry
+      historyIndex.value = history.length - 1;
+      inputText.value = history[historyIndex.value];
+    } else if (historyIndex.value < history.length - 1) {
       historyIndex.value++;
       inputText.value = history[historyIndex.value];
     } else {
-      // Back to the saved input
+      // At the end of history — back to saved input
       historyIndex.value = -1;
       inputText.value = savedInput.value;
     }
@@ -475,6 +483,7 @@ watch(
           v-else
           class="new-session-btn"
           title="Start new session"
+          aria-label="Start new session"
           @click="newSession(panelKey)"
         >+</button>
       </div>
