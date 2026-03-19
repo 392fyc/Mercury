@@ -381,12 +381,26 @@ async function openHistory(panelKey: string): Promise<void> {
 async function selectHistorySession(sessionId: string): Promise<void> {
   const current = pendingHistoryView.value;
   if (!current) return;
-  const result = await bridgeGetSessionMessages(sessionId);
-  pendingHistoryView.value = {
-    ...current,
-    selectedSessionId: sessionId,
-    messages: result.messages,
-  };
+
+  // Mark as selected immediately for UI responsiveness
+  pendingHistoryView.value = { ...current, selectedSessionId: sessionId, messages: [] };
+
+  try {
+    const result = await bridgeGetSessionMessages(sessionId);
+    // Guard against stale response: only apply if this session is still selected
+    if (pendingHistoryView.value?.selectedSessionId !== sessionId) return;
+    pendingHistoryView.value = {
+      ...pendingHistoryView.value,
+      messages: result.messages,
+    };
+  } catch (e) {
+    console.debug("selectHistorySession: failed to load transcript", e);
+    if (pendingHistoryView.value?.selectedSessionId !== sessionId) return;
+    pendingHistoryView.value = {
+      ...pendingHistoryView.value,
+      messages: [],
+    };
+  }
 }
 
 /** Close the history viewer modal. */
