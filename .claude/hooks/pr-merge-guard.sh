@@ -12,7 +12,15 @@ COMMAND=$(echo "$INPUT" | sed -n 's/.*"command"[[:space:]]*:[[:space:]]*"\([^"]*
 echo "$COMMAND" | grep -qE 'gh[[:space:]]+pr[[:space:]]+merge' || exit 0
 
 # Extract PR selector — first non-flag token after `gh pr merge`
-PR_SELECTOR=$(echo "$COMMAND" | sed -n 's/.*gh[[:space:]][[:space:]]*pr[[:space:]][[:space:]]*merge[[:space:]][[:space:]]*\([^[:space:]][^[:space:]]*\).*/\1/p')
+# Strip `gh pr merge` prefix, then find first token not starting with -
+MERGE_ARGS=$(echo "$COMMAND" | sed -n 's/.*gh[[:space:]][[:space:]]*pr[[:space:]][[:space:]]*merge[[:space:]][[:space:]]*//p')
+PR_SELECTOR=""
+for token in $MERGE_ARGS; do
+  case "$token" in
+    -*) continue ;;
+    *) PR_SELECTOR="$token"; break ;;
+  esac
+done
 PR_NUMBER=""
 
 case "$PR_SELECTOR" in
