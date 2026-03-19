@@ -201,6 +201,7 @@ export interface TaskAssignee {
   sessionId?: string;
 }
 
+/** Frontend representation of a task bundle with lifecycle timestamps. */
 export interface TaskBundle {
   taskId: string;
   title: string;

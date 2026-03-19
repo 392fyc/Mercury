@@ -42,10 +42,12 @@ const STATUS_ORDER: Record<string, number> = {
   failed: 8,
 };
 
+/** Return the theme color associated with a task status. */
 function statusColor(status: TaskStatus): string {
   return STATUS_LABELS.find((s) => s.status === status)?.color ?? "var(--text-muted)";
 }
 
+/** Convert a priority slug (e.g. "sev-1") to an uppercase display label. */
 function priorityLabel(p: string): string {
   return p.toUpperCase();
 }
@@ -56,6 +58,7 @@ function formatDate(iso: string): string {
   return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString();
 }
 
+/** Total number of tasks across all statuses. */
 const totalCount = computed(() =>
   Object.values(statusCounts.value).reduce((a, b) => a + (b ?? 0), 0),
 );
@@ -75,6 +78,7 @@ const sortedTasks = computed(() =>
   }),
 );
 
+/** Dispatch a drafted task and refresh its local state. */
 async function handleDispatch(taskId: string) {
   try {
     await dispatchBundleTask(taskId);
@@ -84,6 +88,7 @@ async function handleDispatch(taskId: string) {
   }
 }
 
+/** Create an acceptance flow for a completed task, picking an acceptance-role agent. */
 async function handleCreateAcceptance(taskId: string) {
   // Find an acceptance-role agent, or fall back to first available
   const acceptor = agents.value.find((a) => a.roles.includes("acceptance")) ?? agents.value[0];

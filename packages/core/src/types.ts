@@ -306,6 +306,7 @@ export interface ReviewConfig {
   diffMaxChars?: number;
 }
 
+/** SoT task bundle: tracks a unit of work through its full lifecycle. */
 export interface TaskBundle {
   taskId: string;
   title: string;

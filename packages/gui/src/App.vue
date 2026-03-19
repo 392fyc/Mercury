@@ -23,7 +23,9 @@ const { loadTasks, initTaskListeners } = useTaskStore();
 
 const showSettings = ref(false);
 const activeView = ref<"agents" | "tasks">("agents");
+/** Whether a main-role agent is configured and available. */
 const hasMainAgent = computed(() => Boolean(mainAgent.value));
+/** Number of non-main (sub) agent panels currently rendered. */
 const subAgentCount = computed(() => rolePanels.value.length);
 
 onMounted(async () => {
