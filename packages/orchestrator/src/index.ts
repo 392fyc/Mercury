@@ -30,7 +30,7 @@ type JsonRpcHttpResponse = {
   id: number | string | null;
 };
 
-/** Migrate legacy config: `role: "main"` → `roles: ["main"]` */
+/** Migrate legacy agent config format: single `role` string to `roles` array. */
 function migrateAgentConfig(agents: Record<string, unknown>[]): AgentConfig[] {
   for (const agent of agents) {
     if ("role" in agent && !("roles" in agent)) {
@@ -41,10 +41,12 @@ function migrateAgentConfig(agents: Record<string, unknown>[]): AgentConfig[] {
   return agents as unknown as AgentConfig[];
 }
 
+/** Type guard: returns true if value is a non-null, non-array object. */
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** Deep-merge config overrides into defaults, preserving structure of the defaults object. */
 function mergeConfigDefaults<T>(defaults: T, overrides: unknown): T {
   if (Array.isArray(defaults)) {
     return (Array.isArray(overrides) ? overrides : defaults) as T;
@@ -71,6 +73,7 @@ function mergeConfigDefaults<T>(defaults: T, overrides: unknown): T {
   return result as T;
 }
 
+/** Resolve relative paths in config (workDir, vaultPath, obsidianBin) to absolute paths. */
 function resolveConfigPaths(config: MercuryConfig, configFilePath: string): MercuryConfig {
   const configDir = dirname(configFilePath);
   return {
@@ -100,6 +103,7 @@ function resolveConfigPaths(config: MercuryConfig, configFilePath: string): Merc
   };
 }
 
+/** Read and parse a mercury config JSON file, applying agent config migration. */
 function readConfigFile(path: string): MercuryConfig {
   const raw = readFileSync(path, "utf-8");
   const config = JSON.parse(raw);
@@ -107,6 +111,7 @@ function readConfigFile(path: string): MercuryConfig {
   return config as MercuryConfig;
 }
 
+/** Load Mercury config from project, home, or template; bootstraps a default if none found. */
 function loadConfig(configPath?: string): { config: MercuryConfig; resolvedPath: string | null } {
   const projectConfigPath = configPath ?? resolve(process.cwd(), "mercury.config.json");
   const projectTemplatePath = resolve(dirname(projectConfigPath), "mercury.config.example.json");
@@ -176,8 +181,10 @@ function loadConfig(configPath?: string): { config: MercuryConfig; resolvedPath:
   }
 
   const bootstrappedConfig = templateConfig ?? defaultConfig;
+  let writeSucceeded = false;
   try {
     writeFileSync(projectConfigPath, JSON.stringify(bootstrappedConfig, null, 2) + "\n", "utf-8");
+    writeSucceeded = true;
     transport.log(`Bootstrapped local config at ${projectConfigPath}`);
   } catch (err) {
     transport.log(
@@ -188,7 +195,7 @@ function loadConfig(configPath?: string): { config: MercuryConfig; resolvedPath:
   transport.log(templateConfig ? "No local config found, using template defaults" : "No config found, using defaults");
   return {
     config: resolveConfigPaths(bootstrappedConfig, projectConfigPath),
-    resolvedPath: projectConfigPath,
+    resolvedPath: writeSucceeded ? projectConfigPath : null,
   };
 }
 

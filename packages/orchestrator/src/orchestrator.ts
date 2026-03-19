@@ -4,7 +4,7 @@
 
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { copyFile, mkdir, writeFile, rename, unlink } from "node:fs/promises";
+import { copyFile, mkdir, readdir, writeFile, rename, unlink } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { EventBus, makeRoleSlotKey } from "@mercury/core";
 import type {
@@ -2451,6 +2451,19 @@ export class Orchestrator {
       } catch {
         // Missing source config is expected on first save.
       }
+
+      // Retain only the 10 most recent backups
+      const MAX_BACKUPS = 10;
+      try {
+        const files = await readdir(backupDir);
+        const backups = files
+          .filter((f: string) => f.startsWith("mercury.config."))
+          .sort()
+          .reverse();
+        for (const old of backups.slice(MAX_BACKUPS)) {
+          await unlink(join(backupDir, old)).catch(() => {});
+        }
+      } catch { /* cleanup failure is non-fatal */ }
 
       const json = JSON.stringify(this.projectConfig, null, 2) + "\n";
       await writeFile(tmpPath, json, "utf-8");

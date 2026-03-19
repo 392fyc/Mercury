@@ -70,6 +70,7 @@ export class KnowledgeService {
     return "obsidian";
   }
 
+  /** Resolve a vault-relative path to an absolute filesystem path, or null if vaultPath is unset. */
   private resolveVaultFilePath(relativePath: string): string | null {
     const vaultPath = this.vaultPath?.trim();
     if (!vaultPath) {
@@ -253,6 +254,7 @@ export class KnowledgeService {
     }
   }
 
+  /** Read a file from the vault via CLI, falling back to direct fs read if CLI fails. */
   async read(file: string): Promise<string> {
     try {
       return await this.exec(["read", `file=${file}`]);
@@ -263,12 +265,18 @@ export class KnowledgeService {
         throw error;
       }
 
-      const content = await fs.readFile(filePath, "utf-8");
-      console.warn(`[knowledge] CLI read failed, fell back to direct fs read: ${filePath}`);
-      return content;
+      try {
+        const content = await fs.readFile(filePath, "utf-8");
+        console.warn(`[knowledge] CLI read failed, fell back to direct fs read: ${filePath}`);
+        return content;
+      } catch (fsError) {
+        console.error(`[knowledge] Fallback fs read also failed: ${fsError instanceof Error ? fsError.message : fsError}`);
+        throw error; // Still throw original CLI error
+      }
     }
   }
 
+  /** Write a file to the vault via CLI, falling back to direct fs write if CLI fails. */
   async write(name: string, content: string): Promise<void> {
     try {
       await this.exec(["create", `name=${name}`, `content=${content}`]);
@@ -279,12 +287,18 @@ export class KnowledgeService {
         throw error;
       }
 
-      await fs.mkdir(path.dirname(filePath), { recursive: true });
-      await fs.writeFile(filePath, content, "utf-8");
-      console.warn(`[knowledge] CLI write failed, fell back to direct fs write: ${filePath}`);
+      try {
+        await fs.mkdir(path.dirname(filePath), { recursive: true });
+        await fs.writeFile(filePath, content, "utf-8");
+        console.warn(`[knowledge] CLI write failed, fell back to direct fs write: ${filePath}`);
+      } catch (fsError) {
+        console.error(`[knowledge] Fallback fs write also failed: ${fsError instanceof Error ? fsError.message : fsError}`);
+        throw error; // Still throw original CLI error
+      }
     }
   }
 
+  /** Append content to an existing vault file via CLI. */
   async append(file: string, content: string): Promise<void> {
     await this.exec(["append", `file=${file}`, `content=${content}`]);
   }

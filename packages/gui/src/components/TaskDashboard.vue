@@ -50,14 +50,17 @@ function priorityLabel(p: string): string {
   return p.toUpperCase();
 }
 
+/** Format an ISO date string for display; returns "-" for invalid dates. */
 function formatDate(iso: string): string {
-  return new Date(iso).toLocaleString();
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString();
 }
 
 const totalCount = computed(() =>
   Object.values(statusCounts.value).reduce((a, b) => a + (b ?? 0), 0),
 );
 
+/** Tasks sorted by status priority, then by most recent timestamp descending. */
 const sortedTasks = computed(() =>
   [...filteredTasks.value].sort((a, b) => {
     const sa = STATUS_ORDER[a.status] ?? 99;
