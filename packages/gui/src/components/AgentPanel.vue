@@ -262,7 +262,7 @@ const slashCommands = computed(() => {
   return [...BUILTIN_COMMANDS, ...deduped];
 });
 const showSlashPalette = computed(() =>
-  inputText.value.startsWith("/") && !slashCommandSelected.value,
+  inputText.value.startsWith("/") && !slashCommandSelected.value && historyIndex.value === -1,
 );
 const slashQuery = computed(() => {
   if (!showSlashPalette.value) return "";
