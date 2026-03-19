@@ -6,10 +6,10 @@
 #   PreToolUse(Bash) → detect "gh pr merge" → check CodeRabbit status → block/allow
 
 INPUT=$(cat)
-COMMAND=$(echo "$INPUT" | sed -n 's/.*"command"\s*:\s*"\([^"]*\)".*/\1/p')
+COMMAND=$(echo "$INPUT" | sed -n 's/.*"command"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 
 # Only intercept gh pr merge commands
-echo "$COMMAND" | grep -qE 'gh\s+pr\s+merge' || exit 0
+echo "$COMMAND" | grep -qE 'gh[[:space:]]+pr[[:space:]]+merge' || exit 0
 
 # Extract PR number from command (e.g., "gh pr merge 15 --merge")
 PR_NUMBER=$(echo "$COMMAND" | sed -n 's/.*gh[[:space:]]\+pr[[:space:]]\+merge[[:space:]]\+\([0-9]\+\).*/\1/p')
@@ -22,6 +22,11 @@ if [ -z "$PR_NUMBER" ]; then
   exit 2
 fi
 
+# Validate PR_NUMBER is numeric only (防止路径遍历)
+case "$PR_NUMBER" in
+  ''|*[!0-9]*) echo "BLOCKED: Invalid PR number: $PR_NUMBER" >&2; exit 2 ;;
+esac
+
 # Allow manual bypass via state flag (e.g., human-approved merge)
 STATE_DIR="$(dirname "$0")/state"
 FLAG="$STATE_DIR/pr-merge-approved-${PR_NUMBER}"
@@ -31,7 +36,7 @@ if [ -f "$FLAG" ]; then
 fi
 
 # Check CodeRabbit status via gh pr checks
-CR_STATUS=$(gh pr checks "$PR_NUMBER" --json name,state -q '.[] | select(.name | test("CodeRabbit";"i")) | .state' 2>/dev/null | tr '[:upper:]' '[:lower:]')
+CR_STATUS=$(gh pr checks "$PR_NUMBER" --json name,state -q '.[] | select(.name | test("CodeRabbit";"i")) | .state' 2>/dev/null | head -n1 | tr '[:upper:]' '[:lower:]')
 
 if [ "$CR_STATUS" = "success" ]; then
   exit 0
