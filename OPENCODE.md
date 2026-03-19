@@ -1,3 +1,8 @@
+<!-- This file follows the unified agent instruction template (Session 5).
+     All 4 instruction files (CLAUDE/AGENTS/OPENCODE/GEMINI) share the same
+     structure with agent-specific notes at the bottom. Edits here are
+     intentional and coordinated — not accidental. -->
+
 # Mercury — opencode
 
 ## Identity

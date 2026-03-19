@@ -1,3 +1,6 @@
+<!-- Intentionally in English: branch names, commit formats, and git commands
+     are English-native; mixing languages would reduce clarity for all agents. -->
+
 # Git Branching (GitHub Flow)
 
 ## Branch Structure

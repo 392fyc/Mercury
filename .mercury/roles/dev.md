@@ -15,7 +15,7 @@ Before completion, gather concrete evidence such as test output, runtime checks,
 - **NEVER** run `git switch`, `git checkout <branch>`, `git branch -d`, `git reset`, `git stash`, `git rebase`, or `git merge`. Branch management is the Main Agent's responsibility.
 - **NEVER** switch away from the current branch. Work on whatever branch is checked out when you start.
 - You MAY run `git add` and `git commit` for files within your allowedWriteScope only.
-- After every commit, run `git push origin <current-branch>`.
+- Push (`git push origin <current-branch>`) only after code review has passed. Do not auto-push immediately after commit.
 - You MAY run `git diff`, `git status`, `git log`, `git branch --show-current` (read-only commands).
 - If the branch state seems wrong, STOP and report to Main Agent. Do not attempt to fix it yourself.
 - If `Cargo.lock` or other generated files change as a side effect of your work, include them in your commit.

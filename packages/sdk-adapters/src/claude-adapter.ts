@@ -40,7 +40,7 @@ export class ClaudeAdapter implements AgentAdapter {
   private queryModule: typeof import("@anthropic-ai/claude-agent-sdk") | null =
     null;
   private sharedSystemPrompt?: string;
-  private activeQuery: AsyncGenerator<unknown, void> & { supportedModels?(): Promise<unknown[]>; setModel?(model?: string): Promise<void> } | null = null;
+  private activeQueries = new Map<string, AsyncGenerator<unknown, void> & { supportedModels?(): Promise<unknown[]>; setModel?(model?: string): Promise<void> }>();
   private modelsCache: { id: string; name: string }[] | null = null;
 
   constructor(config?: Partial<AgentConfig>) {
@@ -411,7 +411,7 @@ export class ClaudeAdapter implements AgentAdapter {
 
     // sdk.query() accepts string | AsyncIterable<SDKUserMessage> — both paths converge here
     const queryIter = sdk.query(queryArgs as { prompt: string; options: Record<string, unknown> });
-    this.activeQuery = queryIter as typeof this.activeQuery;
+    this.activeQueries.set(sessionId, queryIter as Parameters<typeof this.activeQueries.set>[1]);
     for await (const message of queryIter) {
       session.lastActiveAt = Date.now();
 
@@ -466,7 +466,7 @@ export class ClaudeAdapter implements AgentAdapter {
       }
     }
 
-    this.activeQuery = null;
+    this.activeQueries.delete(sessionId);
 
     // Store SDK session ID for future resume after restart.
     if (sdkSessionId) {
@@ -554,9 +554,10 @@ export class ClaudeAdapter implements AgentAdapter {
         });
 
     // If there's an active query, use its supportedModels() method
-    if (this.activeQuery?.supportedModels) {
+    const firstActive = this.activeQueries.values().next().value;
+    if (firstActive?.supportedModels) {
       try {
-        const models = await this.activeQuery.supportedModels();
+        const models = await firstActive.supportedModels();
         this.modelsCache = mapModels(models as { value: string; displayName: string }[]);
         return this.modelsCache;
       } catch {
@@ -591,9 +592,11 @@ export class ClaudeAdapter implements AgentAdapter {
     this.config.model = model;
     // Clear cache so next listModels reflects new state
     this.modelsCache = null;
-    // If there's an active query, switch mid-session
-    if (this.activeQuery?.setModel) {
-      this.activeQuery.setModel(model).catch(() => { /* best-effort */ });
+    // Switch model on all active queries
+    for (const q of this.activeQueries.values()) {
+      if (q.setModel) {
+        q.setModel(model).catch(() => { /* best-effort */ });
+      }
     }
   }
 

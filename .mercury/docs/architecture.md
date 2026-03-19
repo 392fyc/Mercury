@@ -1,6 +1,6 @@
 # Mercury 架构
 
-CLI-to-GUI wrapper for multi-agent collaboration.
+用于多代理协作的命令行到图形界面包装器。
 
 ## 技术栈
 
@@ -12,13 +12,13 @@ CLI-to-GUI wrapper for multi-agent collaboration.
 
 ## 数据流
 
-```
+```text
 Vue Frontend → Tauri Rust → Node.js Orchestrator → SDK Adapters → Agent CLIs
 ```
 
 ## 目录结构
 
-```
+```text
 packages/
   gui/                # Tauri 2 desktop app
     src/              # Vue 3 frontend
@@ -30,9 +30,7 @@ packages/
 
 ## Agent 指令文件
 
-| 文件 | Agent | 默认角色 |
-|------|-------|---------|
-| `CLAUDE.md` | Claude Code | main |
-| `AGENTS.md` | Codex CLI | dev |
-| `OPENCODE.md` | opencode | dev |
-| `GEMINI.md` | Gemini CLI | dev |
+每个 Agent CLI 对应一个根目录指令文件（`CLAUDE.md` / `AGENTS.md` / `OPENCODE.md` / `GEMINI.md`），
+遵循统一模板。**Main Agent 由用户在 UI/config 中动态指定**，任何 Agent 均可担任 Main 角色。
+
+角色在运行时通过 orchestrator system prompt 注入，指令文件中不包含硬编码角色映射。
