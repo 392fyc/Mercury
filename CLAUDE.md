@@ -26,6 +26,7 @@ Read these docs on demand when you need the corresponding information:
 - **Commit at every checkpoint**: every milestone must be committed and pushed.
 - **Code review before commit**: every milestone must be code-reviewed before committing.
 - **Research from live sources**: all research must be based on web queries, never training data. This includes SDK/API signatures, CLI features, Tauri plugin APIs.
+- **Web search before SDK/API code**: before writing ANY code that imports an external SDK, references an API signature, or claims a package version, you MUST use WebSearch/WebFetch to verify against the vendor's official documentation (e.g., developers.openai.com, docs.anthropic.com, npmjs.com). GitHub source code alone is NOT sufficient — repos may show dev versions. If verification is not possible, mark claims as UNVERIFIED.
 - **Main Agent is user-configurable**: any agent can be assigned as Main Agent via UI/config.
 - **Install to D drive**: install software to `D:\Program Files`, not C drive.
 - **Agents First**: inter-agent communication uses JSON/YAML. All interactions must include agentId, model, sessionId.

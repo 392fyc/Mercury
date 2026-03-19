@@ -1,0 +1,58 @@
+{
+  "agents": [
+    {
+      "capabilities": [
+        "code",
+        "review",
+        "orchestration"
+      ],
+      "cli": "claude",
+      "displayName": "Claude Code",
+      "id": "claude-code",
+      "integration": "sdk",
+      "maxConcurrentSessions": 3,
+      "model": "claude-opus-4.6",
+      "restrictions": [],
+      "roles": [
+        "main",
+        "design"
+      ]
+    },
+    {
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "cli": "codex",
+      "displayName": "Codex CLI",
+      "id": "codex-cli",
+      "integration": "sdk",
+      "maxConcurrentSessions": 2,
+      "model": "gpt-5.4",
+      "restrictions": [],
+      "roles": [
+        "dev",
+        "acceptance",
+        "research"
+      ]
+    }
+  ],
+  "obsidian": {
+    "autoInjectContext": true,
+    "contextFiles": [],
+    "enabled": true,
+    "kbPaths": {
+      "acceptances": "12-acceptances",
+      "issues": "11-issues",
+      "tasks": "10-tasks"
+    },
+    "roleContextFiles": {
+      "acceptance": [],
+      "dev": [],
+      "main": []
+    },
+    "vaultName": "Mercury_KB",
+    "vaultPath": "../Mercury_KB"
+  },
+  "workDir": "."
+}

@@ -9,7 +9,8 @@
 
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import { promisify } from "node:util";
 import type { KBSearchResult, KBFileInfo, ObsidianConfig } from "@mercury/core";
 
@@ -17,9 +18,12 @@ const execFileAsync = promisify(execFile);
 type KBEntryKind = KBFileInfo["kind"];
 const WINDOWS_OBSIDIAN_BIN_CANDIDATES = [
   "D:/Programs/Obsidian/Obsidian.exe",
-  process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, "Obsidian", "Obsidian.exe") : undefined,
+  process.env.LOCALAPPDATA
+    ? path.join(process.env.LOCALAPPDATA, "Obsidian", "Obsidian.exe")
+    : undefined,
 ].filter((candidate): candidate is string => Boolean(candidate));
 
+/** Obsidian CLI wrapper providing read/write/search/list over a vault. */
 export class KnowledgeService {
   private vaultName: string;
   private vaultPath: string | undefined;
@@ -47,11 +51,11 @@ export class KnowledgeService {
     }
 
     if (process.platform === "win32") {
-      const pathDirs = (process.env.PATH ?? "").split(delimiter);
+      const pathDirs = (process.env.PATH ?? "").split(path.delimiter);
       const candidates = ["Obsidian.exe", "obsidian.exe"];
       for (const dir of pathDirs) {
         for (const name of candidates) {
-          const full = join(dir, name);
+          const full = path.join(dir, name);
           if (existsSync(full)) {
             return full;
           }
@@ -67,6 +71,25 @@ export class KnowledgeService {
     return "obsidian";
   }
 
+  /** Resolve a vault-relative path to an absolute filesystem path, or null if vaultPath is unset. */
+  private resolveVaultFilePath(relativePath: string): string | null {
+    const vaultPath = this.vaultPath?.trim();
+    if (!vaultPath) {
+      return null;
+    }
+
+    const pathSegments = relativePath.split(/[\\/]+/).filter(Boolean);
+    const resolved = path.join(vaultPath, ...pathSegments);
+    const normalizedVault = path.resolve(vaultPath);
+    const normalizedResolved = path.resolve(resolved);
+    if (!normalizedResolved.startsWith(normalizedVault + path.sep) && normalizedResolved !== normalizedVault) {
+      console.error(`[knowledge] Path traversal attempt blocked: ${relativePath}`);
+      return null;
+    }
+    return resolved;
+  }
+
+  /** Split raw CLI output into trimmed, non-empty lines. */
   private parsePlainTextList(raw: string): string[] {
     return raw
       .split(/\r?\n/)
@@ -217,6 +240,7 @@ export class KnowledgeService {
     return this.enabled;
   }
 
+  /** Execute an Obsidian CLI command with the configured vault. */
   private async exec(args: string[]): Promise<string> {
     if (!this.enabled) {
       throw new Error("Knowledge service is disabled. Enable obsidian in mercury.config.json.");
@@ -240,18 +264,72 @@ export class KnowledgeService {
     }
   }
 
+  /** Read a file from the vault via CLI, falling back to direct fs read if CLI fails. */
   async read(file: string): Promise<string> {
-    return this.exec(["read", `file=${file}`]);
+    try {
+      return await this.exec(["read", `file=${file}`]);
+    } catch (error) {
+      const filePath = this.resolveVaultFilePath(file);
+      if (!filePath) {
+        console.error("[knowledge] CLI read failed and no vaultPath configured for fallback");
+        throw error;
+      }
+
+      try {
+        const content = await fs.readFile(filePath, "utf-8");
+        console.warn(`[knowledge] CLI read failed, fell back to direct fs read: ${filePath}`);
+        return content;
+      } catch (fsError) {
+        console.error(`[knowledge] Fallback fs read also failed: ${fsError instanceof Error ? fsError.message : fsError}`);
+        throw error; // Still throw original CLI error
+      }
+    }
   }
 
+  /** Write a file to the vault via CLI, falling back to direct fs write if CLI fails. */
   async write(name: string, content: string): Promise<void> {
-    await this.exec(["create", `name=${name}`, `content=${content}`]);
+    try {
+      await this.exec(["create", `name=${name}`, `content=${content}`]);
+    } catch (error) {
+      const filePath = this.resolveVaultFilePath(name);
+      if (!filePath) {
+        console.error("[knowledge] CLI write failed and no vaultPath configured for fallback");
+        throw error;
+      }
+
+      try {
+        await fs.mkdir(path.dirname(filePath), { recursive: true });
+        await fs.writeFile(filePath, content, "utf-8");
+        console.warn(`[knowledge] CLI write failed, fell back to direct fs write: ${filePath}`);
+      } catch (fsError) {
+        console.error(`[knowledge] Fallback fs write also failed: ${fsError instanceof Error ? fsError.message : fsError}`);
+        throw error; // Still throw original CLI error
+      }
+    }
   }
 
+  /** Append content to an existing vault file, falling back to direct fs append if CLI fails. */
   async append(file: string, content: string): Promise<void> {
-    await this.exec(["append", `file=${file}`, `content=${content}`]);
+    try {
+      await this.exec(["append", `file=${file}`, `content=${content}`]);
+    } catch (error) {
+      const filePath = this.resolveVaultFilePath(file);
+      if (!filePath) {
+        console.error("[knowledge] CLI append failed and no vaultPath configured for fallback");
+        throw error;
+      }
+
+      try {
+        await fs.appendFile(filePath, content, "utf-8");
+        console.warn(`[knowledge] CLI append failed, fell back to direct fs append: ${filePath}`);
+      } catch (fsError) {
+        console.error(`[knowledge] Fallback fs append also failed: ${fsError instanceof Error ? fsError.message : fsError}`);
+        throw error;
+      }
+    }
   }
 
+  /** Search the vault for notes matching a query, returning parsed results. */
   async search(query: string): Promise<KBSearchResult[]> {
     const raw = await this.exec(["search", `query=${query}`, "format=json"]);
     try {
@@ -263,6 +341,7 @@ export class KnowledgeService {
     }
   }
 
+  /** List immediate children (files and folders) of a vault directory. */
   async list(folder?: string): Promise<KBFileInfo[]> {
     const scopedArg = folder ? [`folder=${folder}`] : [];
     const [filesRaw, foldersRaw] = await Promise.all([

@@ -6,8 +6,8 @@
  */
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, resolve } from "node:path";
 import type { MercuryConfig, AgentConfig, ObsidianConfig } from "@mercury/core";
 import { RpcTransport } from "./rpc-transport.js";
 import { AgentRegistry } from "./agent-registry.js";
@@ -30,7 +30,7 @@ type JsonRpcHttpResponse = {
   id: number | string | null;
 };
 
-/** Migrate legacy config: `role: "main"` → `roles: ["main"]` */
+/** Migrate legacy agent config format: single `role` string to `roles` array. */
 function migrateAgentConfig(agents: Record<string, unknown>[]): AgentConfig[] {
   for (const agent of agents) {
     if ("role" in agent && !("roles" in agent)) {
@@ -41,52 +41,163 @@ function migrateAgentConfig(agents: Record<string, unknown>[]): AgentConfig[] {
   return agents as unknown as AgentConfig[];
 }
 
-function loadConfig(configPath?: string): { config: MercuryConfig; resolvedPath: string | null } {
-  const paths = [
-    configPath,
-    resolve(process.cwd(), "mercury.config.json"),
-    resolve(process.env.HOME ?? process.env.USERPROFILE ?? "", ".mercury", "config.json"),
-  ].filter(Boolean) as string[];
+/** Type guard: returns true if value is a non-null, non-array object. */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
-  for (const p of paths) {
+/** Deep-merge config overrides into defaults, preserving structure of the defaults object. */
+function mergeConfigDefaults<T>(defaults: T, overrides: unknown): T {
+  if (Array.isArray(defaults)) {
+    return (Array.isArray(overrides) ? overrides : defaults) as T;
+  }
+
+  if (!isPlainObject(defaults) || !isPlainObject(overrides)) {
+    return (overrides ?? defaults) as T;
+  }
+
+  const result: Record<string, unknown> = { ...defaults };
+  for (const [key, defaultValue] of Object.entries(defaults)) {
+    if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
+    if (!(key in overrides)) {
+      continue;
+    }
+    result[key] = mergeConfigDefaults(defaultValue, overrides[key]);
+  }
+
+  for (const [key, value] of Object.entries(overrides)) {
+    if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
+    if (!(key in result)) {
+      result[key] = value;
+    }
+  }
+
+  return result as T;
+}
+
+/** Resolve relative paths in config (workDir, vaultPath, obsidianBin) to absolute paths. */
+function resolveConfigPaths(config: MercuryConfig, configFilePath: string): MercuryConfig {
+  const configDir = dirname(configFilePath);
+  return {
+    ...config,
+    workDir: config.workDir
+      ? (isAbsolute(config.workDir) ? config.workDir : resolve(configDir, config.workDir))
+      : config.workDir,
+    obsidian: config.obsidian
+      ? {
+          ...config.obsidian,
+          vaultPath: config.obsidian.vaultPath
+            ? (
+                isAbsolute(config.obsidian.vaultPath)
+                  ? config.obsidian.vaultPath
+                  : resolve(configDir, config.obsidian.vaultPath)
+              )
+            : config.obsidian.vaultPath,
+          obsidianBin: config.obsidian.obsidianBin
+            ? (
+                isAbsolute(config.obsidian.obsidianBin)
+                  ? config.obsidian.obsidianBin
+                  : resolve(configDir, config.obsidian.obsidianBin)
+              )
+            : config.obsidian.obsidianBin,
+        }
+      : config.obsidian,
+  };
+}
+
+/** Read and parse a mercury config JSON file, applying agent config migration. */
+function readConfigFile(path: string): MercuryConfig {
+  const raw = readFileSync(path, "utf-8");
+  const config = JSON.parse(raw);
+  config.agents = migrateAgentConfig(config.agents ?? []);
+  return config as MercuryConfig;
+}
+
+/** Load Mercury config from project, home, or template; bootstraps a default if none found. */
+function loadConfig(configPath?: string): { config: MercuryConfig; resolvedPath: string | null } {
+  const projectConfigPath = configPath ?? resolve(process.cwd(), "mercury.config.json");
+  const projectTemplatePath = resolve(dirname(projectConfigPath), "mercury.config.example.json");
+  const homeConfigPath = resolve(process.env.HOME ?? process.env.USERPROFILE ?? "", ".mercury", "config.json");
+  const defaultConfig: MercuryConfig = {
+    agents: [
+      {
+        id: "claude-code",
+        displayName: "Claude Code",
+        cli: "claude",
+        roles: ["main"],
+        integration: "sdk",
+        capabilities: ["code", "review", "orchestration"],
+        restrictions: [],
+        maxConcurrentSessions: 3,
+      },
+      {
+        id: "codex-cli",
+        displayName: "Codex CLI",
+        cli: "codex",
+        roles: ["dev"],
+        integration: "sdk",
+        capabilities: ["code", "test"],
+        restrictions: [],
+        maxConcurrentSessions: 2,
+      },
+    ],
+  };
+
+  let templateConfig: MercuryConfig | null = null;
+  if (existsSync(projectTemplatePath)) {
     try {
-      const raw = readFileSync(p, "utf-8");
-      const config = JSON.parse(raw);
-      config.agents = migrateAgentConfig(config.agents ?? []);
-      transport.log(`Loaded config from ${p} (${config.agents.length} agents)`);
-      return { config: config as MercuryConfig, resolvedPath: p };
+      templateConfig = readConfigFile(projectTemplatePath);
+      transport.log(`Loaded config template from ${projectTemplatePath}`);
+    } catch {
+      transport.log(`Warning: failed to load config template from ${projectTemplatePath}`);
+    }
+  }
+
+  const localPaths = [configPath, projectConfigPath].filter(Boolean) as string[];
+  for (const p of localPaths) {
+    if (!existsSync(p)) {
+      continue;
+    }
+    try {
+      const localConfig = readConfigFile(p);
+      const merged = templateConfig ? mergeConfigDefaults(templateConfig, localConfig) : localConfig;
+      const resolved = resolveConfigPaths(merged, p);
+      transport.log(`Loaded config from ${p} (${resolved.agents.length} agents)`);
+      return { config: resolved, resolvedPath: p };
     } catch {
       // try next
     }
   }
 
-  transport.log("No config found, using defaults");
+  if (existsSync(homeConfigPath)) {
+    try {
+      const homeConfig = readConfigFile(homeConfigPath);
+      transport.log(`Loaded config from ${homeConfigPath} (${homeConfig.agents.length} agents)`);
+      return {
+        config: resolveConfigPaths(homeConfig, homeConfigPath),
+        resolvedPath: homeConfigPath,
+      };
+    } catch {
+      // ignore and continue to bootstrap
+    }
+  }
+
+  const bootstrappedConfig = templateConfig ?? defaultConfig;
+  let writeSucceeded = false;
+  try {
+    writeFileSync(projectConfigPath, JSON.stringify(bootstrappedConfig, null, 2) + "\n", "utf-8");
+    writeSucceeded = true;
+    transport.log(`Bootstrapped local config at ${projectConfigPath}`);
+  } catch (err) {
+    transport.log(
+      `Warning: failed to bootstrap local config at ${projectConfigPath}: ${err instanceof Error ? err.message : err}`,
+    );
+  }
+
+  transport.log(templateConfig ? "No local config found, using template defaults" : "No config found, using defaults");
   return {
-    config: {
-      agents: [
-        {
-          id: "claude-code",
-          displayName: "Claude Code",
-          cli: "claude",
-          roles: ["main"],
-          integration: "sdk",
-          capabilities: ["code", "review", "orchestration"],
-          restrictions: [],
-          maxConcurrentSessions: 3,
-        },
-        {
-          id: "codex-cli",
-          displayName: "Codex CLI",
-          cli: "codex",
-          roles: ["dev"],
-          integration: "sdk",
-          capabilities: ["code", "test"],
-          restrictions: [],
-          maxConcurrentSessions: 2,
-        },
-      ],
-    },
-    resolvedPath: null,
+    config: resolveConfigPaths(bootstrappedConfig, projectConfigPath),
+    resolvedPath: writeSucceeded ? projectConfigPath : null,
   };
 }
 
@@ -102,6 +213,7 @@ const DEFAULT_KB_PATHS: ResolvedKBPaths = {
   issues: "issues",
 };
 
+/** Merge obsidian config KB path overrides with defaults. */
 function resolveKbPaths(obsidian?: ObsidianConfig): ResolvedKBPaths {
   return {
     tasks: obsidian?.kbPaths?.tasks ?? DEFAULT_KB_PATHS.tasks,
@@ -110,6 +222,7 @@ function resolveKbPaths(obsidian?: ObsidianConfig): ResolvedKBPaths {
   };
 }
 
+/** Parse and validate a port number from a string, returning null if invalid. */
 function parseRpcPort(raw: string | undefined): number | null {
   if (!raw) return null;
   const port = Number.parseInt(raw, 10);
@@ -119,6 +232,7 @@ function parseRpcPort(raw: string | undefined): number | null {
   return port;
 }
 
+/** Determine RPC port from env, config, or default. */
 function resolveRpcPort(config: MercuryConfig): number {
   const envPort = parseRpcPort(process.env.MERCURY_RPC_PORT);
   if (envPort !== null) {
@@ -138,12 +252,14 @@ function resolveRpcPort(config: MercuryConfig): number {
   return DEFAULT_RPC_PORT;
 }
 
+/** Set permissive CORS headers on an HTTP response. */
 function setCorsHeaders(res: ServerResponse): void {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 }
 
+/** Send a JSON-RPC response with CORS headers. */
 function sendHttpJson(
   res: ServerResponse,
   statusCode: number,
@@ -155,6 +271,7 @@ function sendHttpJson(
   res.end(JSON.stringify(payload));
 }
 
+/** Read the full request body as a UTF-8 string. */
 function readRequestBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolveBody, rejectBody) => {
     let body = "";
@@ -167,6 +284,7 @@ function readRequestBody(req: IncomingMessage): Promise<string> {
   });
 }
 
+/** Type guard: params is either undefined or a plain object. */
 function isJsonRpcParams(
   params: JsonRpcHttpRequest["params"],
 ): params is Record<string, unknown> | undefined {
@@ -174,6 +292,7 @@ function isJsonRpcParams(
   return typeof params === "object" && params !== null && !Array.isArray(params);
 }
 
+/** Type guard: validates a parsed JSON value as a valid JSON-RPC 2.0 request. */
 function isJsonRpcRequest(value: unknown): value is JsonRpcHttpRequest {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
@@ -189,6 +308,7 @@ function isJsonRpcRequest(value: unknown): value is JsonRpcHttpRequest {
   );
 }
 
+/** Map an error to a JSON-RPC error object with appropriate code. */
 function mapRpcError(err: unknown): { code: number; message: string } {
   const message = err instanceof Error ? err.message : String(err);
   if (message.startsWith("Unknown method:")) {
@@ -197,6 +317,7 @@ function mapRpcError(err: unknown): { code: number; message: string } {
   return { code: -32603, message };
 }
 
+/** Create an HTTP server that handles JSON-RPC 2.0 requests via the orchestrator. */
 function createHttpRpcServer(orchestrator: Orchestrator, port: number): Server {
   return createServer(async (req, res) => {
     setCorsHeaders(res);
@@ -265,6 +386,7 @@ function createHttpRpcServer(orchestrator: Orchestrator, port: number): Server {
   });
 }
 
+/** Wire process shutdown signals to gracefully close the HTTP server. */
 function wireShutdown(server: Server): void {
   const originalExit = process.exit.bind(process);
   let shuttingDown = false;
@@ -305,6 +427,7 @@ function wireShutdown(server: Server): void {
   });
 }
 
+/** Start stdin/stdout RPC transport and HTTP JSON-RPC server, then signal ready. */
 function startTransports(orchestrator: Orchestrator, registry: AgentRegistry, config: MercuryConfig): void {
   transport.start((method, params) => orchestrator.handleRpc(method, params));
   const httpServer = createHttpRpcServer(orchestrator, resolveRpcPort(config));

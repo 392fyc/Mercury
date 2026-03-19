@@ -98,6 +98,12 @@ export class TaskManager {
     this.agentConfigLookup = lookup;
   }
 
+  /** Build a TaskAssignee struct from agentId, enriching with model from agent config if available. */
+  private buildTaskAssignee(agentId: string): TaskAssignee {
+    const model = this.agentConfigLookup?.(agentId)?.model;
+    return model === undefined ? { agentId } : { agentId, model };
+  }
+
   /** Rehydrate task state from persistence (call before RPC starts). */
   async init(): Promise<void> {
     if (!this.persistence) return;
@@ -134,6 +140,9 @@ export class TaskManager {
       phaseId: params.phaseId,
       priority: params.priority,
       status: "drafted",
+      createdAt: new Date().toISOString(),
+      closedAt: null,
+      failedAt: null,
       assignedTo: params.assignedTo,
       branch: params.branch,
       codeScope: params.codeScope,
@@ -153,11 +162,7 @@ export class TaskManager {
     };
 
     // Agents First: populate structured assignee from agent config
-    const agentCfg = this.agentConfigLookup?.(params.assignedTo);
-    task.assignee = {
-      agentId: params.assignedTo,
-      model: agentCfg?.model,
-    };
+    task.assignee = this.buildTaskAssignee(params.assignedTo);
 
     this.tasks.set(taskId, task);
     this.persistTask(task);
@@ -260,6 +265,11 @@ export class TaskManager {
 
     const from = task.status;
     task.status = newStatus;
+    if (newStatus === "verified" || newStatus === "closed") {
+      task.closedAt = new Date().toISOString();
+    } else if (newStatus === "failed") {
+      task.failedAt = new Date().toISOString();
+    }
 
     this.bus.emit(
       "orchestrator.task.status_change",

@@ -47,6 +47,7 @@ const DEFAULT_KB_PATHS: TaskPersistenceKBPaths = {
   issues: "issues",
 };
 
+/** Merge partial KB path overrides with defaults. */
 function resolveKbPaths(paths?: Partial<TaskPersistenceKBPaths>): TaskPersistenceKBPaths {
   return {
     tasks: paths?.tasks ?? DEFAULT_KB_PATHS.tasks,
@@ -55,6 +56,24 @@ function resolveKbPaths(paths?: Partial<TaskPersistenceKBPaths>): TaskPersistenc
   };
 }
 
+/** Default createdAt value for tasks migrated before timestamps were added. */
+const LEGACY_CREATED_AT = "2026-03-18T00:00:00+09:00";
+
+/** Backfill missing timestamp fields for legacy KB data. Mutates and returns the input. */
+function backfillTimestamps(task: TaskBundle): TaskBundle {
+  if (!task.createdAt) {
+    task.createdAt = LEGACY_CREATED_AT;
+  }
+  if (task.closedAt === undefined) {
+    task.closedAt = null;
+  }
+  if (task.failedAt === undefined) {
+    task.failedAt = null;
+  }
+  return task;
+}
+
+/** KB-backed task persistence using KnowledgeService for JSON file storage. */
 export class TaskPersistenceKB implements TaskPersistence {
   private kb: KnowledgeService;
   private kbPaths: TaskPersistenceKBPaths;
@@ -76,18 +95,22 @@ export class TaskPersistenceKB implements TaskPersistence {
     this.log = log;
   }
 
+  /** Persist a task bundle to KB as JSON. */
   async saveTask(task: TaskBundle): Promise<void> {
     await this.writeJson(`${this.kbPaths.tasks}/${task.taskId}.json`, task);
   }
 
+  /** Persist an acceptance bundle to KB as JSON. */
   async saveAcceptance(acc: AcceptanceBundle): Promise<void> {
     await this.writeJson(`${this.kbPaths.acceptances}/${acc.acceptanceId}.json`, acc);
   }
 
+  /** Persist an issue bundle to KB as JSON. */
   async saveIssue(issue: IssueBundle): Promise<void> {
     await this.writeJson(`${this.kbPaths.issues}/${issue.issueId}.json`, issue);
   }
 
+  /** Rehydrate all tasks, acceptances, and issues from KB. */
   async loadAll(): Promise<{
     tasks: TaskBundle[];
     acceptances: AcceptanceBundle[];
@@ -110,7 +133,9 @@ export class TaskPersistenceKB implements TaskPersistence {
   async loadTask(taskId: string): Promise<TaskBundle | null> {
     try {
       const raw = await this.kb.read(`${this.kbPaths.tasks}/${taskId}.json`);
-      return JSON.parse(raw) as TaskBundle;
+      const task = JSON.parse(raw) as TaskBundle;
+      backfillTimestamps(task);
+      return task;
     } catch {
       return null;
     }
@@ -147,12 +172,17 @@ export class TaskPersistenceKB implements TaskPersistence {
 
   private async loadFolder<T>(folder: string): Promise<T[]> {
     const results: T[] = [];
+    const isTaskFolder = folder === this.kbPaths.tasks;
     try {
       const files = await this.kb.list(folder);
       for (const file of files) {
         try {
           const raw = await this.kb.read(file.path);
-          results.push(JSON.parse(raw) as T);
+          const parsed = JSON.parse(raw) as T;
+          if (isTaskFolder) {
+            backfillTimestamps(parsed as T & TaskBundle);
+          }
+          results.push(parsed);
         } catch {
           this.log(`[persistence] Skipping malformed file: ${file.path}`);
         }

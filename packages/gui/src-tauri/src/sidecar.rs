@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::Emitter;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -17,19 +18,16 @@ pub struct SidecarManager {
 
 impl SidecarManager {
     pub async fn spawn(app_handle: tauri::AppHandle, project_dir: String) -> Result<Self, String> {
+        let orchestrator_entry = resolve_orchestrator_entry(&project_dir)?;
+
         // In dev mode, use pnpm exec tsx to run the orchestrator.
         // Using pnpm instead of npx avoids npm warn noise from inherited env vars.
         // On Windows, pnpm is a .cmd script so we must run via cmd.exe.
         #[cfg(target_os = "windows")]
         let mut cmd = {
             let mut c = Command::new("cmd");
-            c.args([
-                "/c",
-                "pnpm",
-                "exec",
-                "tsx",
-                "packages/orchestrator/src/index.ts",
-            ]);
+            c.args(["/c", "pnpm", "exec", "tsx"]);
+            c.arg(&orchestrator_entry);
             c.creation_flags(0x08000000); // CREATE_NO_WINDOW
             c
         };
@@ -37,7 +35,8 @@ impl SidecarManager {
         #[cfg(not(target_os = "windows"))]
         let mut cmd = {
             let mut c = Command::new("pnpm");
-            c.args(["exec", "tsx", "packages/orchestrator/src/index.ts"]);
+            c.args(["exec", "tsx"]);
+            c.arg(&orchestrator_entry);
             c
         };
 
@@ -200,4 +199,21 @@ impl SidecarManager {
         let mut child = self.child.lock().await;
         let _ = child.kill().await;
     }
+}
+
+fn resolve_orchestrator_entry(project_dir: &str) -> Result<PathBuf, String> {
+    let entry = Path::new(project_dir)
+        .join("packages")
+        .join("orchestrator")
+        .join("src")
+        .join("index.ts");
+
+    if entry.exists() {
+        return Ok(entry);
+    }
+
+    Err(format!(
+        "Could not find orchestrator entrypoint at {}",
+        entry.display()
+    ))
 }
