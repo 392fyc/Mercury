@@ -192,7 +192,7 @@ export async function updateConfig(
 export type TaskPriority = "sev-0" | "sev-1" | "sev-2" | "sev-3";
 export type TaskStatus =
   | "drafted" | "dispatched" | "in_progress" | "implementation_done"
-  | "acceptance" | "verified" | "closed" | "failed" | "blocked";
+  | "main_review" | "acceptance" | "verified" | "closed" | "failed" | "blocked";
 export type AcceptanceVerdict = "pass" | "partial" | "fail" | "blocked";
 
 export interface TaskAssignee {
@@ -208,7 +208,7 @@ export interface TaskBundle {
   phaseId?: string;
   priority: TaskPriority;
   status: TaskStatus;
-  createdAt: string;
+  createdAt?: string;
   closedAt: string | null;
   failedAt: string | null;
   assignedTo: string;

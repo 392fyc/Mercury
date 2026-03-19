@@ -313,7 +313,7 @@ export interface TaskBundle {
   phaseId?: string;
   priority: "sev-0" | "sev-1" | "sev-2" | "sev-3";
   status: TaskStatus;
-  createdAt: string; // ISO 8601, set by TaskManager when task is created
+  createdAt?: string; // ISO 8601, set by TaskManager when task is created (optional for legacy compat)
   closedAt: string | null; // ISO 8601, set by TaskManager when status → closed/verified
   failedAt: string | null; // ISO 8601, set by TaskManager when status → failed
   assignedTo: string;

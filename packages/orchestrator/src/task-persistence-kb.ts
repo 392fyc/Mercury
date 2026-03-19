@@ -55,6 +55,21 @@ function resolveKbPaths(paths?: Partial<TaskPersistenceKBPaths>): TaskPersistenc
   };
 }
 
+/** Backfill missing timestamp fields for legacy KB data. */
+const LEGACY_CREATED_AT = "2026-03-18T00:00:00+09:00";
+
+function backfillTimestamps(task: TaskBundle): void {
+  if (!task.createdAt) {
+    task.createdAt = LEGACY_CREATED_AT;
+  }
+  if (task.closedAt === undefined) {
+    task.closedAt = null;
+  }
+  if (task.failedAt === undefined) {
+    task.failedAt = null;
+  }
+}
+
 export class TaskPersistenceKB implements TaskPersistence {
   private kb: KnowledgeService;
   private kbPaths: TaskPersistenceKBPaths;
@@ -110,7 +125,9 @@ export class TaskPersistenceKB implements TaskPersistence {
   async loadTask(taskId: string): Promise<TaskBundle | null> {
     try {
       const raw = await this.kb.read(`${this.kbPaths.tasks}/${taskId}.json`);
-      return JSON.parse(raw) as TaskBundle;
+      const task = JSON.parse(raw) as TaskBundle;
+      backfillTimestamps(task);
+      return task;
     } catch {
       return null;
     }
@@ -147,12 +164,17 @@ export class TaskPersistenceKB implements TaskPersistence {
 
   private async loadFolder<T>(folder: string): Promise<T[]> {
     const results: T[] = [];
+    const isTaskFolder = folder === this.kbPaths.tasks;
     try {
       const files = await this.kb.list(folder);
       for (const file of files) {
         try {
           const raw = await this.kb.read(file.path);
-          results.push(JSON.parse(raw) as T);
+          const parsed = JSON.parse(raw) as T;
+          if (isTaskFolder) {
+            backfillTimestamps(parsed as unknown as TaskBundle);
+          }
+          results.push(parsed);
         } catch {
           this.log(`[persistence] Skipping malformed file: ${file.path}`);
         }

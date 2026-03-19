@@ -36,10 +36,11 @@ const STATUS_ORDER: Record<string, number> = {
   blocked: 2,
   in_progress: 3,
   implementation_done: 4,
-  acceptance: 5,
-  verified: 6,
-  closed: 7,
-  failed: 8,
+  main_review: 5,
+  acceptance: 6,
+  verified: 7,
+  closed: 8,
+  failed: 9,
 };
 
 /** Return the theme color associated with a task status. */
