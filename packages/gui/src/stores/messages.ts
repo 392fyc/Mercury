@@ -395,9 +395,14 @@ function dismissHistoryView(): void {
 }
 
 /**
- * Archive the current session — stops backend, clears the panel, and shows
- * a confirmation message. Functionally similar to newSession but provides
- * explicit user feedback that the session was archived.
+ * Archive the current session — stops the backend session via bridgeStopSession,
+ * clears the panel, and shows a "Session archived" confirmation message.
+ *
+ * NOTE: Both archiveSession and newSession call the same bridgeStopSession backend
+ * API. There is no distinct backend "archive" endpoint yet. The difference is
+ * purely frontend UX: Archive shows a confirmation message, New Session does not.
+ * A dedicated archive_session backend API can be added in a future iteration to
+ * persist archive metadata (e.g., completion status, tags).
  */
 async function archiveSession(panelKey: string): Promise<void> {
   const { setStatus, clearSession, getSession } = useAgentStore();
@@ -423,7 +428,8 @@ async function archiveSession(panelKey: string): Promise<void> {
 }
 
 /**
- * Start a new session — clears context without marking previous as complete.
+ * Start a new session — stops the current backend session and clears the panel.
+ * Uses the same bridgeStopSession call as archiveSession (see note above).
  */
 async function newSession(panelKey: string): Promise<void> {
   const { setStatus, clearSession, getSession } = useAgentStore();

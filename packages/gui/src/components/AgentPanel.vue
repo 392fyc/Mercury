@@ -451,7 +451,7 @@ watch(
       <div class="panel-status">
         <button
           class="history-button"
-          title="Archive current session (marks as complete)"
+          title="Archive current session"
           @click="archiveSession(panelKey)"
           :disabled="status === 'active' || !sessionId"
         >
