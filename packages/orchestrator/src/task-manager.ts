@@ -98,6 +98,11 @@ export class TaskManager {
     this.agentConfigLookup = lookup;
   }
 
+  private buildTaskAssignee(agentId: string): TaskAssignee {
+    const model = this.agentConfigLookup?.(agentId)?.model;
+    return model === undefined ? { agentId } : { agentId, model };
+  }
+
   /** Rehydrate task state from persistence (call before RPC starts). */
   async init(): Promise<void> {
     if (!this.persistence) return;
@@ -153,11 +158,7 @@ export class TaskManager {
     };
 
     // Agents First: populate structured assignee from agent config
-    const agentCfg = this.agentConfigLookup?.(params.assignedTo);
-    task.assignee = {
-      agentId: params.assignedTo,
-      model: agentCfg?.model,
-    };
+    task.assignee = this.buildTaskAssignee(params.assignedTo);
 
     this.tasks.set(taskId, task);
     this.persistTask(task);
