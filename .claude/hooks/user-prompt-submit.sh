@@ -7,7 +7,12 @@
 INPUT=$(cat)
 
 # Extract the user's prompt text
-PROMPT=$(echo "$INPUT" | sed -n 's/.*"prompt"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+# Prefer jq for robust JSON parsing; fall back to sed for minimal environments
+if command -v jq >/dev/null 2>&1; then
+  PROMPT=$(echo "$INPUT" | jq -r '.prompt // empty' 2>/dev/null)
+else
+  PROMPT=$(echo "$INPUT" | sed -n 's/.*"prompt"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+fi
 
 # ── Detect if prompt likely involves SDK/API/CLI/external tool work ──
 NEEDS_RESEARCH=""

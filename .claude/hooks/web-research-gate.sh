@@ -7,7 +7,12 @@
 INPUT=$(cat)
 
 # Extract content being written (new_string for Edit, content for Write)
-CONTENT=$(echo "$INPUT" | sed -n 's/.*"\(new_string\|content\)"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\2/p' | head -1)
+# Prefer jq for robust JSON parsing; fall back to sed for minimal environments
+if command -v jq >/dev/null 2>&1; then
+  CONTENT=$(echo "$INPUT" | jq -r '.tool_input.new_string // .tool_input.content // empty' 2>/dev/null)
+else
+  CONTENT=$(echo "$INPUT" | sed -n 's/.*"\(new_string\|content\)"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\2/p' | head -1)
+fi
 
 [ -z "$CONTENT" ] && exit 0
 
@@ -32,12 +37,12 @@ fi
 # If no sensitive patterns found, allow through
 [ -z "$HAS_SDK_IMPORT" ] && [ -z "$HAS_VERSION" ] && [ -z "$HAS_API_SIG" ] && exit 0
 
-# ── Check if web research was done recently (within last 10 minutes) ──
+# ── Check if web research was done recently (within last 3 minutes) ──
 STATE_DIR="$(dirname "$0")/state"
 FLAG="$STATE_DIR/web-researched"
 
 if [ -f "$FLAG" ]; then
-  # Check if flag is recent (within 600 seconds = 10 minutes)
+  # Check if flag is recent (within 180 seconds = 3 minutes)
   if [ "$(uname)" = "Darwin" ] || [ "$(uname)" = "Linux" ]; then
     FLAG_AGE=$(( $(date +%s) - $(stat -c %Y "$FLAG" 2>/dev/null || stat -f %m "$FLAG" 2>/dev/null || echo 0) ))
   else
@@ -45,7 +50,7 @@ if [ -f "$FLAG" ]; then
     FLAG_AGE=$(( $(date +%s) - $(stat -c %Y "$FLAG" 2>/dev/null || echo 0) ))
   fi
 
-  if [ "$FLAG_AGE" -lt 600 ] 2>/dev/null; then
+  if [ "$FLAG_AGE" -lt 180 ] 2>/dev/null; then
     exit 0
   fi
 fi
@@ -60,6 +65,6 @@ cat >&2 <<MSG
 BLOCKED: Writing content with technical claims that require web verification.
 Reason: ${REASON}.
 Rule: "DO NOT guess SDK/CLI APIs from training data — verify via web search or official docs."
-Action: Use WebSearch or WebFetch to verify, then retry. Flag expires after 10 minutes.
+Action: Use WebSearch or WebFetch to verify, then retry. Flag expires after 3 minutes.
 MSG
 exit 2
