@@ -110,6 +110,12 @@ function clearMessages(panelKey: string) {
   saveToStorage();
 }
 
+/** Replace all messages for a panel in a single reactive update. */
+function setMessages(panelKey: string, msgs: DisplayMessage[]) {
+  messages.value = new Map(messages.value).set(panelKey, msgs);
+  saveToStorage();
+}
+
 /**
  * Send a prompt from a specific role panel.
  * @param panelKey - roleSlotKey "{role}:{agentId}"
@@ -331,17 +337,15 @@ async function loadSessionHistory(panelKey: string, sessionId: string): Promise<
     const result = await bridgeGetSessionMessages(sessionId);
     if (!result.messages || result.messages.length === 0) return;
 
-    // Clear current messages and backfill with historical ones
-    clearMessages(panelKey);
-    for (const msg of result.messages) {
-      appendMessage(panelKey, {
-        role: msg.role,
-        content: msg.content,
-        timestamp: msg.timestamp,
-        images: msg.images,
-        metadata: msg.metadata,
-      });
-    }
+    // Batch-set all messages in a single reactive update
+    const batch: DisplayMessage[] = result.messages.map((msg) => ({
+      role: msg.role,
+      content: msg.content,
+      timestamp: msg.timestamp,
+      images: msg.images,
+      metadata: msg.metadata,
+    }));
+    setMessages(panelKey, batch);
   } catch (e) {
     console.debug("loadSessionHistory: failed to load history", e);
   }
