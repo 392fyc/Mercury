@@ -17,6 +17,7 @@ const {
 
 const { agents } = useAgentStore();
 
+/** Status filter buttons with display label and theme color. */
 const STATUS_LABELS: { status: TaskStatus | null; label: string; color: string }[] = [
   { status: null, label: "All", color: "var(--text-secondary)" },
   { status: "drafted", label: "Drafted", color: "var(--text-muted)" },
@@ -30,6 +31,7 @@ const STATUS_LABELS: { status: TaskStatus | null; label: string; color: string }
   { status: "blocked", label: "Blocked", color: "#fb923c" },
 ];
 
+/** Sort priority for task statuses (lower = earlier in list). */
 const STATUS_ORDER: Record<string, number> = {
   drafted: 0,
   dispatched: 1,

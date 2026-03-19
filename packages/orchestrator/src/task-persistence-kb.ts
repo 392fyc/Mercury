@@ -47,6 +47,7 @@ const DEFAULT_KB_PATHS: TaskPersistenceKBPaths = {
   issues: "issues",
 };
 
+/** Merge partial KB path overrides with defaults. */
 function resolveKbPaths(paths?: Partial<TaskPersistenceKBPaths>): TaskPersistenceKBPaths {
   return {
     tasks: paths?.tasks ?? DEFAULT_KB_PATHS.tasks,
@@ -55,9 +56,10 @@ function resolveKbPaths(paths?: Partial<TaskPersistenceKBPaths>): TaskPersistenc
   };
 }
 
-/** Backfill missing timestamp fields for legacy KB data. */
+/** Default createdAt value for tasks migrated before timestamps were added. */
 const LEGACY_CREATED_AT = "2026-03-18T00:00:00+09:00";
 
+/** Backfill missing timestamp fields for legacy KB data. */
 function backfillTimestamps(task: TaskBundle): void {
   if (!task.createdAt) {
     task.createdAt = LEGACY_CREATED_AT;
@@ -70,6 +72,7 @@ function backfillTimestamps(task: TaskBundle): void {
   }
 }
 
+/** KB-backed task persistence using KnowledgeService for JSON file storage. */
 export class TaskPersistenceKB implements TaskPersistence {
   private kb: KnowledgeService;
   private kbPaths: TaskPersistenceKBPaths;
@@ -91,18 +94,22 @@ export class TaskPersistenceKB implements TaskPersistence {
     this.log = log;
   }
 
+  /** Persist a task bundle to KB as JSON. */
   async saveTask(task: TaskBundle): Promise<void> {
     await this.writeJson(`${this.kbPaths.tasks}/${task.taskId}.json`, task);
   }
 
+  /** Persist an acceptance bundle to KB as JSON. */
   async saveAcceptance(acc: AcceptanceBundle): Promise<void> {
     await this.writeJson(`${this.kbPaths.acceptances}/${acc.acceptanceId}.json`, acc);
   }
 
+  /** Persist an issue bundle to KB as JSON. */
   async saveIssue(issue: IssueBundle): Promise<void> {
     await this.writeJson(`${this.kbPaths.issues}/${issue.issueId}.json`, issue);
   }
 
+  /** Rehydrate all tasks, acceptances, and issues from KB. */
   async loadAll(): Promise<{
     tasks: TaskBundle[];
     acceptances: AcceptanceBundle[];

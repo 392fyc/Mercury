@@ -211,6 +211,7 @@ const DEFAULT_KB_PATHS: ResolvedKBPaths = {
   issues: "issues",
 };
 
+/** Merge obsidian config KB path overrides with defaults. */
 function resolveKbPaths(obsidian?: ObsidianConfig): ResolvedKBPaths {
   return {
     tasks: obsidian?.kbPaths?.tasks ?? DEFAULT_KB_PATHS.tasks,
@@ -219,6 +220,7 @@ function resolveKbPaths(obsidian?: ObsidianConfig): ResolvedKBPaths {
   };
 }
 
+/** Parse and validate a port number from a string, returning null if invalid. */
 function parseRpcPort(raw: string | undefined): number | null {
   if (!raw) return null;
   const port = Number.parseInt(raw, 10);
@@ -228,6 +230,7 @@ function parseRpcPort(raw: string | undefined): number | null {
   return port;
 }
 
+/** Determine RPC port from env, config, or default. */
 function resolveRpcPort(config: MercuryConfig): number {
   const envPort = parseRpcPort(process.env.MERCURY_RPC_PORT);
   if (envPort !== null) {
@@ -247,12 +250,14 @@ function resolveRpcPort(config: MercuryConfig): number {
   return DEFAULT_RPC_PORT;
 }
 
+/** Set permissive CORS headers on an HTTP response. */
 function setCorsHeaders(res: ServerResponse): void {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 }
 
+/** Send a JSON-RPC response with CORS headers. */
 function sendHttpJson(
   res: ServerResponse,
   statusCode: number,
@@ -264,6 +269,7 @@ function sendHttpJson(
   res.end(JSON.stringify(payload));
 }
 
+/** Read the full request body as a UTF-8 string. */
 function readRequestBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolveBody, rejectBody) => {
     let body = "";
@@ -276,6 +282,7 @@ function readRequestBody(req: IncomingMessage): Promise<string> {
   });
 }
 
+/** Type guard: params is either undefined or a plain object. */
 function isJsonRpcParams(
   params: JsonRpcHttpRequest["params"],
 ): params is Record<string, unknown> | undefined {
@@ -283,6 +290,7 @@ function isJsonRpcParams(
   return typeof params === "object" && params !== null && !Array.isArray(params);
 }
 
+/** Type guard: validates a parsed JSON value as a valid JSON-RPC 2.0 request. */
 function isJsonRpcRequest(value: unknown): value is JsonRpcHttpRequest {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
@@ -298,6 +306,7 @@ function isJsonRpcRequest(value: unknown): value is JsonRpcHttpRequest {
   );
 }
 
+/** Map an error to a JSON-RPC error object with appropriate code. */
 function mapRpcError(err: unknown): { code: number; message: string } {
   const message = err instanceof Error ? err.message : String(err);
   if (message.startsWith("Unknown method:")) {
@@ -306,6 +315,7 @@ function mapRpcError(err: unknown): { code: number; message: string } {
   return { code: -32603, message };
 }
 
+/** Create an HTTP server that handles JSON-RPC 2.0 requests via the orchestrator. */
 function createHttpRpcServer(orchestrator: Orchestrator, port: number): Server {
   return createServer(async (req, res) => {
     setCorsHeaders(res);
@@ -374,6 +384,7 @@ function createHttpRpcServer(orchestrator: Orchestrator, port: number): Server {
   });
 }
 
+/** Wire process shutdown signals to gracefully close the HTTP server. */
 function wireShutdown(server: Server): void {
   const originalExit = process.exit.bind(process);
   let shuttingDown = false;
@@ -414,6 +425,7 @@ function wireShutdown(server: Server): void {
   });
 }
 
+/** Start stdin/stdout RPC transport and HTTP JSON-RPC server, then signal ready. */
 function startTransports(orchestrator: Orchestrator, registry: AgentRegistry, config: MercuryConfig): void {
   transport.start((method, params) => orchestrator.handleRpc(method, params));
   const httpServer = createHttpRpcServer(orchestrator, resolveRpcPort(config));

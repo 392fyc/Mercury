@@ -23,6 +23,7 @@ const WINDOWS_OBSIDIAN_BIN_CANDIDATES = [
     : undefined,
 ].filter((candidate): candidate is string => Boolean(candidate));
 
+/** Obsidian CLI wrapper providing read/write/search/list over a vault. */
 export class KnowledgeService {
   private vaultName: string;
   private vaultPath: string | undefined;
@@ -81,6 +82,7 @@ export class KnowledgeService {
     return path.join(vaultPath, ...pathSegments);
   }
 
+  /** Split raw CLI output into trimmed, non-empty lines. */
   private parsePlainTextList(raw: string): string[] {
     return raw
       .split(/\r?\n/)
@@ -231,6 +233,7 @@ export class KnowledgeService {
     return this.enabled;
   }
 
+  /** Execute an Obsidian CLI command with the configured vault. */
   private async exec(args: string[]): Promise<string> {
     if (!this.enabled) {
       throw new Error("Knowledge service is disabled. Enable obsidian in mercury.config.json.");
@@ -303,6 +306,7 @@ export class KnowledgeService {
     await this.exec(["append", `file=${file}`, `content=${content}`]);
   }
 
+  /** Search the vault for notes matching a query, returning parsed results. */
   async search(query: string): Promise<KBSearchResult[]> {
     const raw = await this.exec(["search", `query=${query}`, "format=json"]);
     try {
@@ -314,6 +318,7 @@ export class KnowledgeService {
     }
   }
 
+  /** List immediate children (files and folders) of a vault directory. */
   async list(folder?: string): Promise<KBFileInfo[]> {
     const scopedArg = folder ? [`folder=${folder}`] : [];
     const [filesRaw, foldersRaw] = await Promise.all([
