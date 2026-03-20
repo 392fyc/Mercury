@@ -18,7 +18,7 @@ const props = defineProps<{
   isFloating?: boolean;
 }>();
 
-const { agents, getStatus, getSession, getSessionInfo, getWorkDir, setWorkDir, getGitBranch, setGitBranch, clearSession, defaultWorkDir } = useAgentStore();
+const { agents, getStatus, getSession, getSessionInfo, getWorkDir, setWorkDir, getGitBranch, setGitBranch, clearSession, defaultWorkDir, getModelCache, setModelCache } = useAgentStore();
 const { getMessages, sendPrompt, clearMessages, openSessionPicker, openHistory, archiveSession, newSession, getUserMessageHistory } = useMessageStore();
 
 const inputText = ref("");
@@ -68,12 +68,20 @@ async function toggleModelPicker() {
     showModelPicker.value = false;
     return;
   }
-  modelPickerLoading.value = true;
   showModelPicker.value = true;
+  // Show cached models immediately, refresh in background
+  const cached = getModelCache(props.agentId);
+  if (cached) {
+    availableModels.value = cached;
+  } else {
+    modelPickerLoading.value = true;
+  }
   try {
-    availableModels.value = await listModels(props.agentId);
+    const fresh = await listModels(props.agentId);
+    availableModels.value = fresh;
+    setModelCache(props.agentId, fresh);
   } catch {
-    availableModels.value = [];
+    if (!cached) availableModels.value = [];
   } finally {
     modelPickerLoading.value = false;
   }
@@ -486,14 +494,18 @@ watch(
         <span v-if="status === 'error'" class="status-badge error">
           <span>error</span>
         </span>
-        <!-- Idle: show New Session button -->
+        <!-- Idle: show New Session button (Main Agent only; floating sub-agents use BookmarkRail) -->
         <button
-          v-else-if="status === 'idle'"
+          v-else-if="status === 'idle' && (role === 'main' || !isFloating)"
           class="new-session-btn"
+          :class="{ 'main-new-btn': role === 'main' }"
           title="Start new session"
           aria-label="Start new session"
           @click="newSession(panelKey)"
-        >+</button>
+        >
+          <template v-if="role === 'main'">⊕ New</template>
+          <template v-else>+</template>
+        </button>
       </div>
     </div>
 
@@ -576,7 +588,10 @@ watch(
               class="model-picker-item"
               :class="{ active: m.id === agentModel }"
               @click="selectModel(m.id)"
-            >{{ m.name || m.id }}</button>
+            >
+              <span v-if="m.id === agentModel" class="model-check">✓</span>
+              {{ m.name || m.id }}
+            </button>
           </template>
           <div v-else class="model-picker-item disabled">No models available</div>
         </div>
@@ -801,6 +816,15 @@ watch(
   -webkit-app-region: no-drag;
   padding: 0;
   transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.new-session-btn.main-new-btn {
+  width: auto;
+  border-radius: 4px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 500;
+  gap: 2px;
 }
 
 .new-session-btn:hover {
@@ -1214,6 +1238,11 @@ watch(
 .model-picker-item.active {
   color: var(--accent-main);
   font-weight: 600;
+}
+
+.model-check {
+  margin-right: 4px;
+  font-size: 10px;
 }
 
 .model-picker-item.disabled {
