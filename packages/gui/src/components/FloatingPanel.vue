@@ -39,6 +39,7 @@ function selectTab(index: number) {
 
 function closeTab(panelKey: string) {
   const idx = openFloatingTabs.value.indexOf(panelKey);
+  if (idx < 0) return; // panelKey not found — no-op
   closeFloatingTab(panelKey);
   if (idx <= activeTabIndex.value && activeTabIndex.value > 0) {
     activeTabIndex.value--;
@@ -69,12 +70,13 @@ function minimizeAll() {
           tabindex="0"
           @click="selectTab(idx)"
           @keydown.enter="selectTab(idx)"
+          @keydown.space.prevent="selectTab(idx)"
         >
           <span class="fp-tab-role">{{ tab.role.slice(0, 3) }}</span>
           <span class="fp-tab-label">{{ tab.label }}</span>
-          <button class="fp-tab-close" @click.stop="closeTab(tab.panelKey)" title="Close tab">&times;</button>
+          <button type="button" class="fp-tab-close" @click.stop="closeTab(tab.panelKey)" title="Close tab">&times;</button>
         </div>
-        <button class="fp-minimize-all" title="Minimize all to bookmarks" @click="minimizeAll">
+        <button type="button" class="fp-minimize-all" title="Minimize all to bookmarks" @click="minimizeAll">
           <span>⎽</span>
         </button>
       </div>

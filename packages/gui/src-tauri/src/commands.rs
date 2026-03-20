@@ -99,7 +99,7 @@ pub fn list_git_branches(path: String) -> Result<serde_json::Value, String> {
     let remote: Vec<String> = String::from_utf8_lossy(&remote_output.stdout)
         .lines()
         .map(|l| l.trim().to_string())
-        .filter(|l| !l.is_empty() && !l.contains("HEAD"))
+        .filter(|l| !l.is_empty() && !l.ends_with("/HEAD"))
         .collect();
 
     Ok(serde_json::json!({
