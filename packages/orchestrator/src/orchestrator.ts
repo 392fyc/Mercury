@@ -1353,6 +1353,11 @@ export class Orchestrator {
       const errorMsg = err instanceof Error ? err.message : String(err);
       this.cancelPendingApprovalsForSession(sessionId, "Session failed while approval was pending");
       this.bus.emit("agent.error", agentId, sessionId, { error: errorMsg });
+      // Ensure frontend streaming state is always closed, even on errors
+      this.transport.sendNotification("agent_stream_end", {
+        agentId,
+        sessionId,
+      });
       this.transport.sendNotification("agent_error", {
         agentId,
         sessionId,

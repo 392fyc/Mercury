@@ -622,6 +622,16 @@ pub fn read_session_history(
     session_id: String,
     cwd: Option<String>,
 ) -> Result<serde_json::Value, String> {
+    // Validate session_id to prevent path traversal attacks
+    if session_id.contains("..")
+        || session_id.contains('/')
+        || session_id.contains('\\')
+        || session_id.contains('\0')
+        || session_id.is_empty()
+    {
+        return Err(format!("Invalid session ID: {}", session_id));
+    }
+
     let effective_cwd = cwd.unwrap_or_else(|| root.0.clone());
     let jsonl_path = match cli_type.as_str() {
         "claude" => resolve_claude_session_path(&effective_cwd, &session_id),

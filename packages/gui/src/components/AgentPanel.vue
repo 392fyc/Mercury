@@ -509,6 +509,12 @@ watch(
   () => messages.value.length,
   scrollMessagesToBottom,
 );
+
+// Also scroll when streaming text grows (incremental token display)
+watch(
+  () => streaming.value?.text.length ?? 0,
+  scrollMessagesToBottom,
+);
 </script>
 
 <template>
@@ -1240,6 +1246,12 @@ watch(
 
 @keyframes blink {
   50% { opacity: 0; }
+}
+
+/* Respect reduced-motion for streaming animations */
+@media (prefers-reduced-motion: reduce) {
+  .tool-indicator { animation: none; }
+  .streaming-cursor { animation: none; opacity: 1; }
 }
 
 /* System messages — centered divider style */

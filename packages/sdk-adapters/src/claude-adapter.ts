@@ -414,6 +414,7 @@ export class ClaudeAdapter implements AgentAdapter {
 
     let sdkSessionId: string | undefined;
     let hasYieldedAssistant = false;
+    let inToolBlock = false; // Track whether current content block is a tool_use
 
     // sdk.query() accepts string | AsyncIterable<SDKUserMessage> — both paths converge here
     const queryIter = sdk.query(queryArgs as { prompt: string; options: Record<string, unknown> });
@@ -444,11 +445,12 @@ export class ClaudeAdapter implements AgentAdapter {
 
         if (eventType === "content_block_start") {
           const contentBlock = event.content_block as Record<string, unknown> | undefined;
-          if (contentBlock?.type === "tool_use") {
+          inToolBlock = contentBlock?.type === "tool_use";
+          if (inToolBlock) {
             yield {
               type: "streaming",
               eventKind: "tool_start",
-              toolName: contentBlock.name as string,
+              toolName: contentBlock!.name as string,
               timestamp: now,
             } satisfies AgentStreamingEvent;
           }
@@ -470,11 +472,16 @@ export class ClaudeAdapter implements AgentAdapter {
             } satisfies AgentStreamingEvent;
           }
         } else if (eventType === "content_block_stop") {
-          yield {
-            type: "streaming",
-            eventKind: "tool_end",
-            timestamp: now,
-          } satisfies AgentStreamingEvent;
+          // Only emit tool_end if the ending block was a tool_use.
+          // content_block_stop fires for all block types (text + tool_use).
+          if (inToolBlock) {
+            yield {
+              type: "streaming",
+              eventKind: "tool_end",
+              timestamp: now,
+            } satisfies AgentStreamingEvent;
+            inToolBlock = false;
+          }
         }
         continue;
       }

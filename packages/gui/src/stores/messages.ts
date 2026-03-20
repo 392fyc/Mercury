@@ -427,9 +427,8 @@ async function loadSessionHistory(panelKey: string, sessionId: string): Promise<
   }
 
   // Fallback: native CLI JSONL files
-  const { parsePanelKey } = useAgentStore();
   const agentStore = useAgentStore();
-  const { agentId } = parsePanelKey(panelKey);
+  const { agentId } = agentStore.parsePanelKey(panelKey);
   const agent = agentStore.agents.value.find((a) => a.id === agentId);
   const cliType = agent?.cli === "codex" ? "codex" as const : "claude" as const;
 
