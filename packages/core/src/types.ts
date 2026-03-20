@@ -503,6 +503,42 @@ export interface AgentMessage {
   metadata?: Record<string, unknown>;
 }
 
+// ─── Streaming Events ───
+
+export type AgentStreamingEventKind =
+  | "text_delta"
+  | "tool_start"
+  | "tool_delta"
+  | "tool_end";
+
+/**
+ * Incremental streaming event yielded by adapters when streaming is enabled.
+ * Unlike AgentMessage (complete turns), streaming events represent partial content
+ * arriving token-by-token from the LLM.
+ *
+ * Claude SDK: includePartialMessages → content_block_delta (text_delta / input_json_delta)
+ * Codex app-server: item/agentMessage/delta, item/commandExecution/outputDelta
+ */
+export interface AgentStreamingEvent {
+  type: "streaming";
+  eventKind: AgentStreamingEventKind;
+  /** Incremental text content (for text_delta, tool_delta) */
+  content?: string;
+  /** Tool name (for tool_start) */
+  toolName?: string;
+  /** Partial JSON input for tool call (for tool_delta) */
+  toolInput?: string;
+  timestamp: number;
+}
+
+/** Union type yielded by adapter sendPrompt generators. */
+export type AdapterYield = AgentMessage | AgentStreamingEvent;
+
+/** Type guard: is the yielded value a streaming event? */
+export function isStreamingEvent(value: AdapterYield): value is AgentStreamingEvent {
+  return "type" in value && (value as AgentStreamingEvent).type === "streaming";
+}
+
 export interface AgentOneShotOptions {
   model?: string;
   sandbox?: string;
@@ -525,7 +561,7 @@ export interface AgentAdapter {
     prompt: string,
     images?: ImageAttachment[],
     hooks?: AgentSendHooks,
-  ): AsyncGenerator<AgentMessage>;
+  ): AsyncGenerator<AdapterYield>;
   resumeSession(sessionId: string, persistedInfo?: SessionInfo, cwd?: string): Promise<SessionInfo>;
   endSession(sessionId: string): Promise<void>;
   executeOneShot?(

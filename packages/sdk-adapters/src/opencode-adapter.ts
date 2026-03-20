@@ -11,6 +11,7 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import type {
+  AdapterYield,
   AgentAdapter,
   AgentConfig,
   AgentMessage,
@@ -129,7 +130,7 @@ export class OpencodeAdapter implements AgentAdapter {
   private async *handleSlashCommand(
     sessionId: string,
     prompt: string,
-  ): AsyncGenerator<AgentMessage> {
+  ): AsyncGenerator<AdapterYield> {
     const trimmed = prompt.trim();
     const match = trimmed.match(/^\/(\S+)(?:\s+(.*))?$/);
     if (!match) return;
@@ -311,7 +312,7 @@ export class OpencodeAdapter implements AgentAdapter {
     prompt: string,
     images?: ImageAttachment[],
     _hooks?: AgentSendHooks,
-  ): AsyncGenerator<AgentMessage> {
+  ): AsyncGenerator<AdapterYield> {
     // Intercept slash commands before sending to CLI
     const trimmed = prompt.trim();
     if (trimmed.startsWith("/")) {

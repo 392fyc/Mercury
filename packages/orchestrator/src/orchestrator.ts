@@ -6,11 +6,12 @@ import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { copyFile, mkdir, readdir, writeFile, rename, unlink } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
-import { EventBus, makeRoleSlotKey } from "@mercury/core";
+import { EventBus, isStreamingEvent, makeRoleSlotKey } from "@mercury/core";
 import type {
   AgentConfig,
   AgentSendHooks,
   AgentRole,
+  AgentStreamingEvent,
   ApprovalDecision,
   ApprovalMode,
   ApprovalRequest,
@@ -1290,7 +1291,25 @@ export class Orchestrator {
     let lastAssistantMessage: AgentMessage | undefined;
 
     try {
-      for await (const message of adapter.sendPrompt(sessionId, prompt, images, hooks)) {
+      for await (const yielded of adapter.sendPrompt(sessionId, prompt, images, hooks)) {
+        // Streaming events are forwarded as lightweight notifications without
+        // persisting to transcript — they represent incremental token content.
+        if (isStreamingEvent(yielded)) {
+          this.transport.sendNotification("agent_streaming", {
+            agentId,
+            sessionId,
+            event: {
+              eventKind: yielded.eventKind,
+              content: yielded.content,
+              toolName: yielded.toolName,
+              toolInput: yielded.toolInput,
+              timestamp: yielded.timestamp,
+            },
+          });
+          continue;
+        }
+
+        const message = yielded as AgentMessage;
         if (message.role === "assistant" && message.content.trim().length > 0) {
           lastAssistantMessage = message;
         }

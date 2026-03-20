@@ -448,6 +448,14 @@ export interface ItemStartedNotification {
   turnId: string;
 }
 
+/** Incremental text delta for an agent message being streamed. */
+export interface ItemAgentMessageDeltaNotification {
+  threadId: string;
+  turnId: string;
+  itemId: string;
+  delta: string;
+}
+
 export interface ContextCompactedNotification {
   threadId: string;
   turnId: string;
@@ -492,6 +500,7 @@ export interface CodexAppServerNotificationMap {
   "turn/diff/updated": TurnDiffUpdatedNotification;
   "item/started": ItemStartedNotification;
   "item/completed": ItemCompletedNotification;
+  "item/agentMessage/delta": ItemAgentMessageDeltaNotification;
   "thread/compacted": ContextCompactedNotification;
   "serverRequest/resolved": ServerRequestResolvedNotification;
 }
