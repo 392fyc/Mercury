@@ -125,8 +125,8 @@ function handleApprovalModeChange(event: Event) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 36px;
-  padding: 0 12px;
+  height: 44px;
+  padding: 0 14px;
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border);
   user-select: none;
@@ -140,12 +140,12 @@ function handleApprovalModeChange(event: Event) {
 }
 
 .logo {
-  font-size: 18px;
+  font-size: 20px;
 }
 
 .title {
   font-weight: 600;
-  font-size: 14px;
+  font-size: 15px;
   color: var(--text-primary);
 }
 
@@ -168,8 +168,8 @@ function handleApprovalModeChange(event: Event) {
   border: none;
   border-bottom: 2px solid transparent;
   color: var(--text-muted);
-  font-size: 11px;
-  padding: 2px 8px 4px;
+  font-size: 12px;
+  padding: 4px 10px 6px;
   cursor: pointer;
   -webkit-app-region: no-drag;
 }
@@ -291,9 +291,9 @@ function handleApprovalModeChange(event: Event) {
   background: none;
   border: none;
   color: var(--text-secondary);
-  font-size: 14px;
-  width: 28px;
-  height: 28px;
+  font-size: 16px;
+  width: 32px;
+  height: 32px;
   border-radius: var(--radius);
   cursor: pointer;
   display: flex;

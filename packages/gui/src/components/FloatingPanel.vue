@@ -42,10 +42,17 @@ function selectTab(index: number) {
 function closeTab(panelKey: string) {
   const idx = openFloatingTabs.value.indexOf(panelKey);
   closeFloatingTab(panelKey);
-  // Adjust active tab if the closed tab was before or at the active index
   if (idx <= activeTabIndex.value && activeTabIndex.value > 0) {
     activeTabIndex.value--;
   }
+}
+
+function minimizeAll() {
+  // Close all floating tabs (bookmarks remain)
+  for (const pk of [...openFloatingTabs.value]) {
+    closeFloatingTab(pk);
+  }
+  activeTabIndex.value = 0;
 }
 </script>
 
@@ -64,6 +71,9 @@ function closeTab(panelKey: string) {
           <span class="fp-tab-role">{{ tab.role.slice(0, 3) }}</span>
           <span class="fp-tab-label">{{ tab.label }}</span>
           <button class="fp-tab-close" @click.stop="closeTab(tab.panelKey)" title="Close tab">&times;</button>
+        </button>
+        <button class="fp-minimize-all" title="Minimize all to bookmarks" @click="minimizeAll">
+          <span>⎽</span>
         </button>
       </div>
 
@@ -87,7 +97,7 @@ function closeTab(panelKey: string) {
   position: absolute;
   top: 24px;
   bottom: 24px;
-  right: 48px; /* bookmark rail width + gap */
+  right: 136px; /* bookmark rail width (132px) + gap */
   width: 33%;
   min-width: 360px;
   display: flex;
@@ -167,6 +177,23 @@ function closeTab(panelKey: string) {
 .fp-tab-close:hover {
   color: var(--accent-error);
   background: rgba(255, 82, 82, 0.1);
+}
+
+.fp-minimize-all {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.fp-minimize-all:hover {
+  color: var(--text-primary);
+  background: var(--bg-panel);
 }
 
 .fp-body {

@@ -383,6 +383,19 @@ function renderMarkdown(content: string): string {
   return DOMPurify.sanitize(html);
 }
 
+// ─── Message Copy ───
+const copiedIndex = ref<number | null>(null);
+
+async function copyMessage(content: string, index: number) {
+  try {
+    await navigator.clipboard.writeText(content);
+    copiedIndex.value = index;
+    setTimeout(() => { if (copiedIndex.value === index) copiedIndex.value = null; }, 1500);
+  } catch {
+    console.error("Failed to copy message");
+  }
+}
+
 async function handleSend() {
   const prompt = inputText.value.trim();
   if (!prompt && pendingImages.value.length === 0) return;
@@ -533,7 +546,7 @@ watch(
           aria-label="Start new session"
           @click="newSession(panelKey)"
         >
-          <template v-if="role === 'main'">⊕ New</template>
+          <template v-if="role === 'main'">+ New</template>
           <template v-else>+</template>
         </button>
       </div>
@@ -578,6 +591,9 @@ watch(
               </div>
               <div v-if="msg.content" class="message-content">{{ msg.content }}</div>
             </template>
+            <button class="msg-copy-btn" :class="{ copied: copiedIndex === i }" @click="copyMessage(msg.content, i)" title="Copy message">
+              {{ copiedIndex === i ? '✓' : '⎘' }}
+            </button>
           </div>
           <span class="msg-avatar user-avatar">U</span>
         </template>
@@ -590,6 +606,9 @@ watch(
               class="message-content markdown-body"
               v-html="renderMarkdown(msg.content)"
             ></div>
+            <button class="msg-copy-btn" :class="{ copied: copiedIndex === i }" @click="copyMessage(msg.content, i)" title="Copy message">
+              {{ copiedIndex === i ? '✓' : '⎘' }}
+            </button>
           </div>
         </template>
       </div>
@@ -1005,6 +1024,41 @@ watch(
   max-width: 85%;
   padding: 8px 12px;
   border-radius: var(--radius);
+  position: relative;
+}
+
+.message-bubble:hover .msg-copy-btn {
+  opacity: 1;
+}
+
+.msg-copy-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-muted);
+  font-size: 12px;
+  width: 24px;
+  height: 22px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s, background 0.15s;
+}
+
+.msg-copy-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-panel);
+}
+
+.msg-copy-btn.copied {
+  opacity: 1;
+  color: var(--accent-success);
+  border-color: var(--accent-success);
 }
 
 .user-bubble {

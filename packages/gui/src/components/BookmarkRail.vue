@@ -45,23 +45,28 @@ function handleWheel(event: WheelEvent) {
 function fisheyeScale(index: number): number {
   const center = Math.floor(visibleBookmarks.value.length / 2);
   const dist = Math.abs(index - center);
-  return Math.max(0.65, 1 - dist * 0.1);
+  return Math.max(0.75, 1 - dist * 0.07);
 }
 
 function isTabOpen(panelKey: string): boolean {
   return openFloatingTabs.value.includes(panelKey);
 }
 
-function shortName(name?: string, panelKey?: string): string {
-  if (name) return name.length > 18 ? name.slice(0, 16) + "…" : name;
-  return panelKey?.split(":")[0]?.toUpperCase() ?? "?";
+function formatTime(ts: number): string {
+  if (!ts) return "";
+  const d = new Date(ts);
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) {
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+  return d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 </script>
 
 <template>
   <div class="bookmark-rail" @wheel="handleWheel">
     <!-- Overflow top indicator -->
-    <div v-if="hasOverflowTop" class="overflow-indicator top">⋮</div>
+    <div v-if="hasOverflowTop" class="overflow-indicator top">⋯</div>
 
     <!-- Bookmarks -->
     <div class="bookmark-list">
@@ -71,17 +76,22 @@ function shortName(name?: string, panelKey?: string): string {
         class="bookmark-tab"
         :class="{ active: bm.status === 'active', open: isTabOpen(bm.panelKey) }"
         :style="{ transform: `scale(${fisheyeScale(idx)})` }"
-        :title="`${bm.displayName} — ${bm.sessionName ?? bm.sessionId.slice(0, 8)}\n${bm.status.toUpperCase()}`"
         @click="emit('open-session', bm.panelKey)"
       >
-        <span class="bm-role">{{ bm.role.slice(0, 3).toUpperCase() }}</span>
-        <span class="bm-name">{{ shortName(bm.sessionName, bm.panelKey) }}</span>
-        <span class="bm-dot" :class="bm.status"></span>
+        <div class="bm-top-row">
+          <span class="bm-role">{{ bm.role }}</span>
+          <span class="bm-status-dot" :class="bm.status"></span>
+        </div>
+        <span class="bm-title">{{ bm.sessionName || bm.sessionId.slice(0, 10) }}</span>
+        <div class="bm-bottom-row">
+          <span class="bm-agent">{{ bm.displayName }}</span>
+          <span class="bm-time">{{ formatTime(bm.lastActiveAt) }}</span>
+        </div>
       </button>
     </div>
 
     <!-- Overflow bottom indicator -->
-    <div v-if="hasOverflowBottom" class="overflow-indicator bottom">⋮</div>
+    <div v-if="hasOverflowBottom" class="overflow-indicator bottom">⋯</div>
 
     <!-- Create new session button -->
     <button class="bookmark-add" title="New sub-agent session" @click="emit('create-session')">
@@ -94,20 +104,20 @@ function shortName(name?: string, panelKey?: string): string {
 .bookmark-rail {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  width: 44px;
-  padding: 8px 2px;
+  align-items: stretch;
+  width: 132px;
+  padding: 6px 4px;
   gap: 4px;
   background: var(--bg-secondary);
   border-left: 1px solid var(--border);
   user-select: none;
   overflow: hidden;
+  flex-shrink: 0;
 }
 
 .bookmark-list {
   display: flex;
   flex-direction: column;
-  align-items: center;
   gap: 3px;
   flex: 1;
   justify-content: center;
@@ -116,24 +126,24 @@ function shortName(name?: string, panelKey?: string): string {
 .bookmark-tab {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  width: 38px;
-  min-height: 44px;
-  padding: 4px 2px;
+  gap: 2px;
+  width: 100%;
+  padding: 6px 8px;
   background: var(--bg-primary);
   border: 1px solid var(--border);
   border-right: none;
   border-radius: 6px 0 0 6px;
   cursor: pointer;
   color: var(--text-secondary);
-  font-size: 9px;
+  font-size: 10px;
+  text-align: left;
   transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
   position: relative;
+  transform-origin: right center;
 }
 
 .bookmark-tab:hover {
-  transform: scale(1.12) translateX(-4px) !important;
+  transform: scale(1.05) translateX(-4px) !important;
   background: var(--bg-panel);
   box-shadow: -2px 0 8px rgba(0, 0, 0, 0.3);
   z-index: 2;
@@ -145,57 +155,83 @@ function shortName(name?: string, panelKey?: string): string {
   color: var(--text-primary);
 }
 
-.bookmark-tab.active .bm-dot {
-  background: var(--accent-main);
-  box-shadow: 0 0 4px var(--accent-main);
+.bm-top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .bm-role {
   font-weight: 600;
-  font-size: 8px;
+  font-size: 9px;
   text-transform: uppercase;
   letter-spacing: 0.3px;
   color: var(--accent-sub);
 }
 
-.bm-name {
-  font-size: 7px;
-  color: var(--text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 34px;
-  text-align: center;
-}
-
-.bm-dot {
-  width: 5px;
-  height: 5px;
+.bm-status-dot {
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: var(--text-muted);
-  margin-top: 2px;
+  flex-shrink: 0;
 }
 
-.bm-dot.active {
+.bm-status-dot.active {
   background: var(--accent-main);
   box-shadow: 0 0 4px var(--accent-main);
 }
 
-.bm-dot.error {
+.bm-status-dot.error {
   background: var(--accent-error);
+}
+
+.bm-title {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bm-bottom-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.bm-agent {
+  font-size: 8px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.bm-time {
+  font-size: 8px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .overflow-indicator {
   font-size: 10px;
   color: var(--text-muted);
-  height: 12px;
-  line-height: 12px;
+  height: 14px;
+  line-height: 14px;
+  text-align: center;
 }
 
 .bookmark-add {
-  width: 32px;
+  width: 100%;
   height: 32px;
-  border-radius: 50%;
+  border-radius: 6px;
   border: 1px dashed var(--border);
   background: none;
   color: var(--text-muted);
