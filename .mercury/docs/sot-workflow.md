@@ -42,4 +42,4 @@ Main 创建 Task → 派发
 | `session-context.template.json` | Milestone 快照 |
 | `dispatch-prompt.template.md` | 派发 prompt 模板 |
 
-模板位置: `Mercury_KB/99-templates/`
+模板位置: `{Project}_KB/99-templates/`
