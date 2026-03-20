@@ -9,11 +9,14 @@ import { randomUUID } from "node:crypto";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { isStreamingEvent } from "@mercury/core";
 import type {
+  AdapterYield,
   AgentAdapter,
   AgentConfig,
   AgentMessage,
   AgentRole,
+  AgentStreamingEvent,
   ImageAttachment,
   SessionInfo,
   SlashCommand,
@@ -31,6 +34,7 @@ import type {
   FileUpdateChange,
   FileChangeApprovalDecision,
   FileChangeRequestApprovalParams,
+  ItemAgentMessageDeltaNotification,
   SandboxMode,
   Thread,
   ThreadListResponse,
@@ -45,7 +49,7 @@ const DEFAULT_APPROVAL_POLICY: AskForApproval = "on-request";
 const DEFAULT_SANDBOX_MODE = "workspace-write";
 const END_OF_STREAM = Symbol("codex-turn-end");
 const NOTIFICATION_OPTOUTS: string[] = [
-  "item/agentMessage/delta",
+  // item/agentMessage/delta is NOT opted out — forwarded as streaming events
   "item/reasoning/textDelta",
   "item/reasoning/summaryTextDelta",
   "item/reasoning/summaryPartAdded",
@@ -77,8 +81,8 @@ interface NativeSession {
 }
 
 class MessageStream {
-  private queue: Array<AgentMessage | Error | typeof END_OF_STREAM> = [];
-  private waiters: Array<(value: AgentMessage | Error | typeof END_OF_STREAM) => void> = [];
+  private queue: Array<AdapterYield | Error | typeof END_OF_STREAM> = [];
+  private waiters: Array<(value: AdapterYield | Error | typeof END_OF_STREAM) => void> = [];
   private ended = false;
   private compactionNotified = false;
   readonly hooks?: LocalAgentSendHooks;
@@ -92,7 +96,7 @@ class MessageStream {
     this.turnId = turnId;
   }
 
-  push(message: AgentMessage): void {
+  push(message: AdapterYield): void {
     if (this.ended) return;
     this.deliver(message);
   }
@@ -115,7 +119,7 @@ class MessageStream {
     this.deliver(END_OF_STREAM);
   }
 
-  async *iterate(): AsyncGenerator<AgentMessage> {
+  async *iterate(): AsyncGenerator<AdapterYield> {
     while (true) {
       const next = await this.next();
       if (next === END_OF_STREAM) return;
@@ -124,7 +128,7 @@ class MessageStream {
     }
   }
 
-  private next(): Promise<AgentMessage | Error | typeof END_OF_STREAM> {
+  private next(): Promise<AdapterYield | Error | typeof END_OF_STREAM> {
     const item = this.queue.shift();
     if (item !== undefined) {
       return Promise.resolve(item);
@@ -134,7 +138,7 @@ class MessageStream {
     });
   }
 
-  private deliver(item: AgentMessage | Error | typeof END_OF_STREAM): void {
+  private deliver(item: AdapterYield | Error | typeof END_OF_STREAM): void {
     const waiter = this.waiters.shift();
     if (waiter) {
       waiter(item);
@@ -211,7 +215,7 @@ export class CodexAdapter implements AgentAdapter {
     prompt: string,
     images?: ImageAttachment[],
     hooks?: LocalAgentSendHooks,
-  ): AsyncGenerator<AgentMessage> {
+  ): AsyncGenerator<AdapterYield> {
     const trimmed = prompt.trim();
     if (trimmed.startsWith("/")) {
       let handled = false;
@@ -406,8 +410,10 @@ export class CodexAdapter implements AgentAdapter {
         stream.finish();
       }
 
-      for await (const message of stream.iterate()) {
-        messages.push(message);
+      for await (const yielded of stream.iterate()) {
+        if (!isStreamingEvent(yielded)) {
+          messages.push(yielded as AgentMessage);
+        }
       }
 
       record.info.lastActiveAt = Date.now();
@@ -739,6 +745,18 @@ export class CodexAdapter implements AgentAdapter {
         if (payload.willRetry) return;
         const turn = this.getTurnStream(payload.threadId, payload.turnId);
         turn?.fail(new Error(payload.error.message));
+        return;
+      }
+      case "item/agentMessage/delta": {
+        const payload = params as unknown as ItemAgentMessageDeltaNotification;
+        const turn = this.getTurnStream(payload.threadId, payload.turnId);
+        if (!turn || !payload.delta) return;
+        turn.push({
+          type: "streaming",
+          eventKind: "text_delta",
+          content: payload.delta,
+          timestamp: Date.now(),
+        } satisfies AgentStreamingEvent);
         return;
       }
       case "item/started":
@@ -1291,7 +1309,7 @@ export class CodexAdapter implements AgentAdapter {
   private async *handleSlashCommand(
     sessionId: string,
     prompt: string,
-  ): AsyncGenerator<AgentMessage> {
+  ): AsyncGenerator<AdapterYield> {
     const trimmed = prompt.trim();
     const match = trimmed.match(/^\/(\S+)(?:\s+(.*))?$/);
     if (!match) return;

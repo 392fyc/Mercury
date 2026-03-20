@@ -13,12 +13,14 @@ import {
   listSessions as bridgeListSessions,
   resumeSession as bridgeResumeSession,
   getSessionMessages as bridgeGetSessionMessages,
+  readSessionHistory as bridgeReadSessionHistory,
   onAgentMessage,
   onAgentWorking,
   onAgentStreamEnd,
   onAgentError,
+  onAgentStreaming,
 } from "../lib/tauri-bridge";
-import type { SessionListItem, TranscriptMessage } from "../lib/tauri-bridge";
+import type { AgentStreamingEventKind, SessionListItem, TranscriptMessage } from "../lib/tauri-bridge";
 import { useAgentStore } from "./agents";
 
 export interface DisplayMessage {
@@ -29,10 +31,20 @@ export interface DisplayMessage {
   metadata?: Record<string, unknown>;
 }
 
+/** Per-panel streaming state: accumulated text + active tool indicator. */
+export interface StreamingState {
+  text: string;
+  activeTool: string | null;
+  toolInput: string;
+}
+
 const STORAGE_KEY = "mercury:messages";
 const MAX_MESSAGES_PER_PANEL = 200;
 
 const messages = ref<Map<string, DisplayMessage[]>>(new Map());
+
+/** Live streaming content per panel — cleared when stream ends or full message arrives. */
+const streamingState = ref<Map<string, StreamingState>>(new Map());
 
 /** Reverse map: sessionId → panelKey, populated when we get sessionIds back */
 const sessionToPanelKey = new Map<string, string>();
@@ -95,6 +107,42 @@ function loadFromStorage(): void {
 /** Retrieve messages for a specific panel. */
 function getMessages(panelKey: string): DisplayMessage[] {
   return messages.value.get(panelKey) ?? [];
+}
+
+/** Get the current streaming state for a panel (null if not streaming). */
+function getStreamingState(panelKey: string): StreamingState | null {
+  return streamingState.value.get(panelKey) ?? null;
+}
+
+/** Process an incoming streaming event for a panel. */
+function handleStreamingEvent(panelKey: string, eventKind: AgentStreamingEventKind, content?: string, toolName?: string, toolInput?: string) {
+  const current = streamingState.value.get(panelKey) ?? { text: "", activeTool: null, toolInput: "" };
+
+  switch (eventKind) {
+    case "text_delta":
+      current.text += content ?? "";
+      break;
+    case "tool_start":
+      current.activeTool = toolName ?? null;
+      current.toolInput = "";
+      break;
+    case "tool_delta":
+      current.toolInput += toolInput ?? "";
+      break;
+    case "tool_end":
+      current.activeTool = null;
+      current.toolInput = "";
+      break;
+  }
+
+  streamingState.value = new Map(streamingState.value).set(panelKey, { ...current });
+}
+
+/** Clear streaming state for a panel (on stream end or full message arrival). */
+function clearStreamingState(panelKey: string) {
+  const next = new Map(streamingState.value);
+  next.delete(panelKey);
+  streamingState.value = next;
 }
 
 /** Append a message to a panel's history and persist to localStorage. */
@@ -253,9 +301,23 @@ async function initMessageListeners() {
 
   const { setStatus } = useAgentStore();
 
+  await onAgentStreaming((data) => {
+    const panelKey = resolvePanelKey(data.agentId, data.sessionId);
+    if (!panelKey) return;
+    handleStreamingEvent(
+      panelKey,
+      data.event.eventKind,
+      data.event.content,
+      data.event.toolName,
+      data.event.toolInput,
+    );
+  });
+
   await onAgentMessage((data) => {
     const panelKey = resolvePanelKey(data.agentId, data.sessionId);
     if (!panelKey) return;
+    // Clear streaming buffer when a complete message arrives
+    clearStreamingState(panelKey);
     appendMessage(panelKey, {
       role: data.message.role as "user" | "assistant" | "system",
       content: data.message.content,
@@ -274,6 +336,7 @@ async function initMessageListeners() {
   await onAgentStreamEnd((data) => {
     const panelKey = resolvePanelKey(data.agentId, data.sessionId);
     if (!panelKey) return;
+    clearStreamingState(panelKey);
     setStatus(panelKey, "idle");
   });
 
@@ -329,28 +392,63 @@ async function pickSession(sessionId: string): Promise<void> {
 /**
  * Load historical messages from a session into the panel's message store.
  * Clears existing messages and backfills from the backend transcript.
+ *
+ * Strategy: try orchestrator transcript first (get_session_messages), then
+ * fall back to native CLI JSONL files (read_session_history) for sessions
+ * created outside Mercury.
  */
 async function loadSessionHistory(panelKey: string, sessionId: string): Promise<void> {
   // Always clear old messages to prevent cross-session leakage
   clearMessages(panelKey);
 
-  try {
-    const result = await bridgeGetSessionMessages(sessionId);
-    if (!result.messages || result.messages.length === 0) return;
+  // Show loading indicator
+  appendMessage(panelKey, {
+    role: "system",
+    content: "Loading history...",
+    timestamp: Date.now(),
+  });
 
-    // Batch-set all messages in a single reactive update
-    const batch: DisplayMessage[] = result.messages.map((msg) => ({
-      role: msg.role,
-      content: msg.content,
-      timestamp: msg.timestamp,
-      images: msg.images,
-      metadata: msg.metadata,
-    }));
-    setMessages(panelKey, batch);
-  } catch (e) {
-    console.debug("loadSessionHistory: failed to load history", e);
-    // Panel is already cleared — empty state is safe
+  try {
+    // Primary: orchestrator transcript
+    const result = await bridgeGetSessionMessages(sessionId);
+    if (result.messages && result.messages.length > 0) {
+      const batch: DisplayMessage[] = result.messages.map((msg) => ({
+        role: msg.role,
+        content: msg.content,
+        timestamp: msg.timestamp,
+        images: msg.images,
+        metadata: msg.metadata,
+      }));
+      setMessages(panelKey, batch);
+      return;
+    }
+  } catch {
+    // Orchestrator doesn't have this session — try native CLI files
   }
+
+  // Fallback: native CLI JSONL files
+  const agentStore = useAgentStore();
+  const { agentId } = agentStore.parsePanelKey(panelKey);
+  const agent = agentStore.agents.value.find((a) => a.id === agentId);
+  const cliType = agent?.cli === "codex" ? "codex" as const : "claude" as const;
+
+  try {
+    const nativeResult = await bridgeReadSessionHistory(cliType, sessionId);
+    if (nativeResult.messages && nativeResult.messages.length > 0) {
+      const batch: DisplayMessage[] = nativeResult.messages.map((msg) => ({
+        role: msg.role,
+        content: msg.content,
+        timestamp: msg.timestamp,
+      }));
+      setMessages(panelKey, batch);
+      return;
+    }
+  } catch (e) {
+    console.debug("loadSessionHistory: native CLI history not available", e);
+  }
+
+  // No history found — clear the loading indicator
+  clearMessages(panelKey);
 }
 
 /** Close the session picker modal without selecting a session. */
@@ -505,7 +603,9 @@ function getUserMessageHistory(panelKey: string): string[] {
 export function useMessageStore() {
   return {
     messages,
+    streamingState,
     getMessages,
+    getStreamingState,
     appendMessage,
     clearMessages,
     sendPrompt,

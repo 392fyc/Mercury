@@ -136,6 +136,7 @@ pub fn run() {
             commands::get_context_status,
             commands::list_models,
             commands::set_model,
+            commands::read_session_history,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

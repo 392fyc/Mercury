@@ -418,8 +418,34 @@ async function initAgents() {
     if (event.type === "agent.session.end") {
       for (const [panelKey, sessionId] of sessions.value) {
         if (sessionId !== event.sessionId) continue;
+        const { role } = parsePanelKey(panelKey);
+
+        // Clean up sessionPromptState for this session
+        const nextPromptState = new Map(sessionPromptState.value);
+        nextPromptState.delete(sessionId);
+        sessionPromptState.value = nextPromptState;
+
         clearSession(panelKey);
-        setStatus(panelKey, "idle");
+
+        // For non-main sessions, fully remove all panel-level state to prevent
+        // memory growth from frequent sub-agent creation over long-running sessions
+        if (role !== "main") {
+          const nextStatuses = new Map(statuses.value);
+          nextStatuses.delete(panelKey);
+          statuses.value = nextStatuses;
+
+          const nextWorkDirs = new Map(workDirs.value);
+          nextWorkDirs.delete(panelKey);
+          workDirs.value = nextWorkDirs;
+
+          const nextBranches = new Map(gitBranches.value);
+          nextBranches.delete(panelKey);
+          gitBranches.value = nextBranches;
+
+          removeBookmark(panelKey);
+        } else {
+          setStatus(panelKey, "idle");
+        }
         break;
       }
       return;

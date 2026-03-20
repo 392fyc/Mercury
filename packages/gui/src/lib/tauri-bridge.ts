@@ -469,6 +469,19 @@ export async function getSessionMessages(
   });
 }
 
+/** Read native CLI session history from JSONL files (direct filesystem, no sidecar). */
+export async function readSessionHistory(
+  cliType: "claude" | "codex",
+  sessionId: string,
+  cwd?: string,
+): Promise<{ messages: TranscriptMessage[]; source: string; total: number }> {
+  return invoke("read_session_history", {
+    cliType,
+    sessionId,
+    cwd: cwd ?? null,
+  });
+}
+
 // ─── Approval Control Plane ───
 
 export async function getApprovalMode(): Promise<{ mode: ApprovalMode }> {
@@ -530,6 +543,25 @@ export interface AgentStreamEndEvent {
   sessionId: string;
 }
 
+export type AgentStreamingEventKind =
+  | "text_delta"
+  | "tool_start"
+  | "tool_delta"
+  | "tool_end";
+
+/** Incremental streaming event for real-time token display. */
+export interface AgentStreamingEvent {
+  agentId: string;
+  sessionId: string;
+  event: {
+    eventKind: AgentStreamingEventKind;
+    content?: string;
+    toolName?: string;
+    toolInput?: string;
+    timestamp: number;
+  };
+}
+
 export interface AgentWorkingEvent {
   agentId: string;
   sessionId: string;
@@ -560,6 +592,14 @@ export function onAgentStreamEnd(
   handler: (data: AgentStreamEndEvent) => void,
 ): Promise<UnlistenFn> {
   return listen<AgentStreamEndEvent>("agent-stream-end", (event) =>
+    handler(event.payload),
+  );
+}
+
+export function onAgentStreaming(
+  handler: (data: AgentStreamingEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<AgentStreamingEvent>("agent-streaming", (event) =>
     handler(event.payload),
   );
 }

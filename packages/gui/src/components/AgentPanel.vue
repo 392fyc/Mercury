@@ -21,7 +21,7 @@ const props = defineProps<{
 }>();
 
 const { agents, getStatus, getSession, getSessionInfo, getWorkDir, setWorkDir, getGitBranch, setGitBranch, clearSession, defaultWorkDir, getModelCache, setModelCache } = useAgentStore();
-const { getMessages, sendPrompt, clearMessages, openSessionPicker, openHistory, archiveSession, newSession, getUserMessageHistory } = useMessageStore();
+const { getMessages, getStreamingState, sendPrompt, clearMessages, openSessionPicker, openHistory, archiveSession, newSession, getUserMessageHistory } = useMessageStore();
 const { approvalMode, pendingCount, openQueue, setMode: setApprovalMode } = useApprovalStore();
 
 const inputText = ref("");
@@ -39,6 +39,7 @@ const sessionId = computed(() => getSession(props.panelKey));
 const sessionInfo = computed(() => getSessionInfo(props.panelKey));
 const sessionTitle = computed(() => sessionInfo.value?.sessionName ?? null);
 const hasLegacyRoleConfig = computed(() => sessionInfo.value?.legacyRoleConfig === true);
+const streaming = computed(() => getStreamingState(props.panelKey));
 const sessionShortId = computed(() => {
   const id = sessionId.value;
   return id ? id.slice(0, 8) : null;
@@ -508,6 +509,12 @@ watch(
   () => messages.value.length,
   scrollMessagesToBottom,
 );
+
+// Also scroll when streaming text grows (incremental token display)
+watch(
+  () => streaming.value?.text.length ?? 0,
+  scrollMessagesToBottom,
+);
 </script>
 
 <template>
@@ -655,6 +662,19 @@ watch(
             {{ copiedIndex === i ? '✓' : '⎘' }}
           </button>
         </template>
+      </div>
+
+      <!-- Streaming zone: real-time token display while agent is generating -->
+      <div v-if="streaming" class="message-row assistant streaming-zone">
+        <span class="msg-avatar assistant-avatar">{{ agentName.charAt(0).toUpperCase() }}</span>
+        <div class="message-bubble assistant-bubble streaming-bubble">
+          <div v-if="streaming.activeTool" class="streaming-tool-label">
+            <span class="tool-indicator">&#9881;</span> {{ streaming.activeTool }}
+            <span v-if="streaming.toolInput" class="tool-input-preview">{{ streaming.toolInput.slice(0, 120) }}</span>
+          </div>
+          <div v-if="streaming.text" class="message-content markdown-body streaming-text" v-html="renderMarkdown(streaming.text)"></div>
+          <span v-if="!streaming.text && !streaming.activeTool" class="streaming-cursor">&#9646;</span>
+        </div>
       </div>
     </div>
 
@@ -1174,6 +1194,64 @@ watch(
   background: rgba(123, 104, 238, 0.06);
   border: 1px solid rgba(123, 104, 238, 0.1);
   border-radius: var(--radius) var(--radius) var(--radius) 2px;
+}
+
+/* Streaming zone — real-time token display */
+.streaming-zone {
+  opacity: 0.9;
+}
+
+.streaming-bubble {
+  border-style: dashed;
+  min-height: 24px;
+}
+
+.streaming-tool-label {
+  font-size: 10px;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  padding: 2px 0 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tool-indicator {
+  animation: spin 2s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.tool-input-preview {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 300px;
+}
+
+.streaming-text {
+  border-left: 2px solid var(--accent);
+  padding-left: 8px;
+}
+
+.streaming-cursor {
+  display: inline-block;
+  animation: blink 1s step-end infinite;
+  color: var(--accent);
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+/* Respect reduced-motion for streaming animations */
+@media (prefers-reduced-motion: reduce) {
+  .tool-indicator { animation: none; }
+  .streaming-cursor { animation: none; opacity: 1; }
 }
 
 /* System messages — centered divider style */

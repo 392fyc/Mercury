@@ -12,11 +12,13 @@
 
 import { randomUUID } from "node:crypto";
 import type {
+  AdapterYield,
   AgentAdapter,
   AgentApprovalRequest,
   AgentConfig,
   AgentMessage,
   AgentSendHooks,
+  AgentStreamingEvent,
   ImageAttachment,
   SessionInfo,
   SlashCommand,
@@ -104,7 +106,7 @@ export class ClaudeAdapter implements AgentAdapter {
   private async *handleSlashCommand(
     sessionId: string,
     prompt: string,
-  ): AsyncGenerator<AgentMessage> {
+  ): AsyncGenerator<AdapterYield> {
     const trimmed = prompt.trim();
     const match = trimmed.match(/^\/(\S+)(?:\s+(.*))?$/);
     if (!match) return; // not a slash command — caller should pass through
@@ -266,7 +268,7 @@ export class ClaudeAdapter implements AgentAdapter {
     prompt: string,
     images?: ImageAttachment[],
     hooks?: AgentSendHooks,
-  ): AsyncGenerator<AgentMessage> {
+  ): AsyncGenerator<AdapterYield> {
     // Intercept slash commands before sending to SDK
     const trimmed = prompt.trim();
     if (trimmed.startsWith("/")) {
@@ -297,6 +299,10 @@ export class ClaudeAdapter implements AgentAdapter {
       permissionMode: "acceptEdits",
       maxTurns: 30,
       cwd,
+      // Enable partial message streaming — yields StreamEvent objects alongside
+      // AssistantMessage/ResultMessage for real-time token display.
+      // Ref: https://platform.claude.com/docs/en/agent-sdk/streaming-output
+      includePartialMessages: true,
     };
 
     if (this.config.model) {
@@ -408,6 +414,7 @@ export class ClaudeAdapter implements AgentAdapter {
 
     let sdkSessionId: string | undefined;
     let hasYieldedAssistant = false;
+    let inToolBlock = false; // Track whether current content block is a tool_use
 
     // sdk.query() accepts string | AsyncIterable<SDKUserMessage> — both paths converge here
     const queryIter = sdk.query(queryArgs as { prompt: string; options: Record<string, unknown> });
@@ -424,6 +431,59 @@ export class ClaudeAdapter implements AgentAdapter {
       // Capture SDK session ID from init message
       if (msg.type === "system" && msg.subtype === "init" && msg.session_id) {
         sdkSessionId = msg.session_id as string;
+      }
+
+      // Streaming events — incremental content from includePartialMessages: true
+      // Type: SDKPartialAssistantMessage { type: "stream_event", event: RawMessageStreamEvent }
+      // Ref: https://platform.claude.com/docs/en/agent-sdk/streaming-output
+      if (msg.type === "stream_event") {
+        const event = msg.event as Record<string, unknown> | undefined;
+        if (!event) continue;
+
+        const eventType = event.type as string;
+        const now = Date.now();
+
+        if (eventType === "content_block_start") {
+          const contentBlock = event.content_block as Record<string, unknown> | undefined;
+          inToolBlock = contentBlock?.type === "tool_use";
+          if (inToolBlock) {
+            yield {
+              type: "streaming",
+              eventKind: "tool_start",
+              toolName: contentBlock!.name as string,
+              timestamp: now,
+            } satisfies AgentStreamingEvent;
+          }
+        } else if (eventType === "content_block_delta") {
+          const delta = event.delta as Record<string, unknown> | undefined;
+          if (delta?.type === "text_delta") {
+            yield {
+              type: "streaming",
+              eventKind: "text_delta",
+              content: delta.text as string,
+              timestamp: now,
+            } satisfies AgentStreamingEvent;
+          } else if (delta?.type === "input_json_delta") {
+            yield {
+              type: "streaming",
+              eventKind: "tool_delta",
+              toolInput: delta.partial_json as string,
+              timestamp: now,
+            } satisfies AgentStreamingEvent;
+          }
+        } else if (eventType === "content_block_stop") {
+          // Only emit tool_end if the ending block was a tool_use.
+          // content_block_stop fires for all block types (text + tool_use).
+          if (inToolBlock) {
+            yield {
+              type: "streaming",
+              eventKind: "tool_end",
+              timestamp: now,
+            } satisfies AgentStreamingEvent;
+            inToolBlock = false;
+          }
+        }
+        continue;
       }
 
       // Assistant messages — content is an array of blocks [{text: "..."}, {name: "ToolName"}]

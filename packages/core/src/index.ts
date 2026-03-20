@@ -1,13 +1,16 @@
 export { EventBus } from "./event-bus.js";
-export { makeRoleSlotKey, parseRoleSlotKey, ROLE_CARDS } from "./types.js";
+export { makeRoleSlotKey, parseRoleSlotKey, ROLE_CARDS, isStreamingEvent } from "./types.js";
 export type {
   AcceptanceBundle,
   AcceptanceVerdict,
+  AdapterYield,
   AgentAdapter,
   AgentApprovalRequest,
   AgentConfig,
   AgentMessage,
   AgentRole,
+  AgentStreamingEvent,
+  AgentStreamingEventKind,
   AgentSendHooks,
   ApprovalDecision,
   ApprovalDecisionSource,

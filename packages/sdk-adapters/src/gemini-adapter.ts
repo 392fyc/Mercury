@@ -19,6 +19,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawn } from "node:child_process";
 import type {
+  AdapterYield,
   AgentAdapter,
   AgentConfig,
   AgentMessage,
@@ -105,7 +106,7 @@ export class GeminiAdapter implements AgentAdapter {
   private async *handleSlashCommand(
     sessionId: string,
     prompt: string,
-  ): AsyncGenerator<AgentMessage> {
+  ): AsyncGenerator<AdapterYield> {
     const trimmed = prompt.trim();
     const match = trimmed.match(/^\/(\S+)(?:\s+(.*))?$/);
     if (!match) return;
@@ -283,7 +284,7 @@ export class GeminiAdapter implements AgentAdapter {
     prompt: string,
     images?: ImageAttachment[],
     _hooks?: AgentSendHooks,
-  ): AsyncGenerator<AgentMessage> {
+  ): AsyncGenerator<AdapterYield> {
     // Intercept slash commands
     const trimmed = prompt.trim();
     if (trimmed.startsWith("/")) {

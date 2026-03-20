@@ -1,3 +1,5 @@
+use std::fs;
+use std::path::PathBuf;
 use std::process::Command;
 use tauri::State;
 
@@ -603,4 +605,150 @@ pub async fn get_context_status(
     let mgr = get_sidecar(&sidecar).await?;
     mgr.send_request("get_context_status", serde_json::json!({}))
         .await
+}
+
+// ─── Session History Commands (direct filesystem, no sidecar) ───
+
+/// Read native CLI session history from JSONL files.
+///
+/// Claude Code: ~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl
+/// Codex CLI:   ~/.codex/sessions/<threadId>.jsonl (via app-server)
+///
+/// Returns parsed messages from the JSONL file for history backfill on resume.
+#[tauri::command]
+pub fn read_session_history(
+    root: State<'_, ProjectRoot>,
+    cli_type: String,
+    session_id: String,
+    cwd: Option<String>,
+) -> Result<serde_json::Value, String> {
+    // Validate session_id to prevent path traversal attacks
+    if session_id.contains("..")
+        || session_id.contains('/')
+        || session_id.contains('\\')
+        || session_id.contains('\0')
+        || session_id.is_empty()
+    {
+        return Err(format!("Invalid session ID: {}", session_id));
+    }
+
+    let effective_cwd = cwd.unwrap_or_else(|| root.0.clone());
+    let jsonl_path = match cli_type.as_str() {
+        "claude" => resolve_claude_session_path(&effective_cwd, &session_id),
+        "codex" => resolve_codex_session_path(&session_id),
+        _ => return Err(format!("Unknown CLI type: {}", cli_type)),
+    };
+
+    let path = jsonl_path?;
+    if !path.exists() {
+        return Ok(serde_json::json!({ "messages": [], "source": path.display().to_string() }));
+    }
+
+    let content = fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read session file: {}", e))?;
+
+    let mut messages = Vec::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Ok(obj) = serde_json::from_str::<serde_json::Value>(line) {
+            if let Some(msg) = extract_message_from_jsonl(&obj, &cli_type) {
+                messages.push(msg);
+            }
+        }
+    }
+
+    Ok(serde_json::json!({
+        "messages": messages,
+        "source": path.display().to_string(),
+        "total": messages.len(),
+    }))
+}
+
+/// Resolve Claude Code session JSONL path.
+/// Claude encodes the cwd in the path: ~/.claude/projects/<hex-encoded-cwd>/<sessionId>.jsonl
+fn resolve_claude_session_path(cwd: &str, session_id: &str) -> Result<PathBuf, String> {
+    let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
+    // Claude Code encodes the cwd as a hex string for the directory name
+    let encoded_cwd = cwd.as_bytes().iter().map(|b| format!("{:02x}", b)).collect::<String>();
+    let path = home
+        .join(".claude")
+        .join("projects")
+        .join(&encoded_cwd)
+        .join(format!("{}.jsonl", session_id));
+    Ok(path)
+}
+
+/// Resolve Codex CLI session JSONL path.
+/// Codex stores sessions at: ~/.codex/sessions/<threadId>.jsonl
+fn resolve_codex_session_path(session_id: &str) -> Result<PathBuf, String> {
+    let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
+    let path = home
+        .join(".codex")
+        .join("sessions")
+        .join(format!("{}.jsonl", session_id));
+    Ok(path)
+}
+
+/// Extract a user/assistant message from a JSONL line object.
+/// Claude: { "role": "user"|"assistant", "content": "..." }
+/// Codex:  { "type": "agentMessage"|"userMessage", "text": "...", "content": [...] }
+fn extract_message_from_jsonl(obj: &serde_json::Value, cli_type: &str) -> Option<serde_json::Value> {
+    match cli_type {
+        "claude" => {
+            let role = obj.get("role")?.as_str()?;
+            if role != "user" && role != "assistant" {
+                return None;
+            }
+            // Content can be string or array of blocks
+            let content = if let Some(s) = obj.get("content").and_then(|v| v.as_str()) {
+                s.to_string()
+            } else if let Some(arr) = obj.get("content").and_then(|v| v.as_array()) {
+                arr.iter()
+                    .filter_map(|block| block.get("text").and_then(|t| t.as_str()))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            } else {
+                return None;
+            };
+            if content.is_empty() {
+                return None;
+            }
+            Some(serde_json::json!({
+                "role": role,
+                "content": content,
+                "timestamp": obj.get("timestamp").and_then(|t| t.as_f64()).unwrap_or(0.0) as u64,
+            }))
+        }
+        "codex" => {
+            let item_type = obj.get("type")?.as_str()?;
+            let (role, text) = match item_type {
+                "userMessage" => {
+                    let content = obj.get("content").and_then(|v| v.as_array())?;
+                    let text: String = content
+                        .iter()
+                        .filter_map(|c| c.get("text").and_then(|t| t.as_str()))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    ("user", text)
+                }
+                "agentMessage" => {
+                    let text = obj.get("text").and_then(|t| t.as_str())?.to_string();
+                    ("assistant", text)
+                }
+                _ => return None,
+            };
+            if text.is_empty() {
+                return None;
+            }
+            Some(serde_json::json!({
+                "role": role,
+                "content": text,
+                "timestamp": 0,
+            }))
+        }
+        _ => None,
+    }
 }
