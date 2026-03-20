@@ -102,8 +102,16 @@ pub fn list_git_branches(path: String) -> Result<serde_json::Value, String> {
 }
 
 /// Checkout a git branch in the specified directory.
+/// Validates branch name format before executing to prevent injection.
 #[tauri::command]
 pub fn checkout_branch(path: String, branch: String) -> Result<serde_json::Value, String> {
+    // Basic branch name validation: reject empty, whitespace, or shell metacharacters
+    if branch.is_empty()
+        || branch.contains(|c: char| c.is_whitespace() || ";|&$`".contains(c))
+        || branch.starts_with('-')
+    {
+        return Err(format!("Invalid branch name: {}", branch));
+    }
     let output = Command::new("git")
         .args(["checkout", &branch])
         .current_dir(&path)

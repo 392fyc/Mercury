@@ -64,7 +64,10 @@ function minimizeAll() {
           :key="tab.panelKey"
           class="fp-tab"
           :class="{ active: idx === safeActiveIndex }"
+          role="tab"
+          tabindex="0"
           @click="selectTab(idx)"
+          @keydown.enter="selectTab(idx)"
         >
           <span class="fp-tab-role">{{ tab.role.slice(0, 3) }}</span>
           <span class="fp-tab-label">{{ tab.label }}</span>

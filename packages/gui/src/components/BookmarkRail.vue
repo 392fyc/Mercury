@@ -34,7 +34,9 @@ const hasOverflowBottom = computed(() => {
   return bookmarkList.value.length > MAX_VISIBLE && visibleStart.value + MAX_VISIBLE < bookmarkList.value.length;
 });
 
+/** Handle scroll wheel on bookmark rail. Only intercepts when bookmarks overflow. */
 function handleWheel(event: WheelEvent) {
+  if (bookmarkList.value.length <= MAX_VISIBLE) return; // Don't block scroll when no overflow
   event.preventDefault();
   const delta = event.deltaY > 0 ? 1 : -1;
   scrollOffset.value = Math.max(0, Math.min(scrollOffset.value + delta, bookmarkList.value.length - 1));
