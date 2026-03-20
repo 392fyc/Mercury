@@ -17,3 +17,10 @@ Obsidian vault 命名约定: `{Project}_KB`（如 `Mercury_KB`）。路径由项
 | `archive/` | 已归档制品（过期handoff、旧研究） | Main only |
 
 KB 路径通过 orchestrator 启动配置注入，各 Agent 指令文件中引用相对路径 `{Project}_KB/{子目录}/`。
+
+## 目录编号约定
+
+- `00-09`: 元数据层（导航、注册表、研究、上下文、决策）— `01-registry` 和 `01-research` 共享前缀是有意设计，二者均属「只读参考数据」类别
+- `10-19`: 工作制品层（tasks、issues、acceptances、handoffs）— 由 orchestrator 读写
+- `99`: 模板层（只读参考）
+- `archive/`: 已过期制品归档
