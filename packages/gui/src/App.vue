@@ -10,6 +10,7 @@ import HistoryPanel from "./components/HistoryPanel.vue";
 import ApprovalQueue from "./components/ApprovalQueue.vue";
 import BookmarkRail from "./components/BookmarkRail.vue";
 import FloatingPanel from "./components/FloatingPanel.vue";
+import AgentRoleSelector from "./components/AgentRoleSelector.vue";
 import { useAgentStore } from "./stores/agents";
 import { useApprovalStore } from "./stores/approvals";
 import { useMessageStore } from "./stores/messages";
@@ -104,6 +105,11 @@ onMounted(async () => {
     <SessionPicker />
     <HistoryPanel />
     <ApprovalQueue />
+    <AgentRoleSelector
+      v-if="showAgentRoleSelector"
+      @close="showAgentRoleSelector = false"
+      @created="showAgentRoleSelector = false"
+    />
   </div>
 </template>
 
