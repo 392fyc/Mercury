@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { onMounted, onUnmounted, ref } from "vue";
 import { useAgentStore } from "../stores/agents";
 import { getProjectInfo } from "../lib/tauri-bridge";
-import { useApprovalStore } from "../stores/approvals";
 
 const props = defineProps<{
   activeView: "agents" | "tasks";
@@ -14,8 +13,7 @@ const emit = defineEmits<{
   "toggle-event-log": [];
 }>();
 
-const { sidecarReady, anyActive, anyError } = useAgentStore();
-const { approvalMode, pendingCount, openQueue, setMode } = useApprovalStore();
+const { sidecarReady } = useAgentStore();
 
 const projectRoot = ref("");
 const gitBranch = ref<string | null>(null);
@@ -45,24 +43,6 @@ onUnmounted(() => {
   document.removeEventListener("visibilitychange", handleVisibilityChange);
 });
 
-const statusClass = computed(() => {
-  if (anyError.value) return "error";
-  if (anyActive.value) return "active";
-  if (sidecarReady.value) return "ready";
-  return "";
-});
-
-const statusText = computed(() => {
-  if (anyError.value) return "Error";
-  if (anyActive.value) return "Running";
-  if (sidecarReady.value) return "Ready";
-  return "Connecting...";
-});
-
-function handleApprovalModeChange(event: Event) {
-  const target = event.target as HTMLSelectElement;
-  void setMode(target.value as "main_agent_review" | "auto_accept");
-}
 </script>
 
 <template>
@@ -169,99 +149,6 @@ function handleApprovalModeChange(event: Event) {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.approval-control {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: 10px;
-  -webkit-app-region: no-drag;
-}
-
-.approval-label {
-  font-size: 10px;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-}
-
-.approval-select {
-  height: 24px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg-panel);
-  color: var(--text-primary);
-  font-size: 11px;
-  padding: 0 8px;
-}
-
-.approval-badge {
-  min-width: 22px;
-  height: 22px;
-  border: 1px solid rgba(255, 184, 77, 0.4);
-  border-radius: 999px;
-  background: rgba(255, 184, 77, 0.15);
-  color: #ffb84d;
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.project-info {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  padding-right: 8px;
-  border-right: 1px solid var(--border);
-  margin-right: 2px;
-}
-
-.project-name {
-  color: var(--text-secondary);
-  font-weight: 500;
-}
-
-.git-branch {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  color: var(--accent-main);
-  font-family: var(--font-mono);
-  font-size: 10px;
-}
-
-.branch-icon {
-  font-size: 12px;
-  line-height: 1;
-}
-
-.status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--text-muted);
-}
-
-.status-dot.ready {
-  background: var(--accent-success);
-  box-shadow: 0 0 4px var(--accent-success);
-}
-
-.status-dot.active {
-  background: var(--accent-main);
-  box-shadow: 0 0 4px var(--accent-main);
-}
-
-.status-dot.error {
-  background: var(--accent-error);
-  box-shadow: 0 0 4px var(--accent-error);
-}
-
-.status-text {
-  font-size: 11px;
-  color: var(--text-secondary);
 }
 
 .titlebar-right {

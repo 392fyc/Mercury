@@ -14,26 +14,24 @@ const { bookmarkList, openFloatingTabs } = useAgentStore();
 const scrollOffset = ref(0);
 const MAX_VISIBLE = 7;
 
+/** Computed start index for the visible window of bookmarks. */
+const visibleStart = computed(() => {
+  const len = bookmarkList.value.length;
+  if (len <= MAX_VISIBLE) return 0;
+  const half = Math.floor(MAX_VISIBLE / 2);
+  return Math.max(0, Math.min(scrollOffset.value - half, len - MAX_VISIBLE));
+});
+
 const visibleBookmarks = computed(() => {
   const list = bookmarkList.value;
   if (list.length <= MAX_VISIBLE) return list;
-  const half = Math.floor(MAX_VISIBLE / 2);
-  const start = Math.max(0, Math.min(scrollOffset.value - half, list.length - MAX_VISIBLE));
-  return list.slice(start, start + MAX_VISIBLE);
+  return list.slice(visibleStart.value, visibleStart.value + MAX_VISIBLE);
 });
 
-const hasOverflowTop = computed(() => {
-  if (bookmarkList.value.length <= MAX_VISIBLE) return false;
-  const half = Math.floor(MAX_VISIBLE / 2);
-  const start = Math.max(0, Math.min(scrollOffset.value - half, bookmarkList.value.length - MAX_VISIBLE));
-  return start > 0;
-});
+const hasOverflowTop = computed(() => bookmarkList.value.length > MAX_VISIBLE && visibleStart.value > 0);
 
 const hasOverflowBottom = computed(() => {
-  if (bookmarkList.value.length <= MAX_VISIBLE) return false;
-  const half = Math.floor(MAX_VISIBLE / 2);
-  const start = Math.max(0, Math.min(scrollOffset.value - half, bookmarkList.value.length - MAX_VISIBLE));
-  return start + MAX_VISIBLE < bookmarkList.value.length;
+  return bookmarkList.value.length > MAX_VISIBLE && visibleStart.value + MAX_VISIBLE < bookmarkList.value.length;
 });
 
 function handleWheel(event: WheelEvent) {

@@ -10,6 +10,9 @@ const activeTabIndex = ref(0);
 
 const hasTabs = computed(() => openFloatingTabs.value.length > 0);
 
+/** Safe tab index clamped to valid range — avoids out-of-bounds after tab close. */
+const safeActiveIndex = computed(() => Math.min(activeTabIndex.value, Math.max(0, openFloatingTabs.value.length - 1)));
+
 const tabs = computed(() => {
   return openFloatingTabs.value.map((panelKey) => {
     const { role, agentId } = parsePanelKey(panelKey);
@@ -28,10 +31,7 @@ const tabs = computed(() => {
   });
 });
 
-const currentTab = computed(() => {
-  const idx = Math.min(activeTabIndex.value, tabs.value.length - 1);
-  return tabs.value[idx] ?? null;
-});
+const currentTab = computed(() => tabs.value[safeActiveIndex.value] ?? null);
 
 function selectTab(index: number) {
   activeTabIndex.value = index;
@@ -63,7 +63,7 @@ function minimizeAll() {
           v-for="(tab, idx) in tabs"
           :key="tab.panelKey"
           class="fp-tab"
-          :class="{ active: idx === Math.min(activeTabIndex, tabs.length - 1) }"
+          :class="{ active: idx === safeActiveIndex }"
           @click="selectTab(idx)"
         >
           <span class="fp-tab-role">{{ tab.role.slice(0, 3) }}</span>

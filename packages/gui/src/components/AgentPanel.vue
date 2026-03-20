@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -387,16 +387,37 @@ function renderMarkdown(content: string): string {
 
 // ─── Message Copy ───
 const copiedIndex = ref<number | null>(null);
+let copyTimer: ReturnType<typeof setTimeout> | null = null;
 
 async function copyMessage(content: string, index: number) {
   try {
     await navigator.clipboard.writeText(content);
     copiedIndex.value = index;
-    setTimeout(() => { if (copiedIndex.value === index) copiedIndex.value = null; }, 1500);
+    if (copyTimer) clearTimeout(copyTimer);
+    copyTimer = setTimeout(() => { if (copiedIndex.value === index) copiedIndex.value = null; }, 1500);
   } catch {
     console.error("Failed to copy message");
   }
 }
+
+function handleClickOutside(event: MouseEvent) {
+  const target = event.target as HTMLElement;
+  if (showModelPicker.value && !target.closest(".model-picker-wrapper")) {
+    showModelPicker.value = false;
+  }
+  if (showBranchPicker.value && !target.closest(".branch-picker-wrapper")) {
+    showBranchPicker.value = false;
+  }
+}
+
+onMounted(() => {
+  document.addEventListener("click", handleClickOutside);
+});
+
+onBeforeUnmount(() => {
+  if (copyTimer) clearTimeout(copyTimer);
+  document.removeEventListener("click", handleClickOutside);
+});
 
 async function handleSend() {
   const prompt = inputText.value.trim();

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useAgentStore } from "../stores/agents";
 import { sendPrompt as bridgeSendPrompt } from "../lib/tauri-bridge";
 
@@ -9,6 +9,12 @@ const emit = defineEmits<{
 }>();
 
 const { agents, addBookmark, openFloatingTab, setSession, setSessionInfo, setStatus } = useAgentStore();
+
+const errorMsg = ref<string | null>(null);
+
+function handleEsc(e: KeyboardEvent) { if (e.key === "Escape") emit("close"); }
+onMounted(() => document.addEventListener("keydown", handleEsc));
+onUnmounted(() => document.removeEventListener("keydown", handleEsc));
 
 /** All configured agent+role combos (excluding main role). */
 const combos = computed(() => {
@@ -65,6 +71,8 @@ async function selectCombo(combo: typeof combos.value[number]) {
     }
   } catch (err) {
     console.error("Failed to create session:", err);
+    errorMsg.value = `Failed to create session: ${err}`;
+    return; // Don't close on error — let user see the message
   }
   emit("close");
 }
@@ -78,6 +86,7 @@ async function selectCombo(combo: typeof combos.value[number]) {
           <span class="selector-title">New Sub-Agent Session</span>
           <button class="selector-close" @click="emit('close')">&times;</button>
         </div>
+        <div v-if="errorMsg" class="selector-error">{{ errorMsg }}</div>
         <div class="selector-body">
           <div v-if="combos.length === 0" class="selector-empty">
             No sub-agent roles configured. Add agents with non-main roles in Settings.
@@ -156,6 +165,14 @@ async function selectCombo(combo: typeof combos.value[number]) {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 6px;
+}
+
+.selector-error {
+  padding: 8px 16px;
+  background: rgba(255, 82, 82, 0.1);
+  color: var(--accent-error);
+  font-size: 11px;
+  border-bottom: 1px solid rgba(255, 82, 82, 0.2);
 }
 
 .selector-empty {

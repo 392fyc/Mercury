@@ -213,10 +213,16 @@ const anyError = computed(() =>
 );
 
 /**
- * Parse a panelKey which may be "{role}:{agentId}" or "{role}:{agentId}:{shortSid}".
+ * Parse a panelKey into role and agentId.
+ * Supports both legacy "{role}:{agentId}" and session-unique "{role}:{agentId}:{shortSid}" formats.
+ * Returns empty strings for malformed keys to prevent downstream crashes.
  */
 function parsePanelKey(panelKey: string): { role: string; agentId: string } {
   const parts = panelKey.split(":");
+  if (parts.length < 2) {
+    console.warn(`[agents] malformed panelKey: "${panelKey}"`);
+    return { role: parts[0] ?? "", agentId: "" };
+  }
   return { role: parts[0], agentId: parts[1] };
 }
 
