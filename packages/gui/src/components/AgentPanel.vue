@@ -15,6 +15,7 @@ const props = defineProps<{
   agentName: string;
   role: "main" | "dev" | "acceptance" | "research" | "design";
   panelKey: string;
+  isFloating?: boolean;
 }>();
 
 const { agents, getStatus, getSession, getSessionInfo, getWorkDir, setWorkDir, getGitBranch, setGitBranch, clearSession, defaultWorkDir } = useAgentStore();
