@@ -76,6 +76,10 @@ pub fn list_git_branches(path: String) -> Result<serde_json::Value, String> {
         .current_dir(&path)
         .output()
         .map_err(|e| format!("Failed to list local branches: {}", e))?;
+    if !local_output.status.success() {
+        let stderr = String::from_utf8_lossy(&local_output.stderr);
+        return Err(format!("git branch failed: {}", stderr.trim()));
+    }
     let local: Vec<String> = String::from_utf8_lossy(&local_output.stdout)
         .lines()
         .map(|l| l.trim().to_string())
@@ -88,6 +92,10 @@ pub fn list_git_branches(path: String) -> Result<serde_json::Value, String> {
         .current_dir(&path)
         .output()
         .map_err(|e| format!("Failed to list remote branches: {}", e))?;
+    if !remote_output.status.success() {
+        let stderr = String::from_utf8_lossy(&remote_output.stderr);
+        return Err(format!("git branch -r failed: {}", stderr.trim()));
+    }
     let remote: Vec<String> = String::from_utf8_lossy(&remote_output.stdout)
         .lines()
         .map(|l| l.trim().to_string())

@@ -58,13 +58,14 @@ function minimizeAll() {
   <Transition name="slide">
     <div v-if="hasTabs" class="floating-panel">
       <!-- Tab bar -->
-      <div class="fp-tab-bar">
+      <div class="fp-tab-bar" role="tablist">
         <div
           v-for="(tab, idx) in tabs"
           :key="tab.panelKey"
           class="fp-tab"
           :class="{ active: idx === safeActiveIndex }"
           role="tab"
+          :aria-selected="idx === safeActiveIndex"
           tabindex="0"
           @click="selectTab(idx)"
           @keydown.enter="selectTab(idx)"
