@@ -6,6 +6,10 @@
   "main": "src/index.ts",
   "dependencies": {
     "@mercury/core": "workspace:*",
-    "@mercury/sdk-adapters": "workspace:*"
+    "@mercury/sdk-adapters": "workspace:*",
+    "js-yaml": "^4.1.1"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9"
   }
 }

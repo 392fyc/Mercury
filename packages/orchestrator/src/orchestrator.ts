@@ -44,7 +44,7 @@ import { TaskPersistenceKB } from "./task-persistence-kb.js";
 import {
   buildRoleSystemPrompt,
   buildAcceptanceRolePrompt,
-  loadRoleInstructions,
+  loadRoleCard,
 } from "./role-prompt-builder.js";
 import { SessionPersistence } from "./session-persistence.js";
 import type { PersistedSessionState } from "./session-persistence.js";
@@ -199,10 +199,11 @@ export class Orchestrator {
     const projectRoot = this.getProjectRoot();
 
     try {
-      return loadRoleInstructions(role, projectRoot);
+      const card = loadRoleCard(role, projectRoot);
+      return card.instructions || undefined;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      const instructionsPath = join(projectRoot, ".mercury", "roles", `${role}.md`);
+      const instructionsPath = join(projectRoot, ".mercury", "roles", `${role}.yaml`);
       this.transport.sendNotification("log", {
         message: `[role-prompt] Failed to load ${instructionsPath}: ${msg}`,
       });

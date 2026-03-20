@@ -1,5 +1,5 @@
 /**
- * Role Prompt Builder — generates role-specific system prompts from ROLE_CARDS.
+ * Role Prompt Builder — generates role-specific system prompts from YAML role definitions.
  *
  * Each session receives a system prompt tailored to its role, enforcing:
  * - Execution permissions (code/no-code)
@@ -9,37 +9,14 @@
  * - Blind acceptance policy (for acceptance role)
  */
 
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import {
-  ROLE_CARDS,
-  type AgentRole,
-  type TaskBundle,
-  type AcceptanceBundle,
+import type {
+  AgentRole,
+  TaskBundle,
+  AcceptanceBundle,
 } from "@mercury/core";
+import { loadRoleCard } from "./role-loader.js";
 
-export function loadRoleInstructions(
-  role: AgentRole,
-  basePath = process.cwd(),
-): string | undefined {
-  const instructionsPath = resolve(basePath, ".mercury", "roles", `${role}.md`);
-
-  try {
-    const content = readFileSync(instructionsPath, "utf-8").trim();
-    return content || undefined;
-  } catch (error) {
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      (error.code === "ENOENT" || error.code === "ENOTDIR")
-    ) {
-      return undefined;
-    }
-
-    throw error;
-  }
-}
+export { loadRoleCard };
 
 /**
  * Build a role-scoped system prompt for dev/main/research/design sessions.
@@ -51,7 +28,7 @@ export function buildRoleSystemPrompt(
   roleProjectContext?: string,
   roleInstructions?: string,
 ): string {
-  const card = ROLE_CARDS[role];
+  const card = loadRoleCard(role);
   const lines: string[] = [];
 
   // Role declaration
@@ -140,7 +117,7 @@ export function buildAcceptanceRolePrompt(
   sharedProjectContext?: string,
   roleProjectContext?: string,
 ): string {
-  const card = ROLE_CARDS.acceptance;
+  const card = loadRoleCard("acceptance");
   const lines: string[] = [];
 
   // Role declaration

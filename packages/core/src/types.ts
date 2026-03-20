@@ -51,49 +51,6 @@ export interface RoleCard {
   outputBoundary: string[];
 }
 
-export const ROLE_CARDS: Record<AgentRole, RoleCard> = {
-  main: {
-    role: "main",
-    description: "Orchestrator: reviews, verifies, delegates. Does NOT execute code directly.",
-    canExecuteCode: false,
-    canDelegateToRoles: ["dev", "acceptance", "research", "design"],
-    inputBoundary: ["user prompts", "acceptance results", "research findings"],
-    outputBoundary: ["task bundles", "delegation directives", "final summaries"],
-  },
-  dev: {
-    role: "dev",
-    description: "Worker: receives task bundles, writes code, returns implementation receipts.",
-    canExecuteCode: true,
-    canDelegateToRoles: [],
-    inputBoundary: ["task bundles", "rework directives"],
-    outputBoundary: ["implementation receipts", "code changes"],
-  },
-  acceptance: {
-    role: "acceptance",
-    description: "Reviewer: blind acceptance testing on completed tasks.",
-    canExecuteCode: true,
-    canDelegateToRoles: [],
-    inputBoundary: ["acceptance bundles", "code to review"],
-    outputBoundary: ["acceptance verdicts"],
-  },
-  research: {
-    role: "research",
-    description: "Analyst: reads docs, answers questions, no code writing.",
-    canExecuteCode: false,
-    canDelegateToRoles: [],
-    inputBoundary: ["research questions", "document references"],
-    outputBoundary: ["research findings", "summaries"],
-  },
-  design: {
-    role: "design",
-    description: "Designer: generates specs, mockups, design decisions.",
-    canExecuteCode: false,
-    canDelegateToRoles: [],
-    inputBoundary: ["design requirements"],
-    outputBoundary: ["design specs", "architecture decisions"],
-  },
-};
-
 // ─── Project Configuration ───
 
 export interface ObsidianConfig {
