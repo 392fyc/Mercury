@@ -43,9 +43,9 @@ pub fn run() {
             // Restore and focus the existing window regardless of its current state
             // (minimized, hidden, or normal). Order matters: show → unminimize → focus.
             if let Some(w) = app.get_webview_window("main") {
-                let _ = w.show();
-                let _ = w.unminimize();
-                let _ = w.set_focus();
+                if let Err(e) = w.show() { eprintln!("[single-instance] show failed: {e}"); }
+                if let Err(e) = w.unminimize() { eprintln!("[single-instance] unminimize failed: {e}"); }
+                if let Err(e) = w.set_focus() { eprintln!("[single-instance] set_focus failed: {e}"); }
             }
         }))
     };
