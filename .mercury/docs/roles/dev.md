@@ -17,7 +17,7 @@ Read TaskBundle, implement within allowedWriteScope, fill implementationReceipt,
 - Perform Acceptance testing
 - Modify files outside `allowedWriteScope`
 - Modify agent instruction files (CLAUDE.md/AGENTS.md/OPENCODE.md/GEMINI.md)
-- Modify `Mercury_KB/templates/` or `Mercury_KB/acceptances/`
+- Modify `{Project}_KB/99-templates/` or `{Project}_KB/12-acceptances/`
 - Generate intermediate scripts to indirectly write project files
 - `git switch`/`checkout`/`branch -d`/`reset`/`stash`/`rebase`/`merge`
 - `git add -A` or `git add .`

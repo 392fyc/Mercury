@@ -20,11 +20,11 @@ Main 创建 Task → 派发
 
 | 步骤 | 角色 | 操作 | 输出 |
 |------|------|------|------|
-| 1. Create | Main | 创建 TaskBundle，保存到 KB | `tasks/TASK-{phase}-{nnn}.json` |
+| 1. Create | Main | 创建 TaskBundle，保存到 KB | `10-tasks/TASK-{phase}-{nnn}.json` |
 | 2. Dispatch | Main | 创建 feature branch，派发给 dev | agent session |
 | 3. Implement | Dev | 在 scope 内实现，填写 receipt | 更新 TaskBundle |
 | 4. Main Review | Main | Receipt 完整性检查 | 更新 mainReview |
-| 5. Acceptance | Acceptance | 盲审，输出 verdict | `acceptances/ACC-{phase}-{nnn}.json` |
+| 5. Acceptance | Acceptance | 盲审，输出 verdict | `12-acceptances/ACC-{phase}-{nnn}.json` |
 | 6. Close/Rework | Main | 关闭 task 或触发 rework | 更新 task + issue 状态 |
 
 ## Issue 登记
@@ -42,4 +42,4 @@ Main 创建 Task → 派发
 | `session-context.template.json` | Milestone 快照 |
 | `dispatch-prompt.template.md` | 派发 prompt 模板 |
 
-模板位置: `Mercury_KB/99-templates/`
+模板位置: `{Project}_KB/99-templates/`
