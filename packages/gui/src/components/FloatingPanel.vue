@@ -3,7 +3,7 @@ import { computed, ref } from "vue";
 import AgentPanel from "./AgentPanel.vue";
 import { useAgentStore } from "../stores/agents";
 
-const { openFloatingTabs, closeFloatingTab, agents, bookmarkList } = useAgentStore();
+const { openFloatingTabs, closeFloatingTab, agents, bookmarkList, parsePanelKey } = useAgentStore();
 
 /** Currently active tab index within the floating panel. */
 const activeTabIndex = ref(0);
@@ -12,9 +12,7 @@ const hasTabs = computed(() => openFloatingTabs.value.length > 0);
 
 const tabs = computed(() => {
   return openFloatingTabs.value.map((panelKey) => {
-    const colonIdx = panelKey.indexOf(":");
-    const role = panelKey.slice(0, colonIdx);
-    const agentId = panelKey.slice(colonIdx + 1);
+    const { role, agentId } = parsePanelKey(panelKey);
     const agent = agents.value.find((a) => a.id === agentId);
     const bm = bookmarkList.value.find((b) => b.panelKey === panelKey);
     return {
@@ -95,17 +93,17 @@ function minimizeAll() {
 <style scoped>
 .floating-panel {
   position: absolute;
-  top: 24px;
-  bottom: 24px;
-  right: 136px; /* bookmark rail width (132px) + gap */
+  top: 16px;
+  bottom: 16px;
+  right: 140px; /* bookmark rail width (136px) + gap */
   width: 33%;
   min-width: 360px;
   display: flex;
   flex-direction: column;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.4), 0 4px 12px rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  box-shadow: -6px 0 24px rgba(0, 0, 0, 0.35), 0 4px 16px rgba(0, 0, 0, 0.15);
   z-index: 10;
   overflow: hidden;
 }

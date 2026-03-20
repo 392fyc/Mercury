@@ -47,7 +47,10 @@ async function selectCombo(combo: typeof combos.value[number]) {
       combo.role,
     );
     if (result.sessionId) {
-      const panelKey = combo.panelKey;
+      // Use session-unique panelKey so multiple sessions of the same role+agent can coexist.
+      // Format: "{role}:{agentId}:{shortSessionId}"
+      const shortSid = result.sessionId.slice(0, 8);
+      const panelKey = `${combo.role}:${combo.agentId}:${shortSid}`;
       setSession(panelKey, result.sessionId);
       setSessionInfo(panelKey, {
         sessionId: result.sessionId,

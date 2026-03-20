@@ -85,6 +85,7 @@ onMounted(async () => {
             <BookmarkRail
               @open-session="handleOpenSession"
               @create-session="handleCreateSession"
+              @open-archived="() => {/* TODO: open archived sessions panel */}"
             />
           </div>
           <div v-else class="loading-state">
@@ -168,10 +169,13 @@ onMounted(async () => {
   flex: 1;
   min-height: 0;
   min-width: 0;
+  position: relative;
 }
 
 .main-agent-area :deep(.agent-panel) {
   height: 100%;
+  border-right: none;
+  border-radius: var(--radius) 0 0 var(--radius);
 }
 
 .loading-state {

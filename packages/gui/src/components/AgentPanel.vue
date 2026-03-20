@@ -572,6 +572,9 @@ watch(
 
         <!-- User messages: right-aligned with avatar -->
         <template v-else-if="msg.role === 'user'">
+          <button class="msg-copy-btn" :class="{ copied: copiedIndex === i }" @click="copyMessage(msg.content, i)" title="Copy message">
+            {{ copiedIndex === i ? '✓' : '⎘' }}
+          </button>
           <div class="message-bubble user-bubble">
             <!-- ApprovalCard is exclusive — replaces normal content -->
             <ApprovalCard
@@ -591,9 +594,6 @@ watch(
               </div>
               <div v-if="msg.content" class="message-content">{{ msg.content }}</div>
             </template>
-            <button class="msg-copy-btn" :class="{ copied: copiedIndex === i }" @click="copyMessage(msg.content, i)" title="Copy message">
-              {{ copiedIndex === i ? '✓' : '⎘' }}
-            </button>
           </div>
           <span class="msg-avatar user-avatar">U</span>
         </template>
@@ -606,10 +606,10 @@ watch(
               class="message-content markdown-body"
               v-html="renderMarkdown(msg.content)"
             ></div>
-            <button class="msg-copy-btn" :class="{ copied: copiedIndex === i }" @click="copyMessage(msg.content, i)" title="Copy message">
-              {{ copiedIndex === i ? '✓' : '⎘' }}
-            </button>
           </div>
+          <button class="msg-copy-btn" :class="{ copied: copiedIndex === i }" @click="copyMessage(msg.content, i)" title="Copy message">
+            {{ copiedIndex === i ? '✓' : '⎘' }}
+          </button>
         </template>
       </div>
     </div>
@@ -1024,35 +1024,35 @@ watch(
   max-width: 85%;
   padding: 8px 12px;
   border-radius: var(--radius);
-  position: relative;
 }
 
-.message-bubble:hover .msg-copy-btn {
-  opacity: 1;
-}
-
+/* Copy button — outside the bubble, shown on row hover */
 .msg-copy-btn {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
+  background: none;
+  border: 1px solid transparent;
   border-radius: 3px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 13px;
   width: 24px;
-  height: 22px;
+  height: 24px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   opacity: 0;
-  transition: opacity 0.15s, color 0.15s, background 0.15s;
+  transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: 4px;
+}
+
+.message-row:hover .msg-copy-btn {
+  opacity: 1;
 }
 
 .msg-copy-btn:hover {
   color: var(--text-primary);
-  background: var(--bg-panel);
+  border-color: var(--border);
 }
 
 .msg-copy-btn.copied {

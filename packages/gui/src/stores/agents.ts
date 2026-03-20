@@ -212,13 +212,19 @@ const anyError = computed(() =>
   [...statuses.value.values()].some((s) => s === "error"),
 );
 
+/**
+ * Parse a panelKey which may be "{role}:{agentId}" or "{role}:{agentId}:{shortSid}".
+ */
+function parsePanelKey(panelKey: string): { role: string; agentId: string } {
+  const parts = panelKey.split(":");
+  return { role: parts[0], agentId: parts[1] };
+}
+
 /** All sub-agent bookmarks, sorted by lastActiveAt descending. */
 const bookmarkList = computed<BookmarkInfo[]>(() => {
   const items: BookmarkInfo[] = [];
   for (const panelKey of bookmarks.value.keys()) {
-    const colonIdx = panelKey.indexOf(":");
-    const role = panelKey.slice(0, colonIdx);
-    const agentId = panelKey.slice(colonIdx + 1);
+    const { role, agentId } = parsePanelKey(panelKey);
     if (role === "main") continue;
     const agent = agents.value.find((a) => a.id === agentId);
     const meta = sessionMeta.value.get(panelKey);
@@ -236,6 +242,14 @@ const bookmarkList = computed<BookmarkInfo[]>(() => {
   }
   return items.sort((a, b) => b.lastActiveAt - a.lastActiveAt);
 });
+
+/** Check if a sessionId is already open in any floating tab. */
+function isSessionOpen(sessionId: string): boolean {
+  for (const pk of openFloatingTabs.value) {
+    if (sessions.value.get(pk) === sessionId) return true;
+  }
+  return false;
+}
 
 function addBookmark(panelKey: string) {
   bookmarks.value = new Map(bookmarks.value).set(panelKey, true);
@@ -451,6 +465,8 @@ export function useAgentStore() {
     openFloatingTabs,
     openFloatingTab,
     closeFloatingTab,
+    isSessionOpen,
+    parsePanelKey,
     // Model cache
     modelCache,
     getModelCache,

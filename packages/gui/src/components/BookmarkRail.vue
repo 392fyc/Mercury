@@ -5,6 +5,7 @@ import { useAgentStore } from "../stores/agents";
 const emit = defineEmits<{
   "open-session": [panelKey: string];
   "create-session": [];
+  "open-archived": [];
 }>();
 
 const { bookmarkList, openFloatingTabs } = useAgentStore();
@@ -65,6 +66,12 @@ function formatTime(ts: number): string {
 
 <template>
   <div class="bookmark-rail" @wheel="handleWheel">
+    <!-- Archived sessions entry -->
+    <button class="bookmark-archived" title="Archived sub-agent sessions" @click="emit('open-archived')">
+      <span class="archived-icon">📋</span>
+      <span class="archived-label">Archived</span>
+    </button>
+
     <!-- Overflow top indicator -->
     <div v-if="hasOverflowTop" class="overflow-indicator top">⋯</div>
 
@@ -105,10 +112,10 @@ function formatTime(ts: number): string {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  width: 132px;
-  padding: 6px 4px;
-  gap: 4px;
-  background: var(--bg-secondary);
+  width: 136px;
+  padding: 8px 6px;
+  gap: 5px;
+  background: linear-gradient(to right, var(--bg-secondary), rgba(22, 33, 62, 0.95));
   border-left: 1px solid var(--border);
   user-select: none;
   overflow: hidden;
@@ -126,16 +133,16 @@ function formatTime(ts: number): string {
 .bookmark-tab {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   width: 100%;
-  padding: 6px 8px;
+  padding: 8px 10px;
   background: var(--bg-primary);
   border: 1px solid var(--border);
   border-right: none;
   border-radius: 6px 0 0 6px;
   cursor: pointer;
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: 11px;
   text-align: left;
   transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
   position: relative;
@@ -163,15 +170,15 @@ function formatTime(ts: number): string {
 
 .bm-role {
   font-weight: 600;
-  font-size: 9px;
+  font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.3px;
+  letter-spacing: 0.4px;
   color: var(--accent-sub);
 }
 
 .bm-status-dot {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: var(--text-muted);
   flex-shrink: 0;
@@ -187,7 +194,7 @@ function formatTime(ts: number): string {
 }
 
 .bm-title {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 500;
   color: var(--text-primary);
   white-space: nowrap;
@@ -203,7 +210,7 @@ function formatTime(ts: number): string {
 }
 
 .bm-agent {
-  font-size: 8px;
+  font-size: 9px;
   color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -213,11 +220,40 @@ function formatTime(ts: number): string {
 }
 
 .bm-time {
-  font-size: 8px;
+  font-size: 9px;
   color: var(--text-muted);
   font-family: var(--font-mono);
   white-space: nowrap;
   flex-shrink: 0;
+}
+
+.bookmark-archived {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 10px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+
+.bookmark-archived:hover {
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+}
+
+.archived-icon {
+  font-size: 12px;
+}
+
+.archived-label {
+  font-weight: 500;
 }
 
 .overflow-indicator {
@@ -230,23 +266,24 @@ function formatTime(ts: number): string {
 
 .bookmark-add {
   width: 100%;
-  height: 32px;
+  height: 36px;
   border-radius: 6px;
-  border: 1px dashed var(--border);
-  background: none;
-  color: var(--text-muted);
-  font-size: 16px;
+  border: 1.5px dashed var(--text-muted);
+  background: rgba(0, 212, 255, 0.03);
+  color: var(--text-secondary);
+  font-size: 18px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   margin-top: auto;
-  transition: border-color 0.15s, color 0.15s;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
 }
 
 .bookmark-add:hover {
   border-color: var(--accent-main);
   color: var(--accent-main);
+  background: rgba(0, 212, 255, 0.06);
 }
 
 .add-icon {
