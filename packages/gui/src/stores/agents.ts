@@ -38,6 +38,19 @@ export interface SessionMeta {
 
 type SessionPromptState = Pick<SessionMeta, "promptHash" | "currentPromptHash" | "legacyRoleConfig">;
 
+// ─── Bookmark Rail ───
+
+export interface BookmarkInfo {
+  panelKey: string;
+  sessionId: string;
+  agentId: string;
+  role: string;
+  displayName: string;
+  sessionName?: string;
+  status: "idle" | "active" | "error";
+  lastActiveAt: number;
+}
+
 const SESSIONS_STORAGE_KEY = "mercury:sessions";
 
 const agents = ref<AgentConfig[]>([]);
@@ -50,6 +63,14 @@ const gitBranches = ref<Map<string, string | null>>(new Map()); // panelKey → 
 const defaultWorkDir = ref("");
 const sidecarReady = ref(false);
 const sidecarError = ref<string | null>(null);
+
+// ─── Bookmark Rail State ───
+/** Manually created sub-agent bookmarks (panelKey → true). Auto-created when session starts. */
+const bookmarks = ref<Map<string, boolean>>(new Map());
+/** Which panelKeys are currently open as floating tabs */
+const openFloatingTabs = ref<string[]>([]);
+/** Model cache: agentId → last fetched model list */
+const modelCache = ref<Map<string, { id: string; name: string }[]>>(new Map());
 
 const mainAgent = computed(() => agents.value.find((a) => a.roles.includes("main")));
 
@@ -191,6 +212,61 @@ const anyError = computed(() =>
   [...statuses.value.values()].some((s) => s === "error"),
 );
 
+/** All sub-agent bookmarks, sorted by lastActiveAt descending. */
+const bookmarkList = computed<BookmarkInfo[]>(() => {
+  const items: BookmarkInfo[] = [];
+  for (const panelKey of bookmarks.value.keys()) {
+    const colonIdx = panelKey.indexOf(":");
+    const role = panelKey.slice(0, colonIdx);
+    const agentId = panelKey.slice(colonIdx + 1);
+    if (role === "main") continue;
+    const agent = agents.value.find((a) => a.id === agentId);
+    const meta = sessionMeta.value.get(panelKey);
+    const sid = sessions.value.get(panelKey);
+    items.push({
+      panelKey,
+      sessionId: sid ?? "",
+      agentId,
+      role,
+      displayName: agent?.displayName ?? agentId,
+      sessionName: meta?.sessionName,
+      status: statuses.value.get(panelKey) ?? "idle",
+      lastActiveAt: meta?.lastActiveAt ?? 0,
+    });
+  }
+  return items.sort((a, b) => b.lastActiveAt - a.lastActiveAt);
+});
+
+function addBookmark(panelKey: string) {
+  bookmarks.value = new Map(bookmarks.value).set(panelKey, true);
+}
+
+function removeBookmark(panelKey: string) {
+  const next = new Map(bookmarks.value);
+  next.delete(panelKey);
+  bookmarks.value = next;
+  // Also close floating tab if open
+  openFloatingTabs.value = openFloatingTabs.value.filter((k) => k !== panelKey);
+}
+
+function openFloatingTab(panelKey: string) {
+  if (!openFloatingTabs.value.includes(panelKey)) {
+    openFloatingTabs.value = [...openFloatingTabs.value, panelKey];
+  }
+}
+
+function closeFloatingTab(panelKey: string) {
+  openFloatingTabs.value = openFloatingTabs.value.filter((k) => k !== panelKey);
+}
+
+function getModelCache(agentId: string): { id: string; name: string }[] | undefined {
+  return modelCache.value.get(agentId);
+}
+
+function setModelCache(agentId: string, models: { id: string; name: string }[]) {
+  modelCache.value = new Map(modelCache.value).set(agentId, models);
+}
+
 async function hydrateSessionMeta(): Promise<void> {
   const byAgent = new Map<string, string[]>();
   for (const [panelKey, sessionId] of sessions.value) {
@@ -294,6 +370,10 @@ async function initAgents() {
         legacyRoleConfig: payload.legacyRoleConfig,
       });
       setStatus(panelKey, "idle");
+      // Auto-create bookmark for sub-agent sessions
+      if (payload.role !== "main") {
+        addBookmark(panelKey);
+      }
       return;
     }
 
@@ -363,5 +443,17 @@ export function useAgentStore() {
     getGitBranch,
     defaultWorkDir,
     initAgents,
+    // Bookmark Rail
+    bookmarks,
+    bookmarkList,
+    addBookmark,
+    removeBookmark,
+    openFloatingTabs,
+    openFloatingTab,
+    closeFloatingTab,
+    // Model cache
+    modelCache,
+    getModelCache,
+    setModelCache,
   };
 }
