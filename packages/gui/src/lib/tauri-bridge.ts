@@ -101,6 +101,20 @@ export async function getGitInfo(path: string): Promise<GitInfo> {
   return invoke<GitInfo>("get_git_info", { path });
 }
 
+export interface GitBranchList {
+  current: string;
+  local: string[];
+  remote: string[];
+}
+
+export async function listGitBranches(path: string): Promise<GitBranchList> {
+  return invoke<GitBranchList>("list_git_branches", { path });
+}
+
+export async function checkoutBranch(path: string, branch: string): Promise<{ ok: boolean; branch: string }> {
+  return invoke<{ ok: boolean; branch: string }>("checkout_branch", { path, branch });
+}
+
 // Agent workspace (frontend → Rust → sidecar)
 
 export async function setAgentCwd(

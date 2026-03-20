@@ -52,6 +52,72 @@ pub fn get_git_info(path: String) -> Result<serde_json::Value, String> {
     }))
 }
 
+/// List all local and remote git branches for a given directory.
+#[tauri::command]
+pub fn list_git_branches(path: String) -> Result<serde_json::Value, String> {
+    // Current branch
+    let current = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(&path)
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+
+    // Local branches
+    let local_output = Command::new("git")
+        .args(["branch", "--format=%(refname:short)"])
+        .current_dir(&path)
+        .output()
+        .map_err(|e| format!("Failed to list local branches: {}", e))?;
+    let local: Vec<String> = String::from_utf8_lossy(&local_output.stdout)
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect();
+
+    // Remote branches
+    let remote_output = Command::new("git")
+        .args(["branch", "-r", "--format=%(refname:short)"])
+        .current_dir(&path)
+        .output()
+        .map_err(|e| format!("Failed to list remote branches: {}", e))?;
+    let remote: Vec<String> = String::from_utf8_lossy(&remote_output.stdout)
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty() && !l.contains("HEAD"))
+        .collect();
+
+    Ok(serde_json::json!({
+        "current": current,
+        "local": local,
+        "remote": remote,
+    }))
+}
+
+/// Checkout a git branch in the specified directory.
+#[tauri::command]
+pub fn checkout_branch(path: String, branch: String) -> Result<serde_json::Value, String> {
+    let output = Command::new("git")
+        .args(["checkout", &branch])
+        .current_dir(&path)
+        .output()
+        .map_err(|e| format!("Failed to checkout branch: {}", e))?;
+
+    if output.status.success() {
+        Ok(serde_json::json!({ "ok": true, "branch": branch }))
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        Err(format!("git checkout failed: {}", stderr))
+    }
+}
+
 /// Clone the sidecar manager out of the shared state, or error if not ready.
 async fn get_sidecar(shared: &SharedSidecar) -> Result<SidecarManager, String> {
     let guard = shared.lock().await;

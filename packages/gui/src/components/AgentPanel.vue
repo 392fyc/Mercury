@@ -5,7 +5,8 @@ import DOMPurify from "dompurify";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useAgentStore } from "../stores/agents";
 import { useMessageStore } from "../stores/messages";
-import { getSlashCommands, getGitInfo, setAgentCwd, stopSession, listModels, setModel } from "../lib/tauri-bridge";
+import { getSlashCommands, getGitInfo, setAgentCwd, stopSession, listModels, setModel, listGitBranches, checkoutBranch } from "../lib/tauri-bridge";
+import type { GitBranchList } from "../lib/tauri-bridge";
 import type { SlashCommand, ImageAttachment, ImageMediaType } from "../lib/tauri-bridge";
 import SlashCommandPalette from "./SlashCommandPalette.vue";
 import ApprovalCard from "./ApprovalCard.vue";
@@ -135,12 +136,41 @@ async function handleChangeDir() {
   await refreshGitBranch(selected);
 }
 
+// ─── Branch Picker ───
+const showBranchPicker = ref(false);
+const branchData = ref<GitBranchList | null>(null);
+const branchPickerLoading = ref(false);
+
 async function handleChangeBranch() {
   if (status.value === "active") return;
+  if (showBranchPicker.value) {
+    showBranchPicker.value = false;
+    return;
+  }
   const dir = workDir.value;
   if (!dir) return;
-  // Refresh branch info (re-detect from filesystem)
-  await refreshGitBranch(dir);
+  showBranchPicker.value = true;
+  branchPickerLoading.value = true;
+  try {
+    branchData.value = await listGitBranches(dir);
+  } catch {
+    branchData.value = null;
+  } finally {
+    branchPickerLoading.value = false;
+  }
+}
+
+async function selectBranch(branch: string) {
+  showBranchPicker.value = false;
+  const dir = workDir.value;
+  if (!dir) return;
+  if (branch === gitBranch.value) return;
+  try {
+    await checkoutBranch(dir, branch);
+    setGitBranch(props.panelKey, branch);
+  } catch (err) {
+    console.error("Failed to checkout branch:", err);
+  }
 }
 
 // ─── Image Attachments ───
@@ -599,9 +629,35 @@ watch(
       <button v-if="workDir" class="workspace-dir" @click="handleChangeDir" :title="workDir" :disabled="status === 'active'">
         {{ shortWorkDir }}
       </button>
-      <button v-if="workDir" class="workspace-branch" @click="handleChangeBranch" :disabled="status === 'active'" :title="gitBranch || 'No branch detected'">
-        <span class="branch-icon">&#9095;</span>{{ gitBranch || '—' }}
-      </button>
+      <div v-if="workDir" class="branch-picker-wrapper">
+        <button class="workspace-branch" @click="handleChangeBranch" :disabled="status === 'active'" :title="gitBranch || 'No branch detected'">
+          <span class="branch-icon">&#9095;</span>{{ gitBranch || '—' }}
+        </button>
+        <div v-if="showBranchPicker" class="branch-picker-dropdown">
+          <div v-if="branchPickerLoading" class="branch-picker-item disabled">Loading…</div>
+          <template v-else-if="branchData">
+            <div class="branch-group-label">Local</div>
+            <button
+              v-for="b in branchData.local"
+              :key="'local:' + b"
+              class="branch-picker-item"
+              :class="{ active: b === branchData.current }"
+              @click="selectBranch(b)"
+            >
+              <span v-if="b === branchData.current" class="branch-check">●</span>
+              {{ b }}
+            </button>
+            <div v-if="branchData.remote.length" class="branch-group-label">Remote</div>
+            <button
+              v-for="b in branchData.remote"
+              :key="'remote:' + b"
+              class="branch-picker-item remote"
+              @click="selectBranch(b)"
+            >{{ b }}</button>
+          </template>
+          <div v-else class="branch-picker-item disabled">No branches found</div>
+        </div>
+      </div>
     </div>
 
     <div class="panel-input" style="position: relative;">
@@ -1195,6 +1251,73 @@ watch(
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 150px;
+}
+
+.branch-picker-wrapper {
+  position: relative;
+}
+
+.branch-picker-dropdown {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  margin-bottom: 4px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  min-width: 200px;
+  max-height: 280px;
+  overflow-y: auto;
+  z-index: 100;
+  padding: 4px 0;
+}
+
+.branch-group-label {
+  padding: 4px 12px 2px;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+}
+
+.branch-picker-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.branch-picker-item:hover:not(.disabled) {
+  background: var(--bg-panel);
+}
+
+.branch-picker-item.active {
+  color: var(--accent-main);
+  font-weight: 600;
+}
+
+.branch-picker-item.remote {
+  color: var(--text-secondary);
+}
+
+.branch-picker-item.disabled {
+  color: var(--text-muted);
+  cursor: default;
+  font-style: italic;
+}
+
+.branch-check {
+  margin-right: 4px;
+  font-size: 8px;
 }
 
 .model-picker-wrapper {
