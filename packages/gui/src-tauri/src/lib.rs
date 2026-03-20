@@ -46,6 +46,8 @@ pub fn run() {
                 if let Err(e) = w.show() { eprintln!("[single-instance] show failed: {e}"); }
                 if let Err(e) = w.unminimize() { eprintln!("[single-instance] unminimize failed: {e}"); }
                 if let Err(e) = w.set_focus() { eprintln!("[single-instance] set_focus failed: {e}"); }
+            } else {
+                eprintln!("[single-instance] main window not found");
             }
         }))
     };
