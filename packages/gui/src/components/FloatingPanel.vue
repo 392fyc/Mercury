@@ -59,7 +59,7 @@ function minimizeAll() {
     <div v-if="hasTabs" class="floating-panel">
       <!-- Tab bar -->
       <div class="fp-tab-bar">
-        <button
+        <div
           v-for="(tab, idx) in tabs"
           :key="tab.panelKey"
           class="fp-tab"
@@ -69,7 +69,7 @@ function minimizeAll() {
           <span class="fp-tab-role">{{ tab.role.slice(0, 3) }}</span>
           <span class="fp-tab-label">{{ tab.label }}</span>
           <button class="fp-tab-close" @click.stop="closeTab(tab.panelKey)" title="Close tab">&times;</button>
-        </button>
+        </div>
         <button class="fp-minimize-all" title="Minimize all to bookmarks" @click="minimizeAll">
           <span>⎽</span>
         </button>

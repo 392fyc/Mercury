@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useAgentStore } from "../stores/agents";
-import { sendPrompt as bridgeSendPrompt } from "../lib/tauri-bridge";
+import { startSession as bridgeStartSession } from "../lib/tauri-bridge";
 
 const emit = defineEmits<{
   close: [];
@@ -11,6 +11,7 @@ const emit = defineEmits<{
 const { agents, addBookmark, openFloatingTab, setSession, setSessionInfo, setStatus } = useAgentStore();
 
 const errorMsg = ref<string | null>(null);
+const creating = ref(false);
 
 function handleEsc(e: KeyboardEvent) { if (e.key === "Escape") emit("close"); }
 onMounted(() => document.addEventListener("keydown", handleEsc));
@@ -43,18 +44,17 @@ function cliIcon(cli: string): string {
   }
 }
 
+/**
+ * Create a new sub-agent session using startSession (no prompt sent).
+ * Uses session-unique panelKey to allow multiple concurrent sessions of same role+agent.
+ */
 async function selectCombo(combo: typeof combos.value[number]) {
+  if (creating.value) return; // Prevent double-click re-entry
+  creating.value = true;
+  errorMsg.value = null;
   try {
-    // Send an initial system prompt to create a session
-    const result = await bridgeSendPrompt(
-      combo.agentId,
-      "Session started via Mercury GUI.",
-      undefined,
-      combo.role,
-    );
+    const result = await bridgeStartSession(combo.agentId, combo.role);
     if (result.sessionId) {
-      // Use session-unique panelKey so multiple sessions of the same role+agent can coexist.
-      // Format: "{role}:{agentId}:{shortSessionId}"
       const shortSid = result.sessionId.slice(0, 8);
       const panelKey = `${combo.role}:${combo.agentId}:${shortSid}`;
       setSession(panelKey, result.sessionId);
@@ -72,8 +72,10 @@ async function selectCombo(combo: typeof combos.value[number]) {
   } catch (err) {
     console.error("Failed to create session:", err);
     errorMsg.value = `Failed to create session: ${err}`;
-    return; // Don't close on error — let user see the message
+    creating.value = false;
+    return;
   }
+  creating.value = false;
   emit("close");
 }
 </script>
@@ -95,6 +97,7 @@ async function selectCombo(combo: typeof combos.value[number]) {
             v-for="combo in combos"
             :key="combo.panelKey"
             class="combo-card"
+            :disabled="creating"
             @click="selectCombo(combo)"
           >
             <span class="combo-icon">{{ cliIcon(combo.cli) }}</span>

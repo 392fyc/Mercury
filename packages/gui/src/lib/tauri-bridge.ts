@@ -139,10 +139,15 @@ export async function sendPrompt(
   return invoke("send_prompt", { agentId, prompt, images: images ?? null, role: role ?? null });
 }
 
+/**
+ * Start a new session for an agent, optionally with a specific role.
+ * Does NOT send any prompt — just creates the session.
+ */
 export async function startSession(
   agentId: string,
+  role?: string,
 ): Promise<{ sessionId: string; role?: string; sessionName?: string; status?: string }> {
-  return invoke("start_session", { agentId });
+  return invoke("start_session", { agentId, role: role ?? null });
 }
 
 export async function stopSession(

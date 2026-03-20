@@ -87,7 +87,7 @@ function formatTime(ts: number): string {
           <span class="bm-role">{{ bm.role }}</span>
           <span class="bm-status-dot" :class="bm.status"></span>
         </div>
-        <span class="bm-title">{{ bm.sessionName || bm.sessionId.slice(0, 10) }}</span>
+        <span class="bm-title">{{ bm.sessionName || (bm.sessionId ? bm.sessionId.slice(0, 10) : bm.role) }}</span>
         <div class="bm-bottom-row">
           <span class="bm-agent">{{ bm.displayName }}</span>
           <span class="bm-time">{{ formatTime(bm.lastActiveAt) }}</span>

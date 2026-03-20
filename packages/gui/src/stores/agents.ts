@@ -114,6 +114,9 @@ function saveSessions(): void {
   }
 }
 
+/**
+ * Restore sessions from localStorage and rebuild bookmarks for non-main sessions.
+ */
 function loadSessions(): void {
   try {
     const raw = localStorage.getItem(SESSIONS_STORAGE_KEY);
@@ -124,6 +127,13 @@ function loadSessions(): void {
       if (typeof sid === "string") map.set(key, sid);
     }
     sessions.value = map;
+    // Rebuild bookmarks from persisted sessions (non-main only)
+    for (const panelKey of map.keys()) {
+      const { role } = parsePanelKey(panelKey);
+      if (role !== "main") {
+        bookmarks.value = new Map(bookmarks.value).set(panelKey, true);
+      }
+    }
   } catch {
     // Corrupted — start fresh
   }
