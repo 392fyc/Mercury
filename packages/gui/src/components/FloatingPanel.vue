@@ -59,7 +59,7 @@ function minimizeAll() {
   <Transition name="slide">
     <div v-if="hasTabs" class="floating-panel">
       <!-- Tab bar -->
-      <div class="fp-tab-bar" role="tablist">
+      <div class="fp-tab-bar" role="tablist" aria-label="Open sub-agent sessions">
         <div
           v-for="(tab, idx) in tabs"
           :key="tab.panelKey"
