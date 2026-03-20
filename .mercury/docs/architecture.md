@@ -24,13 +24,29 @@ packages/
     src/              # Vue 3 frontend
     src-tauri/        # Rust shell
   orchestrator/       # Node.js sidecar (JSON-RPC 2.0)
+    src/
+      role-loader.ts      # 运行时从 YAML 加载角色定义
+      role-prompt-builder.ts  # 生成 role-scoped system prompt
+      task-manager.ts     # TaskBundle 状态机 + 基于模板的 prompt 构建
   sdk-adapters/       # Agent CLI wrappers
-  core/               # Shared TypeScript types
+  core/               # Shared TypeScript types (RoleCard interface, AgentRole)
 ```
+
+## 角色定义
+
+角色以 YAML 文件定义于 `.mercury/roles/{role}.yaml`，运行时由 `role-loader.ts` 加载。
+每个 YAML 包含结构化元数据（canExecuteCode, canDelegateToRoles, inputBoundary, outputBoundary）
+和 instructions 文本块。5 个角色: main, dev, acceptance, research, design。
+
+## Dispatch 模板
+
+Dispatch prompt 模板位于 `.mercury/templates/`，由 task-manager.ts 在运行时读取并填充占位符。
+模板包含执行协议和歧义升级规则。
 
 ## Agent 指令文件
 
 每个 Agent CLI 对应一个根目录指令文件（`CLAUDE.md` / `AGENTS.md` / `OPENCODE.md` / `GEMINI.md`），
-遵循统一模板。**Main Agent 由用户在 UI/config 中动态指定**，任何 Agent 均可担任 Main 角色。
+遵循统一精简模板（Identity + Navigation + MUST/DO NOT）。
+**Main Agent 由用户在 UI/config 中动态指定**，任何 Agent 均可担任 Main 角色。
 
-角色在运行时通过 orchestrator system prompt 注入，指令文件中不包含硬编码角色映射。
+角色在运行时通过 orchestrator system prompt 注入，指令文件中不包含角色定义（defer to YAML）。

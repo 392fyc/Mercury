@@ -36,10 +36,12 @@ Main 创建 Task → 派发
 
 ## 补充模板
 
-| 模板 | 用途 |
-|------|------|
-| `handoff-packet.template.json` | Session 转交 |
-| `session-context.template.json` | Milestone 快照 |
-| `dispatch-prompt.template.md` | 派发 prompt 模板 |
+| 模板 | 位置 | 用途 |
+|------|------|------|
+| `handoff-packet.template.json` | `{Project}_KB/99-templates/` | Session 转交 |
+| `session-context.template.json` | `{Project}_KB/99-templates/` | Milestone 快照 |
+| `dispatch-prompt.template.md` | `.mercury/templates/` | Dev dispatch prompt（运行时填充） |
+| `acceptance-prompt.template.md` | `.mercury/templates/` | Acceptance dispatch prompt（运行时填充） |
 
-模板位置: `{Project}_KB/99-templates/`
+KB 模板位置: `{Project}_KB/99-templates/`
+代码模板位置: `.mercury/templates/`
