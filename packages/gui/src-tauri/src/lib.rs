@@ -35,13 +35,19 @@ fn find_project_root(start: PathBuf) -> Option<PathBuf> {
 pub fn run() {
     #[cfg(not(debug_assertions))]
     let builder = {
-        // Keep single-instance enforcement out of `tauri dev`, which may restart/spawn
-        // the app process during development.
+        // Single-instance is disabled during `tauri dev` (debug_assertions enabled)
+        // because the dev runner may spawn multiple cargo processes, causing the
+        // second instance to exit and kill the dev pipeline.
+        // In release builds, the second instance notifies the first and exits with code 0.
         tauri::Builder::default().plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            // Restore and focus the existing window regardless of its current state
+            // (minimized, hidden, or normal). Order matters: show → unminimize → focus.
             if let Some(w) = app.get_webview_window("main") {
-                let _ = w.unminimize();
-                let _ = w.maximize();
-                let _ = w.set_focus();
+                if let Err(e) = w.show() { eprintln!("[single-instance] show failed: {e}"); }
+                if let Err(e) = w.unminimize() { eprintln!("[single-instance] unminimize failed: {e}"); }
+                if let Err(e) = w.set_focus() { eprintln!("[single-instance] set_focus failed: {e}"); }
+            } else {
+                eprintln!("[single-instance] main window not found");
             }
         }))
     };
