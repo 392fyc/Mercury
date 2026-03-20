@@ -388,7 +388,16 @@ async function initAgents() {
         legacyRoleConfig?: boolean;
       };
       if (!payload.role) return;
-      const panelKey = `${payload.role}:${event.agentId}`;
+
+      // Main Agent uses stable panelKey (single instance); sub-agents use
+      // session-unique keys so multiple dispatches to the same role+agent
+      // create independent bookmarks and message streams.
+      const panelKey = payload.role === "main"
+        ? `${payload.role}:${event.agentId}`
+        : `${payload.role}:${event.agentId}:${event.sessionId}`;
+
+      // setSessionInfo internally calls setSession, which registers the
+      // panelKey→sessionId mapping needed by resolvePanelKey in messages.ts.
       setSessionInfo(panelKey, {
         sessionId: event.sessionId,
         sessionName: payload.sessionName,
