@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { onMounted, ref } from "vue";
 import TitleBar from "./components/TitleBar.vue";
 import AgentPanel from "./components/AgentPanel.vue";
 import EventLog from "./components/EventLog.vue";
@@ -18,8 +18,8 @@ import { useEventStore } from "./stores/events";
 import { useTaskStore } from "./stores/tasks";
 
 const {
-  agents, mainAgent, rolePanels, sidecarReady, sidecarError, initAgents,
-  openFloatingTab, bookmarkList,
+  agents, mainAgent, sidecarReady, sidecarError, initAgents,
+  openFloatingTab,
 } = useAgentStore();
 const { initMessageListeners } = useMessageStore();
 const { initApprovalStore } = useApprovalStore();
@@ -30,8 +30,6 @@ const showSettings = ref(false);
 const activeView = ref<"agents" | "tasks">("agents");
 const showEventLog = ref(false);
 const showAgentRoleSelector = ref(false);
-/** Whether a main-role agent is configured and available. */
-const hasMainAgent = computed(() => Boolean(mainAgent.value));
 
 function handleOpenSession(panelKey: string) {
   openFloatingTab(panelKey);
