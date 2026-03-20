@@ -121,12 +121,10 @@ function setMessages(panelKey: string, msgs: DisplayMessage[]) {
  * @param panelKey - roleSlotKey "{role}:{agentId}"
  */
 async function sendPrompt(panelKey: string, prompt: string, images?: ImageAttachment[]) {
-  const { setStatus, setSessionInfo } = useAgentStore();
+  const { setStatus, setSessionInfo, parsePanelKey } = useAgentStore();
 
-  // Parse panelKey to get role and agentId
-  const colonIdx = panelKey.indexOf(":");
-  const role = panelKey.slice(0, colonIdx);
-  const agentId = panelKey.slice(colonIdx + 1);
+  // Parse panelKey to get role and agentId (supports both "{role}:{agentId}" and "{role}:{agentId}:{sid}")
+  const { role, agentId } = parsePanelKey(panelKey);
 
   // Handle built-in commands — intercepted before reaching the backend
   const trimmed = prompt.trim().toLowerCase();
@@ -362,9 +360,7 @@ function dismissSessionPick(): void {
 
 /** Open the session picker modal listing resumable sessions for this panel. */
 async function openSessionPicker(panelKey: string): Promise<void> {
-  const colonIdx = panelKey.indexOf(":");
-  const role = panelKey.slice(0, colonIdx);
-  const agentId = panelKey.slice(colonIdx + 1);
+  const { role, agentId } = useAgentStore().parsePanelKey(panelKey);
 
   try {
     const sessions = await bridgeListSessions(agentId, role, true);
@@ -389,8 +385,7 @@ async function openSessionPicker(panelKey: string): Promise<void> {
 
 /** Open the history panel showing all sessions for this panel's agent. */
 async function openHistory(panelKey: string): Promise<void> {
-  const colonIdx = panelKey.indexOf(":");
-  const agentId = panelKey.slice(colonIdx + 1);
+  const { agentId } = useAgentStore().parsePanelKey(panelKey);
 
   try {
     const sessions = await bridgeListSessions(agentId, undefined, true);
@@ -456,9 +451,8 @@ function dismissHistoryView(): void {
  * persist archive metadata (e.g., completion status, tags).
  */
 async function archiveSession(panelKey: string): Promise<void> {
-  const { setStatus, clearSession, getSession } = useAgentStore();
-  const colonIdx = panelKey.indexOf(":");
-  const agentId = panelKey.slice(colonIdx + 1);
+  const { setStatus, clearSession, getSession, parsePanelKey } = useAgentStore();
+  const { agentId } = parsePanelKey(panelKey);
 
   const sid = getSession(panelKey);
   if (sid) {
@@ -483,9 +477,8 @@ async function archiveSession(panelKey: string): Promise<void> {
  * Uses the same bridgeStopSession call as archiveSession (see note above).
  */
 async function newSession(panelKey: string): Promise<void> {
-  const { setStatus, clearSession, getSession } = useAgentStore();
-  const colonIdx = panelKey.indexOf(":");
-  const agentId = panelKey.slice(colonIdx + 1);
+  const { setStatus, clearSession, getSession, parsePanelKey } = useAgentStore();
+  const { agentId } = parsePanelKey(panelKey);
 
   const sid = getSession(panelKey);
   if (sid) {

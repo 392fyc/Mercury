@@ -4,6 +4,7 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useAgentStore } from "../stores/agents";
+import { useApprovalStore } from "../stores/approvals";
 import { useMessageStore } from "../stores/messages";
 import { getSlashCommands, getGitInfo, setAgentCwd, stopSession, listModels, setModel, listGitBranches, checkoutBranch } from "../lib/tauri-bridge";
 import type { GitBranchList } from "../lib/tauri-bridge";
@@ -21,6 +22,7 @@ const props = defineProps<{
 
 const { agents, getStatus, getSession, getSessionInfo, getWorkDir, setWorkDir, getGitBranch, setGitBranch, clearSession, defaultWorkDir, getModelCache, setModelCache } = useAgentStore();
 const { getMessages, sendPrompt, clearMessages, openSessionPicker, openHistory, archiveSession, newSession, getUserMessageHistory } = useMessageStore();
+const { approvalMode, pendingCount, openQueue, setMode: setApprovalMode } = useApprovalStore();
 
 const inputText = ref("");
 const messagesEl = ref<HTMLDivElement>();
@@ -514,6 +516,27 @@ watch(
           Legacy Role Config
         </span>
       </div>
+      <!-- Main Agent: inline status + approval control -->
+      <div v-if="role === 'main'" class="main-status-bar">
+        <span class="inline-status-dot" :class="status === 'active' ? 'active' : status === 'error' ? 'error' : 'ready'"></span>
+        <span class="inline-status-text">{{ status === 'active' ? 'Running' : status === 'error' ? 'Error' : 'Ready' }}</span>
+        <div class="inline-approval">
+          <select
+            class="inline-approval-select"
+            :value="approvalMode"
+            @change="(e) => setApprovalMode((e.target as HTMLSelectElement).value as 'main_agent_review' | 'auto_accept')"
+          >
+            <option value="main_agent_review">Main Review</option>
+            <option value="auto_accept">Auto Accept</option>
+          </select>
+          <button
+            v-if="pendingCount > 0"
+            class="inline-approval-badge"
+            title="Open approval queue"
+            @click="openQueue"
+          >{{ pendingCount }}</button>
+        </div>
+      </div>
       <div class="panel-status">
         <button
           class="history-button"
@@ -744,6 +767,63 @@ watch(
   background: var(--bg-primary);
   border-bottom: 1px solid var(--border);
   min-width: 0;
+}
+
+/* Main Agent inline status + approval */
+.main-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  margin-right: 8px;
+  flex-shrink: 0;
+}
+
+.inline-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.inline-status-dot.ready { background: var(--accent-success); box-shadow: 0 0 4px var(--accent-success); }
+.inline-status-dot.active { background: var(--accent-main); box-shadow: 0 0 4px var(--accent-main); }
+.inline-status-dot.error { background: var(--accent-error); box-shadow: 0 0 4px var(--accent-error); }
+
+.inline-status-text {
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.inline-approval {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.inline-approval-select {
+  height: 22px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  font-size: 10px;
+  padding: 0 6px;
+}
+
+.inline-approval-badge {
+  min-width: 20px;
+  height: 20px;
+  border: 1px solid rgba(255, 184, 77, 0.4);
+  border-radius: 999px;
+  background: rgba(255, 184, 77, 0.15);
+  color: #ffb84d;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .panel-status {

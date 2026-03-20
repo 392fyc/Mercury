@@ -84,30 +84,7 @@ function handleApprovalModeChange(event: Event) {
         >Tasks</button>
       </div>
     </div>
-    <div class="titlebar-center" data-tauri-drag-region>
-      <span class="status-dot" :class="statusClass"></span>
-      <span class="status-text">{{ statusText }}</span>
-      <div class="approval-control">
-        <label class="approval-label" for="approval-mode">Approval</label>
-        <select
-          id="approval-mode"
-          class="approval-select"
-          :value="approvalMode"
-          @change="handleApprovalModeChange"
-        >
-          <option value="main_agent_review">Main Agent Review</option>
-          <option value="auto_accept">Auto Accept</option>
-        </select>
-        <button
-          v-if="pendingCount > 0"
-          class="approval-badge"
-          title="Open approval queue"
-          @click="openQueue"
-        >
-          {{ pendingCount }}
-        </button>
-      </div>
-    </div>
+    <div class="titlebar-center" data-tauri-drag-region></div>
     <div class="titlebar-right">
       <button
         class="titlebar-btn"
@@ -159,8 +136,9 @@ function handleApprovalModeChange(event: Event) {
 
 .view-tabs {
   display: flex;
-  gap: 2px;
-  margin-left: 8px;
+  gap: 0;
+  margin-left: 12px;
+  align-self: stretch; /* stretch to full titlebar height */
 }
 
 .tab-btn {
@@ -169,9 +147,12 @@ function handleApprovalModeChange(event: Event) {
   border-bottom: 2px solid transparent;
   color: var(--text-muted);
   font-size: 12px;
-  padding: 4px 10px 6px;
+  padding: 0 12px;
   cursor: pointer;
   -webkit-app-region: no-drag;
+  display: flex;
+  align-items: center;
+  margin-bottom: -1px; /* overlap the titlebar border-bottom */
 }
 
 .tab-btn:hover {

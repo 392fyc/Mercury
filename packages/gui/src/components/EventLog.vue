@@ -44,8 +44,9 @@ function payloadPreview(payload: Record<string, unknown>): string {
   display: flex;
   flex-direction: column;
   background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border: none;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
   overflow: hidden;
   min-height: 0;
 }

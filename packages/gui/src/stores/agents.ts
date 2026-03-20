@@ -282,24 +282,23 @@ function setModelCache(agentId: string, models: { id: string; name: string }[]) 
 }
 
 async function hydrateSessionMeta(): Promise<void> {
+  // Group by {role}:{agentId} (ignoring optional session suffix)
   const byAgent = new Map<string, string[]>();
   for (const [panelKey, sessionId] of sessions.value) {
-    const colonIdx = panelKey.indexOf(":");
-    const role = panelKey.slice(0, colonIdx);
-    const agentId = panelKey.slice(colonIdx + 1);
-    const list = byAgent.get(`${role}:${agentId}`) ?? [];
+    const { role, agentId } = parsePanelKey(panelKey);
+    const groupKey = `${role}:${agentId}`;
+    const list = byAgent.get(groupKey) ?? [];
     list.push(sessionId);
-    byAgent.set(`${role}:${agentId}`, list);
+    byAgent.set(groupKey, list);
   }
 
-  for (const panelKey of byAgent.keys()) {
-    const colonIdx = panelKey.indexOf(":");
-    const role = panelKey.slice(0, colonIdx);
-    const agentId = panelKey.slice(colonIdx + 1);
+  for (const groupKey of byAgent.keys()) {
+    const { role, agentId } = parsePanelKey(groupKey);
     try {
       const knownSessions = await fetchSessions(agentId, role, false);
       for (const [panelKey, sessionId] of sessions.value) {
-        if (panelKey !== `${role}:${agentId}`) continue;
+        const pk = parsePanelKey(panelKey);
+        if (pk.role !== role || pk.agentId !== agentId) continue;
         const match = knownSessions.find((s) => s.sessionId === sessionId);
         if (!match) continue;
         setSessionInfo(panelKey, {

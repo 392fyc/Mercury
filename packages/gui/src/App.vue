@@ -131,8 +131,8 @@ onMounted(async () => {
   flex: 1;
   display: grid;
   grid-template-rows: minmax(0, 1fr);
-  gap: var(--panel-gap);
-  padding: var(--panel-gap);
+  gap: 0;
+  padding: 0;
   min-height: 0;
 }
 
@@ -174,8 +174,8 @@ onMounted(async () => {
 
 .main-agent-area :deep(.agent-panel) {
   height: 100%;
-  border-right: none;
-  border-radius: var(--radius) 0 0 var(--radius);
+  border: none;
+  border-radius: 0;
 }
 
 .loading-state {
