@@ -38,6 +38,19 @@ export interface SessionMeta {
 
 type SessionPromptState = Pick<SessionMeta, "promptHash" | "currentPromptHash" | "legacyRoleConfig">;
 
+// ─── Bookmark Rail ───
+
+export interface BookmarkInfo {
+  panelKey: string;
+  sessionId: string;
+  agentId: string;
+  role: string;
+  displayName: string;
+  sessionName?: string;
+  status: "idle" | "active" | "error";
+  lastActiveAt: number;
+}
+
 const SESSIONS_STORAGE_KEY = "mercury:sessions";
 
 const agents = ref<AgentConfig[]>([]);
@@ -50,6 +63,14 @@ const gitBranches = ref<Map<string, string | null>>(new Map()); // panelKey → 
 const defaultWorkDir = ref("");
 const sidecarReady = ref(false);
 const sidecarError = ref<string | null>(null);
+
+// ─── Bookmark Rail State ───
+/** Manually created sub-agent bookmarks (panelKey → true). Auto-created when session starts. */
+const bookmarks = ref<Map<string, boolean>>(new Map());
+/** Which panelKeys are currently open as floating tabs */
+const openFloatingTabs = ref<string[]>([]);
+/** Model cache: agentId → last fetched model list */
+const modelCache = ref<Map<string, { id: string; name: string }[]>>(new Map());
 
 const mainAgent = computed(() => agents.value.find((a) => a.roles.includes("main")));
 
@@ -93,6 +114,9 @@ function saveSessions(): void {
   }
 }
 
+/**
+ * Restore sessions from localStorage and rebuild bookmarks for non-main sessions.
+ */
 function loadSessions(): void {
   try {
     const raw = localStorage.getItem(SESSIONS_STORAGE_KEY);
@@ -103,6 +127,13 @@ function loadSessions(): void {
       if (typeof sid === "string") map.set(key, sid);
     }
     sessions.value = map;
+    // Rebuild bookmarks from persisted sessions (non-main only)
+    for (const panelKey of map.keys()) {
+      const { role } = parsePanelKey(panelKey);
+      if (role !== "main") {
+        bookmarks.value = new Map(bookmarks.value).set(panelKey, true);
+      }
+    }
   } catch {
     // Corrupted — start fresh
   }
@@ -191,25 +222,99 @@ const anyError = computed(() =>
   [...statuses.value.values()].some((s) => s === "error"),
 );
 
+/**
+ * Parse a panelKey into role and agentId.
+ * Supports both legacy "{role}:{agentId}" and session-unique "{role}:{agentId}:{shortSid}" formats.
+ * Returns empty strings for malformed keys to prevent downstream crashes.
+ */
+function parsePanelKey(panelKey: string): { role: string; agentId: string } {
+  const parts = panelKey.split(":");
+  if (parts.length < 2) {
+    console.warn(`[agents] malformed panelKey: "${panelKey}"`);
+    return { role: parts[0] ?? "", agentId: "" };
+  }
+  return { role: parts[0], agentId: parts[1] };
+}
+
+/** All sub-agent bookmarks, sorted by lastActiveAt descending. */
+const bookmarkList = computed<BookmarkInfo[]>(() => {
+  const items: BookmarkInfo[] = [];
+  for (const panelKey of bookmarks.value.keys()) {
+    const { role, agentId } = parsePanelKey(panelKey);
+    if (role === "main") continue;
+    const agent = agents.value.find((a) => a.id === agentId);
+    const meta = sessionMeta.value.get(panelKey);
+    const sid = sessions.value.get(panelKey);
+    items.push({
+      panelKey,
+      sessionId: sid ?? "",
+      agentId,
+      role,
+      displayName: agent?.displayName ?? agentId,
+      sessionName: meta?.sessionName,
+      status: statuses.value.get(panelKey) ?? "idle",
+      lastActiveAt: meta?.lastActiveAt ?? 0,
+    });
+  }
+  return items.sort((a, b) => b.lastActiveAt - a.lastActiveAt);
+});
+
+/** Check if a sessionId is already open in any floating tab. */
+function isSessionOpen(sessionId: string): boolean {
+  for (const pk of openFloatingTabs.value) {
+    if (sessions.value.get(pk) === sessionId) return true;
+  }
+  return false;
+}
+
+function addBookmark(panelKey: string) {
+  bookmarks.value = new Map(bookmarks.value).set(panelKey, true);
+}
+
+function removeBookmark(panelKey: string) {
+  const next = new Map(bookmarks.value);
+  next.delete(panelKey);
+  bookmarks.value = next;
+  // Also close floating tab if open
+  openFloatingTabs.value = openFloatingTabs.value.filter((k) => k !== panelKey);
+}
+
+function openFloatingTab(panelKey: string) {
+  if (!openFloatingTabs.value.includes(panelKey)) {
+    openFloatingTabs.value = [...openFloatingTabs.value, panelKey];
+  }
+}
+
+function closeFloatingTab(panelKey: string) {
+  openFloatingTabs.value = openFloatingTabs.value.filter((k) => k !== panelKey);
+}
+
+function getModelCache(agentId: string): { id: string; name: string }[] | undefined {
+  return modelCache.value.get(agentId);
+}
+
+function setModelCache(agentId: string, models: { id: string; name: string }[]) {
+  modelCache.value = new Map(modelCache.value).set(agentId, models);
+}
+
 async function hydrateSessionMeta(): Promise<void> {
+  // Group by {role}:{agentId} (ignoring optional session suffix)
   const byAgent = new Map<string, string[]>();
   for (const [panelKey, sessionId] of sessions.value) {
-    const colonIdx = panelKey.indexOf(":");
-    const role = panelKey.slice(0, colonIdx);
-    const agentId = panelKey.slice(colonIdx + 1);
-    const list = byAgent.get(`${role}:${agentId}`) ?? [];
+    const { role, agentId } = parsePanelKey(panelKey);
+    const groupKey = `${role}:${agentId}`;
+    const list = byAgent.get(groupKey) ?? [];
     list.push(sessionId);
-    byAgent.set(`${role}:${agentId}`, list);
+    byAgent.set(groupKey, list);
   }
 
-  for (const panelKey of byAgent.keys()) {
-    const colonIdx = panelKey.indexOf(":");
-    const role = panelKey.slice(0, colonIdx);
-    const agentId = panelKey.slice(colonIdx + 1);
+  for (const groupKey of byAgent.keys()) {
+    const { role, agentId } = parsePanelKey(groupKey);
     try {
       const knownSessions = await fetchSessions(agentId, role, false);
       for (const [panelKey, sessionId] of sessions.value) {
-        if (panelKey !== `${role}:${agentId}`) continue;
+        const pk = parsePanelKey(panelKey);
+        if (pk.role !== role || pk.agentId !== agentId) continue;
         const match = knownSessions.find((s) => s.sessionId === sessionId);
         if (!match) continue;
         setSessionInfo(panelKey, {
@@ -294,6 +399,10 @@ async function initAgents() {
         legacyRoleConfig: payload.legacyRoleConfig,
       });
       setStatus(panelKey, "idle");
+      // Auto-create bookmark for sub-agent sessions
+      if (payload.role !== "main") {
+        addBookmark(panelKey);
+      }
       return;
     }
 
@@ -363,5 +472,19 @@ export function useAgentStore() {
     getGitBranch,
     defaultWorkDir,
     initAgents,
+    // Bookmark Rail
+    bookmarks,
+    bookmarkList,
+    addBookmark,
+    removeBookmark,
+    openFloatingTabs,
+    openFloatingTab,
+    closeFloatingTab,
+    isSessionOpen,
+    parsePanelKey,
+    // Model cache
+    modelCache,
+    getModelCache,
+    setModelCache,
   };
 }

@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useAgentStore } from "../stores/agents";
+import { useApprovalStore } from "../stores/approvals";
 import { useMessageStore } from "../stores/messages";
-import { getSlashCommands, getGitInfo, setAgentCwd, stopSession, listModels, setModel } from "../lib/tauri-bridge";
+import { getSlashCommands, getGitInfo, setAgentCwd, stopSession, listModels, setModel, listGitBranches, checkoutBranch } from "../lib/tauri-bridge";
+import type { GitBranchList } from "../lib/tauri-bridge";
 import type { SlashCommand, ImageAttachment, ImageMediaType } from "../lib/tauri-bridge";
 import SlashCommandPalette from "./SlashCommandPalette.vue";
 import ApprovalCard from "./ApprovalCard.vue";
@@ -15,10 +17,12 @@ const props = defineProps<{
   agentName: string;
   role: "main" | "dev" | "acceptance" | "research" | "design";
   panelKey: string;
+  isFloating?: boolean;
 }>();
 
-const { agents, getStatus, getSession, getSessionInfo, getWorkDir, setWorkDir, getGitBranch, setGitBranch, clearSession, defaultWorkDir } = useAgentStore();
+const { agents, getStatus, getSession, getSessionInfo, getWorkDir, setWorkDir, getGitBranch, setGitBranch, clearSession, defaultWorkDir, getModelCache, setModelCache } = useAgentStore();
 const { getMessages, sendPrompt, clearMessages, openSessionPicker, openHistory, archiveSession, newSession, getUserMessageHistory } = useMessageStore();
+const { approvalMode, pendingCount, openQueue, setMode: setApprovalMode } = useApprovalStore();
 
 const inputText = ref("");
 const messagesEl = ref<HTMLDivElement>();
@@ -67,12 +71,20 @@ async function toggleModelPicker() {
     showModelPicker.value = false;
     return;
   }
-  modelPickerLoading.value = true;
   showModelPicker.value = true;
+  // Show cached models immediately, refresh in background
+  const cached = getModelCache(props.agentId);
+  if (cached) {
+    availableModels.value = cached;
+  } else {
+    modelPickerLoading.value = true;
+  }
   try {
-    availableModels.value = await listModels(props.agentId);
+    const fresh = await listModels(props.agentId);
+    availableModels.value = fresh;
+    setModelCache(props.agentId, fresh);
   } catch {
-    availableModels.value = [];
+    if (!cached) availableModels.value = [];
   } finally {
     modelPickerLoading.value = false;
   }
@@ -126,12 +138,41 @@ async function handleChangeDir() {
   await refreshGitBranch(selected);
 }
 
+// ─── Branch Picker ───
+const showBranchPicker = ref(false);
+const branchData = ref<GitBranchList | null>(null);
+const branchPickerLoading = ref(false);
+
 async function handleChangeBranch() {
   if (status.value === "active") return;
+  if (showBranchPicker.value) {
+    showBranchPicker.value = false;
+    return;
+  }
   const dir = workDir.value;
   if (!dir) return;
-  // Refresh branch info (re-detect from filesystem)
-  await refreshGitBranch(dir);
+  showBranchPicker.value = true;
+  branchPickerLoading.value = true;
+  try {
+    branchData.value = await listGitBranches(dir);
+  } catch {
+    branchData.value = null;
+  } finally {
+    branchPickerLoading.value = false;
+  }
+}
+
+async function selectBranch(branch: string) {
+  showBranchPicker.value = false;
+  const dir = workDir.value;
+  if (!dir) return;
+  if (branch === gitBranch.value) return;
+  try {
+    await checkoutBranch(dir, branch);
+    setGitBranch(props.panelKey, branch);
+  } catch (err) {
+    console.error("Failed to checkout branch:", err);
+  }
 }
 
 // ─── Image Attachments ───
@@ -344,6 +385,40 @@ function renderMarkdown(content: string): string {
   return DOMPurify.sanitize(html);
 }
 
+// ─── Message Copy ───
+const copiedIndex = ref<number | null>(null);
+let copyTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function copyMessage(content: string, index: number) {
+  try {
+    await navigator.clipboard.writeText(content);
+    copiedIndex.value = index;
+    if (copyTimer) clearTimeout(copyTimer);
+    copyTimer = setTimeout(() => { if (copiedIndex.value === index) copiedIndex.value = null; }, 1500);
+  } catch {
+    console.error("Failed to copy message");
+  }
+}
+
+function handleClickOutside(event: MouseEvent) {
+  const target = event.target as HTMLElement;
+  if (showModelPicker.value && !target.closest(".model-picker-wrapper")) {
+    showModelPicker.value = false;
+  }
+  if (showBranchPicker.value && !target.closest(".branch-picker-wrapper")) {
+    showBranchPicker.value = false;
+  }
+}
+
+onMounted(() => {
+  document.addEventListener("click", handleClickOutside);
+});
+
+onBeforeUnmount(() => {
+  if (copyTimer) clearTimeout(copyTimer);
+  document.removeEventListener("click", handleClickOutside);
+});
+
 async function handleSend() {
   const prompt = inputText.value.trim();
   if (!prompt && pendingImages.value.length === 0) return;
@@ -462,6 +537,27 @@ watch(
           Legacy Role Config
         </span>
       </div>
+      <!-- Main Agent: inline status + approval control -->
+      <div v-if="role === 'main'" class="main-status-bar">
+        <span class="inline-status-dot" :class="status === 'active' ? 'active' : status === 'error' ? 'error' : 'ready'"></span>
+        <span class="inline-status-text">{{ status === 'active' ? 'Running' : status === 'error' ? 'Error' : 'Ready' }}</span>
+        <div class="inline-approval">
+          <select
+            class="inline-approval-select"
+            :value="approvalMode"
+            @change="(e) => setApprovalMode((e.target as HTMLSelectElement).value as 'main_agent_review' | 'auto_accept')"
+          >
+            <option value="main_agent_review">Main Review</option>
+            <option value="auto_accept">Auto Accept</option>
+          </select>
+          <button
+            v-if="pendingCount > 0"
+            class="inline-approval-badge"
+            title="Open approval queue"
+            @click="openQueue"
+          >{{ pendingCount }}</button>
+        </div>
+      </div>
       <div class="panel-status">
         <button
           class="history-button"
@@ -485,14 +581,18 @@ watch(
         <span v-if="status === 'error'" class="status-badge error">
           <span>error</span>
         </span>
-        <!-- Idle: show New Session button -->
+        <!-- Idle: show New Session button (Main Agent only; floating sub-agents use BookmarkRail) -->
         <button
-          v-else-if="status === 'idle'"
+          v-else-if="status === 'idle' && (role === 'main' || !isFloating)"
           class="new-session-btn"
+          :class="{ 'main-new-btn': role === 'main' }"
           title="Start new session"
           aria-label="Start new session"
           @click="newSession(panelKey)"
-        >+</button>
+        >
+          <template v-if="role === 'main'">+ New</template>
+          <template v-else>+</template>
+        </button>
       </div>
     </div>
 
@@ -516,6 +616,9 @@ watch(
 
         <!-- User messages: right-aligned with avatar -->
         <template v-else-if="msg.role === 'user'">
+          <button class="msg-copy-btn" :class="{ copied: copiedIndex === i }" @click="copyMessage(msg.content, i)" title="Copy message">
+            {{ copiedIndex === i ? '✓' : '⎘' }}
+          </button>
           <div class="message-bubble user-bubble">
             <!-- ApprovalCard is exclusive — replaces normal content -->
             <ApprovalCard
@@ -548,6 +651,9 @@ watch(
               v-html="renderMarkdown(msg.content)"
             ></div>
           </div>
+          <button class="msg-copy-btn" :class="{ copied: copiedIndex === i }" @click="copyMessage(msg.content, i)" title="Copy message">
+            {{ copiedIndex === i ? '✓' : '⎘' }}
+          </button>
         </template>
       </div>
     </div>
@@ -575,7 +681,10 @@ watch(
               class="model-picker-item"
               :class="{ active: m.id === agentModel }"
               @click="selectModel(m.id)"
-            >{{ m.name || m.id }}</button>
+            >
+              <span v-if="m.id === agentModel" class="model-check">✓</span>
+              {{ m.name || m.id }}
+            </button>
           </template>
           <div v-else class="model-picker-item disabled">No models available</div>
         </div>
@@ -583,9 +692,35 @@ watch(
       <button v-if="workDir" class="workspace-dir" @click="handleChangeDir" :title="workDir" :disabled="status === 'active'">
         {{ shortWorkDir }}
       </button>
-      <button v-if="workDir" class="workspace-branch" @click="handleChangeBranch" :disabled="status === 'active'" :title="gitBranch || 'No branch detected'">
-        <span class="branch-icon">&#9095;</span>{{ gitBranch || '—' }}
-      </button>
+      <div v-if="workDir" class="branch-picker-wrapper">
+        <button class="workspace-branch" @click="handleChangeBranch" :disabled="status === 'active'" :title="gitBranch || 'No branch detected'">
+          <span class="branch-icon">&#9095;</span>{{ gitBranch || '—' }}
+        </button>
+        <div v-if="showBranchPicker" class="branch-picker-dropdown">
+          <div v-if="branchPickerLoading" class="branch-picker-item disabled">Loading…</div>
+          <template v-else-if="branchData">
+            <div class="branch-group-label">Local</div>
+            <button
+              v-for="b in branchData.local"
+              :key="'local:' + b"
+              class="branch-picker-item"
+              :class="{ active: b === branchData.current }"
+              @click="selectBranch(b)"
+            >
+              <span v-if="b === branchData.current" class="branch-check">●</span>
+              {{ b }}
+            </button>
+            <div v-if="branchData.remote.length" class="branch-group-label">Remote</div>
+            <button
+              v-for="b in branchData.remote"
+              :key="'remote:' + b"
+              class="branch-picker-item remote"
+              @click="selectBranch(b)"
+            >{{ b }}</button>
+          </template>
+          <div v-else class="branch-picker-item disabled">No branches found</div>
+        </div>
+      </div>
     </div>
 
     <div class="panel-input" style="position: relative;">
@@ -651,8 +786,65 @@ watch(
   gap: 8px;
   padding: 8px 12px;
   background: var(--bg-primary);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid rgba(0, 212, 255, 0.08);
   min-width: 0;
+}
+
+/* Main Agent inline status + approval */
+.main-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  margin-right: 8px;
+  flex-shrink: 0;
+}
+
+.inline-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.inline-status-dot.ready { background: var(--accent-success); box-shadow: 0 0 4px var(--accent-success); }
+.inline-status-dot.active { background: var(--accent-main); box-shadow: 0 0 4px var(--accent-main); }
+.inline-status-dot.error { background: var(--accent-error); box-shadow: 0 0 4px var(--accent-error); }
+
+.inline-status-text {
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.inline-approval {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.inline-approval-select {
+  height: 22px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  font-size: 10px;
+  padding: 0 6px;
+}
+
+.inline-approval-badge {
+  min-width: 20px;
+  height: 20px;
+  border: 1px solid rgba(255, 184, 77, 0.4);
+  border-radius: 999px;
+  background: rgba(255, 184, 77, 0.15);
+  color: #ffb84d;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .panel-status {
@@ -802,6 +994,15 @@ watch(
   transition: border-color 0.15s, color 0.15s, background 0.15s;
 }
 
+.new-session-btn.main-new-btn {
+  width: auto;
+  border-radius: 4px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 500;
+  gap: 2px;
+}
+
 .new-session-btn:hover {
   border-color: var(--accent-main);
   color: var(--accent-main);
@@ -924,6 +1125,41 @@ watch(
   max-width: 85%;
   padding: 8px 12px;
   border-radius: var(--radius);
+}
+
+/* Copy button — outside the bubble, shown on row hover */
+.msg-copy-btn {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--text-muted);
+  font-size: 13px;
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: 4px;
+}
+
+.message-row:hover .msg-copy-btn {
+  opacity: 1;
+}
+
+.msg-copy-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+
+.msg-copy-btn.copied {
+  opacity: 1;
+  color: var(--accent-success);
+  border-color: var(--accent-success);
 }
 
 .user-bubble {
@@ -1102,7 +1338,7 @@ watch(
   align-items: center;
   gap: 6px;
   padding: 4px 8px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid rgba(0, 212, 255, 0.08);
   font-size: 10px;
 }
 
@@ -1172,6 +1408,73 @@ watch(
   max-width: 150px;
 }
 
+.branch-picker-wrapper {
+  position: relative;
+}
+
+.branch-picker-dropdown {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  margin-bottom: 4px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  min-width: 200px;
+  max-height: 280px;
+  overflow-y: auto;
+  z-index: 100;
+  padding: 4px 0;
+}
+
+.branch-group-label {
+  padding: 4px 12px 2px;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+}
+
+.branch-picker-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.branch-picker-item:hover:not(.disabled) {
+  background: var(--bg-panel);
+}
+
+.branch-picker-item.active {
+  color: var(--accent-main);
+  font-weight: 600;
+}
+
+.branch-picker-item.remote {
+  color: var(--text-secondary);
+}
+
+.branch-picker-item.disabled {
+  color: var(--text-muted);
+  cursor: default;
+  font-style: italic;
+}
+
+.branch-check {
+  margin-right: 4px;
+  font-size: 8px;
+}
+
 .model-picker-wrapper {
   position: relative;
 }
@@ -1213,6 +1516,11 @@ watch(
 .model-picker-item.active {
   color: var(--accent-main);
   font-weight: 600;
+}
+
+.model-check {
+  margin-right: 4px;
+  font-size: 10px;
 }
 
 .model-picker-item.disabled {

@@ -101,6 +101,20 @@ export async function getGitInfo(path: string): Promise<GitInfo> {
   return invoke<GitInfo>("get_git_info", { path });
 }
 
+export interface GitBranchList {
+  current: string;
+  local: string[];
+  remote: string[];
+}
+
+export async function listGitBranches(path: string): Promise<GitBranchList> {
+  return invoke<GitBranchList>("list_git_branches", { path });
+}
+
+export async function checkoutBranch(path: string, branch: string): Promise<{ ok: boolean; branch: string }> {
+  return invoke<{ ok: boolean; branch: string }>("checkout_branch", { path, branch });
+}
+
 // Agent workspace (frontend → Rust → sidecar)
 
 export async function setAgentCwd(
@@ -125,10 +139,15 @@ export async function sendPrompt(
   return invoke("send_prompt", { agentId, prompt, images: images ?? null, role: role ?? null });
 }
 
+/**
+ * Start a new session for an agent, optionally with a specific role.
+ * Does NOT send any prompt — just creates the session.
+ */
 export async function startSession(
   agentId: string,
+  role?: string,
 ): Promise<{ sessionId: string; role?: string; sessionName?: string; status?: string }> {
-  return invoke("start_session", { agentId });
+  return invoke("start_session", { agentId, role: role ?? null });
 }
 
 export async function stopSession(

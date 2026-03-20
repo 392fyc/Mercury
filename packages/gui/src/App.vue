@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { onMounted, ref } from "vue";
 import TitleBar from "./components/TitleBar.vue";
 import AgentPanel from "./components/AgentPanel.vue";
 import EventLog from "./components/EventLog.vue";
@@ -8,14 +8,19 @@ import TaskDashboard from "./components/TaskDashboard.vue";
 import SessionPicker from "./components/SessionPicker.vue";
 import HistoryPanel from "./components/HistoryPanel.vue";
 import ApprovalQueue from "./components/ApprovalQueue.vue";
+import BookmarkRail from "./components/BookmarkRail.vue";
+import FloatingPanel from "./components/FloatingPanel.vue";
+import AgentRoleSelector from "./components/AgentRoleSelector.vue";
 import { useAgentStore } from "./stores/agents";
 import { useApprovalStore } from "./stores/approvals";
 import { useMessageStore } from "./stores/messages";
 import { useEventStore } from "./stores/events";
 import { useTaskStore } from "./stores/tasks";
 
-const { agents, mainAgent, rolePanels, sidecarReady, sidecarError, initAgents } =
-  useAgentStore();
+const {
+  agents, mainAgent, sidecarReady, sidecarError, initAgents,
+  openFloatingTab,
+} = useAgentStore();
 const { initMessageListeners } = useMessageStore();
 const { initApprovalStore } = useApprovalStore();
 const { initEventListeners } = useEventStore();
@@ -23,10 +28,16 @@ const { loadTasks, initTaskListeners } = useTaskStore();
 
 const showSettings = ref(false);
 const activeView = ref<"agents" | "tasks">("agents");
-/** Whether a main-role agent is configured and available. */
-const hasMainAgent = computed(() => Boolean(mainAgent.value));
-/** Number of non-main (sub) agent panels currently rendered. */
-const subAgentCount = computed(() => rolePanels.value.length);
+const showEventLog = ref(false);
+const showAgentRoleSelector = ref(false);
+
+function handleOpenSession(panelKey: string) {
+  openFloatingTab(panelKey);
+}
+
+function handleCreateSession() {
+  showAgentRoleSelector.value = true;
+}
 
 onMounted(async () => {
   await initAgents();
@@ -42,8 +53,10 @@ onMounted(async () => {
   <div class="app-shell">
     <TitleBar
       :activeView="activeView"
+      :eventLogOpen="showEventLog"
       @open-settings="showSettings = true"
       @switch-view="(v) => activeView = v"
+      @toggle-event-log="showEventLog = !showEventLog"
     />
     <SettingsPanel v-if="showSettings" @close="showSettings = false" />
 
@@ -51,44 +64,29 @@ onMounted(async () => {
       Orchestrator error: {{ sidecarError }}
     </div>
 
-    <div class="workspace">
+    <div class="workspace" :class="{ 'event-log-visible': showEventLog }">
       <div class="workspace-main">
         <!-- Agents View -->
         <div v-show="activeView === 'agents'" class="workspace-view">
-          <div
-            v-if="agents.length > 0"
-            class="agents-area"
-            :class="{
-              'main-only': hasMainAgent && subAgentCount === 0,
-              'single-sub-agent': subAgentCount === 1,
-              'multi-sub-agents': subAgentCount > 1,
-              'sub-agents-only': !hasMainAgent && subAgentCount > 0,
-            }"
-          >
-            <AgentPanel
-              v-if="mainAgent"
-              :agentId="mainAgent.id"
-              :agentName="mainAgent.displayName"
-              :role="'main'"
-              :panelKey="`main:${mainAgent.id}`"
-            />
-            <div
-              v-if="subAgentCount > 0"
-              class="sub-agents"
-              :class="{
-                'single-panel': subAgentCount === 1,
-                'multi-panel': subAgentCount > 1,
-              }"
-            >
+          <div v-if="agents.length > 0" class="agents-area">
+            <!-- Main Agent: full width -->
+            <div class="main-agent-area">
               <AgentPanel
-                v-for="panel in rolePanels"
-                :key="panel.panelKey"
-                :agentId="panel.agentId"
-                :agentName="panel.displayName"
-                :role="panel.role"
-                :panelKey="panel.panelKey"
+                v-if="mainAgent"
+                :agentId="mainAgent.id"
+                :agentName="mainAgent.displayName"
+                :role="'main'"
+                :panelKey="`main:${mainAgent.id}`"
               />
             </div>
+            <!-- Floating sub-agent panel (overlays right side) -->
+            <FloatingPanel />
+            <!-- Bookmark rail (right edge) -->
+            <BookmarkRail
+              @open-session="handleOpenSession"
+              @create-session="handleCreateSession"
+              @open-archived="() => {/* TODO: open archived sessions panel */}"
+            />
           </div>
           <div v-else class="loading-state">
             <p v-if="!sidecarReady">Connecting to orchestrator...</p>
@@ -100,12 +98,17 @@ onMounted(async () => {
         <TaskDashboard v-show="activeView === 'tasks'" class="workspace-view" />
       </div>
 
-      <EventLog />
+      <EventLog v-if="showEventLog" />
     </div>
 
     <SessionPicker />
     <HistoryPanel />
     <ApprovalQueue />
+    <AgentRoleSelector
+      v-if="showAgentRoleSelector"
+      @close="showAgentRoleSelector = false"
+      @created="showAgentRoleSelector = false"
+    />
   </div>
 </template>
 
@@ -127,10 +130,14 @@ onMounted(async () => {
 .workspace {
   flex: 1;
   display: grid;
-  grid-template-rows: minmax(0, 1fr) clamp(120px, 18vh, 152px);
-  gap: var(--panel-gap);
-  padding: var(--panel-gap);
+  grid-template-rows: minmax(0, 1fr);
+  gap: 0;
+  padding: 0;
   min-height: 0;
+}
+
+.workspace.event-log-visible {
+  grid-template-rows: minmax(0, 1fr) clamp(120px, 18vh, 152px);
 }
 
 .workspace-main {
@@ -150,47 +157,26 @@ onMounted(async () => {
 }
 
 .agents-area {
-  --agent-panel-min-height: 280px;
-  display: grid;
-  grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
-  gap: var(--panel-gap);
+  display: flex;
+  position: relative;
   min-height: 0;
   height: 100%;
-  align-items: stretch;
   flex: 1;
+  gap: 0;
 }
 
-.agents-area :deep(.agent-panel) {
-  min-height: var(--agent-panel-min-height);
-  height: 100%;
-}
-
-.agents-area.single-sub-agent {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.agents-area.main-only,
-.agents-area.sub-agents-only {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.sub-agents {
-  display: grid;
-  gap: var(--panel-gap);
+.main-agent-area {
+  flex: 1;
   min-height: 0;
   min-width: 0;
-  align-content: stretch;
+  position: relative;
 }
 
-.sub-agents.single-panel {
-  grid-template-rows: minmax(0, 1fr);
-  overflow: hidden;
-}
-
-.sub-agents.multi-panel {
-  grid-auto-rows: minmax(var(--agent-panel-min-height), 1fr);
-  overflow-y: auto;
-  padding-right: 2px;
+.main-agent-area :deep(.agent-panel) {
+  height: 100%;
+  border: none;
+  border-radius: 0;
+  border-right: 1px solid rgba(0, 212, 255, 0.08);
 }
 
 .loading-state {
@@ -203,24 +189,8 @@ onMounted(async () => {
 }
 
 @media (max-width: 1180px) {
-  .workspace {
+  .workspace.event-log-visible {
     grid-template-rows: minmax(0, 1fr) clamp(112px, 16vh, 136px);
-  }
-
-  .agents-area,
-  .agents-area.single-sub-agent {
-    grid-template-columns: 1fr;
-    grid-auto-rows: minmax(var(--agent-panel-min-height), auto);
-    overflow-y: auto;
-    align-content: start;
-  }
-
-  .sub-agents.single-panel,
-  .sub-agents.multi-panel {
-    grid-template-rows: none;
-    grid-auto-rows: minmax(var(--agent-panel-min-height), auto);
-    overflow: visible;
-    padding-right: 0;
   }
 }
 </style>

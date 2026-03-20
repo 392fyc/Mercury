@@ -40,7 +40,7 @@ function handleBackdrop() {
           >
             Resumable sessions (same role, same agent)
           </span>
-          <button class="picker-close" @click="dismissSessionPick">&times;</button>
+          <button class="picker-close" aria-label="Close session picker" @click="dismissSessionPick">&times;</button>
         </div>
         <div class="picker-list">
           <div v-if="sessions.length === 0" class="picker-empty">
@@ -93,8 +93,8 @@ function handleBackdrop() {
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  width: 460px;
-  max-height: 400px;
+  width: min(560px, 90vw);
+  max-height: 480px;
   display: flex;
   flex-direction: column;
   overflow: hidden;

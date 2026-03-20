@@ -98,6 +98,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_project_info,
             commands::get_git_info,
+            commands::list_git_branches,
+            commands::checkout_branch,
             commands::get_agents,
             commands::send_prompt,
             commands::start_session,
