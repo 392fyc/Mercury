@@ -93,8 +93,8 @@ function handleBackdrop() {
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  width: 460px;
-  max-height: 400px;
+  width: 560px;
+  max-height: 480px;
   display: flex;
   flex-direction: column;
   overflow: hidden;

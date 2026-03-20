@@ -4,8 +4,15 @@ import { useAgentStore } from "../stores/agents";
 import { getProjectInfo } from "../lib/tauri-bridge";
 import { useApprovalStore } from "../stores/approvals";
 
-const props = defineProps<{ activeView: "agents" | "tasks" }>();
-const emit = defineEmits<{ "open-settings": []; "switch-view": [view: "agents" | "tasks"] }>();
+const props = defineProps<{
+  activeView: "agents" | "tasks";
+  eventLogOpen?: boolean;
+}>();
+const emit = defineEmits<{
+  "open-settings": [];
+  "switch-view": [view: "agents" | "tasks"];
+  "toggle-event-log": [];
+}>();
 
 const { sidecarReady, anyActive, anyError } = useAgentStore();
 const { approvalMode, pendingCount, openQueue, setMode } = useApprovalStore();
@@ -102,7 +109,12 @@ function handleApprovalModeChange(event: Event) {
       </div>
     </div>
     <div class="titlebar-right">
-      <button class="titlebar-btn" title="Event Log">⚡</button>
+      <button
+        class="titlebar-btn"
+        :class="{ 'btn-active': props.eventLogOpen }"
+        title="Toggle Event Log"
+        @click="emit('toggle-event-log')"
+      >⚡</button>
       <button class="titlebar-btn" title="Settings" @click="emit('open-settings')">⚙</button>
     </div>
   </header>
@@ -293,5 +305,10 @@ function handleApprovalModeChange(event: Event) {
 .titlebar-btn:hover {
   background: var(--bg-panel);
   color: var(--text-primary);
+}
+
+.titlebar-btn.btn-active {
+  background: rgba(0, 212, 255, 0.15);
+  color: var(--accent-main);
 }
 </style>

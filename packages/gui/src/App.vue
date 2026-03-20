@@ -23,6 +23,7 @@ const { loadTasks, initTaskListeners } = useTaskStore();
 
 const showSettings = ref(false);
 const activeView = ref<"agents" | "tasks">("agents");
+const showEventLog = ref(false);
 /** Whether a main-role agent is configured and available. */
 const hasMainAgent = computed(() => Boolean(mainAgent.value));
 /** Number of non-main (sub) agent panels currently rendered. */
@@ -42,8 +43,10 @@ onMounted(async () => {
   <div class="app-shell">
     <TitleBar
       :activeView="activeView"
+      :eventLogOpen="showEventLog"
       @open-settings="showSettings = true"
       @switch-view="(v) => activeView = v"
+      @toggle-event-log="showEventLog = !showEventLog"
     />
     <SettingsPanel v-if="showSettings" @close="showSettings = false" />
 
@@ -51,7 +54,7 @@ onMounted(async () => {
       Orchestrator error: {{ sidecarError }}
     </div>
 
-    <div class="workspace">
+    <div class="workspace" :class="{ 'event-log-visible': showEventLog }">
       <div class="workspace-main">
         <!-- Agents View -->
         <div v-show="activeView === 'agents'" class="workspace-view">
@@ -100,7 +103,7 @@ onMounted(async () => {
         <TaskDashboard v-show="activeView === 'tasks'" class="workspace-view" />
       </div>
 
-      <EventLog />
+      <EventLog v-if="showEventLog" />
     </div>
 
     <SessionPicker />
@@ -127,10 +130,14 @@ onMounted(async () => {
 .workspace {
   flex: 1;
   display: grid;
-  grid-template-rows: minmax(0, 1fr) clamp(120px, 18vh, 152px);
+  grid-template-rows: minmax(0, 1fr);
   gap: var(--panel-gap);
   padding: var(--panel-gap);
   min-height: 0;
+}
+
+.workspace.event-log-visible {
+  grid-template-rows: minmax(0, 1fr) clamp(120px, 18vh, 152px);
 }
 
 .workspace-main {
@@ -203,7 +210,7 @@ onMounted(async () => {
 }
 
 @media (max-width: 1180px) {
-  .workspace {
+  .workspace.event-log-visible {
     grid-template-rows: minmax(0, 1fr) clamp(112px, 16vh, 136px);
   }
 
