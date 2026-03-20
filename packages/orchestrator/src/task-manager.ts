@@ -6,6 +6,8 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { EventBus } from "@mercury/core";
 import type {
   TaskBundle,
@@ -584,13 +586,20 @@ export class TaskManager {
 // ─── Prompt Builders ───
 
 /** Build the dispatch prompt sent to the Dev Agent for implementation. */
-export function buildDevPrompt(task: TaskBundle, kbContext?: string): string {
-  const lines: string[] = [];
+export function buildDevPrompt(
+  task: TaskBundle,
+  kbContext?: string,
+  basePath = process.cwd(),
+): string {
+  const templatePath = resolve(basePath, ".mercury", "templates", "dispatch-prompt.template.md");
+  let template: string;
+  try {
+    template = readFileSync(templatePath, "utf-8");
+  } catch {
+    // Fallback: inline template if file not found
+    template = fallbackDevTemplate();
+  }
 
-  lines.push(`# Task: ${task.title} [${task.taskId}]`);
-  lines.push("");
-
-  // Agents First: structured JSON block for machine-readable task metadata
   const bundleMeta = {
     taskId: task.taskId,
     assignee: task.assignee ?? { agentId: task.assignedTo },
@@ -606,33 +615,46 @@ export function buildDevPrompt(task: TaskBundle, kbContext?: string): string {
     reworkCount: task.reworkCount,
     maxReworks: task.maxReworks,
   };
-  lines.push("## Task Bundle (machine-readable)");
-  lines.push("```json");
-  lines.push(JSON.stringify(bundleMeta, null, 2));
-  lines.push("```");
-  lines.push("");
 
-  lines.push("## Context");
-  lines.push(task.context);
-  lines.push("");
-
-  if (kbContext) {
-    lines.push("## Project Knowledge Base Context");
-    lines.push(kbContext);
-    lines.push("");
-  }
-
-  lines.push("## Completion Instructions");
-  lines.push("When complete, output a JSON receipt as your final message:");
-  lines.push("```json");
-  lines.push(JSON.stringify(
+  const receiptTemplate = JSON.stringify(
     { branch: "", summary: "", changedFiles: [], evidence: [], docsUpdated: [], residualRisks: [] },
     null,
     2,
-  ));
-  lines.push("```");
+  );
 
-  return lines.join("\n");
+  let result = template
+    .replace("{{taskId}}", `${task.title} [${task.taskId}]`)
+    .replace("{{context}}", task.context)
+    .replace("{{taskFilePath}}", `Mercury_KB/10-tasks/${task.taskId}.json`)
+    .replace("{{allowedWriteScope}}", task.allowedWriteScope.codePaths.join(", ") || "无限制")
+    .replace("{{docsMustNotTouch}}", task.docsMustNotTouch.join(", ") || "无")
+    .replace("{{bundleJson}}", JSON.stringify(bundleMeta, null, 2))
+    .replace("{{receiptTemplate}}", receiptTemplate);
+
+  if (kbContext) {
+    result += `\n\n## Project Knowledge Base Context\n${kbContext}`;
+  }
+
+  return result;
+}
+
+function fallbackDevTemplate(): string {
+  return [
+    "# Dispatch: {{taskId}}",
+    "",
+    "{{context}}",
+    "",
+    "## Task Bundle (machine-readable)",
+    "```json",
+    "{{bundleJson}}",
+    "```",
+    "",
+    "## Completion Instructions",
+    "When complete, output a JSON receipt as your final message:",
+    "```json",
+    "{{receiptTemplate}}",
+    "```",
+  ].join("\n");
 }
 
 /**
@@ -672,56 +694,68 @@ export function buildReferencePrompt(
 export function buildAcceptancePrompt(
   task: TaskBundle,
   acceptance: AcceptanceBundle,
+  basePath = process.cwd(),
 ): string {
-  const lines: string[] = [];
+  const templatePath = resolve(basePath, ".mercury", "templates", "acceptance-prompt.template.md");
+  let template: string;
+  try {
+    template = readFileSync(templatePath, "utf-8");
+  } catch {
+    // Fallback: inline build
+    template = fallbackAcceptanceTemplate();
+  }
 
-  lines.push(`# Acceptance Review: ${task.title} [${acceptance.acceptanceId}]`);
-  lines.push("");
-
-  // Agents First: structured acceptance metadata
   const acceptanceMeta = {
     acceptanceId: acceptance.acceptanceId,
     linkedTaskId: acceptance.linkedTaskId,
     acceptor: acceptance.acceptor,
     scope: acceptance.scope,
-    blindInputPolicy: acceptance.blindInputPolicy,
     definitionOfDone: task.definitionOfDone,
   };
-  lines.push("## Acceptance Bundle (machine-readable)");
-  lines.push("```json");
-  lines.push(JSON.stringify(acceptanceMeta, null, 2));
-  lines.push("```");
-  lines.push("");
 
-  // Blind review: only expose changedFiles and branch — NOT summary/evidence/residualRisks
-  if (task.implementationReceipt) {
-    const blindReceipt = {
-      branch: task.implementationReceipt.branch,
-      changedFiles: task.implementationReceipt.changedFiles,
-      docsUpdated: task.implementationReceipt.docsUpdated,
-    };
-    lines.push("## Implementation (blind — changed files only)");
-    lines.push("```json");
-    lines.push(JSON.stringify(blindReceipt, null, 2));
-    lines.push("```");
-    lines.push("");
-  }
+  const blindReceipt = task.implementationReceipt
+    ? {
+        branch: task.implementationReceipt.branch,
+        changedFiles: task.implementationReceipt.changedFiles,
+        docsUpdated: task.implementationReceipt.docsUpdated,
+      }
+    : { branch: "", changedFiles: [], docsUpdated: [] };
 
-  lines.push("## Instructions");
-  lines.push("BLIND REVIEW: You are FORBIDDEN from referencing the developer's self-assessment,");
-  lines.push("evidence descriptions, or risk evaluations. Evaluate ONLY from code, tests, and runtime output.");
-  lines.push("");
-  lines.push("Review the implementation against the definition of done and scope above.");
-  lines.push("Provide your review as JSON:");
-  lines.push("```json");
-  lines.push(JSON.stringify(
+  const verdictTemplate = JSON.stringify(
     { verdict: "pass|partial|fail|blocked", findings: [], recommendations: [] },
     null,
     2,
-  ));
-  lines.push("```");
+  );
 
-  return lines.join("\n");
+  return template
+    .replace("{{taskTitle}}", task.title)
+    .replace("{{acceptanceId}}", acceptance.acceptanceId)
+    .replace("{{acceptanceJson}}", JSON.stringify(acceptanceMeta, null, 2))
+    .replace("{{blindReceiptJson}}", JSON.stringify(blindReceipt, null, 2))
+    .replace("{{verdictTemplate}}", verdictTemplate);
+}
+
+function fallbackAcceptanceTemplate(): string {
+  return [
+    "# Acceptance Review: {{taskTitle}} [{{acceptanceId}}]",
+    "",
+    "## Acceptance Bundle (machine-readable)",
+    "```json",
+    "{{acceptanceJson}}",
+    "```",
+    "",
+    "## Implementation (blind — changed files only)",
+    "```json",
+    "{{blindReceiptJson}}",
+    "```",
+    "",
+    "## Instructions",
+    "BLIND REVIEW: Evaluate ONLY from code, tests, and runtime output.",
+    "Provide your review as JSON:",
+    "```json",
+    "{{verdictTemplate}}",
+    "```",
+  ].join("\n");
 }
 
 /** Build the rework prompt sent to the Dev Agent after acceptance failure. */
