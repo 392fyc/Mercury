@@ -44,7 +44,6 @@ import { TaskPersistenceKB } from "./task-persistence-kb.js";
 import {
   buildRoleSystemPrompt,
   buildAcceptanceRolePrompt,
-  loadRoleCard,
 } from "./role-prompt-builder.js";
 import { SessionPersistence } from "./session-persistence.js";
 import type { PersistedSessionState } from "./session-persistence.js";
@@ -195,29 +194,14 @@ export class Orchestrator {
     return process.cwd();
   }
 
-  private getRoleInstructions(role: AgentRole): string | undefined {
-    const projectRoot = this.getProjectRoot();
-
-    try {
-      const card = loadRoleCard(role, projectRoot);
-      return card.instructions || undefined;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      const instructionsPath = join(projectRoot, ".mercury", "roles", `${role}.yaml`);
-      this.transport.sendNotification("log", {
-        message: `[role-prompt] Failed to load ${instructionsPath}: ${msg}`,
-      });
-      return undefined;
-    }
-  }
-
   private buildSystemRolePrompt(role: AgentRole, task?: TaskBundle): string {
     return buildRoleSystemPrompt(
       role,
       task,
       this.sharedContext || undefined,
       this.getRoleSpecificContext(role),
-      this.getRoleInstructions(role),
+      undefined, // instructions loaded from YAML via basePath
+      this.getProjectRoot(),
     );
   }
 
@@ -1979,7 +1963,7 @@ export class Orchestrator {
 
     return {
       task,
-      prompt: buildDevPrompt(task, kbContext),
+      prompt: buildDevPrompt(task, kbContext, this.getProjectRoot()),
       devRolePrompt: this.buildSystemRolePrompt("dev", task),
       baseRolePrompt: this.buildSystemRolePrompt("dev"),
     };
@@ -2187,12 +2171,14 @@ export class Orchestrator {
     const acceptance = this.taskManager.createAcceptance(taskId, acceptorId);
 
     // Build blind acceptance prompt (filtered — no dev narrative)
-    const prompt = buildAcceptancePrompt(task, acceptance);
+    const projectRoot = this.getProjectRoot();
+    const prompt = buildAcceptancePrompt(task, acceptance, projectRoot);
     const acceptanceRolePrompt = buildAcceptanceRolePrompt(
       task,
       acceptance,
       this.sharedContext || undefined,
       this.getRoleSpecificContext("acceptance"),
+      projectRoot,
     );
     const session = await this.startRoleSession(
       acceptorId,

@@ -20,6 +20,10 @@ export { loadRoleCard };
 
 /**
  * Build a role-scoped system prompt for dev/main/research/design sessions.
+ *
+ * basePath controls where .mercury/roles/{role}.yaml is resolved from.
+ * If roleInstructions is provided it overrides the YAML instructions block;
+ * otherwise instructions are read from the YAML file via loadRoleCard().
  */
 export function buildRoleSystemPrompt(
   role: AgentRole,
@@ -27,8 +31,9 @@ export function buildRoleSystemPrompt(
   sharedProjectContext?: string,
   roleProjectContext?: string,
   roleInstructions?: string,
+  basePath?: string,
 ): string {
-  const card = loadRoleCard(role);
+  const card = loadRoleCard(role, basePath);
   const lines: string[] = [];
 
   // Role declaration
@@ -62,9 +67,11 @@ export function buildRoleSystemPrompt(
   lines.push(`You produce: ${card.outputBoundary.join(", ")}`);
   lines.push("");
 
-  if (roleInstructions) {
+  // Role-specific instructions: explicit parameter overrides YAML
+  const instructions = roleInstructions ?? card.instructions;
+  if (instructions) {
     lines.push("## Role-Specific Instructions");
-    lines.push(roleInstructions);
+    lines.push(instructions);
     lines.push("");
   }
 
@@ -116,8 +123,9 @@ export function buildAcceptanceRolePrompt(
   acceptance: AcceptanceBundle,
   sharedProjectContext?: string,
   roleProjectContext?: string,
+  basePath?: string,
 ): string {
-  const card = loadRoleCard("acceptance");
+  const card = loadRoleCard("acceptance", basePath);
   const lines: string[] = [];
 
   // Role declaration
