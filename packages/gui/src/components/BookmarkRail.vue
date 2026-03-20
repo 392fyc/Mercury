@@ -115,8 +115,9 @@ function formatTime(ts: number): string {
   width: 136px;
   padding: 8px 6px;
   gap: 5px;
-  background: linear-gradient(to right, var(--bg-secondary), rgba(22, 33, 62, 0.95));
-  border-left: 1px solid var(--border);
+  background: var(--bg-secondary);
+  border-left: 1px solid rgba(0, 212, 255, 0.15);
+  box-shadow: inset 1px 0 8px rgba(0, 212, 255, 0.04);
   user-select: none;
   overflow: hidden;
   flex-shrink: 0;

@@ -176,6 +176,7 @@ onMounted(async () => {
   height: 100%;
   border: none;
   border-radius: 0;
+  border-right: 1px solid rgba(0, 212, 255, 0.08);
 }
 
 .loading-state {

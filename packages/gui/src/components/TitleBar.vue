@@ -105,7 +105,8 @@ function handleApprovalModeChange(event: Event) {
   height: 44px;
   padding: 0 14px;
   background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid rgba(0, 212, 255, 0.1);
+  box-shadow: 0 1px 6px rgba(0, 212, 255, 0.03);
   user-select: none;
   -webkit-app-region: drag;
 }

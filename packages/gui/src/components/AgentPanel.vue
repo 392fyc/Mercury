@@ -765,7 +765,7 @@ watch(
   gap: 8px;
   padding: 8px 12px;
   background: var(--bg-primary);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid rgba(0, 212, 255, 0.08);
   min-width: 0;
 }
 
@@ -1317,7 +1317,7 @@ watch(
   align-items: center;
   gap: 6px;
   padding: 4px 8px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid rgba(0, 212, 255, 0.08);
   font-size: 10px;
 }
 

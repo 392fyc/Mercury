@@ -101,9 +101,10 @@ function minimizeAll() {
   display: flex;
   flex-direction: column;
   background: var(--bg-secondary);
-  border: 1px solid var(--border);
+  border: 1px solid rgba(0, 212, 255, 0.12);
   border-radius: 8px;
-  box-shadow: -6px 0 24px rgba(0, 0, 0, 0.35), 0 4px 16px rgba(0, 0, 0, 0.15);
+  box-shadow: -6px 0 24px rgba(0, 0, 0, 0.35), 0 4px 16px rgba(0, 0, 0, 0.15),
+              0 0 1px rgba(0, 212, 255, 0.1);
   z-index: 10;
   overflow: hidden;
 }
