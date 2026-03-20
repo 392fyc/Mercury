@@ -8,7 +8,7 @@ const emit = defineEmits<{
   created: [panelKey: string];
 }>();
 
-const { agents, addBookmark, openFloatingTab, setSession, setSessionInfo, setStatus } = useAgentStore();
+const { agents, addBookmark, openFloatingTab, setSessionInfo, setStatus } = useAgentStore();
 
 const errorMsg = ref<string | null>(null);
 const creating = ref(false);
@@ -55,9 +55,10 @@ async function selectCombo(combo: typeof combos.value[number]) {
   try {
     const result = await bridgeStartSession(combo.agentId, combo.role);
     if (result.sessionId) {
-      const shortSid = result.sessionId.slice(0, 8);
-      const panelKey = `${combo.role}:${combo.agentId}:${shortSid}`;
-      setSession(panelKey, result.sessionId);
+      // Use full sessionId in panelKey to guarantee uniqueness across
+      // concurrent sessions of the same role+agent combination.
+      const panelKey = `${combo.role}:${combo.agentId}:${result.sessionId}`;
+      // setSessionInfo internally calls setSession for the mapping.
       setSessionInfo(panelKey, {
         sessionId: result.sessionId,
         sessionName: result.sessionName,

@@ -394,11 +394,10 @@ async function initAgents() {
       // create independent bookmarks and message streams.
       const panelKey = payload.role === "main"
         ? `${payload.role}:${event.agentId}`
-        : `${payload.role}:${event.agentId}:${event.sessionId.slice(0, 8)}`;
+        : `${payload.role}:${event.agentId}:${event.sessionId}`;
 
-      // Register session mapping so resolvePanelKey in messages.ts can
-      // route onAgentMessage events to the correct FloatingPanel tab.
-      setSession(panelKey, event.sessionId);
+      // setSessionInfo internally calls setSession, which registers the
+      // panelKey→sessionId mapping needed by resolvePanelKey in messages.ts.
       setSessionInfo(panelKey, {
         sessionId: event.sessionId,
         sessionName: payload.sessionName,
