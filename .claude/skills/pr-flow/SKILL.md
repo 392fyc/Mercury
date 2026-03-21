@@ -126,6 +126,8 @@ normalize_patch() {
 extract_patch_paths() { printf '%s\n' "$1" | sed -n 's/^+++ b\///p'; }
 validate_scope() { [ ${#ALLOWED_SCOPE[@]} -eq 0 ] && return 0; is_within_scope "$1" "${ALLOWED_SCOPE[@]}"; }
 refresh_actionable() { COMMENTS=$(gh api repos/{owner}/{repo}/pulls/"$PR_NUMBER"/comments); ACTIONABLE=$(echo "$COMMENTS" | jq -cr '.[] | .firstLine = (.body | split("\n")[0]) | .severity = (if (.firstLine | test("Critical")) then "Critical" elif (.firstLine | test("Major")) then "Major" else "Other" end) | select(.severity == "Critical" or .severity == "Major") | {id, path, severity, body}'); }
+# NOTE: || true is intentional — CI check here is observational (wait for new review), not a gate.
+# The hard CI gate is in Step 6 check_ready_to_merge() before merge.
 wait_for_refresh() { gh pr checks "$PR_NUMBER" --watch || true; for i in $(seq 1 10); do refresh_actionable; [ -n "$ACTIONABLE" ] || break; sleep 30; done; }
 MAX_ITERATIONS=3 # CodeRabbit usually converges in 1-2 rounds; keep 1 buffer.
 ITERATION=1
@@ -182,6 +184,8 @@ done
 ```
 
 ## Output
+
+The agent assembles the following summary from variables collected during execution:
 
 ```text
 PR: #<number> (<url>)
