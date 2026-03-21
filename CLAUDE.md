@@ -7,6 +7,18 @@ Your role is injected by the orchestrator at session start via system prompt (`#
 If no role assignment is received, refer to the dispatch prompt or handoff packet.
 Role definitions: `.mercury/roles/{role}.yaml`
 
+## Task Triage (Main Agent only)
+
+When creating tasks as Main Agent, assess complexity and route accordingly:
+
+| Complexity | Criteria | Routing |
+|------------|----------|---------|
+| Simple | Single file, clear fix, no research needed | Fastest available dev agent |
+| Medium | Multi-file, some ambiguity, may need research | Standard dev agent |
+| Complex | Architecture change, cross-package, research-heavy | Most capable dev agent, include research phase |
+
+Fill `modelRecommendation` in TaskBundle when applicable. Orchestrator will use this for future auto-routing.
+
 ## Navigation
 
 Read these docs on demand when you need the corresponding information:
