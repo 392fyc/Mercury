@@ -2201,8 +2201,6 @@ export class Orchestrator {
       }
 
       try {
-        this.taskManager.recordDispatchAttempt(taskId);
-
         const { task: freshTask, prompt, devRolePrompt } = await this.prepareBundleTaskExecution(taskId);
 
         // Transition: drafted → dispatched → in_progress
@@ -2230,9 +2228,12 @@ export class Orchestrator {
           freshTask.taskId,
         );
 
+        // Record successful dispatch attempt
+        this.taskManager.recordDispatchAttempt(taskId);
         return { sessionId: session.sessionId, taskId };
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
+        // Record failed dispatch attempt with error
         this.taskManager.recordDispatchAttempt(taskId, lastError.message);
         this.transport.sendNotification("log", {
           message: `[dispatch] attempt ${attempt + 1}/${maxAttempts} failed for ${taskId}: ${lastError.message}`,
