@@ -53,4 +53,8 @@ execution-relevant fields. Orchestrator-only lifecycle fields are excluded.
 ## Decision
 
 Keep current `bundleMeta` approach. Add conditional omission of empty arrays
-in serialization to save ~50 tokens per dispatch. No schema change required.
+and empty scope objects in serialization to save ~50 tokens per dispatch.
+No schema change required.
+
+**Related**: `.mercury/docs/guides/sot-workflow.md` (dispatch lifecycle),
+`packages/orchestrator/src/task-manager.ts` (`buildDevPrompt`).

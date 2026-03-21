@@ -654,28 +654,30 @@ export function buildDevPrompt(
   }
 
   // Lightweight dispatch meta: only execution-relevant fields.
-  // Empty arrays/objects are conditionally omitted to save tokens (DEC-2).
+  // Empty arrays within scope objects are stripped; if all sub-fields are empty
+  // the scope key itself is also omitted to avoid serializing empty {} (DEC-2).
   /** Strip empty string[] fields from a scope object to save dispatch tokens. */
-  const compactScope = <T extends Record<string, string[]>>(scope: T): Partial<T> => {
+  const compactScope = <T extends Record<string, string[]>>(scope: T): Partial<T> | undefined => {
     const out: Partial<T> = {};
+    let hasContent = false;
     for (const key of Object.keys(scope) as (keyof T)[]) {
       const val = scope[key];
-      if (Array.isArray(val) && val.length > 0) out[key] = val;
+      if (Array.isArray(val) && val.length > 0) { out[key] = val; hasContent = true; }
     }
-    return out;
+    return hasContent ? out : undefined;
   };
   const bundleMeta: Record<string, unknown> = {
     taskId: task.taskId,
     assignee: task.assignee ?? { agentId: task.assignedTo },
     priority: task.priority,
     branch: task.branch ?? null,
-    codeScope: compactScope(task.codeScope),
-    readScope: compactScope(task.readScope),
-    allowedWriteScope: compactScope(task.allowedWriteScope),
     definitionOfDone: task.definitionOfDone,
     reworkCount: task.reworkCount,
     maxReworks: task.maxReworks,
   };
+  const cs = compactScope(task.codeScope); if (cs) bundleMeta.codeScope = cs;
+  const rs = compactScope(task.readScope); if (rs) bundleMeta.readScope = rs;
+  const ws = compactScope(task.allowedWriteScope); if (ws) bundleMeta.allowedWriteScope = ws;
   if (task.docsMustUpdate.length > 0) bundleMeta.docsMustUpdate = task.docsMustUpdate;
   if (task.docsMustNotTouch.length > 0) bundleMeta.docsMustNotTouch = task.docsMustNotTouch;
   if (task.requiredEvidence.length > 0) bundleMeta.requiredEvidence = task.requiredEvidence;

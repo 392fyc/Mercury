@@ -44,7 +44,7 @@ export interface BookmarkInfo {
   panelKey: string;
   sessionId: string;
   agentId: string;
-  role: string;
+  role: "main" | "dev" | "acceptance" | "research" | "design";
   displayName: string;
   sessionName?: string;
   status: "idle" | "active" | "error";
@@ -227,13 +227,15 @@ const anyError = computed(() =>
  * Supports both legacy "{role}:{agentId}" and session-unique "{role}:{agentId}:{shortSid}" formats.
  * Returns empty strings for malformed keys to prevent downstream crashes.
  */
-function parsePanelKey(panelKey: string): { role: string; agentId: string } {
+type AgentRole = "main" | "dev" | "acceptance" | "research" | "design";
+
+function parsePanelKey(panelKey: string): { role: AgentRole; agentId: string } {
   const parts = panelKey.split(":");
   if (parts.length < 2) {
     console.warn(`[agents] malformed panelKey: "${panelKey}"`);
-    return { role: parts[0] ?? "", agentId: "" };
+    return { role: (parts[0] ?? "dev") as AgentRole, agentId: "" };
   }
-  return { role: parts[0], agentId: parts[1] };
+  return { role: parts[0] as AgentRole, agentId: parts[1] };
 }
 
 /** All sub-agent bookmarks, sorted by lastActiveAt descending. */

@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from "vue";
-import { useAgentStore } from "../stores/agents";
 import { getProjectInfo } from "../lib/tauri-bridge";
 
 const props = defineProps<{
@@ -13,7 +12,6 @@ const emit = defineEmits<{
   "toggle-event-log": [];
 }>();
 
-const { sidecarReady } = useAgentStore();
 
 const projectRoot = ref("");
 const gitBranch = ref<string | null>(null);

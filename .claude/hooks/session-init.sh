@@ -25,7 +25,7 @@ GIT_STATUS=$(git status --porcelain 2>/dev/null | head -20)
 ACTIVE_TASKS=""
 if [ -d "Mercury_KB/10-tasks" ]; then
   ACTIVE_TASKS=$(find Mercury_KB/10-tasks -name "*.json" -not -name "*.receipt.json" \
-    -exec grep -lE '"status":\s*"(in_progress|dispatched|implementation_done)"' {} \; 2>/dev/null \
+    -exec grep -lE '"status":[[:space:]]*"(in_progress|dispatched|implementation_done)"' {} \; 2>/dev/null \
     | head -5 | while read -r f; do basename "$f" .json; done)
 fi
 
