@@ -61,17 +61,53 @@ $SUMMARY
 - DoD items completed: $DOD_COUNT
 EOF
 )
+# ── Label derivation: task-type label + severity label ──
+case "$TASK_ID" in
+  TASK-BUG-*|TASK-FIX-*|TASK-SB-FIX-*|TASK-KB-FIX-*) TYPE_LABEL=bugfix ;;
+  TASK-DOC-*)                                          TYPE_LABEL=documentation ;;
+  TASK-GUI-*|TASK-UI-*)                                TYPE_LABEL=enhancement ;;
+  TASK-WF-*)                                           TYPE_LABEL=workflow ;;
+  TASK-PROMPT-*|TASK-ARCH-*)                           TYPE_LABEL=refactor ;;
+  TASK-SDK-*|TASK-MCP-*)                               TYPE_LABEL=infrastructure ;;
+  TASK-PERF-*)                                         TYPE_LABEL=performance ;;
+  *)                                                   TYPE_LABEL=refactor ;;
+esac
+SEV_LABEL=""
+if [ -n "$TASK_FILE" ]; then
+  SEV=$(jq -r '.priority // empty' "$TASK_FILE" 2>/dev/null)
+  [ -n "$SEV" ] && SEV_LABEL="$SEV"
+fi
+LABELS="$TYPE_LABEL"
+[ -n "$SEV_LABEL" ] && LABELS="$LABELS,$SEV_LABEL"
+
+# ── Ensure labels exist (gh pr create fails on missing labels) ──
+EXISTING_LABELS=$(gh label list --json name --jq '.[].name' 2>/dev/null)
+IFS=',' read -ra LABEL_ARRAY <<< "$LABELS"
+for LBL in "${LABEL_ARRAY[@]}"; do
+  echo "$EXISTING_LABELS" | grep -Fxq "$LBL" || gh label create "$LBL" --color "ededed" 2>/dev/null || true
+done
+
+# ── Create or reuse the PR (with --assignee and --label baked in) ──
 EXISTING_PR=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number // empty')
 if [ -n "$EXISTING_PR" ]; then
   PR_NUMBER=$EXISTING_PR
+  # Ensure labels/assignee are set even on reused PRs
+  gh pr edit "$PR_NUMBER" --add-assignee "@me" --add-label "$LABELS" 2>/dev/null || true
 else
   git push -u origin "$BRANCH"
-  PR_URL=$(gh pr create --base develop --title "$TASK_ID: $SUMMARY" --body "$PR_BODY")
+  PR_URL=$(gh pr create --base develop \
+    --title "$TASK_ID: $SUMMARY" \
+    --body "$PR_BODY" \
+    --assignee "@me" \
+    --label "$LABELS")
   PR_NUMBER=$(gh pr view "$PR_URL" --json number --jq '.number')
 fi
-case "$TASK_ID" in TASK-BUG-*|TASK-FIX-*) LABEL=bugfix ;; TASK-DOC-*) LABEL=documentation ;; TASK-GUI-*) LABEL=enhancement ;; *) LABEL=refactor ;; esac
-gh pr edit "$PR_NUMBER" --add-assignee "@me" --add-label "$LABEL"
-if ! gh api repos/{owner}/{repo}/issues/"$PR_NUMBER"/comments --jq '.[].body' | grep -Fq "@coderabbitai review"; then gh pr comment "$PR_NUMBER" --body "@coderabbitai review"; fi
+
+# ── Trigger CodeRabbit review if not already requested ──
+CR_ALREADY=$(gh api "repos/{owner}/{repo}/issues/${PR_NUMBER}/comments" --jq '[.[] | select(.body | test("@coderabbitai review"))] | length' 2>/dev/null || echo "0")
+if [ "$CR_ALREADY" = "0" ]; then
+  gh pr comment "$PR_NUMBER" --body "@coderabbitai review"
+fi
 ```
 
 ### Step 2: Poll CI Checks

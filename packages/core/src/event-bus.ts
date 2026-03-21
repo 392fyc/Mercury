@@ -39,12 +39,14 @@ export class EventBus {
     sessionId: string,
     payload: T,
     parentEventId?: string,
+    modelId?: string,
   ): MercuryEvent<T> {
     const event: MercuryEvent<T> = Object.freeze({
       id: randomUUID(),
       type,
       timestamp: Date.now(),
       agentId,
+      ...(modelId !== undefined ? { modelId } : {}),
       sessionId,
       payload,
       parentEventId,

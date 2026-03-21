@@ -44,7 +44,7 @@ export interface BookmarkInfo {
   panelKey: string;
   sessionId: string;
   agentId: string;
-  role: string;
+  role: "main" | "dev" | "acceptance" | "research" | "design";
   displayName: string;
   sessionName?: string;
   status: "idle" | "active" | "error";
@@ -227,13 +227,28 @@ const anyError = computed(() =>
  * Supports both legacy "{role}:{agentId}" and session-unique "{role}:{agentId}:{shortSid}" formats.
  * Returns empty strings for malformed keys to prevent downstream crashes.
  */
-function parsePanelKey(panelKey: string): { role: string; agentId: string } {
+type AgentRole = "main" | "dev" | "acceptance" | "research" | "design";
+const VALID_ROLES: ReadonlySet<string> = new Set<AgentRole>(["main", "dev", "acceptance", "research", "design"]);
+
+/**
+ * Parse a composite panelKey into role + agentId.
+ * Format: "{role}:{agentId}" (main) or "{role}:{agentId}:{sessionId}" (sub-agents).
+ * Falls back to role="dev" for malformed keys — this is intentional: malformed
+ * keys are filtered out by downstream bookmarkList (skips "main"), so "dev" is
+ * the safest default that keeps the entry visible for debugging.
+ */
+function parsePanelKey(panelKey: string): { role: AgentRole; agentId: string } {
   const parts = panelKey.split(":");
   if (parts.length < 2) {
     console.warn(`[agents] malformed panelKey: "${panelKey}"`);
-    return { role: parts[0] ?? "", agentId: "" };
+    return { role: "dev", agentId: "" };
   }
-  return { role: parts[0], agentId: parts[1] };
+  const rawRole = parts[0];
+  if (!VALID_ROLES.has(rawRole)) {
+    console.warn(`[agents] unknown role "${rawRole}" in panelKey "${panelKey}", defaulting to "dev"`);
+    return { role: "dev", agentId: parts[1] };
+  }
+  return { role: rawRole as AgentRole, agentId: parts[1] };
 }
 
 /** All sub-agent bookmarks, sorted by lastActiveAt descending. */

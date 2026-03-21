@@ -653,21 +653,35 @@ export function buildDevPrompt(
     template = fallbackDevTemplate();
   }
 
-  const bundleMeta = {
+  // Lightweight dispatch meta: only execution-relevant fields.
+  // Empty arrays within scope objects are stripped; if all sub-fields are empty
+  // the scope key itself is also omitted to avoid serializing empty {} (DEC-2).
+  /** Strip empty string[] fields from a scope object to save dispatch tokens. */
+  const compactScope = <T extends Record<string, string[]>>(scope: T): Partial<T> | undefined => {
+    const out: Partial<T> = {};
+    let hasContent = false;
+    for (const key of Object.keys(scope) as (keyof T)[]) {
+      const val = scope[key];
+      if (Array.isArray(val) && val.length > 0) { out[key] = val; hasContent = true; }
+    }
+    return hasContent ? out : undefined;
+  };
+  const bundleMeta: Record<string, unknown> = {
     taskId: task.taskId,
     assignee: task.assignee ?? { agentId: task.assignedTo },
     priority: task.priority,
     branch: task.branch ?? null,
-    codeScope: task.codeScope,
-    readScope: task.readScope,
-    allowedWriteScope: task.allowedWriteScope,
-    docsMustUpdate: task.docsMustUpdate,
-    docsMustNotTouch: task.docsMustNotTouch,
     definitionOfDone: task.definitionOfDone,
-    requiredEvidence: task.requiredEvidence,
     reworkCount: task.reworkCount,
     maxReworks: task.maxReworks,
   };
+  // Scope fields: omit entirely when all sub-fields are empty (defensive for legacy KB entries)
+  if (task.codeScope) { const cs = compactScope(task.codeScope); if (cs) bundleMeta.codeScope = cs; }
+  if (task.readScope) { const rs = compactScope(task.readScope); if (rs) bundleMeta.readScope = rs; }
+  if (task.allowedWriteScope) { const ws = compactScope(task.allowedWriteScope); if (ws) bundleMeta.allowedWriteScope = ws; }
+  if ((task.docsMustUpdate ?? []).length > 0) bundleMeta.docsMustUpdate = task.docsMustUpdate;
+  if ((task.docsMustNotTouch ?? []).length > 0) bundleMeta.docsMustNotTouch = task.docsMustNotTouch;
+  if ((task.requiredEvidence ?? []).length > 0) bundleMeta.requiredEvidence = task.requiredEvidence;
 
   const receiptTemplate = JSON.stringify(
     { implementer: "", branch: "", summary: "", changedFiles: [], evidence: [], docsUpdated: [], residualRisks: [], completedAt: "" },
