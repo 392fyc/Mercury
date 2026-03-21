@@ -59,7 +59,7 @@ else
   PR_URL=$(gh pr create --base develop --title "$TASK_ID: $SUMMARY" --body "$PR_BODY")
   PR_NUMBER=$(gh pr view "$PR_URL" --json number --jq '.number')
 fi
-case "$TASK_ID" in BUG-*|fix/*) LABEL=bugfix ;; DOC-*|docs/*) LABEL=documentation ;; *) LABEL=refactor ;; esac
+case "$TASK_ID" in TASK-BUG-*|TASK-FIX-*) LABEL=bugfix ;; TASK-DOC-*) LABEL=documentation ;; TASK-GUI-*) LABEL=enhancement ;; *) LABEL=refactor ;; esac
 gh pr edit "$PR_NUMBER" --add-assignee "@me" --add-label "$LABEL"
 if ! gh api repos/{owner}/{repo}/issues/"$PR_NUMBER"/comments --jq '.[].body' | grep -Fq "@coderabbitai review"; then gh pr comment "$PR_NUMBER" --body "@coderabbitai review"; fi
 ```
@@ -68,8 +68,8 @@ if ! gh api repos/{owner}/{repo}/issues/"$PR_NUMBER"/comments --jq '.[].body' | 
 
 ```bash
 extract_changed_paths() { jq -r '.[]?.path // empty'; }
-is_within_scope() { local p="$1"; shift; for root in "$@"; do [[ "$p" == "$root"* ]] && return 0; done; return 1; }
-gh pr checks "$PR_NUMBER" --watch || true
+is_within_scope() { local p="$1"; shift; for root in "$@"; do case "$p" in "$root"/*|"$root") return 0;; esac; done; return 1; }
+if ! gh pr checks "$PR_NUMBER" --watch; then echo "CI failed — inspect output before continuing"; exit 1; fi
 ```
 
 ### Step 3: Wait for CodeRabbit Review
@@ -130,9 +130,9 @@ while [ "$ITERATION" -le "$MAX_ITERATIONS" ] && [ -n "$ACTIONABLE" ]; do
 $PATCH_PATHS
 EOF
     [ "$SCOPE_OK" -eq 1 ] || { echo "skip: out of scope patch $COMMENT_ID"; continue; }
-    printf '%s\n' "$PATCH_BODY" | git apply --check || { git restore .; continue; }
+    printf '%s\n' "$PATCH_BODY" | git apply --check || { git checkout -- $PATCH_PATHS 2>/dev/null; continue; }
     printf '%s\n' "$PATCH_BODY" | git apply
-    npx tsc --noEmit || { git restore .; continue; }
+    npx tsc --noEmit || { git checkout -- $PATCH_PATHS 2>/dev/null; continue; }
     while read -r TARGET_PATH; do [ -n "$TARGET_PATH" ] && git add "$TARGET_PATH"; done <<EOF
 $PATCH_PATHS
 EOF
@@ -149,6 +149,9 @@ done
 ```bash
 check_ci_status() { gh pr checks "$PR_NUMBER" >/dev/null; }
 check_review_state() { [ "$(gh pr view "$PR_NUMBER" --json reviewDecision --jq '.reviewDecision // "REVIEW_REQUIRED"')" = "APPROVED" ]; }
+# NOTE: REST API pull request comments do not expose "resolved" state.
+# GraphQL reviewThreads.isResolved is the accurate source but requires more complexity.
+# Current approach: re-count severity from latest comment bodies as a practical approximation.
 check_unresolved_critical_comments() { LIVE_COMMENTS=$(gh api repos/{owner}/{repo}/pulls/"$PR_NUMBER"/comments); LIVE_ACTIONABLE=$(echo "$LIVE_COMMENTS" | jq -cr '.[] | .firstLine = (.body | split("\n")[0]) | .severity = (if (.firstLine | test("Critical")) then "Critical" elif (.firstLine | test("Major")) then "Major" else "Other" end) | select(.severity == "Critical" or .severity == "Major") | {id, path, severity, body}'); [ -z "$LIVE_ACTIONABLE" ] && return 0; COUNT=$(printf '%s\n' "$LIVE_ACTIONABLE" | jq -s 'length' 2>/dev/null || echo 0); [ "${COUNT:-0}" -eq 0 ]; }
 check_ready_to_merge() { check_ci_status && check_review_state && check_unresolved_critical_comments; }
 MERGE_STRATEGY=${MERGE_STRATEGY:-squash}
@@ -160,7 +163,12 @@ if [ "${CONFIRM_MERGE:-}" != "yes" ]; then
   [ "$CONFIRM" = "y" ] || [ "$CONFIRM" = "Y" ] || { echo "merge cancelled"; exit 1; }
 fi
 gh pr merge "$PR_NUMBER" "--$MERGE_STRATEGY" $DELETE_FLAG
-curl -s http://localhost:${MERCURY_RPC_PORT:-7654}/rpc -X POST -H "Content-Type: application/json" -d "{\"method\":\"transition_task\",\"params\":{\"taskId\":\"$TASK_ID\",\"to\":\"done\"}}"
+# Transition task with retry (max 3 attempts)
+for attempt in 1 2 3; do
+  if curl -sf --max-time 5 http://localhost:${MERCURY_RPC_PORT:-7654}/rpc -X POST -H "Content-Type: application/json" -d "{\"method\":\"transition_task\",\"params\":{\"taskId\":\"$TASK_ID\",\"to\":\"done\"}}"; then break
+  elif [ "$attempt" -eq 3 ]; then echo "warn: Mercury RPC unavailable — transition $TASK_ID manually"
+  else sleep $((2 * attempt)); fi
+done
 ```
 
 ## Output
