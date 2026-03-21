@@ -1,0 +1,80 @@
+name: Skill Drift Detection
+
+on:
+  pull_request:
+    branches: [develop, master]
+    paths:
+      - ".claude/skills/**"
+  push:
+    branches: [develop]
+    paths:
+      - ".claude/skills/**"
+
+jobs:
+  skill-drift:
+    name: Validate Skill Metadata
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate skill frontmatter and consistency
+        run: |
+          FAIL=0
+          for skill_dir in .claude/skills/*/; do
+            SKILL_FILE="${skill_dir}SKILL.md"
+            [ -f "$SKILL_FILE" ] || continue
+            SKILL_NAME=$(basename "$skill_dir")
+
+            # ── Check required frontmatter fields ──
+            FRONTMATTER=$(sed -n '/^---$/,/^---$/p' "$SKILL_FILE" | sed '1d;$d')
+            if [ -z "$FRONTMATTER" ]; then
+              echo "::error file=$SKILL_FILE::Missing YAML frontmatter"
+              FAIL=1
+              continue
+            fi
+
+            # name field
+            NAME=$(echo "$FRONTMATTER" | grep -E '^name:' | head -1)
+            if [ -z "$NAME" ]; then
+              echo "::error file=$SKILL_FILE::Missing 'name' field in frontmatter"
+              FAIL=1
+            fi
+
+            # description field
+            DESC=$(echo "$FRONTMATTER" | grep -E '^description:' | head -1)
+            if [ -z "$DESC" ]; then
+              echo "::error file=$SKILL_FILE::Missing 'description' field in frontmatter"
+              FAIL=1
+            fi
+
+            # allowed-tools field
+            TOOLS_LINE=$(echo "$FRONTMATTER" | grep -E '^allowed-tools:' | head -1)
+            if [ -z "$TOOLS_LINE" ]; then
+              echo "::warning file=$SKILL_FILE::Missing 'allowed-tools' field — cannot validate tool usage"
+              continue
+            fi
+
+            # ── Check for tool references in bash blocks that aren't in allowed-tools ──
+            ALLOWED=$(echo "$TOOLS_LINE" | sed 's/allowed-tools://' | tr ',' '\n' | sed 's/^ *//;s/ *$//' | tr '\n' '|' | sed 's/|$//')
+
+            # Check if skill references tools not in its allowed list
+            # This is a heuristic — look for common tool patterns in the prose
+            BODY=$(sed -n '/^---$/,/^---$/!p' "$SKILL_FILE" | sed '1,/^---$/d')
+            for TOOL in "WebSearch" "WebFetch" "Edit" "Write" "Read" "Grep" "Glob" "Bash" "Agent" "TodoWrite"; do
+              if echo "$BODY" | grep -qw "$TOOL" && ! echo "$ALLOWED" | grep -qw "$TOOL"; then
+                echo "::warning file=$SKILL_FILE::Skill '$SKILL_NAME' references tool '$TOOL' but it's not in allowed-tools: $TOOLS_LINE"
+              fi
+            done
+
+            # ── Check description length (should be meaningful) ──
+            DESC_TEXT=$(echo "$FRONTMATTER" | sed -n '/^description:/,/^[a-z]/p' | head -5)
+            DESC_LEN=$(echo "$DESC_TEXT" | wc -c)
+            if [ "$DESC_LEN" -lt 20 ]; then
+              echo "::warning file=$SKILL_FILE::Description seems too short ($DESC_LEN chars) — may cause poor skill triggering"
+            fi
+
+            echo "OK: $SKILL_NAME"
+          done
+
+          [ "$FAIL" -eq 0 ] || { echo "::error::Skill validation failed"; exit 1; }
+          echo "All skills validated successfully"
