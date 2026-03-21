@@ -675,12 +675,13 @@ export function buildDevPrompt(
     reworkCount: task.reworkCount,
     maxReworks: task.maxReworks,
   };
-  const cs = compactScope(task.codeScope); if (cs) bundleMeta.codeScope = cs;
-  const rs = compactScope(task.readScope); if (rs) bundleMeta.readScope = rs;
-  const ws = compactScope(task.allowedWriteScope); if (ws) bundleMeta.allowedWriteScope = ws;
-  if (task.docsMustUpdate.length > 0) bundleMeta.docsMustUpdate = task.docsMustUpdate;
-  if (task.docsMustNotTouch.length > 0) bundleMeta.docsMustNotTouch = task.docsMustNotTouch;
-  if (task.requiredEvidence.length > 0) bundleMeta.requiredEvidence = task.requiredEvidence;
+  // Scope fields: omit entirely when all sub-fields are empty (defensive for legacy KB entries)
+  if (task.codeScope) { const cs = compactScope(task.codeScope); if (cs) bundleMeta.codeScope = cs; }
+  if (task.readScope) { const rs = compactScope(task.readScope); if (rs) bundleMeta.readScope = rs; }
+  if (task.allowedWriteScope) { const ws = compactScope(task.allowedWriteScope); if (ws) bundleMeta.allowedWriteScope = ws; }
+  if ((task.docsMustUpdate ?? []).length > 0) bundleMeta.docsMustUpdate = task.docsMustUpdate;
+  if ((task.docsMustNotTouch ?? []).length > 0) bundleMeta.docsMustNotTouch = task.docsMustNotTouch;
+  if ((task.requiredEvidence ?? []).length > 0) bundleMeta.requiredEvidence = task.requiredEvidence;
 
   const receiptTemplate = JSON.stringify(
     { implementer: "", branch: "", summary: "", changedFiles: [], evidence: [], docsUpdated: [], residualRisks: [], completedAt: "" },

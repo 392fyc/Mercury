@@ -29,7 +29,8 @@ if [ -d "Mercury_KB/10-tasks" ]; then
     | head -5 | while read -r f; do basename "$f" .json; done)
 fi
 
-# Write current-session.md
+# Write current-session.md (ensure directory exists)
+mkdir -p "$CLAUDE_PROJECT_DIR/.claude" 2>/dev/null
 SESSION_FILE="$CLAUDE_PROJECT_DIR/.claude/current-session.md"
 cat > "$SESSION_FILE" <<EOF
 # Current Session
