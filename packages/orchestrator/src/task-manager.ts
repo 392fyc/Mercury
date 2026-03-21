@@ -176,7 +176,7 @@ export class TaskManager {
       branch: params.branch,
       codeScope: params.codeScope,
       readScope: params.readScope,
-      allowedWriteScope: params.allowedWriteScope,
+      allowedWriteScope: { codePaths: normCodePaths, kbPaths: normKbPaths },
       docsMustUpdate: params.docsMustUpdate ?? [],
       docsMustNotTouch: params.docsMustNotTouch ?? [],
       definitionOfDone: params.definitionOfDone,
@@ -368,6 +368,17 @@ export class TaskManager {
         const allowed = codePaths.some((prefix) => file.startsWith(prefix));
         if (!allowed) {
           violations.push({ file, reason: "Outside allowedWriteScope.codePaths" });
+        }
+      }
+    }
+
+    // Check docsUpdated against allowedWriteScope.kbPaths
+    const kbPaths = task.allowedWriteScope.kbPaths ?? [];
+    if (kbPaths.length > 0) {
+      for (const doc of receipt.docsUpdated) {
+        const allowed = kbPaths.some((prefix) => doc.startsWith(prefix));
+        if (!allowed) {
+          violations.push({ file: doc, reason: "Outside allowedWriteScope.kbPaths" });
         }
       }
     }

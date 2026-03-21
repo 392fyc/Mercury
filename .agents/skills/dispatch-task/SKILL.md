@@ -39,7 +39,7 @@ $body = @{
 Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$port" -ContentType "application/json" -Body $body
 ```
 
-1. Create the task with `create_task`. Use `sev-0` to `sev-3`, not human-only labels like `high` or `medium`.
+4. Create the task with `create_task`. Use `sev-0` to `sev-3`, not human-only labels like `high` or `medium`. Check the response for errors before proceeding.
 
 ```powershell
 $params = @{
@@ -64,10 +64,12 @@ $body = @{
 } | ConvertTo-Json -Depth 10
 
 $task = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$port" -ContentType "application/json" -Body $body
+if ($task.error) { Write-Error "create_task failed: $($task.error.message)"; return }
 $taskId = $task.result.taskId
+if (-not $taskId) { Write-Error "create_task returned no taskId"; return }
 ```
 
-1. Create the feature branch after the `taskId` is known:
+5. Create the feature branch after the `taskId` is known:
 
 ```powershell
 git switch develop
@@ -76,7 +78,7 @@ git switch -c "feature/$taskId"
 git push -u origin "feature/$taskId"
 ```
 
-1. Dispatch the task:
+6. Dispatch the task:
 
 ```powershell
 $body = @{
@@ -89,10 +91,10 @@ $body = @{
 Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$port" -ContentType "application/json" -Body $body
 ```
 
-1. Remember two runtime constraints:
+7. Remember two runtime constraints:
    - `create_task` accepts `CreateTaskParams`, not a full persisted TaskBundle
    - the current RPC surface does not expose a general `update_task` method for backfilling `task.branch`; do not invent one
-1. If local RPC fails, check whether the orchestrator is running before blaming network access. If the loopback call is blocked only by sandboxing, request escalation.
+8. If local RPC fails, check whether the orchestrator is running before blaming network access. If the loopback call is blocked only by sandboxing, request escalation.
 
 ## Output
 
