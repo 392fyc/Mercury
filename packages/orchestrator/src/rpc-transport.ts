@@ -52,10 +52,11 @@ export class RpcTransport {
     });
 
     rl.on("close", () => {
-      this.log("stdin closed");
       // Do not call process.exit() — if an HTTP server is still listening,
-      // the Node.js event loop will keep the process alive naturally.
-      // In Tauri sidecar mode the GUI will SIGTERM/SIGINT to shut down.
+      // the Node.js event loop keeps the process alive naturally.
+      // In Tauri sidecar mode the GUI sends SIGTERM/SIGINT to shut down.
+      const activeHandles = (process as NodeJS.Process & { _getActiveHandles?: () => unknown[] })._getActiveHandles?.()?.length ?? "?";
+      this.log(`stdin closed (active handles: ${activeHandles}, process will exit when event loop drains)`);
     });
 
     this.log("RPC transport started");

@@ -76,6 +76,9 @@ class MessageStream {
   private waiters: Array<(value: AdapterYield | Error | typeof END_OF_STREAM) => void> = [];
   private ended = false;
   private compactionNotified = false;
+  /** CR-4: Flag set by turn/completed notification. The tool call promise
+   *  checks this and calls finish() after pushing final text. */
+  turnCompleted = false;
   readonly hooks?: LocalAgentSendHooks;
 
   constructor(hooks?: LocalAgentSendHooks) {
@@ -254,9 +257,20 @@ export class CodexMCPAdapter implements AgentAdapter {
     images?: ImageAttachment[],
     hooks?: LocalAgentSendHooks,
   ): AsyncGenerator<AdapterYield> {
-    // Handle slash commands
+    const record = this.sessions.get(sessionId);
+    if (!record) throw new Error(`Unknown session: ${sessionId}`);
+
+    // CR-3: Check activeTurn BEFORE slash commands to prevent /new, /clear,
+    // /model from mutating session state while a streaming turn is in progress.
     const trimmed = prompt.trim();
     if (trimmed.startsWith("/")) {
+      if (record.activeTurn) {
+        // Only allow read-only commands during an active turn
+        const cmd = trimmed.split(/\s/)[0].toLowerCase();
+        if (cmd !== "/help" && cmd !== "/mcp") {
+          throw new Error(`Cannot execute ${cmd} while a turn is in progress on session ${sessionId}`);
+        }
+      }
       let handled = false;
       for await (const message of this.handleSlashCommand(sessionId, prompt)) {
         handled = true;
@@ -265,9 +279,16 @@ export class CodexMCPAdapter implements AgentAdapter {
       if (handled) return;
     }
 
-    const record = this.sessions.get(sessionId);
-    if (!record) throw new Error(`Unknown session: ${sessionId}`);
     if (record.activeTurn) throw new Error(`Session ${sessionId} already has an active turn`);
+
+    // CR-2: codex mcp-server tools do not accept image parameters.
+    // Fail explicitly rather than silently dropping attachments.
+    if (images && images.length > 0) {
+      throw new Error(
+        `Codex MCP adapter does not support image attachments (received ${images.length}). ` +
+        `Remove images or use an adapter that supports them.`,
+      );
+    }
 
     record.info.lastActiveAt = Date.now();
 
@@ -520,7 +541,10 @@ export class CodexMCPAdapter implements AgentAdapter {
       }
 
       case "turn/completed":
-        record.activeTurn.finish();
+        // CR-4: Don't finish stream here — turn/completed may arrive before
+        // callCodex returns. Set a flag; the tool call promise will finish
+        // the stream after pushing final text from the result.
+        record.activeTurn.turnCompleted = true;
         break;
 
       case "context_compaction":
