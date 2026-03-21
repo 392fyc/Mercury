@@ -42,14 +42,16 @@ If checks fail, read output, fix if in scope, push again.
 ```bash
 # Poll review status (max 15 min, check every 60s)
 for i in $(seq 1 15); do
-  STATUS=$(gh pr reviews <pr-number> --json state --jq '.[].state' | tail -1)
-  [ "$STATUS" = "APPROVED" ] && break
+  REVIEWS=$(gh pr reviews <pr-number> --json state --jq '.[].state')
+  HAS_APPROVED=$(echo "$REVIEWS" | grep -c "APPROVED" || true)
+  HAS_CHANGES=$(echo "$REVIEWS" | grep -c "CHANGES_REQUESTED" || true)
+  [ "$HAS_APPROVED" -gt 0 ] && [ "$HAS_CHANGES" -eq 0 ] && break
   sleep 60
 done
 ```
 
 - **Timeout**: 15 minutes max polling. If CodeRabbit is unresponsive, notify user and wait for manual decision.
-- **Completion criteria**: `gh pr reviews` shows at least one `APPROVED` state and no pending `CHANGES_REQUESTED`.
+- **Completion criteria**: at least one `APPROVED` **and** zero `CHANGES_REQUESTED`.
 - **Service unavailable**: If CodeRabbit status check remains `PENDING` beyond timeout, escalate to user.
 
 4. Address feedback:

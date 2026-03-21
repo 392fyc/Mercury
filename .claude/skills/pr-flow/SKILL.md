@@ -62,8 +62,10 @@ Mercury rules require waiting for CodeRabbit to **approve** before merge. Poll w
 ```bash
 # Poll review status (max 15 min, check every 60s)
 for i in $(seq 1 15); do
-  STATUS=$(gh pr reviews <pr-number> --json state --jq '.[].state' | tail -1)
-  [ "$STATUS" = "APPROVED" ] && break
+  REVIEWS=$(gh pr reviews <pr-number> --json state --jq '.[].state')
+  HAS_APPROVED=$(echo "$REVIEWS" | grep -c "APPROVED" || true)
+  HAS_CHANGES=$(echo "$REVIEWS" | grep -c "CHANGES_REQUESTED" || true)
+  [ "$HAS_APPROVED" -gt 0 ] && [ "$HAS_CHANGES" -eq 0 ] && break
   sleep 60
 done
 # Also check inline comments
@@ -71,7 +73,7 @@ gh api repos/{owner}/{repo}/pulls/<pr-number>/comments
 ```
 
 - **Timeout**: 15 minutes max. If CodeRabbit unresponsive, notify user.
-- **Completion**: at least one `APPROVED` review state, no `CHANGES_REQUESTED`.
+- **Completion**: at least one `APPROVED` **and** zero `CHANGES_REQUESTED`.
 
 Parse CodeRabbit comments for actionable feedback. Categories:
 - **Critical**: Must fix before merge

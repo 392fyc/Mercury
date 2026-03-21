@@ -78,8 +78,10 @@ Then proceed with implementation using verified signatures.
 ## Integration with Hooks
 
 Mercury has automated enforcement via hooks:
-- `web-research-gate.sh` blocks Edit/Write operations containing SDK imports, version claims, or API signatures unless a web research flag was set within the last 3 minutes
+- `web-research-gate.sh` blocks Edit/Write operations containing SDK imports, version claims, or API signatures unless a web research flag was set within the configured TTL (currently 3 minutes; adjustable in the gate script's `THRESHOLD` variable)
 - `post-web-research-flag.sh` automatically sets this flag after WebSearch/WebFetch completes
 - `user-prompt-submit.sh` injects the research protocol reminder when research-intent keywords are detected
 
 These hooks are a safety net — this skill provides the proactive workflow to follow so you rarely hit the gate.
+
+> **Single source of truth**: Research-intent keywords are defined in `user-prompt-submit.sh`. This skill's description mirrors those keywords for trigger alignment. When updating keywords, change both locations in the same commit.

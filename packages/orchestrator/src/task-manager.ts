@@ -631,7 +631,11 @@ function formatWriteScope(scope: TaskBundle["allowedWriteScope"]): string {
   return parts.length > 0 ? parts.join(" | ") : "无限制";
 }
 
-/** Build the dispatch prompt sent to the Dev Agent for implementation. */
+/**
+ * Build the dispatch prompt sent to the Dev Agent for implementation.
+ * NOTE: Template is loaded synchronously per call. Future optimization:
+ * preload + cache at TaskManager.init() with mtime-based refresh (tracked in TASK-WF-001).
+ */
 export function buildDevPrompt(
   task: TaskBundle,
   kbContext?: string,

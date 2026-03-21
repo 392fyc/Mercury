@@ -20,7 +20,10 @@ function isAgentRole(value: unknown): value is AgentRole {
 
 function asStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
-  return value.filter((v): v is string => typeof v === "string");
+  return value
+    .filter((v): v is string => typeof v === "string")
+    .map((v) => v.trim())
+    .filter((v) => v.length > 0);
 }
 
 function asRoleArray(value: unknown): AgentRole[] {

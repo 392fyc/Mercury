@@ -78,7 +78,7 @@ Essential fields the Main Agent must populate:
 | `docsMustNotTouch` | Forbidden modification targets |
 | `definitionOfDone` | Objectively verifiable completion criteria |
 
-Full template: `Mercury_KB/99-templates/task-bundle.template.json`
+Full template: `{Project}_KB/99-templates/task-bundle.template.json` (resolve `{Project}_KB` per environment)
 
 ## Related Skills
 

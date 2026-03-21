@@ -15,6 +15,8 @@ description: |
 
 ## Pipeline
 
+> **Platform note**: Examples use PowerShell syntax (Windows). For bash/zsh, replace `Invoke-RestMethod` with `curl`, `ConvertTo-Json` with `jq`, and adjust variable syntax accordingly.
+
 1. Read the canonical references you need:
    - `.mercury/docs/guides/sot-workflow.md`
    - `.mercury/docs/guides/git-flow.md`

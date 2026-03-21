@@ -6,6 +6,8 @@ description: |
 
 # Auto Verify
 
+> **Platform note**: Examples use PowerShell syntax (Windows). For bash/zsh, replace `2>$null` with `2>/dev/null` and adjust accordingly.
+
 ## When
 
 - Use before every `git commit` during task implementation.

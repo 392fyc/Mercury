@@ -30,6 +30,12 @@ Choose `allow_implicit_invocation: true` when the skill:
 - verifies external dependency claims
 - runs a local quality gate before commit
 
+## Consistency
+
+The policy table above mirrors each skill's `openai.yaml`. To prevent drift:
+- When adding/modifying a skill's `openai.yaml`, update this table in the same commit.
+- Future CI validation: parse `openai.yaml` files and assert they match this table (tracked in TASK-WF-001).
+
 ## Codex Notes
 
 - `description` remains the primary trigger surface. `openai.yaml` only controls whether Codex may invoke the skill implicitly.
