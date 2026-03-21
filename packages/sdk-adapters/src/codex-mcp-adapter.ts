@@ -132,17 +132,31 @@ class MessageStream {
 
 // ─── Adapter ───
 
+/**
+ * Codex CLI adapter using the standard MCP protocol.
+ *
+ * Connects to `codex mcp-server` (stdio) and maps MCP tools to the
+ * Mercury {@link AgentAdapter} interface:
+ *
+ * - `codex(prompt, ...)` — start a new conversation
+ * - `codex-reply(threadId, prompt)` — continue an existing conversation
+ * - `notifications/codex/event` — streaming events
+ * - `elicitation/*` — approval bridge (command/file change approval)
+ *
+ * @see https://developers.openai.com/codex/guides/agents-sdk
+ */
 export class CodexMCPAdapter implements AgentAdapter {
   readonly agentId: string;
   readonly config: AgentConfig;
 
   private sessions = new Map<string, MCPSession>();
-  private threadToSession = new Map<string, string>(); // threadId → sessionId
+  private threadToSession = new Map<string, string>();
   /** Sessions awaiting their first threadId (first-turn notification routing). */
   private pendingSessionIds = new Set<string>();
   private sharedSystemPrompt?: string;
   private transport: CodexMCPTransport | null = null;
 
+  /** @param config  Partial agent config merged with Codex defaults. */
   constructor(config?: Partial<AgentConfig>) {
     this.config = {
       id: "codex-cli",
@@ -160,6 +174,7 @@ export class CodexMCPAdapter implements AgentAdapter {
 
   // ─── System prompt ───
 
+  /** Inject shared context prepended to every user prompt as role context. */
   setSystemPrompt(prompt: string): void {
     this.sharedSystemPrompt = prompt;
   }
@@ -180,6 +195,7 @@ export class CodexMCPAdapter implements AgentAdapter {
 
   // ─── Session lifecycle ───
 
+  /** Create a new session. The actual Codex thread is created lazily on the first {@link sendPrompt}. */
   async startSession(cwd: string): Promise<SessionInfo> {
     const transport = this.ensureTransport();
     await transport.ensureStarted();
@@ -204,6 +220,7 @@ export class CodexMCPAdapter implements AgentAdapter {
     return info;
   }
 
+  /** Resume an existing session, re-establishing the threadId mapping if available. */
   async resumeSession(
     sessionId: string,
     persistedInfo?: SessionInfo,
@@ -239,6 +256,7 @@ export class CodexMCPAdapter implements AgentAdapter {
     return info;
   }
 
+  /** End a session and clean up thread mappings. */
   async endSession(sessionId: string): Promise<void> {
     const record = this.sessions.get(sessionId);
     if (record) {
@@ -251,6 +269,15 @@ export class CodexMCPAdapter implements AgentAdapter {
 
   // ─── Send prompt (main interaction) ───
 
+  /**
+   * Send a prompt and yield streaming events + final response.
+   *
+   * First turn calls `codex()`, subsequent turns call `codex-reply(threadId)`.
+   * The MCP tool call runs in the background while events are yielded in real-time.
+   *
+   * @throws If images are provided (not supported by codex mcp-server tools).
+   * @throws If a mutating slash command is issued during an active turn.
+   */
   async *sendPrompt(
     sessionId: string,
     prompt: string,
@@ -374,6 +401,7 @@ export class CodexMCPAdapter implements AgentAdapter {
 
   // ─── One-shot execution ───
 
+  /** Execute a single prompt without session management. Auto-cleans up after completion. */
   async executeOneShot(
     prompt: string,
     cwd: string,
@@ -412,6 +440,7 @@ export class CodexMCPAdapter implements AgentAdapter {
 
   // ─── Handoff (context overflow continuation) ───
 
+  /** End the old session and start a new one with the handoff summary as frozen context. */
   async handoffSession(oldSessionId: string, summary: string): Promise<SessionInfo> {
     const oldRecord = this.sessions.get(oldSessionId);
     const cwd = oldRecord?.cwd ?? process.cwd();
@@ -430,6 +459,7 @@ export class CodexMCPAdapter implements AgentAdapter {
 
   // ─── Model management ───
 
+  /** List available models from the Codex models cache, falling back to defaults. */
   async listModels(): Promise<{ id: string; name: string }[]> {
     try {
       const cachePath = join(homedir(), ".codex", "models_cache.json");
@@ -451,12 +481,14 @@ export class CodexMCPAdapter implements AgentAdapter {
     ];
   }
 
+  /** Override the model used for subsequent tool calls. */
   setModel(model: string): void {
     this.config.model = model;
   }
 
   // ─── Slash commands ───
 
+  /** Return the list of supported slash commands for this adapter. */
   getSlashCommands(): SlashCommand[] {
     return [
       { name: "/new", description: "Start a new conversation thread", category: "session" },

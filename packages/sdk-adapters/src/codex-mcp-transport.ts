@@ -53,6 +53,16 @@ export type ElicitationHandler = (
   params: Record<string, unknown>,
 ) => Promise<Record<string, unknown>>;
 
+/**
+ * MCP client wrapper for `codex mcp-server`.
+ *
+ * Manages the lifecycle of a single `codex mcp-server` child process,
+ * exposes the `codex()` and `codex-reply()` MCP tools, and routes
+ * Codex-specific notifications and elicitation requests to callbacks.
+ *
+ * @see https://developers.openai.com/codex/guides/agents-sdk
+ * @see https://deepwiki.com/openai/codex/6.4-mcp-server-implementation-(codex-mcp-server)
+ */
 export class CodexMCPTransport {
   private client: Client | null = null;
   private transport: StdioClientTransport | null = null;
@@ -63,6 +73,11 @@ export class CodexMCPTransport {
   private onElicitation?: ElicitationHandler;
   private onError?: (error: Error) => void;
 
+  /**
+   * @param options.onEvent       Called for each `notifications/codex/event` notification (streaming).
+   * @param options.onElicitation  Called for `elicitation/*` server-to-client requests (approval bridge).
+   * @param options.onError       Called on transport-level errors.
+   */
   constructor(options?: {
     onEvent?: CodexEventHandler;
     onElicitation?: ElicitationHandler;
