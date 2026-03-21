@@ -10,7 +10,7 @@
  */
 
 import { EventBus, isStreamingEvent } from "@mercury/core";
-import { CodexAdapter } from "@mercury/sdk-adapters";
+import { CodexMCPAdapter } from "@mercury/sdk-adapters";
 
 async function testCodexSDK() {
   console.log("═══════════════════════════════════════");
@@ -18,7 +18,7 @@ async function testCodexSDK() {
   console.log("═══════════════════════════════════════\n");
 
   const bus = new EventBus();
-  const codex = new CodexAdapter();
+  const codex = new CodexMCPAdapter();
 
   bus.on("*", (event) => {
     console.log(`[EVENT] ${event.type} | agent=${event.agentId} | ${JSON.stringify(event.payload).slice(0, 100)}`);

@@ -15,7 +15,7 @@
 
 import { EventBus, isStreamingEvent } from "@mercury/core";
 import type { AgentAdapter, AgentMessage, SessionInfo } from "@mercury/core";
-import { ClaudeAdapter, CodexAdapter } from "@mercury/sdk-adapters";
+import { ClaudeAdapter, CodexMCPAdapter } from "@mercury/sdk-adapters";
 
 async function testCrossAgentCommunication() {
   console.log("═══════════════════════════════════════════════════");
@@ -26,7 +26,7 @@ async function testCrossAgentCommunication() {
 
   // Initialize agents
   const mainAgent = new ClaudeAdapter(); // Main Agent = Claude Code
-  const subAgent = new CodexAdapter(); // Sub Agent = Codex CLI
+  const subAgent = new CodexMCPAdapter(); // Sub Agent = Codex CLI
 
   // Monitor all events
   bus.on("*", (event) => {
