@@ -13,6 +13,7 @@ import { RpcTransport } from "./rpc-transport.js";
 import { AgentRegistry } from "./agent-registry.js";
 import { Orchestrator } from "./orchestrator.js";
 import { KnowledgeService } from "./knowledge-service.js";
+import { createMcpServer } from "./mcp-server.js";
 
 const DEFAULT_RPC_PORT = 7654;
 
@@ -469,10 +470,33 @@ if (config.obsidian?.enabled) {
 // Wire agent config lookup for Agents First assignee.model (works with or without KB)
 orchestrator.setAgentConfigLookup();
 
-// Rehydrate task state from KB (no-op if KB disabled), then start RPC + signal ready
+// Detect MCP mode: --mcp flag or MERCURY_MCP_MODE=1 env var
+const isMcpMode =
+  process.argv.includes("--mcp") ||
+  process.env.MERCURY_MCP_MODE === "1";
+
+/** Start MCP server on stdio (replaces HTTP + stdio JSON-RPC transports). */
+function startMcpServer(orchestrator: Orchestrator): void {
+  const { start } = createMcpServer(orchestrator, transport);
+  start().catch((err) => {
+    transport.log(`MCP server start error: ${err instanceof Error ? err.message : err}`);
+    process.exit(1);
+  });
+}
+
+// Rehydrate task state from KB (no-op if KB disabled), then start appropriate transport
 orchestrator.init().then(() => {
-  startTransports(orchestrator, registry, config);
+  if (isMcpMode) {
+    transport.log("Starting in MCP server mode");
+    startMcpServer(orchestrator);
+  } else {
+    startTransports(orchestrator, registry, config);
+  }
 }).catch((err) => {
   transport.log(`Init warning: ${err instanceof Error ? err.message : err}`);
-  startTransports(orchestrator, registry, config);
+  if (isMcpMode) {
+    startMcpServer(orchestrator);
+  } else {
+    startTransports(orchestrator, registry, config);
+  }
 });
