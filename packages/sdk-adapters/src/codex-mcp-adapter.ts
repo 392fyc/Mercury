@@ -129,10 +129,15 @@ class MessageStream {
     return new Promise((resolve) => { this.waiters.push(resolve); });
   }
 
+  private static readonly QUEUE_DEPTH_WARN = 1000;
+
   private deliver(item: AdapterYield | Error | typeof END_OF_STREAM): void {
     const waiter = this.waiters.shift();
     if (waiter) { waiter(item); return; }
     this.queue.push(item);
+    if (this.queue.length === MessageStream.QUEUE_DEPTH_WARN) {
+      console.warn(`[MessageStream] queue depth reached ${MessageStream.QUEUE_DEPTH_WARN} — consumer may be too slow`);
+    }
   }
 }
 

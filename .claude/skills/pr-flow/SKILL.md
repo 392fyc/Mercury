@@ -13,6 +13,7 @@ allowed-tools: Bash, Read, Grep, Glob, WebFetch
 - `gh` CLI v2.x+ (authenticated)
 - `git` with push access to the PR branch
 - `jq` for JSON parsing
+- `python3` (used by merge gate for GraphQL pagination parsing)
 - Current branch must not be `develop` or `main`
 - TaskBundle JSON must include `allowedWriteScope.codePaths`
 
@@ -170,9 +171,10 @@ than 50 threads.
 OWNER=$(gh repo view --json owner --jq '.owner.login')
 NAME=$(gh repo view --json name --jq '.name')
 
-# FIXED_TIDS should be populated by the fix step with the specific
-# thread IDs that were addressed. Example:
-# FIXED_TIDS=("PRRT_abc123" "PRRT_def456")
+# Initialize FIXED_TIDS before the fix loop (safe under set -u).
+# Populate it during Step 5 as each thread's fix is confirmed.
+declare -a FIXED_TIDS=()
+# Example: FIXED_TIDS+=("PRRT_abc123") after fixing that thread's issue
 
 for TID in "${FIXED_TIDS[@]}"; do
   gh api graphql -f query="mutation { resolveReviewThread(input: {threadId: \"$TID\"}) { thread { isResolved } } }" >/dev/null 2>&1

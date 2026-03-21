@@ -6,6 +6,7 @@
  *
  * Verified against:
  *   - @modelcontextprotocol/sdk v1.27.1 — https://www.npmjs.com/package/@modelcontextprotocol/sdk
+ *     (onmessage interception in start() depends on SDK internals; re-verify after upgrades)
  *   - codex mcp-server — https://developers.openai.com/codex/guides/agents-sdk
  *   - MCP TS SDK source — https://github.com/modelcontextprotocol/typescript-sdk
  */
@@ -64,10 +65,14 @@ export type ElicitationHandler = (
  * @see https://deepwiki.com/openai/codex/6.4-mcp-server-implementation-(codex-mcp-server)
  */
 export class CodexMCPTransport {
+  /** Default timeout for MCP tool calls (10 minutes). Override via constructor. */
+  static readonly DEFAULT_TOOL_TIMEOUT_MS = 600_000;
+
   private client: Client | null = null;
   private transport: StdioClientTransport | null = null;
   private startPromise: Promise<void> | null = null;
   private closed = false;
+  private readonly toolTimeoutMs: number;
 
   private onEvent?: CodexEventHandler;
   private onElicitation?: ElicitationHandler;
@@ -77,15 +82,18 @@ export class CodexMCPTransport {
    * @param options.onEvent       Called for each `notifications/codex/event` notification (streaming).
    * @param options.onElicitation  Called for `elicitation/*` server-to-client requests (approval bridge).
    * @param options.onError       Called on transport-level errors.
+   * @param options.toolTimeoutMs Override the default 10-minute timeout for tool calls.
    */
   constructor(options?: {
     onEvent?: CodexEventHandler;
     onElicitation?: ElicitationHandler;
     onError?: (error: Error) => void;
+    toolTimeoutMs?: number;
   }) {
     this.onEvent = options?.onEvent;
     this.onElicitation = options?.onElicitation;
     this.onError = options?.onError;
+    this.toolTimeoutMs = options?.toolTimeoutMs ?? CodexMCPTransport.DEFAULT_TOOL_TIMEOUT_MS;
   }
 
   /**
@@ -224,7 +232,7 @@ export class CodexMCPTransport {
     const result = await this.client!.callTool(
       { name: "codex", arguments: params as unknown as Record<string, unknown> },
       undefined,
-      { timeout: 600_000 },
+      { timeout: this.toolTimeoutMs },
     );
     return result as unknown as CodexToolResult;
   }
@@ -235,7 +243,7 @@ export class CodexMCPTransport {
     const result = await this.client!.callTool(
       { name: "codex-reply", arguments: params as unknown as Record<string, unknown> },
       undefined,
-      { timeout: 600_000 },
+      { timeout: this.toolTimeoutMs },
     );
     return result as unknown as CodexToolResult;
   }

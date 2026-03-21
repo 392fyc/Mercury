@@ -23,7 +23,7 @@ allowed-tools: Bash, Read, Grep, Glob
 git diff --cached --name-only
 ```
 
-2. Run type-check or compile checks. Choose the right command for the project:
+1. Run type-check or compile checks. Choose the right command for the project:
    - If `package.json` has a `typecheck` or `check` script: run that (e.g., `npm run typecheck`)
    - TypeScript project (tsconfig.json exists): `npx tsc --noEmit` or `npx tsc --build` for monorepos
    - JavaScript with JSDoc types: `npx tsc --checkJs --noEmit`
@@ -34,17 +34,17 @@ git diff --cached --name-only
 npm run typecheck 2>/dev/null || npx tsc --noEmit
 ```
 
-3. Validate scope against the active TaskBundle when available:
+1. Validate scope against the active TaskBundle when available:
    - every changed file must be inside `allowedWriteScope.codePaths` or `allowedWriteScope.kbPaths`
    - no changed file may violate `docsMustNotTouch`
    - if no TaskBundle context is available, record `SKIP` instead of inventing scope
-4. Run lint only if lint config exists:
+1. Run lint only if lint config exists:
 
 ```bash
 npx eslint --max-warnings 0 <changed-files>
 ```
 
-5. Check docstring coverage on changed files (whole-file scan, not diff-only):
+1. Check docstring coverage on changed files (whole-file scan, not diff-only):
    - Threshold: 50% of public API surface in changed `.ts` files must have JSDoc
    - Check: for each changed `.ts` file, count exported classes/functions/methods and
      count those with a `/** ... */` comment immediately preceding them
@@ -54,8 +54,10 @@ npx eslint --max-warnings 0 <changed-files>
    - This aligns with CodeRabbit's pre-merge check (`.coderabbit.yaml` threshold: 50%)
 
 ```bash
-# Quick heuristic: count exports vs documented exports in changed .ts files
-for f in $(git diff --cached --name-only -- '*.ts'); do
+# Quick heuristic: count exports vs documented exports in changed .ts files.
+# Note: the regex is a rough approximation — it catches most exported declarations
+# but may miss or over-count some patterns (e.g. re-exports, decorators).
+git diff --cached --name-only -- '*.ts' | while IFS= read -r f; do
   TOTAL=$(grep -cE '^\s*(export (class|function|async function|const)|^\s+(async )?(get |set )?[a-z]\w*\()' "$f" 2>/dev/null || echo 0)
   DOCUMENTED=$(grep -B1 -E '^\s*(export (class|function|async function|const)|^\s+(async )?(get |set )?[a-z]\w*\()' "$f" 2>/dev/null | grep -c '^\s*\*/' || echo 0)
   [ "$TOTAL" -gt 0 ] && PCT=$((DOCUMENTED * 100 / TOTAL)) || PCT=100
@@ -63,11 +65,11 @@ for f in $(git diff --cached --name-only -- '*.ts'); do
 done
 ```
 
-6. Run git hygiene checks:
+1. Run git hygiene checks:
    - no stray debug artifacts that obviously should not ship
    - no `.only` in tests
    - branch naming matches the task expectation when a task branch is known
-7. If a check fails:
+1. If a check fails:
    - fix obvious in-scope issues
    - rerun the failed check
    - escalate instead of committing if the failure requires out-of-scope changes
