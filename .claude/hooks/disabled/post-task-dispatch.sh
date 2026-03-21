@@ -1,4 +1,5 @@
 #!/bin/bash
+# DISABLED: removed from settings.json in c6e7360 (orchestrator not yet online).
 # POST-WRITE HOOK: Auto-dispatch TaskBundle via Mercury orchestrator HTTP RPC
 # Triggers when a file is written to Mercury_KB/10-tasks/ with status "dispatched"
 # Token cost: ZERO. No LLM calls.
