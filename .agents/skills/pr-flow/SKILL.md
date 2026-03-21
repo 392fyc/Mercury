@@ -43,6 +43,18 @@ else
 fi
 ```
 
+After PR creation (or reuse), set metadata and trigger review:
+
+```bash
+# Set assignee and labels
+gh pr edit $PR_NUMBER --add-assignee "@me" --add-label "refactor"
+
+# Trigger CodeRabbit review (auto-pause may block automatic review)
+gh pr comment $PR_NUMBER --body "@coderabbitai review"
+```
+
+> **Why explicit mention?** CodeRabbit auto-pauses on rapid commits. Always `@coderabbitai review` after final push.
+
 2. **Poll CI checks (scope-bounded fixes)**:
 
 ```bash

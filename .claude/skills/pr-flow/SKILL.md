@@ -63,6 +63,20 @@ fi
 
 Target branch is always `develop` per Mercury git-flow rules.
 
+After PR creation (or reuse), set PR metadata and trigger review:
+
+```bash
+# Set author, assignee, labels, and project
+gh pr edit $PR_NUMBER \
+  --add-assignee "@me" \
+  --add-label "refactor" # or "feature", "bugfix" as appropriate
+
+# Trigger CodeRabbit review explicitly (auto-pause may block automatic review)
+gh pr comment $PR_NUMBER --body "@coderabbitai review"
+```
+
+> **Why explicit mention?** CodeRabbit auto-pauses review on branches with rapid commits. Always `@coderabbitai review` after the final push to guarantee review starts.
+
 ### Step 2: Poll CI Checks (scope-bounded fixes)
 
 Wait for CI checks to complete:
