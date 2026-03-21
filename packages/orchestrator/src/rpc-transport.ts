@@ -33,16 +33,6 @@ export type RpcHandler = (
 
 export class RpcTransport {
   private handler: RpcHandler | null = null;
-  /** When true, stdin EOF logs a warning but does NOT call process.exit(). */
-  private stdinOptional = false;
-
-  /**
-   * Mark stdin as optional so that its closure does not kill the process.
-   * Call this BEFORE start() when running in headless / HTTP-only mode.
-   */
-  setStdinOptional(optional = true): void {
-    this.stdinOptional = optional;
-  }
 
   start(handler: RpcHandler): void {
     this.handler = handler;
@@ -62,10 +52,6 @@ export class RpcTransport {
     });
 
     rl.on("close", () => {
-      if (this.stdinOptional) {
-        this.log("stdin closed (non-fatal in headless mode, HTTP server still active)");
-        return;
-      }
       this.log("stdin closed, shutting down");
       process.exit(0);
     });
