@@ -44,11 +44,28 @@ npm run typecheck 2>/dev/null || npx tsc --noEmit
 npx eslint --max-warnings 0 <changed-files>
 ```
 
-5. Run git hygiene checks:
+5. Check docstring coverage on new/modified exported classes and public methods:
+   - Threshold: 50% of public API surface in changed `.ts` files must have JSDoc
+   - Check: for each changed `.ts` file, count exported classes/functions/methods and
+     count those with a `/** ... */` comment immediately preceding them
+   - If coverage < 50%, report which exports are missing JSDoc
+   - This aligns with CodeRabbit's pre-merge check (`.coderabbit.yaml` threshold: 50%)
+
+```bash
+# Quick heuristic: count exports vs documented exports in changed .ts files
+for f in $(git diff --cached --name-only -- '*.ts'); do
+  TOTAL=$(grep -cE '^\s*(export (class|function|async function|const)|^\s+(async )?(get |set )?[a-z]\w*\()' "$f" 2>/dev/null || echo 0)
+  DOCUMENTED=$(grep -B1 -E '^\s*(export (class|function|async function|const)|^\s+(async )?(get |set )?[a-z]\w*\()' "$f" 2>/dev/null | grep -c '^\s*\*/' || echo 0)
+  [ "$TOTAL" -gt 0 ] && PCT=$((DOCUMENTED * 100 / TOTAL)) || PCT=100
+  [ "$PCT" -lt 50 ] && echo "WARN: $f docstring coverage $PCT% (${DOCUMENTED}/${TOTAL})"
+done
+```
+
+6. Run git hygiene checks:
    - no stray debug artifacts that obviously should not ship
    - no `.only` in tests
    - branch naming matches the task expectation when a task branch is known
-6. If a check fails:
+7. If a check fails:
    - fix obvious in-scope issues
    - rerun the failed check
    - escalate instead of committing if the failure requires out-of-scope changes
@@ -62,6 +79,7 @@ Produce a compact result block:
 TypeCheck: PASS | FAIL | SKIP
 Scope: PASS | FAIL | SKIP
 Lint: PASS | FAIL | SKIP
+DocString: PASS | WARN (<files>) | SKIP
 GitHygiene: PASS | FAIL
 Overall: PASS | FAIL
 ```
@@ -74,7 +92,7 @@ Overall: PASS | FAIL
 Record a one-line entry suitable for `implementationReceipt.evidence`, for example:
 
 ```text
-auto-verify: PASS (tsc: clean, scope: 8 files checked, lint: clean, git: clean)
+auto-verify: PASS (tsc: clean, scope: 8 files checked, lint: clean, docstring: 75%, git: clean)
 ```
 
 If anything failed, keep the failure summary and the rerun result.

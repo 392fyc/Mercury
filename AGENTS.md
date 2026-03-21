@@ -43,6 +43,7 @@ Read these docs on demand when you need the corresponding information:
 - **Role boundary enforcement**: operate strictly within your assigned role.
 - **PR to develop**: all code merges into develop must go through a PR. Direct push to develop is forbidden.
 - **Install to D drive**: install software to `D:\Program Files`, not C drive. (Windows team-specific policy; skip on non-Windows environments.)
+- **JSDoc on public API**: exported classes, functions, and public methods in `.ts` files must have JSDoc (`/** ... */`). Minimum coverage: 50% per file (CodeRabbit pre-merge threshold).
 
 ## DO NOT
 

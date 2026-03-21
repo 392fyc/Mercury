@@ -156,15 +156,58 @@ EOF
 done
 ```
 
+### Step 5b: Resolve Addressed Review Threads
+
+After fixes are committed and pushed, resolve all review threads that have been
+addressed. Use GraphQL `resolveReviewThread` mutation. Only resolve threads where
+the underlying issue has actually been fixed in the code.
+
+```bash
+OWNER=$(gh repo view --json owner --jq '.owner.login')
+NAME=$(gh repo view --json name --jq '.name')
+# Get all unresolved thread IDs
+THREAD_IDS=$(gh api graphql -f query="
+  { repository(owner: \"$OWNER\", name: \"$NAME\") {
+      pullRequest(number: $PR_NUMBER) {
+        reviewThreads(first: 50) {
+          nodes { id isResolved }
+        }
+      }
+    }
+  }" --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .id] | .[]')
+
+for TID in $THREAD_IDS; do
+  gh api graphql -f query="mutation { resolveReviewThread(input: {threadId: \"$TID\"}) { thread { isResolved } } }" >/dev/null 2>&1
+done
+echo "Resolved $(echo "$THREAD_IDS" | grep -c . || echo 0) review threads"
+```
+
 ### Step 6: Merge and Update Mercury State
 
 ```bash
 check_ci_status() { gh pr checks "$PR_NUMBER" >/dev/null; }
 check_review_state() { [ "$(gh pr view "$PR_NUMBER" --json reviewDecision --jq '.reviewDecision // "REVIEW_REQUIRED"')" = "APPROVED" ]; }
-# NOTE: REST API pull request comments do not expose "resolved" state.
-# GraphQL reviewThreads.isResolved is the accurate source but requires more complexity.
-# Current approach: re-count severity from latest comment bodies as a practical approximation.
-check_unresolved_critical_comments() { LIVE_COMMENTS=$(gh api repos/{owner}/{repo}/pulls/"$PR_NUMBER"/comments); LIVE_ACTIONABLE=$(echo "$LIVE_COMMENTS" | jq -cr '.[] | .firstLine = (.body | split("\n")[0]) | .severity = (if (.firstLine | test("Critical")) then "Critical" elif (.firstLine | test("Major")) then "Major" else "Other" end) | select(.severity == "Critical" or .severity == "Major") | {id, path, severity, body}'); [ -z "$LIVE_ACTIONABLE" ] && return 0; COUNT=$(printf '%s\n' "$LIVE_ACTIONABLE" | jq -s 'length' 2>/dev/null || echo 0); [ "${COUNT:-0}" -eq 0 ]; }
+# Use GraphQL to get accurate resolved/unresolved status for review threads.
+# REST API does not expose thread resolution state.
+check_unresolved_critical_comments() {
+  OWNER=$(gh repo view --json owner --jq '.owner.login')
+  NAME=$(gh repo view --json name --jq '.name')
+  UNRESOLVED=$(gh api graphql -f query="
+    { repository(owner: \"$OWNER\", name: \"$NAME\") {
+        pullRequest(number: $PR_NUMBER) {
+          reviewThreads(first: 50) {
+            nodes { isResolved comments(first: 1) { nodes { body } } }
+          }
+        }
+      }
+    }" --jq '
+    [.data.repository.pullRequest.reviewThreads.nodes[]
+     | select(.isResolved == false)
+     | .comments.nodes[0].body // ""
+     | select(test("Critical|Major"))]
+    | length')
+  [ "${UNRESOLVED:-0}" -eq 0 ]
+}
 check_ready_to_merge() { check_ci_status && check_review_state && check_unresolved_critical_comments; }
 MERGE_STRATEGY=${MERGE_STRATEGY:-squash}
 DELETE_BRANCH=${DELETE_BRANCH:-true}
