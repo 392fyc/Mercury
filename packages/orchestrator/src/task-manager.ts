@@ -135,7 +135,7 @@ export class TaskManager {
   // ─── Task CRUD ───
 
   createTask(params: CreateTaskParams): TaskBundle {
-    // ─── Input Validation ───
+    // ─── Input Validation + Normalization ───
     const errors: string[] = [];
     if (!params.title?.trim()) errors.push("title is required");
     if (!params.assignedTo?.trim()) errors.push("assignedTo is required");
@@ -147,13 +147,20 @@ export class TaskManager {
     if (!validPriorities.includes(params.priority)) {
       errors.push(`priority must be one of ${validPriorities.join(", ")}, got "${params.priority}"`);
     }
-    const hasWriteScope =
-      (params.allowedWriteScope?.codePaths?.length ?? 0) > 0 ||
-      (params.allowedWriteScope?.kbPaths?.length ?? 0) > 0;
-    if (!hasWriteScope) errors.push("allowedWriteScope must have at least 1 codePath or kbPath");
+    // Filter empty/whitespace-only entries from write scope paths
+    const normCodePaths = (params.allowedWriteScope?.codePaths ?? []).map((p) => p.trim()).filter(Boolean);
+    const normKbPaths = (params.allowedWriteScope?.kbPaths ?? []).map((p) => p.trim()).filter(Boolean);
+    if (normCodePaths.length === 0 && normKbPaths.length === 0) {
+      errors.push("allowedWriteScope must have at least 1 codePath or kbPath");
+    }
     if (errors.length > 0) {
       throw new Error(`createTask validation failed:\n  - ${errors.join("\n  - ")}`);
     }
+
+    // Normalize string inputs
+    params.title = params.title.trim();
+    params.assignedTo = params.assignedTo.trim();
+    params.context = params.context.trim();
 
     const taskId = `TASK-${shortId()}`;
     const task: TaskBundle = {
