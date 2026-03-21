@@ -605,6 +605,14 @@ export class TaskManager {
 
 // ─── Prompt Builders ───
 
+/** Format allowedWriteScope for human-readable display (codePaths + kbPaths). */
+function formatWriteScope(scope: TaskBundle["allowedWriteScope"]): string {
+  const parts: string[] = [];
+  if (scope.codePaths.length) parts.push(`code: ${scope.codePaths.join(", ")}`);
+  if (scope.kbPaths?.length) parts.push(`kb: ${scope.kbPaths.join(", ")}`);
+  return parts.length > 0 ? parts.join(" | ") : "无限制";
+}
+
 /** Build the dispatch prompt sent to the Dev Agent for implementation. */
 export function buildDevPrompt(
   task: TaskBundle,
@@ -640,16 +648,12 @@ export function buildDevPrompt(
   };
 
   const receiptTemplate = JSON.stringify(
-    { branch: "", summary: "", changedFiles: [], evidence: [], docsUpdated: [], residualRisks: [] },
+    { implementer: "", branch: "", summary: "", changedFiles: [], evidence: [], docsUpdated: [], residualRisks: [], completedAt: "" },
     null,
     2,
   );
 
-  // Build combined allowedWriteScope display (codePaths + kbPaths)
-  const scopeParts: string[] = [];
-  if (task.allowedWriteScope.codePaths.length) scopeParts.push(`code: ${task.allowedWriteScope.codePaths.join(", ")}`);
-  if (task.allowedWriteScope.kbPaths?.length) scopeParts.push(`kb: ${task.allowedWriteScope.kbPaths.join(", ")}`);
-  const scopeDisplay = scopeParts.length > 0 ? scopeParts.join(" | ") : "无限制";
+  const scopeDisplay = formatWriteScope(task.allowedWriteScope);
 
   // Single-pass template substitution to prevent cross-replacement
   const placeholders: Record<string, string> = {
@@ -720,7 +724,7 @@ export function buildReferencePrompt(
   lines.push(`1. 将 implementation receipt 写入 ${taskFilePath} 的 implementationReceipt 字段`);
   lines.push('2. 返回一句话总结 + receipt 文件路径');
   lines.push("");
-  lines.push(`允许修改的文件: ${task.allowedWriteScope.codePaths.join(", ") || "无限制"}`);
+  lines.push(`允许修改的文件: ${formatWriteScope(task.allowedWriteScope)}`);
   lines.push(`禁止修改: ${task.docsMustNotTouch.join(", ") || "无"}`);
 
   return lines.join("\n");

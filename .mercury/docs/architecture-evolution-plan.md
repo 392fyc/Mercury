@@ -43,7 +43,7 @@
 
 **当前运营配置**：暂时仅将 Claude Code 配置为 Main Agent。这是阶段性运营决策，非架构限制。
 
-**迁移路线图**：见 [codex-main-agent-roadmap.md](../codex-main-agent-roadmap.md)
+**迁移路线图**：见 [codex-main-agent-roadmap.md](./codex-main-agent-roadmap.md)
 - 前置：MCP Server 暴露（TASK-MCP-001）
 - 前置：Approval 桥接
 - 前置：Orchestrator 配置解锁
@@ -59,7 +59,7 @@
 
 - `.claude/skills/` (Claude Code) 和 `.agents/skills/` (Codex) 手动对齐
 - 未来可在 `.mercury/skills/` 维护通用源，构建时同步
-- 当前 5 个 skill 已完成双栈: dispatch-task, acceptance-review, web-research, sot-workflow, auto-verify
+- 当前 6 个 skill 已完成双栈: dispatch-task, acceptance-review, web-research, sot-workflow, auto-verify, pr-flow
 
 ### AD-004: Web-Search 强制执行三层机制
 

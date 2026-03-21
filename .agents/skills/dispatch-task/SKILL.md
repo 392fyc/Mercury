@@ -39,7 +39,7 @@ $body = @{
 Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$port" -ContentType "application/json" -Body $body
 ```
 
-4. Create the task with `create_task`. Use `sev-0` to `sev-3`, not human-only labels like `high` or `medium`.
+1. Create the task with `create_task`. Use `sev-0` to `sev-3`, not human-only labels like `high` or `medium`.
 
 ```powershell
 $params = @{
@@ -67,7 +67,7 @@ $task = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$port" -ContentTyp
 $taskId = $task.result.taskId
 ```
 
-5. Create the feature branch after the `taskId` is known:
+1. Create the feature branch after the `taskId` is known:
 
 ```powershell
 git switch develop
@@ -76,7 +76,7 @@ git switch -c "feature/$taskId"
 git push -u origin "feature/$taskId"
 ```
 
-6. Dispatch the task:
+1. Dispatch the task:
 
 ```powershell
 $body = @{

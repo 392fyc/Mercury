@@ -50,7 +50,7 @@ Read these docs on demand when you need the corresponding information:
 - Do not make adapters depend on Obsidian/KB — agents keep their own MCP/SDK architecture.
 - Do not commit without code review.
 - Do not guess SDK/CLI APIs from training data.
-- Do not install software to C drive.
+- Do not install software to C drive. (Windows only; skip on non-Windows environments.)
 - Do not bypass the SoT task flow.
 - Do not execute work outside your assigned role.
 

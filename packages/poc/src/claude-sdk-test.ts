@@ -73,7 +73,8 @@ async function testClaudeSDK() {
   console.log(`  Streaming events: ${streamingEventCount}`);
   console.log(`  Event bus events: ${bus.size}`);
   console.log(`  Last content: ${lastContent.slice(0, 200)}`);
-  console.log(`  ✅ Claude SDK integration: ${messageCount > 0 ? "PASS" : "FAIL"}`);
+  const passed = messageCount > 0 && streamingEventCount > 0;
+  console.log(`  ${passed ? "✅" : "❌"} Claude SDK integration: ${passed ? "PASS" : "FAIL"}`);
   if (streamingEventCount === 0) {
     console.warn("  ⚠️ No streaming events received — streaming may not be working");
   }
