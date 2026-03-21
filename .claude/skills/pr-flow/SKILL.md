@@ -61,17 +61,43 @@ $SUMMARY
 - DoD items completed: $DOD_COUNT
 EOF
 )
+# ── Label derivation: task-type label + severity label ──
+case "$TASK_ID" in
+  TASK-BUG-*|TASK-FIX-*|TASK-SB-FIX-*) TYPE_LABEL=bugfix ;;
+  TASK-DOC-*)                            TYPE_LABEL=documentation ;;
+  TASK-GUI-*|TASK-UI-*)                  TYPE_LABEL=enhancement ;;
+  TASK-WF-*)                             TYPE_LABEL=workflow ;;
+  TASK-PROMPT-*)                         TYPE_LABEL=refactor ;;
+  *)                                     TYPE_LABEL=refactor ;;
+esac
+SEV_LABEL=""
+if [ -n "$TASK_FILE" ]; then
+  SEV=$(jq -r '.priority // empty' "$TASK_FILE" 2>/dev/null)
+  [ -n "$SEV" ] && SEV_LABEL="$SEV"
+fi
+LABELS="$TYPE_LABEL"
+[ -n "$SEV_LABEL" ] && LABELS="$LABELS,$SEV_LABEL"
+
+# ── Create or reuse the PR (with --assignee and --label baked in) ──
 EXISTING_PR=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number // empty')
 if [ -n "$EXISTING_PR" ]; then
   PR_NUMBER=$EXISTING_PR
+  # Ensure labels/assignee are set even on reused PRs
+  gh pr edit "$PR_NUMBER" --add-assignee "@me" --add-label "$LABELS" 2>/dev/null || true
 else
   git push -u origin "$BRANCH"
-  PR_URL=$(gh pr create --base develop --title "$TASK_ID: $SUMMARY" --body "$PR_BODY")
+  PR_URL=$(gh pr create --base develop \
+    --title "$TASK_ID: $SUMMARY" \
+    --body "$PR_BODY" \
+    --assignee "@me" \
+    --label "$LABELS")
   PR_NUMBER=$(gh pr view "$PR_URL" --json number --jq '.number')
 fi
-case "$TASK_ID" in TASK-BUG-*|TASK-FIX-*) LABEL=bugfix ;; TASK-DOC-*) LABEL=documentation ;; TASK-GUI-*) LABEL=enhancement ;; *) LABEL=refactor ;; esac
-gh pr edit "$PR_NUMBER" --add-assignee "@me" --add-label "$LABEL"
-if ! gh api repos/{owner}/{repo}/issues/"$PR_NUMBER"/comments --jq '.[].body' | grep -Fq "@coderabbitai review"; then gh pr comment "$PR_NUMBER" --body "@coderabbitai review"; fi
+
+# ── Trigger CodeRabbit review if not already requested ──
+if ! gh api repos/{owner}/{repo}/issues/"$PR_NUMBER"/comments --jq '.[].body' 2>/dev/null | grep -Fq "@coderabbitai review"; then
+  gh pr comment "$PR_NUMBER" --body "@coderabbitai review"
+fi
 ```
 
 ### Step 2: Poll CI Checks
