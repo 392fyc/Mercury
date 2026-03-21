@@ -1,11 +1,18 @@
 language: "zh-CN"
+tone_instructions: "提供架构层面的洞察，关注系统设计、可扩展性和长期可维护性。同时检查文档与代码的一致性。"
 
 reviews:
   profile: "assertive"
+  sequence_diagrams: true
+  high_level_summary: true
+  high_level_summary_in_walkthrough: true
+  related_issues: true
+  related_prs: true
+  assess_linked_issues: true
+  estimate_code_review_effort: true
   auto_review:
     enabled: true
     base_branches: ["develop", "master"]
-  high_level_summary: true
   path_filters:
     - "!**/*.lock"
     - "!dist/**"
@@ -14,13 +21,20 @@ reviews:
     - "!.mercury/sessions.json"
   path_instructions:
     - path: "packages/orchestrator/**"
-      instructions: "关注 task 状态机一致性、event bus 事件命名、scope 验证、异步流程完整性"
+      instructions: "关注架构模式、task 状态机一致性、event bus 事件命名、scope 验证、异步流程完整性、系统设计影响"
     - path: "packages/sdk-adapters/**"
-      instructions: "关注 adapter 接口一致性、错误处理、session 生命周期管理"
+      instructions: "关注 adapter 接口一致性、错误处理、session 生命周期管理、MCP 协议兼容性"
     - path: "packages/core/**"
-      instructions: "关注 TypeScript 类型安全、接口向后兼容"
+      instructions: "关注 TypeScript 类型安全、接口向后兼容、依赖管理"
     - path: "packages/gui/**"
       instructions: "关注 Tauri 2 API 使用、Vue 3 reactivity、内存泄漏"
+    - path: ".mercury/**"
+      instructions: "关注角色定义一致性、模板占位符完整性、文档交叉引用正确性"
+
+knowledge_base:
+  linked_repositories:
+    - repository: "392fyc/Mercury"
+      instructions: "Mercury 主仓库：多Agent编排系统，包含 orchestrator、sdk-adapters、core types、GUI"
 
 chat:
   auto_reply: true

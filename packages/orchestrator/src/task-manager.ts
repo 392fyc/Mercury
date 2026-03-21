@@ -6,6 +6,8 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { EventBus } from "@mercury/core";
 import type {
   TaskBundle,
@@ -133,6 +135,33 @@ export class TaskManager {
   // ─── Task CRUD ───
 
   createTask(params: CreateTaskParams): TaskBundle {
+    // ─── Input Validation + Normalization ───
+    const errors: string[] = [];
+    if (!params.title?.trim()) errors.push("title is required");
+    if (!params.assignedTo?.trim()) errors.push("assignedTo is required");
+    if (!params.context?.trim()) errors.push("context is required");
+    if (!params.definitionOfDone?.length) errors.push("definitionOfDone must have at least 1 item");
+    if (!params.codeScope) errors.push("codeScope is required");
+    if (!params.readScope) errors.push("readScope is required");
+    const validPriorities = ["sev-0", "sev-1", "sev-2", "sev-3"];
+    if (!validPriorities.includes(params.priority)) {
+      errors.push(`priority must be one of ${validPriorities.join(", ")}, got "${params.priority}"`);
+    }
+    // Filter empty/whitespace-only entries from write scope paths
+    const normCodePaths = (params.allowedWriteScope?.codePaths ?? []).map((p) => p.trim()).filter(Boolean);
+    const normKbPaths = (params.allowedWriteScope?.kbPaths ?? []).map((p) => p.trim()).filter(Boolean);
+    if (normCodePaths.length === 0 && normKbPaths.length === 0) {
+      errors.push("allowedWriteScope must have at least 1 codePath or kbPath");
+    }
+    if (errors.length > 0) {
+      throw new Error(`createTask validation failed:\n  - ${errors.join("\n  - ")}`);
+    }
+
+    // Normalize string inputs
+    params.title = params.title.trim();
+    params.assignedTo = params.assignedTo.trim();
+    params.context = params.context.trim();
+
     const taskId = `TASK-${shortId()}`;
     const task: TaskBundle = {
       taskId,
@@ -147,7 +176,7 @@ export class TaskManager {
       branch: params.branch,
       codeScope: params.codeScope,
       readScope: params.readScope,
-      allowedWriteScope: params.allowedWriteScope,
+      allowedWriteScope: { codePaths: normCodePaths, kbPaths: normKbPaths },
       docsMustUpdate: params.docsMustUpdate ?? [],
       docsMustNotTouch: params.docsMustNotTouch ?? [],
       definitionOfDone: params.definitionOfDone,
@@ -177,7 +206,7 @@ export class TaskManager {
     return task;
   }
 
-  /** Get task — in-memory first, KB fallback. */
+  /** Get task — in-memory only. Use getTaskAsync() for KB-fresh reads. */
   getTask(taskId: string): TaskBundle | undefined {
     return this.tasks.get(taskId);
   }
@@ -339,6 +368,17 @@ export class TaskManager {
         const allowed = codePaths.some((prefix) => file.startsWith(prefix));
         if (!allowed) {
           violations.push({ file, reason: "Outside allowedWriteScope.codePaths" });
+        }
+      }
+    }
+
+    // Check docsUpdated against allowedWriteScope.kbPaths
+    const kbPaths = task.allowedWriteScope.kbPaths ?? [];
+    if (kbPaths.length > 0) {
+      for (const doc of receipt.docsUpdated) {
+        const allowed = kbPaths.some((prefix) => doc.startsWith(prefix));
+        if (!allowed) {
+          violations.push({ file: doc, reason: "Outside allowedWriteScope.kbPaths" });
         }
       }
     }
@@ -583,14 +623,36 @@ export class TaskManager {
 
 // ─── Prompt Builders ───
 
-/** Build the dispatch prompt sent to the Dev Agent for implementation. */
-export function buildDevPrompt(task: TaskBundle, kbContext?: string): string {
-  const lines: string[] = [];
+/** Format allowedWriteScope for human-readable display (codePaths + kbPaths). */
+function formatWriteScope(scope: TaskBundle["allowedWriteScope"]): string {
+  const parts: string[] = [];
+  if (scope.codePaths.length) parts.push(`code: ${scope.codePaths.join(", ")}`);
+  if (scope.kbPaths?.length) parts.push(`kb: ${scope.kbPaths.join(", ")}`);
+  return parts.length > 0 ? parts.join(" | ") : "无限制";
+}
 
-  lines.push(`# Task: ${task.title} [${task.taskId}]`);
-  lines.push("");
+/**
+ * Build the dispatch prompt sent to the Dev Agent for implementation.
+ * NOTE: Template is loaded synchronously per call. Future optimization:
+ * preload + cache at TaskManager.init() with mtime-based refresh (tracked in TASK-WF-001).
+ */
+export function buildDevPrompt(
+  task: TaskBundle,
+  kbContext?: string,
+  basePath = process.cwd(),
+): string {
+  const templatePath = resolve(basePath, ".mercury", "templates", "dispatch-prompt.template.md");
+  let template: string;
+  try {
+    template = readFileSync(templatePath, "utf-8");
+  } catch (err) {
+    // Fallback: inline template if file not found — log warning for debugging
+    console.warn(
+      `[TaskManager] dispatch template not found at ${templatePath}: ${err instanceof Error ? err.message : String(err)}. Using fallback.`,
+    );
+    template = fallbackDevTemplate();
+  }
 
-  // Agents First: structured JSON block for machine-readable task metadata
   const bundleMeta = {
     taskId: task.taskId,
     assignee: task.assignee ?? { agentId: task.assignedTo },
@@ -606,33 +668,55 @@ export function buildDevPrompt(task: TaskBundle, kbContext?: string): string {
     reworkCount: task.reworkCount,
     maxReworks: task.maxReworks,
   };
-  lines.push("## Task Bundle (machine-readable)");
-  lines.push("```json");
-  lines.push(JSON.stringify(bundleMeta, null, 2));
-  lines.push("```");
-  lines.push("");
 
-  lines.push("## Context");
-  lines.push(task.context);
-  lines.push("");
-
-  if (kbContext) {
-    lines.push("## Project Knowledge Base Context");
-    lines.push(kbContext);
-    lines.push("");
-  }
-
-  lines.push("## Completion Instructions");
-  lines.push("When complete, output a JSON receipt as your final message:");
-  lines.push("```json");
-  lines.push(JSON.stringify(
-    { branch: "", summary: "", changedFiles: [], evidence: [], docsUpdated: [], residualRisks: [] },
+  const receiptTemplate = JSON.stringify(
+    { implementer: "", branch: "", summary: "", changedFiles: [], evidence: [], docsUpdated: [], residualRisks: [], completedAt: "" },
     null,
     2,
-  ));
-  lines.push("```");
+  );
 
-  return lines.join("\n");
+  const scopeDisplay = formatWriteScope(task.allowedWriteScope);
+
+  // Single-pass template substitution to prevent cross-replacement
+  const placeholders: Record<string, string> = {
+    "{{taskId}}": `${task.title} [${task.taskId}]`,
+    "{{context}}": task.context,
+    "{{taskFilePath}}": `{Project}_KB/10-tasks/${task.taskId}.json`,
+    "{{allowedWriteScope}}": scopeDisplay,
+    "{{docsMustNotTouch}}": task.docsMustNotTouch.join(", ") || "无",
+    "{{bundleJson}}": JSON.stringify(bundleMeta, null, 2),
+    "{{receiptTemplate}}": receiptTemplate,
+  };
+  const placeholderPattern = new RegExp(
+    Object.keys(placeholders).map((k) => k.replace(/[{}]/g, "\\$&")).join("|"),
+    "g",
+  );
+  let result = template.replace(placeholderPattern, (match) => placeholders[match] ?? match);
+
+  if (kbContext) {
+    result += `\n\n## Project Knowledge Base Context\n${kbContext}`;
+  }
+
+  return result;
+}
+
+function fallbackDevTemplate(): string {
+  return [
+    "# Dispatch: {{taskId}}",
+    "",
+    "{{context}}",
+    "",
+    "## Task Bundle (machine-readable)",
+    "```json",
+    "{{bundleJson}}",
+    "```",
+    "",
+    "## Completion Instructions",
+    "When complete, output a JSON receipt as your final message:",
+    "```json",
+    "{{receiptTemplate}}",
+    "```",
+  ].join("\n");
 }
 
 /**
@@ -662,7 +746,7 @@ export function buildReferencePrompt(
   lines.push(`1. 将 implementation receipt 写入 ${taskFilePath} 的 implementationReceipt 字段`);
   lines.push('2. 返回一句话总结 + receipt 文件路径');
   lines.push("");
-  lines.push(`允许修改的文件: ${task.allowedWriteScope.codePaths.join(", ") || "无限制"}`);
+  lines.push(`允许修改的文件: ${formatWriteScope(task.allowedWriteScope)}`);
   lines.push(`禁止修改: ${task.docsMustNotTouch.join(", ") || "无"}`);
 
   return lines.join("\n");
@@ -672,56 +756,77 @@ export function buildReferencePrompt(
 export function buildAcceptancePrompt(
   task: TaskBundle,
   acceptance: AcceptanceBundle,
+  basePath = process.cwd(),
 ): string {
-  const lines: string[] = [];
+  const templatePath = resolve(basePath, ".mercury", "templates", "acceptance-prompt.template.md");
+  let template: string;
+  try {
+    template = readFileSync(templatePath, "utf-8");
+  } catch (err) {
+    console.warn(
+      `[TaskManager] acceptance template not found at ${templatePath}: ${err instanceof Error ? err.message : String(err)}. Using fallback.`,
+    );
+    template = fallbackAcceptanceTemplate();
+  }
 
-  lines.push(`# Acceptance Review: ${task.title} [${acceptance.acceptanceId}]`);
-  lines.push("");
-
-  // Agents First: structured acceptance metadata
   const acceptanceMeta = {
     acceptanceId: acceptance.acceptanceId,
     linkedTaskId: acceptance.linkedTaskId,
     acceptor: acceptance.acceptor,
     scope: acceptance.scope,
-    blindInputPolicy: acceptance.blindInputPolicy,
     definitionOfDone: task.definitionOfDone,
   };
-  lines.push("## Acceptance Bundle (machine-readable)");
-  lines.push("```json");
-  lines.push(JSON.stringify(acceptanceMeta, null, 2));
-  lines.push("```");
-  lines.push("");
 
-  // Blind review: only expose changedFiles and branch — NOT summary/evidence/residualRisks
-  if (task.implementationReceipt) {
-    const blindReceipt = {
-      branch: task.implementationReceipt.branch,
-      changedFiles: task.implementationReceipt.changedFiles,
-      docsUpdated: task.implementationReceipt.docsUpdated,
-    };
-    lines.push("## Implementation (blind — changed files only)");
-    lines.push("```json");
-    lines.push(JSON.stringify(blindReceipt, null, 2));
-    lines.push("```");
-    lines.push("");
-  }
+  const blindReceipt = task.implementationReceipt
+    ? {
+        branch: task.implementationReceipt.branch,
+        changedFiles: task.implementationReceipt.changedFiles,
+        docsUpdated: task.implementationReceipt.docsUpdated,
+      }
+    : { branch: "", changedFiles: [], docsUpdated: [] };
 
-  lines.push("## Instructions");
-  lines.push("BLIND REVIEW: You are FORBIDDEN from referencing the developer's self-assessment,");
-  lines.push("evidence descriptions, or risk evaluations. Evaluate ONLY from code, tests, and runtime output.");
-  lines.push("");
-  lines.push("Review the implementation against the definition of done and scope above.");
-  lines.push("Provide your review as JSON:");
-  lines.push("```json");
-  lines.push(JSON.stringify(
+  const verdictTemplate = JSON.stringify(
     { verdict: "pass|partial|fail|blocked", findings: [], recommendations: [] },
     null,
     2,
-  ));
-  lines.push("```");
+  );
 
-  return lines.join("\n");
+  // Single-pass template substitution
+  const accPlaceholders: Record<string, string> = {
+    "{{taskTitle}}": task.title,
+    "{{acceptanceId}}": acceptance.acceptanceId,
+    "{{acceptanceJson}}": JSON.stringify(acceptanceMeta, null, 2),
+    "{{blindReceiptJson}}": JSON.stringify(blindReceipt, null, 2),
+    "{{verdictTemplate}}": verdictTemplate,
+  };
+  const accPattern = new RegExp(
+    Object.keys(accPlaceholders).map((k) => k.replace(/[{}]/g, "\\$&")).join("|"),
+    "g",
+  );
+  return template.replace(accPattern, (match) => accPlaceholders[match] ?? match);
+}
+
+function fallbackAcceptanceTemplate(): string {
+  return [
+    "# Acceptance Review: {{taskTitle}} [{{acceptanceId}}]",
+    "",
+    "## Acceptance Bundle (machine-readable)",
+    "```json",
+    "{{acceptanceJson}}",
+    "```",
+    "",
+    "## Implementation (blind — changed files only)",
+    "```json",
+    "{{blindReceiptJson}}",
+    "```",
+    "",
+    "## Instructions",
+    "BLIND REVIEW: Evaluate ONLY from code, tests, and runtime output.",
+    "Provide your review as JSON:",
+    "```json",
+    "{{verdictTemplate}}",
+    "```",
+  ].join("\n");
 }
 
 /** Build the rework prompt sent to the Dev Agent after acceptance failure. */

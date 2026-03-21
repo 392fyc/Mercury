@@ -1,5 +1,5 @@
 /**
- * Role Prompt Builder — generates role-specific system prompts from ROLE_CARDS.
+ * Role Prompt Builder — generates role-specific system prompts from YAML role definitions.
  *
  * Each session receives a system prompt tailored to its role, enforcing:
  * - Execution permissions (code/no-code)
@@ -9,40 +9,19 @@
  * - Blind acceptance policy (for acceptance role)
  */
 
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import {
-  ROLE_CARDS,
-  type AgentRole,
-  type TaskBundle,
-  type AcceptanceBundle,
+import type {
+  AgentRole,
+  TaskBundle,
+  AcceptanceBundle,
 } from "@mercury/core";
-
-export function loadRoleInstructions(
-  role: AgentRole,
-  basePath = process.cwd(),
-): string | undefined {
-  const instructionsPath = resolve(basePath, ".mercury", "roles", `${role}.md`);
-
-  try {
-    const content = readFileSync(instructionsPath, "utf-8").trim();
-    return content || undefined;
-  } catch (error) {
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      (error.code === "ENOENT" || error.code === "ENOTDIR")
-    ) {
-      return undefined;
-    }
-
-    throw error;
-  }
-}
+import { loadRoleCard } from "./role-loader.js";
 
 /**
  * Build a role-scoped system prompt for dev/main/research/design sessions.
+ *
+ * basePath controls where .mercury/roles/{role}.yaml is resolved from.
+ * If roleInstructions is provided it overrides the YAML instructions block;
+ * otherwise instructions are read from the YAML file via loadRoleCard().
  */
 export function buildRoleSystemPrompt(
   role: AgentRole,
@@ -50,8 +29,9 @@ export function buildRoleSystemPrompt(
   sharedProjectContext?: string,
   roleProjectContext?: string,
   roleInstructions?: string,
+  basePath?: string,
 ): string {
-  const card = ROLE_CARDS[role];
+  const card = loadRoleCard(role, basePath);
   const lines: string[] = [];
 
   // Role declaration
@@ -85,9 +65,11 @@ export function buildRoleSystemPrompt(
   lines.push(`You produce: ${card.outputBoundary.join(", ")}`);
   lines.push("");
 
-  if (roleInstructions) {
+  // Role-specific instructions: explicit parameter overrides YAML
+  const instructions = roleInstructions ?? card.instructions;
+  if (instructions) {
     lines.push("## Role-Specific Instructions");
-    lines.push(roleInstructions);
+    lines.push(instructions);
     lines.push("");
   }
 
@@ -139,8 +121,9 @@ export function buildAcceptanceRolePrompt(
   acceptance: AcceptanceBundle,
   sharedProjectContext?: string,
   roleProjectContext?: string,
+  basePath?: string,
 ): string {
-  const card = ROLE_CARDS.acceptance;
+  const card = loadRoleCard("acceptance", basePath);
   const lines: string[] = [];
 
   // Role declaration
@@ -148,9 +131,13 @@ export function buildAcceptanceRolePrompt(
   lines.push(`You are assigned the **acceptance** role. ${card.description}`);
   lines.push("");
 
-  // Execution permissions
+  // Execution permissions — driven by YAML role definition
   lines.push("## Execution Permissions");
-  lines.push("You MAY execute code, run tests, and inspect runtime output for verification.");
+  if (card.canExecuteCode) {
+    lines.push("You MAY execute code, run tests, and inspect runtime output for verification.");
+  } else {
+    lines.push("You MUST NOT execute code or modify files. Review artifacts only.");
+  }
   lines.push("");
 
   // Blind review policy

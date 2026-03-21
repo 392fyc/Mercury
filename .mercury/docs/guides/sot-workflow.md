@@ -34,12 +34,29 @@ Main 创建 Task → 派发
 | 0a. Report | 任意角色 | 填写 Issue（模板: `issue-bundle.template.json`） |
 | 0b. Triage | Main | 评估优先级，关联 Task |
 
+## Session Handoff
+
+TaskBundle + git 分支状态是天然的 handoff 机制：
+
+| 信息 | 来源 | 说明 |
+|------|------|------|
+| 任务上下文 | `TaskBundle.context` | 完整任务描述 |
+| 实施进度 | `TaskBundle.implementationReceipt` | 已完成工作 |
+| 代码状态 | `git log <branch>` | 分支上的所有 commit |
+| 未完成项 | `TaskBundle.definitionOfDone` vs receipt | 对比可知剩余 |
+| 历史 rework | `TaskBundle.reworkHistory` | 之前的尝试和反馈 |
+
+**Handoff JSON 降级为可选归档**：仅在跨 session 需要额外人工备注时手动创建。
+日常任务流转不再需要独立的 handoff 文件。
+
 ## 补充模板
 
-| 模板 | 用途 |
-|------|------|
-| `handoff-packet.template.json` | Session 转交 |
-| `session-context.template.json` | Milestone 快照 |
-| `dispatch-prompt.template.md` | 派发 prompt 模板 |
+| 模板 | 位置 | 用途 |
+|------|------|------|
+| `handoff-packet.template.json` | `{Project}_KB/99-templates/` | Session 转交（可选归档） |
+| `session-context.template.json` | `{Project}_KB/99-templates/` | Milestone 快照 |
+| `dispatch-prompt.template.md` | `.mercury/templates/` | Dev dispatch prompt（运行时填充） |
+| `acceptance-prompt.template.md` | `.mercury/templates/` | Acceptance dispatch prompt（运行时填充） |
 
-模板位置: `{Project}_KB/99-templates/`
+KB 模板位置: `{Project}_KB/99-templates/`
+代码模板位置: `.mercury/templates/`

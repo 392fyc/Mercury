@@ -1,5 +1,7 @@
 #!/bin/bash
-# GATE: block writes to C drive and adapter-KB coupling.
+# GATE: block software installation to C drive + adapter-KB coupling.
+# Allows normal file writes to C drive (configs, caches, user data).
+# Only blocks paths that indicate software installation (Program Files, etc).
 # Token cost: ZERO. No external deps.
 
 INPUT=$(cat)
@@ -7,9 +9,9 @@ FILE=$(echo "$INPUT" | grep -oP '"file_path"\s*:\s*"\K[^"]*' | head -1)
 
 [ -z "$FILE" ] && exit 0
 
-# Block C drive writes
-if echo "$FILE" | grep -qiE '^[Cc]:[/\\]'; then
-  echo "Blocked: CLAUDE.md — do not write to C drive when D drive is available." >&2
+# Block software installation to C drive (Program Files, installers, etc)
+if echo "$FILE" | grep -qiE '^[Cc]:[/\\](Program Files|Program Files \(x86\)|ProgramData|Windows|opt)[/\\]'; then
+  echo "Blocked: CLAUDE.md — install software to D:\\Program Files, not C drive." >&2
   exit 2
 fi
 

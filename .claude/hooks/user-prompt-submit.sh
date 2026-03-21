@@ -14,16 +14,16 @@ else
   PROMPT=$(echo "$INPUT" | sed -n 's/.*"prompt"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
 fi
 
-# ── Detect if prompt likely involves SDK/API/CLI/external tool work ──
+# ── Detect if prompt involves intent requiring external verification ──
 NEEDS_RESEARCH=""
 
-# Check for SDK/package mentions
-echo "$PROMPT" | grep -qiE 'sdk|api|cli|codex|claude.code|openai|anthropic|tauri|obsidian|npm|package' && NEEDS_RESEARCH="1"
+# Intent keywords (English): research, verify, review, audit, investigate, compare, evaluate, validate
+echo "$PROMPT" | grep -qiE 'research|verify|review|audit|investigate|compare|evaluate|validate|look.?up|check.*(doc|spec|api)' && NEEDS_RESEARCH="1"
 
-# Check for integration/research/implementation keywords
-echo "$PROMPT" | grep -qiE 'integrate|implement|install|upgrade|migrate|version|resume|session|mcp' && NEEDS_RESEARCH="1"
+# Intent keywords (Chinese): 研究、验证、审查、审核、调查、对比、评估、校验、查阅
+echo "$PROMPT" | grep -qE '研究|验证|审查|审核|调查|对比|评估|校验|查阅|核实|考察' && NEEDS_RESEARCH="1"
 
-# If no research-sensitive keywords, stay silent (no context injection)
+# If no research-intent keywords, stay silent (no context injection)
 [ -z "$NEEDS_RESEARCH" ] && exit 0
 
 # ── Inject mandatory context ──

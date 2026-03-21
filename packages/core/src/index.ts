@@ -1,5 +1,5 @@
 export { EventBus } from "./event-bus.js";
-export { makeRoleSlotKey, parseRoleSlotKey, ROLE_CARDS, isStreamingEvent } from "./types.js";
+export { ROLE_CARDS, makeRoleSlotKey, parseRoleSlotKey, isStreamingEvent } from "./types.js";
 export type {
   AcceptanceBundle,
   AcceptanceVerdict,

@@ -10,7 +10,7 @@
  * Run: pnpm poc:claude
  */
 
-import { EventBus } from "@mercury/core";
+import { EventBus, isStreamingEvent } from "@mercury/core";
 import { ClaudeAdapter } from "@mercury/sdk-adapters";
 
 async function testClaudeSDK() {
@@ -44,17 +44,21 @@ async function testClaudeSDK() {
   });
 
   let messageCount = 0;
+  let streamingEventCount = 0;
   let lastContent = "";
 
-  for await (const message of claude.sendPrompt(session.sessionId, prompt)) {
+  for await (const item of claude.sendPrompt(session.sessionId, prompt)) {
+    if (isStreamingEvent(item)) {
+      streamingEventCount++;
+      continue;
+    }
     messageCount++;
-    lastContent = message.content;
+    lastContent = item.content;
     bus.emit("agent.message.receive", claude.agentId, session.sessionId, {
-      role: message.role,
-      contentPreview: message.content.slice(0, 200),
-      metadata: message.metadata,
+      role: item.role,
+      contentPreview: item.content.slice(0, 200),
     });
-    console.log(`  [${message.role}] ${message.content.slice(0, 200)}`);
+    console.log(`  [${item.role}] ${item.content.slice(0, 200)}`);
   }
 
   // Step 3: End session
@@ -66,9 +70,15 @@ async function testClaudeSDK() {
   // Report
   console.log("\n─── Results ───");
   console.log(`  Messages received: ${messageCount}`);
+  console.log(`  Streaming events: ${streamingEventCount}`);
   console.log(`  Event bus events: ${bus.size}`);
   console.log(`  Last content: ${lastContent.slice(0, 200)}`);
-  console.log(`  ✅ Claude SDK integration: ${messageCount > 0 ? "PASS" : "FAIL"}`);
+  const passed = messageCount > 0 && streamingEventCount > 0;
+  console.log(`  ${passed ? "✅" : "❌"} Claude SDK integration: ${passed ? "PASS" : "FAIL"}`);
+  if (!passed) {
+    console.error(`  ❌ Test failed: messageCount=${messageCount}, streamingEventCount=${streamingEventCount}`);
+    process.exitCode = 1;
+  }
 }
 
 testClaudeSDK().catch((err) => {
