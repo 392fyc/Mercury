@@ -3,6 +3,11 @@
  *
  * Spawns `codex mcp-server` as a child process and communicates via
  * the standard MCP protocol using @modelcontextprotocol/sdk.
+ *
+ * Verified against:
+ *   - @modelcontextprotocol/sdk v1.27.1 — https://www.npmjs.com/package/@modelcontextprotocol/sdk
+ *   - codex mcp-server — https://developers.openai.com/codex/guides/agents-sdk
+ *   - MCP TS SDK source — https://github.com/modelcontextprotocol/typescript-sdk
  */
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -68,121 +73,113 @@ export class CodexMCPTransport {
     this.onError = options?.onError;
   }
 
-  /** Ensure the MCP client is connected. Idempotent — only spawns once. */
+  /**
+   * Ensure the MCP client is connected. Idempotent — only spawns once.
+   *
+   * Checks startPromise BEFORE client to avoid race where concurrent
+   * callers see a non-null client before connect() completes. On failure,
+   * clears startPromise so the next call can retry.
+   */
   async ensureStarted(): Promise<void> {
-    if (this.client && !this.closed) return;
     if (this.startPromise) return this.startPromise;
-    this.startPromise = this.start();
+    if (this.client && !this.closed) return;
+    this.startPromise = this.start().catch((error) => {
+      this.client = null;
+      this.transport = null;
+      this.startPromise = null;
+      throw error;
+    });
     return this.startPromise;
   }
 
   private async start(): Promise<void> {
     this.closed = false;
 
-    this.transport = new StdioClientTransport({
+    const stdioTransport = new StdioClientTransport({
       command: process.platform === "win32" ? "codex.cmd" : "codex",
       args: ["mcp-server"],
       stderr: "pipe",
     });
 
-    this.client = new Client(
+    const client = new Client(
       { name: "mercury-orchestrator", version: "0.1.0" },
       {
         capabilities: {
-          // Declare elicitation support so the server can send approval requests
           elicitation: {},
         },
       },
     );
 
-    // Register custom notification handler for codex/event streaming
-    // The MCP SDK setNotificationHandler requires a Zod schema; for custom
-    // notifications we hook into the low-level transport message handler.
-    const origOnMessage = this.transport.onmessage;
-    this.transport.onmessage = (message: JSONRPCMessage) => {
-      this.interceptNotification(message);
-      origOnMessage?.call(this.transport, message);
-    };
-
-    this.transport.onerror = (error) => {
+    stdioTransport.onerror = (error) => {
       this.onError?.(error);
     };
 
-    this.transport.onclose = () => {
+    stdioTransport.onclose = () => {
       this.client = null;
       this.transport = null;
       this.startPromise = null;
     };
 
-    await this.client.connect(this.transport);
+    // Connect first, THEN register custom message handlers.
+    // The SDK's Protocol.connect() sets up its own onmessage chain on the
+    // transport. We wrap it AFTER connect so our interceptors sit in front
+    // of the SDK's handler rather than being overwritten by it.
+    await client.connect(stdioTransport);
 
-    // Register elicitation request handler if callback provided
-    // Codex MCP server sends elicitation/exec_approval and elicitation/patch_approval
-    // as server→client requests. We handle them generically.
-    if (this.onElicitation) {
-      this.setupElicitationHandlers();
-    }
-  }
+    // Store references only after successful connect
+    this.client = client;
+    this.transport = stdioTransport;
 
-  /**
-   * Intercept raw JSON-RPC messages to capture `notifications/codex/event`
-   * which are custom Codex-specific notifications not in the MCP spec.
-   */
-  private interceptNotification(message: JSONRPCMessage): void {
-    if (!this.onEvent) return;
-    const msg = message as Record<string, unknown>;
-    if (msg.method === "notifications/codex/event" && msg.params) {
-      try {
-        this.onEvent(msg.params as CodexEventNotification);
-      } catch {
-        // Event handler errors are non-fatal
-      }
-    }
-  }
+    // Wrap the SDK's onmessage to intercept codex-specific notifications
+    // and elicitation server→client requests.
+    const sdkOnMessage = stdioTransport.onmessage;
+    const elicitationHandler = this.onElicitation;
 
-  /**
-   * Register handlers for elicitation requests from the Codex MCP server.
-   * These are server→client requests for command/file approval.
-   */
-  private setupElicitationHandlers(): void {
-    if (!this.client || !this.onElicitation) return;
-
-    // The Codex MCP server may send elicitation requests with various method
-    // names. We use the low-level transport message interception since these
-    // aren't standard MCP elicitation/create requests — they're Codex-specific.
-    //
-    // We override the transport.onmessage to intercept JSON-RPC requests
-    // (messages with 'id' and 'method' fields that expect a response).
-    const prevOnMessage = this.transport!.onmessage;
-    const handler = this.onElicitation;
-
-    this.transport!.onmessage = (message: JSONRPCMessage) => {
+    stdioTransport.onmessage = (message: JSONRPCMessage) => {
       const msg = message as Record<string, unknown>;
-      const isRequest = typeof msg.id !== "undefined" && typeof msg.method === "string" && !("result" in msg) && !("error" in msg);
 
-      if (isRequest && typeof msg.method === "string" && msg.method.startsWith("elicitation/")) {
-        // Handle asynchronously, respond via transport.send()
-        void (async () => {
-          try {
-            const result = await handler(msg.method as string, (msg.params ?? {}) as Record<string, unknown>);
-            await this.transport!.send({
-              jsonrpc: "2.0",
-              id: msg.id,
-              result,
-            } as JSONRPCMessage);
-          } catch (err) {
-            await this.transport!.send({
-              jsonrpc: "2.0",
-              id: msg.id,
-              error: { code: -32000, message: err instanceof Error ? err.message : String(err) },
-            } as JSONRPCMessage);
-          }
-        })();
-        return; // Don't pass to the SDK's own handler
+      // Intercept codex/event notifications for streaming
+      if (msg.method === "notifications/codex/event" && msg.params && this.onEvent) {
+        try {
+          this.onEvent(msg.params as CodexEventNotification);
+        } catch {
+          // Event handler errors are non-fatal
+        }
       }
 
-      // Pass non-elicitation messages to the SDK
-      prevOnMessage?.call(this.transport, message);
+      // Intercept elicitation server→client requests for approval bridge
+      if (elicitationHandler) {
+        const isRequest = typeof msg.id !== "undefined"
+          && typeof msg.method === "string"
+          && !("result" in msg)
+          && !("error" in msg);
+
+        if (isRequest && (msg.method as string).startsWith("elicitation/")) {
+          void (async () => {
+            try {
+              const result = await elicitationHandler(
+                msg.method as string,
+                (msg.params ?? {}) as Record<string, unknown>,
+              );
+              await stdioTransport.send({
+                jsonrpc: "2.0",
+                id: msg.id,
+                result,
+              } as JSONRPCMessage);
+            } catch (err) {
+              await stdioTransport.send({
+                jsonrpc: "2.0",
+                id: msg.id,
+                error: { code: -32000, message: err instanceof Error ? err.message : String(err) },
+              } as JSONRPCMessage);
+            }
+          })();
+          return; // Don't pass elicitation requests to SDK
+        }
+      }
+
+      // All other messages go to SDK's handler chain
+      sdkOnMessage?.call(stdioTransport, message);
     };
   }
 
@@ -192,7 +189,7 @@ export class CodexMCPTransport {
     const result = await this.client!.callTool(
       { name: "codex", arguments: params as unknown as Record<string, unknown> },
       undefined,
-      { timeout: 600_000 }, // 10 min for long tasks
+      { timeout: 600_000 },
     );
     return result as unknown as CodexToolResult;
   }

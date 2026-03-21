@@ -52,8 +52,10 @@ export class RpcTransport {
     });
 
     rl.on("close", () => {
-      this.log("stdin closed, shutting down");
-      process.exit(0);
+      this.log("stdin closed");
+      // Do not call process.exit() — if an HTTP server is still listening,
+      // the Node.js event loop will keep the process alive naturally.
+      // In Tauri sidecar mode the GUI will SIGTERM/SIGINT to shut down.
     });
 
     this.log("RPC transport started");

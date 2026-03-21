@@ -135,6 +135,8 @@ export class CodexMCPAdapter implements AgentAdapter {
 
   private sessions = new Map<string, MCPSession>();
   private threadToSession = new Map<string, string>(); // threadId → sessionId
+  /** Sessions awaiting their first threadId (first-turn notification routing). */
+  private pendingSessionIds = new Set<string>();
   private sharedSystemPrompt?: string;
   private transport: CodexMCPTransport | null = null;
 
@@ -280,57 +282,73 @@ export class CodexMCPAdapter implements AgentAdapter {
 
     const transport = this.ensureTransport();
 
-    try {
-      let result: CodexToolResult;
-
-      if (record.threadId) {
-        // Continue existing session via codex-reply(threadId, prompt)
-        result = await transport.callCodexReply({
-          threadId: record.threadId,
-          prompt: effectivePrompt,
-        });
-      } else {
-        // Start new session via codex(prompt, ...)
-        const toolParams: CodexToolParams = {
-          prompt: effectivePrompt,
-          cwd: record.cwd,
-          sandbox: DEFAULT_SANDBOX_MODE,
-          "approval-policy": DEFAULT_APPROVAL_POLICY,
-        };
-        if (this.config.model) toolParams.model = this.config.model;
-
-        result = await transport.callCodex(toolParams);
-
-        // Extract threadId from structuredContent for session continuation
-        if (result.structuredContent?.threadId) {
-          record.threadId = result.structuredContent.threadId;
-          record.info.resumeToken = record.threadId;
-          this.threadToSession.set(record.threadId, sessionId);
-        }
-      }
-
-      // Push final response message
-      const text = this.extractTextFromResult(result);
-      if (text) {
-        stream.push({
-          role: "assistant",
-          content: text,
-          timestamp: Date.now(),
-        });
-      }
-
-      if (result.isError) {
-        stream.fail(new Error(text || "Codex tool call returned an error"));
-      } else {
-        stream.finish();
-      }
-    } catch (err) {
-      stream.fail(err instanceof Error ? err : new Error(String(err)));
-    } finally {
-      record.activeTurn = null;
+    // Fix #3: For first-turn calls (no threadId yet), register a temporary
+    // session mapping keyed by sessionId so that notifications arriving before
+    // structuredContent.threadId can still be routed via pendingSessionIds.
+    if (!record.threadId) {
+      this.pendingSessionIds.add(sessionId);
     }
 
+    // Fix #1: Decouple tool call from stream iteration. Launch the MCP tool
+    // call in the background so yield* can start consuming events immediately
+    // as they arrive via notifications, rather than buffering until callTool returns.
+    const toolCallPromise = (async () => {
+      try {
+        let result: CodexToolResult;
+
+        if (record.threadId) {
+          result = await transport.callCodexReply({
+            threadId: record.threadId,
+            prompt: effectivePrompt,
+          });
+        } else {
+          const toolParams: CodexToolParams = {
+            prompt: effectivePrompt,
+            cwd: record.cwd,
+            sandbox: DEFAULT_SANDBOX_MODE,
+            "approval-policy": hooks?.onApprovalRequest ? DEFAULT_APPROVAL_POLICY : "never",
+          };
+          if (this.config.model) toolParams.model = this.config.model;
+
+          result = await transport.callCodex(toolParams);
+
+          // Extract threadId and establish permanent mapping
+          if (result.structuredContent?.threadId) {
+            record.threadId = result.structuredContent.threadId;
+            record.info.resumeToken = record.threadId;
+            this.threadToSession.set(record.threadId, sessionId);
+          }
+          this.pendingSessionIds.delete(sessionId);
+        }
+
+        // Push final response message
+        const text = this.extractTextFromResult(result);
+        if (text) {
+          stream.push({
+            role: "assistant",
+            content: text,
+            timestamp: Date.now(),
+          });
+        }
+
+        if (result.isError) {
+          stream.fail(new Error(text || "Codex tool call returned an error"));
+        } else {
+          stream.finish();
+        }
+      } catch (err) {
+        this.pendingSessionIds.delete(sessionId);
+        stream.fail(err instanceof Error ? err : new Error(String(err)));
+      } finally {
+        record.activeTurn = null;
+      }
+    })();
+
+    // Yield events as they arrive (streaming from notifications + final from tool result)
     yield* stream.iterate();
+
+    // Ensure the background promise is settled (should already be, since stream.finish/fail was called)
+    await toolCallPromise;
   }
 
   // ─── One-shot execution ───
@@ -348,13 +366,15 @@ export class CodexMCPAdapter implements AgentAdapter {
       ? `[Mercury Role Context]\n${promptContext}\n\n[User Prompt]\n${prompt}`
       : prompt;
 
+    // Fix #4: Respect caller-provided model and sandbox overrides
     const toolParams: CodexToolParams = {
       prompt: effectivePrompt,
       cwd,
-      sandbox: DEFAULT_SANDBOX_MODE,
+      sandbox: options?.sandbox ?? DEFAULT_SANDBOX_MODE,
       "approval-policy": (options?.approvalPolicy as string) ?? "never",
     };
-    if (this.config.model) toolParams.model = this.config.model;
+    const model = options?.model ?? this.config.model;
+    if (model) toolParams.model = model;
 
     const result = await transport.callCodex(toolParams);
     const text = this.extractTextFromResult(result);
@@ -430,9 +450,27 @@ export class CodexMCPAdapter implements AgentAdapter {
 
   private handleEvent(notification: CodexEventNotification): void {
     const threadId = notification._meta?.threadId;
-    if (!threadId) return;
 
-    const sessionId = this.threadToSession.get(threadId);
+    // Try threadId → sessionId lookup first
+    let sessionId = threadId ? this.threadToSession.get(threadId) : undefined;
+
+    // Fix #3: During the first turn, threadId may not be mapped yet.
+    // Fall back to the pending session (there should be at most one active).
+    if (!sessionId && this.pendingSessionIds.size > 0) {
+      const pendingId = this.pendingSessionIds.values().next().value as string;
+      const pending = this.sessions.get(pendingId);
+      if (pending?.activeTurn) {
+        sessionId = pendingId;
+        // Establish the mapping now if threadId is available
+        if (threadId && !pending.threadId) {
+          pending.threadId = threadId;
+          pending.info.resumeToken = threadId;
+          this.threadToSession.set(threadId, pendingId);
+          this.pendingSessionIds.delete(pendingId);
+        }
+      }
+    }
+
     if (!sessionId) return;
 
     const record = this.sessions.get(sessionId);
@@ -508,7 +546,9 @@ export class CodexMCPAdapter implements AgentAdapter {
     const hooks = record?.activeTurn?.hooks;
 
     if (!hooks?.onApprovalRequest) {
-      return { decision: "accept" };
+      // Fix #2: Fail-closed — decline when no approval handler is registered.
+      // This matches the "on-request" semantics: no handler = no one to approve.
+      return { decision: "decline" };
     }
 
     if (method === "elicitation/exec_approval") {
@@ -531,7 +571,8 @@ export class CodexMCPAdapter implements AgentAdapter {
       return { decision: decision.action === "approve" ? "accept" : "decline" };
     }
 
-    return { decision: "accept" };
+    // Unknown elicitation method — decline by default (fail-closed)
+    return { decision: "decline" };
   }
 
   // ─── Helpers ───
@@ -611,7 +652,12 @@ export class CodexMCPAdapter implements AgentAdapter {
     switch (cmd) {
       case "/new": {
         const record = this.sessions.get(sessionId);
-        if (record) record.threadId = null;
+        if (record) {
+          // Fix #5: Clean up old threadToSession mapping and resumeToken
+          if (record.threadId) this.threadToSession.delete(record.threadId);
+          record.threadId = null;
+          record.info.resumeToken = undefined;
+        }
         yield infoMsg("Started new conversation thread. Next message will create a fresh session.");
         return;
       }
@@ -644,7 +690,13 @@ export class CodexMCPAdapter implements AgentAdapter {
 
       case "/clear": {
         const record = this.sessions.get(sessionId);
-        if (record) { record.threadId = null; record.info.frozenSystemPrompt = undefined; }
+        if (record) {
+          // Fix #5: Clean up old threadToSession mapping and resumeToken
+          if (record.threadId) this.threadToSession.delete(record.threadId);
+          record.threadId = null;
+          record.info.resumeToken = undefined;
+          record.info.frozenSystemPrompt = undefined;
+        }
         yield infoMsg("Cleared conversation context.");
         return;
       }
