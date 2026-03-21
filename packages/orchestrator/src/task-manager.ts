@@ -138,8 +138,11 @@ export class TaskManager {
     // ─── Input Validation ───
     const errors: string[] = [];
     if (!params.title?.trim()) errors.push("title is required");
+    if (!params.assignedTo?.trim()) errors.push("assignedTo is required");
     if (!params.context?.trim()) errors.push("context is required");
     if (!params.definitionOfDone?.length) errors.push("definitionOfDone must have at least 1 item");
+    if (!params.codeScope) errors.push("codeScope is required");
+    if (!params.readScope) errors.push("readScope is required");
     const validPriorities = ["sev-0", "sev-1", "sev-2", "sev-3"];
     if (!validPriorities.includes(params.priority)) {
       errors.push(`priority must be one of ${validPriorities.join(", ")}, got "${params.priority}"`);

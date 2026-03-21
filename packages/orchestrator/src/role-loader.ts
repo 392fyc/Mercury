@@ -30,7 +30,14 @@ export function loadRoleCard(
     );
   }
 
-  const parsed = yaml.load(raw);
+  let parsed: unknown;
+  try {
+    parsed = yaml.load(raw);
+  } catch (err) {
+    throw new Error(
+      `Failed to parse YAML for role "${role}" at ${yamlPath}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
   if (parsed == null || typeof parsed !== "object") {
     throw new Error(
       `Invalid role definition for "${role}" at ${yamlPath}: expected a YAML mapping, got ${parsed === null ? "null" : typeof parsed}`,
