@@ -14,6 +14,7 @@ allowed-tools: Bash, Read, Grep, Glob
 - `git` with push access to the PR branch
 - `jq` for JSON parsing
 - Current branch must not be `develop` or `main`
+- TaskBundle JSON must include `allowedWriteScope.codePaths`
 
 ## Pipeline
 
@@ -26,15 +27,18 @@ gh auth status
 git remote -v
 jq --version
 BRANCH=$(git branch --show-current)
+TASK_ID=${BRANCH##*/}
+TASK_FILE="Mercury_KB/10-tasks/$TASK_ID.json"
 test "$BRANCH" != "develop" && test "$BRANCH" != "main"
+test -f "$TASK_FILE"
+declare -a ALLOWED_SCOPE=()
+while IFS= read -r path; do [ -n "$path" ] && ALLOWED_SCOPE+=("$path"); done < <(jq -r '.allowedWriteScope.codePaths[]? // empty' "$TASK_FILE")
 gh api rate_limit --jq '.resources.core.remaining'
 ```
 
 ### Step 1: Create or Reuse the PR
 
 ```bash
-BRANCH=$(git branch --show-current)
-TASK_ID=${BRANCH##*/}
 SUMMARY=$(jq -r '.summary // "PR update"' Mercury_KB/10-tasks/"$TASK_ID".receipt.json 2>/dev/null || echo "PR update")
 DOD_COUNT=$(jq -r '(.definitionOfDone // []) | length' Mercury_KB/10-tasks/"$TASK_ID".json 2>/dev/null || echo "unknown")
 PR_BODY=$(cat <<EOF
@@ -57,7 +61,7 @@ else
 fi
 case "$TASK_ID" in BUG-*|fix/*) LABEL=bugfix ;; DOC-*|docs/*) LABEL=documentation ;; *) LABEL=refactor ;; esac
 gh pr edit "$PR_NUMBER" --add-assignee "@me" --add-label "$LABEL"
-gh pr comment "$PR_NUMBER" --body "@coderabbitai review"
+if ! gh api repos/{owner}/{repo}/issues/"$PR_NUMBER"/comments --jq '.[].body' | grep -Fq "@coderabbitai review"; then gh pr comment "$PR_NUMBER" --body "@coderabbitai review"; fi
 ```
 
 ### Step 2: Poll CI Checks
@@ -65,8 +69,7 @@ gh pr comment "$PR_NUMBER" --body "@coderabbitai review"
 ```bash
 extract_changed_paths() { jq -r '.[]?.path // empty'; }
 is_within_scope() { local p="$1"; shift; for root in "$@"; do [[ "$p" == "$root"* ]] && return 0; done; return 1; }
-classify_failure() { case "$1" in *eslint*|*lint*|*prettier*) echo lint ;; *tsc*|*typecheck*) echo type ;; *test*|*jest*|*vitest*) echo test ;; *) echo build ;; esac; }
-gh pr checks "$PR_NUMBER" --watch --fail-fast
+gh pr checks "$PR_NUMBER" --watch || true
 ```
 
 ### Step 3: Wait for CodeRabbit Review
@@ -109,10 +112,12 @@ normalize_patch() {
   [ -n "$diff" ] && { printf '%s\n' "$diff"; return 0; }
   suggestion=$(printf '%s\n' "$body" | sed -n '/```suggestion/,/```/p' | sed '1d;$d')
   [ -n "$suggestion" ] || return 1
-  build_patch_from_suggestion "$path" "$suggestion" # pseudo: wrap suggestion as unified diff.
+  printf 'skip: suggestion-only comment for %s (no patch builder implemented)\n' "$path" >&2; return 1
 }
 extract_patch_paths() { printf '%s\n' "$1" | sed -n 's/^+++ b\///p'; }
 validate_scope() { is_within_scope "$1" "${ALLOWED_SCOPE[@]}"; }
+refresh_actionable() { COMMENTS=$(gh api repos/{owner}/{repo}/pulls/"$PR_NUMBER"/comments); ACTIONABLE=$(echo "$COMMENTS" | jq -cr '.[] | .firstLine = (.body | split("\n")[0]) | .severity = (if (.firstLine | test("Critical")) then "Critical" elif (.firstLine | test("Major")) then "Major" else "Other" end) | select(.severity == "Critical" or .severity == "Major") | {id, path, severity, body}'); }
+wait_for_refresh() { gh pr checks "$PR_NUMBER" --watch || true; for i in $(seq 1 10); do refresh_actionable; [ -n "$ACTIONABLE" ] || break; sleep 30; done; }
 MAX_ITERATIONS=3 # CodeRabbit usually converges in 1-2 rounds; keep 1 buffer.
 ITERATION=1
 while [ "$ITERATION" -le "$MAX_ITERATIONS" ] && [ -n "$ACTIONABLE" ]; do
@@ -134,8 +139,7 @@ EOF
     git commit -m "fix(PR-feedback): address comment $COMMENT_ID"
   done
   git push
-  COMMENTS=$(gh api repos/{owner}/{repo}/pulls/"$PR_NUMBER"/comments)
-  ACTIONABLE=$(echo "$COMMENTS" | jq -cr '.[] | .firstLine = (.body | split("\n")[0]) | .severity = (if (.firstLine | test("Critical")) then "Critical" elif (.firstLine | test("Major")) then "Major" else "Other" end) | select(.severity == "Critical" or .severity == "Major") | {id, path, severity, body}')
+  wait_for_refresh
   ITERATION=$((ITERATION + 1))
 done
 ```
@@ -143,9 +147,9 @@ done
 ### Step 6: Merge and Update Mercury State
 
 ```bash
-check_ci_status() { gh pr checks "$PR_NUMBER" --fail-fast >/dev/null; }
+check_ci_status() { gh pr checks "$PR_NUMBER" >/dev/null; }
 check_review_state() { [ "$(gh pr view "$PR_NUMBER" --json reviewDecision --jq '.reviewDecision // "REVIEW_REQUIRED"')" = "APPROVED" ]; }
-check_unresolved_critical_comments() { [ -z "$ACTIONABLE" ] && return 0; COUNT=$(printf '%s\n' "$ACTIONABLE" | jq -s 'length' 2>/dev/null || echo 0); [ "${COUNT:-0}" -eq 0 ]; }
+check_unresolved_critical_comments() { LIVE_COMMENTS=$(gh api repos/{owner}/{repo}/pulls/"$PR_NUMBER"/comments); LIVE_ACTIONABLE=$(echo "$LIVE_COMMENTS" | jq -cr '.[] | .firstLine = (.body | split("\n")[0]) | .severity = (if (.firstLine | test("Critical")) then "Critical" elif (.firstLine | test("Major")) then "Major" else "Other" end) | select(.severity == "Critical" or .severity == "Major") | {id, path, severity, body}'); [ -z "$LIVE_ACTIONABLE" ] && return 0; COUNT=$(printf '%s\n' "$LIVE_ACTIONABLE" | jq -s 'length' 2>/dev/null || echo 0); [ "${COUNT:-0}" -eq 0 ]; }
 check_ready_to_merge() { check_ci_status && check_review_state && check_unresolved_critical_comments; }
 MERGE_STRATEGY=${MERGE_STRATEGY:-squash}
 DELETE_BRANCH=${DELETE_BRANCH:-true}
