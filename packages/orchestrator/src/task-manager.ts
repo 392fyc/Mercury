@@ -653,7 +653,9 @@ export function buildDevPrompt(
     template = fallbackDevTemplate();
   }
 
-  const bundleMeta = {
+  // Lightweight dispatch meta: only execution-relevant fields.
+  // Empty arrays are omitted to save ~50 tokens per dispatch (DEC-2).
+  const bundleMeta: Record<string, unknown> = {
     taskId: task.taskId,
     assignee: task.assignee ?? { agentId: task.assignedTo },
     priority: task.priority,
@@ -661,13 +663,13 @@ export function buildDevPrompt(
     codeScope: task.codeScope,
     readScope: task.readScope,
     allowedWriteScope: task.allowedWriteScope,
-    docsMustUpdate: task.docsMustUpdate,
-    docsMustNotTouch: task.docsMustNotTouch,
     definitionOfDone: task.definitionOfDone,
-    requiredEvidence: task.requiredEvidence,
     reworkCount: task.reworkCount,
     maxReworks: task.maxReworks,
   };
+  if (task.docsMustUpdate.length > 0) bundleMeta.docsMustUpdate = task.docsMustUpdate;
+  if (task.docsMustNotTouch.length > 0) bundleMeta.docsMustNotTouch = task.docsMustNotTouch;
+  if (task.requiredEvidence.length > 0) bundleMeta.requiredEvidence = task.requiredEvidence;
 
   const receiptTemplate = JSON.stringify(
     { implementer: "", branch: "", summary: "", changedFiles: [], evidence: [], docsUpdated: [], residualRisks: [], completedAt: "" },
