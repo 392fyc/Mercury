@@ -1,95 +1,67 @@
 ---
 name: sot-workflow
 description: |
-  Use this skill when the user is asking how Mercury's SoT task lifecycle works, what status comes next, which role owns a phase, or how dispatch, Main Review, acceptance, rework, and close fit together. Trigger on English and Chinese requests such as "SoT", "workflow", "task lifecycle", "state machine", "what happens after main_review", "任务流程", "状态机", "下一步是什么", "谁负责验收", "派发之后怎么走". This is a knowledge skill: it explains the lifecycle, role boundaries, state transitions, and where to find the canonical guides and templates.
+  Use this skill when the user is asking how Mercury's SoT lifecycle works, what status comes next, which role owns a phase, or how dispatch, Main Review, acceptance, rework, and close fit together. Trigger proactively on English and Chinese requests such as "SoT", "workflow", "task lifecycle", "state machine", "what happens after main_review", "任务流程", "状态机", "下一步是什么", "谁负责验收", "派发之后怎么走". This is a reference skill: it explains lifecycle rules, role boundaries, core RPC names, and the canonical guides to cite.
 ---
 
-# SoT Task Orchestration Reference
+# SoT Workflow
 
-This skill provides quick reference to Mercury's task lifecycle. For the canonical source, read `.mercury/docs/guides/sot-workflow.md`.
+## When
 
-Useful companion files:
-- `.mercury/docs/guides/git-flow.md`
-- `.mercury/docs/guides/kb-structure.md`
-- `.mercury/roles/main.yaml`
-- `.mercury/roles/dev.yaml`
-- `.mercury/roles/acceptance.yaml`
+- Use when a user asks about Mercury task states, next steps, role boundaries, or orchestration rules.
+- Use when you need to explain why a task is in a given status or what should happen after dispatch, Main Review, or acceptance.
+- Use as background knowledge before using `dispatch-task` or `acceptance-review`.
+- This skill explains the lifecycle; it does not execute the workflow by itself.
 
-## Task State Machine
+## Pipeline
 
+1. Read the canonical references you need:
+   - `.mercury/docs/guides/sot-workflow.md`
+   - `.mercury/docs/guides/git-flow.md`
+   - `.mercury/docs/guides/kb-structure.md`
+   - `.mercury/roles/main.yaml`
+   - `.mercury/roles/dev.yaml`
+   - `.mercury/roles/acceptance.yaml`
+2. Map the task to one of the entry paths:
+   - bug path: `Issue -> Task -> Dispatch`
+   - planned feature path: `Task -> Dispatch`
+3. Use the core state machine:
+
+```text
+drafted -> dispatched -> in_progress -> implementation_done -> main_review -> acceptance -> verified -> closed
+blocked -> in_progress | failed
+main_review -> in_progress
+acceptance -> in_progress
 ```
-drafted → dispatched → in_progress → implementation_done → main_review → acceptance → verified → closed
-                            ↑                                    |              |
-                            └────────────── rework ──────────────┘              |
-                            ↑                                                   |
-                            └──────────────── rework ───────────────────────────┘
-                       blocked → in_progress (after unblock)
-                       failed (terminal)
-```
 
-## Entry Paths
+4. Use the role boundaries:
+   - Main: create, dispatch, review coordination, acceptance coordination, merge decisions
+   - Dev: implement inside allowed scope, commit, provide receipt
+   - Acceptance: blind review from code and runtime only
+5. When RPC names matter, use the current ones:
+   - `get_agents`
+   - `create_task`
+   - `dispatch_task`
+   - `record_receipt`
+   - `main_review_result`
+   - `create_acceptance`
+   - `record_acceptance_result`
+6. For task shape questions, prefer runtime sources over older templates:
+   - `packages/orchestrator/src/task-manager.ts`
+   - `packages/core/src/types.ts`
+   - `{Project}_KB/99-templates/task-bundle.template.json` as reference only
 
-| Path | Trigger | Flow |
-|------|---------|------|
-| **Bug → Issue → Task** | Bug discovered, crash, unexpected behavior | Create Issue → Main triage → Create Task (link Issue) → Dispatch |
-| **Planned Feature → Task** | New functionality needed | Main creates Task → Dispatch |
+## Output
 
-Issues and Tasks are independent entities. An Issue records "what happened"; a Task records "what to do about it."
+- Explain the current state, owning role, and next expected transition.
+- If the user asks "what next", answer in the form `current status -> owner -> next action`.
+- Point to the execution skill when appropriate:
+   - `dispatch-task` for dispatch
+   - `acceptance-review` for acceptance
+   - `web-research` for external dependency verification
 
-## Role Responsibilities per Phase
+## Evidence
 
-| Phase | Who | Does What |
-|-------|-----|-----------|
-| Create & Dispatch | Main | Decompose request, build `create_task` params / TaskBundle context, create branch, dispatch to worker |
-| Implement | Dev | Code within `allowedWriteScope`, fill `implementationReceipt`, commit + push |
-| Main Review | Main | Check receipt completeness (branch, summary, changedFiles, evidence present) |
-| Acceptance | Acceptance | Blind review: code + tests + runtime only, no dev narrative |
-| Close / Rework | Main | Merge PR on pass, or build rework prompt on fail |
-
-## Key Rules
-
-- **Dev agents never switch branches** — Main creates the branch, Dev works on it
-- **Direct push to develop is forbidden** — all code enters through PRs
-- **Acceptance is blind** — the acceptance agent cannot see the dev's reasoning or self-assessment
-- **Rework has limits** — `maxReworks` (typically 2) bounds retry cycles before escalation
-- **Chinese for milestones** — completion messages use Chinese
-
-## TaskBundle Quick Reference
-
-Essential fields the Main Agent must populate:
-
-| Field | Purpose |
-|-------|---------|
-| `title` | One-line task summary |
-| `priority` | `sev-0` \| `sev-1` \| `sev-2` \| `sev-3` |
-| `assignedTo` | Worker agent ID string for `create_task` |
-| `codeScope` | Files to include/exclude from context |
-| `readScope.requiredDocs` | Docs injected into the dispatch prompt |
-| `allowedWriteScope.codePaths` | Source paths the worker may modify |
-| `allowedWriteScope.kbPaths` | KB paths the worker may modify |
-| `docsMustNotTouch` | Forbidden modification targets |
-| `definitionOfDone` | Objectively verifiable completion criteria |
-
-Reference sources:
-- Live RPC params: `packages/orchestrator/src/task-manager.ts`
-- Live task types: `packages/core/src/types.ts`
-- KB template reference: `D:/Mercury/Mercury_KB/99-templates/task-bundle.template.json`
-
-The KB template is a reference artifact, not the final authority for raw RPC parameter names. If the template and TypeScript differ, follow the TypeScript.
-
-## Core RPC Names
-
-These are the main orchestrator methods mentioned across the workflow:
-- `get_agents`
-- `create_task`
-- `dispatch_task`
-- `record_receipt`
-- `main_review_result`
-- `create_acceptance`
-- `record_acceptance_result`
-
-## Related Skills
-
-- `dispatch-task` — Execute the dispatch workflow
-- `acceptance-review` — Execute the acceptance workflow
-- `web-research` — Verify external dependencies before coding
+- Cite the exact guide or role file used for the answer.
+- If a rule depends on runtime code rather than prose docs, cite `task-manager.ts` or `types.ts`.
+- If you rely on the KB template, say that it is a reference artifact rather than the final source of truth.

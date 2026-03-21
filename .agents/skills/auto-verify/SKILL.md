@@ -1,63 +1,73 @@
 ---
 name: auto-verify
 description: |
-  Mercury's pre-commit verification gate for dev agents. Runs TypeScript type checking, scope validation, and linting before any commit. Use this skill whenever you're about to commit code, need to verify implementation quality, or want to run a quality gate. Triggers on: "verify", "pre-commit check", "auto-verify", "quality gate", "run checks", "type check", "scope check". This skill should be invoked proactively before every commit during task implementation — skipping verification leads to failed PRs and wasted rework cycles.
+  Use this skill before every commit and whenever the user asks to verify implementation quality, run checks, or apply a pre-commit quality gate. Trigger proactively on English and Chinese requests such as "verify", "pre-commit check", "quality gate", "run checks", "type check", "lint", "scope check", "验证", "自检", "commit前检查", "检查一下". This skill runs Mercury's local quality gate for dev work: compile or type-check when available, validate scope against the TaskBundle, run lint if configured, and produce evidence for `implementationReceipt.evidence`.
 ---
 
-# Auto-Verify: Pre-Commit Quality Gate
+# Auto Verify
 
-Run this verification pipeline before every commit. Results go into `implementationReceipt.evidence`.
+## When
+
+- Use before every `git commit` during task implementation.
+- Use after a meaningful change set, even if the user did not explicitly ask for checks.
+- Use when a TaskBundle expects verification evidence or when you are preparing an implementation receipt.
+- Do not skip this skill just because the change looks small.
 
 ## Pipeline
 
-### Check 1: TypeScript Compilation
+1. Collect the changed files:
 
-```
-npx tsc --noEmit
-```
-
-PASS = exit code 0. FAIL = fix errors before proceeding.
-
-### Check 2: Scope Validation
-
-```
+```powershell
 git diff --cached --name-only
 ```
 
-Verify each changed file is within TaskBundle's `allowedWriteScope.codePaths` or `allowedWriteScope.kbPaths`. Flag any file in `docsMustNotTouch`. Skip if no TaskBundle context available.
+2. Run type-check or compile checks when the project supports them. Prefer the repo's existing package scripts; otherwise use a direct compiler invocation.
 
-### Check 3: ESLint (if configured)
-
+```powershell
+npx tsc --noEmit
 ```
+
+3. Validate scope against the active TaskBundle when available:
+   - every changed file must be inside `allowedWriteScope.codePaths` or `allowedWriteScope.kbPaths`
+   - no changed file may violate `docsMustNotTouch`
+   - if no TaskBundle context is available, record `SKIP` instead of inventing scope
+4. Run lint only if lint config exists:
+
+```powershell
 npx eslint --max-warnings 0 <changed-files>
 ```
 
-Only run if ESLint config exists. Skip with note if not configured.
-
-### Check 4: Git Hygiene
-
-- No debug artifacts (`console.log` with TODO, `.only` in tests)
-- Branch name matches TaskBundle `branch` field if specified
+5. Run git hygiene checks:
+   - no stray debug artifacts that obviously should not ship
+   - no `.only` in tests
+   - branch naming matches the task expectation when a task branch is known
+6. If a check fails:
+   - fix obvious in-scope issues
+   - rerun the failed check
+   - escalate instead of committing if the failure requires out-of-scope changes
 
 ## Output
 
-```
+Produce a compact result block:
+
+```text
 ## Auto-Verify Results
-
-| Check | Status | Details |
-|-------|--------|---------|
-| TypeScript | PASS/FAIL | {details} |
-| Scope | PASS/FAIL/SKIP | {details} |
-| ESLint | PASS/FAIL/SKIP | {details} |
-| Git Hygiene | PASS/FAIL | {details} |
-
-Overall: PASS/FAIL
+TypeCheck: PASS | FAIL | SKIP
+Scope: PASS | FAIL | SKIP
+Lint: PASS | FAIL | SKIP
+GitHygiene: PASS | FAIL
+Overall: PASS | FAIL
 ```
 
-## Evidence String
+- Say exactly which check failed and why.
+- Do not recommend committing with failing checks unless the user explicitly overrides.
 
-```
-auto-verify: PASS (tsc: clean, scope: N files checked, eslint: clean, git: clean)
+## Evidence
+
+Record a one-line entry suitable for `implementationReceipt.evidence`, for example:
+
+```text
+auto-verify: PASS (tsc: clean, scope: 8 files checked, lint: clean, git: clean)
 ```
 
-Do not commit with failing checks unless explicitly overridden.
+If anything failed, keep the failure summary and the rerun result.

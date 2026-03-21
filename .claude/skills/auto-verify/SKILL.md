@@ -1,112 +1,75 @@
 ---
 name: auto-verify
 description: |
-  Mercury's pre-commit verification gate for dev agents. Runs TypeScript type checking, scope validation, and linting before any commit. Use this skill whenever you're about to commit code, need to verify implementation quality, or want to run a quality gate. Triggers on: "verify", "验证", "pre-commit check", "auto-verify", "quality gate", "自检", "检查", "commit前检查", "run checks", "type check", "scope check". This skill should be invoked proactively before every commit during task implementation — skipping verification leads to failed PRs and wasted rework cycles. Even if you're confident the code is correct, run the checks anyway; TypeScript catches things humans miss.
+  Use this skill before every commit and whenever the user asks to verify implementation quality, run checks, or apply a pre-commit quality gate. Trigger proactively on English and Chinese requests such as "verify", "pre-commit check", "quality gate", "run checks", "type check", "lint", "scope check", "验证", "自检", "commit前检查", "检查一下". This skill runs Mercury's local quality gate for dev work: compile or type-check when available, validate scope against the TaskBundle, run lint if configured, and produce evidence for `implementationReceipt.evidence`.
 user-invocable: true
 allowed-tools: Bash, Read, Grep, Glob
 ---
 
-# Auto-Verify: Pre-Commit Quality Gate
+# Auto Verify
 
-This skill runs a structured verification pipeline before committing code. It exists because Mercury's SoT workflow requires evidence of passing checks in the `implementationReceipt.evidence` array, and because catching issues before commit is 10x cheaper than catching them during PR review or acceptance.
+## When
 
-## When to Run
+- Use before every `git commit` during task implementation.
+- Use after a meaningful change set, even if the user did not explicitly ask for checks.
+- Use when a TaskBundle expects verification evidence or when you are preparing an implementation receipt.
+- Do not skip this skill just because the change looks small.
 
-Run this skill:
-- Before every `git commit` during task implementation
-- After completing a work item (W1, W2, etc.) in a multi-step task
-- When the TaskBundle includes `verifyGate.autoChecks`
-- When you want to confirm your changes haven't broken anything
+## Pipeline
 
-## Verification Pipeline
-
-Execute these checks in order. Each check produces a PASS/FAIL result. All checks must pass before committing.
-
-### Check 1: TypeScript Compilation
-
-```bash
-npx tsc --noEmit 2>&1
-```
-
-- PASS: exit code 0, no errors
-- FAIL: any compilation error — fix before proceeding
-- Record: number of errors if any, first error message
-
-### Check 2: Scope Validation
-
-Verify that all changed files fall within the TaskBundle's `allowedWriteScope`.
+1. Collect the changed files:
 
 ```bash
 git diff --cached --name-only
 ```
 
-For each changed file, check:
-- Is it under one of `allowedWriteScope.codePaths`?
-- Is it under one of `allowedWriteScope.kbPaths`?
-- Is it in `docsMustNotTouch`? (must NOT be modified)
-
-If scope information isn't available (no active TaskBundle), skip this check with a warning rather than blocking.
-
-- PASS: all files within scope
-- FAIL: list each out-of-scope file with the violated boundary
-- Record: total files checked, any violations
-
-### Check 3: ESLint (if configured)
+2. Run type-check or compile checks when the project supports them. Prefer the repo's existing package scripts; otherwise use a direct compiler invocation.
 
 ```bash
-npx eslint --max-warnings 0 <changed-files> 2>&1
+npx tsc --noEmit
 ```
 
-Only run if an ESLint config exists (`.eslintrc.*`, `eslint.config.*`, or `eslintConfig` in package.json). If no config exists, skip with a note.
+3. Validate scope against the active TaskBundle when available:
+   - every changed file must be inside `allowedWriteScope.codePaths` or `allowedWriteScope.kbPaths`
+   - no changed file may violate `docsMustNotTouch`
+   - if no TaskBundle context is available, record `SKIP` instead of inventing scope
+4. Run lint only if lint config exists:
 
-- PASS: exit code 0, no errors or warnings
-- FAIL: list errors/warnings by file
-- Record: error count, warning count
-
-### Check 4: Git Hygiene
-
-Quick sanity checks:
-- No untracked files that should be staged (look for new files in `allowedWriteScope`)
-- No debug artifacts left behind (`console.log` with TODO markers, `.only` in tests)
-- Branch name matches expected pattern (if TaskBundle specifies `branch`)
-
-## Output Format
-
-After running all checks, produce a structured result block:
-
+```bash
+npx eslint --max-warnings 0 <changed-files>
 ```
+
+5. Run git hygiene checks:
+   - no stray debug artifacts that obviously should not ship
+   - no `.only` in tests
+   - branch naming matches the task expectation when a task branch is known
+6. If a check fails:
+   - fix obvious in-scope issues
+   - rerun the failed check
+   - escalate instead of committing if the failure requires out-of-scope changes
+
+## Output
+
+Produce a compact result block:
+
+```text
 ## Auto-Verify Results
-
-| Check | Status | Details |
-|-------|--------|---------|
-| TypeScript | PASS/FAIL | {error count or "clean"} |
-| Scope | PASS/FAIL/SKIP | {violation count or "all files in scope"} |
-| ESLint | PASS/FAIL/SKIP | {error/warning count or "clean"} |
-| Git Hygiene | PASS/FAIL | {issues found or "clean"} |
-
-**Overall: PASS/FAIL**
+TypeCheck: PASS | FAIL | SKIP
+Scope: PASS | FAIL | SKIP
+Lint: PASS | FAIL | SKIP
+GitHygiene: PASS | FAIL
+Overall: PASS | FAIL
 ```
 
-## Recording Evidence
+- Say exactly which check failed and why.
+- Do not recommend committing with failing checks unless the user explicitly overrides.
 
-The verification result should be included in `implementationReceipt.evidence` as a string entry:
+## Evidence
 
-```
-"auto-verify: PASS (tsc: clean, scope: 12 files checked, eslint: clean, git: clean)"
-```
+Record a one-line entry suitable for `implementationReceipt.evidence`, for example:
 
-If any check fails:
-
-```
-"auto-verify: FAIL (tsc: 3 errors in role-loader.ts, scope: PASS, eslint: SKIP, git: PASS)"
+```text
+auto-verify: PASS (tsc: clean, scope: 8 files checked, lint: clean, git: clean)
 ```
 
-## Failure Handling
-
-When a check fails:
-1. Report the failure clearly with file names and line numbers
-2. Attempt to fix if the fix is obvious and within scope (e.g., missing import, unused variable)
-3. Re-run the failed check after fixing
-4. If the fix requires changes outside `allowedWriteScope`, escalate — do not fix
-
-Do not commit with failing checks. The only exception is if the user explicitly overrides with "commit anyway" or equivalent.
+If anything failed, keep the failure summary and the rerun result.
