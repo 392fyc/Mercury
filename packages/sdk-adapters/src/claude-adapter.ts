@@ -92,6 +92,8 @@ export class ClaudeAdapter implements AgentAdapter {
       cwd,
       startedAt: Date.now(),
       lastActiveAt: Date.now(),
+      tokenUsage: 0,
+      tokenLimit: 200000, // Claude default context window; updated by streaming events
       status: "active",
     };
     this.sessions.set(sessionId, info);
@@ -415,6 +417,7 @@ export class ClaudeAdapter implements AgentAdapter {
     let sdkSessionId: string | undefined;
     let hasYieldedAssistant = false;
     let inToolBlock = false; // Track whether current content block is a tool_use
+    let cumulativeTokenCount = 0; // Track cumulative tokens across the stream
 
     // sdk.query() accepts string | AsyncIterable<SDKUserMessage> — both paths converge here
     const queryIter = sdk.query(queryArgs as { prompt: string; options: Record<string, unknown> });
@@ -443,6 +446,27 @@ export class ClaudeAdapter implements AgentAdapter {
         const eventType = event.type as string;
         const now = Date.now();
 
+        // Extract token usage from message_start (input tokens) and message_delta (output tokens)
+        if (eventType === "message_start") {
+          const message = event.message as Record<string, unknown> | undefined;
+          const usage = message?.usage as Record<string, unknown> | undefined;
+          if (usage?.input_tokens) {
+            cumulativeTokenCount = (usage.input_tokens as number) + (usage.output_tokens as number ?? 0);
+            // Also populate session-level token limit from model info if available
+            session.tokenUsage = cumulativeTokenCount;
+          }
+        } else if (eventType === "message_delta") {
+          const usage = event.usage as Record<string, unknown> | undefined;
+          if (usage?.output_tokens) {
+            // message_delta.usage.output_tokens is cumulative output tokens for this message
+            const inputTokens = session.tokenUsage
+              ? session.tokenUsage - (cumulativeTokenCount - (session.tokenUsage ?? 0))
+              : 0;
+            cumulativeTokenCount = inputTokens + (usage.output_tokens as number);
+            session.tokenUsage = cumulativeTokenCount;
+          }
+        }
+
         if (eventType === "content_block_start") {
           const contentBlock = event.content_block as Record<string, unknown> | undefined;
           inToolBlock = contentBlock?.type === "tool_use";
@@ -451,6 +475,7 @@ export class ClaudeAdapter implements AgentAdapter {
               type: "streaming",
               eventKind: "tool_start",
               toolName: contentBlock!.name as string,
+              tokenCount: cumulativeTokenCount || undefined,
               timestamp: now,
             } satisfies AgentStreamingEvent;
           }
@@ -461,6 +486,7 @@ export class ClaudeAdapter implements AgentAdapter {
               type: "streaming",
               eventKind: "text_delta",
               content: delta.text as string,
+              tokenCount: cumulativeTokenCount || undefined,
               timestamp: now,
             } satisfies AgentStreamingEvent;
           } else if (delta?.type === "input_json_delta") {
@@ -468,6 +494,7 @@ export class ClaudeAdapter implements AgentAdapter {
               type: "streaming",
               eventKind: "tool_delta",
               toolInput: delta.partial_json as string,
+              tokenCount: cumulativeTokenCount || undefined,
               timestamp: now,
             } satisfies AgentStreamingEvent;
           }
@@ -478,6 +505,7 @@ export class ClaudeAdapter implements AgentAdapter {
             yield {
               type: "streaming",
               eventKind: "tool_end",
+              tokenCount: cumulativeTokenCount || undefined,
               timestamp: now,
             } satisfies AgentStreamingEvent;
             inToolBlock = false;
