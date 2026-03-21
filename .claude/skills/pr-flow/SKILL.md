@@ -31,12 +31,13 @@ test "$BRANCH" != "develop" && test "$BRANCH" != "main"
 # Extract TASK_ID: try branch suffix first, then scan branch name for TASK-XXX pattern
 TASK_ID=${BRANCH##*/}
 if ! [[ "$TASK_ID" =~ ^TASK- ]]; then
-  TASK_ID=$(echo "$BRANCH" | grep -oE 'TASK-[A-Z]+-[0-9]+' | head -1)
+  TASK_ID=$(echo "$BRANCH" | grep -oE 'TASK-[A-Z][A-Z0-9-]+-[0-9]+' | head -1)
 fi
 TASK_FILE=""
 if [ -n "$TASK_ID" ] && [ -f "Mercury_KB/10-tasks/$TASK_ID.json" ]; then
   TASK_FILE="Mercury_KB/10-tasks/$TASK_ID.json"
 fi
+# When TASK_FILE is absent (non-task branches), ALLOWED_SCOPE stays empty → scope checks pass all files.
 declare -a ALLOWED_SCOPE=()
 if [ -n "$TASK_FILE" ]; then
   while IFS= read -r path; do [ -n "$path" ] && ALLOWED_SCOPE+=("$path"); done < <(jq -r '.allowedWriteScope.codePaths[]? // empty' "$TASK_FILE")
@@ -123,7 +124,7 @@ normalize_patch() {
   printf 'skip: suggestion-only comment for %s (no patch builder implemented)\n' "$path" >&2; return 1
 }
 extract_patch_paths() { printf '%s\n' "$1" | sed -n 's/^+++ b\///p'; }
-validate_scope() { is_within_scope "$1" "${ALLOWED_SCOPE[@]}"; }
+validate_scope() { [ ${#ALLOWED_SCOPE[@]} -eq 0 ] && return 0; is_within_scope "$1" "${ALLOWED_SCOPE[@]}"; }
 refresh_actionable() { COMMENTS=$(gh api repos/{owner}/{repo}/pulls/"$PR_NUMBER"/comments); ACTIONABLE=$(echo "$COMMENTS" | jq -cr '.[] | .firstLine = (.body | split("\n")[0]) | .severity = (if (.firstLine | test("Critical")) then "Critical" elif (.firstLine | test("Major")) then "Major" else "Other" end) | select(.severity == "Critical" or .severity == "Major") | {id, path, severity, body}'); }
 wait_for_refresh() { gh pr checks "$PR_NUMBER" --watch || true; for i in $(seq 1 10); do refresh_actionable; [ -n "$ACTIONABLE" ] || break; sleep 30; done; }
 MAX_ITERATIONS=3 # CodeRabbit usually converges in 1-2 rounds; keep 1 buffer.
@@ -138,9 +139,9 @@ while [ "$ITERATION" -le "$MAX_ITERATIONS" ] && [ -n "$ACTIONABLE" ]; do
 $PATCH_PATHS
 EOF
     [ "$SCOPE_OK" -eq 1 ] || { echo "skip: out of scope patch $COMMENT_ID"; continue; }
-    printf '%s\n' "$PATCH_BODY" | git apply --check || { git checkout -- $PATCH_PATHS 2>/dev/null; continue; }
+    printf '%s\n' "$PATCH_BODY" | git apply --check || { while read -r p; do [ -n "$p" ] && git checkout -- "$p" 2>/dev/null; done <<< "$PATCH_PATHS"; continue; }
     printf '%s\n' "$PATCH_BODY" | git apply
-    npx tsc --noEmit || { git checkout -- $PATCH_PATHS 2>/dev/null; continue; }
+    npx tsc --noEmit || { while read -r p; do [ -n "$p" ] && git checkout -- "$p" 2>/dev/null; done <<< "$PATCH_PATHS"; continue; }
     while read -r TARGET_PATH; do [ -n "$TARGET_PATH" ] && git add "$TARGET_PATH"; done <<EOF
 $PATCH_PATHS
 EOF
