@@ -655,10 +655,12 @@ export function buildDevPrompt(
 
   // Lightweight dispatch meta: only execution-relevant fields.
   // Empty arrays/objects are conditionally omitted to save tokens (DEC-2).
-  const compactScope = (scope: Record<string, unknown[]>): Record<string, unknown[]> => {
-    const out: Record<string, unknown[]> = {};
-    for (const [k, v] of Object.entries(scope)) {
-      if (Array.isArray(v) && v.length > 0) out[k] = v;
+  /** Strip empty string[] fields from a scope object to save dispatch tokens. */
+  const compactScope = <T extends Record<string, string[]>>(scope: T): Partial<T> => {
+    const out: Partial<T> = {};
+    for (const key of Object.keys(scope) as (keyof T)[]) {
+      const val = scope[key];
+      if (Array.isArray(val) && val.length > 0) out[key] = val;
     }
     return out;
   };
@@ -667,9 +669,9 @@ export function buildDevPrompt(
     assignee: task.assignee ?? { agentId: task.assignedTo },
     priority: task.priority,
     branch: task.branch ?? null,
-    codeScope: compactScope(task.codeScope as unknown as Record<string, unknown[]>),
-    readScope: compactScope(task.readScope as unknown as Record<string, unknown[]>),
-    allowedWriteScope: compactScope(task.allowedWriteScope as unknown as Record<string, unknown[]>),
+    codeScope: compactScope(task.codeScope),
+    readScope: compactScope(task.readScope),
+    allowedWriteScope: compactScope(task.allowedWriteScope),
     definitionOfDone: task.definitionOfDone,
     reworkCount: task.reworkCount,
     maxReworks: task.maxReworks,

@@ -1,14 +1,18 @@
 #!/bin/bash
 # SESSION INIT: Generate .claude/current-session.md on first prompt of a session.
 # Event: UserPromptSubmit — fires before Claude starts reasoning.
-# Idempotent: writes only once per session (checks SESSION_INIT_DONE flag).
+# Idempotent: writes only once per session (uses PID-based flag for session scope).
 # Token cost: ZERO (output goes to file, not stdout).
 
 STATE_DIR="$(dirname "$0")/state"
 mkdir -p "$STATE_DIR" 2>/dev/null
 
-# One-shot guard: skip if already initialized this session
-FLAG="$STATE_DIR/session-init-done"
+# Session-scoped guard: use parent PID as session identifier.
+# Each Claude Code session has a unique parent process; concurrent sessions
+# get independent flags. Stale flags from crashed sessions are harmless
+# (unique PIDs) and cleaned up by stop-guard.sh on normal exit.
+SESSION_ID="${PPID:-$$}"
+FLAG="$STATE_DIR/session-init-${SESSION_ID}"
 [ -f "$FLAG" ] && exit 0
 
 cd "$CLAUDE_PROJECT_DIR" 2>/dev/null || exit 0
@@ -20,7 +24,9 @@ TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 GIT_STATUS=$(git status --porcelain 2>/dev/null | head -20)
 ACTIVE_TASKS=""
 if [ -d "Mercury_KB/10-tasks" ]; then
-  ACTIVE_TASKS=$(find Mercury_KB/10-tasks -name "*.json" -not -name "*.receipt.json" -exec grep -l '"status":\s*"in_progress\|dispatched\|implementation_done"' {} \; 2>/dev/null | head -5 | while read -r f; do basename "$f" .json; done)
+  ACTIVE_TASKS=$(find Mercury_KB/10-tasks -name "*.json" -not -name "*.receipt.json" \
+    -exec grep -lE '"status":\s*"(in_progress|dispatched|implementation_done)"' {} \; 2>/dev/null \
+    | head -5 | while read -r f; do basename "$f" .json; done)
 fi
 
 # Write current-session.md

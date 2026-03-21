@@ -71,8 +71,8 @@ fi
 # pending check blocks an already-approved PR.
 if [ "$REVIEW_DECISION" = "APPROVED" ]; then
   case "$CR_STATUS" in
-    pending|queued|in_progress|"")
-      echo "NOTE: CodeRabbit check is ${CR_STATUS:-absent} but PR #${PR_NUMBER} is APPROVED — allowing merge." >&2
+    pending|queued|in_progress)
+      echo "NOTE: CodeRabbit check is ${CR_STATUS} but PR #${PR_NUMBER} is APPROVED — allowing merge." >&2
       exit 0
       ;;
   esac

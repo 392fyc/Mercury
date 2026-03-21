@@ -47,7 +47,7 @@ jobs:
 
       - name: ESLint (if configured)
         run: |
-          if [ -f .eslintrc.json ] || [ -f .eslintrc.js ] || [ -f eslint.config.js ] || [ -f eslint.config.mjs ]; then
+          if [ -f .eslintrc.json ] || [ -f .eslintrc.js ] || [ -f .eslintrc.cjs ] || [ -f .eslintrc.yml ] || [ -f eslint.config.js ] || [ -f eslint.config.mjs ] || [ -f eslint.config.cjs ] || [ -f eslint.config.ts ]; then
             npx eslint --max-warnings 0 packages/
           else
             echo "No ESLint config found — skipping"
@@ -65,7 +65,11 @@ jobs:
         run: |
           CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- '*.ts' | grep -v node_modules || true)
           [ -z "$CHANGED" ] && { echo "No .ts files changed"; exit 0; }
-          FAIL=0
+          # NOTE: Regex-based heuristic (MVP). Known limitations:
+          # - Blank line between JSDoc and declaration → false negative
+          # - Non-JSDoc block comments → false positive
+          # Future: replace with ts-morph or TypeDoc-based analysis
+          LOW_COVERAGE_FOUND=0
           for f in $CHANGED; do
             [ -f "$f" ] || continue
             TOTAL=$(grep -cE '^\s*(export (class|function|async function|const)|^\s+(async )?(get |set )?[a-z]\w*\()' "$f" 2>/dev/null || echo 0)
@@ -73,7 +77,7 @@ jobs:
             [ "$TOTAL" -gt 0 ] && PCT=$((DOCUMENTED * 100 / TOTAL)) || PCT=100
             if [ "$PCT" -lt 50 ]; then
               echo "::warning file=$f::Docstring coverage $PCT% (${DOCUMENTED}/${TOTAL}) — below 50% threshold"
-              FAIL=1
+              LOW_COVERAGE_FOUND=1
             fi
           done
-          [ "$FAIL" -eq 0 ] || echo "::notice::Some files have low docstring coverage (warnings above)"
+          [ "$LOW_COVERAGE_FOUND" -eq 0 ] || echo "::notice::Some files have low docstring coverage (warnings above)"

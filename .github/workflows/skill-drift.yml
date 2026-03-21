@@ -67,8 +67,9 @@ jobs:
             done
 
             # ── Check description length (should be meaningful) ──
-            DESC_TEXT=$(echo "$FRONTMATTER" | sed -n '/^description:/,/^[a-z]/p' | head -5)
-            DESC_LEN=$(echo "$DESC_TEXT" | wc -c)
+            # Extract description: single-line or multi-line YAML (| or >)
+            DESC_TEXT=$(echo "$FRONTMATTER" | awk '/^description:/{found=1; sub(/^description:[[:space:]]*\|?[[:space:]]*/, ""); if(length>0) print; next} found && /^[[:space:]]/{print; next} found{exit}')
+            DESC_LEN=$(printf '%s' "$DESC_TEXT" | wc -c)
             if [ "$DESC_LEN" -lt 20 ]; then
               echo "::warning file=$SKILL_FILE::Description seems too short ($DESC_LEN chars) — may cause poor skill triggering"
             fi

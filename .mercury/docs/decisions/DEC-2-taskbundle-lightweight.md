@@ -1,7 +1,7 @@
 # DEC-2: TaskBundle Lightweight Dispatch
 
 **Status**: Accepted
-**Date**: 2026-03-22
+**Date**: 2026-03-21
 **Task**: TASK-WF-001 / W6
 
 ## Context
@@ -31,6 +31,7 @@ consumes ~800-1200 tokens of context. Sub-agents only need a subset to execute.
 ## Analysis
 
 ### Already lightweight
+
 The dispatch prompt is already well-optimized. `bundleMeta` contains only
 execution-relevant fields. Orchestrator-only lifecycle fields are excluded.
 

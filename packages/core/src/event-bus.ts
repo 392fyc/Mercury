@@ -46,7 +46,7 @@ export class EventBus {
       type,
       timestamp: Date.now(),
       agentId,
-      modelId,
+      ...(modelId !== undefined ? { modelId } : {}),
       sessionId,
       payload,
       parentEventId,

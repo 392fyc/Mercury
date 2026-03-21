@@ -80,6 +80,13 @@ fi
 LABELS="$TYPE_LABEL"
 [ -n "$SEV_LABEL" ] && LABELS="$LABELS,$SEV_LABEL"
 
+# ── Ensure labels exist (gh pr create fails on missing labels) ──
+EXISTING_LABELS=$(gh label list --json name --jq '.[].name' 2>/dev/null)
+IFS=',' read -ra LABEL_ARRAY <<< "$LABELS"
+for LBL in "${LABEL_ARRAY[@]}"; do
+  echo "$EXISTING_LABELS" | grep -Fxq "$LBL" || gh label create "$LBL" --color "ededed" 2>/dev/null || true
+done
+
 # ── Create or reuse the PR (with --assignee and --label baked in) ──
 EXISTING_PR=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number // empty')
 if [ -n "$EXISTING_PR" ]; then
@@ -97,7 +104,8 @@ else
 fi
 
 # ── Trigger CodeRabbit review if not already requested ──
-if ! gh api repos/{owner}/{repo}/issues/"$PR_NUMBER"/comments --jq '.[].body' 2>/dev/null | grep -Fq "@coderabbitai review"; then
+CR_ALREADY=$(gh api "repos/{owner}/{repo}/issues/${PR_NUMBER}/comments" --jq '[.[] | select(.body | test("@coderabbitai review"))] | length' 2>/dev/null || echo "0")
+if [ "$CR_ALREADY" = "0" ]; then
   gh pr comment "$PR_NUMBER" --body "@coderabbitai review"
 fi
 ```
