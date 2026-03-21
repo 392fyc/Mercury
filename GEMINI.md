@@ -14,10 +14,10 @@ Read these docs on demand when you need the corresponding information:
 | Topic | Path |
 |-------|------|
 | Role definitions & boundaries | `.mercury/roles/{role}.yaml` |
-| SoT task workflow | `.mercury/docs/sot-workflow.md` |
-| Git branching rules | `.mercury/docs/git-flow.md` |
-| KB directory structure | `.mercury/docs/kb-structure.md` |
-| Project architecture | `.mercury/docs/architecture.md` |
+| SoT task workflow | `.mercury/docs/guides/sot-workflow.md` |
+| Git branching rules | `.mercury/docs/guides/git-flow.md` |
+| KB directory structure | `.mercury/docs/guides/kb-structure.md` |
+| Project architecture | `.mercury/docs/guides/architecture.md` |
 | Dispatch prompt templates | `.mercury/templates/` |
 | Bundle templates | `Mercury_KB/99-templates/` |
 
@@ -25,6 +25,7 @@ Read these docs on demand when you need the corresponding information:
 
 - **Commit at every checkpoint**: every milestone must be committed and pushed.
 - **Code review before commit**: every milestone must be code-reviewed before committing.
+- **Web search before SDK/API code**: before writing ANY code that imports an external SDK, references an API signature, or claims a package version, you MUST use web search to verify against the vendor's official documentation. GitHub source code alone is NOT sufficient. If web search is unavailable, mark claims as UNVERIFIED.
 - **Agents First**: inter-agent communication uses JSON/YAML. All interactions must include agentId, model, sessionId.
 - **Chinese for milestones**: return milestone completion messages in Chinese.
 - **Role boundary enforcement**: operate strictly within your assigned role.

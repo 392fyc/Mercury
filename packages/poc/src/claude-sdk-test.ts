@@ -10,7 +10,7 @@
  * Run: pnpm poc:claude
  */
 
-import { EventBus } from "@mercury/core";
+import { EventBus, isStreamingEvent } from "@mercury/core";
 import { ClaudeAdapter } from "@mercury/sdk-adapters";
 
 async function testClaudeSDK() {
@@ -46,15 +46,15 @@ async function testClaudeSDK() {
   let messageCount = 0;
   let lastContent = "";
 
-  for await (const message of claude.sendPrompt(session.sessionId, prompt)) {
+  for await (const item of claude.sendPrompt(session.sessionId, prompt)) {
+    if (isStreamingEvent(item)) continue;
     messageCount++;
-    lastContent = message.content;
+    lastContent = item.content;
     bus.emit("agent.message.receive", claude.agentId, session.sessionId, {
-      role: message.role,
-      contentPreview: message.content.slice(0, 200),
-      metadata: message.metadata,
+      role: item.role,
+      contentPreview: item.content.slice(0, 200),
     });
-    console.log(`  [${message.role}] ${message.content.slice(0, 200)}`);
+    console.log(`  [${item.role}] ${item.content.slice(0, 200)}`);
   }
 
   // Step 3: End session

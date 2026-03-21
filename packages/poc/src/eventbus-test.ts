@@ -40,7 +40,7 @@ function testEventBus() {
   console.log("Test 2: Event immutability...");
   let immutable = true;
   try {
-    (e1 as Record<string, unknown>).type = "hacked" as never;
+    (e1 as unknown as Record<string, unknown>).type = "hacked" as never;
     immutable = false;
   } catch {
     // Object.freeze prevents modification — this is expected

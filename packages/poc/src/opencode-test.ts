@@ -8,7 +8,7 @@
  * Run: pnpm poc:opencode
  */
 
-import { EventBus } from "@mercury/core";
+import { EventBus, isStreamingEvent } from "@mercury/core";
 import { OpencodeAdapter } from "@mercury/sdk-adapters";
 
 async function testOpencode() {
@@ -36,13 +36,14 @@ async function testOpencode() {
   bus.emit("agent.message.send", oc.agentId, session.sessionId, { prompt });
 
   let messageCount = 0;
-  for await (const message of oc.sendPrompt(session.sessionId, prompt)) {
+  for await (const item of oc.sendPrompt(session.sessionId, prompt)) {
+    if (isStreamingEvent(item)) continue;
     messageCount++;
     bus.emit("agent.message.receive", oc.agentId, session.sessionId, {
-      role: message.role,
-      contentPreview: message.content.slice(0, 200),
+      role: item.role,
+      contentPreview: item.content.slice(0, 200),
     });
-    console.log(`  [${message.role}] ${message.content.slice(0, 200)}`);
+    console.log(`  [${item.role}] ${item.content.slice(0, 200)}`);
   }
 
   await oc.endSession(session.sessionId);

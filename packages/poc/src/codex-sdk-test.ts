@@ -9,7 +9,7 @@
  * Run: pnpm poc:codex
  */
 
-import { EventBus } from "@mercury/core";
+import { EventBus, isStreamingEvent } from "@mercury/core";
 import { CodexAdapter } from "@mercury/sdk-adapters";
 
 async function testCodexSDK() {
@@ -41,14 +41,15 @@ async function testCodexSDK() {
   let messageCount = 0;
   let lastContent = "";
 
-  for await (const message of codex.sendPrompt(session.sessionId, prompt)) {
+  for await (const item of codex.sendPrompt(session.sessionId, prompt)) {
+    if (isStreamingEvent(item)) continue;
     messageCount++;
-    lastContent = message.content;
+    lastContent = item.content;
     bus.emit("agent.message.receive", codex.agentId, session.sessionId, {
-      role: message.role,
-      contentPreview: message.content.slice(0, 200),
+      role: item.role,
+      contentPreview: item.content.slice(0, 200),
     });
-    console.log(`  [${message.role}] ${message.content.slice(0, 200)}`);
+    console.log(`  [${item.role}] ${item.content.slice(0, 200)}`);
   }
 
   // End session

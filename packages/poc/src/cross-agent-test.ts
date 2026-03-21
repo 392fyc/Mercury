@@ -13,7 +13,7 @@
  * Run: pnpm poc:cross-agent
  */
 
-import { EventBus } from "@mercury/core";
+import { EventBus, isStreamingEvent } from "@mercury/core";
 import type { AgentAdapter, AgentMessage, SessionInfo } from "@mercury/core";
 import { ClaudeAdapter, CodexAdapter } from "@mercury/sdk-adapters";
 
@@ -73,13 +73,14 @@ async function testCrossAgentCommunication() {
   const subPrompt = 'Read the file "README.md" and list the project goals. Respond concisely. Do not make any changes.';
   const subResults: AgentMessage[] = [];
 
-  for await (const message of subAgent.sendPrompt(subSession.sessionId, subPrompt)) {
-    subResults.push(message);
+  for await (const item of subAgent.sendPrompt(subSession.sessionId, subPrompt)) {
+    if (isStreamingEvent(item)) continue;
+    subResults.push(item);
     bus.emit(
       "agent.message.receive",
       subAgent.agentId,
       subSession.sessionId,
-      { contentPreview: message.content.slice(0, 100) },
+      { contentPreview: item.content.slice(0, 100) },
       taskEvent.id,
     );
   }

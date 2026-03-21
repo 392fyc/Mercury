@@ -14,10 +14,10 @@ Read these docs on demand when you need the corresponding information:
 | Topic | Path |
 |-------|------|
 | Role definitions & boundaries | `.mercury/roles/{role}.yaml` |
-| SoT task workflow | `.mercury/docs/sot-workflow.md` |
-| Git branching rules | `.mercury/docs/git-flow.md` |
-| KB directory structure | `.mercury/docs/kb-structure.md` |
-| Project architecture | `.mercury/docs/architecture.md` |
+| SoT task workflow | `.mercury/docs/guides/sot-workflow.md` |
+| Git branching rules | `.mercury/docs/guides/git-flow.md` |
+| KB directory structure | `.mercury/docs/guides/kb-structure.md` |
+| Project architecture | `.mercury/docs/guides/architecture.md` |
 | Dispatch prompt templates | `.mercury/templates/` |
 | Bundle templates | `Mercury_KB/99-templates/` |
 
