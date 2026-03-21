@@ -60,6 +60,7 @@ If web search is unavailable or the official docs don't cover your specific ques
 ## Example
 
 Before writing:
+
 ```typescript
 import { query } from "@anthropic-ai/claude-agent-sdk";
 ```

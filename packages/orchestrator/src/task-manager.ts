@@ -655,7 +655,7 @@ export function buildDevPrompt(
   const placeholders: Record<string, string> = {
     "{{taskId}}": `${task.title} [${task.taskId}]`,
     "{{context}}": task.context,
-    "{{taskFilePath}}": `Mercury_KB/10-tasks/${task.taskId}.json`,
+    "{{taskFilePath}}": `{Project}_KB/10-tasks/${task.taskId}.json`,
     "{{allowedWriteScope}}": scopeDisplay,
     "{{docsMustNotTouch}}": task.docsMustNotTouch.join(", ") || "无",
     "{{bundleJson}}": JSON.stringify(bundleMeta, null, 2),

@@ -34,11 +34,11 @@ main_review -> in_progress
 acceptance -> in_progress
 ```
 
-4. Use the role boundaries:
+1. Use the role boundaries:
    - Main: create, dispatch, review coordination, acceptance coordination, merge decisions
    - Dev: implement inside allowed scope, commit, provide receipt
    - Acceptance: blind review from code and runtime only
-5. When RPC names matter, use the current ones:
+1. When RPC names matter, use the current ones:
    - `get_agents`
    - `create_task`
    - `dispatch_task`
@@ -46,7 +46,7 @@ acceptance -> in_progress
    - `main_review_result`
    - `create_acceptance`
    - `record_acceptance_result`
-6. For task shape questions, prefer runtime sources over older templates:
+1. For task shape questions, prefer runtime sources over older templates:
    - `packages/orchestrator/src/task-manager.ts`
    - `packages/core/src/types.ts`
    - `{Project}_KB/99-templates/task-bundle.template.json` as reference only

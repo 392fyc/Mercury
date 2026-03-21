@@ -38,7 +38,7 @@ $body = @{
 Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$port" -ContentType "application/json" -Body $body
 ```
 
-4. Create the acceptance flow:
+1. Create the acceptance flow:
 
 ```powershell
 $body = @{
@@ -54,8 +54,8 @@ $body = @{
 Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$port" -ContentType "application/json" -Body $body
 ```
 
-5. Expect the blind review to use only code, runtime output, and allowed bundle fields. The acceptance agent must not rely on `summary`, `evidence`, or `residualRisks`.
-6. Wait for a verdict shaped like:
+1. Expect the blind review to use only code, runtime output, and allowed bundle fields. The acceptance agent must not rely on `summary`, `evidence`, or `residualRisks`.
+1. Wait for a verdict shaped like:
 
 ```json
 {
@@ -65,7 +65,7 @@ Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$port" -ContentType "appli
 }
 ```
 
-7. Record the verdict with the nested `results` object:
+1. Record the verdict with the nested `results` object:
 
 ```powershell
 $body = @{
@@ -85,11 +85,11 @@ $body = @{
 Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$port" -ContentType "application/json" -Body $body
 ```
 
-8. Interpret the result precisely:
+1. Interpret the result precisely:
    - `pass`: task state auto-moves to `verified` then `closed`; Main still handles the PR merge into `develop`
    - `partial` or `fail`: rework is auto-triggered and the response tells you whether a new dev session is needed
    - `blocked`: task moves to `blocked`; resolve the blocker before retrying
-9. If RPC fails, verify the orchestrator process first. If loopback is sandbox-blocked, request escalation.
+1. If RPC fails, verify the orchestrator process first. If loopback is sandbox-blocked, request escalation.
 
 ## Output
 
