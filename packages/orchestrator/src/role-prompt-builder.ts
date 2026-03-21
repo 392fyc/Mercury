@@ -16,8 +16,6 @@ import type {
 } from "@mercury/core";
 import { loadRoleCard } from "./role-loader.js";
 
-export { loadRoleCard };
-
 /**
  * Build a role-scoped system prompt for dev/main/research/design sessions.
  *
@@ -133,9 +131,13 @@ export function buildAcceptanceRolePrompt(
   lines.push(`You are assigned the **acceptance** role. ${card.description}`);
   lines.push("");
 
-  // Execution permissions
+  // Execution permissions — driven by YAML role definition
   lines.push("## Execution Permissions");
-  lines.push("You MAY execute code, run tests, and inspect runtime output for verification.");
+  if (card.canExecuteCode) {
+    lines.push("You MAY execute code, run tests, and inspect runtime output for verification.");
+  } else {
+    lines.push("You MUST NOT execute code or modify files. Review artifacts only.");
+  }
   lines.push("");
 
   // Blind review policy

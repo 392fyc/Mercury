@@ -196,7 +196,7 @@ export class TaskManager {
     return task;
   }
 
-  /** Get task — in-memory first, KB fallback. */
+  /** Get task — in-memory only. Use getTaskAsync() for KB-fresh reads. */
   getTask(taskId: string): TaskBundle | undefined {
     return this.tasks.get(taskId);
   }
@@ -640,13 +640,13 @@ export function buildDevPrompt(
   );
 
   let result = template
-    .replace("{{taskId}}", `${task.title} [${task.taskId}]`)
-    .replace("{{context}}", task.context)
-    .replace("{{taskFilePath}}", `Mercury_KB/10-tasks/${task.taskId}.json`)
-    .replace("{{allowedWriteScope}}", task.allowedWriteScope.codePaths.join(", ") || "无限制")
-    .replace("{{docsMustNotTouch}}", task.docsMustNotTouch.join(", ") || "无")
-    .replace("{{bundleJson}}", JSON.stringify(bundleMeta, null, 2))
-    .replace("{{receiptTemplate}}", receiptTemplate);
+    .replaceAll("{{taskId}}", `${task.title} [${task.taskId}]`)
+    .replaceAll("{{context}}", task.context)
+    .replaceAll("{{taskFilePath}}", `Mercury_KB/10-tasks/${task.taskId}.json`)
+    .replaceAll("{{allowedWriteScope}}", task.allowedWriteScope.codePaths.join(", ") || "无限制")
+    .replaceAll("{{docsMustNotTouch}}", task.docsMustNotTouch.join(", ") || "无")
+    .replaceAll("{{bundleJson}}", JSON.stringify(bundleMeta, null, 2))
+    .replaceAll("{{receiptTemplate}}", receiptTemplate);
 
   if (kbContext) {
     result += `\n\n## Project Knowledge Base Context\n${kbContext}`;
@@ -745,11 +745,11 @@ export function buildAcceptancePrompt(
   );
 
   return template
-    .replace("{{taskTitle}}", task.title)
-    .replace("{{acceptanceId}}", acceptance.acceptanceId)
-    .replace("{{acceptanceJson}}", JSON.stringify(acceptanceMeta, null, 2))
-    .replace("{{blindReceiptJson}}", JSON.stringify(blindReceipt, null, 2))
-    .replace("{{verdictTemplate}}", verdictTemplate);
+    .replaceAll("{{taskTitle}}", task.title)
+    .replaceAll("{{acceptanceId}}", acceptance.acceptanceId)
+    .replaceAll("{{acceptanceJson}}", JSON.stringify(acceptanceMeta, null, 2))
+    .replaceAll("{{blindReceiptJson}}", JSON.stringify(blindReceipt, null, 2))
+    .replaceAll("{{verdictTemplate}}", verdictTemplate);
 }
 
 function fallbackAcceptanceTemplate(): string {

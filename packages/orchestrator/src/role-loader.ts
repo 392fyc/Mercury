@@ -20,13 +20,28 @@ export function loadRoleCard(
   basePath = process.cwd(),
 ): LoadedRoleCard {
   const yamlPath = resolve(basePath, ".mercury", "roles", `${role}.yaml`);
-  const raw = readFileSync(yamlPath, "utf-8");
-  const data = yaml.load(raw) as Record<string, unknown>;
+
+  let raw: string;
+  try {
+    raw = readFileSync(yamlPath, "utf-8");
+  } catch (err) {
+    throw new Error(
+      `Failed to read role definition for "${role}" at ${yamlPath}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  const parsed = yaml.load(raw);
+  if (parsed == null || typeof parsed !== "object") {
+    throw new Error(
+      `Invalid role definition for "${role}" at ${yamlPath}: expected a YAML mapping, got ${parsed === null ? "null" : typeof parsed}`,
+    );
+  }
+  const data = parsed as Record<string, unknown>;
 
   return {
     role: data.role as AgentRole,
-    description: data.description as string,
-    canExecuteCode: data.canExecuteCode as boolean,
+    description: (data.description as string) ?? "",
+    canExecuteCode: Boolean(data.canExecuteCode),
     canDelegateToRoles: (data.canDelegateToRoles as AgentRole[]) ?? [],
     inputBoundary: (data.inputBoundary as string[]) ?? [],
     outputBoundary: (data.outputBoundary as string[]) ?? [],

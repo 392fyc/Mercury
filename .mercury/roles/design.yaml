@@ -4,6 +4,8 @@ canExecuteCode: false
 canDelegateToRoles: []
 inputBoundary:
   - design requirements
+  - architecture questions
+  - UI/UX specifications
 outputBoundary:
   - design specs
   - architecture decisions
