@@ -59,7 +59,7 @@ jobs:
 
             # Check if skill references tools not in its allowed list
             # This is a heuristic — look for common tool patterns in the prose
-            BODY=$(sed -n '/^---$/,/^---$/!p' "$SKILL_FILE" | sed '1,/^---$/d')
+            BODY=$(awk 'BEGIN{n=0} /^---$/{n++; next} n>=2' "$SKILL_FILE")
             for TOOL in "WebSearch" "WebFetch" "Edit" "Write" "Read" "Grep" "Glob" "Bash" "Agent" "TodoWrite"; do
               if echo "$BODY" | grep -qw "$TOOL" && ! echo "$ALLOWED" | grep -qw "$TOOL"; then
                 echo "::warning file=$SKILL_FILE::Skill '$SKILL_NAME' references tool '$TOOL' but it's not in allowed-tools: $TOOLS_LINE"

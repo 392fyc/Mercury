@@ -654,15 +654,22 @@ export function buildDevPrompt(
   }
 
   // Lightweight dispatch meta: only execution-relevant fields.
-  // Empty arrays are omitted to save ~50 tokens per dispatch (DEC-2).
+  // Empty arrays/objects are conditionally omitted to save tokens (DEC-2).
+  const compactScope = (scope: Record<string, unknown[]>): Record<string, unknown[]> => {
+    const out: Record<string, unknown[]> = {};
+    for (const [k, v] of Object.entries(scope)) {
+      if (Array.isArray(v) && v.length > 0) out[k] = v;
+    }
+    return out;
+  };
   const bundleMeta: Record<string, unknown> = {
     taskId: task.taskId,
     assignee: task.assignee ?? { agentId: task.assignedTo },
     priority: task.priority,
     branch: task.branch ?? null,
-    codeScope: task.codeScope,
-    readScope: task.readScope,
-    allowedWriteScope: task.allowedWriteScope,
+    codeScope: compactScope(task.codeScope as unknown as Record<string, unknown[]>),
+    readScope: compactScope(task.readScope as unknown as Record<string, unknown[]>),
+    allowedWriteScope: compactScope(task.allowedWriteScope as unknown as Record<string, unknown[]>),
     definitionOfDone: task.definitionOfDone,
     reworkCount: task.reworkCount,
     maxReworks: task.maxReworks,

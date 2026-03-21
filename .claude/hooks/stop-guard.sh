@@ -11,4 +11,8 @@ if [ -n "$STAGED" ]; then
   exit 0
 fi
 
+# Clean up session-scoped state flags so the next session starts fresh
+STATE_DIR="$(dirname "$0")/state"
+rm -f "$STATE_DIR/session-init-done" 2>/dev/null
+
 exit 0

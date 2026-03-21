@@ -63,12 +63,14 @@ EOF
 )
 # ── Label derivation: task-type label + severity label ──
 case "$TASK_ID" in
-  TASK-BUG-*|TASK-FIX-*|TASK-SB-FIX-*) TYPE_LABEL=bugfix ;;
-  TASK-DOC-*)                            TYPE_LABEL=documentation ;;
-  TASK-GUI-*|TASK-UI-*)                  TYPE_LABEL=enhancement ;;
-  TASK-WF-*)                             TYPE_LABEL=workflow ;;
-  TASK-PROMPT-*)                         TYPE_LABEL=refactor ;;
-  *)                                     TYPE_LABEL=refactor ;;
+  TASK-BUG-*|TASK-FIX-*|TASK-SB-FIX-*|TASK-KB-FIX-*) TYPE_LABEL=bugfix ;;
+  TASK-DOC-*)                                          TYPE_LABEL=documentation ;;
+  TASK-GUI-*|TASK-UI-*)                                TYPE_LABEL=enhancement ;;
+  TASK-WF-*)                                           TYPE_LABEL=workflow ;;
+  TASK-PROMPT-*|TASK-ARCH-*)                           TYPE_LABEL=refactor ;;
+  TASK-SDK-*|TASK-MCP-*)                               TYPE_LABEL=infrastructure ;;
+  TASK-PERF-*)                                         TYPE_LABEL=performance ;;
+  *)                                                   TYPE_LABEL=refactor ;;
 esac
 SEV_LABEL=""
 if [ -n "$TASK_FILE" ]; then
