@@ -16,29 +16,41 @@ description: |
 
 1. Push branch and create PR targeting `develop`:
 
-```powershell
+```bash
 git push -u origin <branch-name>
 
-gh pr create `
-  --base develop `
-  --title "<taskId>: <short summary>" `
-  --body "## Summary`n<bullets from receipt>`n`n## Task`n- TaskId: <taskId>"
+gh pr create \
+  --base develop \
+  --title "<taskId>: <short summary>" \
+  --body "## Summary
+<bullets from receipt>
+
+## Task
+- TaskId: <taskId>"
 ```
 
 2. Poll CI checks:
 
-```powershell
+```bash
 gh pr checks <pr-number> --watch --fail-fast
 ```
 
 If checks fail, read output, fix if in scope, push again.
 
-3. Wait for CodeRabbit review (Mercury rule: never merge before review completes):
+3. Wait for CodeRabbit review (Mercury rule: never merge before review **approves**):
 
-```powershell
-gh pr reviews <pr-number>
-gh api repos/{owner}/{repo}/pulls/<pr-number>/comments
+```bash
+# Poll review status (max 15 min, check every 60s)
+for i in $(seq 1 15); do
+  STATUS=$(gh pr reviews <pr-number> --json state --jq '.[].state' | tail -1)
+  [ "$STATUS" = "APPROVED" ] && break
+  sleep 60
+done
 ```
+
+- **Timeout**: 15 minutes max polling. If CodeRabbit is unresponsive, notify user and wait for manual decision.
+- **Completion criteria**: `gh pr reviews` shows at least one `APPROVED` state and no pending `CHANGES_REQUESTED`.
+- **Service unavailable**: If CodeRabbit status check remains `PENDING` beyond timeout, escalate to user.
 
 4. Address feedback:
    - Critical comments: must fix before merge
@@ -47,7 +59,7 @@ gh api repos/{owner}/{repo}/pulls/<pr-number>/comments
 
 5. Merge (ask user confirmation first):
 
-```powershell
+```bash
 gh pr merge <pr-number> --squash --delete-branch
 ```
 
@@ -57,7 +69,7 @@ gh pr merge <pr-number> --squash --delete-branch
 ## PR Flow Results
 PR: #<number> (<url>)
 CI Checks: PASS | FAIL
-CodeRabbit: reviewed | pending | N comments
+CodeRabbit: approved | pending | N comments
 Feedback: <N> critical, <N> suggestions addressed
 Status: merged | waiting | blocked
 ```

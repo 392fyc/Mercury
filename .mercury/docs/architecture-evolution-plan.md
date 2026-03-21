@@ -37,11 +37,16 @@
 
 ## 关键架构决策记录
 
-### AD-001: Claude 为唯一 Main Agent（当前约束）
+### AD-001: Main Agent 配置
 
-- 系统配置层面禁止将其他 agent 设为 main
-- Codex 提升 Main Agent 的路线图见 `.mercury/docs/codex-main-agent-roadmap.md`
-- 需要完成: MCP Server 暴露、Approval 桥接、配置解锁
+**架构原则**：系统不硬编码特定 Main Agent，设计支持替换与迁移（对应指令文件 "Do not hardcode" 规则）。
+
+**当前运营配置**：暂时仅将 Claude Code 配置为 Main Agent。这是阶段性运营决策，非架构限制。
+
+**迁移路线图**：见 [codex-main-agent-roadmap.md](../codex-main-agent-roadmap.md)
+- 前置：MCP Server 暴露（TASK-MCP-001）
+- 前置：Approval 桥接
+- 前置：Orchestrator 配置解锁
 
 ### AD-002: Codex Adapter 迁移方向
 

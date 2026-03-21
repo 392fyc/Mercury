@@ -23,7 +23,7 @@ Before constructing the TaskBundle, confirm these with the user. Do not guess �
 | **description** | Detailed context: root cause, expected behavior, constraints | Yes |
 | **assignedTo** | Target agent ID (check available agents via RPC `get_agents`) | Yes |
 | **target role** | `dev` \| `research` \| `design` — determines system prompt and permissions | Yes |
-| **priority** | `critical` \| `high` \| `medium` \| `low` | Yes |
+| **priority** | `sev-0` \| `sev-1` \| `sev-2` \| `sev-3` | Yes |
 | **codeScope.include** | Files/directories the worker should read | Yes |
 | **codeScope.exclude** | Files/directories to skip | No |
 | **allowedWriteScope.codePaths** | Paths the worker may modify | Yes |
@@ -63,29 +63,29 @@ Optional fields (include when needed): `phaseId`, `branch`, `docsMustUpdate`, `r
 
 The full template with all fields is at `Mercury_KB/99-templates/task-bundle.template.json` — read it for the complete schema including resilience and contextInjection.
 
-## Step 3: Create Feature Branch
+## Step 3: Persist via RPC
 
-Before dispatching, create the working branch from `develop`:
-
-```bash
-git checkout develop && git pull origin develop
-git checkout -b feature/TASK-<id> develop
-git push -u origin feature/TASK-<id>
-```
-
-Branch naming follows `.mercury/docs/guides/git-flow.md`: `feature/TASK-{id}` from develop.
-
-## Step 4: Persist via RPC
-
-Send the TaskBundle to the orchestrator:
+Send the CreateTaskParams to the orchestrator. The response contains the generated `taskId`:
 
 ```bash
 curl -s -X POST http://127.0.0.1:${MERCURY_RPC_PORT:-7654} \
   -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"create_task","params":<TaskBundle JSON>,"id":1}'
+  -d '{"jsonrpc":"2.0","method":"create_task","params":<CreateTaskParams JSON>,"id":1}'
 ```
 
-The response contains the generated `taskId`. Save it — you need it for dispatch.
+Save the returned `taskId` — you need it for the branch name and dispatch.
+
+## Step 4: Create Feature Branch
+
+After getting the taskId, create the working branch from `develop`:
+
+```bash
+git checkout develop && git pull origin develop
+git checkout -b feature/<taskId> develop
+git push -u origin feature/<taskId>
+```
+
+Branch naming follows `.mercury/docs/guides/git-flow.md`: `feature/{taskId}` from develop.
 
 ## Step 5: Dispatch
 

@@ -42,7 +42,7 @@ Read these docs on demand when you need the corresponding information:
 - **Chinese for milestones**: return milestone completion messages in Chinese.
 - **Role boundary enforcement**: operate strictly within your assigned role.
 - **PR to develop**: all code merges into develop must go through a PR. Direct push to develop is forbidden.
-- **Install to D drive**: install software to `D:\Program Files`, not C drive.
+- **Install to D drive**: install software to `D:\Program Files`, not C drive. (Windows team-specific policy; skip on non-Windows environments.)
 
 ## DO NOT
 

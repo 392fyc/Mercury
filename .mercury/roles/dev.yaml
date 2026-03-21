@@ -47,7 +47,7 @@ instructions: |
   - Branch anomaly → stop work, escalate to Main Agent
 
   ## Completion
-  1. Fill `implementationReceipt`: implementer, branch, summary, changedFiles, evidence, scopeViolations, completedAt
+  1. Fill `implementationReceipt`: implementer, branch, summary, changedFiles, evidence, docsUpdated, residualRisks, completedAt
   2. Git commit + push
   3. Stop. Wait for Main Agent review.
 

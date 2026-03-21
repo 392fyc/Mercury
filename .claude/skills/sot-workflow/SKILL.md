@@ -11,7 +11,7 @@ This skill provides quick reference to Mercury's task lifecycle. For the canonic
 
 ## Task State Machine
 
-```
+```text
 drafted → dispatched → in_progress → implementation_done → main_review → acceptance → verified → closed
                             ↑                                    |              |
                             └────────────── rework ──────────────┘              |

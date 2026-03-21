@@ -40,7 +40,7 @@ instructions: |
   Can dispatch to: dev, acceptance, research, design
 
   ## Input Boundary
-  Receives: user requests, dev receipts, acceptance verdicts, research summaries
+  Receives: user requests, dev receipts, acceptance verdicts, research summaries, design proposals
 
   ## Output Boundary
   Produces: TaskBundles, AcceptanceBundles, review decisions, session summaries

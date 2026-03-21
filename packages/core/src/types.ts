@@ -42,6 +42,13 @@ export function parseRoleSlotKey(key: RoleSlotKey): { role: AgentRole; agentId: 
 
 // ─── Role Cards ───
 
+/**
+ * @deprecated ROLE_CARDS has been removed. Role definitions are now loaded at runtime
+ * from .mercury/roles/{role}.yaml via role-loader.ts. This empty map is kept for
+ * backward compatibility — migrate to loadRoleCard() from @mercury/orchestrator.
+ */
+export const ROLE_CARDS: Record<string, never> = {};
+
 export interface RoleCard {
   role: AgentRole;
   description: string;

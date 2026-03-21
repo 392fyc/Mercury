@@ -24,7 +24,7 @@ description: |
    - required: `title`, `context`, `assignedTo`, `priority`, `codeScope`, `readScope.requiredDocs`, `allowedWriteScope`, `definitionOfDone`
    - optional: `phaseId`, `docsMustUpdate`, `docsMustNotTouch`, `readScope.optionalDocs`, `requiredEvidence`, `reviewConfig`, `handoffToAcceptance`, `maxReworks`
    - use live runtime shapes from `packages/orchestrator/src/task-manager.ts` and `packages/core/src/types.ts`
-   - use `{Project}_KB/99-templates/task-bundle.template.json` only as a reference artifact; in Mercury that resolves to `D:/Mercury/Mercury_KB/99-templates/task-bundle.template.json`
+   - use `{Project}_KB/99-templates/task-bundle.template.json` as a reference artifact; resolve `{Project}_KB` per your environment (e.g., `Mercury_KB` for the Mercury project)
 3. Verify the target agent with `get_agents`:
 
 ```powershell

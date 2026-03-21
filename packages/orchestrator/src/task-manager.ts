@@ -615,8 +615,11 @@ export function buildDevPrompt(
   let template: string;
   try {
     template = readFileSync(templatePath, "utf-8");
-  } catch {
-    // Fallback: inline template if file not found
+  } catch (err) {
+    // Fallback: inline template if file not found — log warning for debugging
+    console.warn(
+      `[TaskManager] dispatch template not found at ${templatePath}: ${err instanceof Error ? err.message : String(err)}. Using fallback.`,
+    );
     template = fallbackDevTemplate();
   }
 
@@ -642,14 +645,27 @@ export function buildDevPrompt(
     2,
   );
 
-  let result = template
-    .replaceAll("{{taskId}}", `${task.title} [${task.taskId}]`)
-    .replaceAll("{{context}}", task.context)
-    .replaceAll("{{taskFilePath}}", `Mercury_KB/10-tasks/${task.taskId}.json`)
-    .replaceAll("{{allowedWriteScope}}", task.allowedWriteScope.codePaths.join(", ") || "无限制")
-    .replaceAll("{{docsMustNotTouch}}", task.docsMustNotTouch.join(", ") || "无")
-    .replaceAll("{{bundleJson}}", JSON.stringify(bundleMeta, null, 2))
-    .replaceAll("{{receiptTemplate}}", receiptTemplate);
+  // Build combined allowedWriteScope display (codePaths + kbPaths)
+  const scopeParts: string[] = [];
+  if (task.allowedWriteScope.codePaths.length) scopeParts.push(`code: ${task.allowedWriteScope.codePaths.join(", ")}`);
+  if (task.allowedWriteScope.kbPaths?.length) scopeParts.push(`kb: ${task.allowedWriteScope.kbPaths.join(", ")}`);
+  const scopeDisplay = scopeParts.length > 0 ? scopeParts.join(" | ") : "无限制";
+
+  // Single-pass template substitution to prevent cross-replacement
+  const placeholders: Record<string, string> = {
+    "{{taskId}}": `${task.title} [${task.taskId}]`,
+    "{{context}}": task.context,
+    "{{taskFilePath}}": `Mercury_KB/10-tasks/${task.taskId}.json`,
+    "{{allowedWriteScope}}": scopeDisplay,
+    "{{docsMustNotTouch}}": task.docsMustNotTouch.join(", ") || "无",
+    "{{bundleJson}}": JSON.stringify(bundleMeta, null, 2),
+    "{{receiptTemplate}}": receiptTemplate,
+  };
+  const placeholderPattern = new RegExp(
+    Object.keys(placeholders).map((k) => k.replace(/[{}]/g, "\\$&")).join("|"),
+    "g",
+  );
+  let result = template.replace(placeholderPattern, (match) => placeholders[match] ?? match);
 
   if (kbContext) {
     result += `\n\n## Project Knowledge Base Context\n${kbContext}`;
@@ -720,8 +736,10 @@ export function buildAcceptancePrompt(
   let template: string;
   try {
     template = readFileSync(templatePath, "utf-8");
-  } catch {
-    // Fallback: inline build
+  } catch (err) {
+    console.warn(
+      `[TaskManager] acceptance template not found at ${templatePath}: ${err instanceof Error ? err.message : String(err)}. Using fallback.`,
+    );
     template = fallbackAcceptanceTemplate();
   }
 
@@ -747,12 +765,19 @@ export function buildAcceptancePrompt(
     2,
   );
 
-  return template
-    .replaceAll("{{taskTitle}}", task.title)
-    .replaceAll("{{acceptanceId}}", acceptance.acceptanceId)
-    .replaceAll("{{acceptanceJson}}", JSON.stringify(acceptanceMeta, null, 2))
-    .replaceAll("{{blindReceiptJson}}", JSON.stringify(blindReceipt, null, 2))
-    .replaceAll("{{verdictTemplate}}", verdictTemplate);
+  // Single-pass template substitution
+  const accPlaceholders: Record<string, string> = {
+    "{{taskTitle}}": task.title,
+    "{{acceptanceId}}": acceptance.acceptanceId,
+    "{{acceptanceJson}}": JSON.stringify(acceptanceMeta, null, 2),
+    "{{blindReceiptJson}}": JSON.stringify(blindReceipt, null, 2),
+    "{{verdictTemplate}}": verdictTemplate,
+  };
+  const accPattern = new RegExp(
+    Object.keys(accPlaceholders).map((k) => k.replace(/[{}]/g, "\\$&")).join("|"),
+    "g",
+  );
+  return template.replace(accPattern, (match) => accPlaceholders[match] ?? match);
 }
 
 function fallbackAcceptanceTemplate(): string {

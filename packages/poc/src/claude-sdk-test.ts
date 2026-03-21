@@ -44,10 +44,14 @@ async function testClaudeSDK() {
   });
 
   let messageCount = 0;
+  let streamingEventCount = 0;
   let lastContent = "";
 
   for await (const item of claude.sendPrompt(session.sessionId, prompt)) {
-    if (isStreamingEvent(item)) continue;
+    if (isStreamingEvent(item)) {
+      streamingEventCount++;
+      continue;
+    }
     messageCount++;
     lastContent = item.content;
     bus.emit("agent.message.receive", claude.agentId, session.sessionId, {
@@ -66,9 +70,13 @@ async function testClaudeSDK() {
   // Report
   console.log("\n─── Results ───");
   console.log(`  Messages received: ${messageCount}`);
+  console.log(`  Streaming events: ${streamingEventCount}`);
   console.log(`  Event bus events: ${bus.size}`);
   console.log(`  Last content: ${lastContent.slice(0, 200)}`);
   console.log(`  ✅ Claude SDK integration: ${messageCount > 0 ? "PASS" : "FAIL"}`);
+  if (streamingEventCount === 0) {
+    console.warn("  ⚠️ No streaming events received — streaming may not be working");
+  }
 }
 
 testClaudeSDK().catch((err) => {

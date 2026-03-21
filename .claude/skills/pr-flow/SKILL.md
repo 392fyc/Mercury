@@ -57,12 +57,21 @@ If checks fail:
 
 ### Step 3: Wait for CodeRabbit Review
 
-Mercury rules require waiting for CodeRabbit before merge. Poll for review:
+Mercury rules require waiting for CodeRabbit to **approve** before merge. Poll with timeout:
 
 ```bash
-gh pr reviews <pr-number>
+# Poll review status (max 15 min, check every 60s)
+for i in $(seq 1 15); do
+  STATUS=$(gh pr reviews <pr-number> --json state --jq '.[].state' | tail -1)
+  [ "$STATUS" = "APPROVED" ] && break
+  sleep 60
+done
+# Also check inline comments
 gh api repos/{owner}/{repo}/pulls/<pr-number>/comments
 ```
+
+- **Timeout**: 15 minutes max. If CodeRabbit unresponsive, notify user.
+- **Completion**: at least one `APPROVED` review state, no `CHANGES_REQUESTED`.
 
 Parse CodeRabbit comments for actionable feedback. Categories:
 - **Critical**: Must fix before merge

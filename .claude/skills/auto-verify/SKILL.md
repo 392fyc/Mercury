@@ -23,10 +23,15 @@ allowed-tools: Bash, Read, Grep, Glob
 git diff --cached --name-only
 ```
 
-2. Run type-check or compile checks when the project supports them. Prefer the repo's existing package scripts; otherwise use a direct compiler invocation.
+2. Run type-check or compile checks. Choose the right command for the project:
+   - If `package.json` has a `typecheck` or `check` script: run that (e.g., `npm run typecheck`)
+   - TypeScript project (tsconfig.json exists): `npx tsc --noEmit` or `npx tsc --build` for monorepos
+   - JavaScript with JSDoc types: `npx tsc --checkJs --noEmit`
+   - Other languages or no type system: record `SKIP` with a note
 
 ```bash
-npx tsc --noEmit
+# Preferred: use repo script if available
+npm run typecheck 2>/dev/null || npx tsc --noEmit
 ```
 
 3. Validate scope against the active TaskBundle when available:
