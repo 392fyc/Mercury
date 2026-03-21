@@ -440,7 +440,16 @@ function startTransports(orchestrator: Orchestrator, registry: AgentRegistry, co
 
 // Bootstrap
 const transport = new RpcTransport();
-const configPath = process.argv[2];
+
+// Headless mode: when launched outside Tauri (e.g. `tsx index.ts --headless config.json`),
+// stdin may close immediately. Make stdin non-fatal so the HTTP server keeps running.
+// Tauri sidecar mode keeps stdin open as a control channel and does NOT pass --headless.
+if (process.argv.includes("--headless")) {
+  transport.setStdinOptional(true);
+  transport.log("Headless mode: stdin close will not terminate process");
+}
+
+const configPath = process.argv.filter((a) => !a.startsWith("-")).at(2);
 const { config, resolvedPath: configFilePath } = loadConfig(configPath);
 
 if (config.workDir) {
