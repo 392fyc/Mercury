@@ -17,6 +17,11 @@ import { EventBus, isStreamingEvent } from "@mercury/core";
 import type { AgentAdapter, AgentMessage, SessionInfo } from "@mercury/core";
 import { ClaudeAdapter, CodexMCPAdapter } from "@mercury/sdk-adapters";
 
+/**
+ * Runs a proof-of-concept cross-agent orchestration where a main agent delegates a file-reading task to a sub-agent and relays the sub-agent's results back.
+ *
+ * Starts sessions for a main and sub agent, dispatches a delegated task via the EventBus, streams and collects the sub-agent's responses, emits session/task/message events for tracing, and prints a final pass/fail report summarizing the interaction.
+ */
 async function testCrossAgentCommunication() {
   console.log("═══════════════════════════════════════════════════");
   console.log("  PoC-5: Cross-Agent Communication (Main → Sub)   ");

@@ -12,6 +12,11 @@
 import { EventBus, isStreamingEvent } from "@mercury/core";
 import { CodexMCPAdapter } from "@mercury/sdk-adapters";
 
+/**
+ * Executes an end-to-end integration test of the Codex CLI SDK: starts a session, sends a README.md summary prompt, consumes streamed responses, and ends the session.
+ *
+ * Emits agent lifecycle and message events on an internal EventBus and logs events, received messages, and a pass/fail result based on whether any messages were received.
+ */
 async function testCodexSDK() {
   console.log("═══════════════════════════════════════");
   console.log("  PoC-2: Codex CLI SDK Integration     ");
