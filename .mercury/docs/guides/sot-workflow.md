@@ -24,6 +24,7 @@ drafted → dispatched → in_progress → implementation_done → main_review �
                             └────────────── rework ──────────────┘              |
                             ↑                                                   |
                             └──────────────── rework ───────────────────────────┘
+                       in_progress → blocked (when blocked)
                        blocked → in_progress (after unblock)
                        failed (terminal)
 ```

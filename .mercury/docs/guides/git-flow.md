@@ -32,7 +32,7 @@ Both `develop` and `master` have branch protection rules enabled:
 | Required approving reviews | 1 | 1 |
 | Dismiss stale reviews | Yes | Yes |
 
-PRs must receive at least one approved review (typically CodeRabbit) before merging.
+PRs must receive at least one approved review (from CodeRabbit or an authorized human reviewer) before merging.
 
 ## Commit Format
 
