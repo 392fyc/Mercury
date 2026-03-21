@@ -22,6 +22,18 @@
 
 **Direct push to develop is forbidden.** All code enters develop through PRs.
 
+## Branch Protection (GitHub)
+
+Both `develop` and `master` have branch protection rules enabled:
+
+| Rule | develop | master |
+|------|---------|--------|
+| Require PR before merge | Yes | Yes |
+| Required approving reviews | 1 | 1 |
+| Dismiss stale reviews | Yes | Yes |
+
+PRs must receive at least one approved review (typically CodeRabbit) before merging.
+
 ## Commit Format
 
 `{type}({task_id}): {summary}`

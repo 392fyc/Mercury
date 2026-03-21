@@ -16,6 +16,18 @@ Main 创建 Task → 派发
 
 **Issue 和 Task 是独立实体**：Issue 记录"发生了什么"，Task 记录"要做什么"。
 
+## Task 状态机
+
+```text
+drafted → dispatched → in_progress → implementation_done → main_review → acceptance → verified → closed
+                            ↑                                    |              |
+                            └────────────── rework ──────────────┘              |
+                            ↑                                                   |
+                            └──────────────── rework ───────────────────────────┘
+                       blocked → in_progress (after unblock)
+                       failed (terminal)
+```
+
 ## Task 执行流程
 
 | 步骤 | 角色 | 操作 | 输出 |
