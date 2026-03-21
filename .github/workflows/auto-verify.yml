@@ -1,0 +1,79 @@
+name: Auto Verify
+
+on:
+  pull_request:
+    branches: [develop, master]
+
+jobs:
+  typecheck:
+    name: Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: TypeScript check (orchestrator + core)
+        run: npx tsc --noEmit -p packages/orchestrator/tsconfig.json
+
+      - name: Vue type check (GUI)
+        run: cd packages/gui && npx vue-tsc --noEmit
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: ESLint (if configured)
+        run: |
+          if [ -f .eslintrc.json ] || [ -f .eslintrc.js ] || [ -f eslint.config.js ] || [ -f eslint.config.mjs ]; then
+            npx eslint --max-warnings 0 packages/
+          else
+            echo "No ESLint config found — skipping"
+          fi
+
+  docstring-coverage:
+    name: Docstring Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check docstring coverage on changed .ts files
+        run: |
+          CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- '*.ts' | grep -v node_modules || true)
+          [ -z "$CHANGED" ] && { echo "No .ts files changed"; exit 0; }
+          FAIL=0
+          for f in $CHANGED; do
+            [ -f "$f" ] || continue
+            TOTAL=$(grep -cE '^\s*(export (class|function|async function|const)|^\s+(async )?(get |set )?[a-z]\w*\()' "$f" 2>/dev/null || echo 0)
+            DOCUMENTED=$(grep -B1 -E '^\s*(export (class|function|async function|const)|^\s+(async )?(get |set )?[a-z]\w*\()' "$f" 2>/dev/null | grep -c '\*/' || echo 0)
+            [ "$TOTAL" -gt 0 ] && PCT=$((DOCUMENTED * 100 / TOTAL)) || PCT=100
+            if [ "$PCT" -lt 50 ]; then
+              echo "::warning file=$f::Docstring coverage $PCT% (${DOCUMENTED}/${TOTAL}) — below 50% threshold"
+              FAIL=1
+            fi
+          done
+          [ "$FAIL" -eq 0 ] || echo "::notice::Some files have low docstring coverage (warnings above)"
