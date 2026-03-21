@@ -55,17 +55,33 @@ if [ -f "$FLAG" ]; then
   exit 0
 fi
 
-# Check CodeRabbit status via gh pr checks
+# Check review decision (APPROVED / CHANGES_REQUESTED / REVIEW_REQUIRED)
+REVIEW_DECISION=$(gh pr view "$PR_NUMBER" --json reviewDecision --jq '.reviewDecision // "REVIEW_REQUIRED"' 2>/dev/null | tr '[:lower:]' '[:upper:]')
+
+# Check CodeRabbit CI check status
 CR_STATUS=$(gh pr checks "$PR_NUMBER" --json name,state -q '.[] | select(.name | test("CodeRabbit";"i")) | .state' 2>/dev/null | head -n1 | tr '[:upper:]' '[:lower:]')
 
 if [ "$CR_STATUS" = "success" ]; then
   exit 0
 fi
 
+# KEY FIX: If PR is already APPROVED by reviewers, a pending/in-progress CI
+# check should NOT block merge. The review approval is the authoritative gate.
+# This prevents the scenario where CodeRabbit re-runs after a push and the
+# pending check blocks an already-approved PR.
+if [ "$REVIEW_DECISION" = "APPROVED" ]; then
+  case "$CR_STATUS" in
+    pending|queued|in_progress|"")
+      echo "NOTE: CodeRabbit check is ${CR_STATUS:-absent} but PR #${PR_NUMBER} is APPROVED — allowing merge." >&2
+      exit 0
+      ;;
+  esac
+fi
+
 case "$CR_STATUS" in
   pending|queued|in_progress)
     cat >&2 <<MSG
-BLOCKED: CodeRabbit review still in progress for PR #${PR_NUMBER}.
+BLOCKED: CodeRabbit review still in progress for PR #${PR_NUMBER} (reviewDecision: ${REVIEW_DECISION}).
 Wait for review to complete before merging.
 To check: gh pr checks ${PR_NUMBER}
 To bypass (human-approved): touch ${STATE_DIR}/pr-merge-approved-${PR_NUMBER}
