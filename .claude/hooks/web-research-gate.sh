@@ -1,6 +1,4 @@
 #!/bin/bash
-# DISABLED: removed from settings.json in c6e7360 (over-restrictive).
-# Pair: requires post-web-research-flag.sh on PostToolUse(WebSearch|WebFetch).
 # GATE: block Write/Edit containing technical claims unless web research was done recently.
 # Scope: SDK imports, version numbers, API signatures, CLI flags, npm packages, URLs as evidence.
 # Applies to ALL agents via .claude/settings.json PreToolUse(Edit|Write).

@@ -1,6 +1,4 @@
 #!/bin/bash
-# DISABLED: never registered in settings.json. Redundant with CLAUDE.md MUST rules
-# and Codex developer_instructions. Token cost ~100/prompt for duplicate enforcement.
 # INJECT: Append mandatory web-research rules to every user prompt before Claude processes it.
 # Event: UserPromptSubmit — fires before Claude starts reasoning.
 # Output on stdout is added to Claude's context alongside the user prompt.

@@ -1,5 +1,4 @@
 #!/bin/bash
-# DISABLED: removed from settings.json in c6e7360 (pair of web-research-gate).
 # FLAG: mark web research as done after WebSearch/WebFetch completes.
 # Records timestamp and query for audit trail.
 
