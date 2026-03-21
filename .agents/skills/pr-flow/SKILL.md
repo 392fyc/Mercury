@@ -27,12 +27,20 @@ gh auth status
 git remote -v
 jq --version
 BRANCH=$(git branch --show-current)
-TASK_ID=${BRANCH##*/}
-TASK_FILE="Mercury_KB/10-tasks/$TASK_ID.json"
 test "$BRANCH" != "develop" && test "$BRANCH" != "main"
-test -f "$TASK_FILE"
+# Extract TASK_ID: try branch suffix first, then scan branch name for TASK-XXX pattern
+TASK_ID=${BRANCH##*/}
+if ! [[ "$TASK_ID" =~ ^TASK- ]]; then
+  TASK_ID=$(echo "$BRANCH" | grep -oE 'TASK-[A-Z]+-[0-9]+' | head -1)
+fi
+TASK_FILE=""
+if [ -n "$TASK_ID" ] && [ -f "Mercury_KB/10-tasks/$TASK_ID.json" ]; then
+  TASK_FILE="Mercury_KB/10-tasks/$TASK_ID.json"
+fi
 declare -a ALLOWED_SCOPE=()
-while IFS= read -r path; do [ -n "$path" ] && ALLOWED_SCOPE+=("$path"); done < <(jq -r '.allowedWriteScope.codePaths[]? // empty' "$TASK_FILE")
+if [ -n "$TASK_FILE" ]; then
+  while IFS= read -r path; do [ -n "$path" ] && ALLOWED_SCOPE+=("$path"); done < <(jq -r '.allowedWriteScope.codePaths[]? // empty' "$TASK_FILE")
+fi
 gh api rate_limit --jq '.resources.core.remaining'
 ```
 
@@ -136,6 +144,7 @@ EOF
     while read -r TARGET_PATH; do [ -n "$TARGET_PATH" ] && git add "$TARGET_PATH"; done <<EOF
 $PATCH_PATHS
 EOF
+    git diff --cached --quiet && { echo "skip: no staged changes for $COMMENT_ID"; continue; }
     git commit -m "fix(PR-feedback): address comment $COMMENT_ID"
   done
   git push
