@@ -13,6 +13,7 @@ allowed-tools: Bash, Read, Grep, Glob, WebFetch
 - `gh` CLI v2.x+ (authenticated)
 - `git` with push access to the PR branch
 - `jq` for JSON parsing
+- `python3` (used by merge gate for GraphQL pagination parsing)
 - Current branch must not be `develop` or `main`
 - TaskBundle JSON must include `allowedWriteScope.codePaths`
 
@@ -156,15 +157,71 @@ EOF
 done
 ```
 
+### Step 5b: Resolve Addressed Review Threads
+
+After fixes are committed and pushed, resolve **only** the review threads that
+were actually addressed in this fix round. Never batch-resolve all threads —
+human reviewer threads must stay open for the reviewer to close.
+
+**Procedure**: collect the thread IDs you fixed into a `FIXED_TIDS` list, then
+resolve only those. Use GraphQL pagination (`after` cursor) if the PR has more
+than 50 threads.
+
+```bash
+OWNER=$(gh repo view --json owner --jq '.owner.login')
+NAME=$(gh repo view --json name --jq '.name')
+
+# Initialize FIXED_TIDS before the fix loop (safe under set -u).
+# Populate it during Step 5 as each thread's fix is confirmed.
+declare -a FIXED_TIDS=()
+# Example: FIXED_TIDS+=("PRRT_abc123") after fixing that thread's issue
+
+for TID in "${FIXED_TIDS[@]}"; do
+  gh api graphql -f query="mutation { resolveReviewThread(input: {threadId: \"$TID\"}) { thread { isResolved } } }" >/dev/null 2>&1
+done
+echo "Resolved ${#FIXED_TIDS[@]} addressed review threads"
+```
+
 ### Step 6: Merge and Update Mercury State
 
 ```bash
 check_ci_status() { gh pr checks "$PR_NUMBER" >/dev/null; }
 check_review_state() { [ "$(gh pr view "$PR_NUMBER" --json reviewDecision --jq '.reviewDecision // "REVIEW_REQUIRED"')" = "APPROVED" ]; }
-# NOTE: REST API pull request comments do not expose "resolved" state.
-# GraphQL reviewThreads.isResolved is the accurate source but requires more complexity.
-# Current approach: re-count severity from latest comment bodies as a practical approximation.
-check_unresolved_critical_comments() { LIVE_COMMENTS=$(gh api repos/{owner}/{repo}/pulls/"$PR_NUMBER"/comments); LIVE_ACTIONABLE=$(echo "$LIVE_COMMENTS" | jq -cr '.[] | .firstLine = (.body | split("\n")[0]) | .severity = (if (.firstLine | test("Critical")) then "Critical" elif (.firstLine | test("Major")) then "Major" else "Other" end) | select(.severity == "Critical" or .severity == "Major") | {id, path, severity, body}'); [ -z "$LIVE_ACTIONABLE" ] && return 0; COUNT=$(printf '%s\n' "$LIVE_ACTIONABLE" | jq -s 'length' 2>/dev/null || echo 0); [ "${COUNT:-0}" -eq 0 ]; }
+# Use GraphQL to get accurate resolved/unresolved status for review threads.
+# REST API does not expose thread resolution state.
+check_unresolved_critical_comments() {
+  OWNER=$(gh repo view --json owner --jq '.owner.login')
+  NAME=$(gh repo view --json name --jq '.name')
+  # Paginate all review threads (handles PRs with >50 threads)
+  CURSOR=""
+  TOTAL_CRITICAL=0
+  while true; do
+    AFTER_ARG=""
+    [ -n "$CURSOR" ] && AFTER_ARG=", after: \"$CURSOR\""
+    RESULT=$(gh api graphql -f query="
+      { repository(owner: \"$OWNER\", name: \"$NAME\") {
+          pullRequest(number: $PR_NUMBER) {
+            reviewThreads(first: 50${AFTER_ARG}) {
+              pageInfo { hasNextPage endCursor }
+              nodes { isResolved comments(first: 1) { nodes { body } } }
+            }
+          }
+        }
+      }")
+    PAGE_CRITICAL=$(echo "$RESULT" | python3 -c "
+import sys,json
+d=json.loads(sys.stdin.read())
+nodes=d['data']['repository']['pullRequest']['reviewThreads']['nodes']
+import re
+count=sum(1 for n in nodes if not n['isResolved'] and n['comments']['nodes'] and re.search(r'Critical|Major',n['comments']['nodes'][0].get('body','')))
+print(count)")
+    TOTAL_CRITICAL=$((TOTAL_CRITICAL + PAGE_CRITICAL))
+    HAS_NEXT=$(echo "$RESULT" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print(d['data']['repository']['pullRequest']['reviewThreads']['pageInfo']['hasNextPage'])")
+    [ "$HAS_NEXT" = "True" ] || break
+    CURSOR=$(echo "$RESULT" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print(d['data']['repository']['pullRequest']['reviewThreads']['pageInfo']['endCursor'])")
+  done
+  [ "$TOTAL_CRITICAL" -eq 0 ]
+}
 check_ready_to_merge() { check_ci_status && check_review_state && check_unresolved_critical_comments; }
 MERGE_STRATEGY=${MERGE_STRATEGY:-squash}
 DELETE_BRANCH=${DELETE_BRANCH:-true}

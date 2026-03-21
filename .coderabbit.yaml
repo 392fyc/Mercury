@@ -2,6 +2,10 @@ language: "zh-CN"
 tone_instructions: "提供架构层面的洞察，关注系统设计、可扩展性和长期可维护性。同时检查文档与代码的一致性。"
 
 reviews:
+  pre_merge_checks:
+    docstrings:
+      mode: "warning"
+      threshold: 50
   profile: "assertive"
   request_changes_workflow: true
   sequence_diagrams: true

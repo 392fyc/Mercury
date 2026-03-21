@@ -3,7 +3,7 @@
  */
 
 import type { AgentConfig, AgentAdapter, AgentRole } from "@mercury/core";
-import { ClaudeAdapter, CodexAdapter, GeminiAdapter, OpencodeAdapter } from "@mercury/sdk-adapters";
+import { ClaudeAdapter, CodexMCPAdapter, GeminiAdapter, OpencodeAdapter } from "@mercury/sdk-adapters";
 
 export class AgentRegistry {
   private adapters = new Map<string, AgentAdapter>();
@@ -54,7 +54,7 @@ export class AgentRegistry {
       case "claude":
         return new ClaudeAdapter(config);
       case "codex":
-        return new CodexAdapter(config);
+        return new CodexMCPAdapter(config);
       case "opencode":
         return new OpencodeAdapter(undefined, config);
       case "gemini":
