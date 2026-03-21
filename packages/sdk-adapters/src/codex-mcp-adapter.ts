@@ -164,7 +164,14 @@ export class CodexMCPAdapter implements AgentAdapter {
 
   private sessions = new Map<string, MCPSession>();
   private threadToSession = new Map<string, string>();
-  /** Sessions awaiting their first threadId (first-turn notification routing). */
+  /**
+   * Sessions awaiting their first threadId (first-turn notification routing).
+   *
+   * Design assumption: Codex's notifications include `_meta.threadId` as soon as
+   * the thread is created, minimizing the window where routing falls back to this
+   * set. When multiple sessions are pending concurrently, `handleEvent()` iterates
+   * to find the one with an `activeTurn` rather than picking first.
+   */
   private pendingSessionIds = new Set<string>();
   private sharedSystemPrompt?: string;
   private transport: CodexMCPTransport | null = null;
@@ -615,7 +622,21 @@ export class CodexMCPAdapter implements AgentAdapter {
     params: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
     const threadId = params.threadId as string | undefined;
-    const sessionId = threadId ? this.threadToSession.get(threadId) : undefined;
+    let sessionId = threadId ? this.threadToSession.get(threadId) : undefined;
+
+    // First-turn fallback: elicitation may arrive before threadId is mapped
+    // (same pattern as handleEvent). Iterate pendingSessionIds to find the
+    // session with an activeTurn.
+    if (!sessionId && this.pendingSessionIds.size > 0) {
+      for (const pendingId of this.pendingSessionIds) {
+        const pending = this.sessions.get(pendingId);
+        if (pending?.activeTurn) {
+          sessionId = pendingId;
+          break;
+        }
+      }
+    }
+
     const record = sessionId ? this.sessions.get(sessionId) : undefined;
     const hooks = record?.activeTurn?.hooks;
 

@@ -46,20 +46,21 @@ async function testCodexSDK() {
   let messageCount = 0;
   let lastContent = "";
 
-  for await (const item of codex.sendPrompt(session.sessionId, prompt)) {
-    if (isStreamingEvent(item)) continue;
-    messageCount++;
-    lastContent = item.content;
-    bus.emit("agent.message.receive", codex.agentId, session.sessionId, {
-      role: item.role,
-      contentPreview: item.content.slice(0, 200),
-    });
-    console.log(`  [${item.role}] ${item.content.slice(0, 200)}`);
+  try {
+    for await (const item of codex.sendPrompt(session.sessionId, prompt)) {
+      if (isStreamingEvent(item)) continue;
+      messageCount++;
+      lastContent = item.content;
+      bus.emit("agent.message.receive", codex.agentId, session.sessionId, {
+        role: item.role,
+        contentPreview: item.content.slice(0, 200),
+      });
+      console.log(`  [${item.role}] ${item.content.slice(0, 200)}`);
+    }
+  } finally {
+    await codex.endSession(session.sessionId);
+    bus.emit("agent.session.end", codex.agentId, session.sessionId, { messageCount });
   }
-
-  // End session
-  await codex.endSession(session.sessionId);
-  bus.emit("agent.session.end", codex.agentId, session.sessionId, { messageCount });
 
   console.log("\n─── Results ───");
   console.log(`  Messages received: ${messageCount}`);

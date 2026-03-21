@@ -44,11 +44,13 @@ npm run typecheck 2>/dev/null || npx tsc --noEmit
 npx eslint --max-warnings 0 <changed-files>
 ```
 
-5. Check docstring coverage on new/modified exported classes and public methods:
+5. Check docstring coverage on changed files (whole-file scan, not diff-only):
    - Threshold: 50% of public API surface in changed `.ts` files must have JSDoc
    - Check: for each changed `.ts` file, count exported classes/functions/methods and
      count those with a `/** ... */` comment immediately preceding them
    - If coverage < 50%, report which exports are missing JSDoc
+   - Note: this scans the entire file, not just the diff hunks — pre-existing undocumented
+     exports in a touched file will also count
    - This aligns with CodeRabbit's pre-merge check (`.coderabbit.yaml` threshold: 50%)
 
 ```bash

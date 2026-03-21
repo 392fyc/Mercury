@@ -148,6 +148,15 @@ export class CodexMCPTransport {
     // upgrading @modelcontextprotocol/sdk.
     await client.connect(stdioTransport);
 
+    // Guard: if close() was called while connect() was in-flight, tear down
+    // immediately to avoid leaking a zombie codex mcp-server process.
+    // See: https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/client.md
+    if (this.closed) {
+      try { await client.close(); } catch { /* best-effort */ }
+      this.startPromise = null;
+      return;
+    }
+
     // Store references only after successful connect
     this.client = client;
     this.transport = stdioTransport;

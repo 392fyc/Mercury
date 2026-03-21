@@ -158,28 +158,26 @@ done
 
 ### Step 5b: Resolve Addressed Review Threads
 
-After fixes are committed and pushed, resolve all review threads that have been
-addressed. Use GraphQL `resolveReviewThread` mutation. Only resolve threads where
-the underlying issue has actually been fixed in the code.
+After fixes are committed and pushed, resolve **only** the review threads that
+were actually addressed in this fix round. Never batch-resolve all threads —
+human reviewer threads must stay open for the reviewer to close.
+
+**Procedure**: collect the thread IDs you fixed into a `FIXED_TIDS` list, then
+resolve only those. Use GraphQL pagination (`after` cursor) if the PR has more
+than 50 threads.
 
 ```bash
 OWNER=$(gh repo view --json owner --jq '.owner.login')
 NAME=$(gh repo view --json name --jq '.name')
-# Get all unresolved thread IDs
-THREAD_IDS=$(gh api graphql -f query="
-  { repository(owner: \"$OWNER\", name: \"$NAME\") {
-      pullRequest(number: $PR_NUMBER) {
-        reviewThreads(first: 50) {
-          nodes { id isResolved }
-        }
-      }
-    }
-  }" --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .id] | .[]')
 
-for TID in $THREAD_IDS; do
+# FIXED_TIDS should be populated by the fix step with the specific
+# thread IDs that were addressed. Example:
+# FIXED_TIDS=("PRRT_abc123" "PRRT_def456")
+
+for TID in "${FIXED_TIDS[@]}"; do
   gh api graphql -f query="mutation { resolveReviewThread(input: {threadId: \"$TID\"}) { thread { isResolved } } }" >/dev/null 2>&1
 done
-echo "Resolved $(echo "$THREAD_IDS" | grep -c . || echo 0) review threads"
+echo "Resolved ${#FIXED_TIDS[@]} addressed review threads"
 ```
 
 ### Step 6: Merge and Update Mercury State
@@ -192,21 +190,35 @@ check_review_state() { [ "$(gh pr view "$PR_NUMBER" --json reviewDecision --jq '
 check_unresolved_critical_comments() {
   OWNER=$(gh repo view --json owner --jq '.owner.login')
   NAME=$(gh repo view --json name --jq '.name')
-  UNRESOLVED=$(gh api graphql -f query="
-    { repository(owner: \"$OWNER\", name: \"$NAME\") {
-        pullRequest(number: $PR_NUMBER) {
-          reviewThreads(first: 50) {
-            nodes { isResolved comments(first: 1) { nodes { body } } }
+  # Paginate all review threads (handles PRs with >50 threads)
+  CURSOR=""
+  TOTAL_CRITICAL=0
+  while true; do
+    AFTER_ARG=""
+    [ -n "$CURSOR" ] && AFTER_ARG=", after: \"$CURSOR\""
+    RESULT=$(gh api graphql -f query="
+      { repository(owner: \"$OWNER\", name: \"$NAME\") {
+          pullRequest(number: $PR_NUMBER) {
+            reviewThreads(first: 50${AFTER_ARG}) {
+              pageInfo { hasNextPage endCursor }
+              nodes { isResolved comments(first: 1) { nodes { body } } }
+            }
           }
         }
-      }
-    }" --jq '
-    [.data.repository.pullRequest.reviewThreads.nodes[]
-     | select(.isResolved == false)
-     | .comments.nodes[0].body // ""
-     | select(test("Critical|Major"))]
-    | length')
-  [ "${UNRESOLVED:-0}" -eq 0 ]
+      }")
+    PAGE_CRITICAL=$(echo "$RESULT" | python3 -c "
+import sys,json
+d=json.loads(sys.stdin.read())
+nodes=d['data']['repository']['pullRequest']['reviewThreads']['nodes']
+import re
+count=sum(1 for n in nodes if not n['isResolved'] and n['comments']['nodes'] and re.search(r'Critical|Major',n['comments']['nodes'][0].get('body','')))
+print(count)")
+    TOTAL_CRITICAL=$((TOTAL_CRITICAL + PAGE_CRITICAL))
+    HAS_NEXT=$(echo "$RESULT" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print(d['data']['repository']['pullRequest']['reviewThreads']['pageInfo']['hasNextPage'])")
+    [ "$HAS_NEXT" = "True" ] || break
+    CURSOR=$(echo "$RESULT" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print(d['data']['repository']['pullRequest']['reviewThreads']['pageInfo']['endCursor'])")
+  done
+  [ "$TOTAL_CRITICAL" -eq 0 ]
 }
 check_ready_to_merge() { check_ci_status && check_review_state && check_unresolved_critical_comments; }
 MERGE_STRATEGY=${MERGE_STRATEGY:-squash}
