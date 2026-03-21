@@ -3,6 +3,7 @@ tone_instructions: "提供架构层面的洞察，关注系统设计、可扩展
 
 reviews:
   profile: "assertive"
+  request_changes_workflow: true
   sequence_diagrams: true
   high_level_summary: true
   high_level_summary_in_walkthrough: true
