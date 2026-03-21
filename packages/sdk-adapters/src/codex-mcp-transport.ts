@@ -136,9 +136,16 @@ export class CodexMCPTransport {
     };
 
     // Connect first, THEN register custom message handlers.
-    // The SDK's Protocol.connect() sets up its own onmessage chain on the
-    // transport. We wrap it AFTER connect so our interceptors sit in front
-    // of the SDK's handler rather than being overwritten by it.
+    // The SDK's Protocol.connect() overwrites transport.onmessage with a
+    // chain-wrapper (captures existing callback, wraps it). We wrap AFTER
+    // connect so our interceptors sit in front of the SDK's handler.
+    //
+    // RISK: this replaces the SDK's onmessage wrapper. Codex-specific
+    // notifications (notifications/codex/event) and elicitation requests
+    // are intercepted here; all other messages are forwarded to the SDK's
+    // original handler (sdkOnMessage). If the SDK's internal chain changes
+    // in a future version, this interception may break — verify after
+    // upgrading @modelcontextprotocol/sdk.
     await client.connect(stdioTransport);
 
     // Store references only after successful connect
@@ -180,13 +187,17 @@ export class CodexMCPTransport {
                 jsonrpc: "2.0",
                 id: msg.id,
                 result,
-              } as JSONRPCMessage);
+              } as JSONRPCMessage).catch((sendErr) => {
+                this.onError?.(sendErr instanceof Error ? sendErr : new Error(`Elicitation response send failed: ${sendErr}`));
+              });
             } catch (err) {
               await stdioTransport.send({
                 jsonrpc: "2.0",
                 id: msg.id,
                 error: { code: -32000, message: err instanceof Error ? err.message : String(err) },
-              } as JSONRPCMessage);
+              } as JSONRPCMessage).catch((sendErr) => {
+                this.onError?.(sendErr instanceof Error ? sendErr : new Error(`Elicitation error response send failed: ${sendErr}`));
+              });
             }
           })();
           return; // Don't pass elicitation requests to SDK

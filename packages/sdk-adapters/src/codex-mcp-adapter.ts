@@ -44,6 +44,12 @@ const CODEX_COMPACTION_NOTICE =
   "Context compaction triggered — role boundary instructions from earlier turns may have been summarized.";
 const DEFAULT_APPROVAL_POLICY = "on-request";
 const DEFAULT_SANDBOX_MODE = "workspace-write";
+/** Fallback model list when ~/.codex/models_cache.json is unavailable. */
+const FALLBACK_MODELS: Array<{ id: string; name: string }> = [
+  { id: "o3", name: "o3" },
+  { id: "o4-mini", name: "o4-mini" },
+  { id: "codex-mini-latest", name: "Codex Mini" },
+];
 const END_OF_STREAM = Symbol("codex-mcp-turn-end");
 
 // ─── Local types ───
@@ -143,7 +149,14 @@ class MessageStream {
  * - `notifications/codex/event` — streaming events
  * - `elicitation/*` — approval bridge (command/file change approval)
  *
+ * **Transport sharing**: all sessions share a single {@link CodexMCPTransport}
+ * instance (one `codex mcp-server` process). This is intentional — Codex's
+ * ThreadManager multiplexes sessions over one MCP connection via `threadId`
+ * in notification `_meta` fields. Trade-off: a transport-level crash affects
+ * all active sessions.
+ *
  * @see https://developers.openai.com/codex/guides/agents-sdk
+ * @see https://deepwiki.com/openai/codex/6.4-mcp-server-implementation-(codex-mcp-server)
  */
 export class CodexMCPAdapter implements AgentAdapter {
   readonly agentId: string;
@@ -360,13 +373,14 @@ export class CodexMCPAdapter implements AgentAdapter {
 
           result = await transport.callCodex(toolParams);
 
-          // Extract threadId and establish permanent mapping
-          if (result.structuredContent?.threadId) {
+          // Extract threadId and establish permanent mapping.
+          // Guard: only write if session still exists (may have been ended/handed off).
+          this.pendingSessionIds.delete(sessionId);
+          if (result.structuredContent?.threadId && this.sessions.has(sessionId)) {
             record.threadId = result.structuredContent.threadId;
             record.info.resumeToken = record.threadId;
             this.threadToSession.set(record.threadId, sessionId);
           }
-          this.pendingSessionIds.delete(sessionId);
         }
 
         // Push final response message
@@ -401,11 +415,16 @@ export class CodexMCPAdapter implements AgentAdapter {
 
   // ─── One-shot execution ───
 
-  /** Execute a single prompt without session management. Auto-cleans up after completion. */
+  /**
+   * Execute a single prompt without session management. Auto-cleans up after completion.
+   *
+   * One-shot mode has no approval hooks — approval-policy is forced to "never".
+   * Callers requiring interactive approval should use startSession + sendPrompt instead.
+   */
   async executeOneShot(
     prompt: string,
     cwd: string,
-    options?: { model?: string; sandbox?: string; approvalPolicy?: unknown },
+    options?: { model?: string; sandbox?: string },
   ): Promise<{ messages: AgentMessage[]; finalMessage: string; threadId: string }> {
     const transport = this.ensureTransport();
     await transport.ensureStarted();
@@ -415,12 +434,11 @@ export class CodexMCPAdapter implements AgentAdapter {
       ? `[Mercury Role Context]\n${promptContext}\n\n[User Prompt]\n${prompt}`
       : prompt;
 
-    // Fix #4: Respect caller-provided model and sandbox overrides
     const toolParams: CodexToolParams = {
       prompt: effectivePrompt,
       cwd,
       sandbox: options?.sandbox ?? DEFAULT_SANDBOX_MODE,
-      "approval-policy": (options?.approvalPolicy as string) ?? "never",
+      "approval-policy": "never", // One-shot has no approval hooks — always "never"
     };
     const model = options?.model ?? this.config.model;
     if (model) toolParams.model = model;
@@ -474,11 +492,7 @@ export class CodexMCPAdapter implements AgentAdapter {
     } catch {
       // Cache not available
     }
-    return [
-      { id: "o3", name: "o3" },
-      { id: "o4-mini", name: "o4-mini" },
-      { id: "codex-mini-latest", name: "Codex Mini" },
-    ];
+    return FALLBACK_MODELS;
   }
 
   /** Override the model used for subsequent tool calls. */
@@ -508,18 +522,22 @@ export class CodexMCPAdapter implements AgentAdapter {
     let sessionId = threadId ? this.threadToSession.get(threadId) : undefined;
 
     // Fix #3: During the first turn, threadId may not be mapped yet.
-    // Fall back to the pending session (there should be at most one active).
+    // Fall back to pending sessions. When multiple sessions are pending
+    // concurrently, iterate all to find the one with an activeTurn (rather
+    // than blindly picking the first, which could mis-route).
     if (!sessionId && this.pendingSessionIds.size > 0) {
-      const pendingId = this.pendingSessionIds.values().next().value as string;
-      const pending = this.sessions.get(pendingId);
-      if (pending?.activeTurn) {
-        sessionId = pendingId;
-        // Establish the mapping now if threadId is available
-        if (threadId && !pending.threadId) {
-          pending.threadId = threadId;
-          pending.info.resumeToken = threadId;
-          this.threadToSession.set(threadId, pendingId);
-          this.pendingSessionIds.delete(pendingId);
+      for (const pendingId of this.pendingSessionIds) {
+        const pending = this.sessions.get(pendingId);
+        if (pending?.activeTurn) {
+          sessionId = pendingId;
+          // Establish permanent mapping if threadId is available
+          if (threadId && !pending.threadId) {
+            pending.threadId = threadId;
+            pending.info.resumeToken = threadId;
+            this.threadToSession.set(threadId, pendingId);
+            this.pendingSessionIds.delete(pendingId);
+          }
+          break;
         }
       }
     }
