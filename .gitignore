@@ -51,3 +51,4 @@ CLAUDE.md
 .mercury/transcripts/
 .mercury/backups/
 mercury.config.json
+.claude/current-session.md

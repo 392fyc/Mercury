@@ -69,6 +69,11 @@
         "hooks": [
           {
             "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-init.sh\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/user-prompt-submit.sh\"",
             "timeout": 5
           }
