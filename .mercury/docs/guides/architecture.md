@@ -7,7 +7,7 @@
 - **Frontend**: Vue 3 (Tauri 2 desktop app)
 - **Shell**: Rust (Tauri)
 - **Orchestrator**: Node.js sidecar (JSON-RPC 2.0 over stdio)
-- **SDK Adapters**: 包装 Agent CLI (Claude Code, Codex, opencode, Gemini CLI)
+- **SDK Adapters**: 包装 Agent CLI (Claude Code, Codex, opencode, Gemini CLI)。Codex 使用 MCP 协议 (`codex mcp-server`)，其他 adapter 使用各自的 CLI 集成方式
 - **Task Flow**: SoT (Ship of Theseus) orchestration pattern
 
 ## 数据流
@@ -28,7 +28,13 @@ packages/
       role-loader.ts      # 运行时从 YAML 加载角色定义
       role-prompt-builder.ts  # 生成 role-scoped system prompt
       task-manager.ts     # TaskBundle 状态机 + 基于模板的 prompt 构建
-  sdk-adapters/       # Agent CLI wrappers
+  sdk-adapters/       # Agent CLI adapters
+    src/
+      claude-adapter.ts       # Claude Code CLI adapter
+      codex-mcp-adapter.ts    # Codex MCP adapter (via codex mcp-server)
+      codex-mcp-transport.ts  # Codex MCP transport layer
+      gemini-adapter.ts       # Gemini CLI adapter
+      opencode-adapter.ts     # opencode CLI adapter
   core/               # Shared TypeScript types (RoleCard interface, AgentRole)
 ```
 

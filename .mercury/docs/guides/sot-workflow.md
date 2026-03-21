@@ -16,6 +16,49 @@ Main 创建 Task → 派发
 
 **Issue 和 Task 是独立实体**：Issue 记录"发生了什么"，Task 记录"要做什么"。
 
+## Task 状态机
+
+> 代码实现: `packages/orchestrator/src/task-manager.ts` — `VALID_TRANSITIONS` 常量
+
+```mermaid
+stateDiagram-v2
+    [*] --> drafted
+    drafted --> dispatched
+    dispatched --> in_progress
+    in_progress --> implementation_done
+    implementation_done --> main_review
+    main_review --> acceptance
+    main_review --> in_progress : rework
+    acceptance --> verified
+    acceptance --> in_progress : rework
+    verified --> closed
+    closed --> [*]
+
+    in_progress --> blocked : when blocked
+    in_progress --> failed : unrecoverable
+    blocked --> in_progress : after unblock
+    blocked --> failed : unrecoverable
+
+    failed --> [*]
+```
+
+**转换说明**:
+
+| 转换 | 触发方式 | 说明 |
+|------|----------|------|
+| `drafted → dispatched` | Main 派发 | 创建分支，发送 dispatch prompt |
+| `dispatched → in_progress` | 系统自动 | Dev agent 开始执行 |
+| `in_progress → implementation_done` | Dev 提交 receipt | Dev 填写 implementationReceipt |
+| `implementation_done → main_review` | 系统自动 | 进入 Main 审核队列 |
+| `main_review → acceptance` | Main 人工审核 | Receipt 完整性检查通过 |
+| `main_review → in_progress` | Main 人工审核 | Rework: receipt 不完整或实现有误 |
+| `acceptance → verified` | Acceptance 盲审 | Verdict: pass |
+| `acceptance → in_progress` | Acceptance 盲审 | Rework: verdict fail/partial |
+| `verified → closed` | Main 关闭 | 合并 PR，归档 |
+| `in_progress → blocked` | Dev/Main 标记 | 外部依赖阻塞 |
+| `blocked → in_progress` | Main 解除阻塞 | 阻塞条件消除 |
+| `in_progress/blocked → failed` | Main 标记 | 不可恢复的失败（终态） |
+
 ## Task 执行流程
 
 | 步骤 | 角色 | 操作 | 输出 |
