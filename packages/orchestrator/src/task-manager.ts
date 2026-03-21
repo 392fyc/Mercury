@@ -135,6 +135,23 @@ export class TaskManager {
   // ─── Task CRUD ───
 
   createTask(params: CreateTaskParams): TaskBundle {
+    // ─── Input Validation ───
+    const errors: string[] = [];
+    if (!params.title?.trim()) errors.push("title is required");
+    if (!params.context?.trim()) errors.push("context is required");
+    if (!params.definitionOfDone?.length) errors.push("definitionOfDone must have at least 1 item");
+    const validPriorities = ["sev-0", "sev-1", "sev-2", "sev-3"];
+    if (!validPriorities.includes(params.priority)) {
+      errors.push(`priority must be one of ${validPriorities.join(", ")}, got "${params.priority}"`);
+    }
+    const hasWriteScope =
+      (params.allowedWriteScope?.codePaths?.length ?? 0) > 0 ||
+      (params.allowedWriteScope?.kbPaths?.length ?? 0) > 0;
+    if (!hasWriteScope) errors.push("allowedWriteScope must have at least 1 codePath or kbPath");
+    if (errors.length > 0) {
+      throw new Error(`createTask validation failed:\n  - ${errors.join("\n  - ")}`);
+    }
+
     const taskId = `TASK-${shortId()}`;
     const task: TaskBundle = {
       taskId,
