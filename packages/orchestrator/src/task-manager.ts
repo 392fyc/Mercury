@@ -127,9 +127,7 @@ export class TaskManager {
     // Only consider agents with "dev" role
     const devAgents = agents.filter((a) => a.roles.includes("dev"));
     if (devAgents.length === 0) {
-      // Last resort: any agent
-      if (agents.length > 0) return agents[0].id;
-      throw new Error("No agents registered — cannot auto-assign task");
+      throw new Error("No agents with 'dev' role registered — cannot auto-assign task");
     }
     if (devAgents.length === 1) return devAgents[0].id;
 
@@ -239,6 +237,11 @@ export class TaskManager {
 
     // G9: Auto-assign agent if not provided — use modelRecommendation routing
     const assignedTo = params.assignedTo?.trim() || this.autoSelectAgent(params);
+
+    // Validate assignedTo references a registered agent
+    if (this.agentConfigLookup && !this.agentConfigLookup(assignedTo)) {
+      throw new Error(`createTask validation failed: agent "${assignedTo}" is not registered`);
+    }
 
     const taskId = `TASK-${shortId()}`;
     const task: TaskBundle = {
