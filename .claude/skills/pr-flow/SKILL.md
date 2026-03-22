@@ -149,9 +149,54 @@ ACTIONABLE=$(echo "$COMMENTS" | jq -cr '
 ')
 ```
 
-### Step 5: Apply Fixes, Validate, and Re-Review
+### Step 5: Apply Fixes, Validate, Resolve Threads, and Re-Review
+
+**CRITICAL RULE**: Every fix commit MUST be immediately followed by resolving
+the corresponding review threads. This is a single atomic operation:
+  commit fix → push → resolve threads → request re-review.
+Skipping the resolve step causes CodeRabbit to re-issue CHANGES_REQUESTED
+on already-fixed issues.
+
+This applies to both automated patch application AND manual code fixes.
+When fixing issues manually (not via `git apply`), map each fixed file back
+to its review thread(s) and resolve them after push.
 
 ```bash
+OWNER=$(gh repo view --json owner --jq '.owner.login')
+NAME=$(gh repo view --json name --jq '.name')
+
+# ── Helper: resolve a review thread by GraphQL ID ──
+resolve_thread() {
+  local tid="$1"
+  gh api graphql -f query="mutation { resolveReviewThread(input: {threadId: \"$tid\"}) { thread { isResolved } } }" >/dev/null 2>&1
+}
+
+# ── Helper: get thread ID for a given file path ──
+# Returns all unresolved thread IDs whose first comment matches the given path.
+get_thread_ids_for_path() {
+  local target_path="$1"
+  gh api graphql -f query="
+    { repository(owner: \"$OWNER\", name: \"$NAME\") {
+        pullRequest(number: $PR_NUMBER) {
+          reviewThreads(first: 100) {
+            nodes { id isResolved path }
+          }
+        }
+      }
+    }" --jq ".data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false and .path == \"$target_path\") | .id" 2>/dev/null
+}
+
+# ── Helper: resolve all unresolved threads for given file paths ──
+resolve_threads_for_paths() {
+  local resolved_count=0
+  for fpath in "$@"; do
+    while IFS= read -r tid; do
+      [ -n "$tid" ] && resolve_thread "$tid" && resolved_count=$((resolved_count + 1))
+    done < <(get_thread_ids_for_path "$fpath")
+  done
+  echo "Resolved $resolved_count review threads"
+}
+
 normalize_patch() {
   local path="$1" body="$2" diff suggestion
   diff=$(printf '%s\n' "$body" | sed -n '/```diff/,/```/p' | sed '1d;$d')
@@ -169,6 +214,8 @@ wait_for_refresh() { gh pr checks "$PR_NUMBER" --watch || true; for i in $(seq 1
 MAX_ITERATIONS=3 # CodeRabbit usually converges in 1-2 rounds; keep 1 buffer.
 ITERATION=1
 while [ "$ITERATION" -le "$MAX_ITERATIONS" ] && [ -n "$ACTIONABLE" ]; do
+  # Collect all fixed paths in this iteration for thread resolution
+  declare -a FIXED_PATHS=()
   echo "$ACTIONABLE" | while read -r item; do
     COMMENT_ID=$(echo "$item" | jq -r '.id'); PATHNAME=$(echo "$item" | jq -r '.path')
     COMMENT_BODY=$(gh api repos/{owner}/{repo}/pulls/comments/"$COMMENT_ID" --jq '.body')
@@ -186,36 +233,24 @@ $PATCH_PATHS
 EOF
     git diff --cached --quiet && { echo "skip: no staged changes for $COMMENT_ID"; continue; }
     git commit -m "fix(PR-feedback): address comment $COMMENT_ID"
+    # Track fixed paths for thread resolution
+    FIXED_PATHS+=("$PATHNAME")
   done
   git push
+  # ── Resolve threads for all fixed paths in this iteration ──
+  [ ${#FIXED_PATHS[@]} -gt 0 ] && resolve_threads_for_paths "${FIXED_PATHS[@]}"
   wait_for_refresh
   ITERATION=$((ITERATION + 1))
 done
 ```
 
-### Step 5b: Resolve Addressed Review Threads
-
-After fixes are committed and pushed, resolve **only** the review threads that
-were actually addressed in this fix round. Never batch-resolve all threads —
-human reviewer threads must stay open for the reviewer to close.
-
-**Procedure**: collect the thread IDs you fixed into a `FIXED_TIDS` list, then
-resolve only those. Use GraphQL pagination (`after` cursor) if the PR has more
-than 50 threads.
+**Manual fix scenario**: When fixing CR feedback by writing code directly
+(not via auto-patch), you MUST still resolve threads after pushing:
 
 ```bash
-OWNER=$(gh repo view --json owner --jq '.owner.login')
-NAME=$(gh repo view --json name --jq '.name')
-
-# Initialize FIXED_TIDS before the fix loop (safe under set -u).
-# Populate it during Step 5 as each thread's fix is confirmed.
-declare -a FIXED_TIDS=()
-# Example: FIXED_TIDS+=("PRRT_abc123") after fixing that thread's issue
-
-for TID in "${FIXED_TIDS[@]}"; do
-  gh api graphql -f query="mutation { resolveReviewThread(input: {threadId: \"$TID\"}) { thread { isResolved } } }" >/dev/null 2>&1
-done
-echo "Resolved ${#FIXED_TIDS[@]} addressed review threads"
+# After committing and pushing manual fixes, resolve threads for all changed files:
+CHANGED_FILES=$(git diff --name-only HEAD~1)
+resolve_threads_for_paths $CHANGED_FILES
 ```
 
 ### Step 6: Merge and Update Mercury State
