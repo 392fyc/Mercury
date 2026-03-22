@@ -152,11 +152,11 @@ export function createMcpServer(orchestrator: Orchestrator, transport: RpcTransp
   // ─── Task Management ───
 
   rpcTool(server, orchestrator, "create_task",
-    "Create a new TaskBundle", {
+    "Create a new TaskBundle (assignedTo is auto-selected via G9 if omitted)", {
       taskId: taskId.optional().describe("Custom task ID (auto-generated if omitted)"),
       title: z.string().describe("Short task title"),
       priority: z.enum(["P0", "P1", "P2", "P3"]).optional().describe("Task priority level"),
-      assignedTo: agentId.describe("Agent to assign the task to"),
+      assignedTo: agentId.optional().describe("Agent to assign (auto-selected if omitted)"),
       description: z.string().optional().describe("Detailed task description"),
       context: z.string().describe("Task context for dev agent"),
       codeScope: z.record(z.string(), z.unknown()).optional().describe("Code scope boundaries"),
@@ -164,6 +164,12 @@ export function createMcpServer(orchestrator: Orchestrator, transport: RpcTransp
       allowedWriteScope: z.record(z.string(), z.unknown()).describe("Allowed write paths"),
       definitionOfDone: z.array(z.string()).optional().describe("DoD checklist items"),
       branch: z.string().optional().describe("Git branch name"),
+      modelRecommendation: z.object({
+        complexity: z.enum(["low", "medium", "high"]).describe("Task complexity"),
+        requiredCapabilities: z.array(z.string()).optional().describe("Required agent capabilities"),
+        preferredModel: z.string().optional().describe("Preferred model hint (e.g. claude-opus-4-6)"),
+        reason: z.string().optional().describe("Reason for recommendation"),
+      }).optional().describe("G9: model recommendation for auto-routing"),
     });
 
   rpcTool(server, orchestrator, "get_task",

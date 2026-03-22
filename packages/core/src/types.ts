@@ -182,6 +182,7 @@ export type EventType =
   | "orchestrator.task.complete"
   | "orchestrator.task.fail"
   | "orchestrator.task.created"
+  | "orchestrator.routing.debug"
   | "orchestrator.task.status_change"
   | "orchestrator.task.rework"
   | "orchestrator.acceptance.created"
@@ -218,6 +219,16 @@ export interface TaskAssignee {
 }
 
 export type TaskPriority = "P0" | "P1" | "P2" | "P3";
+
+/** G9: Model recommendation for automatic task routing. */
+export type TaskComplexity = "low" | "medium" | "high";
+
+export interface ModelRecommendation {
+  complexity: TaskComplexity;
+  requiredCapabilities?: string[];
+  preferredModel?: string; // hint: e.g. "claude-opus-4-6", "o3"
+  reason?: string;
+}
 
 export type TaskStatus =
   | "drafted"
@@ -346,6 +357,9 @@ export interface TaskBundle {
 
   // Callback routing: Main Agent session that dispatched this task
   originatorSessionId?: string;
+
+  // G9: Auto-triage model recommendation
+  modelRecommendation?: ModelRecommendation;
 
   // Rework history: accumulated across attempts for iterative context
   reworkHistory: ReworkHistoryEntry[];

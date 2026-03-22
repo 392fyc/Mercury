@@ -287,7 +287,7 @@ export interface CreateTaskParams {
   title: string;
   phaseId?: string;
   priority: TaskPriority;
-  assignedTo: string;
+  assignedTo?: string; // Optional: auto-assigned via G9 modelRecommendation if omitted
   branch?: string;
   codeScope: { include: string[]; exclude: string[] };
   readScope: { requiredDocs: string[]; optionalDocs: string[] };
@@ -297,6 +297,11 @@ export interface CreateTaskParams {
   definitionOfDone: string[];
   requiredEvidence?: string[];
   context: string;
+  modelRecommendation?: {
+    complexity: "low" | "medium" | "high"; // Required per core ModelRecommendation
+    preferredModel?: string;
+    requiredCapabilities?: string[];
+  };
   maxReworks?: number;
 }
 

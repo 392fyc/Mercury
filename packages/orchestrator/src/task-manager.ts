@@ -51,7 +51,7 @@ export interface CreateTaskParams {
   title: string;
   phaseId?: string;
   priority: TaskBundle["priority"];
-  assignedTo: string;
+  assignedTo?: string; // Optional: auto-assigned via G9 modelRecommendation if omitted
   branch?: string;
   codeScope: TaskBundle["codeScope"];
   readScope: TaskBundle["readScope"];
@@ -63,6 +63,7 @@ export interface CreateTaskParams {
   context: string;
   reviewConfig?: TaskBundle["reviewConfig"];
   handoffToAcceptance?: TaskBundle["handoffToAcceptance"];
+  modelRecommendation?: TaskBundle["modelRecommendation"];
   maxReworks?: number;
   maxDispatchAttempts?: number;
 }
@@ -89,6 +90,7 @@ export class TaskManager {
 
   private persistence: TaskPersistence | null = null;
   private agentConfigLookup: ((agentId: string) => AgentConfig | undefined) | null = null;
+  private agentListLookup: (() => AgentConfig[]) | null = null;
 
   constructor(private bus: EventBus) {}
 
@@ -102,10 +104,117 @@ export class TaskManager {
     this.agentConfigLookup = lookup;
   }
 
+  /** Inject agent list lookup for G9 auto-triage agent selection. */
+  setAgentListLookup(lookup: () => AgentConfig[]): void {
+    this.agentListLookup = lookup;
+  }
+
   /** Build a TaskAssignee struct from agentId, enriching with model from agent config if available. */
   private buildTaskAssignee(agentId: string): TaskAssignee {
     const model = this.agentConfigLookup?.(agentId)?.model;
     return model === undefined ? { agentId } : { agentId, model };
+  }
+
+  /**
+   * G9 Auto-triage: select the best agent for a task based on:
+   * 1. modelRecommendation.preferredModel → match agent.model
+   * 2. modelRecommendation.requiredCapabilities → match agent.capabilities
+   * 3. modelRecommendation.complexity → prefer more capable agents for high complexity
+   * 4. Fallback: first agent with "dev" role
+   */
+  private autoSelectAgent(params: CreateTaskParams, taskId: string): string {
+    if (!this.agentListLookup) {
+      throw new Error("agentListLookup not injected — Orchestrator wiring incomplete");
+    }
+    const agents = this.agentListLookup();
+    // Only consider agents with "dev" role
+    const devAgents = agents.filter((a) => a.roles.includes("dev"));
+    if (devAgents.length === 0) {
+      throw new Error(
+        `No agents with 'dev' role in registry (${agents.length} total agents) — cannot auto-assign task`,
+      );
+    }
+
+    // Helper: emit debug event and return selected agent
+    const selectAndEmit = (
+      agentId: string,
+      reason: string,
+      candidates?: { agentId: string; score: number }[],
+    ): string => {
+      this.bus.emit("orchestrator.routing.debug", "orchestrator", "orchestrator", {
+        taskId,
+        taskTitle: params.title,
+        reason,
+        candidates: candidates ?? [{ agentId, score: 0 }],
+        selected: agentId,
+      });
+      return agentId;
+    };
+
+    if (devAgents.length === 1) {
+      return selectAndEmit(devAgents[0].id, "single-dev-agent");
+    }
+
+    const rawRec = params.modelRecommendation;
+    // Normalize: treat recommendation with only whitespace values as absent
+    const hasModel = !!rawRec?.preferredModel?.trim();
+    const hasCaps = !!rawRec?.requiredCapabilities?.some((c) => c.trim().length > 0);
+    const hasComplexity = !!rawRec?.complexity;
+    if (!rawRec || (!hasModel && !hasCaps && !hasComplexity)) {
+      return selectAndEmit(devAgents[0].id, "no-recommendation-fallback");
+    }
+    const rec = rawRec;
+
+    // Score each dev agent
+    const scored = devAgents.map((agent) => {
+      let score = 0;
+
+      // Preferred model match: trim + lowercase to handle whitespace in MCP/JSON inputs
+      if (rec.preferredModel && agent.model) {
+        const preferred = rec.preferredModel.trim().toLowerCase();
+        const agentModel = agent.model.trim().toLowerCase();
+        if (preferred && agentModel) {
+          if (agentModel === preferred) {
+            score += 100; // Exact match
+          } else if (agentModel.startsWith(preferred + "-") || preferred.startsWith(agentModel + "-")) {
+            score += 50; // Family match (e.g. "claude-opus-4-6" matches "claude-opus-4-6-xxx")
+          }
+        }
+      }
+
+      // Capability matching (deduplicated, trimmed to prevent whitespace/repeated scoring)
+      if (rec.requiredCapabilities?.length) {
+        const uniqueCaps = [
+          ...new Set(
+            rec.requiredCapabilities
+              .map((c) => c.trim().toLowerCase())
+              .filter((c) => c.length > 0),
+          ),
+        ];
+        const matched = uniqueCaps.filter((cap) =>
+          agent.capabilities.some((ac) => ac.trim().toLowerCase() === cap),
+        ).length;
+        score += matched * 20;
+      }
+
+      // Complexity-based preference:
+      // - high: prefer agents with more capabilities (stronger models)
+      // - medium/low: no capability bias (any dev agent is suitable)
+      if (rec.complexity === "high") {
+        score += agent.capabilities.length * 5;
+      }
+
+      return { agent, score };
+    });
+
+    // Sort by score descending; tiebreak by agent ID for deterministic selection
+    scored.sort((a, b) => b.score - a.score || a.agent.id.localeCompare(b.agent.id));
+
+    return selectAndEmit(
+      scored[0].agent.id,
+      "scored-selection",
+      scored.slice(0, 3).map((s) => ({ agentId: s.agent.id, score: s.score })),
+    );
   }
 
   /** Rehydrate task state from persistence (call before RPC starts). */
@@ -145,7 +254,6 @@ export class TaskManager {
     // ─── Input Validation + Normalization ───
     const errors: string[] = [];
     if (!params.title?.trim()) errors.push("title is required");
-    if (!params.assignedTo?.trim()) errors.push("assignedTo is required");
     if (!params.context?.trim()) errors.push("context is required");
     if (!params.definitionOfDone?.length) errors.push("definitionOfDone must have at least 1 item");
     if (!params.codeScope) errors.push("codeScope is required");
@@ -170,10 +278,26 @@ export class TaskManager {
 
     // Normalize string inputs
     params.title = params.title.trim();
-    params.assignedTo = params.assignedTo.trim();
     params.context = params.context.trim();
 
+    // Generate taskId early so it can be included in routing debug events
     const taskId = `TASK-${shortId()}`;
+
+    // G9: Auto-assign agent if not provided — use modelRecommendation routing
+    const explicitAssignedTo = params.assignedTo?.trim();
+    const assignedTo = explicitAssignedTo || this.autoSelectAgent(params, taskId);
+
+    // Validate assignedTo references a registered agent with 'dev' role
+    if (this.agentConfigLookup) {
+      const agentConfig = this.agentConfigLookup(assignedTo);
+      if (!agentConfig) {
+        throw new Error(`createTask validation failed: agent "${assignedTo}" is not registered`);
+      }
+      if (!agentConfig.roles.includes("dev")) {
+        throw new Error(`createTask validation failed: agent "${assignedTo}" does not have 'dev' role`);
+      }
+    }
+
     const task: TaskBundle = {
       taskId,
       title: params.title,
@@ -183,7 +307,7 @@ export class TaskManager {
       createdAt: new Date().toISOString(),
       closedAt: null,
       failedAt: null,
-      assignedTo: params.assignedTo,
+      assignedTo,
       branch: params.branch,
       codeScope: params.codeScope,
       readScope: params.readScope,
@@ -195,6 +319,7 @@ export class TaskManager {
       context: params.context,
       reviewConfig: params.reviewConfig,
       handoffToAcceptance: params.handoffToAcceptance,
+      modelRecommendation: params.modelRecommendation,
       dispatchAttempts: 0,
       maxDispatchAttempts: params.maxDispatchAttempts ?? 5,
       reworkCount: 0,
@@ -204,16 +329,23 @@ export class TaskManager {
     };
 
     // Agents First: populate structured assignee from agent config
-    task.assignee = this.buildTaskAssignee(params.assignedTo);
+    task.assignee = this.buildTaskAssignee(assignedTo);
 
     this.tasks.set(taskId, task);
     this.persistTask(task);
 
     this.bus.emit(
       "orchestrator.task.created",
-      params.assignedTo,
+      assignedTo,
       "orchestrator",
-      { taskId, title: task.title, assignedTo: task.assignedTo, priority: task.priority },
+      {
+        taskId,
+        title: task.title,
+        assignedTo: task.assignedTo,
+        priority: task.priority,
+        modelRecommendation: task.modelRecommendation,
+        routingMethod: explicitAssignedTo ? "explicit" : "auto-triage",
+      },
     );
 
     return task;
