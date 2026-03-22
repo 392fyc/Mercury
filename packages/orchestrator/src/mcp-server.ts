@@ -167,6 +167,9 @@ export function createMcpServer(orchestrator: Orchestrator, transport: RpcTransp
   rpcTool(server, orchestrator, "get_task",
     "Get a task by ID", { taskId });
 
+  rpcTool(server, orchestrator, "get_task_result",
+    "Get task result with acceptance verdict and findings (for polling task completion)", { taskId });
+
   rpcTool(server, orchestrator, "list_tasks",
     "List all tasks, optionally filtered by status", {
       status: z.string().optional().describe("Filter by task status"),
