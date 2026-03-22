@@ -1039,3 +1039,95 @@ export function buildMainReviewPrompt(task: TaskBundle): string {
 
   return lines.join("\n");
 }
+
+/** Build the Critic Agent verification prompt — spec-driven DoD validation. */
+export function buildCriticPrompt(task: TaskBundle, _projectRoot?: string): string {
+  const lines: string[] = [];
+
+  lines.push(`# Critic Verification: ${task.title} [${task.taskId}]`);
+  lines.push("");
+
+  // Definition of Done — the "spec" to verify against
+  lines.push("## Definition of Done (verify each item)");
+  for (const [i, item] of task.definitionOfDone.entries()) {
+    lines.push(`${i + 1}. ${item}`);
+  }
+  lines.push("");
+
+  // Task context
+  lines.push("## Task Context");
+  lines.push(task.context || "(no context provided)");
+  lines.push("");
+
+  // Code scope
+  lines.push("## Code Scope");
+  lines.push("```json");
+  lines.push(JSON.stringify(task.codeScope, null, 2));
+  lines.push("```");
+  lines.push("");
+
+  // Pre-check results (if available)
+  if (task.mainReview?.preChecks?.length) {
+    lines.push("## Pre-Check Results");
+    for (const pc of task.mainReview.preChecks) {
+      const icon = pc.success ? "PASS" : "FAIL";
+      lines.push(`- [${icon}] ${pc.name}: exit=${pc.exitCode}, ${pc.durationMs}ms`);
+      if (!pc.success && pc.stdout) {
+        lines.push("  ```");
+        lines.push("  " + truncate(pc.stdout, 500));
+        lines.push("  ```");
+      }
+    }
+    lines.push("");
+  }
+
+  // Git diff (if available)
+  if (task.mainReview?.gitDiff) {
+    lines.push("## Git Diff");
+    lines.push("```diff");
+    lines.push(sanitizeFenceContent(truncate(task.mainReview.gitDiff, MAX_DIFF_CHARS)));
+    lines.push("```");
+    lines.push("");
+  }
+
+  // Changed files list from receipt
+  if (task.implementationReceipt?.changedFiles?.length) {
+    lines.push("## Changed Files");
+    for (const f of task.implementationReceipt.changedFiles) {
+      lines.push(`- ${f}`);
+    }
+    lines.push("");
+  }
+
+  // Instructions
+  lines.push("## Instructions");
+  lines.push("");
+  lines.push("For EACH Definition of Done item above:");
+  lines.push("1. Locate the relevant code changes in the diff");
+  lines.push("2. Verify the implementation satisfies the requirement");
+  lines.push("3. Cite specific evidence (file:line or test output)");
+  lines.push("4. Assign a verdict: pass / fail / partial / skip");
+  lines.push("");
+  lines.push("Return your result as JSON:");
+  lines.push("```json");
+  lines.push(JSON.stringify({
+    overallVerdict: "pass|partial|fail",
+    completeness: 0.85,
+    items: [
+      {
+        dodItem: "the DoD checklist item text",
+        verdict: "pass|fail|partial|skip",
+        evidence: "file:line or test output citation",
+        detail: "explanation of verification result",
+      },
+    ],
+    blockers: ["critical issues that must be fixed"],
+    suggestions: ["optional improvements"],
+  }, null, 2));
+  lines.push("```");
+  lines.push("");
+  lines.push("Any item with verdict `fail` should appear in `blockers`.");
+  lines.push("Set `overallVerdict` to `fail` if any blocker exists, `partial` if any item is partial/skip, `pass` if all pass.");
+
+  return lines.join("\n");
+}

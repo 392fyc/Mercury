@@ -3,6 +3,10 @@ export { ROLE_CARDS, makeRoleSlotKey, parseRoleSlotKey, isStreamingEvent, normal
 export type {
   AcceptanceBundle,
   AcceptanceVerdict,
+  CriticItemResult,
+  CriticItemVerdict,
+  CriticResult,
+  CriticVerdict,
   AdapterYield,
   AgentAdapter,
   AgentApprovalRequest,
