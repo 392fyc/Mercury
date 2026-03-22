@@ -683,6 +683,7 @@ export class Orchestrator {
         return this.recordCriticResult(
           params.taskId as string,
           params.result as import("@mercury/core").CriticResult,
+          (params.criticAgentId as string | undefined),
         );
       case "create_acceptance":
         return this.createAcceptanceFlow(
@@ -2570,13 +2571,15 @@ export class Orchestrator {
   private recordCriticResult(
     taskId: string,
     result: import("@mercury/core").CriticResult,
+    criticAgentId?: string,
   ): { recorded: true; overallVerdict: string } {
     this.taskManager.updateTaskField(taskId, "criticReview", {
       result,
       reviewedAt: Date.now(),
+      criticAgent: criticAgentId,
     });
 
-    this.bus.emit("orchestrator.critic.result", "orchestrator", "", {
+    this.bus.emit("orchestrator.critic.result", "orchestrator", "orchestrator", {
       taskId,
       overallVerdict: result.overallVerdict,
       completeness: result.completeness,

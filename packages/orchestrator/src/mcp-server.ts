@@ -233,17 +233,18 @@ export function createMcpServer(orchestrator: Orchestrator, transport: RpcTransp
     "Record the critic agent's verification result on a task", {
       taskId,
       result: z.object({
-        overallVerdict: z.string().describe("pass | partial | fail"),
+        overallVerdict: z.enum(["pass", "partial", "fail"]).describe("Overall critic verdict"),
         completeness: z.number().describe("0.0 – 1.0"),
         items: z.array(z.object({
           dodItem: z.string(),
-          verdict: z.string().describe("pass | fail | partial | skip"),
+          verdict: z.enum(["pass", "fail", "partial", "skip"]).describe("Per-item verdict"),
           evidence: z.string(),
           detail: z.string(),
         })),
         blockers: z.array(z.string()),
         suggestions: z.array(z.string()),
       }).describe("Critic verification result"),
+      criticAgentId: z.string().optional().describe("Agent ID of the critic that performed verification"),
     });
 
   // ─── Issue Management ───
