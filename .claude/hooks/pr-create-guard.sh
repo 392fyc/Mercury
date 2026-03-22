@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # GATE: block `gh pr create` unless --assignee and --label are present.
 # Ensures all PRs follow Mercury standard flow with proper metadata.
 #
@@ -25,7 +25,7 @@ if [ -n "$MISSING" ]; then
   cat >&2 <<MSG
 BLOCKED: PR creation missing required metadata (Mercury standard flow).
 Missing flags:
-$(echo -e "$MISSING")
+$(printf '%b' "$MISSING")
 All PRs must include assignee and label. Use pr-flow skill or add flags manually.
 Example: gh pr create --title "..." --body "..." --assignee 392fyc --label enhancement
 MSG
