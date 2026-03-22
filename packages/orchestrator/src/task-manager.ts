@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { EventBus } from "@mercury/core";
+import { normalizePriority } from "@mercury/core";
 import type {
   TaskBundle,
   TaskStatus,
@@ -149,9 +150,9 @@ export class TaskManager {
     if (!params.definitionOfDone?.length) errors.push("definitionOfDone must have at least 1 item");
     if (!params.codeScope) errors.push("codeScope is required");
     if (!params.readScope) errors.push("readScope is required");
-    const validPriorities = ["sev-0", "sev-1", "sev-2", "sev-3"];
+    const validPriorities = ["P0", "P1", "P2", "P3", "sev-0", "sev-1", "sev-2", "sev-3"];
     if (!validPriorities.includes(params.priority)) {
-      errors.push(`priority must be one of ${validPriorities.join(", ")}, got "${params.priority}"`);
+      errors.push(`priority must be one of P0, P1, P2, P3, got "${params.priority}"`);
     }
     if (params.maxDispatchAttempts !== undefined &&
         (!Number.isInteger(params.maxDispatchAttempts) || params.maxDispatchAttempts < 1)) {
@@ -177,7 +178,7 @@ export class TaskManager {
       taskId,
       title: params.title,
       phaseId: params.phaseId,
-      priority: params.priority,
+      priority: normalizePriority(params.priority),
       status: "drafted",
       createdAt: new Date().toISOString(),
       closedAt: null,

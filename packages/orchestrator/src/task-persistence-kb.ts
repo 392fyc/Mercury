@@ -13,6 +13,7 @@
  * falls back to in-memory Map as write-through cache.
  */
 
+import { normalizePriority } from "@mercury/core";
 import type { TaskBundle, AcceptanceBundle, IssueBundle, TaskStatus } from "@mercury/core";
 import type { KnowledgeService } from "./knowledge-service.js";
 
@@ -59,7 +60,7 @@ function resolveKbPaths(paths?: Partial<TaskPersistenceKBPaths>): TaskPersistenc
 /** Default createdAt value for tasks migrated before timestamps were added. */
 const LEGACY_CREATED_AT = "2026-03-18T00:00:00+09:00";
 
-/** Backfill missing timestamp fields for legacy KB data. Mutates and returns the input. */
+/** Backfill missing timestamp fields and normalize priority for legacy KB data. Mutates and returns the input. */
 function backfillTimestamps(task: TaskBundle): TaskBundle {
   if (!task.createdAt) {
     task.createdAt = LEGACY_CREATED_AT;
@@ -70,6 +71,8 @@ function backfillTimestamps(task: TaskBundle): TaskBundle {
   if (task.failedAt === undefined) {
     task.failedAt = null;
   }
+  // Normalize legacy sev-X priorities to P0-P3
+  task.priority = normalizePriority(task.priority);
   return task;
 }
 

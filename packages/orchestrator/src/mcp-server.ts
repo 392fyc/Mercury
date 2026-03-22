@@ -153,7 +153,7 @@ export function createMcpServer(orchestrator: Orchestrator, transport: RpcTransp
     "Create a new TaskBundle", {
       taskId: taskId.optional().describe("Custom task ID (auto-generated if omitted)"),
       title: z.string().describe("Short task title"),
-      priority: z.string().optional().describe("sev-0 | sev-1 | sev-2 | sev-3"),
+      priority: z.enum(["P0", "P1", "P2", "P3"]).optional().describe("Task priority level"),
       assignedTo: agentId.describe("Agent to assign the task to"),
       description: z.string().optional().describe("Detailed task description"),
       context: z.string().describe("Task context for dev agent"),
@@ -228,7 +228,7 @@ export function createMcpServer(orchestrator: Orchestrator, transport: RpcTransp
     "Create a new issue (params passed to CreateIssueParams)", {
       title: z.string().describe("Issue title"),
       type: z.string().describe("bug | enhancement | task"),
-      priority: z.string().describe("sev-0 | sev-1 | sev-2 | sev-3"),
+      priority: z.enum(["P0", "P1", "P2", "P3"]).describe("Issue priority level"),
       description: z.string().describe("Issue description"),
       source: z.string().optional().describe("Source context"),
       linkedTaskIds: z.array(z.string()).optional().describe("Related task IDs"),

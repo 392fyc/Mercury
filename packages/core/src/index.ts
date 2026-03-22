@@ -1,5 +1,5 @@
 export { EventBus } from "./event-bus.js";
-export { ROLE_CARDS, makeRoleSlotKey, parseRoleSlotKey, isStreamingEvent } from "./types.js";
+export { ROLE_CARDS, makeRoleSlotKey, parseRoleSlotKey, isStreamingEvent, normalizePriority } from "./types.js";
 export type {
   AcceptanceBundle,
   AcceptanceVerdict,
@@ -39,5 +39,6 @@ export type {
   SlashCommandArg,
   TaskAssignee,
   TaskBundle,
+  TaskPriority,
   TaskStatus,
 } from "./types.js";

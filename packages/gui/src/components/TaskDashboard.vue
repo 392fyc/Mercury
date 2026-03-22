@@ -50,7 +50,7 @@ function statusColor(status: TaskStatus): string {
   return STATUS_LABELS.find((s) => s.status === status)?.color ?? "var(--text-muted)";
 }
 
-/** Convert a priority slug (e.g. "sev-1") to an uppercase display label. */
+/** Convert a priority slug (e.g. "P1") to an uppercase display label. */
 function priorityLabel(p: string): string {
   return p.toUpperCase();
 }
@@ -364,10 +364,10 @@ async function handleCreateAcceptance(taskId: string) {
   border-radius: 3px;
 }
 
-.task-priority.sev-0 { background: rgba(255, 82, 82, 0.2); color: var(--accent-error); }
-.task-priority.sev-1 { background: rgba(251, 146, 60, 0.2); color: #fb923c; }
-.task-priority.sev-2 { background: rgba(250, 204, 21, 0.2); color: #facc15; }
-.task-priority.sev-3 { background: rgba(148, 163, 184, 0.2); color: var(--text-muted); }
+.task-priority.P0 { background: rgba(255, 82, 82, 0.2); color: var(--accent-error); }
+.task-priority.P1 { background: rgba(251, 146, 60, 0.2); color: #fb923c; }
+.task-priority.P2 { background: rgba(250, 204, 21, 0.2); color: #facc15; }
+.task-priority.P3 { background: rgba(148, 163, 184, 0.2); color: var(--text-muted); }
 
 .empty-state {
   display: flex;
