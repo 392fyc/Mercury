@@ -31,7 +31,7 @@ import type { TaskPersistence } from "./task-persistence-kb.js";
 const VALID_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
   drafted: ["dispatched"],
   dispatched: ["in_progress"],
-  in_progress: ["implementation_done", "failed", "blocked"],
+  in_progress: ["implementation_done", "failed", "blocked", "dispatched"], // dispatched: G2 crash recovery re-dispatch
   implementation_done: ["main_review"],
   main_review: ["acceptance", "in_progress"],
   acceptance: ["verified", "in_progress"],

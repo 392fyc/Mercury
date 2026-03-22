@@ -227,6 +227,8 @@ export class Orchestrator {
 
     await this.taskManager.init();
     await this.restoreSessions();
+    // G2: Detect orphaned in-progress tasks and queue re-dispatch
+    await this.recoverOrphanedTasks();
     // Build and inject shared context from KB if autoInjectContext is enabled
     await this.buildAndInjectContext();
   }
@@ -553,6 +555,65 @@ export class Orchestrator {
     }
     if (approvalsChanged) {
       this.persistState(true);
+    }
+  }
+
+  /**
+   * G2 Crash Recovery: detect orphaned in-progress/dispatched tasks whose
+   * sessions are dead, and automatically re-dispatch them.
+   *
+   * An "orphaned" task is one in dispatched/in_progress status where all
+   * bound sessions are completed/overflow or missing from the sessions map.
+   * Only tasks with remaining dispatch budget are re-dispatched.
+   */
+  private async recoverOrphanedTasks(): Promise<void> {
+    const recoverableStatuses: TaskStatus[] = ["dispatched", "in_progress"];
+    const orphanedTasks: TaskBundle[] = [];
+
+    for (const status of recoverableStatuses) {
+      const tasks = this.taskManager.listTasks({ status });
+      for (const task of tasks) {
+        // Check if any bound session is still alive
+        const boundSessions = this.taskManager.getSessionsForTask(task.taskId);
+        const hasLiveSession = boundSessions.some((sid) => {
+          const sess = this.sessions.get(sid);
+          return sess && sess.status !== "completed" && sess.status !== "overflow";
+        });
+
+        if (!hasLiveSession && task.dispatchAttempts < task.maxDispatchAttempts) {
+          orphanedTasks.push(task);
+        }
+      }
+    }
+
+    if (orphanedTasks.length === 0) return;
+
+    this.transport.sendNotification("log", {
+      message: `[recovery] Found ${orphanedTasks.length} orphaned task(s) — scheduling re-dispatch`,
+    });
+
+    for (const task of orphanedTasks) {
+      try {
+        // Transition back to "dispatched" so validateDispatch() accepts it
+        if (task.status === "in_progress") {
+          this.taskManager.transitionTask(task.taskId, "dispatched", "orchestrator");
+        }
+
+        this.transport.sendNotification("log", {
+          message: `[recovery] Re-dispatching orphaned task ${task.taskId} (${task.title}) — attempt ${task.dispatchAttempts + 1}/${task.maxDispatchAttempts}`,
+        });
+
+        // Fire-and-forget: re-dispatch uses existing retry infrastructure
+        void this.dispatchBundleTask(task.taskId).catch((err) => {
+          this.transport.sendNotification("log", {
+            message: `[recovery] Re-dispatch of ${task.taskId} failed: ${err instanceof Error ? err.message : err}`,
+          });
+        });
+      } catch (err) {
+        this.transport.sendNotification("log", {
+          message: `[recovery] Failed to prepare re-dispatch for ${task.taskId}: ${err instanceof Error ? err.message : err}`,
+        });
+      }
     }
   }
 
@@ -1455,6 +1516,30 @@ export class Orchestrator {
       }
       try { await adapter.endSession(sessionId); } catch { /* best-effort */ }
       this.persistState(true);
+
+      // G2: Auto re-dispatch if this session was bound to a task with retry budget
+      const crashedTaskId = this.taskManager.getTaskForSession(sessionId);
+      if (crashedTaskId) {
+        const crashedTask = this.taskManager.getTask(crashedTaskId);
+        if (
+          crashedTask &&
+          (crashedTask.status === "in_progress" || crashedTask.status === "dispatched") &&
+          crashedTask.dispatchAttempts < crashedTask.maxDispatchAttempts
+        ) {
+          this.transport.sendNotification("log", {
+            message: `[recovery] Session ${sessionId} crashed for task ${crashedTaskId} — scheduling re-dispatch (attempt ${crashedTask.dispatchAttempts + 1}/${crashedTask.maxDispatchAttempts})`,
+          });
+          if (crashedTask.status === "in_progress") {
+            this.taskManager.transitionTask(crashedTaskId, "dispatched", "orchestrator");
+          }
+          void this.dispatchBundleTask(crashedTaskId).catch((redispatchErr) => {
+            this.transport.sendNotification("log", {
+              message: `[recovery] Re-dispatch of ${crashedTaskId} failed: ${redispatchErr instanceof Error ? redispatchErr.message : redispatchErr}`,
+            });
+          });
+        }
+      }
+
       return { completed: false };
     }
   }
@@ -2289,9 +2374,8 @@ export class Orchestrator {
       try {
         // NOTE: sendPrompt() internally fire-and-forgets streamMessages().
         // This try/catch only catches synchronous failures (session creation,
-        // state transitions). Streaming failures are handled by the adapter's
-        // error events + session overflow detection, not by this retry loop.
-        // Full streaming retry requires G2 (crash recovery) — see Issue #33/#34.
+        // state transitions). Streaming failures trigger G2 crash recovery
+        // in streamMessages() catch handler — automatic re-dispatch.
         const { task: freshTask, prompt, devRolePrompt } = await this.prepareBundleTaskExecution(taskId);
 
         // Transition: drafted → dispatched → in_progress
