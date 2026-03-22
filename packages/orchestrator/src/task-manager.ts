@@ -122,7 +122,7 @@ export class TaskManager {
    * 3. modelRecommendation.complexity → prefer more capable agents for high complexity
    * 4. Fallback: first agent with "dev" role
    */
-  private autoSelectAgent(params: CreateTaskParams): string {
+  private autoSelectAgent(params: CreateTaskParams, taskId: string): string {
     if (!this.agentListLookup) {
       throw new Error("agentListLookup not injected — Orchestrator wiring incomplete");
     }
@@ -142,6 +142,7 @@ export class TaskManager {
       candidates?: { agentId: string; score: number }[],
     ): string => {
       this.bus.emit("orchestrator.routing.debug", "orchestrator", "orchestrator", {
+        taskId,
         taskTitle: params.title,
         reason,
         candidates: candidates ?? [{ agentId, score: 0 }],
@@ -154,10 +155,15 @@ export class TaskManager {
       return selectAndEmit(devAgents[0].id, "single-dev-agent");
     }
 
-    const rec = params.modelRecommendation;
-    if (!rec) {
+    const rawRec = params.modelRecommendation;
+    // Normalize: treat recommendation with only whitespace values as absent
+    const hasModel = !!rawRec?.preferredModel?.trim();
+    const hasCaps = !!rawRec?.requiredCapabilities?.some((c) => c.trim().length > 0);
+    const hasComplexity = !!rawRec?.complexity;
+    if (!rawRec || (!hasModel && !hasCaps && !hasComplexity)) {
       return selectAndEmit(devAgents[0].id, "no-recommendation-fallback");
     }
+    const rec = rawRec;
 
     // Score each dev agent
     const scored = devAgents.map((agent) => {
@@ -274,9 +280,12 @@ export class TaskManager {
     params.title = params.title.trim();
     params.context = params.context.trim();
 
+    // Generate taskId early so it can be included in routing debug events
+    const taskId = `TASK-${shortId()}`;
+
     // G9: Auto-assign agent if not provided — use modelRecommendation routing
     const explicitAssignedTo = params.assignedTo?.trim();
-    const assignedTo = explicitAssignedTo || this.autoSelectAgent(params);
+    const assignedTo = explicitAssignedTo || this.autoSelectAgent(params, taskId);
 
     // Validate assignedTo references a registered agent with 'dev' role
     if (this.agentConfigLookup) {
@@ -289,7 +298,6 @@ export class TaskManager {
       }
     }
 
-    const taskId = `TASK-${shortId()}`;
     const task: TaskBundle = {
       taskId,
       title: params.title,
