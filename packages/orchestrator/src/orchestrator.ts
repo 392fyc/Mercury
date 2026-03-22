@@ -143,6 +143,19 @@ export class Orchestrator {
         parentEventId: event.parentEventId,
       });
     });
+
+    // Route task completion callbacks to Internal Main Agent session
+    this.bus.on("orchestrator.task.callback", (event) => {
+      const payload = event.payload as {
+        taskId: string;
+        originatorSessionId?: string;
+        verdict: string;
+        findings?: string[];
+        recommendations?: string[];
+      };
+      // Fire-and-forget: deliver callback to Main Agent
+      void this.deliverTaskCallback(payload);
+    });
   }
 
   /** Inject optional knowledge service + wire up task persistence (with optional SQLite dual-write). */
@@ -663,6 +676,8 @@ export class Orchestrator {
         return this.taskManager.createTask(params as unknown as CreateTaskParams);
       case "get_task":
         return (await this.taskManager.getTaskAsync(params.taskId as string)) ?? null;
+      case "get_task_result":
+        return this.getTaskResult(params.taskId as string);
       case "list_tasks":
         return this.taskManager.listTasksAsync(params as { status?: TaskStatus; assignedTo?: string });
       case "record_receipt":
@@ -2331,6 +2346,83 @@ export class Orchestrator {
     return this.registry.listAgents().find((a) => a.roles.includes("main"))?.id;
   }
 
+  /**
+   * Deliver task completion callback to Internal Main Agent session.
+   * Called when acceptance result (pass/fail/partial/blocked) is recorded.
+   */
+  private async deliverTaskCallback(payload: {
+    taskId: string;
+    originatorSessionId?: string;
+    verdict: string;
+    findings?: string[];
+    recommendations?: string[];
+  }): Promise<void> {
+    const mainAgentId = this.findMainAgentId();
+    if (!mainAgentId) return;
+
+    const task = this.taskManager.getTask(payload.taskId);
+    const taskTitle = task?.title ?? payload.taskId;
+    const findings = payload.findings?.length
+      ? `\nFindings:\n${payload.findings.map((f) => `- ${f}`).join("\n")}`
+      : "";
+    const recommendations = payload.recommendations?.length
+      ? `\nRecommendations:\n${payload.recommendations.map((r) => `- ${r}`).join("\n")}`
+      : "";
+
+    const callbackPrompt = [
+      `[Task Callback] ${taskTitle}`,
+      `Task ID: ${payload.taskId}`,
+      `Acceptance Verdict: ${payload.verdict.toUpperCase()}`,
+      findings,
+      recommendations,
+      payload.verdict === "pass"
+        ? "Task has been verified and closed."
+        : payload.verdict === "blocked"
+          ? "Task is blocked. Manual intervention required."
+          : "Rework has been triggered. Dev agent will receive updated instructions.",
+    ].filter(Boolean).join("\n");
+
+    try {
+      await this.sendPrompt(mainAgentId, callbackPrompt, undefined, "main");
+    } catch (err) {
+      // Non-fatal: callback delivery is best-effort
+      this.transport.sendNotification("log", {
+        message: `[orchestrator] Failed to deliver task callback to Main Agent: ${err instanceof Error ? err.message : err}`,
+      });
+    }
+  }
+
+  /**
+   * Get task result — returns task status, acceptance verdict, and findings.
+   * Designed for external callers to poll task completion.
+   */
+  private async getTaskResult(taskId: string): Promise<{
+    taskId: string;
+    status: TaskStatus;
+    title: string;
+    verdict: AcceptanceVerdict | null;
+    findings: string[];
+    recommendations: string[];
+    closedAt: string | null;
+  }> {
+    const task = await this.taskManager.getTaskAsync(taskId);
+    if (!task) throw new Error(`Task not found: ${taskId}`);
+
+    // Find latest acceptance result for this task
+    const acceptance = this.taskManager.getAcceptanceByTaskId(taskId);
+    const latestResult = acceptance?.results;
+
+    return {
+      taskId: task.taskId,
+      status: task.status,
+      title: task.title,
+      verdict: latestResult?.verdict ?? null,
+      findings: latestResult?.findings ?? [],
+      recommendations: latestResult?.recommendations ?? [],
+      closedAt: task.closedAt,
+    };
+  }
+
   private async createAcceptanceFlow(
     taskId: string,
     acceptorId: string,
@@ -2414,6 +2506,20 @@ export class Orchestrator {
         results.findings,
       );
 
+      // Callback to Main Agent for fail/partial
+      this.bus.emit(
+        "orchestrator.task.callback",
+        acceptance.acceptor,
+        "orchestrator",
+        {
+          taskId: task.taskId,
+          originatorSessionId: task.originatorSessionId,
+          verdict: results.verdict,
+          findings: results.findings,
+          recommendations: results.recommendations,
+        },
+      );
+
       if (!newSession) {
         // Send rework prompt to existing dev session
         const reworkPrompt = buildReworkPrompt(task, acceptance);
@@ -2434,6 +2540,21 @@ export class Orchestrator {
     // verdict === "blocked" → create issue (caller handles specifics)
     if (results.verdict === "blocked") {
       this.taskManager.transitionTask(task.taskId, "blocked", acceptance.acceptor);
+
+      // Callback to Main Agent for blocked
+      this.bus.emit(
+        "orchestrator.task.callback",
+        acceptance.acceptor,
+        "orchestrator",
+        {
+          taskId: task.taskId,
+          originatorSessionId: task.originatorSessionId,
+          verdict: "blocked",
+          findings: results.findings,
+          recommendations: results.recommendations,
+        },
+      );
+
       return { verdict: "blocked", reworkTriggered: false, newSession: false };
     }
 

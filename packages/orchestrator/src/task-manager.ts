@@ -520,6 +520,19 @@ export class TaskManager {
     return this.acceptances.get(acceptanceId);
   }
 
+  /** Find the latest acceptance for a given task ID. */
+  getAcceptanceByTaskId(taskId: string): AcceptanceBundle | undefined {
+    let latest: AcceptanceBundle | undefined;
+    for (const a of this.acceptances.values()) {
+      if (a.linkedTaskId === taskId) {
+        if (!latest || (a.completedAt ?? 0) > (latest.completedAt ?? 0)) {
+          latest = a;
+        }
+      }
+    }
+    return latest;
+  }
+
   recordAcceptanceResult(
     acceptanceId: string,
     results: { verdict: AcceptanceVerdict; findings: string[]; recommendations: string[] },
