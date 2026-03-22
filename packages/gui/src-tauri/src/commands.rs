@@ -512,6 +512,8 @@ pub async fn get_session_messages(
     session_id: String,
     offset: Option<usize>,
     limit: Option<usize>,
+    agent_id: Option<String>,
+    role: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let mgr = get_sidecar(&sidecar).await?;
     mgr.send_request(
@@ -519,7 +521,9 @@ pub async fn get_session_messages(
         serde_json::json!({
             "sessionId": session_id,
             "offset": offset,
-            "limit": limit
+            "limit": limit,
+            "agentId": agent_id,
+            "role": role
         }),
     )
     .await

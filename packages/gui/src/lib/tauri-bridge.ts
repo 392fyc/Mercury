@@ -477,11 +477,15 @@ export async function getSessionMessages(
   sessionId: string,
   offset?: number,
   limit?: number,
+  agentId?: string,
+  role?: string,
 ): Promise<{ messages: TranscriptMessage[]; total: number }> {
   return invoke("get_session_messages", {
     sessionId,
     offset: offset ?? null,
     limit: limit ?? null,
+    agentId: agentId ?? null,
+    role: role ?? null,
   });
 }
 

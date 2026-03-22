@@ -841,6 +841,8 @@ export class Orchestrator {
           params.sessionId as string,
           (params.offset as number | null) ?? undefined,
           (params.limit as number | null) ?? undefined,
+          (params.agentId as string | null) ?? undefined,
+          (params.role as AgentRole | null) ?? undefined,
         );
       case "get_approval_mode":
         return { mode: this.approvalMode };
@@ -1068,7 +1070,25 @@ export class Orchestrator {
     sessionId: string,
     offset?: number,
     limit?: number,
+    requestingAgentId?: string,
+    requestingRole?: AgentRole,
   ): Promise<{ messages: TranscriptMessage[]; total: number }> {
+    // Validate session ownership if requesting context is provided
+    if (requestingAgentId || requestingRole) {
+      const sessionInfo = this.sessions.get(sessionId);
+      if (sessionInfo) {
+        if (requestingAgentId && sessionInfo.agentId !== requestingAgentId) {
+          return { messages: [], total: 0 };
+        }
+        if (requestingRole) {
+          const sessionRole = this.getSessionRole(sessionInfo, sessionInfo.agentId);
+          if (sessionRole && sessionRole !== requestingRole) {
+            return { messages: [], total: 0 };
+          }
+        }
+      }
+    }
+
     const safeOffset = Math.max(0, offset ?? 0);
 
     if (this.transcripts) {
@@ -1079,6 +1099,8 @@ export class Orchestrator {
     }
 
     for (const agent of this.registry.listAgents()) {
+      // When requesting agent is specified, only try that agent's adapter
+      if (requestingAgentId && agent.id !== requestingAgentId) continue;
       const nativeAdapter = this.asNativeSessionBridge(agent.id);
       if (!nativeAdapter.readNativeMessages) continue;
       try {

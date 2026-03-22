@@ -60,6 +60,7 @@ const pendingSessionPick = ref<{
 const pendingHistoryView = ref<{
   panelKey: string;
   agentId: string;
+  role?: string;
   sessions: SessionListItem[];
   selectedSessionId: string | null;
   messages: TranscriptMessage[];
@@ -408,9 +409,12 @@ async function loadSessionHistory(panelKey: string, sessionId: string): Promise<
     timestamp: Date.now(),
   });
 
+  const agentStore = useAgentStore();
+  const { agentId, role } = agentStore.parsePanelKey(panelKey);
+
   try {
-    // Primary: orchestrator transcript
-    const result = await bridgeGetSessionMessages(sessionId);
+    // Primary: orchestrator transcript (with agent+role isolation)
+    const result = await bridgeGetSessionMessages(sessionId, undefined, undefined, agentId, role);
     if (result.messages && result.messages.length > 0) {
       const batch: DisplayMessage[] = result.messages.map((msg) => ({
         role: msg.role,
@@ -427,8 +431,6 @@ async function loadSessionHistory(panelKey: string, sessionId: string): Promise<
   }
 
   // Fallback: native CLI JSONL files
-  const agentStore = useAgentStore();
-  const { agentId } = agentStore.parsePanelKey(panelKey);
   const agent = agentStore.agents.value.find((a) => a.id === agentId);
   const cliType = agent?.cli === "codex" ? "codex" as const : "claude" as const;
 
@@ -481,15 +483,17 @@ async function openSessionPicker(panelKey: string): Promise<void> {
   }
 }
 
-/** Open the history panel showing all sessions for this panel's agent. */
+/** Open the history panel showing sessions filtered by agent+role for isolation. */
 async function openHistory(panelKey: string): Promise<void> {
-  const { agentId } = useAgentStore().parsePanelKey(panelKey);
+  const { agentId, role } = useAgentStore().parsePanelKey(panelKey);
 
   try {
-    const sessions = await bridgeListSessions(agentId, undefined, true);
+    // Filter sessions by agent + role for proper isolation
+    const sessions = await bridgeListSessions(agentId, role, true);
     pendingHistoryView.value = {
       panelKey,
       agentId,
+      role,
       sessions,
       selectedSessionId: null,
       messages: [],
@@ -507,7 +511,7 @@ async function openHistory(panelKey: string): Promise<void> {
   }
 }
 
-/** Load transcript messages for a session into the history viewer. */
+/** Load transcript messages for a session into the history viewer (with agent+role isolation). */
 async function selectHistorySession(sessionId: string): Promise<void> {
   const current = pendingHistoryView.value;
   if (!current) return;
@@ -516,7 +520,14 @@ async function selectHistorySession(sessionId: string): Promise<void> {
   pendingHistoryView.value = { ...current, selectedSessionId: sessionId, messages: [] };
 
   try {
-    const result = await bridgeGetSessionMessages(sessionId);
+    // Pass agentId + role for server-side ownership validation
+    const result = await bridgeGetSessionMessages(
+      sessionId,
+      undefined,
+      undefined,
+      current.agentId,
+      current.role,
+    );
     // Guard against stale response: only apply if this session is still selected
     if (pendingHistoryView.value?.selectedSessionId !== sessionId) return;
     pendingHistoryView.value = {

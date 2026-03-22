@@ -135,10 +135,12 @@ export function createMcpServer(orchestrator: Orchestrator, transport: RpcTransp
     });
 
   rpcTool(server, orchestrator, "get_session_messages",
-    "Get message history for a session", {
+    "Get message history for a session (filtered by agent+role when provided)", {
       sessionId,
       offset: z.number().optional().describe("Start offset"),
       limit: z.number().optional().describe("Max messages to return"),
+      agentId: agentId.optional().describe("Filter: only return messages if session belongs to this agent"),
+      role: z.string().optional().describe("Filter: only return messages if session has this role"),
     });
 
   rpcTool(server, orchestrator, "summarize_session",
