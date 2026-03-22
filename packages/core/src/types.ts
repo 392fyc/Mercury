@@ -230,14 +230,14 @@ export type TaskStatus =
   | "failed"
   | "blocked";
 
-/** Normalize legacy priority formats (sev-0..sev-3) to canonical P0..P3. */
+/** Normalize legacy priority formats (sev-0..sev-3, mixed case) to canonical P0..P3. */
 export function normalizePriority(raw: string): TaskPriority {
+  const key = raw.trim().toLowerCase();
   const map: Record<string, TaskPriority> = {
     "sev-0": "P0", "sev-1": "P1", "sev-2": "P2", "sev-3": "P3",
-    "P0": "P0", "P1": "P1", "P2": "P2", "P3": "P3",
     "p0": "P0", "p1": "P1", "p2": "P2", "p3": "P3",
   };
-  return map[raw] ?? "P3";
+  return map[key] ?? "P3";
 }
 
 export interface PreCheckConfig {

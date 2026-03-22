@@ -180,63 +180,80 @@ export class TaskPersistenceSqlite implements TaskPersistence {
   /** Persist a task bundle to SQLite — INSERT OR REPLACE with indexed columns + raw_json backup. */
   async saveTask(task: TaskBundle): Promise<void> {
     try {
-      const priority = normalizePriority(task.priority);
-      this.stmts.upsertTask.run({
-        task_id: task.taskId,
-        title: task.title,
-        status: task.status,
-        priority,
-        phase_id: task.phaseId ?? null,
-        created_at: task.createdAt ?? null,
-        closed_at: task.closedAt ?? null,
-        failed_at: task.failedAt ?? null,
-        assigned_to: task.assignedTo ?? null,
-        branch: task.branch ?? null,
-        context: task.context ?? null,
-        dispatch_attempts: task.dispatchAttempts ?? 0,
-        max_dispatch_attempts: task.maxDispatchAttempts ?? 5,
-        last_dispatch_error: task.lastDispatchError ?? null,
-        rework_count: task.reworkCount ?? 0,
-        max_reworks: task.maxReworks ?? 2,
-        originator_session_id: task.originatorSessionId ?? null,
-        raw_json: JSON.stringify({ ...task, priority }),
-      });
+      this.saveTaskSync(task);
     } catch (err) {
       this.log(`[sqlite] Failed to save task ${task.taskId}: ${err instanceof Error ? err.message : err}`);
+      throw err;
     }
   }
 
   /** Persist an acceptance bundle to SQLite. */
   async saveAcceptance(acc: AcceptanceBundle): Promise<void> {
     try {
-      this.stmts.upsertAcceptance.run({
-        acceptance_id: acc.acceptanceId,
-        linked_task_id: acc.linkedTaskId,
-        status: acc.status,
-        acceptor: acc.acceptor ?? null,
-        completed_at: acc.completedAt ?? null,
-        raw_json: JSON.stringify(acc),
-      });
+      this.saveAcceptanceSync(acc);
     } catch (err) {
       this.log(`[sqlite] Failed to save acceptance ${acc.acceptanceId}: ${err instanceof Error ? err.message : err}`);
+      throw err;
     }
   }
 
   /** Persist an issue bundle to SQLite. */
   async saveIssue(issue: IssueBundle): Promise<void> {
     try {
-      const priority = normalizePriority(issue.priority);
-      this.stmts.upsertIssue.run({
-        issue_id: issue.issueId,
-        title: issue.title,
-        status: issue.status,
-        type: issue.type,
-        priority,
-        raw_json: JSON.stringify({ ...issue, priority }),
-      });
+      this.saveIssueSync(issue);
     } catch (err) {
       this.log(`[sqlite] Failed to save issue ${issue.issueId}: ${err instanceof Error ? err.message : err}`);
+      throw err;
     }
+  }
+
+  // ─── Sync helpers (used by importFromKB transaction) ───
+
+  private saveTaskSync(task: TaskBundle): void {
+    const priority = normalizePriority(task.priority);
+    this.stmts.upsertTask.run({
+      task_id: task.taskId,
+      title: task.title,
+      status: task.status,
+      priority,
+      phase_id: task.phaseId ?? null,
+      created_at: task.createdAt ?? null,
+      closed_at: task.closedAt ?? null,
+      failed_at: task.failedAt ?? null,
+      assigned_to: task.assignedTo ?? null,
+      branch: task.branch ?? null,
+      context: task.context ?? null,
+      dispatch_attempts: task.dispatchAttempts ?? 0,
+      max_dispatch_attempts: task.maxDispatchAttempts ?? 5,
+      last_dispatch_error: task.lastDispatchError ?? null,
+      rework_count: task.reworkCount ?? 0,
+      max_reworks: task.maxReworks ?? 2,
+      originator_session_id: task.originatorSessionId ?? null,
+      raw_json: JSON.stringify({ ...task, priority }),
+    });
+  }
+
+  private saveAcceptanceSync(acc: AcceptanceBundle): void {
+    this.stmts.upsertAcceptance.run({
+      acceptance_id: acc.acceptanceId,
+      linked_task_id: acc.linkedTaskId,
+      status: acc.status,
+      acceptor: acc.acceptor ?? null,
+      completed_at: acc.completedAt ?? null,
+      raw_json: JSON.stringify(acc),
+    });
+  }
+
+  private saveIssueSync(issue: IssueBundle): void {
+    const priority = normalizePriority(issue.priority);
+    this.stmts.upsertIssue.run({
+      issue_id: issue.issueId,
+      title: issue.title,
+      status: issue.status,
+      type: issue.type,
+      priority,
+      raw_json: JSON.stringify({ ...issue, priority }),
+    });
   }
 
   /** Load all tasks, acceptances, and issues from SQLite. */
@@ -298,15 +315,17 @@ export class TaskPersistenceSqlite implements TaskPersistence {
     acceptances: AcceptanceBundle[];
     issues: IssueBundle[];
   }): void {
+    // Use sync helpers directly — better-sqlite3 transactions are synchronous,
+    // so we must avoid the async TaskPersistence interface methods here.
     const importAll = this.db.transaction(() => {
       for (const task of data.tasks) {
-        this.saveTask(task); // async wrapper but actually sync inside
+        this.saveTaskSync(task);
       }
       for (const acc of data.acceptances) {
-        this.saveAcceptance(acc);
+        this.saveAcceptanceSync(acc);
       }
       for (const issue of data.issues) {
-        this.saveIssue(issue);
+        this.saveIssueSync(issue);
       }
     });
 
@@ -314,10 +333,12 @@ export class TaskPersistenceSqlite implements TaskPersistence {
     this.log(`[sqlite] Imported from KB: ${data.tasks.length} tasks, ${data.acceptances.length} acceptances, ${data.issues.length} issues`);
   }
 
-  /** Check if DB has any data (used to detect first-run migration need). */
+  /** Check if DB has any data across all entity tables (used to detect first-run migration need). */
   isEmpty(): boolean {
-    const row = this.db.prepare("SELECT COUNT(*) as cnt FROM tasks").get() as { cnt: number };
-    return row.cnt === 0;
+    const row = this.db.prepare(
+      "SELECT (SELECT COUNT(*) FROM tasks) + (SELECT COUNT(*) FROM issues) + (SELECT COUNT(*) FROM acceptances) as total"
+    ).get() as { total: number };
+    return row.total === 0;
   }
 
   /** Close the database connection. */

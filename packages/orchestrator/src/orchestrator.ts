@@ -154,8 +154,15 @@ export class Orchestrator {
 
     // Try to initialize SQLite as primary persistence with dual-write to KB
     try {
-      const mercuryDir = join(this.getProjectRoot(), ".mercury");
-      try { mkdirSync(mercuryDir, { recursive: true }); } catch { /* already exists */ }
+      // Prefer configFilePath-derived root over process.cwd() for deterministic DB location
+      const projectRoot = this.configFilePath ? dirname(this.configFilePath) : this.getProjectRoot();
+      const mercuryDir = join(projectRoot, ".mercury");
+      try {
+        mkdirSync(mercuryDir, { recursive: true });
+      } catch (err) {
+        logFn(`[orchestrator] Warning: mkdirSync .mercury failed: ${(err as Error).message}`);
+        throw err;
+      }
       const dbPath = join(mercuryDir, "mercury.db");
       this.sqliteDb = new TaskPersistenceSqlite(dbPath, logFn);
       const dualPersistence = new TaskPersistenceDual(this.sqliteDb, kbPersistence, logFn);
@@ -205,6 +212,12 @@ export class Orchestrator {
     await this.restoreSessions();
     // Build and inject shared context from KB if autoInjectContext is enabled
     await this.buildAndInjectContext();
+  }
+
+  /** Graceful shutdown — close SQLite connection and release resources. */
+  async shutdown(): Promise<void> {
+    this.sqliteDb?.close();
+    this.sqliteDb = null;
   }
 
   /** Store project config for get_config/update_config RPC. */
