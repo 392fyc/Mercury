@@ -262,6 +262,22 @@ export interface TaskBundle {
     residualRisks: string[];
     completedAt: number;
   };
+  criticReview?: {
+    result?: {
+      overallVerdict: "pass" | "partial" | "fail";
+      completeness: number;
+      items: Array<{
+        dodItem: string;
+        verdict: "pass" | "fail" | "partial" | "skip";
+        evidence: string;
+        detail: string;
+      }>;
+      blockers: string[];
+      suggestions: string[];
+    };
+    reviewedAt?: number;
+    criticAgent?: string;
+  };
   reworkCount: number;
   maxReworks: number;
   linkedIssueIds: string[];

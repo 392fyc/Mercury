@@ -39,6 +39,7 @@ import {
   buildAcceptancePrompt,
   buildReworkPrompt,
   buildMainReviewPrompt,
+  buildCriticPrompt,
 } from "./task-manager.js";
 import type { CreateTaskParams, CreateIssueParams } from "./task-manager.js";
 import { TaskPersistenceKB } from "./task-persistence-kb.js";
@@ -675,6 +676,14 @@ export class Orchestrator {
           params.decision as string,
           (params.reason as string | null) ?? undefined,
           (params.acceptorId as string | null) ?? undefined,
+        );
+      case "get_critic_prompt":
+        return this.getCriticPrompt(params.taskId as string);
+      case "record_critic_result":
+        return this.recordCriticResult(
+          params.taskId as string,
+          params.result as import("@mercury/core").CriticResult,
+          (params.criticAgentId as string | undefined),
         );
       case "create_acceptance":
         return this.createAcceptanceFlow(
@@ -2543,6 +2552,41 @@ export class Orchestrator {
     }
 
     throw new Error(`Invalid review decision: "${decision}". Expected APPROVE_FOR_ACCEPTANCE or SEND_BACK.`);
+  }
+
+  // ─── Critic Agent Integration ───
+
+  /** Generate the critic verification prompt for a task. */
+  private getCriticPrompt(taskId: string): { prompt: string } {
+    const task = this.taskManager.getTask(taskId);
+    if (!task) throw new Error(`Task not found: ${taskId}`);
+    if (task.status !== "main_review" && task.status !== "implementation_done") {
+      throw new Error(`Task ${taskId} is not in reviewable state (current: ${task.status})`);
+    }
+    const prompt = buildCriticPrompt(task, this.getProjectRoot());
+    return { prompt };
+  }
+
+  /** Record the critic agent's verification result on a task. */
+  private recordCriticResult(
+    taskId: string,
+    result: import("@mercury/core").CriticResult,
+    criticAgentId?: string,
+  ): { recorded: true; overallVerdict: string } {
+    this.taskManager.updateTaskField(taskId, "criticReview", {
+      result,
+      reviewedAt: Date.now(),
+      criticAgent: criticAgentId,
+    });
+
+    this.bus.emit("orchestrator.critic.result", "orchestrator", "orchestrator", {
+      taskId,
+      overallVerdict: result.overallVerdict,
+      completeness: result.completeness,
+      blockerCount: result.blockers.length,
+    });
+
+    return { recorded: true, overallVerdict: result.overallVerdict };
   }
 
   /** Find an agent with the "acceptance" role. */

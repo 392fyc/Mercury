@@ -4,6 +4,7 @@ canExecuteCode: false
 canDelegateToRoles:
   - dev
   - acceptance
+  - critic
   - research
   - design
 inputBoundary:
