@@ -79,6 +79,15 @@ type ParsedMainReviewDecision = {
   structured: StructuredReviewResult;
 };
 
+/** Shared type for orchestrator.task.callback event payload. */
+type TaskCallbackPayload = {
+  taskId: string;
+  originatorSessionId?: string;
+  verdict: AcceptanceVerdict;
+  findings?: string[];
+  recommendations?: string[];
+};
+
 const ROLE_CONTEXT_ROLES = ["main", "dev", "acceptance"] as const;
 type RoleContextKey = (typeof ROLE_CONTEXT_ROLES)[number];
 
@@ -146,13 +155,7 @@ export class Orchestrator {
 
     // Route task completion callbacks to Internal Main Agent session
     this.bus.on("orchestrator.task.callback", (event) => {
-      const payload = event.payload as {
-        taskId: string;
-        originatorSessionId?: string;
-        verdict: string;
-        findings?: string[];
-        recommendations?: string[];
-      };
+      const payload = event.payload as TaskCallbackPayload;
       // Fire-and-forget: deliver callback to Main Agent
       void this.deliverTaskCallback(payload);
     });
@@ -2350,15 +2353,19 @@ export class Orchestrator {
    * Deliver task completion callback to Internal Main Agent session.
    * Called when acceptance result (pass/fail/partial/blocked) is recorded.
    */
-  private async deliverTaskCallback(payload: {
-    taskId: string;
-    originatorSessionId?: string;
-    verdict: string;
-    findings?: string[];
-    recommendations?: string[];
-  }): Promise<void> {
+  private async deliverTaskCallback(payload: TaskCallbackPayload): Promise<void> {
     const mainAgentId = this.findMainAgentId();
     if (!mainAgentId) return;
+
+    // Only deliver if there's an active Main Agent session (avoid spawning new session)
+    const mainSlot = makeRoleSlotKey("main", mainAgentId);
+    const activeSessionId = this.roleSessions.get(mainSlot);
+    if (!activeSessionId) {
+      this.transport.sendNotification("log", {
+        message: `[orchestrator] No active Main Agent session for callback delivery (task: ${payload.taskId})`,
+      });
+      return;
+    }
 
     const task = this.taskManager.getTask(payload.taskId);
     const taskTitle = task?.title ?? payload.taskId;
@@ -2408,8 +2415,11 @@ export class Orchestrator {
     const task = await this.taskManager.getTaskAsync(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
 
-    // Find latest acceptance result for this task
-    const acceptance = this.taskManager.getAcceptanceByTaskId(taskId);
+    // Find acceptance result: prefer persisted reference, fall back to memory scan
+    const acceptanceBundleId = task.handoffToAcceptance?.acceptanceBundleId;
+    const acceptance = acceptanceBundleId
+      ? this.taskManager.getAcceptance(acceptanceBundleId)
+      : this.taskManager.getAcceptanceByTaskId(taskId);
     const latestResult = acceptance?.results;
 
     return {
