@@ -123,11 +123,16 @@ export class TaskManager {
    * 4. Fallback: first agent with "dev" role
    */
   private autoSelectAgent(params: CreateTaskParams): string {
-    const agents = this.agentListLookup?.() ?? [];
+    if (!this.agentListLookup) {
+      throw new Error("agentListLookup not injected — Orchestrator wiring incomplete");
+    }
+    const agents = this.agentListLookup();
     // Only consider agents with "dev" role
     const devAgents = agents.filter((a) => a.roles.includes("dev"));
     if (devAgents.length === 0) {
-      throw new Error("No agents with 'dev' role registered — cannot auto-assign task");
+      throw new Error(
+        `No agents with 'dev' role in registry (${agents.length} total agents) — cannot auto-assign task`,
+      );
     }
     if (devAgents.length === 1) return devAgents[0].id;
 
@@ -170,6 +175,14 @@ export class TaskManager {
 
     // Sort by score descending; tiebreak by agent ID for deterministic selection
     scored.sort((a, b) => b.score - a.score || a.agent.id.localeCompare(b.agent.id));
+
+    // Debug: emit routing snapshot for observability
+    this.bus.emit("orchestrator.routing.debug", "orchestrator", "orchestrator", {
+      taskTitle: params.title,
+      candidates: scored.slice(0, 3).map((s) => ({ agentId: s.agent.id, score: s.score })),
+      selected: scored[0].agent.id,
+    });
+
     return scored[0].agent.id;
   }
 

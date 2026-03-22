@@ -182,6 +182,7 @@ export type EventType =
   | "orchestrator.task.complete"
   | "orchestrator.task.fail"
   | "orchestrator.task.created"
+  | "orchestrator.routing.debug"
   | "orchestrator.task.status_change"
   | "orchestrator.task.rework"
   | "orchestrator.acceptance.created"
