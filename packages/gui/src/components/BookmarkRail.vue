@@ -67,12 +67,14 @@ function formatTime(ts: number): string {
 /** Hide bookmark without deleting the session. */
 function closeBookmark(panelKey: string, event: Event) {
   event.stopPropagation();
+  hideContextMenu();
   removeBookmark(panelKey);
 }
 
 /** Delete the session entirely (stops + removes from orchestrator + hides bookmark). */
 async function handleDeleteSession(panelKey: string, event: Event) {
   event.stopPropagation();
+  hideContextMenu();
   const { agentId } = parsePanelKey(panelKey);
   const sessionId = getSession(panelKey);
   if (sessionId && agentId) {
