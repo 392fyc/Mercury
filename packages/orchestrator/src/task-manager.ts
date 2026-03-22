@@ -290,7 +290,14 @@ export class TaskManager {
       "orchestrator.task.created",
       assignedTo,
       "orchestrator",
-      { taskId, title: task.title, assignedTo: task.assignedTo, priority: task.priority },
+      {
+        taskId,
+        title: task.title,
+        assignedTo: task.assignedTo,
+        priority: task.priority,
+        modelRecommendation: task.modelRecommendation,
+        routingMethod: params.assignedTo ? "explicit" : "auto-triage",
+      },
     );
 
     return task;
