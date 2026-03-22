@@ -2516,20 +2516,6 @@ export class Orchestrator {
         results.findings,
       );
 
-      // Callback to Main Agent for fail/partial
-      this.bus.emit(
-        "orchestrator.task.callback",
-        acceptance.acceptor,
-        "orchestrator",
-        {
-          taskId: task.taskId,
-          originatorSessionId: task.originatorSessionId,
-          verdict: results.verdict,
-          findings: results.findings,
-          recommendations: results.recommendations,
-        },
-      );
-
       if (!newSession) {
         // Send rework prompt to existing dev session
         const reworkPrompt = buildReworkPrompt(task, acceptance);
@@ -2543,6 +2529,20 @@ export class Orchestrator {
           task.taskId,
         );
       }
+
+      // Callback to Main Agent for fail/partial (after rework dispatch to avoid premature notification)
+      this.bus.emit(
+        "orchestrator.task.callback",
+        acceptance.acceptor,
+        "orchestrator",
+        {
+          taskId: task.taskId,
+          originatorSessionId: task.originatorSessionId,
+          verdict: results.verdict,
+          findings: results.findings,
+          recommendations: results.recommendations,
+        },
+      );
 
       return { verdict: results.verdict, reworkTriggered: true, newSession };
     }
