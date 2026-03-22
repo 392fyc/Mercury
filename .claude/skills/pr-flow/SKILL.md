@@ -175,15 +175,26 @@ resolve_thread() {
 # Returns all unresolved thread IDs whose first comment matches the given path.
 get_thread_ids_for_path() {
   local target_path="$1"
-  gh api graphql -f query="
-    { repository(owner: \"$OWNER\", name: \"$NAME\") {
-        pullRequest(number: $PR_NUMBER) {
-          reviewThreads(first: 100) {
-            nodes { id isResolved path }
+  local cursor="" after_arg=""
+  while true; do
+    [ -n "$cursor" ] && after_arg=", after: \"$cursor\""
+    local result
+    result=$(gh api graphql -f query="
+      { repository(owner: \"$OWNER\", name: \"$NAME\") {
+          pullRequest(number: $PR_NUMBER) {
+            reviewThreads(first: 100${after_arg}) {
+              pageInfo { hasNextPage endCursor }
+              nodes { id isResolved path }
+            }
           }
         }
-      }
-    }" --jq ".data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false and .path == \"$target_path\") | .id" 2>/dev/null
+      }" 2>/dev/null)
+    echo "$result" | jq -r ".data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false and .path == \"$target_path\") | .id" 2>/dev/null
+    local has_next
+    has_next=$(echo "$result" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' 2>/dev/null)
+    [ "$has_next" = "true" ] || break
+    cursor=$(echo "$result" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor' 2>/dev/null)
+  done
 }
 
 # ── Helper: resolve all unresolved threads for given file paths ──
@@ -249,8 +260,8 @@ done
 
 ```bash
 # After committing and pushing manual fixes, resolve threads for all changed files:
-CHANGED_FILES=$(git diff --name-only HEAD~1)
-resolve_threads_for_paths $CHANGED_FILES
+mapfile -t CHANGED_FILES < <(git diff --name-only HEAD~1)
+resolve_threads_for_paths "${CHANGED_FILES[@]}"
 ```
 
 ### Step 6: Merge and Update Mercury State
