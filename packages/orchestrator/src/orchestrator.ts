@@ -841,6 +841,8 @@ export class Orchestrator {
           params.sessionId as string,
           (params.offset as number | null) ?? undefined,
           (params.limit as number | null) ?? undefined,
+          (params.agentId as string | null) ?? undefined,
+          (params.role as AgentRole | null) ?? undefined,
         );
       case "get_approval_mode":
         return { mode: this.approvalMode };
@@ -1066,9 +1068,46 @@ export class Orchestrator {
 
   private async getSessionMessages(
     sessionId: string,
-    offset?: number,
-    limit?: number,
-  ): Promise<{ messages: TranscriptMessage[]; total: number }> {
+    offset: number | undefined,
+    limit: number | undefined,
+    requestingAgentId?: string,
+    requestingRole?: AgentRole,
+  ): Promise<{ messages: TranscriptMessage[]; total: number; accessDenied?: boolean }> {
+    // Enforce agent+role isolation: validate session ownership
+    if (requestingAgentId) {
+      const sessionInfo = this.sessions.get(sessionId);
+      if (sessionInfo) {
+        // Session found in memory — validate ownership
+        if (sessionInfo.agentId !== requestingAgentId) {
+          return { messages: [], total: 0, accessDenied: true };
+        }
+        if (requestingRole) {
+          const sessionRole = this.getSessionRole(sessionInfo, sessionInfo.agentId);
+          if (!sessionRole || sessionRole !== requestingRole) {
+            return { messages: [], total: 0, accessDenied: true };
+          }
+        }
+      } else {
+        // Session not in memory — deny by default (unknown session = no access)
+        // Exception: allow if session can be found via native adapter for the requesting agent
+        const nativeAdapter = this.asNativeSessionBridge(requestingAgentId);
+        if (!nativeAdapter.getNativeSessionInfo) {
+          return { messages: [], total: 0, accessDenied: true };
+        }
+        try {
+          const nativeInfo = await nativeAdapter.getNativeSessionInfo(
+            sessionId,
+            this.agentCwds.get(requestingAgentId),
+          );
+          if (!nativeInfo || nativeInfo.agentId !== requestingAgentId) {
+            return { messages: [], total: 0, accessDenied: true };
+          }
+        } catch {
+          return { messages: [], total: 0, accessDenied: true };
+        }
+      }
+    }
+
     const safeOffset = Math.max(0, offset ?? 0);
 
     if (this.transcripts) {
@@ -1079,6 +1118,8 @@ export class Orchestrator {
     }
 
     for (const agent of this.registry.listAgents()) {
+      // When requesting agent is specified, only try that agent's adapter
+      if (requestingAgentId && agent.id !== requestingAgentId) continue;
       const nativeAdapter = this.asNativeSessionBridge(agent.id);
       if (!nativeAdapter.readNativeMessages) continue;
       try {
