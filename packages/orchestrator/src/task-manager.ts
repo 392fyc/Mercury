@@ -51,7 +51,7 @@ export interface CreateTaskParams {
   title: string;
   phaseId?: string;
   priority: TaskBundle["priority"];
-  assignedTo: string;
+  assignedTo?: string; // Optional: auto-assigned via G9 modelRecommendation if omitted
   branch?: string;
   codeScope: TaskBundle["codeScope"];
   readScope: TaskBundle["readScope"];
@@ -63,6 +63,7 @@ export interface CreateTaskParams {
   context: string;
   reviewConfig?: TaskBundle["reviewConfig"];
   handoffToAcceptance?: TaskBundle["handoffToAcceptance"];
+  modelRecommendation?: TaskBundle["modelRecommendation"];
   maxReworks?: number;
   maxDispatchAttempts?: number;
 }
@@ -89,6 +90,7 @@ export class TaskManager {
 
   private persistence: TaskPersistence | null = null;
   private agentConfigLookup: ((agentId: string) => AgentConfig | undefined) | null = null;
+  private agentListLookup: (() => AgentConfig[]) | null = null;
 
   constructor(private bus: EventBus) {}
 
@@ -102,10 +104,68 @@ export class TaskManager {
     this.agentConfigLookup = lookup;
   }
 
+  /** Inject agent list lookup for G9 auto-triage agent selection. */
+  setAgentListLookup(lookup: () => AgentConfig[]): void {
+    this.agentListLookup = lookup;
+  }
+
   /** Build a TaskAssignee struct from agentId, enriching with model from agent config if available. */
   private buildTaskAssignee(agentId: string): TaskAssignee {
     const model = this.agentConfigLookup?.(agentId)?.model;
     return model === undefined ? { agentId } : { agentId, model };
+  }
+
+  /**
+   * G9 Auto-triage: select the best agent for a task based on:
+   * 1. modelRecommendation.preferredModel → match agent.model
+   * 2. modelRecommendation.requiredCapabilities → match agent.capabilities
+   * 3. modelRecommendation.complexity → prefer more capable agents for high complexity
+   * 4. Fallback: first agent with "dev" role
+   */
+  private autoSelectAgent(params: CreateTaskParams): string {
+    const agents = this.agentListLookup?.() ?? [];
+    // Only consider agents with "dev" role
+    const devAgents = agents.filter((a) => a.roles.includes("dev"));
+    if (devAgents.length === 0) {
+      // Last resort: any agent
+      if (agents.length > 0) return agents[0].id;
+      throw new Error("No agents registered — cannot auto-assign task");
+    }
+    if (devAgents.length === 1) return devAgents[0].id;
+
+    const rec = params.modelRecommendation;
+    if (!rec) return devAgents[0].id;
+
+    // Score each dev agent
+    const scored = devAgents.map((agent) => {
+      let score = 0;
+
+      // Preferred model match (highest weight)
+      if (rec.preferredModel && agent.model) {
+        if (agent.model.includes(rec.preferredModel) || rec.preferredModel.includes(agent.model)) {
+          score += 100;
+        }
+      }
+
+      // Capability matching
+      if (rec.requiredCapabilities?.length) {
+        const matched = rec.requiredCapabilities.filter((cap) =>
+          agent.capabilities.some((ac) => ac.toLowerCase().includes(cap.toLowerCase())),
+        ).length;
+        score += matched * 20;
+      }
+
+      // Complexity-based preference: high → prefer agents with more capabilities
+      if (rec.complexity === "high") {
+        score += agent.capabilities.length * 5;
+      }
+
+      return { agent, score };
+    });
+
+    // Sort by score descending, return best match
+    scored.sort((a, b) => b.score - a.score);
+    return scored[0].agent.id;
   }
 
   /** Rehydrate task state from persistence (call before RPC starts). */
@@ -145,7 +205,6 @@ export class TaskManager {
     // ─── Input Validation + Normalization ───
     const errors: string[] = [];
     if (!params.title?.trim()) errors.push("title is required");
-    if (!params.assignedTo?.trim()) errors.push("assignedTo is required");
     if (!params.context?.trim()) errors.push("context is required");
     if (!params.definitionOfDone?.length) errors.push("definitionOfDone must have at least 1 item");
     if (!params.codeScope) errors.push("codeScope is required");
@@ -170,8 +229,10 @@ export class TaskManager {
 
     // Normalize string inputs
     params.title = params.title.trim();
-    params.assignedTo = params.assignedTo.trim();
     params.context = params.context.trim();
+
+    // G9: Auto-assign agent if not provided — use modelRecommendation routing
+    const assignedTo = params.assignedTo?.trim() || this.autoSelectAgent(params);
 
     const taskId = `TASK-${shortId()}`;
     const task: TaskBundle = {
@@ -183,7 +244,7 @@ export class TaskManager {
       createdAt: new Date().toISOString(),
       closedAt: null,
       failedAt: null,
-      assignedTo: params.assignedTo,
+      assignedTo,
       branch: params.branch,
       codeScope: params.codeScope,
       readScope: params.readScope,
@@ -195,6 +256,7 @@ export class TaskManager {
       context: params.context,
       reviewConfig: params.reviewConfig,
       handoffToAcceptance: params.handoffToAcceptance,
+      modelRecommendation: params.modelRecommendation,
       dispatchAttempts: 0,
       maxDispatchAttempts: params.maxDispatchAttempts ?? 5,
       reworkCount: 0,
@@ -204,14 +266,14 @@ export class TaskManager {
     };
 
     // Agents First: populate structured assignee from agent config
-    task.assignee = this.buildTaskAssignee(params.assignedTo);
+    task.assignee = this.buildTaskAssignee(assignedTo);
 
     this.tasks.set(taskId, task);
     this.persistTask(task);
 
     this.bus.emit(
       "orchestrator.task.created",
-      params.assignedTo,
+      assignedTo,
       "orchestrator",
       { taskId, title: task.title, assignedTo: task.assignedTo, priority: task.priority },
     );

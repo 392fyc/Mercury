@@ -43,6 +43,8 @@ export type {
   SlashCommandArg,
   TaskAssignee,
   TaskBundle,
+  TaskComplexity,
   TaskPriority,
   TaskStatus,
+  ModelRecommendation,
 } from "./types.js";

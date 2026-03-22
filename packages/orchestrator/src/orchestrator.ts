@@ -195,6 +195,8 @@ export class Orchestrator {
     this.taskManager.setAgentConfigLookup((agentId) =>
       this.registry.listAgents().find((a) => a.id === agentId),
     );
+    // Wire agent list lookup for G9 auto-triage agent selection
+    this.taskManager.setAgentListLookup(() => this.registry.listAgents());
   }
 
   /** Wire agent config lookup for Agents First assignee.model (works with or without KB). */
@@ -202,6 +204,7 @@ export class Orchestrator {
     this.taskManager.setAgentConfigLookup((agentId) =>
       this.registry.listAgents().find((a) => a.id === agentId),
     );
+    this.taskManager.setAgentListLookup(() => this.registry.listAgents());
   }
 
   /** Rehydrate task state from KB persistence + build shared context + restore sessions. */
