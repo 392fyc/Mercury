@@ -140,10 +140,14 @@ export class TaskManager {
     const scored = devAgents.map((agent) => {
       let score = 0;
 
-      // Preferred model match (highest weight)
+      // Preferred model match: exact or normalized comparison (avoids "o3" matching "o3-mini" etc.)
       if (rec.preferredModel && agent.model) {
-        if (agent.model.includes(rec.preferredModel) || rec.preferredModel.includes(agent.model)) {
-          score += 100;
+        const preferred = rec.preferredModel.toLowerCase();
+        const agentModel = agent.model.toLowerCase();
+        if (agentModel === preferred) {
+          score += 100; // Exact match
+        } else if (agentModel.startsWith(preferred + "-") || preferred.startsWith(agentModel + "-")) {
+          score += 50; // Family match (e.g. "claude-opus-4-6" matches "claude-opus-4-6-xxx")
         }
       }
 
@@ -155,7 +159,9 @@ export class TaskManager {
         score += matched * 20;
       }
 
-      // Complexity-based preference: high → prefer agents with more capabilities
+      // Complexity-based preference:
+      // - high: prefer agents with more capabilities (stronger models)
+      // - medium/low: no capability bias (any dev agent is suitable)
       if (rec.complexity === "high") {
         score += agent.capabilities.length * 5;
       }
@@ -163,8 +169,8 @@ export class TaskManager {
       return { agent, score };
     });
 
-    // Sort by score descending, return best match
-    scored.sort((a, b) => b.score - a.score);
+    // Sort by score descending; tiebreak by agent ID for deterministic selection
+    scored.sort((a, b) => b.score - a.score || a.agent.id.localeCompare(b.agent.id));
     return scored[0].agent.id;
   }
 
