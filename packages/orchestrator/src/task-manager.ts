@@ -149,10 +149,11 @@ export class TaskManager {
         }
       }
 
-      // Capability matching
+      // Capability matching (deduplicated to prevent repeated scoring)
       if (rec.requiredCapabilities?.length) {
-        const matched = rec.requiredCapabilities.filter((cap) =>
-          agent.capabilities.some((ac) => ac.toLowerCase() === cap.toLowerCase()),
+        const uniqueCaps = [...new Set(rec.requiredCapabilities.map((c) => c.toLowerCase()))];
+        const matched = uniqueCaps.filter((cap) =>
+          agent.capabilities.some((ac) => ac.toLowerCase() === cap),
         ).length;
         score += matched * 20;
       }
@@ -236,7 +237,8 @@ export class TaskManager {
     params.context = params.context.trim();
 
     // G9: Auto-assign agent if not provided — use modelRecommendation routing
-    const assignedTo = params.assignedTo?.trim() || this.autoSelectAgent(params);
+    const explicitAssignedTo = params.assignedTo?.trim();
+    const assignedTo = explicitAssignedTo || this.autoSelectAgent(params);
 
     // Validate assignedTo references a registered agent with 'dev' role
     if (this.agentConfigLookup) {
@@ -296,7 +298,7 @@ export class TaskManager {
         assignedTo: task.assignedTo,
         priority: task.priority,
         modelRecommendation: task.modelRecommendation,
-        routingMethod: params.assignedTo ? "explicit" : "auto-triage",
+        routingMethod: explicitAssignedTo ? "explicit" : "auto-triage",
       },
     );
 
