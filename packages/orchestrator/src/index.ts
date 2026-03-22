@@ -441,7 +441,10 @@ function startTransports(orchestrator: Orchestrator, registry: AgentRegistry, co
 
 // Bootstrap
 const transport = new RpcTransport();
-const configPath = process.argv[2];
+// Parse CLI flags before treating positional args as config path.
+// --mcp / MERCURY_MCP_MODE=1 switches the server to MCP protocol mode.
+const cliArgs = process.argv.slice(2).filter((a) => !a.startsWith("--"));
+const configPath = cliArgs[0]; // first non-flag arg, if any
 const { config, resolvedPath: configFilePath } = loadConfig(configPath);
 
 if (config.workDir) {

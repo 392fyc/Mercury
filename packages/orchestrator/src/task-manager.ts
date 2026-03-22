@@ -112,7 +112,12 @@ export class TaskManager {
     if (!this.persistence) return;
     try {
       const { tasks, acceptances, issues } = await this.persistence.loadAll();
-      for (const t of tasks) this.tasks.set(t.taskId, t);
+      for (const t of tasks) {
+        // Backfill dispatch retry fields for legacy tasks (pre-RESILIENCE-001)
+        if (t.dispatchAttempts === undefined) t.dispatchAttempts = 0;
+        if (t.maxDispatchAttempts === undefined) t.maxDispatchAttempts = 5;
+        this.tasks.set(t.taskId, t);
+      }
       for (const a of acceptances) this.acceptances.set(a.acceptanceId, a);
       for (const i of issues) this.issues.set(i.issueId, i);
     } catch {
@@ -147,6 +152,10 @@ export class TaskManager {
     const validPriorities = ["sev-0", "sev-1", "sev-2", "sev-3"];
     if (!validPriorities.includes(params.priority)) {
       errors.push(`priority must be one of ${validPriorities.join(", ")}, got "${params.priority}"`);
+    }
+    if (params.maxDispatchAttempts !== undefined &&
+        (!Number.isInteger(params.maxDispatchAttempts) || params.maxDispatchAttempts < 1)) {
+      errors.push(`maxDispatchAttempts must be a positive integer, got ${params.maxDispatchAttempts}`);
     }
     // Filter empty/whitespace-only entries from write scope paths
     const normCodePaths = (params.allowedWriteScope?.codePaths ?? []).map((p) => p.trim()).filter(Boolean);

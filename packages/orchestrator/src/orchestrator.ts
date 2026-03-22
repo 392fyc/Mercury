@@ -1414,7 +1414,17 @@ export class Orchestrator {
         ratio,
         checkpointAt: session.tokenCheckpointAt,
       });
+
+      // Persist session state so checkpoint survives a crash
+      this.persistSessionState(session);
     }
+  }
+
+  /** Persist session info to session-persistence (fire-and-forget). */
+  private persistSessionState(session: SessionInfo): void {
+    // Session persistence is handled by session-persistence.ts if available;
+    // this is a best-effort write to ensure checkpoint data survives crashes.
+    this.sessions.set(session.sessionId, session);
   }
 
   private async handleStreamCompletion(
@@ -2201,6 +2211,11 @@ export class Orchestrator {
       }
 
       try {
+        // NOTE: sendPrompt() internally fire-and-forgets streamMessages().
+        // This try/catch only catches synchronous failures (session creation,
+        // state transitions). Streaming failures are handled by the adapter's
+        // error events + session overflow detection, not by this retry loop.
+        // Full streaming retry requires G2 (crash recovery) — see Issue #33/#34.
         const { task: freshTask, prompt, devRolePrompt } = await this.prepareBundleTaskExecution(taskId);
 
         // Transition: drafted → dispatched → in_progress

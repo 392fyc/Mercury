@@ -96,44 +96,56 @@ export function createMcpServer(orchestrator: Orchestrator, transport: RpcTransp
     "Get slash commands supported by an agent's CLI", { agentId });
 
   // ─── Session Management ───
+  // Signatures verified against orchestrator.ts handleRpc() cases
 
   rpcTool(server, orchestrator, "start_session",
-    "Start a new agent session", {
+    "Start a new agent session with optional role", {
       agentId,
-      prompt: z.string().optional().describe("Initial prompt"),
-      cwd: z.string().optional().describe("Working directory override"),
+      role: z.string().optional().describe("Agent role (main/dev/acceptance/research/design)"),
+      taskName: z.string().optional().describe("Task name for session context"),
     });
 
   rpcTool(server, orchestrator, "send_prompt",
     "Send a prompt to an active session", {
       agentId,
       prompt: z.string().describe("The prompt text"),
-      sessionId: sessionId.optional().describe("Target session (latest if omitted)"),
+      images: z.array(z.record(z.string(), z.unknown())).optional().describe("Image attachments"),
+      role: z.string().optional().describe("Agent role context"),
+      taskName: z.string().optional().describe("Task name context"),
     });
 
   rpcTool(server, orchestrator, "stop_session",
     "Stop an active session", {
       agentId,
-      sessionId: sessionId.optional().describe("Session to stop (latest if omitted)"),
+      sessionId,
     });
 
   rpcTool(server, orchestrator, "list_sessions",
-    "List all sessions, optionally filtered by agent", {
+    "List all sessions, optionally filtered by agent and role", {
       agentId: agentId.optional(),
+      role: z.string().optional().describe("Filter by role"),
+      includeTerminal: z.boolean().optional().describe("Include completed/overflow sessions"),
     });
 
   rpcTool(server, orchestrator, "resume_session",
     "Resume a paused or completed session", {
       agentId,
       sessionId,
-      prompt: z.string().optional().describe("Resume prompt"),
+      expectedRole: z.string().optional().describe("Expected role for validation"),
     });
 
   rpcTool(server, orchestrator, "get_session_messages",
-    "Get message history for a session", { agentId, sessionId });
+    "Get message history for a session", {
+      sessionId,
+      offset: z.number().optional().describe("Start offset"),
+      limit: z.number().optional().describe("Max messages to return"),
+    });
 
   rpcTool(server, orchestrator, "summarize_session",
-    "Generate a summary of a session's conversation", { agentId, sessionId });
+    "Record a summary for a session", {
+      agentId,
+      summary: z.string().describe("Session summary text"),
+    });
 
   // ─── Task Management ───
 
@@ -164,12 +176,9 @@ export function createMcpServer(orchestrator: Orchestrator, transport: RpcTransp
     "Dispatch a drafted task to its assigned dev agent", { taskId });
 
   rpcTool(server, orchestrator, "execute_task",
-    "Execute a task directly (create + dispatch in one step)", {
-      taskId: taskId.optional(),
-      title: z.string().describe("Task title"),
-      assignedTo: agentId.describe("Agent to execute"),
-      context: z.string().describe("Task context"),
-      definitionOfDone: z.array(z.string()).optional(),
+    "Execute an existing task (dispatch by taskId)", {
+      taskId,
+      oneShot: z.boolean().optional().describe("If true, create+dispatch in one step"),
     });
 
   // ─── Review Flow ───
@@ -184,14 +193,15 @@ export function createMcpServer(orchestrator: Orchestrator, transport: RpcTransp
     "Record the main agent's review decision", {
       taskId,
       decision: z.string().describe("APPROVE_FOR_ACCEPTANCE | SEND_BACK"),
-      summary: z.string().optional().describe("Review summary"),
-      findings: z.array(z.record(z.string(), z.unknown())).optional(),
+      reason: z.string().optional().describe("Review reason"),
+      acceptorId: agentId.optional().describe("Agent for acceptance (if approved)"),
     });
 
   rpcTool(server, orchestrator, "build_reference_prompt",
     "Build a reference prompt for a task's required docs", {
       taskId,
-      maxTokens: z.number().optional().describe("Max tokens for reference content"),
+      taskFilePath: z.string().describe("Path to task JSON file"),
+      handoffFilePath: z.string().optional().describe("Path to handoff file"),
     });
 
   // ─── Acceptance ───
@@ -199,33 +209,39 @@ export function createMcpServer(orchestrator: Orchestrator, transport: RpcTransp
   rpcTool(server, orchestrator, "create_acceptance",
     "Create an acceptance review for a task", {
       taskId,
-      acceptor: agentId.optional().describe("Agent to run acceptance"),
+      acceptorId: agentId.describe("Agent to run acceptance review"),
     });
 
   rpcTool(server, orchestrator, "record_acceptance_result",
     "Record acceptance review results", {
       acceptanceId: z.string().describe("Acceptance bundle ID"),
-      verdict: z.string().describe("pass | fail | partial"),
-      findings: z.array(z.string()).optional(),
-      recommendations: z.array(z.string()).optional(),
+      results: z.object({
+        verdict: z.string().describe("pass | fail | partial"),
+        findings: z.array(z.string()),
+        recommendations: z.array(z.string()),
+      }).describe("Acceptance results object"),
     });
 
   // ─── Issue Management ───
 
   rpcTool(server, orchestrator, "create_issue",
-    "Create a new issue in the knowledge base", {
+    "Create a new issue (params passed to CreateIssueParams)", {
       title: z.string().describe("Issue title"),
+      type: z.string().describe("bug | enhancement | task"),
+      priority: z.string().describe("sev-0 | sev-1 | sev-2 | sev-3"),
       description: z.string().describe("Issue description"),
-      severity: z.string().optional().describe("sev-0 | sev-1 | sev-2 | sev-3"),
       source: z.string().optional().describe("Source context"),
-      reportedBy: z.string().optional().describe("Reporter agent ID"),
+      linkedTaskIds: z.array(z.string()).optional().describe("Related task IDs"),
     });
 
   rpcTool(server, orchestrator, "resolve_issue",
     "Resolve an open issue", {
       issueId: z.string().describe("Issue ID to resolve"),
-      resolution: z.string().describe("Resolution description"),
-      linkedTaskId: taskId.optional().describe("Task that fixed this issue"),
+      resolution: z.object({
+        resolvedBy: z.string().describe("Agent/user who resolved"),
+        summary: z.string().describe("Resolution summary"),
+        resolvedAt: z.number().describe("Timestamp (epoch ms)"),
+      }).describe("Resolution details"),
     });
 
   // ─── Configuration ───
@@ -234,15 +250,15 @@ export function createMcpServer(orchestrator: Orchestrator, transport: RpcTransp
     "Get current Mercury configuration");
 
   rpcTool(server, orchestrator, "update_config",
-    "Update Mercury configuration", {
-      config: z.record(z.string(), z.unknown()).describe("Configuration fields to update"),
+    "Replace the full Mercury configuration (not a partial patch)", {
+      config: z.record(z.string(), z.unknown()).describe("Complete MercuryConfig object"),
     });
 
   // ─── Knowledge Base ───
 
   rpcTool(server, orchestrator, "kb_read",
     "Read a file from the knowledge base", {
-      path: z.string().describe("File path within the vault"),
+      file: z.string().describe("File path within the vault"),
     });
 
   rpcTool(server, orchestrator, "kb_search",
@@ -252,7 +268,7 @@ export function createMcpServer(orchestrator: Orchestrator, transport: RpcTransp
 
   rpcTool(server, orchestrator, "kb_list",
     "List files in a knowledge base directory", {
-      path: z.string().optional().describe("Directory path (root if omitted)"),
+      folder: z.string().optional().describe("Directory path (root if omitted)"),
     });
 
   rpcTool(server, orchestrator, "kb_write",
@@ -263,7 +279,7 @@ export function createMcpServer(orchestrator: Orchestrator, transport: RpcTransp
 
   rpcTool(server, orchestrator, "kb_append",
     "Append content to a knowledge base file", {
-      path: z.string().describe("File path within the vault"),
+      file: z.string().describe("File path within the vault"),
       content: z.string().describe("Content to append"),
     });
 
@@ -282,20 +298,18 @@ export function createMcpServer(orchestrator: Orchestrator, transport: RpcTransp
 
   rpcTool(server, orchestrator, "list_approval_requests",
     "List pending approval requests", {
-      agentId: agentId.optional(),
-      sessionId: sessionId.optional(),
+      status: z.string().optional().describe("Filter by status (pending/approved/denied)"),
     });
 
   rpcTool(server, orchestrator, "approve_request",
     "Approve a pending request", {
       requestId: z.string().describe("Approval request ID"),
-      agentId,
+      reason: z.string().optional().describe("Approval reason"),
     });
 
   rpcTool(server, orchestrator, "deny_request",
     "Deny a pending request", {
       requestId: z.string().describe("Approval request ID"),
-      agentId,
       reason: z.string().optional().describe("Denial reason"),
     });
 
