@@ -115,30 +115,36 @@ function hideContextMenu() {
 
     <!-- Bookmarks -->
     <div class="bookmark-list">
-      <button
+      <div
         v-for="(bm, idx) in visibleBookmarks"
         :key="bm.panelKey"
-        class="bookmark-tab"
-        :class="{ active: bm.status === 'active', open: isTabOpen(bm.panelKey) }"
+        class="bookmark-item"
         :style="{ transform: `scale(${fisheyeScale(idx)})` }"
-        @click="emit('open-session', bm.panelKey)"
         @contextmenu="showContextMenu(bm.panelKey, $event)"
       >
         <button
+          type="button"
+          class="bookmark-tab"
+          :class="{ active: bm.status === 'active', open: isTabOpen(bm.panelKey) }"
+          @click="emit('open-session', bm.panelKey)"
+        >
+          <div class="bm-top-row">
+            <span class="bm-role">{{ bm.role }}</span>
+            <span class="bm-status-dot" :class="bm.status"></span>
+          </div>
+          <span class="bm-title">{{ bm.sessionName || (bm.sessionId ? bm.sessionId.slice(0, 10) : bm.role) }}</span>
+          <div class="bm-bottom-row">
+            <span class="bm-agent">{{ bm.displayName }}</span>
+            <span class="bm-time">{{ formatTime(bm.lastActiveAt) }}</span>
+          </div>
+        </button>
+        <button
+          type="button"
           class="bm-close"
-          title="Hide bookmark"
+          aria-label="Hide bookmark"
           @click="closeBookmark(bm.panelKey, $event)"
         >&times;</button>
-        <div class="bm-top-row">
-          <span class="bm-role">{{ bm.role }}</span>
-          <span class="bm-status-dot" :class="bm.status"></span>
-        </div>
-        <span class="bm-title">{{ bm.sessionName || (bm.sessionId ? bm.sessionId.slice(0, 10) : bm.role) }}</span>
-        <div class="bm-bottom-row">
-          <span class="bm-agent">{{ bm.displayName }}</span>
-          <span class="bm-time">{{ formatTime(bm.lastActiveAt) }}</span>
-        </div>
-      </button>
+      </div>
     </div>
 
     <!-- Overflow bottom indicator -->
@@ -193,6 +199,11 @@ function hideContextMenu() {
   justify-content: center;
 }
 
+.bookmark-item {
+  position: relative;
+  transform-origin: right center;
+}
+
 .bookmark-tab {
   display: flex;
   flex-direction: column;
@@ -207,9 +218,8 @@ function hideContextMenu() {
   color: var(--text-secondary);
   font-size: 11px;
   text-align: left;
-  transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
   position: relative;
-  transform-origin: right center;
 }
 
 .bm-close {
@@ -225,7 +235,9 @@ function hideContextMenu() {
   line-height: 1;
   cursor: pointer;
   padding: 0;
-  display: none;
+  opacity: 0;
+  pointer-events: none;
+  display: flex;
   align-items: center;
   justify-content: center;
   border-radius: 3px;
@@ -237,15 +249,19 @@ function hideContextMenu() {
   color: var(--accent-error, #ff6464);
 }
 
-.bookmark-tab:hover .bm-close {
-  display: flex;
+.bookmark-item:hover .bm-close,
+.bookmark-item:focus-within .bm-close {
+  opacity: 1;
+  pointer-events: auto;
 }
 
-.bookmark-tab:hover {
-  transform: scale(1.05) translateX(-4px) !important;
+.bookmark-item:hover {
+  z-index: 2;
+}
+
+.bookmark-item:hover .bookmark-tab {
   background: var(--bg-panel);
   box-shadow: -2px 0 8px rgba(0, 0, 0, 0.3);
-  z-index: 2;
 }
 
 .bookmark-tab.open {
