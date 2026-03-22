@@ -63,6 +63,7 @@ export interface CreateTaskParams {
   reviewConfig?: TaskBundle["reviewConfig"];
   handoffToAcceptance?: TaskBundle["handoffToAcceptance"];
   maxReworks?: number;
+  maxDispatchAttempts?: number;
 }
 
 export interface CreateIssueParams {
@@ -111,7 +112,12 @@ export class TaskManager {
     if (!this.persistence) return;
     try {
       const { tasks, acceptances, issues } = await this.persistence.loadAll();
-      for (const t of tasks) this.tasks.set(t.taskId, t);
+      for (const t of tasks) {
+        // Backfill dispatch retry fields for legacy tasks (pre-RESILIENCE-001)
+        if (t.dispatchAttempts === undefined) t.dispatchAttempts = 0;
+        if (t.maxDispatchAttempts === undefined) t.maxDispatchAttempts = 5;
+        this.tasks.set(t.taskId, t);
+      }
       for (const a of acceptances) this.acceptances.set(a.acceptanceId, a);
       for (const i of issues) this.issues.set(i.issueId, i);
     } catch {
@@ -146,6 +152,10 @@ export class TaskManager {
     const validPriorities = ["sev-0", "sev-1", "sev-2", "sev-3"];
     if (!validPriorities.includes(params.priority)) {
       errors.push(`priority must be one of ${validPriorities.join(", ")}, got "${params.priority}"`);
+    }
+    if (params.maxDispatchAttempts !== undefined &&
+        (!Number.isInteger(params.maxDispatchAttempts) || params.maxDispatchAttempts < 1)) {
+      errors.push(`maxDispatchAttempts must be a positive integer, got ${params.maxDispatchAttempts}`);
     }
     // Filter empty/whitespace-only entries from write scope paths
     const normCodePaths = (params.allowedWriteScope?.codePaths ?? []).map((p) => p.trim()).filter(Boolean);
@@ -184,6 +194,8 @@ export class TaskManager {
       context: params.context,
       reviewConfig: params.reviewConfig,
       handoffToAcceptance: params.handoffToAcceptance,
+      dispatchAttempts: 0,
+      maxDispatchAttempts: params.maxDispatchAttempts ?? 5,
       reworkCount: 0,
       maxReworks: params.maxReworks ?? 3,
       linkedIssueIds: [],
@@ -618,6 +630,41 @@ export class TaskManager {
   private getLatestSession(taskId: string): string | undefined {
     const sessions = this.taskToSessions.get(taskId);
     return sessions?.[sessions.length - 1];
+  }
+
+  // ─── Dispatch Retry Tracking ───
+
+  /**
+   * Validate whether a task can be dispatched (pre-dispatch check).
+   * Returns null if OK, or an error message string if dispatch should be blocked.
+   */
+  validateDispatch(taskId: string): string | null {
+    const task = this.tasks.get(taskId);
+    if (!task) return `Task not found: ${taskId}`;
+    if (task.status !== "drafted" && task.status !== "dispatched") {
+      return `Task ${taskId} is in status "${task.status}" — only drafted/dispatched tasks can be dispatched`;
+    }
+    if (task.dispatchAttempts >= task.maxDispatchAttempts) {
+      return `Task ${taskId} exceeded max dispatch attempts (${task.dispatchAttempts}/${task.maxDispatchAttempts})`;
+    }
+    return null;
+  }
+
+  /**
+   * Record a dispatch attempt (success or failure).
+   * Call this before each dispatch attempt to track retries.
+   */
+  recordDispatchAttempt(taskId: string, error?: string): void {
+    const task = this.tasks.get(taskId);
+    if (!task) return;
+    task.dispatchAttempts += 1;
+    task.lastDispatchAt = new Date().toISOString();
+    if (error) {
+      task.lastDispatchError = error;
+    } else {
+      task.lastDispatchError = undefined;
+    }
+    this.persistTask(task);
   }
 }
 

@@ -78,9 +78,15 @@ importers:
       '@mercury/sdk-adapters':
         specifier: workspace:*
         version: link:../sdk-adapters
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.27.1
+        version: 1.27.1(zod@4.3.6)
       js-yaml:
         specifier: ^4.1.1
         version: 4.1.1
+      zod:
+        specifier: ^4.0.0
+        version: 4.3.6
     devDependencies:
       '@types/js-yaml':
         specifier: ^4.0.9

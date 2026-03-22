@@ -313,6 +313,12 @@ export interface TaskBundle {
     reviewedAt?: number;
   };
 
+  // Dispatch retry tracking
+  dispatchAttempts: number;
+  maxDispatchAttempts: number;
+  lastDispatchError?: string;
+  lastDispatchAt?: string; // ISO 8601
+
   // Rework tracking
   reworkCount: number;
   maxReworks: number;
@@ -439,6 +445,8 @@ export interface SessionInfo {
   frozenSystemPrompt?: string;
   baseRolePromptHash?: string;
   promptHash?: string;
+  /** ISO 8601 timestamp when a context checkpoint was taken at ~70% token usage. */
+  tokenCheckpointAt?: string;
 }
 
 // ─── Image Attachments ───
@@ -492,6 +500,8 @@ export interface AgentStreamingEvent {
   toolName?: string;
   /** Partial JSON input for tool call (for tool_delta) */
   toolInput?: string;
+  /** Cumulative token count reported by the adapter during streaming. */
+  tokenCount?: number;
   timestamp: number;
 }
 

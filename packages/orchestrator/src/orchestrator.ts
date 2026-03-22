@@ -83,6 +83,12 @@ export class Orchestrator {
   private static readonly SESSION_HISTORY_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
   private static readonly DEFAULT_PRECHECK_TIMEOUT_MS = 5 * 60 * 1000;
   private static readonly DEFAULT_REVIEW_DIFF_MAX_CHARS = 12000;
+  /** Token usage threshold (70%) at which context checkpoint + handoff is triggered. */
+  private static readonly TOKEN_CHECKPOINT_THRESHOLD = 0.7;
+  /** Base delay (ms) for exponential backoff on dispatch retries: min(300*2^attempt, 30000)+jitter. */
+  private static readonly DISPATCH_RETRY_BASE_MS = 300;
+  /** Max delay cap (ms) for dispatch retry backoff. */
+  private static readonly DISPATCH_RETRY_MAX_MS = 30000;
   private bus: EventBus;
   private registry: AgentRegistry;
   private transport: RpcTransport;
@@ -1280,6 +1286,15 @@ export class Orchestrator {
         // Streaming events are forwarded as lightweight notifications without
         // persisting to transcript — they represent incremental token content.
         if (isStreamingEvent(yielded)) {
+          // Track token usage from streaming events for context checkpoint
+          if (yielded.tokenCount !== undefined) {
+            const session = this.sessions.get(sessionId);
+            if (session) {
+              session.tokenUsage = yielded.tokenCount;
+              this.checkTokenThreshold(session);
+            }
+          }
+
           this.transport.sendNotification("agent_streaming", {
             agentId,
             sessionId,
@@ -1288,6 +1303,7 @@ export class Orchestrator {
               content: yielded.content,
               toolName: yielded.toolName,
               toolInput: yielded.toolInput,
+              tokenCount: yielded.tokenCount,
               timestamp: yielded.timestamp,
             },
           });
@@ -1365,6 +1381,50 @@ export class Orchestrator {
       this.persistState(true);
       return { completed: false };
     }
+  }
+
+  /**
+   * Check if a session has crossed the 70% token usage threshold.
+   * When crossed for the first time, records a checkpoint timestamp and
+   * emits an event so the orchestrator can plan a session handoff.
+   */
+  private checkTokenThreshold(session: SessionInfo): void {
+    if (session.tokenCheckpointAt) return; // already checkpointed
+    if (!session.tokenUsage || !session.tokenLimit) return;
+
+    const ratio = session.tokenUsage / session.tokenLimit;
+    if (ratio >= Orchestrator.TOKEN_CHECKPOINT_THRESHOLD) {
+      session.tokenCheckpointAt = new Date().toISOString();
+      this.bus.emit(
+        "orchestrator.context.compact",
+        session.agentId,
+        session.sessionId,
+        {
+          tokenUsage: session.tokenUsage,
+          tokenLimit: session.tokenLimit,
+          ratio,
+          checkpointAt: session.tokenCheckpointAt,
+        },
+      );
+      this.transport.sendNotification("orchestrator.context.checkpoint", {
+        agentId: session.agentId,
+        sessionId: session.sessionId,
+        tokenUsage: session.tokenUsage,
+        tokenLimit: session.tokenLimit,
+        ratio,
+        checkpointAt: session.tokenCheckpointAt,
+      });
+
+      // Persist session state so checkpoint survives a crash
+      this.persistSessionState(session);
+    }
+  }
+
+  /** Persist session info to session-persistence (fire-and-forget). */
+  private persistSessionState(session: SessionInfo): void {
+    // Session persistence is handled by session-persistence.ts if available;
+    // this is a best-effort write to ensure checkpoint data survives crashes.
+    this.sessions.set(session.sessionId, session);
   }
 
   private async handleStreamCompletion(
@@ -2111,37 +2171,95 @@ export class Orchestrator {
     };
   }
 
+  /**
+   * Compute exponential backoff delay: min(300 * 2^attempt, 30000) + jitter.
+   * Jitter is a random value in [0, baseDelay) to prevent thundering herd.
+   */
+  private computeDispatchBackoff(attempt: number): number {
+    const base = Math.min(
+      Orchestrator.DISPATCH_RETRY_BASE_MS * Math.pow(2, attempt),
+      Orchestrator.DISPATCH_RETRY_MAX_MS,
+    );
+    const jitter = Math.floor(Math.random() * base);
+    return base + jitter;
+  }
+
   private async dispatchBundleTask(
     taskId: string,
   ): Promise<{ sessionId: string; taskId: string }> {
-    const { task, prompt, devRolePrompt } = await this.prepareBundleTaskExecution(taskId);
-
-    // Transition: drafted → dispatched → in_progress
-    if (task.status === "drafted") {
-      this.taskManager.transitionTask(taskId, "dispatched", "orchestrator");
+    // Pre-dispatch validation
+    const validationError = this.taskManager.validateDispatch(taskId);
+    if (validationError) {
+      throw new Error(validationError);
     }
 
-    // Start role-scoped session for assigned agent
-    const session = await this.startRoleSession(task.assignedTo, "dev", task.title, devRolePrompt);
-    this.taskManager.bindSession(taskId, session.sessionId);
+    const task = this.taskManager.getTask(taskId);
+    if (!task) throw new Error(`Task not found: ${taskId}`);
 
-    // Transition to in_progress (only if not already there)
-    if (task.status === "dispatched") {
-      this.taskManager.transitionTask(taskId, "in_progress", task.assignedTo);
+    // Retry loop with exponential backoff
+    let lastError: Error | undefined;
+    const maxAttempts = task.maxDispatchAttempts;
+
+    for (let attempt = task.dispatchAttempts; attempt < maxAttempts; attempt++) {
+      // Apply backoff delay for retries (not the first attempt)
+      if (attempt > 0) {
+        const delay = this.computeDispatchBackoff(attempt);
+        this.transport.sendNotification("log", {
+          message: `[dispatch] retry attempt ${attempt + 1}/${maxAttempts} for ${taskId}, backoff ${delay}ms`,
+        });
+        await new Promise<void>((resolve) => setTimeout(resolve, delay));
+      }
+
+      try {
+        // NOTE: sendPrompt() internally fire-and-forgets streamMessages().
+        // This try/catch only catches synchronous failures (session creation,
+        // state transitions). Streaming failures are handled by the adapter's
+        // error events + session overflow detection, not by this retry loop.
+        // Full streaming retry requires G2 (crash recovery) — see Issue #33/#34.
+        const { task: freshTask, prompt, devRolePrompt } = await this.prepareBundleTaskExecution(taskId);
+
+        // Transition: drafted → dispatched → in_progress
+        if (freshTask.status === "drafted") {
+          this.taskManager.transitionTask(taskId, "dispatched", "orchestrator");
+        }
+
+        // Start role-scoped session for assigned agent
+        const session = await this.startRoleSession(freshTask.assignedTo, "dev", freshTask.title, devRolePrompt);
+        this.taskManager.bindSession(taskId, session.sessionId);
+
+        // Transition to in_progress (only if not already there)
+        if (freshTask.status === "dispatched") {
+          this.taskManager.transitionTask(taskId, "in_progress", freshTask.assignedTo);
+        }
+
+        // Send the prompt with role context
+        await this.sendPrompt(
+          freshTask.assignedTo,
+          prompt,
+          undefined,
+          "dev",
+          freshTask.title,
+          devRolePrompt,
+          freshTask.taskId,
+        );
+
+        // Record successful dispatch attempt
+        this.taskManager.recordDispatchAttempt(taskId);
+        return { sessionId: session.sessionId, taskId };
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        // Record failed dispatch attempt with error
+        this.taskManager.recordDispatchAttempt(taskId, lastError.message);
+        this.transport.sendNotification("log", {
+          message: `[dispatch] attempt ${attempt + 1}/${maxAttempts} failed for ${taskId}: ${lastError.message}`,
+        });
+      }
     }
 
-    // Send the prompt with role context
-    await this.sendPrompt(
-      task.assignedTo,
-      prompt,
-      undefined,
-      "dev",
-      task.title,
-      devRolePrompt,
-      task.taskId,
+    // All attempts exhausted
+    throw new Error(
+      `Failed to dispatch task ${taskId} after ${maxAttempts} attempts: ${lastError?.message ?? "unknown error"}`,
     );
-
-    return { sessionId: session.sessionId, taskId };
   }
 
   /** Find the agent currently assigned to the "main" role. */

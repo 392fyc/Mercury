@@ -13,13 +13,13 @@
 |---|-----|------|------|
 | G4 | 无 auto-verify 门控 | 创建 `/auto-verify` skill（Claude + Codex 双版本） | ✅ 完成 |
 | G6 | TaskBundle 创建无验证 | `createTask()` 增加 5 项输入校验 | ✅ 完成 |
-| G5 | DoD 非结构化 | TaskBundle 模板增加可选 `specs` 字段 | 推迟（不改 TS 类型） |
+| G5 | DoD 非结构化 | TaskBundle 模板增加可选 `specs` 字段 | ❌ 已决策：不采用（DEC-1） |
 
 ## Phase 2: 自动化构架（下一任务）
 
 | # | Gap | 措施 | 依赖 |
 |---|-----|------|------|
-| G8 | PR flow 全手动 | 创建 `/pr-flow` skill 自动化: pr create, poll checks, read comments, dispatch fix, merge | 无 |
+| G8 | PR flow 全手动 | 创建 `/pr-flow` skill 自动化: pr create, poll checks, read comments, dispatch fix, merge | ✅ 完成 (PR#30 W3/W5) |
 | G1 | 无 context 耗尽处理 | orchestrator 监控 adapter streaming token count，70% 阈值 checkpoint | adapter 改造 |
 | G2 | 无崩溃恢复 | session 非正常结束时 orchestrator 自动 re-dispatch | G1 |
 | G3 | 无重试语义 | adapter 层 exponential backoff retry，TaskBundle 增加 `dispatchAttempts` | 无 |
@@ -29,11 +29,11 @@
 
 | # | Gap | 措施 | 依赖 |
 |---|-----|------|------|
-| G11 | Agent 是 CLI session 非服务 | Codex adapter 迁移到 MCP (方案 B) | MCP SDK 集成 |
-| G12 | MCP 仅做数据层 | Mercury orchestrator 暴露为 MCP server (方案 C) | G11 验证 |
+| G11 | Agent 是 CLI session 非服务 | Codex adapter 迁移到 MCP (方案 B) | ✅ 完成 (PR#29, TASK-MCP-001) |
+| G12 | MCP 仅做数据层 | Mercury orchestrator 暴露为 MCP server (方案 C) | G11 ✅ 前置已满足 |
 | G7 | 单层 code review | 增加 critic agent（独立于 CodeRabbit） | G12 |
-| G13 | Skill 无漂移检测 | CI 脚本校验 SKILL.md 引用路径、RPC 方法名 | 无 |
-| G10 | Handoff 是独立流程 | TaskBundle + git 分支状态 = 天然 handoff，Handoff JSON 降级 | 无 |
+| G13 | Skill 无漂移检测 | CI 脚本校验 SKILL.md 引用路径、RPC 方法名 | ✅ 完成 (PR#30 W7) |
+| G10 | Handoff 是独立流程 | TaskBundle + git 分支状态 = 天然 handoff，Handoff JSON 降级 | ✅ 完成 |
 
 ## 关键架构决策记录
 
