@@ -78,8 +78,8 @@ async function handleDeleteSession(panelKey: string, event: Event) {
   if (sessionId && agentId) {
     try {
       await rpcDeleteSession(agentId, sessionId);
-    } catch {
-      // Event-driven cleanup will handle the rest
+    } catch (err) {
+      console.warn("[BookmarkRail] deleteSession RPC failed:", err);
     }
   }
   removeBookmark(panelKey);
@@ -90,7 +90,9 @@ const contextMenu = ref<{ panelKey: string; x: number; y: number } | null>(null)
 function showContextMenu(panelKey: string, event: MouseEvent) {
   event.preventDefault();
   event.stopPropagation();
-  contextMenu.value = { panelKey, x: event.clientX, y: event.clientY };
+  const x = Math.min(event.clientX, window.innerWidth - 160);
+  const y = Math.min(event.clientY, window.innerHeight - 80);
+  contextMenu.value = { panelKey, x, y };
 }
 
 function hideContextMenu() {
