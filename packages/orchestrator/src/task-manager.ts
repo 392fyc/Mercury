@@ -152,7 +152,7 @@ export class TaskManager {
       // Capability matching
       if (rec.requiredCapabilities?.length) {
         const matched = rec.requiredCapabilities.filter((cap) =>
-          agent.capabilities.some((ac) => ac.toLowerCase().includes(cap.toLowerCase())),
+          agent.capabilities.some((ac) => ac.toLowerCase() === cap.toLowerCase()),
         ).length;
         score += matched * 20;
       }
@@ -238,9 +238,15 @@ export class TaskManager {
     // G9: Auto-assign agent if not provided — use modelRecommendation routing
     const assignedTo = params.assignedTo?.trim() || this.autoSelectAgent(params);
 
-    // Validate assignedTo references a registered agent
-    if (this.agentConfigLookup && !this.agentConfigLookup(assignedTo)) {
-      throw new Error(`createTask validation failed: agent "${assignedTo}" is not registered`);
+    // Validate assignedTo references a registered agent with 'dev' role
+    if (this.agentConfigLookup) {
+      const agentConfig = this.agentConfigLookup(assignedTo);
+      if (!agentConfig) {
+        throw new Error(`createTask validation failed: agent "${assignedTo}" is not registered`);
+      }
+      if (!agentConfig.roles.includes("dev")) {
+        throw new Error(`createTask validation failed: agent "${assignedTo}" does not have 'dev' role`);
+      }
     }
 
     const taskId = `TASK-${shortId()}`;
