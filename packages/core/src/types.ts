@@ -171,6 +171,7 @@ export interface KBFileInfo {
 export type EventType =
   | "agent.session.start"
   | "agent.session.end"
+  | "agent.session.delete"
   | "agent.message.send"
   | "agent.message.receive"
   | "agent.approval.requested"

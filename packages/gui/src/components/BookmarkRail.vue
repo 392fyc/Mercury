@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useAgentStore } from "../stores/agents";
+import { deleteSession as rpcDeleteSession } from "../lib/tauri-bridge";
 
 const emit = defineEmits<{
   "open-session": [panelKey: string];
@@ -8,7 +9,7 @@ const emit = defineEmits<{
   "open-archived": [];
 }>();
 
-const { bookmarkList, openFloatingTabs } = useAgentStore();
+const { bookmarkList, openFloatingTabs, removeBookmark, parsePanelKey, getSession } = useAgentStore();
 
 /** Scroll offset: which bookmark index is at the center of the visible area. */
 const scrollOffset = ref(0);
@@ -62,6 +63,39 @@ function formatTime(ts: number): string {
   }
   return d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
+
+/** Hide bookmark without deleting the session. */
+function closeBookmark(panelKey: string, event: Event) {
+  event.stopPropagation();
+  removeBookmark(panelKey);
+}
+
+/** Delete the session entirely (stops + removes from orchestrator + hides bookmark). */
+async function handleDeleteSession(panelKey: string, event: Event) {
+  event.stopPropagation();
+  const { agentId } = parsePanelKey(panelKey);
+  const sessionId = getSession(panelKey);
+  if (sessionId && agentId) {
+    try {
+      await rpcDeleteSession(agentId, sessionId);
+    } catch {
+      // Event-driven cleanup will handle the rest
+    }
+  }
+  removeBookmark(panelKey);
+}
+
+const contextMenu = ref<{ panelKey: string; x: number; y: number } | null>(null);
+
+function showContextMenu(panelKey: string, event: MouseEvent) {
+  event.preventDefault();
+  event.stopPropagation();
+  contextMenu.value = { panelKey, x: event.clientX, y: event.clientY };
+}
+
+function hideContextMenu() {
+  contextMenu.value = null;
+}
 </script>
 
 <template>
@@ -84,7 +118,13 @@ function formatTime(ts: number): string {
         :class="{ active: bm.status === 'active', open: isTabOpen(bm.panelKey) }"
         :style="{ transform: `scale(${fisheyeScale(idx)})` }"
         @click="emit('open-session', bm.panelKey)"
+        @contextmenu="showContextMenu(bm.panelKey, $event)"
       >
+        <button
+          class="bm-close"
+          title="Hide bookmark"
+          @click="closeBookmark(bm.panelKey, $event)"
+        >&times;</button>
         <div class="bm-top-row">
           <span class="bm-role">{{ bm.role }}</span>
           <span class="bm-status-dot" :class="bm.status"></span>
@@ -104,6 +144,24 @@ function formatTime(ts: number): string {
     <button class="bookmark-add" title="New sub-agent session" @click="emit('create-session')">
       <span class="add-icon">+</span>
     </button>
+
+    <!-- Context menu -->
+    <Teleport to="body">
+      <div
+        v-if="contextMenu"
+        class="bm-context-menu"
+        :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
+        @click="hideContextMenu"
+      >
+        <button class="ctx-item" @click="closeBookmark(contextMenu.panelKey, $event)">
+          Hide Bookmark
+        </button>
+        <button class="ctx-item ctx-danger" @click="handleDeleteSession(contextMenu.panelKey, $event)">
+          Delete Session
+        </button>
+      </div>
+      <div v-if="contextMenu" class="ctx-backdrop" @click="hideContextMenu" />
+    </Teleport>
   </div>
 </template>
 
@@ -148,6 +206,35 @@ function formatTime(ts: number): string {
   transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
   position: relative;
   transform-origin: right center;
+}
+
+.bm-close {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 16px;
+  height: 16px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  z-index: 3;
+}
+
+.bm-close:hover {
+  background: rgba(255, 100, 100, 0.2);
+  color: var(--accent-error, #ff6464);
+}
+
+.bookmark-tab:hover .bm-close {
+  display: flex;
 }
 
 .bookmark-tab:hover {
@@ -289,5 +376,45 @@ function formatTime(ts: number): string {
 
 .add-icon {
   line-height: 1;
+}
+
+/* ─── Context Menu ─── */
+.bm-context-menu {
+  position: fixed;
+  z-index: 9999;
+  background: var(--bg-panel, #1e1e2e);
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  padding: 4px 0;
+  min-width: 140px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.ctx-item {
+  display: block;
+  width: 100%;
+  padding: 6px 14px;
+  background: none;
+  border: none;
+  color: var(--text-secondary, #ccc);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ctx-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-primary, #fff);
+}
+
+.ctx-danger:hover {
+  background: rgba(255, 100, 100, 0.15);
+  color: var(--accent-error, #ff6464);
+}
+
+.ctx-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
 }
 </style>

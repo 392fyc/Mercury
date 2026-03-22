@@ -466,6 +466,35 @@ async function initAgents() {
       return;
     }
 
+    if (event.type === "agent.session.delete") {
+      for (const [panelKey, sessionId] of sessions.value) {
+        if (sessionId !== event.sessionId) continue;
+
+        // Clean up all state for this session
+        const nextPromptState = new Map(sessionPromptState.value);
+        nextPromptState.delete(sessionId);
+        sessionPromptState.value = nextPromptState;
+
+        clearSession(panelKey);
+
+        const nextStatuses = new Map(statuses.value);
+        nextStatuses.delete(panelKey);
+        statuses.value = nextStatuses;
+
+        const nextWorkDirs = new Map(workDirs.value);
+        nextWorkDirs.delete(panelKey);
+        workDirs.value = nextWorkDirs;
+
+        const nextBranches = new Map(gitBranches.value);
+        nextBranches.delete(panelKey);
+        gitBranches.value = nextBranches;
+
+        removeBookmark(panelKey);
+        break;
+      }
+      return;
+    }
+
     if (event.type === "agent.message.receive") {
       for (const [panelKey, sessionId] of sessions.value) {
         if (sessionId !== event.sessionId) continue;

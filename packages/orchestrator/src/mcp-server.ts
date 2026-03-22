@@ -120,6 +120,12 @@ export function createMcpServer(orchestrator: Orchestrator, transport: RpcTransp
       sessionId,
     });
 
+  rpcTool(server, orchestrator, "delete_session",
+    "Delete a session entirely (stops if active, removes from persistence)", {
+      agentId,
+      sessionId,
+    });
+
   rpcTool(server, orchestrator, "list_sessions",
     "List all sessions, optionally filtered by agent and role", {
       agentId: agentId.optional(),

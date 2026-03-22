@@ -726,6 +726,11 @@ export class Orchestrator {
           params.agentId as string,
           params.sessionId as string,
         );
+      case "delete_session":
+        return this.deleteSession(
+          params.agentId as string,
+          params.sessionId as string,
+        );
       case "configure_agent":
         return this.configureAgent(params.config as AgentConfig);
       case "dispatch_task":
@@ -737,6 +742,7 @@ export class Orchestrator {
           params.fromAgentId as string,
           params.toAgentId as string,
           params.prompt as string,
+          (params.role as AgentRole | null) ?? undefined,
         );
       case "execute_task":
         return this.executeTask(
@@ -2146,6 +2152,29 @@ export class Orchestrator {
     this.persistState(true);
   }
 
+  /**
+   * Delete a session entirely — removes it from the sessions map, roleSessions,
+   * and persisted state. If the session is still active, stops it first.
+   */
+  private async deleteSession(
+    agentId: string,
+    sessionId: string,
+  ): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (session && session.status !== "completed") {
+      await this.stopSession(agentId, sessionId);
+    }
+    this.sessions.delete(sessionId);
+    for (const [key, sid] of this.roleSessions) {
+      if (sid === sessionId) {
+        this.roleSessions.delete(key);
+        break;
+      }
+    }
+    this.bus.emit("agent.session.delete", agentId, sessionId, {});
+    this.persistState(true);
+  }
+
   private configureAgent(config: AgentConfig): { ok: true } {
     this.registry.register(config);
     return { ok: true };
@@ -2155,7 +2184,14 @@ export class Orchestrator {
     fromAgentId: string,
     toAgentId: string,
     prompt: string,
+    role?: AgentRole,
   ): Promise<{ sessionId: string; taskId: string }> {
+    // Default role to "dev" for dispatched tasks — the simple dispatch pathway
+    // previously omitted the role, causing sessions to inherit the agent's
+    // first configured role (often "main"), which silently overwrote the
+    // main panel and suppressed sub-agent bookmark creation.
+    const effectiveRole: AgentRole = role ?? "dev";
+
     // Find any active session for fromAgent
     let fromSessionId = "orchestrator";
     for (const [key, sid] of this.roleSessions) {
@@ -2177,8 +2213,8 @@ export class Orchestrator {
       },
     );
 
-    // Start sub-agent session and send prompt
-    const result = await this.sendPrompt(toAgentId, prompt);
+    // Start sub-agent session and send prompt with correct role
+    const result = await this.sendPrompt(toAgentId, prompt, undefined, effectiveRole);
 
     return { sessionId: result.sessionId, taskId };
   }

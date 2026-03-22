@@ -157,6 +157,13 @@ export async function stopSession(
   return invoke("stop_session", { agentId, sessionId });
 }
 
+export async function deleteSession(
+  agentId: string,
+  sessionId: string,
+): Promise<void> {
+  return invoke("delete_session", { agentId, sessionId });
+}
+
 export async function configureAgent(config: AgentConfig): Promise<void> {
   return invoke("configure_agent", { config });
 }
@@ -165,8 +172,9 @@ export async function dispatchTask(
   fromAgentId: string,
   toAgentId: string,
   prompt: string,
+  role?: string,
 ): Promise<{ sessionId: string; taskId: string }> {
-  return invoke("dispatch_task", { params: { fromAgentId, toAgentId, prompt } });
+  return invoke("dispatch_task", { params: { fromAgentId, toAgentId, prompt, role } });
 }
 
 // ─── Config Operations ───

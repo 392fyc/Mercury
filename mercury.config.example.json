@@ -11,7 +11,7 @@
       "id": "claude-code",
       "integration": "sdk",
       "maxConcurrentSessions": 3,
-      "model": "claude-opus-4.6",
+      "model": "claude-opus-4-6",
       "restrictions": [],
       "roles": [
         "main",
@@ -28,7 +28,7 @@
       "id": "codex-cli",
       "integration": "sdk",
       "maxConcurrentSessions": 2,
-      "model": "gpt-5.4",
+      "model": "o3",
       "restrictions": [],
       "roles": [
         "dev",
