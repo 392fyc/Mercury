@@ -5,6 +5,11 @@
  * Communicates via JSON-RPC 2.0 over stdin/stdout.
  */
 
+// ─── Force UTF-8 on stdio (defense against Windows codepage 936/GBK) ───
+process.stdin.setEncoding("utf-8");
+process.stdout.setDefaultEncoding("utf-8");
+process.stderr.setDefaultEncoding("utf-8");
+
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
