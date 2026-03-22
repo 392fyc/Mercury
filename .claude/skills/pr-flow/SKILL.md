@@ -230,9 +230,11 @@ wait_for_refresh() { gh pr checks "$PR_NUMBER" --watch || true; for i in $(seq 1
 MAX_ITERATIONS=3 # CodeRabbit usually converges in 1-2 rounds; keep 1 buffer.
 ITERATION=1
 while [ "$ITERATION" -le "$MAX_ITERATIONS" ] && [ -n "$ACTIONABLE" ]; do
-  # Collect all fixed paths in this iteration for thread resolution
+  # Collect all fixed paths in this iteration for thread resolution.
+  # IMPORTANT: use process substitution (< <(...)) instead of pipe to avoid
+  # subshell — pipe would discard FIXED_PATHS modifications on loop exit.
   declare -a FIXED_PATHS=()
-  echo "$ACTIONABLE" | while read -r item; do
+  while read -r item; do
     COMMENT_ID=$(echo "$item" | jq -r '.id'); PATHNAME=$(echo "$item" | jq -r '.path')
     COMMENT_BODY=$(gh api repos/{owner}/{repo}/pulls/comments/"$COMMENT_ID" --jq '.body')
     PATCH_BODY=$(normalize_patch "$PATHNAME" "$COMMENT_BODY") || { echo "skip: no diff/suggestion for $COMMENT_ID"; continue; }
@@ -251,7 +253,7 @@ EOF
     git commit -m "fix(PR-feedback): address comment $COMMENT_ID"
     # Track fixed paths for thread resolution
     FIXED_PATHS+=("$PATHNAME")
-  done
+  done < <(echo "$ACTIONABLE")
   git push
   # ── Resolve threads for all fixed paths in this iteration ──
   [ ${#FIXED_PATHS[@]} -gt 0 ] && resolve_threads_for_paths "${FIXED_PATHS[@]}"
