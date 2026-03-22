@@ -29,6 +29,11 @@ impl SidecarManager {
             c.args(["/c", "pnpm", "exec", "tsx"]);
             c.arg(&orchestrator_entry);
             c.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            // Force UTF-8 encoding to prevent codepage 936/GBK garbling on CJK Windows.
+            // PYTHONIOENCODING: protects any Python subprocess spawned downstream.
+            c.env("LANG", "en_US.UTF-8");
+            c.env("LC_ALL", "en_US.UTF-8");
+            c.env("PYTHONIOENCODING", "utf-8");
             c
         };
 
