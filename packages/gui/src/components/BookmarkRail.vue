@@ -71,7 +71,12 @@ function closeBookmark(panelKey: string, event: Event) {
   removeBookmark(panelKey);
 }
 
-/** Delete the session entirely (stops + removes from orchestrator + hides bookmark). */
+/**
+ * Delete the session entirely (stops + removes from orchestrator + hides bookmark).
+ * Uses optimistic UI: the bookmark is always removed regardless of RPC outcome.
+ * If RPC fails, the orchestrator-side session will be cleaned up on next restart
+ * via session persistence reconciliation.
+ */
 async function handleDeleteSession(panelKey: string, event: Event) {
   event.stopPropagation();
   hideContextMenu();
@@ -103,10 +108,16 @@ function showContextMenu(panelKey: string, event: MouseEvent) {
 function hideContextMenu() {
   contextMenu.value = null;
 }
+
+function handleKeydown(event: KeyboardEvent) {
+  if (event.key === "Escape" && contextMenu.value) {
+    hideContextMenu();
+  }
+}
 </script>
 
 <template>
-  <div class="bookmark-rail" @wheel="handleWheel">
+  <div class="bookmark-rail" @wheel="handleWheel" @keydown="handleKeydown">
     <!-- Archived sessions entry -->
     <button class="bookmark-archived" title="Archived sub-agent sessions" @click="emit('open-archived')">
       <span class="archived-icon">📋</span>
