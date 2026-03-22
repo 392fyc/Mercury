@@ -89,11 +89,14 @@ async function handleDeleteSession(panelKey: string, event: Event) {
 
 const contextMenu = ref<{ panelKey: string; x: number; y: number } | null>(null);
 
+const MENU_WIDTH_ESTIMATE = 160;
+const MENU_HEIGHT_ESTIMATE = 80;
+
 function showContextMenu(panelKey: string, event: MouseEvent) {
   event.preventDefault();
   event.stopPropagation();
-  const x = Math.min(event.clientX, window.innerWidth - 160);
-  const y = Math.min(event.clientY, window.innerHeight - 80);
+  const x = Math.min(event.clientX, window.innerWidth - MENU_WIDTH_ESTIMATE);
+  const y = Math.min(event.clientY, window.innerHeight - MENU_HEIGHT_ESTIMATE);
   contextMenu.value = { panelKey, x, y };
 }
 
