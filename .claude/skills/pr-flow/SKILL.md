@@ -168,7 +168,12 @@ NAME=$(gh repo view --json name --jq '.name')
 # ── Helper: resolve a review thread by GraphQL ID ──
 resolve_thread() {
   local tid="$1"
-  gh api graphql -f query="mutation { resolveReviewThread(input: {threadId: \"$tid\"}) { thread { isResolved } } }" >/dev/null 2>&1
+  local result
+  result=$(gh api graphql -f query="mutation { resolveReviewThread(input: {threadId: \"$tid\"}) { thread { isResolved } } }" 2>&1)
+  if [ $? -ne 0 ] || ! echo "$result" | jq -e '.data.resolveReviewThread.thread.isResolved' >/dev/null 2>&1; then
+    echo "warn: failed to resolve thread $tid: $result" >&2
+    return 1
+  fi
 }
 
 # ── Helper: get thread ID for a given file path ──
@@ -259,9 +264,11 @@ done
 (not via auto-patch), you MUST still resolve threads after pushing:
 
 ```bash
-# After committing and pushing manual fixes, resolve threads for all changed files:
+# After committing and pushing manual fixes, resolve threads and request re-review:
 mapfile -t CHANGED_FILES < <(git diff --name-only HEAD~1)
 resolve_threads_for_paths "${CHANGED_FILES[@]}"
+# Request re-review from CodeRabbit (completes the atomic operation)
+gh pr comment "$PR_NUMBER" --body "@coderabbitai review"
 ```
 
 ### Step 6: Merge and Update Mercury State
@@ -272,6 +279,7 @@ check_review_state() { [ "$(gh pr view "$PR_NUMBER" --json reviewDecision --jq '
 # Use GraphQL to get accurate resolved/unresolved status for review threads.
 # REST API does not expose thread resolution state.
 check_unresolved_critical_comments() {
+  # Re-declare OWNER/NAME — Step 5 and Step 6 are separate bash blocks with no shared state.
   OWNER=$(gh repo view --json owner --jq '.owner.login')
   NAME=$(gh repo view --json name --jq '.name')
   # Paginate all review threads (handles PRs with >50 threads)
