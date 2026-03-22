@@ -134,31 +134,59 @@ export class TaskManager {
         `No agents with 'dev' role in registry (${agents.length} total agents) — cannot auto-assign task`,
       );
     }
-    if (devAgents.length === 1) return devAgents[0].id;
+
+    // Helper: emit debug event and return selected agent
+    const selectAndEmit = (
+      agentId: string,
+      reason: string,
+      candidates?: { agentId: string; score: number }[],
+    ): string => {
+      this.bus.emit("orchestrator.routing.debug", "orchestrator", "orchestrator", {
+        taskTitle: params.title,
+        reason,
+        candidates: candidates ?? [{ agentId, score: 0 }],
+        selected: agentId,
+      });
+      return agentId;
+    };
+
+    if (devAgents.length === 1) {
+      return selectAndEmit(devAgents[0].id, "single-dev-agent");
+    }
 
     const rec = params.modelRecommendation;
-    if (!rec) return devAgents[0].id;
+    if (!rec) {
+      return selectAndEmit(devAgents[0].id, "no-recommendation-fallback");
+    }
 
     // Score each dev agent
     const scored = devAgents.map((agent) => {
       let score = 0;
 
-      // Preferred model match: exact or normalized comparison (avoids "o3" matching "o3-mini" etc.)
+      // Preferred model match: trim + lowercase to handle whitespace in MCP/JSON inputs
       if (rec.preferredModel && agent.model) {
-        const preferred = rec.preferredModel.toLowerCase();
-        const agentModel = agent.model.toLowerCase();
-        if (agentModel === preferred) {
-          score += 100; // Exact match
-        } else if (agentModel.startsWith(preferred + "-") || preferred.startsWith(agentModel + "-")) {
-          score += 50; // Family match (e.g. "claude-opus-4-6" matches "claude-opus-4-6-xxx")
+        const preferred = rec.preferredModel.trim().toLowerCase();
+        const agentModel = agent.model.trim().toLowerCase();
+        if (preferred && agentModel) {
+          if (agentModel === preferred) {
+            score += 100; // Exact match
+          } else if (agentModel.startsWith(preferred + "-") || preferred.startsWith(agentModel + "-")) {
+            score += 50; // Family match (e.g. "claude-opus-4-6" matches "claude-opus-4-6-xxx")
+          }
         }
       }
 
-      // Capability matching (deduplicated to prevent repeated scoring)
+      // Capability matching (deduplicated, trimmed to prevent whitespace/repeated scoring)
       if (rec.requiredCapabilities?.length) {
-        const uniqueCaps = [...new Set(rec.requiredCapabilities.map((c) => c.toLowerCase()))];
+        const uniqueCaps = [
+          ...new Set(
+            rec.requiredCapabilities
+              .map((c) => c.trim().toLowerCase())
+              .filter((c) => c.length > 0),
+          ),
+        ];
         const matched = uniqueCaps.filter((cap) =>
-          agent.capabilities.some((ac) => ac.toLowerCase() === cap),
+          agent.capabilities.some((ac) => ac.trim().toLowerCase() === cap),
         ).length;
         score += matched * 20;
       }
@@ -176,14 +204,11 @@ export class TaskManager {
     // Sort by score descending; tiebreak by agent ID for deterministic selection
     scored.sort((a, b) => b.score - a.score || a.agent.id.localeCompare(b.agent.id));
 
-    // Debug: emit routing snapshot for observability
-    this.bus.emit("orchestrator.routing.debug", "orchestrator", "orchestrator", {
-      taskTitle: params.title,
-      candidates: scored.slice(0, 3).map((s) => ({ agentId: s.agent.id, score: s.score })),
-      selected: scored[0].agent.id,
-    });
-
-    return scored[0].agent.id;
+    return selectAndEmit(
+      scored[0].agent.id,
+      "scored-selection",
+      scored.slice(0, 3).map((s) => ({ agentId: s.agent.id, score: s.score })),
+    );
   }
 
   /** Rehydrate task state from persistence (call before RPC starts). */
