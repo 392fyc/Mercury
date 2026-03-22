@@ -11,11 +11,11 @@
 INPUT=$(cat)
 
 # Only intercept gh pr create commands
-echo "$INPUT" | grep -qE 'gh\s+pr\s+create' || exit 0
+echo "$INPUT" | grep -qE 'gh[[:space:]]+pr[[:space:]]+create' || exit 0
 
 MISSING=""
 
-# Check --assignee or --add-assignee (match word boundary to avoid substring false positives)
+# Check --assignee or --add-assignee
 echo "$INPUT" | grep -qE '(--assignee|--add-assignee)' || MISSING="${MISSING}  - --assignee (required: who owns this PR)\n"
 
 # Check --label or --add-label
