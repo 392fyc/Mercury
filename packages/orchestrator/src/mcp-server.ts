@@ -222,6 +222,30 @@ export function createMcpServer(orchestrator: Orchestrator, transport: RpcTransp
       }).describe("Acceptance results object"),
     });
 
+  // ─── Critic Verification ───
+
+  rpcTool(server, orchestrator, "get_critic_prompt",
+    "Generate the critic verification prompt for a task (spec-driven DoD validation)", {
+      taskId,
+    });
+
+  rpcTool(server, orchestrator, "record_critic_result",
+    "Record the critic agent's verification result on a task", {
+      taskId,
+      result: z.object({
+        overallVerdict: z.string().describe("pass | partial | fail"),
+        completeness: z.number().describe("0.0 – 1.0"),
+        items: z.array(z.object({
+          dodItem: z.string(),
+          verdict: z.string().describe("pass | fail | partial | skip"),
+          evidence: z.string(),
+          detail: z.string(),
+        })),
+        blockers: z.array(z.string()),
+        suggestions: z.array(z.string()),
+      }).describe("Critic verification result"),
+    });
+
   // ─── Issue Management ───
 
   rpcTool(server, orchestrator, "create_issue",

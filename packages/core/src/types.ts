@@ -10,7 +10,7 @@
 
 // ─── Agent Identity ───
 
-export type AgentRole = "main" | "dev" | "acceptance" | "research" | "design";
+export type AgentRole = "main" | "dev" | "acceptance" | "critic" | "research" | "design";
 
 export type IntegrationType = "sdk" | "mcp" | "http" | "pty" | "rpc";
 
@@ -193,6 +193,7 @@ export type EventType =
   | "orchestrator.session.handoff"
   | "orchestrator.task.main_review"
   | "orchestrator.task.callback"
+  | "orchestrator.critic.result"
   | "orchestrator.scope.violation"
   | "human.intervention";
 
@@ -325,6 +326,13 @@ export interface TaskBundle {
     reviewedAt?: number;
   };
 
+  // Critic review (spec-driven verification, parallel to main_review)
+  criticReview?: {
+    result?: CriticResult;
+    reviewedAt?: number;
+    criticAgent?: string; // agentId of the critic
+  };
+
   // Dispatch retry tracking
   dispatchAttempts: number;
   maxDispatchAttempts: number;
@@ -392,6 +400,28 @@ export interface AcceptanceBundle {
     recommendations: string[];
   };
   completedAt?: number;
+}
+
+// ─── Critic Result ───
+
+export type CriticVerdict = "pass" | "partial" | "fail";
+export type CriticItemVerdict = "pass" | "fail" | "partial" | "skip";
+
+/** Per-item verification result from the Critic Agent. */
+export interface CriticItemResult {
+  dodItem: string;
+  verdict: CriticItemVerdict;
+  evidence: string;
+  detail: string;
+}
+
+/** Structured output from the Critic Agent's spec-driven verification. */
+export interface CriticResult {
+  overallVerdict: CriticVerdict;
+  completeness: number; // 0.0 – 1.0
+  items: CriticItemResult[];
+  blockers: string[];
+  suggestions: string[];
 }
 
 // ─── Issue Bundle ───
