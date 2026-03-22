@@ -414,7 +414,23 @@ async function loadSessionHistory(panelKey: string, sessionId: string): Promise<
 
   try {
     // Primary: orchestrator transcript (with agent+role isolation)
-    const result = await bridgeGetSessionMessages(sessionId, undefined, undefined, agentId, role);
+    const result = await bridgeGetSessionMessages(sessionId, undefined, undefined, agentId, role) as {
+      messages: TranscriptMessage[];
+      total: number;
+      accessDenied?: boolean;
+    };
+
+    // If access was denied by isolation, do NOT fall back to native files
+    if (result.accessDenied) {
+      clearMessages(panelKey);
+      appendMessage(panelKey, {
+        role: "system",
+        content: "Access denied: this session belongs to a different agent/role.",
+        timestamp: Date.now(),
+      });
+      return;
+    }
+
     if (result.messages && result.messages.length > 0) {
       const batch: DisplayMessage[] = result.messages.map((msg) => ({
         role: msg.role,
@@ -430,7 +446,7 @@ async function loadSessionHistory(panelKey: string, sessionId: string): Promise<
     // Orchestrator doesn't have this session — try native CLI files
   }
 
-  // Fallback: native CLI JSONL files
+  // Fallback: native CLI JSONL files (only reached when orchestrator has no transcript, NOT access denied)
   const agent = agentStore.agents.value.find((a) => a.id === agentId);
   const cliType = agent?.cli === "codex" ? "codex" as const : "claude" as const;
 

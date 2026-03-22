@@ -1068,23 +1068,42 @@ export class Orchestrator {
 
   private async getSessionMessages(
     sessionId: string,
-    offset?: number,
-    limit?: number,
+    offset: number | undefined,
+    limit: number | undefined,
     requestingAgentId?: string,
     requestingRole?: AgentRole,
-  ): Promise<{ messages: TranscriptMessage[]; total: number }> {
-    // Validate session ownership if requesting context is provided
-    if (requestingAgentId || requestingRole) {
+  ): Promise<{ messages: TranscriptMessage[]; total: number; accessDenied?: boolean }> {
+    // Enforce agent+role isolation: validate session ownership
+    if (requestingAgentId) {
       const sessionInfo = this.sessions.get(sessionId);
       if (sessionInfo) {
-        if (requestingAgentId && sessionInfo.agentId !== requestingAgentId) {
-          return { messages: [], total: 0 };
+        // Session found in memory — validate ownership
+        if (sessionInfo.agentId !== requestingAgentId) {
+          return { messages: [], total: 0, accessDenied: true };
         }
         if (requestingRole) {
           const sessionRole = this.getSessionRole(sessionInfo, sessionInfo.agentId);
-          if (sessionRole && sessionRole !== requestingRole) {
-            return { messages: [], total: 0 };
+          if (!sessionRole || sessionRole !== requestingRole) {
+            return { messages: [], total: 0, accessDenied: true };
           }
+        }
+      } else {
+        // Session not in memory — deny by default (unknown session = no access)
+        // Exception: allow if session can be found via native adapter for the requesting agent
+        const nativeAdapter = this.asNativeSessionBridge(requestingAgentId);
+        if (!nativeAdapter.getNativeSessionInfo) {
+          return { messages: [], total: 0, accessDenied: true };
+        }
+        try {
+          const nativeInfo = await nativeAdapter.getNativeSessionInfo(
+            sessionId,
+            this.agentCwds.get(requestingAgentId),
+          );
+          if (!nativeInfo || nativeInfo.agentId !== requestingAgentId) {
+            return { messages: [], total: 0, accessDenied: true };
+          }
+        } catch {
+          return { messages: [], total: 0, accessDenied: true };
         }
       }
     }
