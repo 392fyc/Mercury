@@ -4,6 +4,7 @@
 
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
+import { mkdirSync } from "node:fs";
 import { copyFile, mkdir, readdir, writeFile, rename, unlink } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { EventBus, isStreamingEvent, makeRoleSlotKey } from "@mercury/core";
@@ -41,6 +42,8 @@ import {
 } from "./task-manager.js";
 import type { CreateTaskParams, CreateIssueParams } from "./task-manager.js";
 import { TaskPersistenceKB } from "./task-persistence-kb.js";
+import { TaskPersistenceSqlite } from "./task-persistence-sqlite.js";
+import { TaskPersistenceDual } from "./task-persistence-dual.js";
 import {
   buildRoleSystemPrompt,
   buildAcceptanceRolePrompt,
@@ -105,6 +108,7 @@ export class Orchestrator {
     }
   >();
   private kb: KnowledgeService | null = null;
+  private sqliteDb: TaskPersistenceSqlite | null = null;
   private projectConfig: MercuryConfig | null = null;
   private configFilePath: string | null = null;
   private taskManager: TaskManager;
@@ -140,14 +144,29 @@ export class Orchestrator {
     });
   }
 
-  /** Inject optional knowledge service + wire up task persistence. */
+  /** Inject optional knowledge service + wire up task persistence (with optional SQLite dual-write). */
   setKnowledgeService(kb: KnowledgeService) {
     this.kb = kb;
-    // Wire KB persistence into TaskManager
-    const persistence = new TaskPersistenceKB(kb, (msg) =>
-      this.transport.sendNotification("log", { message: msg }),
-    );
-    this.taskManager.setPersistence(persistence);
+    const logFn = (msg: string) => this.transport.sendNotification("log", { message: msg });
+
+    // KB persistence (always available as secondary / fallback)
+    const kbPersistence = new TaskPersistenceKB(kb, logFn);
+
+    // Try to initialize SQLite as primary persistence with dual-write to KB
+    try {
+      const mercuryDir = join(this.getProjectRoot(), ".mercury");
+      try { mkdirSync(mercuryDir, { recursive: true }); } catch { /* already exists */ }
+      const dbPath = join(mercuryDir, "mercury.db");
+      this.sqliteDb = new TaskPersistenceSqlite(dbPath, logFn);
+      const dualPersistence = new TaskPersistenceDual(this.sqliteDb, kbPersistence, logFn);
+      this.taskManager.setPersistence(dualPersistence);
+      logFn("[orchestrator] Persistence: SQLite (primary) + KB (sync)");
+    } catch (err) {
+      // Fallback to KB-only if SQLite fails to initialize
+      logFn(`[orchestrator] SQLite init failed, falling back to KB-only: ${err instanceof Error ? err.message : err}`);
+      this.taskManager.setPersistence(kbPersistence);
+    }
+
     // Wire agent config lookup for Agents First assignee.model
     this.taskManager.setAgentConfigLookup((agentId) =>
       this.registry.listAgents().find((a) => a.id === agentId),
@@ -165,6 +184,23 @@ export class Orchestrator {
   async init(): Promise<void> {
     this.syncRTKCommandWrapper();
     await this.validateRTKConfiguration();
+
+    // If SQLite is empty and KB has data, do one-time migration
+    if (this.sqliteDb?.isEmpty() && this.kb) {
+      try {
+        const logFn = (msg: string) => this.transport.sendNotification("log", { message: msg });
+        const kbOnly = new TaskPersistenceKB(this.kb, logFn);
+        const kbData = await kbOnly.loadAll();
+        if (kbData.tasks.length > 0 || kbData.issues.length > 0 || kbData.acceptances.length > 0) {
+          logFn(`[orchestrator] Migrating KB data to SQLite (${kbData.tasks.length} tasks, ${kbData.issues.length} issues, ${kbData.acceptances.length} acceptances)`);
+          this.sqliteDb.importFromKB(kbData);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.transport.sendNotification("log", { message: `[orchestrator] KB→SQLite migration failed: ${msg}` });
+      }
+    }
+
     await this.taskManager.init();
     await this.restoreSessions();
     // Build and inject shared context from KB if autoInjectContext is enabled

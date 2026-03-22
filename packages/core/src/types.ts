@@ -216,6 +216,8 @@ export interface TaskAssignee {
   sessionId?: string; // populated when task is dispatched
 }
 
+export type TaskPriority = "P0" | "P1" | "P2" | "P3";
+
 export type TaskStatus =
   | "drafted"
   | "dispatched"
@@ -227,6 +229,16 @@ export type TaskStatus =
   | "closed"
   | "failed"
   | "blocked";
+
+/** Normalize legacy priority formats (sev-0..sev-3) to canonical P0..P3. */
+export function normalizePriority(raw: string): TaskPriority {
+  const map: Record<string, TaskPriority> = {
+    "sev-0": "P0", "sev-1": "P1", "sev-2": "P2", "sev-3": "P3",
+    "P0": "P0", "P1": "P1", "P2": "P2", "P3": "P3",
+    "p0": "P0", "p1": "P1", "p2": "P2", "p3": "P3",
+  };
+  return map[raw] ?? "P3";
+}
 
 export interface PreCheckConfig {
   name: string;
@@ -275,7 +287,7 @@ export interface TaskBundle {
   taskId: string;
   title: string;
   phaseId?: string;
-  priority: "sev-0" | "sev-1" | "sev-2" | "sev-3";
+  priority: TaskPriority;
   status: TaskStatus;
   createdAt?: string; // ISO 8601, set by TaskManager when task is created (optional for legacy compat)
   closedAt: string | null; // ISO 8601, set by TaskManager when status → closed/verified
@@ -391,7 +403,7 @@ export interface IssueBundle {
   title: string;
   status: "open" | "resolved" | "deferred";
   type: IssueType;
-  priority: "sev-0" | "sev-1" | "sev-2" | "sev-3";
+  priority: TaskPriority;
   source: {
     reporterType: AgentRole;
     reporterId: string;

@@ -50,5 +50,8 @@ CLAUDE.md
 .mercury/sessions.json
 .mercury/transcripts/
 .mercury/backups/
+.mercury/mercury.db
+.mercury/mercury.db-wal
+.mercury/mercury.db-shm
 mercury.config.json
 .claude/current-session.md

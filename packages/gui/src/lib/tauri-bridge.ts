@@ -208,7 +208,7 @@ export async function updateConfig(
 
 // ─── Task Orchestration Operations ───
 
-export type TaskPriority = "sev-0" | "sev-1" | "sev-2" | "sev-3";
+export type TaskPriority = "P0" | "P1" | "P2" | "P3";
 /** Task lifecycle status. SYNC: mirrors @mercury/core TaskStatus. */
 export type TaskStatus =
   | "drafted" | "dispatched" | "in_progress" | "implementation_done"
