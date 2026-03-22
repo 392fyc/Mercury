@@ -298,9 +298,9 @@ export interface CreateTaskParams {
   requiredEvidence?: string[];
   context: string;
   modelRecommendation?: {
+    complexity: "low" | "medium" | "high"; // Required per core ModelRecommendation
     preferredModel?: string;
     requiredCapabilities?: string[];
-    complexity?: "low" | "medium" | "high";
   };
   maxReworks?: number;
 }
