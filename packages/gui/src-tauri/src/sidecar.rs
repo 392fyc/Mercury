@@ -40,7 +40,13 @@ impl SidecarManager {
             c
         };
 
-        cmd.current_dir(&project_dir)
+        // Force UTF-8 encoding to prevent codepage 936/GBK garbling on CJK Windows.
+        // LANG/LC_ALL: effective on Unix; NODE_ICU_DATA + CHCP side: handled by Node.js W1/W2.
+        // PYTHONIOENCODING: protects any Python subprocess spawned downstream.
+        cmd.env("LANG", "en_US.UTF-8")
+            .env("LC_ALL", "en_US.UTF-8")
+            .env("PYTHONIOENCODING", "utf-8")
+            .current_dir(&project_dir)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());

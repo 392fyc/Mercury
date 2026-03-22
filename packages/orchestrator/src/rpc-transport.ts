@@ -90,14 +90,14 @@ export class RpcTransport {
 
   sendNotification(method: string, params: Record<string, unknown>): void {
     const msg: RpcNotification = { jsonrpc: "2.0", method, params };
-    process.stdout.write(JSON.stringify(msg) + "\n");
+    process.stdout.write(JSON.stringify(msg) + "\n", "utf-8");
   }
 
   private sendResponse(response: RpcResponse): void {
-    process.stdout.write(JSON.stringify(response) + "\n");
+    process.stdout.write(JSON.stringify(response) + "\n", "utf-8");
   }
 
   log(message: string): void {
-    process.stderr.write(`[orchestrator] ${message}\n`);
+    process.stderr.write(`[orchestrator] ${message}\n`, "utf-8");
   }
 }
