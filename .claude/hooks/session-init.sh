@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # SESSION INIT: Generate .claude/current-session.md on first prompt of a session.
 # Event: UserPromptSubmit — fires before Claude starts reasoning.
 # Idempotent: writes only once per session (uses PID-based flag for session scope).

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # FLAG: mark web research as done after WebSearch/WebFetch completes.
 # Records timestamp and query for audit trail.
 

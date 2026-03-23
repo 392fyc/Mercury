@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # GATE: block gh pr merge unless CodeRabbit review has completed.
 # Token cost: ~1 gh API call when intercepted.
 #
@@ -6,7 +6,12 @@
 #   PreToolUse(Bash) → detect "gh pr merge" → check CodeRabbit status → block/allow
 
 INPUT=$(cat)
-COMMAND=$(echo "$INPUT" | sed -n 's/.*"command"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+# Extract command (jq preferred, sed fallback)
+if command -v jq >/dev/null 2>&1; then
+  COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
+else
+  COMMAND=$(echo "$INPUT" | sed -n 's/.*"command"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+fi
 
 # Only intercept gh pr merge commands
 echo "$COMMAND" | grep -qE 'gh[[:space:]]+pr[[:space:]]+merge' || exit 0

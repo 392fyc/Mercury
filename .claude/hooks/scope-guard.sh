@@ -1,11 +1,16 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # GATE: block software installation to C drive + adapter-KB coupling.
 # Allows normal file writes to C drive (configs, caches, user data).
 # Only blocks paths that indicate software installation (Program Files, etc).
 # Token cost: ZERO. No external deps.
 
 INPUT=$(cat)
-FILE=$(echo "$INPUT" | grep -oP '"file_path"\s*:\s*"\K[^"]*' | head -1)
+# Extract file_path (jq preferred, sed fallback)
+if command -v jq >/dev/null 2>&1; then
+  FILE=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
+else
+  FILE=$(echo "$INPUT" | sed -n 's/.*"file_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+fi
 
 [ -z "$FILE" ] && exit 0
 
