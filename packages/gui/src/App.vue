@@ -36,11 +36,41 @@ const activeView = ref<"agents" | "tasks">("agents");
 const showEventLog = ref(false);
 const showAgentRoleSelector = ref(false);
 const splitShellEl = ref<HTMLDivElement | null>(null);
-const explorerSize = ref(15);
 const isExplorerResizing = ref(false);
 
+// ─── Center area tab switching (Agent ↔ File Preview) ───
+const centerTab = ref<"agent" | "file">("agent");
+const openFilePath = ref("");
+const openFileName = ref("");
+
+function handleOpenFile(path: string, name: string) {
+  openFilePath.value = path;
+  openFileName.value = name;
+  centerTab.value = "file";
+}
+
+function switchToAgent() {
+  centerTab.value = "agent";
+}
+
+// ─── Explorer resize with localStorage persistence ───
+// Uses Window.localStorage (MDN Web API) for cross-session persistence
+const EXPLORER_STORAGE_KEY = "mercury-explorer-size";
 const EXPLORER_MIN_SIZE = 8;
 const EXPLORER_MAX_SIZE = 25;
+
+function loadExplorerSize(): number {
+  try {
+    const saved = localStorage.getItem(EXPLORER_STORAGE_KEY);
+    if (saved) {
+      const val = parseFloat(saved);
+      if (!isNaN(val)) return clampExplorerSize(val);
+    }
+  } catch { /* ignore */ }
+  return 15;
+}
+
+const explorerSize = ref(loadExplorerSize());
 
 function clampExplorerSize(size: number) {
   return Math.min(EXPLORER_MAX_SIZE, Math.max(EXPLORER_MIN_SIZE, size));
@@ -70,6 +100,8 @@ function stopExplorerResize() {
   window.removeEventListener("pointermove", handleExplorerPointerMove);
   window.removeEventListener("pointerup", stopExplorerResize);
   window.removeEventListener("pointercancel", stopExplorerResize);
+  // Persist size to localStorage
+  try { localStorage.setItem(EXPLORER_STORAGE_KEY, String(explorerSize.value)); } catch { /* ignore */ }
 }
 
 function startExplorerResize(event: PointerEvent) {
@@ -130,7 +162,7 @@ onBeforeUnmount(() => {
             <div ref="splitShellEl" class="agents-split-shell">
               <div class="explorer-pane" :style="{ flexBasis: `${explorerSize}%` }">
                 <ExplorerPanel
-                  @open-file="(_path, _name) => { /* TODO: open file in center area */ }"
+                  @open-file="handleOpenFile"
                 />
               </div>
               <div
@@ -145,7 +177,18 @@ onBeforeUnmount(() => {
                 @pointerdown="startExplorerResize"
               />
               <div class="center-pane">
-                <div class="main-agent-area">
+                <!-- Tab bar for Agent ↔ File switching -->
+                <div v-if="centerTab === 'file'" class="center-tab-bar">
+                  <button class="center-tab" @click="switchToAgent">Agent</button>
+                  <button class="center-tab active">
+                    <span class="tab-file-icon">📄</span>
+                    {{ openFileName }}
+                  </button>
+                  <button class="center-tab-close" @click="switchToAgent" title="Close file">&times;</button>
+                </div>
+
+                <!-- Agent Panel (always mounted, visibility toggled) -->
+                <div v-show="centerTab === 'agent'" class="main-agent-area">
                   <AgentPanel
                     v-if="mainAgent"
                     :agentId="mainAgent.id"
@@ -154,6 +197,15 @@ onBeforeUnmount(() => {
                     :panelKey="`main:${mainAgent.id}`"
                   />
                 </div>
+
+                <!-- File Preview (shown when a file is open) -->
+                <div v-if="centerTab === 'file'" class="file-preview-area">
+                  <div class="file-preview-placeholder">
+                    <span class="file-preview-path">{{ openFilePath }}</span>
+                    <p class="file-preview-note">File preview — coming soon</p>
+                  </div>
+                </div>
+
                 <!-- Floating sub-agent panel (overlays right side) -->
                 <FloatingPanel />
               </div>
@@ -295,10 +347,10 @@ onBeforeUnmount(() => {
 
 .sessions-rail {
   display: flex;
-  flex: 0 0 300px;
-  width: 300px;
-  min-width: 300px;
-  max-width: 300px;
+  flex: 0 0 390px;
+  width: 390px;
+  min-width: 390px;
+  max-width: 390px;
   min-height: 0;
   overflow: hidden;
   background: var(--bg-secondary);
@@ -345,6 +397,83 @@ onBeforeUnmount(() => {
   .workspace.event-log-visible {
     grid-template-rows: minmax(0, 1fr) clamp(112px, 16vh, 136px);
   }
+}
+
+/* ─── Center tab bar (Agent ↔ File) ─── */
+.center-tab-bar {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  height: 34px;
+}
+
+.center-tab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.15s;
+}
+
+.center-tab:hover { color: var(--text-secondary); }
+.center-tab.active {
+  color: var(--text-primary);
+  border-bottom-color: var(--accent-main);
+}
+
+.tab-file-icon { font-size: 12px; }
+
+.center-tab-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 6px;
+  margin-left: auto;
+  border-radius: 3px;
+}
+.center-tab-close:hover {
+  color: var(--accent-error);
+  background: rgba(255, 82, 82, 0.1);
+}
+
+/* ─── File preview placeholder ─── */
+.file-preview-area {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-primary);
+}
+
+.file-preview-placeholder {
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.file-preview-path {
+  font-size: 12px;
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+.file-preview-note {
+  margin-top: 8px;
+  font-size: 11px;
+  opacity: 0.6;
 }
 
 :global(body.explorer-resizing) {

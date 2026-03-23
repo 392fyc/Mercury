@@ -222,20 +222,22 @@ function roleColor(role: string): string {
 }
 
 .sp-title {
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.8px;
-  color: var(--text-secondary);
+  color: var(--text-primary);
 }
 
 .sp-count {
-  background: rgba(0, 212, 255, 0.12);
+  background: rgba(0, 212, 255, 0.15);
   color: var(--accent-main);
-  padding: 1px 6px;
-  border-radius: 8px;
-  font-size: 9px;
-  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 9px;
+  font-size: 10px;
+  font-weight: 700;
+  min-width: 20px;
+  text-align: center;
 }
 
 /* ─── List ─── */
@@ -250,21 +252,22 @@ function roleColor(role: string): string {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 10px 8px 4px;
+  padding: 12px 8px 6px;
   cursor: pointer;
-  font-size: 9px;
+  font-size: 11px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 1px;
-  color: var(--text-muted);
+  letter-spacing: 0.8px;
+  color: var(--text-secondary);
   transition: color 0.15s;
 }
 
 .sp-group-header:hover {
-  color: var(--text-secondary);
+  color: var(--text-primary);
 }
 
 .sp-arrow {
-  font-size: 8px;
+  font-size: 9px;
   transition: transform 0.2s;
   display: inline-block;
 }
@@ -278,12 +281,15 @@ function roleColor(role: string): string {
 }
 
 .sp-group-count {
-  background: rgba(0, 212, 255, 0.1);
+  background: rgba(0, 212, 255, 0.15);
   color: var(--accent-main);
-  padding: 0 5px;
-  border-radius: 8px;
-  font-size: 8px;
-  line-height: 16px;
+  padding: 1px 7px;
+  border-radius: 9px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 18px;
+  min-width: 18px;
+  text-align: center;
 }
 
 /* ─── Group items (collapsible) ─── */

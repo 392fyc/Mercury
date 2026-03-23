@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onBeforeUnmount, ref } from "vue";
 import AgentPanel from "./AgentPanel.vue";
 import { useAgentStore } from "../stores/agents";
 
@@ -39,7 +39,7 @@ function selectTab(index: number) {
 
 function closeTab(panelKey: string) {
   const idx = openFloatingTabs.value.indexOf(panelKey);
-  if (idx < 0) return; // panelKey not found — no-op
+  if (idx < 0) return;
   closeFloatingTab(panelKey);
   if (idx <= activeTabIndex.value && activeTabIndex.value > 0) {
     activeTabIndex.value--;
@@ -47,17 +47,73 @@ function closeTab(panelKey: string) {
 }
 
 function minimizeAll() {
-  // Close all floating tabs (bookmarks remain)
   for (const pk of [...openFloatingTabs.value]) {
     closeFloatingTab(pk);
   }
   activeTabIndex.value = 0;
 }
+
+// ─── Left-side resize (drag left edge to widen/narrow) ───
+// Uses localStorage (MDN Web Storage API) for persistence
+const FP_WIDTH_KEY = "mercury-floating-width";
+const FP_MIN_WIDTH = 320;
+const FP_MAX_WIDTH_RATIO = 0.65; // max 65% of center-pane
+
+function loadWidth(): number {
+  try {
+    const saved = localStorage.getItem(FP_WIDTH_KEY);
+    if (saved) {
+      const val = parseFloat(saved);
+      if (!isNaN(val) && val >= FP_MIN_WIDTH) return val;
+    }
+  } catch { /* ignore */ }
+  return 480;
+}
+
+const panelWidth = ref(loadWidth());
+const isResizing = ref(false);
+
+function onResizePointerDown(e: PointerEvent) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  isResizing.value = true;
+  document.body.classList.add("fp-resizing");
+  window.addEventListener("pointermove", onResizeMove, { passive: false });
+  window.addEventListener("pointerup", onResizeUp);
+  window.addEventListener("pointercancel", onResizeUp);
+}
+
+function onResizeMove(e: PointerEvent) {
+  if (!isResizing.value) return;
+  e.preventDefault();
+  // FloatingPanel is right-aligned; its right edge aligns with right side of center-pane.
+  // Width = container right edge - mouse X
+  const parent = document.querySelector(".center-pane") as HTMLElement | null;
+  if (!parent) return;
+  const parentRect = parent.getBoundingClientRect();
+  const maxW = parentRect.width * FP_MAX_WIDTH_RATIO;
+  const raw = parentRect.right - e.clientX;
+  panelWidth.value = Math.min(maxW, Math.max(FP_MIN_WIDTH, raw));
+}
+
+function onResizeUp() {
+  if (!isResizing.value) return;
+  isResizing.value = false;
+  document.body.classList.remove("fp-resizing");
+  window.removeEventListener("pointermove", onResizeMove);
+  window.removeEventListener("pointerup", onResizeUp);
+  window.removeEventListener("pointercancel", onResizeUp);
+  try { localStorage.setItem(FP_WIDTH_KEY, String(Math.round(panelWidth.value))); } catch { /* ignore */ }
+}
+
+onBeforeUnmount(() => { onResizeUp(); });
 </script>
 
 <template>
   <Transition name="slide">
-    <div v-if="hasTabs" class="floating-panel">
+    <div v-if="hasTabs" class="floating-panel" :style="{ width: panelWidth + 'px' }">
+      <!-- Left resize handle -->
+      <div class="fp-resize-handle" @pointerdown="onResizePointerDown" />
       <!-- Tab bar -->
       <div class="fp-tab-bar" role="tablist" aria-label="Open sub-agent sessions">
         <div
@@ -99,20 +155,33 @@ function minimizeAll() {
 <style scoped>
 .floating-panel {
   position: absolute;
-  top: 16px;
-  bottom: 16px;
-  right: 304px; /* sessions panel width (300px) + gap */
-  width: 33%;
-  min-width: 360px;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  min-width: 320px;
   display: flex;
   flex-direction: column;
   background: var(--bg-secondary);
-  border: 1px solid rgba(0, 212, 255, 0.12);
-  border-radius: 8px;
-  box-shadow: -6px 0 24px rgba(0, 0, 0, 0.35), 0 4px 16px rgba(0, 0, 0, 0.15),
-              0 0 1px rgba(0, 212, 255, 0.1);
+  border-left: 1px solid rgba(0, 212, 255, 0.15);
+  box-shadow: -4px 0 20px rgba(0, 0, 0, 0.35);
   z-index: 10;
   overflow: hidden;
+}
+
+.fp-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -2px;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 11;
+  transition: background 0.15s;
+}
+
+.fp-resize-handle:hover,
+:global(body.fp-resizing) .fp-resize-handle {
+  background: var(--accent-main);
 }
 
 .fp-tab-bar {
@@ -213,7 +282,8 @@ function minimizeAll() {
   border-radius: 0;
 }
 
-/* Slide-in animation */
+/* Slide-in animation from right — Vue 3 Transition classes */
+/* Ref: https://vuejs.org/guide/built-ins/transition */
 .slide-enter-active {
   transition: transform 0.2s ease-out, opacity 0.2s ease-out;
 }
@@ -221,11 +291,16 @@ function minimizeAll() {
   transition: transform 0.15s ease-in, opacity 0.15s ease-in;
 }
 .slide-enter-from {
-  transform: translateX(20px);
+  transform: translateX(100%);
   opacity: 0;
 }
 .slide-leave-to {
-  transform: translateX(20px);
+  transform: translateX(100%);
   opacity: 0;
+}
+
+:global(body.fp-resizing) {
+  cursor: col-resize;
+  user-select: none;
 }
 </style>
