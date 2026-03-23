@@ -665,6 +665,76 @@ export function onRemoteControlLog(
   );
 }
 
+// ─── PR Monitor Operations ───
+
+export type CodeRabbitStatus = "pending" | "commented" | "approved" | "changes_requested";
+
+export interface PrReview {
+  author: string;
+  state: string;
+}
+
+export interface PullRequest {
+  number: number;
+  title: string;
+  head_ref_name: string;
+  author: string;
+  created_at: string;
+  updated_at: string;
+  url: string;
+  review_decision: string | null;
+  coderabbit_status: CodeRabbitStatus;
+  timeout_alert: boolean;
+  reviews: PrReview[];
+}
+
+export interface PrMonitorState {
+  polling: boolean;
+  interval_secs: number;
+  prs: PullRequest[];
+  last_error: string | null;
+  last_fetched_at: string | null;
+}
+
+/** Fetch all open PRs from GitHub (one-shot). */
+export async function getOpenPrs(): Promise<{ prs: PullRequest[] }> {
+  return invoke<{ prs: PullRequest[] }>("get_open_prs");
+}
+
+/** Get the current PR monitor state (cached PRs + polling status). */
+export async function getPrMonitorState(): Promise<PrMonitorState> {
+  return invoke<PrMonitorState>("get_pr_monitor_state");
+}
+
+/** Start background polling for PR status updates. */
+export async function startPrPolling(intervalSecs?: number): Promise<{ ok: true }> {
+  return invoke("start_pr_polling", { intervalSecs: intervalSecs ?? null });
+}
+
+/** Stop background PR status polling. */
+export async function stopPrPolling(): Promise<{ ok: true }> {
+  return invoke("stop_pr_polling");
+}
+
+/** Post "@coderabbitai review" comment on a PR. */
+export async function triggerCoderabbitReview(prNumber: number): Promise<{ ok: true }> {
+  return invoke("trigger_coderabbit_review", { prNumber });
+}
+
+/** Squash-merge a PR (with delete-branch). */
+export async function mergePr(prNumber: number): Promise<{ ok: true }> {
+  return invoke("merge_pr", { prNumber });
+}
+
+/** Listen for PR list update events from background polling. */
+export function onPrListUpdated(
+  handler: (data: { prs: PullRequest[]; timestamp: string }) => void,
+): Promise<UnlistenFn> {
+  return listen<{ prs: PullRequest[]; timestamp: string }>("pr-list-updated", (event) =>
+    handler(event.payload),
+  );
+}
+
 // Events (sidecar → Rust → frontend)
 
 export interface AgentMessageEvent {

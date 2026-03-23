@@ -1,4 +1,5 @@
 mod commands;
+mod pr_monitor;
 mod remote_control;
 mod sidecar;
 mod types;
@@ -8,6 +9,7 @@ use std::sync::Arc;
 use tauri::{Emitter, Manager};
 use tokio::sync::Mutex;
 
+use pr_monitor::PrMonitor;
 use remote_control::RemoteControlManager;
 use sidecar::SidecarManager;
 
@@ -16,6 +18,9 @@ pub type SharedSidecar = Arc<Mutex<Option<SidecarManager>>>;
 
 /// Shared remote control manager.
 pub type SharedRemoteControl = Arc<Mutex<RemoteControlManager>>;
+
+/// Shared PR monitor.
+pub type SharedPrMonitor = Arc<Mutex<PrMonitor>>;
 
 /// Project root path — available immediately (no sidecar dependency).
 pub struct ProjectRoot(pub String);
@@ -75,6 +80,10 @@ pub fn run() {
             let rc: SharedRemoteControl = Arc::new(Mutex::new(RemoteControlManager::new()));
             app.manage(rc.clone());
 
+            // Register PR monitor
+            let pm: SharedPrMonitor = Arc::new(Mutex::new(PrMonitor::new()));
+            app.manage(pm.clone());
+
             // Resolve the monorepo root (where mercury.config.json lives)
             let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
             let cwd = std::env::current_dir().unwrap_or_else(|_| manifest_dir.clone());
@@ -86,6 +95,16 @@ pub fn run() {
 
             app.manage(ProjectRoot(project_dir.clone()));
             eprintln!("[tauri] Project root: {}", project_dir);
+
+            // Set project root on PR monitor
+            {
+                let pm_clone = pm.clone();
+                let dir = project_dir.clone();
+                tauri::async_runtime::spawn(async move {
+                    let monitor = pm_clone.lock().await;
+                    monitor.set_project_root(dir).await;
+                });
+            }
 
             // Spawn the Node.js orchestrator sidecar
             tauri::async_runtime::spawn(async move {
@@ -150,6 +169,12 @@ pub fn run() {
             commands::start_remote_control,
             commands::stop_remote_control,
             commands::get_remote_control_status,
+            commands::get_open_prs,
+            commands::get_pr_monitor_state,
+            commands::start_pr_polling,
+            commands::stop_pr_polling,
+            commands::trigger_coderabbit_review,
+            commands::merge_pr,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -157,7 +182,16 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 let shared = app.state::<SharedSidecar>().inner().clone();
                 let rc = app.state::<SharedRemoteControl>().inner().clone();
+                let pm = app.state::<SharedPrMonitor>().inner().clone();
                 tauri::async_runtime::block_on(async {
+                    // Stop PR monitor polling
+                    {
+                        let monitor = pm.lock().await;
+                        if monitor.is_polling() {
+                            eprintln!("[tauri] Stopping PR monitor polling");
+                            monitor.stop_polling();
+                        }
+                    }
                     // Shutdown remote control first
                     {
                         let mgr = rc.lock().await;

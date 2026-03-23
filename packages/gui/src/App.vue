@@ -12,6 +12,7 @@ import BookmarkRail from "./components/BookmarkRail.vue";
 import FloatingPanel from "./components/FloatingPanel.vue";
 import AgentRoleSelector from "./components/AgentRoleSelector.vue";
 import RemoteControlPanel from "./components/RemoteControlPanel.vue";
+import PRMonitorPanel from "./components/PRMonitorPanel.vue";
 import { useAgentStore } from "./stores/agents";
 import { useApprovalStore } from "./stores/approvals";
 import { useMessageStore } from "./stores/messages";
@@ -29,6 +30,7 @@ const { loadTasks, initTaskListeners } = useTaskStore();
 
 const showSettings = ref(false);
 const showRemoteControl = ref(false);
+const showPrMonitor = ref(false);
 const activeView = ref<"agents" | "tasks">("agents");
 const showEventLog = ref(false);
 const showAgentRoleSelector = ref(false);
@@ -58,6 +60,7 @@ onMounted(async () => {
       :eventLogOpen="showEventLog"
       @open-settings="showSettings = true"
       @open-remote-control="showRemoteControl = true"
+      @open-pr-monitor="showPrMonitor = true"
       @switch-view="(v) => activeView = v"
       @toggle-event-log="showEventLog = !showEventLog"
     />
@@ -107,6 +110,10 @@ onMounted(async () => {
     <RemoteControlPanel
       v-if="showRemoteControl"
       @close="showRemoteControl = false"
+    />
+    <PRMonitorPanel
+      v-if="showPrMonitor"
+      @close="showPrMonitor = false"
     />
     <SessionPicker />
     <HistoryPanel />
