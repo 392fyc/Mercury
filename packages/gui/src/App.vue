@@ -11,6 +11,8 @@ import ApprovalQueue from "./components/ApprovalQueue.vue";
 import SessionsPanel from "./components/SessionsPanel.vue";
 import ExplorerPanel from "./components/ExplorerPanel.vue";
 import FloatingPanel from "./components/FloatingPanel.vue";
+import { Splitpanes, Pane } from "splitpanes";
+import "splitpanes/dist/splitpanes.css";
 import AgentRoleSelector from "./components/AgentRoleSelector.vue";
 import RemoteControlPanel from "./components/RemoteControlPanel.vue";
 import PRMonitorPanel from "./components/PRMonitorPanel.vue";
@@ -76,27 +78,35 @@ onMounted(async () => {
         <!-- Agents View -->
         <div v-show="activeView === 'agents'" class="workspace-view">
           <div v-if="agents.length > 0" class="agents-area">
-            <!-- Explorer: left file tree -->
-            <ExplorerPanel
-              @open-file="(_path, _name) => { /* TODO: open file in center area */ }"
-            />
-            <!-- Main Agent: center area -->
-            <div class="main-agent-area">
-              <AgentPanel
-                v-if="mainAgent"
-                :agentId="mainAgent.id"
-                :agentName="mainAgent.displayName"
-                :role="'main'"
-                :panelKey="`main:${mainAgent.id}`"
-              />
-            </div>
-            <!-- Floating sub-agent panel (overlays right side) -->
-            <FloatingPanel />
-            <!-- Sessions panel: right edge -->
-            <SessionsPanel
-              @open-session="handleOpenSession"
-              @create-session="handleCreateSession"
-            />
+            <Splitpanes class="default-theme" @resized="() => {}">
+              <!-- Explorer pane: resizable, default 15% -->
+              <Pane :size="15" :min-size="8" :max-size="35">
+                <ExplorerPanel
+                  @open-file="(_path, _name) => { /* TODO: open file in center area */ }"
+                />
+              </Pane>
+              <!-- Center pane: Agent chat area -->
+              <Pane :min-size="35">
+                <div class="main-agent-area">
+                  <AgentPanel
+                    v-if="mainAgent"
+                    :agentId="mainAgent.id"
+                    :agentName="mainAgent.displayName"
+                    :role="'main'"
+                    :panelKey="`main:${mainAgent.id}`"
+                  />
+                </div>
+                <!-- Floating sub-agent panel (overlays right side) -->
+                <FloatingPanel />
+              </Pane>
+              <!-- Sessions pane: resizable, min 8%, default 14% -->
+              <Pane :size="14" :min-size="8" :max-size="25">
+                <SessionsPanel
+                  @open-session="handleOpenSession"
+                  @create-session="handleCreateSession"
+                />
+              </Pane>
+            </Splitpanes>
           </div>
           <div v-else class="loading-state">
             <p v-if="!sidecarReady">Connecting to orchestrator...</p>
@@ -210,5 +220,33 @@ onMounted(async () => {
   .workspace.event-log-visible {
     grid-template-rows: minmax(0, 1fr) clamp(112px, 16vh, 136px);
   }
+}
+
+/* ─── Splitpanes dark theme overrides ─── */
+.agents-area :deep(.splitpanes) {
+  height: 100%;
+}
+
+.agents-area :deep(.splitpanes__splitter) {
+  background: var(--border);
+  width: 3px !important;
+  min-width: 3px !important;
+  border: none;
+  position: relative;
+  transition: background 0.15s;
+}
+
+.agents-area :deep(.splitpanes__splitter:hover),
+.agents-area :deep(.splitpanes__splitter.splitpanes__splitter__active) {
+  background: var(--accent-main);
+}
+
+.agents-area :deep(.splitpanes__splitter::before),
+.agents-area :deep(.splitpanes__splitter::after) {
+  display: none;
+}
+
+.agents-area :deep(.splitpanes__pane) {
+  overflow: hidden;
 }
 </style>

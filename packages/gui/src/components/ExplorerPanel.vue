@@ -7,7 +7,7 @@ const emit = defineEmits<{
   "open-file": [path: string, name: string];
 }>();
 
-const { defaultWorkDir, getWorkDir, getGitBranch } = useAgentStore();
+const { defaultWorkDir, getWorkDir } = useAgentStore();
 
 // Use main agent panel key for workspace info
 const mainPanelKey = computed(() => {
@@ -20,17 +20,6 @@ const workDir = computed(() => {
   return defaultWorkDir.value;
 });
 
-const gitBranch = computed(() => {
-  if (mainPanelKey.value) return getGitBranch(mainPanelKey.value);
-  return null;
-});
-
-const shortWorkDir = computed(() => {
-  const dir = workDir.value;
-  if (!dir) return "";
-  const parts = dir.replace(/\\/g, "/").split("/");
-  return parts[parts.length - 1] || parts[parts.length - 2] || dir;
-});
 
 // ─── File tree ───
 interface TreeNode {
@@ -191,17 +180,7 @@ onMounted(() => {
       </template>
     </div>
 
-    <!-- Footer: workspace info -->
-    <div class="ep-footer">
-      <div class="ep-ws-info" v-if="workDir">
-        <span class="ep-ws-icon">📂</span>
-        <span class="ep-ws-path" :title="workDir">{{ shortWorkDir }}</span>
-      </div>
-      <div class="ep-branch" v-if="gitBranch">
-        <span class="ep-branch-icon">⎇</span>
-        <span class="ep-branch-name">{{ gitBranch }}</span>
-      </div>
-    </div>
+    <!-- Footer removed: workspace/branch info shown in AgentPanel status bar -->
   </div>
 </template>
 
@@ -209,11 +188,11 @@ onMounted(() => {
 .explorer-panel {
   display: flex;
   flex-direction: column;
-  width: 200px;
+  width: 100%;
+  height: 100%;
   background: var(--bg-secondary);
   border-right: 1px solid var(--border);
   user-select: none;
-  flex-shrink: 0;
   overflow: hidden;
 }
 
@@ -320,40 +299,4 @@ onMounted(() => {
   color: var(--accent-error);
 }
 
-/* ─── Footer ─── */
-.ep-footer {
-  padding: 8px 12px;
-  border-top: 1px solid var(--border);
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.ep-ws-info,
-.ep-branch {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 10px;
-  color: var(--text-muted);
-}
-
-.ep-ws-icon,
-.ep-branch-icon {
-  font-size: 11px;
-  flex-shrink: 0;
-}
-
-.ep-ws-path,
-.ep-branch-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ep-branch-name {
-  color: var(--accent-success);
-  font-family: var(--font-mono);
-}
 </style>
