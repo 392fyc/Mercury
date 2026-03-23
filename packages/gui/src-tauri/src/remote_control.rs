@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tauri::Emitter;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -7,14 +7,27 @@ use tokio::sync::Mutex;
 
 /// Manages a `claude remote-control` child process.
 /// Parses stdout for session URL, emits Tauri events for GUI updates.
+///
+/// Thread-safety design:
+/// - `start()` holds the child lock across the entire spawn to prevent concurrent spawns.
+/// - A monotonic `generation` counter ties each spawn's cleanup tasks to the correct session,
+///   so stale stdout/stderr watchers from a previous process cannot corrupt the current state.
+///
+/// References:
+/// - AtomicU64: https://docs.rs/rustc-std-workspace-std/latest/std/sync/atomic/struct.AtomicU64.html
+/// - tokio Child: https://docs.rs/tokio/latest/tokio/process/struct.Child.html
+/// - url crate: https://crates.io/crates/url
 #[derive(Clone)]
 pub struct RemoteControlManager {
     child: Arc<Mutex<Option<Child>>>,
     session_url: Arc<Mutex<Option<String>>>,
     status: Arc<Mutex<RemoteControlStatus>>,
     session_name: Arc<Mutex<Option<String>>>,
-    /// Ensures cleanup logic runs exactly once when stdout/stderr tasks race.
+    /// Ensures cleanup logic runs exactly once per generation.
     cleanup_done: Arc<AtomicBool>,
+    /// Monotonic counter incremented on every `start()`. Cleanup tasks compare their
+    /// captured generation against the current value to avoid cross-session corruption.
+    generation: Arc<AtomicU64>,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -42,31 +55,39 @@ impl RemoteControlManager {
             status: Arc::new(Mutex::new(RemoteControlStatus::Stopped)),
             session_name: Arc::new(Mutex::new(None)),
             cleanup_done: Arc::new(AtomicBool::new(false)),
+            generation: Arc::new(AtomicU64::new(0)),
         }
     }
 
+    /// Start a `claude remote-control` session.
+    ///
+    /// The child lock is held across the entire spawn to guarantee atomicity:
+    /// no concurrent `start()` can slip through between the "is running?" check and
+    /// the child handle being stored.
     pub async fn start(
         &self,
         app_handle: tauri::AppHandle,
         project_dir: String,
         session_name: Option<String>,
     ) -> Result<(), String> {
-        // Check if already running
-        {
-            let child = self.child.lock().await;
-            if child.is_some() {
-                return Err("Remote control is already running".to_string());
-            }
+        // Hold the child lock for the ENTIRE start sequence to prevent concurrent spawns.
+        let mut child_guard = self.child.lock().await;
+
+        if child_guard.is_some() {
+            return Err("Remote control is already running".to_string());
         }
 
-        // Persist session name and reset cleanup flag
+        // Bump generation so any lingering cleanup tasks from a previous session become no-ops.
+        let gen = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        self.cleanup_done.store(false, Ordering::SeqCst);
+
+        // Persist session name
         {
             let mut name = self.session_name.lock().await;
             *name = session_name.clone();
         }
-        self.cleanup_done.store(false, Ordering::SeqCst);
 
-        // Update status
+        // Update status to Starting
         {
             let mut status = self.status.lock().await;
             *status = RemoteControlStatus::Starting;
@@ -107,24 +128,41 @@ impl RemoteControlManager {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
 
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| format!("Failed to spawn claude remote-control: {}", e))?;
+        let mut child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                // Rollback status on spawn failure so the state machine stays clean.
+                {
+                    let mut status = self.status.lock().await;
+                    *status = RemoteControlStatus::Stopped;
+                }
+                {
+                    let mut name = self.session_name.lock().await;
+                    *name = None;
+                }
+                let _ = app_handle.emit("remote-control-status", RemoteControlState {
+                    status: RemoteControlStatus::Stopped,
+                    session_url: None,
+                    session_name: None,
+                });
+                return Err(format!("Failed to spawn claude remote-control: {}", e));
+            }
+        };
 
         let stdout = child.stdout.take().ok_or("Failed to get stdout")?;
         let stderr = child.stderr.take().ok_or("Failed to get stderr")?;
 
-        // Store child process
-        {
-            let mut guard = self.child.lock().await;
-            *guard = Some(child);
-        }
+        // Store child process (still under the same lock — atomic).
+        *child_guard = Some(child);
+        // Release the child lock now.
+        drop(child_guard);
 
         // Monitor stdout for session URL and status changes
         let url_clone = self.session_url.clone();
         let status_clone = self.status.clone();
         let child_clone = self.child.clone();
         let cleanup_flag_stdout = self.cleanup_done.clone();
+        let generation_stdout = self.generation.clone();
         let app_stdout = app_handle.clone();
         let name_for_stdout = session_name.clone();
         tokio::spawn(async move {
@@ -132,6 +170,11 @@ impl RemoteControlManager {
             let mut lines = reader.lines();
 
             while let Ok(Some(line)) = lines.next_line().await {
+                // If a newer generation has started, this task is stale — bail out.
+                if generation_stdout.load(Ordering::SeqCst) != gen {
+                    return;
+                }
+
                 let trimmed = line.trim().to_string();
                 if trimmed.is_empty() {
                     continue;
@@ -141,7 +184,6 @@ impl RemoteControlManager {
 
                 // Detect session URL (typically contains claude.ai/code or a URL pattern)
                 if trimmed.contains("https://") {
-                    // Extract URL from the line
                     if let Some(url) = extract_url(&trimmed) {
                         {
                             let mut url_guard = url_clone.lock().await;
@@ -182,11 +224,18 @@ impl RemoteControlManager {
                 }
             }
 
-            // Process exited — only the first task to reach here runs cleanup
-            if !cleanup_flag_stdout.swap(true, Ordering::SeqCst) {
+            // Process exited — only the first task to reach here runs cleanup,
+            // and only if this is still the current generation.
+            if generation_stdout.load(Ordering::SeqCst) == gen
+                && !cleanup_flag_stdout.swap(true, Ordering::SeqCst)
+            {
                 {
                     let mut status_guard = status_clone.lock().await;
                     *status_guard = RemoteControlStatus::Stopped;
+                }
+                {
+                    let mut url_guard = url_clone.lock().await;
+                    *url_guard = None;
                 }
                 {
                     let mut child_guard = child_clone.lock().await;
@@ -202,8 +251,10 @@ impl RemoteControlManager {
 
         // Monitor stderr for errors and logs
         let status_stderr = self.status.clone();
+        let url_stderr = self.session_url.clone();
         let child_stderr = self.child.clone();
         let cleanup_flag_stderr = self.cleanup_done.clone();
+        let generation_stderr = self.generation.clone();
         let app_stderr = app_handle.clone();
         let name_for_stderr = session_name;
         tokio::spawn(async move {
@@ -211,6 +262,10 @@ impl RemoteControlManager {
             let mut lines = reader.lines();
 
             while let Ok(Some(line)) = lines.next_line().await {
+                if generation_stderr.load(Ordering::SeqCst) != gen {
+                    return;
+                }
+
                 let trimmed = line.trim().to_string();
                 if trimmed.is_empty() {
                     continue;
@@ -233,10 +288,16 @@ impl RemoteControlManager {
             }
 
             // stderr closed — only the first task to reach here runs cleanup
-            if !cleanup_flag_stderr.swap(true, Ordering::SeqCst) {
+            if generation_stderr.load(Ordering::SeqCst) == gen
+                && !cleanup_flag_stderr.swap(true, Ordering::SeqCst)
+            {
                 {
                     let mut status_guard = status_stderr.lock().await;
                     *status_guard = RemoteControlStatus::Stopped;
+                }
+                {
+                    let mut url_guard = url_stderr.lock().await;
+                    *url_guard = None;
                 }
                 {
                     let mut child_guard = child_stderr.lock().await;
@@ -253,12 +314,12 @@ impl RemoteControlManager {
         Ok(())
     }
 
+    /// Stop the remote-control session, killing the child process and resetting all state.
     pub async fn stop(&self) -> Result<(), String> {
         let mut child = self.child.lock().await;
         if let Some(ref mut c) = *child {
             let _ = c.kill().await;
             // Wait for the child process to fully exit (timeout 5s) to avoid zombies.
-            // See: https://docs.rs/tokio/latest/tokio/process/struct.Child.html
             let _ = tokio::time::timeout(
                 std::time::Duration::from_secs(5),
                 c.wait(),
@@ -292,6 +353,7 @@ impl RemoteControlManager {
         }
     }
 
+    /// Returns whether a child process is currently held.
     pub async fn is_running(&self) -> bool {
         let child = self.child.lock().await;
         child.is_some()
@@ -299,8 +361,8 @@ impl RemoteControlManager {
 }
 
 /// Extract and validate a URL from a line of text.
-/// Only accepts well-formed HTTPS URLs on expected domains (claude.ai, anthropic.com).
-/// Uses the `url` crate (https://crates.io/crates/url) for robust parsing.
+/// Only accepts well-formed HTTPS URLs on the exact `claude.ai` domain (or subdomains).
+/// Uses the `url` crate (<https://crates.io/crates/url>) for robust parsing.
 fn extract_url(line: &str) -> Option<String> {
     if let Some(start) = line.find("https://") {
         let rest = &line[start..];
@@ -311,7 +373,8 @@ fn extract_url(line: &str) -> Option<String> {
         // Structural validation: must parse as a URL with a recognised host.
         if let Ok(parsed) = url::Url::parse(candidate) {
             if let Some(host) = parsed.host_str() {
-                if host.ends_with("claude.ai") || host.ends_with("anthropic.com") {
+                // Exact match or subdomain — rejects lookalikes like "evilclaude.ai".
+                if host == "claude.ai" || host.ends_with(".claude.ai") {
                     return Some(candidate.to_string());
                 }
             }

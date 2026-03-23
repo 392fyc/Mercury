@@ -18,6 +18,9 @@ const {
 const copyFeedback = ref<string | null>(null);
 const isLoading = ref(false);
 const unlistenFns: Array<() => void> = [];
+/** Guard: if the component unmounts before the async init resolves,
+ *  any returned UnlistenFns are executed immediately. */
+let disposed = false;
 
 async function handleStart() {
   isLoading.value = true;
@@ -79,10 +82,16 @@ const statusColors: Record<string, string> = {
 
 onMounted(async () => {
   const fns = await initRemoteControlListeners();
-  unlistenFns.push(...fns);
+  if (disposed) {
+    // Component was unmounted while we were awaiting — clean up immediately.
+    fns.forEach((fn) => fn());
+  } else {
+    unlistenFns.push(...fns);
+  }
 });
 
 onUnmounted(() => {
+  disposed = true;
   unlistenFns.forEach((fn) => fn());
 });
 </script>
