@@ -189,12 +189,20 @@ impl RemoteControlManager {
                     return;
                 }
 
+                // Forward the raw line (preserving whitespace for QR/ASCII art) to the GUI.
+                let _ = app_stdout.emit("remote-control-log", serde_json::json!({
+                    "level": "stdout",
+                    "message": &line,
+                }));
+
                 let trimmed = line.trim().to_string();
                 if trimmed.is_empty() {
                     continue;
                 }
 
-                eprintln!("[remote-control stdout] {}", trimmed);
+                // Debug logging — redact session URLs to avoid leaking pairing credentials.
+                #[cfg(debug_assertions)]
+                eprintln!("[remote-control stdout] {}", redact_url(&trimmed));
 
                 // Detect session URL (typically contains claude.ai/code or a URL pattern)
                 if trimmed.contains("https://") {
@@ -287,7 +295,9 @@ impl RemoteControlManager {
                 if trimmed.is_empty() {
                     continue;
                 }
-                eprintln!("[remote-control stderr] {}", trimmed);
+
+                #[cfg(debug_assertions)]
+                eprintln!("[remote-control stderr] {}", redact_url(&trimmed));
 
                 // Classify and forward all stderr lines to the GUI log panel.
                 let lower = trimmed.to_lowercase();
@@ -400,4 +410,21 @@ fn extract_url(line: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Replace any `https://...` URL in the line with a redacted placeholder.
+/// Used for debug logging to avoid leaking session pairing credentials.
+/// Only compiled in debug builds via `#[cfg(debug_assertions)]`.
+/// See: https://doc.rust-lang.org/reference/conditional-compilation.html
+#[cfg(debug_assertions)]
+fn redact_url(line: &str) -> String {
+    if let Some(start) = line.find("https://") {
+        let rest = &line[start..];
+        let end = rest
+            .find(|c: char| c.is_whitespace())
+            .unwrap_or(rest.len());
+        format!("{}[REDACTED_URL]{}", &line[..start], &line[start + end..])
+    } else {
+        line.to_string()
+    }
 }

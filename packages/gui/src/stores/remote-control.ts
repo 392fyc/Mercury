@@ -85,37 +85,50 @@ function applyState(state: RemoteControlState) {
 let listenersInitialized = false;
 
 /** Register Tauri event listeners for remote control status, URL, and log updates.
- *  Returns an array of unlisten functions for cleanup on component unmount. */
+ *  Returns an array of unlisten functions for cleanup on component unmount.
+ *  The `listenersInitialized` flag is only set after ALL listeners succeed;
+ *  on partial failure the already-registered listeners are cleaned up. */
 async function initRemoteControlListeners(): Promise<Array<() => void>> {
   if (listenersInitialized) {
     console.warn("[remote-control] Listeners already initialized");
     return [];
   }
+
+  const collected: Array<() => void> = [];
+  try {
+    const unlistenStatus = await onRemoteControlStatus((state) => {
+      applyState(state);
+    });
+    collected.push(unlistenStatus);
+
+    const unlistenUrl = await onRemoteControlUrl((data) => {
+      sessionUrl.value = data.url;
+    });
+    collected.push(unlistenUrl);
+
+    const unlistenLog = await onRemoteControlLog((data) => {
+      logs.value = [...logs.value.slice(-99), `[${data.level}] ${data.message}`];
+      if (data.level === "error") {
+        error.value = data.message;
+      }
+    });
+    collected.push(unlistenLog);
+  } catch (e) {
+    // Partial failure — clean up any listeners that were registered.
+    collected.forEach((fn) => fn());
+    console.error("[remote-control] Failed to init listeners:", e);
+    return [];
+  }
+
+  // All listeners registered successfully — mark as initialised.
   listenersInitialized = true;
-
-  const unlistenStatus = await onRemoteControlStatus((state) => {
-    /** Update store from status event. */
-    applyState(state);
-  });
-
-  const unlistenUrl = await onRemoteControlUrl((data) => {
-    sessionUrl.value = data.url;
-  });
-
-  const unlistenLog = await onRemoteControlLog((data) => {
-    logs.value = [...logs.value.slice(-99), `[${data.level}] ${data.message}`];
-    if (data.level === "error") {
-      error.value = data.message;
-    }
-  });
 
   // Fetch initial status
   await refreshStatus();
 
   return [
-    () => { unlistenStatus(); listenersInitialized = false; },
-    unlistenUrl,
-    unlistenLog,
+    () => { collected[0](); listenersInitialized = false; },
+    ...collected.slice(1),
   ];
 }
 
