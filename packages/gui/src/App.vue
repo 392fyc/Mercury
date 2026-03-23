@@ -241,9 +241,12 @@ onMounted(async () => {
 }
 
 /* ─── Splitpanes dark theme overrides ─── */
+/* Force Splitpanes to fill all available flex space (workaround for #194) */
+.agents-area > .mercury-splitpanes,
 .agents-area :deep(.mercury-splitpanes) {
-  flex: 1;
+  flex: 1 1 0%;
   min-width: 0;
+  width: 0; /* flex-basis trick: let flex:1 compute the actual width */
   height: 100%;
 }
 
@@ -268,6 +271,12 @@ onMounted(async () => {
 
 .agents-area :deep(.splitpanes__pane) {
   overflow: hidden;
+  height: 100%;
+}
+
+/* Ensure splitpanes container div fills parent */
+.agents-area :deep(.splitpanes__container) {
+  width: 100%;
   height: 100%;
 }
 </style>

@@ -141,10 +141,15 @@ onMounted(() => {
     <!-- Header -->
     <div class="ep-header">
       <span class="ep-title">Explorer</span>
-      <button class="ep-refresh" title="Refresh" @click="refreshTree">↻</button>
     </div>
 
-    <!-- File tree -->
+    <!-- Workspace directory (under header, above tree) -->
+    <button v-if="workDir" class="ep-workspace-dir" :title="workDir">
+      <span class="ep-ws-icon">📂</span>
+      <span class="ep-ws-name">{{ shortWorkDir }}</span>
+    </button>
+
+    <!-- File tree (indented under workspace) -->
     <div class="ep-tree">
       <div v-if="loading && tree.length === 0" class="ep-loading">Loading...</div>
       <div v-else-if="error" class="ep-error">{{ error }}</div>
@@ -192,19 +197,13 @@ onMounted(() => {
       </template>
     </div>
 
-    <!-- Footer: VS Code style workspace + branch -->
+    <!-- Footer: branch + refresh -->
     <div class="ep-footer">
-      <button v-if="workDir" class="ep-btn" :title="workDir">
-        <span class="ep-btn-icon">📂</span>
-        <span class="ep-btn-text">{{ shortWorkDir }}</span>
+      <button v-if="gitBranch" class="ep-branch-btn" :title="'Branch: ' + gitBranch">
+        <span class="ep-branch-icon">⎇</span>
+        <span class="ep-branch-text">{{ gitBranch }}</span>
       </button>
-      <div class="ep-footer-row">
-        <button v-if="gitBranch" class="ep-btn branch" :title="'Branch: ' + gitBranch">
-          <span class="ep-btn-icon">⎇</span>
-          <span class="ep-btn-text">{{ gitBranch }}</span>
-        </button>
-        <button class="ep-btn-icon-only" title="Refresh" @click="refreshTree">↻</button>
-      </div>
+      <button class="ep-refresh-btn" title="Refresh" @click="refreshTree">↻</button>
     </div>
   </div>
 </template>
@@ -238,26 +237,12 @@ onMounted(() => {
   color: var(--text-secondary);
 }
 
-.ep-refresh {
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  font-size: 14px;
-  cursor: pointer;
-  padding: 2px 4px;
-  border-radius: 3px;
-  transition: color 0.15s;
-}
-
-.ep-refresh:hover {
-  color: var(--accent-main);
-}
 
 /* ─── Tree ─── */
 .ep-tree {
   flex: 1;
   overflow-y: auto;
-  padding: 0 4px;
+  padding: 0 4px 0 8px;
 }
 
 .ep-node {
@@ -324,23 +309,50 @@ onMounted(() => {
   color: var(--accent-error);
 }
 
-/* ─── Footer: VS Code style ─── */
-.ep-footer {
-  padding: 6px 8px;
-  flex-shrink: 0;
+/* ─── Workspace directory (under header) ─── */
+.ep-workspace-dir {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  background: var(--bg-secondary);
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  margin: 0 0 2px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  transition: background 0.12s;
 }
 
-.ep-footer-row {
+.ep-workspace-dir:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.ep-ws-icon {
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.ep-ws-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ─── Footer: branch + refresh ─── */
+.ep-footer {
+  padding: 4px 8px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 4px;
+  background: var(--bg-secondary);
 }
 
-.ep-btn {
+.ep-branch-btn {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -348,44 +360,32 @@ onMounted(() => {
   background: none;
   border: none;
   border-radius: 3px;
-  color: var(--text-muted);
+  color: var(--accent-success);
   font-size: 11px;
   font-family: var(--font-mono);
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
   min-width: 0;
-  transition: background 0.12s, color 0.12s;
-}
-
-.ep-btn:hover {
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--text-secondary);
-}
-
-.ep-btn.branch {
-  color: var(--accent-success);
   flex: 1;
-  min-width: 0;
+  transition: background 0.12s;
 }
 
-.ep-btn.branch:hover {
-  color: var(--accent-success);
+.ep-branch-btn:hover {
   background: rgba(0, 230, 118, 0.08);
 }
 
-.ep-btn-icon {
+.ep-branch-icon {
   font-size: 11px;
   flex-shrink: 0;
 }
 
-.ep-btn-text {
+.ep-branch-text {
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.ep-btn-icon-only {
+.ep-refresh-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -402,7 +402,7 @@ onMounted(() => {
   transition: background 0.12s, color 0.12s;
 }
 
-.ep-btn-icon-only:hover {
+.ep-refresh-btn:hover {
   background: rgba(255, 255, 255, 0.06);
   color: var(--text-secondary);
 }
