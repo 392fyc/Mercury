@@ -8,6 +8,7 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{
   "open-settings": [];
+  "open-remote-control": [];
   "switch-view": [view: "agents" | "tasks"];
   "toggle-event-log": [];
 }>();
@@ -64,6 +65,11 @@ onUnmounted(() => {
     </div>
     <div class="titlebar-center" data-tauri-drag-region></div>
     <div class="titlebar-right">
+      <button
+        class="titlebar-btn"
+        title="Remote Control"
+        @click="emit('open-remote-control')"
+      >📡</button>
       <button
         class="titlebar-btn"
         :class="{ 'btn-active': props.eventLogOpen }"

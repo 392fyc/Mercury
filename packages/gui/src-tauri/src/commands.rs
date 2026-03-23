@@ -4,7 +4,7 @@ use std::process::Command;
 use tauri::State;
 
 use crate::sidecar::SidecarManager;
-use crate::{ProjectRoot, SharedSidecar};
+use crate::{ProjectRoot, SharedRemoteControl, SharedSidecar};
 
 // ─── Project Info (direct, no sidecar) ───
 
@@ -769,4 +769,36 @@ fn extract_message_from_jsonl(obj: &serde_json::Value, cli_type: &str) -> Option
         }
         _ => None,
     }
+}
+
+// ─── Remote Control Commands ───
+
+#[tauri::command]
+pub async fn start_remote_control(
+    app: tauri::AppHandle,
+    rc: State<'_, SharedRemoteControl>,
+    root: State<'_, ProjectRoot>,
+    session_name: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let mgr = rc.lock().await;
+    mgr.start(app, root.0.clone(), session_name).await?;
+    Ok(serde_json::json!({ "ok": true }))
+}
+
+#[tauri::command]
+pub async fn stop_remote_control(
+    rc: State<'_, SharedRemoteControl>,
+) -> Result<serde_json::Value, String> {
+    let mgr = rc.lock().await;
+    mgr.stop().await?;
+    Ok(serde_json::json!({ "ok": true }))
+}
+
+#[tauri::command]
+pub async fn get_remote_control_status(
+    rc: State<'_, SharedRemoteControl>,
+) -> Result<serde_json::Value, String> {
+    let mgr = rc.lock().await;
+    let state = mgr.get_state().await;
+    serde_json::to_value(&state).map_err(|e| e.to_string())
 }

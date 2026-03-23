@@ -86,6 +86,7 @@ export interface ProjectInfo {
   gitBranch: string | null;
 }
 
+/** Retrieve the current project root path and git branch via Rust. */
 export async function getProjectInfo(): Promise<ProjectInfo> {
   return invoke<ProjectInfo>("get_project_info");
 }
@@ -97,6 +98,7 @@ export interface GitInfo {
   gitBranch: string | null;
 }
 
+/** Get git information (branch name) for an arbitrary directory path. */
 export async function getGitInfo(path: string): Promise<GitInfo> {
   return invoke<GitInfo>("get_git_info", { path });
 }
@@ -107,16 +109,19 @@ export interface GitBranchList {
   remote: string[];
 }
 
+/** List local and remote git branches for the repository at the given path. */
 export async function listGitBranches(path: string): Promise<GitBranchList> {
   return invoke<GitBranchList>("list_git_branches", { path });
 }
 
+/** Switch the repository at `path` to the specified git branch. */
 export async function checkoutBranch(path: string, branch: string): Promise<{ ok: boolean; branch: string }> {
   return invoke<{ ok: boolean; branch: string }>("checkout_branch", { path, branch });
 }
 
 // Agent workspace (frontend → Rust → sidecar)
 
+/** Set the working directory for an agent via the sidecar. */
 export async function setAgentCwd(
   agentId: string,
   cwd: string,
@@ -126,10 +131,12 @@ export async function setAgentCwd(
 
 // Commands (frontend → Rust → sidecar)
 
+/** Retrieve the list of configured agents from the sidecar. */
 export async function getAgents(): Promise<AgentConfig[]> {
   return invoke<AgentConfig[]>("get_agents");
 }
 
+/** Send a prompt (with optional images and role) to an agent session. */
 export async function sendPrompt(
   agentId: string,
   prompt: string,
@@ -150,6 +157,7 @@ export async function startSession(
   return invoke("start_session", { agentId, role: role ?? null });
 }
 
+/** Stop an active agent session by ID. */
 export async function stopSession(
   agentId: string,
   sessionId: string,
@@ -157,6 +165,7 @@ export async function stopSession(
   return invoke("stop_session", { agentId, sessionId });
 }
 
+/** Delete a terminated session and its associated resources. */
 export async function deleteSession(
   agentId: string,
   sessionId: string,
@@ -164,10 +173,12 @@ export async function deleteSession(
   return invoke("delete_session", { agentId, sessionId });
 }
 
+/** Update an agent's configuration in the sidecar runtime. */
 export async function configureAgent(config: AgentConfig): Promise<void> {
   return invoke("configure_agent", { config });
 }
 
+/** Dispatch a task prompt from one agent to another, creating a new session. */
 export async function dispatchTask(
   fromAgentId: string,
   toAgentId: string,
@@ -204,10 +215,12 @@ export interface MercuryProjectConfig {
   obsidian?: ObsidianConfig;
 }
 
+/** Retrieve the current Mercury project configuration. */
 export async function getConfig(): Promise<MercuryProjectConfig> {
   return invoke<MercuryProjectConfig>("get_config");
 }
 
+/** Persist an updated Mercury project configuration. */
 export async function updateConfig(
   config: MercuryProjectConfig,
 ): Promise<{ ok: true }> {
@@ -313,14 +326,17 @@ export interface CreateTaskParams {
   maxReworks?: number;
 }
 
+/** Create a new task bundle from the provided parameters. */
 export async function createTask(params: CreateTaskParams): Promise<TaskBundle> {
   return invoke<TaskBundle>("create_task", { params });
 }
 
+/** Fetch a single task bundle by its ID, or null if not found. */
 export async function getTask(taskId: string): Promise<TaskBundle | null> {
   return invoke<TaskBundle | null>("get_task", { taskId });
 }
 
+/** List task bundles, optionally filtered by status and/or assignee. */
 export async function listTasks(
   status?: TaskStatus,
   assignedTo?: string,
@@ -328,12 +344,14 @@ export async function listTasks(
   return invoke<TaskBundle[]>("list_tasks", { status: status ?? null, assignedTo: assignedTo ?? null });
 }
 
+/** Dispatch a task bundle to the assigned agent for execution. */
 export async function dispatchBundleTask(
   taskId: string,
 ): Promise<{ sessionId: string; taskId: string }> {
   return invoke("dispatch_task", { params: { taskId } });
 }
 
+/** Record an implementation receipt for a completed task. */
 export async function recordReceipt(
   taskId: string,
   receipt: Record<string, unknown>,
@@ -341,6 +359,7 @@ export async function recordReceipt(
   return invoke<TaskBundle>("record_receipt", { taskId, receipt });
 }
 
+/** Create an acceptance test session for a task, assigning the given acceptor. */
 export async function createAcceptance(
   taskId: string,
   acceptorId: string,
@@ -348,6 +367,7 @@ export async function createAcceptance(
   return invoke("create_acceptance", { taskId, acceptorId });
 }
 
+/** Record the acceptance test verdict and findings for a task. */
 export async function recordAcceptanceResult(
   acceptanceId: string,
   results: { verdict: AcceptanceVerdict; findings: string[]; recommendations: string[] },
@@ -355,12 +375,14 @@ export async function recordAcceptanceResult(
   return invoke("record_acceptance_result", { acceptanceId, results });
 }
 
+/** Create a new issue in the Mercury issue tracker. */
 export async function createIssue(
   params: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   return invoke("create_issue", { params });
 }
 
+/** Mark an issue as resolved with a summary and resolution metadata. */
 export async function resolveIssue(
   issueId: string,
   resolution: { resolvedBy: string; summary: string; resolvedAt: number },
@@ -368,6 +390,7 @@ export async function resolveIssue(
   return invoke("resolve_issue", { issueId, resolution });
 }
 
+/** Summarize and close the current session, returning the new session ID. */
 export async function summarizeSession(
   agentId: string,
   summary: string,
@@ -377,10 +400,12 @@ export async function summarizeSession(
 
 // ─── Model Listing & Switching ───
 
+/** List available models for the specified agent. */
 export async function listModels(agentId: string): Promise<{ id: string; name: string }[]> {
   return invoke<{ id: string; name: string }[]>("list_models", { agentId });
 }
 
+/** Switch an agent to a different model at runtime. */
 export async function setModel(agentId: string, model: string): Promise<{ ok: boolean }> {
   return invoke<{ ok: boolean }>("set_model", { agentId, model });
 }
@@ -402,28 +427,33 @@ export interface SlashCommand {
   category?: string;
 }
 
+/** Retrieve the list of slash commands supported by an agent. */
 export async function getSlashCommands(agentId: string): Promise<SlashCommand[]> {
   return invoke<SlashCommand[]>("get_slash_commands", { agentId });
 }
 
 // ─── Knowledge Base Operations (optional, requires obsidian enabled) ───
 
+/** Read a file from the Obsidian knowledge base. */
 export async function kbRead(file: string): Promise<{ content: string }> {
   return invoke("kb_read", { file });
 }
 
+/** Search the knowledge base for files matching the given query. */
 export async function kbSearch(
   query: string,
 ): Promise<Array<{ file: string; matches: string[] }>> {
   return invoke("kb_search", { query });
 }
 
+/** List files and folders in the knowledge base, optionally within a subfolder. */
 export async function kbList(
   folder?: string,
 ): Promise<Array<{ path: string; name: string; folder: string; kind: "file" | "folder" }>> {
   return invoke("kb_list", { folder: folder ?? null });
 }
 
+/** Write (create or overwrite) a file in the knowledge base. */
 export async function kbWrite(
   name: string,
   content: string,
@@ -431,6 +461,7 @@ export async function kbWrite(
   return invoke("kb_write", { name, content });
 }
 
+/** Append content to an existing knowledge base file. */
 export async function kbAppend(
   file: string,
   content: string,
@@ -454,6 +485,7 @@ export interface SessionListItem {
   promptHash?: string;
 }
 
+/** List sessions, optionally filtered by agent, role, or terminal status. */
 export async function listSessions(
   agentId?: string,
   role?: string,
@@ -466,6 +498,7 @@ export async function listSessions(
   });
 }
 
+/** Resume a previously paused or overflow session for an agent. */
 export async function resumeSession(
   agentId: string,
   sessionId: string,
@@ -486,6 +519,7 @@ export interface TranscriptMessage {
   metadata?: Record<string, unknown>;
 }
 
+/** Retrieve paginated transcript messages for a given session. */
 export async function getSessionMessages(
   sessionId: string,
   offset?: number,
@@ -517,20 +551,24 @@ export async function readSessionHistory(
 
 // ─── Approval Control Plane ───
 
+/** Get the current approval mode (main_agent_review or auto_accept). */
 export async function getApprovalMode(): Promise<{ mode: ApprovalMode }> {
   return invoke<{ mode: ApprovalMode }>("get_approval_mode");
 }
 
+/** Set the approval mode for incoming agent requests. */
 export async function setApprovalMode(mode: ApprovalMode): Promise<{ mode: ApprovalMode }> {
   return invoke<{ mode: ApprovalMode }>("set_approval_mode", { mode });
 }
 
+/** List approval requests, optionally filtered by status. */
 export async function listApprovalRequests(
   status?: ApprovalRequestStatus,
 ): Promise<ApprovalRequest[]> {
   return invoke<ApprovalRequest[]>("list_approval_requests", { status: status ?? null });
 }
 
+/** Approve a pending approval request with an optional reason. */
 export async function approveRequest(
   requestId: string,
   reason?: string,
@@ -538,6 +576,7 @@ export async function approveRequest(
   return invoke("approve_request", { requestId, reason: reason ?? null });
 }
 
+/** Deny a pending approval request with an optional reason. */
 export async function denyRequest(
   requestId: string,
   reason?: string,
@@ -555,12 +594,75 @@ export interface ContextStatus {
   roleContextFiles?: ObsidianConfig["roleContextFiles"];
 }
 
+/** Re-inject shared context into all active agent sessions. */
 export async function refreshContext(): Promise<{ injected: boolean; agentCount: number; contextLength: number }> {
   return invoke("refresh_context");
 }
 
+/** Get the current shared context injection status and configuration. */
 export async function getContextStatus(): Promise<ContextStatus> {
   return invoke<ContextStatus>("get_context_status");
+}
+
+// ─── Remote Control Operations ───
+
+export type RemoteControlStatus =
+  | "stopped"
+  | "starting"
+  | "waiting_for_connection"
+  | "connected"
+  | "error";
+
+export interface RemoteControlState {
+  status: RemoteControlStatus;
+  session_url: string | null;
+  session_name: string | null;
+  /** Present only when `status === "error"`; carries the error description. */
+  error_message?: string | null;
+}
+
+/** Start a `claude remote-control` subprocess with an optional session name. */
+export async function startRemoteControl(
+  sessionName?: string,
+): Promise<{ ok: true }> {
+  return invoke("start_remote_control", { sessionName: sessionName ?? null });
+}
+
+/** Stop the running `claude remote-control` subprocess. */
+export async function stopRemoteControl(): Promise<{ ok: true }> {
+  return invoke("stop_remote_control");
+}
+
+/** Query the current remote control subprocess state from the backend. */
+export async function getRemoteControlStatus(): Promise<RemoteControlState> {
+  return invoke<RemoteControlState>("get_remote_control_status");
+}
+
+/** Listen for remote control status change events from the backend. */
+export function onRemoteControlStatus(
+  handler: (data: RemoteControlState) => void,
+): Promise<UnlistenFn> {
+  return listen<RemoteControlState>("remote-control-status", (event) =>
+    handler(event.payload),
+  );
+}
+
+/** Listen for remote control session URL events. */
+export function onRemoteControlUrl(
+  handler: (data: { url: string }) => void,
+): Promise<UnlistenFn> {
+  return listen<{ url: string }>("remote-control-url", (event) =>
+    handler(event.payload),
+  );
+}
+
+/** Listen for remote control log messages (stdout/stderr). */
+export function onRemoteControlLog(
+  handler: (data: { level: string; message: string }) => void,
+): Promise<UnlistenFn> {
+  return listen<{ level: string; message: string }>("remote-control-log", (event) =>
+    handler(event.payload),
+  );
 }
 
 // Events (sidecar → Rust → frontend)
@@ -613,6 +715,7 @@ export interface SidecarReadyEvent {
   timestamp: number;
 }
 
+/** Listen for complete agent response messages. */
 export function onAgentMessage(
   handler: (data: AgentMessageEvent) => void,
 ): Promise<UnlistenFn> {
@@ -621,6 +724,7 @@ export function onAgentMessage(
   );
 }
 
+/** Listen for the end-of-stream signal from an agent session. */
 export function onAgentStreamEnd(
   handler: (data: AgentStreamEndEvent) => void,
 ): Promise<UnlistenFn> {
@@ -629,6 +733,7 @@ export function onAgentStreamEnd(
   );
 }
 
+/** Listen for incremental streaming token events from an agent. */
 export function onAgentStreaming(
   handler: (data: AgentStreamingEvent) => void,
 ): Promise<UnlistenFn> {
@@ -637,6 +742,7 @@ export function onAgentStreaming(
   );
 }
 
+/** Listen for agent working-state notifications (session started processing). */
 export function onAgentWorking(
   handler: (data: AgentWorkingEvent) => void,
 ): Promise<UnlistenFn> {
@@ -645,6 +751,7 @@ export function onAgentWorking(
   );
 }
 
+/** Listen for agent error events. */
 export function onAgentError(
   handler: (data: AgentErrorEvent) => void,
 ): Promise<UnlistenFn> {
@@ -653,6 +760,7 @@ export function onAgentError(
   );
 }
 
+/** Listen for generic Mercury platform events. */
 export function onMercuryEvent(
   handler: (data: MercuryEvent) => void,
 ): Promise<UnlistenFn> {
@@ -661,6 +769,7 @@ export function onMercuryEvent(
   );
 }
 
+/** Listen for the sidecar ready event after initial bootstrap. */
 export function onSidecarReady(
   handler: (data: SidecarReadyEvent) => void,
 ): Promise<UnlistenFn> {
@@ -669,6 +778,7 @@ export function onSidecarReady(
   );
 }
 
+/** Listen for fatal sidecar error events. */
 export function onSidecarError(
   handler: (data: { error: string }) => void,
 ): Promise<UnlistenFn> {
