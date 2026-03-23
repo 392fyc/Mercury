@@ -1,66 +1,72 @@
 #!/usr/bin/env bash
-# GATE (Layer 1): block Write/Edit containing technical claims unless web research was done recently.
-# Scope: SDK imports, version numbers, API signatures, CLI flags, model names, config identifiers.
-# Layer 2 (prompt hook in settings.json) provides LLM-based judgment for cases regex cannot catch.
-# Applies to ALL agents via .claude/settings.json PreToolUse(Edit|Write).
-# Token cost: ZERO. No external deps.
+# GATE (Layer 1): block Write/Edit if content contains external technical references
+# and no recent web research was performed.
+#
+# Detection: structural patterns only — NO hardcoded package/model/API names.
+# Layer 2 (prompt hook in settings.json) provides LLM judgment as fallback.
+#
+# Flag TTL: 60 seconds (tightened from 180s after Session 11 incident)
 
 INPUT=$(cat)
 
-# Extract content being written (new_string for Edit, content for Write)
-# Prefer jq for robust JSON parsing; fall back to sed for minimal environments
 if command -v jq >/dev/null 2>&1; then
   CONTENT=$(echo "$INPUT" | jq -r '.tool_input.new_string // .tool_input.content // empty' 2>/dev/null)
+  FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
 else
   CONTENT=$(echo "$INPUT" | sed -n 's/.*"\(new_string\|content\)"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\2/p' | head -1)
+  FILE_PATH=""
 fi
 
 [ -z "$CONTENT" ] && exit 0
 
-# ── Pattern 1: SDK package imports ──
-HAS_SDK_IMPORT=""
-if echo "$CONTENT" | grep -qE '@anthropic-ai|@openai/codex|@google/gemini|claude-code|codex-sdk'; then
-  HAS_SDK_IMPORT="1"
+# Skip hook scripts themselves to avoid self-triggering on regex descriptions
+case "$FILE_PATH" in
+  */.claude/hooks/*) exit 0 ;;
+esac
+
+TRIGGERED=""
+
+# Structural: import/require of any external package
+if echo "$CONTENT" | grep -qE '^[[:space:]]*(import[[:space:]]|from[[:space:]]|require\()'; then
+  TRIGGERED="external import/require"
 fi
 
-# ── Pattern 2: Version claims (e.g., "v0.115.0", "version 2.1.76", "gpt-5.4") ──
-HAS_VERSION=""
-if echo "$CONTENT" | grep -qE 'v[0-9]+\.[0-9]+\.[0-9]+|version[[:space:]]+[0-9]+\.[0-9]|npm[[:space:]]+install|published.*[0-9]+\.[0-9]'; then
-  HAS_VERSION="1"
+# Structural: semantic version pattern (x.y.z)
+if echo "$CONTENT" | grep -qE '[0-9]+\.[0-9]+\.[0-9]+'; then
+  TRIGGERED="${TRIGGERED:+$TRIGGERED, }version identifier"
 fi
 
-# ── Pattern 3: API method signatures in technical docs (JSON/markdown with SDK calls) ──
-HAS_API_SIG=""
-if echo "$CONTENT" | grep -qE 'query\(\{|startThread\(|resumeThread\(|codex-reply|mcp-server|unstable_v[0-9]'; then
-  HAS_API_SIG="1"
+# Structural: config keys referencing external services
+if echo "$CONTENT" | grep -qiE '"(model|engine|provider|baseURL|apiKey|endpoint|runtime)"[[:space:]]*:'; then
+  TRIGGERED="${TRIGGERED:+$TRIGGERED, }external config key"
 fi
 
-# If no sensitive patterns found, allow through
-[ -z "$HAS_SDK_IMPORT" ] && [ -z "$HAS_VERSION" ] && [ -z "$HAS_API_SIG" ] && exit 0
+# Structural: CLI flags referencing external values
+if echo "$CONTENT" | grep -qE '\-\-(model|engine|provider|version|registry|from)[[:space:]=]'; then
+  TRIGGERED="${TRIGGERED:+$TRIGGERED, }CLI flag with external ref"
+fi
 
-# ── Check if web research was done recently (within last 3 minutes) ──
+# Structural: external URLs
+if echo "$CONTENT" | grep -qE 'https?://[^[:space:]"]+'; then
+  TRIGGERED="${TRIGGERED:+$TRIGGERED, }external URL"
+fi
+
+[ -z "$TRIGGERED" ] && exit 0
+
+# Check if web research was done within last 60 seconds
 STATE_DIR="$(dirname "$0")/state"
 FLAG="$STATE_DIR/web-researched"
 
 if [ -f "$FLAG" ]; then
-  # stat -c %Y for Linux/Windows, stat -f %m for Darwin; fallback to 0 (treat as expired)
   FLAG_AGE=$(( $(date +%s) - $(stat -c %Y "$FLAG" 2>/dev/null || stat -f %m "$FLAG" 2>/dev/null || echo 0) ))
-
-  if [ "$FLAG_AGE" -lt 180 ] 2>/dev/null; then
+  if [ "$FLAG_AGE" -lt 60 ] 2>/dev/null; then
     exit 0
   fi
 fi
 
-# ── Build specific blocking message ──
-REASON=""
-[ -n "$HAS_SDK_IMPORT" ] && REASON="SDK package import detected"
-[ -n "$HAS_VERSION" ] && REASON="${REASON:+$REASON, }version/package claim detected"
-[ -n "$HAS_API_SIG" ] && REASON="${REASON:+$REASON, }API signature detected"
-
 cat >&2 <<MSG
-BLOCKED: Writing content with technical claims that require web verification.
-Reason: ${REASON}.
-Rule: "DO NOT guess SDK/CLI APIs from training data — verify via web search or official docs."
-Action: Use WebSearch or WebFetch to verify, then retry. Flag expires after 3 minutes.
+BLOCKED: Content contains external technical references without recent web verification.
+Detected: ${TRIGGERED}.
+Action: Run WebSearch/WebFetch to verify, then retry. Flag valid for 60 seconds.
 MSG
 exit 2
