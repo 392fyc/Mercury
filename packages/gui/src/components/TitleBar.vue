@@ -9,6 +9,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   "open-settings": [];
   "open-remote-control": [];
+  "open-pr-monitor": [];
   "switch-view": [view: "agents" | "tasks"];
   "toggle-event-log": [];
 }>();
@@ -65,6 +66,11 @@ onUnmounted(() => {
     </div>
     <div class="titlebar-center" data-tauri-drag-region></div>
     <div class="titlebar-right">
+      <button
+        class="titlebar-btn"
+        title="PR Monitor"
+        @click="emit('open-pr-monitor')"
+      >🔀</button>
       <button
         class="titlebar-btn"
         title="Remote Control"

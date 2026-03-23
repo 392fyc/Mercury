@@ -4,7 +4,7 @@ use std::process::Command;
 use tauri::State;
 
 use crate::sidecar::SidecarManager;
-use crate::{ProjectRoot, SharedRemoteControl, SharedSidecar};
+use crate::{ProjectRoot, SharedPrMonitor, SharedRemoteControl, SharedSidecar};
 
 // ─── Project Info (direct, no sidecar) ───
 
@@ -801,4 +801,74 @@ pub async fn get_remote_control_status(
     let mgr = rc.lock().await;
     let state = mgr.get_state().await;
     serde_json::to_value(&state).map_err(|e| e.to_string())
+}
+
+// ─── PR Monitor Commands ───
+
+#[tauri::command]
+pub async fn get_open_prs(
+    pm: State<'_, SharedPrMonitor>,
+) -> Result<serde_json::Value, String> {
+    let prs = pm.fetch_prs().await?;
+    Ok(serde_json::json!({ "prs": prs }))
+}
+
+#[tauri::command]
+pub async fn get_pr_monitor_state(
+    pm: State<'_, SharedPrMonitor>,
+) -> Result<serde_json::Value, String> {
+    let state = pm.get_state().await;
+    serde_json::to_value(&state).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn start_pr_polling(
+    app: tauri::AppHandle,
+    pm: State<'_, SharedPrMonitor>,
+    interval_secs: Option<u64>,
+) -> Result<serde_json::Value, String> {
+    pm.start_polling(app, interval_secs).await?;
+    Ok(serde_json::json!({ "ok": true }))
+}
+
+#[tauri::command]
+pub async fn stop_pr_polling(
+    pm: State<'_, SharedPrMonitor>,
+) -> Result<serde_json::Value, String> {
+    pm.stop_polling();
+    Ok(serde_json::json!({ "ok": true }))
+}
+
+#[tauri::command]
+pub async fn trigger_coderabbit_review(
+    root: State<'_, ProjectRoot>,
+    pr_number: u32,
+) -> Result<serde_json::Value, String> {
+    if pr_number == 0 {
+        return Err("Invalid PR number".to_string());
+    }
+    let project_root = root.0.clone();
+    tokio::task::spawn_blocking(move || {
+        crate::pr_monitor::trigger_coderabbit_review_blocking(&project_root, pr_number)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))??;
+    Ok(serde_json::json!({ "ok": true }))
+}
+
+#[tauri::command]
+pub async fn merge_pr(
+    root: State<'_, ProjectRoot>,
+    pr_number: u32,
+) -> Result<serde_json::Value, String> {
+    if pr_number == 0 {
+        return Err("Invalid PR number".to_string());
+    }
+    let project_root = root.0.clone();
+    tokio::task::spawn_blocking(move || {
+        crate::pr_monitor::merge_pr_blocking(&project_root, pr_number)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))??;
+    Ok(serde_json::json!({ "ok": true }))
 }

@@ -1,4 +1,5 @@
 mod commands;
+mod pr_monitor;
 mod remote_control;
 mod sidecar;
 mod types;
@@ -8,6 +9,7 @@ use std::sync::Arc;
 use tauri::{Emitter, Manager};
 use tokio::sync::Mutex;
 
+use pr_monitor::PrMonitor;
 use remote_control::RemoteControlManager;
 use sidecar::SidecarManager;
 
@@ -16,6 +18,9 @@ pub type SharedSidecar = Arc<Mutex<Option<SidecarManager>>>;
 
 /// Shared remote control manager.
 pub type SharedRemoteControl = Arc<Mutex<RemoteControlManager>>;
+
+/// Shared PR monitor — no outer Mutex needed; PrMonitor has internal fine-grained locking.
+pub type SharedPrMonitor = Arc<PrMonitor>;
 
 /// Project root path — available immediately (no sidecar dependency).
 pub struct ProjectRoot(pub String);
@@ -87,6 +92,10 @@ pub fn run() {
             app.manage(ProjectRoot(project_dir.clone()));
             eprintln!("[tauri] Project root: {}", project_dir);
 
+            // Register PR monitor with project root available immediately
+            let pm: SharedPrMonitor = Arc::new(PrMonitor::new(project_dir.clone()));
+            app.manage(pm.clone());
+
             // Spawn the Node.js orchestrator sidecar
             tauri::async_runtime::spawn(async move {
                 match SidecarManager::spawn(app_handle.clone(), project_dir).await {
@@ -150,6 +159,12 @@ pub fn run() {
             commands::start_remote_control,
             commands::stop_remote_control,
             commands::get_remote_control_status,
+            commands::get_open_prs,
+            commands::get_pr_monitor_state,
+            commands::start_pr_polling,
+            commands::stop_pr_polling,
+            commands::trigger_coderabbit_review,
+            commands::merge_pr,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -157,7 +172,13 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 let shared = app.state::<SharedSidecar>().inner().clone();
                 let rc = app.state::<SharedRemoteControl>().inner().clone();
+                let pm = app.state::<SharedPrMonitor>().inner().clone();
                 tauri::async_runtime::block_on(async {
+                    // Stop PR monitor polling
+                    if pm.is_polling() {
+                        eprintln!("[tauri] Stopping PR monitor polling");
+                        pm.stop_polling();
+                    }
                     // Shutdown remote control first
                     {
                         let mgr = rc.lock().await;
