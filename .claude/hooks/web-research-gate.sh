@@ -21,7 +21,7 @@ fi
 
 # Skip hook scripts themselves to avoid self-triggering on regex descriptions
 case "$FILE_PATH" in
-  */.claude/hooks/*|.claude/hooks/*|./.claude/hooks/*) exit 0 ;;
+  */.claude/hooks/*) exit 0 ;;
 esac
 
 TRIGGERED=""
@@ -58,9 +58,12 @@ STATE_DIR="$(dirname "$0")/state"
 FLAG="$STATE_DIR/web-researched"
 
 if [ -f "$FLAG" ]; then
-  FLAG_AGE=$(( $(date +%s) - $(stat -c %Y "$FLAG" 2>/dev/null || stat -f %m "$FLAG" 2>/dev/null || echo 0) ))
-  if [ "$FLAG_AGE" -lt 60 ] 2>/dev/null; then
-    exit 0
+  FLAG_MTIME=$(stat -c %Y "$FLAG" 2>/dev/null || stat -f %m "$FLAG" 2>/dev/null)
+  if [ -n "$FLAG_MTIME" ] && [ "$FLAG_MTIME" -gt 0 ] 2>/dev/null; then
+    FLAG_AGE=$(( $(date +%s) - FLAG_MTIME ))
+    if [ "$FLAG_AGE" -ge 0 ] && [ "$FLAG_AGE" -lt 60 ] 2>/dev/null; then
+      exit 0
+    fi
   fi
 fi
 

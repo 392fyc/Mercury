@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
-# GATE (Layer 2): broad structural detection for external technical claims.
+# GATE (Layer 2): extended structural detection for external technical claims.
 # Complements Layer 1 (web-research-gate.sh) with wider pattern coverage.
 # Both layers share the same web-researched flag (60s TTL).
 #
 # Layer 1: detects imports, semver, config keys, CLI flags, URLs
-# Layer 2: detects quoted string assignments, function calls on external
-#          objects, HTTP methods, package.json-style deps, and any content
-#          in config files (.json, .yaml, .yml, .toml)
+# Layer 2: detects config file external refs, package deps, container images
 #
 # Flag-aware: if web research was done within 60s, both layers allow through.
 
@@ -22,7 +20,7 @@ fi
 
 # Skip hook infrastructure
 case "$FILE_PATH" in
-  */.claude/hooks/*|.claude/hooks/*|./.claude/hooks/*) exit 0 ;;
+  */.claude/hooks/*) exit 0 ;;
 esac
 
 [ -z "$CONTENT" ] && exit 0
@@ -31,26 +29,28 @@ esac
 STATE_DIR="$(dirname "$0")/state"
 FLAG="$STATE_DIR/web-researched"
 if [ -f "$FLAG" ]; then
-  FLAG_AGE=$(( $(date +%s) - $(stat -c %Y "$FLAG" 2>/dev/null || stat -f %m "$FLAG" 2>/dev/null || echo 0) ))
-  if [ "$FLAG_AGE" -lt 60 ] 2>/dev/null; then
-    exit 0
+  FLAG_MTIME=$(stat -c %Y "$FLAG" 2>/dev/null || stat -f %m "$FLAG" 2>/dev/null)
+  if [ -n "$FLAG_MTIME" ] && [ "$FLAG_MTIME" -gt 0 ] 2>/dev/null; then
+    FLAG_AGE=$(( $(date +%s) - FLAG_MTIME ))
+    if [ "$FLAG_AGE" -ge 0 ] && [ "$FLAG_AGE" -lt 60 ] 2>/dev/null; then
+      exit 0
+    fi
   fi
 fi
 
 TRIGGERED=""
 
-# Config files always require verification when modified (they contain external refs)
+# Config files with external reference keys (JSON quoted + YAML unquoted)
 case "$FILE_PATH" in
   *.json|*.yaml|*.yml|*.toml)
-    # Only flag config files that look like they have external references
-    if echo "$CONTENT" | grep -qiE '["\x27]?(model|version|engine|provider|url|endpoint|api|registry|image|base)["\x27]?[[:space:]]*:'; then
+    if echo "$CONTENT" | grep -qiE '["\x27]?(model|version|engine|provider|url|endpoint|api|registry|image)["\x27]?[[:space:]]*:'; then
       TRIGGERED="config file with external reference keys"
     fi
     ;;
 esac
 
-# Package dependency declarations
-if echo "$CONTENT" | grep -qE '"(dependencies|devDependencies|peerDependencies)"[[:space:]]*:'; then
+# Package dependency declarations (JSON + YAML)
+if echo "$CONTENT" | grep -qiE '(dependencies|devDependencies|peerDependencies)["\x27]?[[:space:]]*:'; then
   TRIGGERED="${TRIGGERED:+$TRIGGERED, }package dependency declaration"
 fi
 

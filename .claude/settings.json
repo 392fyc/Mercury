@@ -16,7 +16,7 @@
           },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/web-research-llm-gate.sh\"",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/web-research-extended-gate.sh\"",
             "timeout": 5
           }
         ]
