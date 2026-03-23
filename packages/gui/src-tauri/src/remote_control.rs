@@ -162,10 +162,13 @@ impl RemoteControlManager {
                     }
                 }
 
-                // Detect connection established
-                if trimmed.to_lowercase().contains("connected")
-                    || trimmed.to_lowercase().contains("session active")
-                {
+                // Detect connection established.
+                // Pattern list centralised here for maintainability if CLI output changes.
+                let lower = trimmed.to_lowercase();
+                let is_connected = lower.contains("connected")
+                    || lower.contains("session active")
+                    || lower.contains("connection established");
+                if is_connected {
                     {
                         let mut status_guard = status_clone.lock().await;
                         *status_guard = RemoteControlStatus::Connected;
@@ -214,15 +217,19 @@ impl RemoteControlManager {
                 }
                 eprintln!("[remote-control stderr] {}", trimmed);
 
-                // Detect fatal errors
-                if trimmed.to_lowercase().contains("error")
-                    && !trimmed.to_lowercase().contains("error handler")
-                {
-                    let _ = app_stderr.emit("remote-control-log", serde_json::json!({
-                        "level": "error",
-                        "message": trimmed,
-                    }));
-                }
+                // Classify and forward all stderr lines to the GUI log panel.
+                let lower = trimmed.to_lowercase();
+                let level = if lower.contains("error") && !lower.contains("error handler") {
+                    "error"
+                } else if lower.contains("warn") {
+                    "warn"
+                } else {
+                    "info"
+                };
+                let _ = app_stderr.emit("remote-control-log", serde_json::json!({
+                    "level": level,
+                    "message": trimmed,
+                }));
             }
 
             // stderr closed — only the first task to reach here runs cleanup
@@ -291,18 +298,23 @@ impl RemoteControlManager {
     }
 }
 
-/// Extract a URL from a line of text.
+/// Extract and validate a URL from a line of text.
+/// Only accepts well-formed HTTPS URLs on expected domains (claude.ai, anthropic.com).
+/// Uses the `url` crate (https://crates.io/crates/url) for robust parsing.
 fn extract_url(line: &str) -> Option<String> {
-    // Find the start of https://
     if let Some(start) = line.find("https://") {
-        // Find the end of the URL (space, newline, or end of string)
         let rest = &line[start..];
         let end = rest
             .find(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == '>' || c == ')')
             .unwrap_or(rest.len());
-        let url = &rest[..end];
-        if url.len() > 10 {
-            return Some(url.to_string());
+        let candidate = &rest[..end];
+        // Structural validation: must parse as a URL with a recognised host.
+        if let Ok(parsed) = url::Url::parse(candidate) {
+            if let Some(host) = parsed.host_str() {
+                if host.ends_with("claude.ai") || host.ends_with("anthropic.com") {
+                    return Some(candidate.to_string());
+                }
+            }
         }
     }
     None

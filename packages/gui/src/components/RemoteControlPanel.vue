@@ -16,14 +16,25 @@ const {
 } = useRemoteControlStore();
 
 const copyFeedback = ref<string | null>(null);
+const isLoading = ref(false);
 const unlistenFns: Array<() => void> = [];
 
 async function handleStart() {
-  await start("Mercury");
+  isLoading.value = true;
+  try {
+    await start("Mercury");
+  } finally {
+    isLoading.value = false;
+  }
 }
 
 async function handleStop() {
-  await stop();
+  isLoading.value = true;
+  try {
+    await stop();
+  } finally {
+    isLoading.value = false;
+  }
 }
 
 function copyUrl() {
@@ -42,7 +53,11 @@ function copyUrl() {
 
 function openInBrowser() {
   if (sessionUrl.value) {
-    window.open(sessionUrl.value, "_blank");
+    const win = window.open(sessionUrl.value, "_blank");
+    if (!win) {
+      // Popup blocked — fall back to clipboard copy
+      copyUrl();
+    }
   }
 }
 
@@ -130,16 +145,18 @@ onUnmounted(() => {
         <button
           v-if="!isRunning"
           class="rc-btn rc-btn-primary"
+          :disabled="isLoading"
           @click="handleStart"
         >
-          Start Remote Control
+          {{ isLoading ? "Starting..." : "Start Remote Control" }}
         </button>
         <button
           v-if="isRunning"
           class="rc-btn rc-btn-danger"
+          :disabled="isLoading"
           @click="handleStop"
         >
-          Stop
+          {{ isLoading ? "Stopping..." : "Stop" }}
         </button>
       </div>
 
