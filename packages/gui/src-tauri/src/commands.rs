@@ -809,8 +809,7 @@ pub async fn get_remote_control_status(
 pub async fn get_open_prs(
     pm: State<'_, SharedPrMonitor>,
 ) -> Result<serde_json::Value, String> {
-    let monitor = pm.lock().await;
-    let prs = monitor.fetch_prs().await?;
+    let prs = pm.fetch_prs().await?;
     Ok(serde_json::json!({ "prs": prs }))
 }
 
@@ -818,8 +817,7 @@ pub async fn get_open_prs(
 pub async fn get_pr_monitor_state(
     pm: State<'_, SharedPrMonitor>,
 ) -> Result<serde_json::Value, String> {
-    let monitor = pm.lock().await;
-    let state = monitor.get_state().await;
+    let state = pm.get_state().await;
     serde_json::to_value(&state).map_err(|e| e.to_string())
 }
 
@@ -829,8 +827,7 @@ pub async fn start_pr_polling(
     pm: State<'_, SharedPrMonitor>,
     interval_secs: Option<u64>,
 ) -> Result<serde_json::Value, String> {
-    let monitor = pm.lock().await;
-    monitor.start_polling(app, interval_secs).await?;
+    pm.start_polling(app, interval_secs).await?;
     Ok(serde_json::json!({ "ok": true }))
 }
 
@@ -838,8 +835,7 @@ pub async fn start_pr_polling(
 pub async fn stop_pr_polling(
     pm: State<'_, SharedPrMonitor>,
 ) -> Result<serde_json::Value, String> {
-    let monitor = pm.lock().await;
-    monitor.stop_polling();
+    pm.stop_polling();
     Ok(serde_json::json!({ "ok": true }))
 }
 

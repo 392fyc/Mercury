@@ -19,8 +19,8 @@ pub type SharedSidecar = Arc<Mutex<Option<SidecarManager>>>;
 /// Shared remote control manager.
 pub type SharedRemoteControl = Arc<Mutex<RemoteControlManager>>;
 
-/// Shared PR monitor.
-pub type SharedPrMonitor = Arc<Mutex<PrMonitor>>;
+/// Shared PR monitor — no outer Mutex needed; PrMonitor has internal fine-grained locking.
+pub type SharedPrMonitor = Arc<PrMonitor>;
 
 /// Project root path — available immediately (no sidecar dependency).
 pub struct ProjectRoot(pub String);
@@ -80,10 +80,6 @@ pub fn run() {
             let rc: SharedRemoteControl = Arc::new(Mutex::new(RemoteControlManager::new()));
             app.manage(rc.clone());
 
-            // Register PR monitor
-            let pm: SharedPrMonitor = Arc::new(Mutex::new(PrMonitor::new()));
-            app.manage(pm.clone());
-
             // Resolve the monorepo root (where mercury.config.json lives)
             let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
             let cwd = std::env::current_dir().unwrap_or_else(|_| manifest_dir.clone());
@@ -96,15 +92,9 @@ pub fn run() {
             app.manage(ProjectRoot(project_dir.clone()));
             eprintln!("[tauri] Project root: {}", project_dir);
 
-            // Set project root on PR monitor
-            {
-                let pm_clone = pm.clone();
-                let dir = project_dir.clone();
-                tauri::async_runtime::spawn(async move {
-                    let monitor = pm_clone.lock().await;
-                    monitor.set_project_root(dir).await;
-                });
-            }
+            // Register PR monitor with project root available immediately
+            let pm: SharedPrMonitor = Arc::new(PrMonitor::new(project_dir.clone()));
+            app.manage(pm.clone());
 
             // Spawn the Node.js orchestrator sidecar
             tauri::async_runtime::spawn(async move {
@@ -185,12 +175,9 @@ pub fn run() {
                 let pm = app.state::<SharedPrMonitor>().inner().clone();
                 tauri::async_runtime::block_on(async {
                     // Stop PR monitor polling
-                    {
-                        let monitor = pm.lock().await;
-                        if monitor.is_polling() {
-                            eprintln!("[tauri] Stopping PR monitor polling");
-                            monitor.stop_polling();
-                        }
+                    if pm.is_polling() {
+                        eprintln!("[tauri] Stopping PR monitor polling");
+                        pm.stop_polling();
                     }
                     // Shutdown remote control first
                     {

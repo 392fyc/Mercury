@@ -49,8 +49,12 @@ async function startPolling(interval?: number) {
     polling.value = true;
     if (interval) intervalSecs.value = interval;
   } catch (e) {
-    // "Polling already active" is not a real error — just sync state
-    polling.value = true;
+    const msg = String(e);
+    if (msg.includes("Polling already active")) {
+      polling.value = true;
+    } else {
+      lastError.value = msg;
+    }
   }
 }
 

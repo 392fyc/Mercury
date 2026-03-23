@@ -59,9 +59,9 @@ pub struct PrMonitor {
 }
 
 impl PrMonitor {
-    pub fn new() -> Self {
+    pub fn new(project_root: String) -> Self {
         Self {
-            project_root: Arc::new(Mutex::new(String::new())),
+            project_root: Arc::new(Mutex::new(project_root)),
             polling: Arc::new(AtomicBool::new(false)),
             generation: Arc::new(AtomicU64::new(0)),
             interval_secs: Arc::new(Mutex::new(60)),
@@ -259,6 +259,8 @@ fn fetch_prs_blocking(project_root: &str) -> Result<Vec<PullRequest>, String> {
             "list",
             "--state",
             "open",
+            "--limit",
+            "100",
             "--json",
             "number,title,headRefName,author,createdAt,updatedAt,url,reviewDecision,reviews",
         ])
@@ -365,8 +367,45 @@ pub fn trigger_coderabbit_review_blocking(
     Ok(())
 }
 
-/// Squash merge a PR.
+/// Squash merge a PR after verifying it is approved and not a draft.
 pub fn merge_pr_blocking(project_root: &str, pr_number: u32) -> Result<(), String> {
+    // Gate: verify PR is approved and not a draft before merging
+    let check = Command::new("gh")
+        .args([
+            "pr",
+            "view",
+            &pr_number.to_string(),
+            "--json",
+            "reviewDecision,isDraft",
+        ])
+        .current_dir(project_root)
+        .env("LANG", "en_US.UTF-8")
+        .env("LC_ALL", "en_US.UTF-8")
+        .output()
+        .map_err(|e| format!("Failed to check PR state: {}", e))?;
+
+    if check.status.success() {
+        let check_json: serde_json::Value =
+            serde_json::from_slice(&check.stdout).unwrap_or_default();
+        let decision = check_json
+            .get("reviewDecision")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let is_draft = check_json
+            .get("isDraft")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if is_draft {
+            return Err("Cannot merge: PR is still a draft".to_string());
+        }
+        if decision != "APPROVED" {
+            return Err(format!(
+                "Cannot merge: review decision is '{}', expected 'APPROVED'",
+                decision
+            ));
+        }
+    }
+
     let output = Command::new("gh")
         .args([
             "pr",

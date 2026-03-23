@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from "vue";
+import { onMounted, onUnmounted, ref, reactive } from "vue";
 import { usePrMonitorStore } from "../stores/pr-monitor";
 import type { PullRequest, CodeRabbitStatus } from "../lib/tauri-bridge";
 
@@ -23,6 +23,7 @@ const {
 const disposed = ref(false);
 const unlistenFns: Array<() => void> = [];
 const confirmMerge = ref<number | null>(null);
+const pending = reactive<Record<number, boolean>>({});
 
 onMounted(async () => {
   // Reset listener flag so re-mount can re-register
@@ -30,12 +31,14 @@ onMounted(async () => {
   const fns = await initPrMonitorListeners();
   if (disposed.value) {
     fns.forEach((fn) => fn());
-  } else {
-    unlistenFns.push(...fns);
+    return;
   }
+  unlistenFns.push(...fns);
   // Sync backend state first, then fetch + start polling if not active
   await syncState();
+  if (disposed.value) return;
   await fetchPrs();
+  if (disposed.value) return;
   if (!polling.value) {
     await startPolling(60);
   }
@@ -45,6 +48,7 @@ onUnmounted(() => {
   disposed.value = true;
   unlistenFns.forEach((fn) => fn());
   resetListeners();
+  stopPolling();
 });
 
 function codeRabbitLabel(status: CodeRabbitStatus): string {
@@ -89,13 +93,25 @@ function timeAgo(isoString: string): string {
 }
 
 async function handleTriggerReview(pr: PullRequest) {
-  await requestCoderabbitReview(pr.number);
-  await fetchPrs();
+  if (pending[pr.number]) return;
+  pending[pr.number] = true;
+  try {
+    await requestCoderabbitReview(pr.number);
+    await fetchPrs();
+  } finally {
+    pending[pr.number] = false;
+  }
 }
 
 async function handleMerge(prNumber: number) {
+  if (pending[prNumber]) return;
   confirmMerge.value = null;
-  await requestMerge(prNumber);
+  pending[prNumber] = true;
+  try {
+    await requestMerge(prNumber);
+  } finally {
+    pending[prNumber] = false;
+  }
 }
 </script>
 
@@ -179,13 +195,14 @@ async function handleMerge(prNumber: number) {
           <div class="pr-card-actions">
             <button
               class="action-btn review-btn"
+              :disabled="pending[pr.number]"
               title="@coderabbitai review"
               @click="handleTriggerReview(pr)"
             >🐰 Request Review</button>
             <button
               v-if="confirmMerge !== pr.number"
               class="action-btn merge-btn"
-              :disabled="pr.review_decision !== 'APPROVED'"
+              :disabled="pr.review_decision !== 'APPROVED' || pending[pr.number]"
               :title="pr.review_decision === 'APPROVED' ? 'Squash merge' : 'Not yet approved'"
               @click="confirmMerge = pr.number"
             >Merge</button>
