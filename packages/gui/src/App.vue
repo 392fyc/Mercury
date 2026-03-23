@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref } from "vue";
+import { onBeforeUnmount, onMounted, ref } from "vue";
 import TitleBar from "./components/TitleBar.vue";
 import AgentPanel from "./components/AgentPanel.vue";
 import EventLog from "./components/EventLog.vue";
@@ -11,8 +11,6 @@ import ApprovalQueue from "./components/ApprovalQueue.vue";
 import SessionsPanel from "./components/SessionsPanel.vue";
 import ExplorerPanel from "./components/ExplorerPanel.vue";
 import FloatingPanel from "./components/FloatingPanel.vue";
-import { Splitpanes, Pane } from "splitpanes";
-import "splitpanes/dist/splitpanes.css";
 import AgentRoleSelector from "./components/AgentRoleSelector.vue";
 import RemoteControlPanel from "./components/RemoteControlPanel.vue";
 import PRMonitorPanel from "./components/PRMonitorPanel.vue";
@@ -37,15 +35,52 @@ const showPrMonitor = ref(false);
 const activeView = ref<"agents" | "tasks">("agents");
 const showEventLog = ref(false);
 const showAgentRoleSelector = ref(false);
+const splitShellEl = ref<HTMLDivElement | null>(null);
+const explorerSize = ref(15);
+const isExplorerResizing = ref(false);
 
-// Splitpanes initial size fix: force recalculation after mount
-// See: https://github.com/antoniandre/splitpanes/issues/108
-const splitpanesKey = ref(0);
+const EXPLORER_MIN_SIZE = 8;
+const EXPLORER_MAX_SIZE = 25;
 
-function forceSplitpanesRecalc() {
-  nextTick(() => {
-    splitpanesKey.value++;
-  });
+function clampExplorerSize(size: number) {
+  return Math.min(EXPLORER_MAX_SIZE, Math.max(EXPLORER_MIN_SIZE, size));
+}
+
+function updateExplorerSize(clientX: number) {
+  const shell = splitShellEl.value;
+  if (!shell) return;
+
+  const rect = shell.getBoundingClientRect();
+  if (rect.width <= 0) return;
+
+  const nextSize = ((clientX - rect.left) / rect.width) * 100;
+  explorerSize.value = clampExplorerSize(nextSize);
+}
+
+function handleExplorerPointerMove(event: PointerEvent) {
+  if (!isExplorerResizing.value) return;
+  event.preventDefault();
+  updateExplorerSize(event.clientX);
+}
+
+function stopExplorerResize() {
+  if (!isExplorerResizing.value) return;
+  isExplorerResizing.value = false;
+  document.body.classList.remove("explorer-resizing");
+  window.removeEventListener("pointermove", handleExplorerPointerMove);
+  window.removeEventListener("pointerup", stopExplorerResize);
+  window.removeEventListener("pointercancel", stopExplorerResize);
+}
+
+function startExplorerResize(event: PointerEvent) {
+  if (event.button !== 0) return;
+  event.preventDefault();
+  isExplorerResizing.value = true;
+  document.body.classList.add("explorer-resizing");
+  updateExplorerSize(event.clientX);
+  window.addEventListener("pointermove", handleExplorerPointerMove, { passive: false });
+  window.addEventListener("pointerup", stopExplorerResize);
+  window.addEventListener("pointercancel", stopExplorerResize);
 }
 
 function handleOpenSession(panelKey: string) {
@@ -63,8 +98,10 @@ onMounted(async () => {
   await initEventListeners();
   await initTaskListeners();
   await loadTasks();
-  // Force splitpanes recalculation after everything is mounted
-  forceSplitpanesRecalc();
+});
+
+onBeforeUnmount(() => {
+  stopExplorerResize();
 });
 </script>
 
@@ -90,35 +127,44 @@ onMounted(async () => {
         <!-- Agents View -->
         <div v-show="activeView === 'agents'" class="workspace-view">
           <div v-if="agents.length > 0" class="agents-area">
-            <Splitpanes :key="splitpanesKey" class="default-theme mercury-splitpanes">
-              <!-- Explorer pane: resizable -->
-              <Pane :size="15" :min-size="8" :max-size="25">
+            <div ref="splitShellEl" class="agents-split-shell">
+              <div class="explorer-pane" :style="{ flexBasis: `${explorerSize}%` }">
                 <ExplorerPanel
                   @open-file="(_path, _name) => { /* TODO: open file in center area */ }"
                 />
-              </Pane>
-              <!-- Center pane: Agent chat area -->
-              <Pane :min-size="50">
-                <div class="center-pane">
-                  <div class="main-agent-area">
-                    <AgentPanel
-                      v-if="mainAgent"
-                      :agentId="mainAgent.id"
-                      :agentName="mainAgent.displayName"
-                      :role="'main'"
-                      :panelKey="`main:${mainAgent.id}`"
-                    />
-                  </div>
-                  <!-- Floating sub-agent panel (overlays right side) -->
-                  <FloatingPanel />
+              </div>
+              <div
+                class="explorer-resizer"
+                :class="{ active: isExplorerResizing }"
+                role="separator"
+                aria-label="Resize explorer"
+                aria-orientation="vertical"
+                :aria-valuemin="EXPLORER_MIN_SIZE"
+                :aria-valuemax="EXPLORER_MAX_SIZE"
+                :aria-valuenow="Math.round(explorerSize)"
+                @pointerdown="startExplorerResize"
+              />
+              <div class="center-pane">
+                <div class="main-agent-area">
+                  <AgentPanel
+                    v-if="mainAgent"
+                    :agentId="mainAgent.id"
+                    :agentName="mainAgent.displayName"
+                    :role="'main'"
+                    :panelKey="`main:${mainAgent.id}`"
+                  />
                 </div>
-              </Pane>
-            </Splitpanes>
-            <!-- Sessions panel: fixed width, not resizable -->
-            <SessionsPanel
-              @open-session="handleOpenSession"
-              @create-session="handleCreateSession"
-            />
+                <!-- Floating sub-agent panel (overlays right side) -->
+                <FloatingPanel />
+              </div>
+            </div>
+            <div class="sessions-rail">
+              <!-- Sessions panel: fixed width, not resizable -->
+              <SessionsPanel
+                @open-session="handleOpenSession"
+                @create-session="handleCreateSession"
+              />
+            </div>
           </div>
           <div v-else class="loading-state">
             <p v-if="!sidecarReady">Connecting to orchestrator...</p>
@@ -199,8 +245,64 @@ onMounted(async () => {
 .agents-area {
   display: flex;
   min-height: 0;
+  min-width: 0;
   height: 100%;
   flex: 1;
+  overflow: hidden;
+}
+
+.agents-split-shell {
+  display: flex;
+  flex: 1 1 0%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.explorer-pane {
+  display: flex;
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.explorer-resizer {
+  position: relative;
+  flex: 0 0 3px;
+  width: 3px;
+  min-width: 3px;
+  background: var(--border);
+  cursor: col-resize;
+  touch-action: none;
+  transition: background 0.15s;
+}
+
+.explorer-resizer:hover,
+.explorer-resizer.active {
+  background: var(--accent-main);
+}
+
+.explorer-resizer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  right: -4px;
+}
+
+.sessions-rail {
+  display: flex;
+  flex: 0 0 300px;
+  width: 300px;
+  min-width: 300px;
+  max-width: 300px;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border);
 }
 
 .center-pane {
@@ -209,10 +311,13 @@ onMounted(async () => {
   height: 100%;
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
   background: var(--bg-primary);
 }
 
 .main-agent-area {
+  display: flex;
   flex: 1;
   min-height: 0;
   min-width: 0;
@@ -220,9 +325,11 @@ onMounted(async () => {
 }
 
 .main-agent-area :deep(.agent-panel) {
+  flex: 1 1 auto;
   height: 100%;
   border: none;
   border-radius: 0;
+  min-width: 0;
 }
 
 .loading-state {
@@ -240,43 +347,8 @@ onMounted(async () => {
   }
 }
 
-/* ─── Splitpanes dark theme overrides ─── */
-/* Force Splitpanes to fill all available flex space (workaround for #194) */
-.agents-area > .mercury-splitpanes,
-.agents-area :deep(.mercury-splitpanes) {
-  flex: 1 1 0%;
-  min-width: 0;
-  width: 0; /* flex-basis trick: let flex:1 compute the actual width */
-  height: 100%;
-}
-
-.agents-area :deep(.splitpanes__splitter) {
-  background: var(--border);
-  width: 3px !important;
-  min-width: 3px !important;
-  border: none;
-  position: relative;
-  transition: background 0.15s;
-}
-
-.agents-area :deep(.splitpanes__splitter:hover),
-.agents-area :deep(.splitpanes__splitter.splitpanes__splitter__active) {
-  background: var(--accent-main);
-}
-
-.agents-area :deep(.splitpanes__splitter::before),
-.agents-area :deep(.splitpanes__splitter::after) {
-  display: none;
-}
-
-.agents-area :deep(.splitpanes__pane) {
-  overflow: hidden;
-  height: 100%;
-}
-
-/* Ensure splitpanes container div fills parent */
-.agents-area :deep(.splitpanes__container) {
-  width: 100%;
-  height: 100%;
+:global(body.explorer-resizing) {
+  cursor: col-resize;
+  user-select: none;
 }
 </style>
