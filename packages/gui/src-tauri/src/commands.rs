@@ -55,59 +55,63 @@ pub fn get_git_info(path: String) -> Result<serde_json::Value, String> {
 }
 
 /// Get git file status (modified/untracked) for all files in a directory.
-/// Uses `git status --porcelain` (https://git-scm.com/docs/git-status).
-/// Returns a map of relative_path -> status_code (M=modified, ?=untracked, A=added, D=deleted).
+/// Uses `git diff --name-only` for actual worktree changes and
+/// `git ls-files --others --exclude-standard` for untracked files.
+/// This avoids false positives from stat cache or CRLF differences.
+/// Refs: https://git-scm.com/docs/git-diff, https://git-scm.com/docs/git-ls-files
 #[tauri::command]
 pub fn get_git_file_status(path: String) -> Result<serde_json::Value, String> {
-    let output = Command::new("git")
-        .args(["status", "--porcelain", "-uall"])
-        .current_dir(&path)
-        .output()
-        .map_err(|e| format!("git status failed: {}", e))?;
-
-    if !output.status.success() {
-        return Ok(serde_json::json!({}));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
     let mut statuses = serde_json::Map::new();
 
-    for line in stdout.lines() {
-        if line.len() < 4 {
-            continue;
+    // 1. Files with actual worktree diff (M = modified)
+    // `git diff --name-only` only lists files with real content changes
+    if let Ok(output) = Command::new("git")
+        .args(["diff", "--name-only"])
+        .current_dir(&path)
+        .output()
+    {
+        if output.status.success() {
+            for line in String::from_utf8_lossy(&output.stdout).lines() {
+                let f = line.trim();
+                if !f.is_empty() {
+                    statuses.insert(f.to_string(), serde_json::Value::String("M".to_string()));
+                }
+            }
         }
-        // Porcelain format: XY filename
-        // X = index status, Y = worktree status
-        let xy = &line[..2];
-        let file_path = line[3..].trim_matches('"').to_string();
+    }
 
-        // Porcelain XY: X = index, Y = worktree
-        // Only show badge when worktree has actual changes (like VS Code).
-        // X-only changes (staged, clean worktree) don't show a badge.
-        let x = xy.as_bytes()[0] as char;
-        let y = xy.as_bytes()[1] as char;
+    // 2. Untracked files (U)
+    // `git ls-files --others --exclude-standard` lists untracked, non-ignored files
+    if let Ok(output) = Command::new("git")
+        .args(["ls-files", "--others", "--exclude-standard"])
+        .current_dir(&path)
+        .output()
+    {
+        if output.status.success() {
+            for line in String::from_utf8_lossy(&output.stdout).lines() {
+                let f = line.trim();
+                if !f.is_empty() && !statuses.contains_key(f) {
+                    statuses.insert(f.to_string(), serde_json::Value::String("U".to_string()));
+                }
+            }
+        }
+    }
 
-        let status = if xy == "??" {
-            "U" // Untracked: new file not in git
-        } else if y == 'M' || y == 'm' {
-            "M" // Worktree modified (has diff vs index)
-        } else if y == 'D' {
-            "D" // Deleted in worktree
-        } else if x == 'A' && y == ' ' {
-            // Staged new file, no worktree changes — skip (IDE doesn't show M)
-            continue;
-        } else if x == 'M' && y == ' ' {
-            // Staged modification, worktree clean — skip
-            continue;
-        } else if x == 'R' {
-            "R" // Renamed
-        } else if x == 'A' {
-            "A" // Added
-        } else {
-            continue; // Unknown, skip
-        };
-
-        statuses.insert(file_path, serde_json::Value::String(status.to_string()));
+    // 3. Deleted files (D)
+    // `git diff --name-only --diff-filter=D` lists worktree deletions
+    if let Ok(output) = Command::new("git")
+        .args(["diff", "--name-only", "--diff-filter=D"])
+        .current_dir(&path)
+        .output()
+    {
+        if output.status.success() {
+            for line in String::from_utf8_lossy(&output.stdout).lines() {
+                let f = line.trim();
+                if !f.is_empty() {
+                    statuses.insert(f.to_string(), serde_json::Value::String("D".to_string()));
+                }
+            }
+        }
     }
 
     Ok(serde_json::Value::Object(statuses))
