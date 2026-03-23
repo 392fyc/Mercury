@@ -196,6 +196,20 @@ pub async fn stop_session(
 }
 
 #[tauri::command]
+pub async fn delete_session(
+    sidecar: State<'_, SharedSidecar>,
+    agent_id: String,
+    session_id: String,
+) -> Result<serde_json::Value, String> {
+    let mgr = get_sidecar(&sidecar).await?;
+    mgr.send_request(
+        "delete_session",
+        serde_json::json!({ "agentId": agent_id, "sessionId": session_id }),
+    )
+    .await
+}
+
+#[tauri::command]
 pub async fn configure_agent(
     sidecar: State<'_, SharedSidecar>,
     config: serde_json::Value,

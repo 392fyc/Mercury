@@ -104,6 +104,7 @@ pub fn run() {
             commands::send_prompt,
             commands::start_session,
             commands::stop_session,
+            commands::delete_session,
             commands::configure_agent,
             commands::dispatch_task,
             commands::get_config,
