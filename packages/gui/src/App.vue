@@ -11,6 +11,7 @@ import ApprovalQueue from "./components/ApprovalQueue.vue";
 import BookmarkRail from "./components/BookmarkRail.vue";
 import FloatingPanel from "./components/FloatingPanel.vue";
 import AgentRoleSelector from "./components/AgentRoleSelector.vue";
+import RemoteControlPanel from "./components/RemoteControlPanel.vue";
 import { useAgentStore } from "./stores/agents";
 import { useApprovalStore } from "./stores/approvals";
 import { useMessageStore } from "./stores/messages";
@@ -27,6 +28,7 @@ const { initEventListeners } = useEventStore();
 const { loadTasks, initTaskListeners } = useTaskStore();
 
 const showSettings = ref(false);
+const showRemoteControl = ref(false);
 const activeView = ref<"agents" | "tasks">("agents");
 const showEventLog = ref(false);
 const showAgentRoleSelector = ref(false);
@@ -55,6 +57,7 @@ onMounted(async () => {
       :activeView="activeView"
       :eventLogOpen="showEventLog"
       @open-settings="showSettings = true"
+      @open-remote-control="showRemoteControl = true"
       @switch-view="(v) => activeView = v"
       @toggle-event-log="showEventLog = !showEventLog"
     />
@@ -101,6 +104,10 @@ onMounted(async () => {
       <EventLog v-if="showEventLog" />
     </div>
 
+    <RemoteControlPanel
+      v-if="showRemoteControl"
+      @close="showRemoteControl = false"
+    />
     <SessionPicker />
     <HistoryPanel />
     <ApprovalQueue />

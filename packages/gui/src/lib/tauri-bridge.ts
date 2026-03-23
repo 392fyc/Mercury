@@ -563,6 +563,59 @@ export async function getContextStatus(): Promise<ContextStatus> {
   return invoke<ContextStatus>("get_context_status");
 }
 
+// ─── Remote Control Operations ───
+
+export type RemoteControlStatus =
+  | "stopped"
+  | "starting"
+  | "waiting_for_connection"
+  | "connected"
+  | "error";
+
+export interface RemoteControlState {
+  status: RemoteControlStatus;
+  session_url: string | null;
+  session_name: string | null;
+}
+
+export async function startRemoteControl(
+  sessionName?: string,
+): Promise<{ ok: true }> {
+  return invoke("start_remote_control", { sessionName: sessionName ?? null });
+}
+
+export async function stopRemoteControl(): Promise<{ ok: true }> {
+  return invoke("stop_remote_control");
+}
+
+export async function getRemoteControlStatus(): Promise<RemoteControlState> {
+  return invoke<RemoteControlState>("get_remote_control_status");
+}
+
+export function onRemoteControlStatus(
+  handler: (data: RemoteControlState) => void,
+): Promise<UnlistenFn> {
+  return listen<RemoteControlState>("remote-control-status", (event) =>
+    handler(event.payload),
+  );
+}
+
+export function onRemoteControlUrl(
+  handler: (data: { url: string }) => void,
+): Promise<UnlistenFn> {
+  return listen<{ url: string }>("remote-control-url", (event) =>
+    handler(event.payload),
+  );
+}
+
+export function onRemoteControlLog(
+  handler: (data: { level: string; message: string }) => void,
+): Promise<UnlistenFn> {
+  return listen<{ level: string; message: string }>("remote-control-log", (event) =>
+    handler(event.payload),
+  );
+}
+
 // Events (sidecar → Rust → frontend)
 
 export interface AgentMessageEvent {

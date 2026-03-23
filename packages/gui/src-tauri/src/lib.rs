@@ -1,4 +1,5 @@
 mod commands;
+mod remote_control;
 mod sidecar;
 mod types;
 
@@ -7,10 +8,14 @@ use std::sync::Arc;
 use tauri::{Emitter, Manager};
 use tokio::sync::Mutex;
 
+use remote_control::RemoteControlManager;
 use sidecar::SidecarManager;
 
 /// Shared sidecar handle — `None` until the sidecar finishes spawning.
 pub type SharedSidecar = Arc<Mutex<Option<SidecarManager>>>;
+
+/// Shared remote control manager.
+pub type SharedRemoteControl = Arc<Mutex<RemoteControlManager>>;
 
 /// Project root path — available immediately (no sidecar dependency).
 pub struct ProjectRoot(pub String);
@@ -65,6 +70,10 @@ pub fn run() {
             // Register shared sidecar state synchronously (avoids race condition)
             let shared: SharedSidecar = Arc::new(Mutex::new(None));
             app.manage(shared.clone());
+
+            // Register remote control manager
+            let rc: SharedRemoteControl = Arc::new(Mutex::new(RemoteControlManager::new()));
+            app.manage(rc.clone());
 
             // Resolve the monorepo root (where mercury.config.json lives)
             let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -138,13 +147,26 @@ pub fn run() {
             commands::list_models,
             commands::set_model,
             commands::read_session_history,
+            commands::start_remote_control,
+            commands::stop_remote_control,
+            commands::get_remote_control_status,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
                 let shared = app.state::<SharedSidecar>().inner().clone();
+                let rc = app.state::<SharedRemoteControl>().inner().clone();
                 tauri::async_runtime::block_on(async {
+                    // Shutdown remote control first
+                    {
+                        let mgr = rc.lock().await;
+                        if mgr.is_running().await {
+                            eprintln!("[tauri] Shutting down remote control");
+                            let _ = mgr.stop().await;
+                        }
+                    }
+                    // Then shutdown sidecar
                     let guard = shared.lock().await;
                     if let Some(mgr) = guard.as_ref() {
                         eprintln!("[tauri] Shutting down orchestrator sidecar");
