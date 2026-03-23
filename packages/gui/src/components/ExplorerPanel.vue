@@ -161,8 +161,10 @@ function refreshTree() {
   loadRoot();
 }
 
+const HEAVY_DIRS = new Set(["node_modules", "target", "dist", ".git", "__pycache__", ".venv", ".next", ".nuxt"]);
+
 function fileIcon(name: string, isDir: boolean): string {
-  if (isDir) return "📁";
+  if (isDir) return HEAVY_DIRS.has(name) ? "📦" : "📁";
   const ext = name.split(".").pop()?.toLowerCase() ?? "";
   const map: Record<string, string> = {
     vue: "🟢", ts: "🔷", tsx: "🔷", js: "🟡", jsx: "🟡",

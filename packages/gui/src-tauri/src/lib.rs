@@ -118,6 +118,7 @@ pub fn run() {
             commands::get_project_info,
             commands::get_git_info,
             commands::get_git_file_status,
+            commands::get_git_diff,
             commands::list_git_branches,
             commands::checkout_branch,
             commands::get_agents,

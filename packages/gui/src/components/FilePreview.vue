@@ -13,11 +13,15 @@ import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
+import { getGitDiff } from "../lib/tauri-bridge";
+import { useAgentStore } from "../stores/agents";
 
 const props = defineProps<{
   filePath: string;
   fileName: string;
 }>();
+
+const { defaultWorkDir, getWorkDir } = useAgentStore();
 
 const content = ref("");
 const editContent = ref("");
@@ -29,6 +33,82 @@ const fileSize = ref(0);
 const isEditing = ref(false);
 const isDirty = ref(false);
 const isSaving = ref(false);
+
+// ─── Diff mode ───
+const showDiff = ref(false);
+const diffContent = ref("");
+const diffLoading = ref(false);
+
+interface DiffLine {
+  type: "add" | "remove" | "context" | "header";
+  text: string;
+  lineNum?: string;
+}
+
+const parsedDiff = computed<DiffLine[]>(() => {
+  if (!diffContent.value) return [];
+  const lines = diffContent.value.split("\n");
+  const result: DiffLine[] = [];
+  let oldLine = 0;
+  let newLine = 0;
+  for (const line of lines) {
+    if (line.startsWith("@@")) {
+      // Parse hunk header: @@ -oldStart,count +newStart,count @@
+      const match = line.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      if (match) {
+        oldLine = parseInt(match[1]) - 1;
+        newLine = parseInt(match[2]) - 1;
+      }
+      result.push({ type: "header", text: line });
+    } else if (line.startsWith("---") || line.startsWith("+++") || line.startsWith("diff ") || line.startsWith("index ")) {
+      result.push({ type: "header", text: line });
+    } else if (line.startsWith("+")) {
+      newLine++;
+      result.push({ type: "add", text: line.slice(1), lineNum: String(newLine) });
+    } else if (line.startsWith("-")) {
+      oldLine++;
+      result.push({ type: "remove", text: line.slice(1), lineNum: String(oldLine) });
+    } else {
+      oldLine++;
+      newLine++;
+      result.push({ type: "context", text: line.startsWith(" ") ? line.slice(1) : line, lineNum: String(newLine) });
+    }
+  }
+  return result;
+});
+
+async function toggleDiff() {
+  if (showDiff.value) {
+    showDiff.value = false;
+    return;
+  }
+  diffLoading.value = true;
+  try {
+    const { mainAgent } = useAgentStore();
+    const panelKey = mainAgent.value ? `main:${mainAgent.value.id}` : "";
+    const repoPath = (panelKey ? getWorkDir(panelKey) : defaultWorkDir.value) || "";
+    if (!repoPath) {
+      diffContent.value = "No workspace directory set";
+      showDiff.value = true;
+      return;
+    }
+    // Get relative path for git diff
+    const normalized = props.filePath.replace(/\\/g, "/");
+    const base = repoPath.replace(/\\/g, "/");
+    let relPath = normalized.startsWith(base) ? normalized.slice(base.length) : normalized;
+    if (relPath.startsWith("/")) relPath = relPath.slice(1);
+
+    // Tauri command using git diff: https://git-scm.com/docs/git-diff
+    const diff = await getGitDiff(repoPath, relPath);
+    diffContent.value = diff || "No changes (file matches HEAD)";
+    showDiff.value = true;
+  } catch (err) {
+    diffContent.value = `Diff failed: ${err instanceof Error ? err.message : String(err)}`;
+    showDiff.value = true;
+  } finally {
+    diffLoading.value = false;
+  }
+}
 
 // Refs for scroll sync
 const codeContainerEl = ref<HTMLDivElement | null>(null);
@@ -327,6 +407,15 @@ const minimapLines = computed(() => {
           {{ isSaving ? '💾 Saving...' : '💾 Save' }}
         </button>
         <span v-if="isDirty" class="fp-dirty-dot" title="Unsaved changes" />
+        <button
+          class="fp-tool-btn"
+          :class="{ active: showDiff }"
+          :disabled="diffLoading"
+          @click="toggleDiff"
+          title="Show git diff"
+        >
+          {{ diffLoading ? '⏳' : '±' }} Diff
+        </button>
       </div>
       <div class="fp-toolbar-right">
         <span class="fp-toolbar-info">{{ lineCount }} lines</span>
@@ -366,6 +455,26 @@ const minimapLines = computed(() => {
         spellcheck="false"
         @input="onEditInput"
       />
+    </div>
+
+    <!-- Diff view (overlays normal preview when active) -->
+    <div v-else-if="showDiff" class="fp-diff-container">
+      <div v-if="parsedDiff.length === 0" class="fp-center">
+        <span>{{ diffContent }}</span>
+      </div>
+      <div v-else class="fp-diff-lines">
+        <div
+          v-for="(line, i) in parsedDiff"
+          :key="i"
+          class="fp-diff-line"
+          :class="'diff-' + line.type"
+        >
+          <span v-if="line.lineNum" class="fp-diff-num">{{ line.lineNum }}</span>
+          <span v-else class="fp-diff-num">···</span>
+          <span class="fp-diff-prefix">{{ line.type === 'add' ? '+' : line.type === 'remove' ? '-' : line.type === 'header' ? '' : ' ' }}</span>
+          <span class="fp-diff-text">{{ line.text }}</span>
+        </div>
+      </div>
     </div>
 
     <!-- Markdown preview -->
@@ -725,5 +834,75 @@ const minimapLines = computed(() => {
 .fp-status-warn {
   color: var(--accent-warn);
   margin-left: auto;
+}
+
+/* ─── Diff view ─── */
+.fp-diff-container {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: var(--bg-primary);
+}
+
+.fp-diff-lines {
+  font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.fp-diff-line {
+  display: flex;
+  padding: 0 12px 0 0;
+  white-space: pre;
+  min-height: 19px;
+}
+
+.fp-diff-num {
+  display: inline-block;
+  width: 40px;
+  min-width: 40px;
+  text-align: right;
+  padding-right: 8px;
+  color: var(--text-muted);
+  opacity: 0.5;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.fp-diff-prefix {
+  display: inline-block;
+  width: 16px;
+  min-width: 16px;
+  text-align: center;
+  flex-shrink: 0;
+  font-weight: 600;
+}
+
+.fp-diff-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.fp-diff-line.diff-add {
+  background: rgba(46, 160, 67, 0.12);
+  color: #7ee787;
+}
+.fp-diff-line.diff-add .fp-diff-prefix { color: #3fb950; }
+
+.fp-diff-line.diff-remove {
+  background: rgba(248, 81, 73, 0.12);
+  color: #ffa198;
+}
+.fp-diff-line.diff-remove .fp-diff-prefix { color: #f85149; }
+
+.fp-diff-line.diff-context {
+  color: var(--text-secondary);
+}
+
+.fp-diff-line.diff-header {
+  color: var(--accent-sub);
+  font-weight: 500;
+  background: rgba(139, 148, 158, 0.06);
+  padding-left: 56px;
 }
 </style>

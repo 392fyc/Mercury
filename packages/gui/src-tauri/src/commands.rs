@@ -102,6 +102,29 @@ pub fn get_git_file_status(path: String) -> Result<serde_json::Value, String> {
     Ok(serde_json::Value::Object(statuses))
 }
 
+/// Get git diff for a specific file (unstaged changes).
+/// Returns the raw unified diff output.
+#[tauri::command]
+pub fn get_git_diff(repo_path: String, file_path: String) -> Result<String, String> {
+    let output = Command::new("git")
+        .args(["diff", "--", &file_path])
+        .current_dir(&repo_path)
+        .output()
+        .map_err(|e| format!("git diff failed: {}", e))?;
+
+    if !output.status.success() {
+        // Try staged diff
+        let staged = Command::new("git")
+            .args(["diff", "--cached", "--", &file_path])
+            .current_dir(&repo_path)
+            .output()
+            .map_err(|e| format!("git diff --cached failed: {}", e))?;
+        return Ok(String::from_utf8_lossy(&staged.stdout).to_string());
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
 /// List all local and remote git branches for a given directory.
 #[tauri::command]
 pub fn list_git_branches(path: String) -> Result<serde_json::Value, String> {

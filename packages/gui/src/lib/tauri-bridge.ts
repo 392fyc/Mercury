@@ -109,6 +109,12 @@ export async function getGitFileStatus(path: string): Promise<Record<string, str
   return invoke<Record<string, string>>("get_git_file_status", { path });
 }
 
+/** Get git diff (unified format) for a specific file.
+ * Uses `git diff -- <file>` — see https://git-scm.com/docs/git-diff */
+export async function getGitDiff(repoPath: string, filePath: string): Promise<string> {
+  return invoke<string>("get_git_diff", { repoPath, filePath });
+}
+
 export interface GitBranchList {
   current: string;
   local: string[];
