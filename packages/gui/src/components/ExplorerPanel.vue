@@ -7,7 +7,7 @@ const emit = defineEmits<{
   "open-file": [path: string, name: string];
 }>();
 
-const { defaultWorkDir, getWorkDir } = useAgentStore();
+const { defaultWorkDir, getWorkDir, getGitBranch } = useAgentStore();
 
 // Use main agent panel key for workspace info
 const mainPanelKey = computed(() => {
@@ -18,6 +18,18 @@ const mainPanelKey = computed(() => {
 const workDir = computed(() => {
   if (mainPanelKey.value) return getWorkDir(mainPanelKey.value);
   return defaultWorkDir.value;
+});
+
+const gitBranch = computed(() => {
+  if (mainPanelKey.value) return getGitBranch(mainPanelKey.value);
+  return null;
+});
+
+const shortWorkDir = computed(() => {
+  const dir = workDir.value;
+  if (!dir) return "";
+  const parts = dir.replace(/\\/g, "/").split("/");
+  return parts[parts.length - 1] || parts[parts.length - 2] || dir;
 });
 
 
@@ -180,7 +192,20 @@ onMounted(() => {
       </template>
     </div>
 
-    <!-- Footer removed: workspace/branch info shown in AgentPanel status bar -->
+    <!-- Footer: VS Code style workspace + branch -->
+    <div class="ep-footer">
+      <button v-if="workDir" class="ep-btn" :title="workDir">
+        <span class="ep-btn-icon">📂</span>
+        <span class="ep-btn-text">{{ shortWorkDir }}</span>
+      </button>
+      <div class="ep-footer-row">
+        <button v-if="gitBranch" class="ep-btn branch" :title="'Branch: ' + gitBranch">
+          <span class="ep-btn-icon">⎇</span>
+          <span class="ep-btn-text">{{ gitBranch }}</span>
+        </button>
+        <button class="ep-btn-icon-only" title="Refresh" @click="refreshTree">↻</button>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -299,4 +324,86 @@ onMounted(() => {
   color: var(--accent-error);
 }
 
+/* ─── Footer: VS Code style ─── */
+.ep-footer {
+  padding: 6px 8px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--bg-secondary);
+}
+
+.ep-footer-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ep-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  background: none;
+  border: none;
+  border-radius: 3px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  transition: background 0.12s, color 0.12s;
+}
+
+.ep-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-secondary);
+}
+
+.ep-btn.branch {
+  color: var(--accent-success);
+  flex: 1;
+  min-width: 0;
+}
+
+.ep-btn.branch:hover {
+  color: var(--accent-success);
+  background: rgba(0, 230, 118, 0.08);
+}
+
+.ep-btn-icon {
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.ep-btn-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ep-btn-icon-only {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 3px;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.12s, color 0.12s;
+}
+
+.ep-btn-icon-only:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-secondary);
+}
 </style>
