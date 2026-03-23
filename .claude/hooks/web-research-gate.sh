@@ -21,7 +21,7 @@ fi
 
 # Skip hook scripts themselves to avoid self-triggering on regex descriptions
 case "$FILE_PATH" in
-  */.claude/hooks/*) exit 0 ;;
+  */.claude/hooks/*|.claude/hooks/*|./.claude/hooks/*) exit 0 ;;
 esac
 
 TRIGGERED=""
@@ -36,8 +36,8 @@ if echo "$CONTENT" | grep -qE '[0-9]+\.[0-9]+\.[0-9]+'; then
   TRIGGERED="${TRIGGERED:+$TRIGGERED, }version identifier"
 fi
 
-# Structural: config keys referencing external services
-if echo "$CONTENT" | grep -qiE '"(model|engine|provider|baseURL|apiKey|endpoint|runtime)"[[:space:]]*:'; then
+# Structural: config keys referencing external services (JSON quoted + YAML unquoted)
+if echo "$CONTENT" | grep -qiE '["\x27]?(model|engine|provider|baseURL|apiKey|endpoint|runtime)["\x27]?[[:space:]]*:'; then
   TRIGGERED="${TRIGGERED:+$TRIGGERED, }external config key"
 fi
 

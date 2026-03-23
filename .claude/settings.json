@@ -15,9 +15,9 @@
             "timeout": 5
           },
           {
-            "type": "prompt",
-            "prompt": "You are a verification gate for file writes. Check tool_input.file_path first: if the path contains .claude/hooks/ respond {\"ok\": true} immediately (hook scripts are infrastructure, not external claims). For all other files, examine tool_input.new_string or tool_input.content. Determine if it contains ANY external technical claims that could be wrong without verification: model names, SDK/API signatures, package versions, CLI flags, config values referencing external services, endpoint URLs, or protocol specs. Internal project code (variables, business logic, architecture comments, TypeScript interfaces) does NOT need verification. If unverified external claims exist, respond {\"ok\": false, \"reason\": \"Unverified external claim: [specific]. Use WebSearch to verify.\"}. Otherwise respond {\"ok\": true}.",
-            "timeout": 30
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/web-research-llm-gate.sh\"",
+            "timeout": 5
           }
         ]
       },
