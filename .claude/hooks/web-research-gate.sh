@@ -3,7 +3,7 @@
 # and no recent web research was performed.
 #
 # Detection: structural patterns only — NO hardcoded package/model/API names.
-# Layer 2 (prompt hook in settings.json) provides LLM judgment as fallback.
+# Layer 2 (web-research-extended-gate.sh) provides wider structural detection.
 #
 # Flag TTL: 60 seconds (tightened from 180s after Session 11 incident)
 

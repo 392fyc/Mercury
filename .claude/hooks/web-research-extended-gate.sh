@@ -43,7 +43,10 @@ TRIGGERED=""
 # Config files with external reference keys (JSON quoted + YAML unquoted)
 case "$FILE_PATH" in
   *.json|*.yaml|*.yml|*.toml)
-    if echo "$CONTENT" | grep -qiE '["\x27]?(model|version|engine|provider|url|endpoint|api|registry|image)["\x27]?[[:space:]]*:'; then
+    # Note: 'version' excluded (too common in package.json internal use)
+    # Layer 1 already covers: model|engine|provider|baseURL|apiKey|endpoint|runtime
+    # Layer 2 extends with: url|api|registry|image (non-overlapping)
+    if echo "$CONTENT" | grep -qiE '["\x27]?(url|api|registry|image)["\x27]?[[:space:]]*:'; then
       TRIGGERED="config file with external reference keys"
     fi
     ;;
@@ -55,7 +58,7 @@ if echo "$CONTENT" | grep -qiE '(dependencies|devDependencies|peerDependencies)[
 fi
 
 # Docker/container image references
-if echo "$CONTENT" | grep -qiE '(FROM[[:space:]]|image:[[:space:]]|docker\.io/|ghcr\.io/)'; then
+if echo "$CONTENT" | grep -qiE '(FROM[[:space:]]|image:[[:space:]]|docker\.io/|ghcr\.io/|gcr\.io/|quay\.io/|registry\.k8s\.io/)'; then
   TRIGGERED="${TRIGGERED:+$TRIGGERED, }container image reference"
 fi
 
