@@ -28,7 +28,7 @@
       "id": "codex-cli",
       "integration": "sdk",
       "maxConcurrentSessions": 2,
-      "model": "o3",
+      "model": "gpt-5.4",
       "restrictions": [],
       "roles": [
         "dev",
