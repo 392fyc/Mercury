@@ -242,7 +242,7 @@ onMounted(() => {
 .ep-tree {
   flex: 1;
   overflow-y: auto;
-  padding: 0 4px 0 8px;
+  padding: 0 4px 0 14px;
 }
 
 .ep-node {
