@@ -81,19 +81,30 @@ pub fn get_git_file_status(path: String) -> Result<serde_json::Value, String> {
         let xy = &line[..2];
         let file_path = line[3..].trim_matches('"').to_string();
 
-        // Determine display status
+        // Porcelain XY: X = index, Y = worktree
+        // Only show badge when worktree has actual changes (like VS Code).
+        // X-only changes (staged, clean worktree) don't show a badge.
+        let x = xy.as_bytes()[0] as char;
+        let y = xy.as_bytes()[1] as char;
+
         let status = if xy == "??" {
-            "U" // Untracked
-        } else if xy.contains('M') || xy.contains('m') {
-            "M" // Modified
-        } else if xy.contains('A') {
-            "A" // Added
-        } else if xy.contains('D') {
-            "D" // Deleted
-        } else if xy.contains('R') {
+            "U" // Untracked: new file not in git
+        } else if y == 'M' || y == 'm' {
+            "M" // Worktree modified (has diff vs index)
+        } else if y == 'D' {
+            "D" // Deleted in worktree
+        } else if x == 'A' && y == ' ' {
+            // Staged new file, no worktree changes — skip (IDE doesn't show M)
+            continue;
+        } else if x == 'M' && y == ' ' {
+            // Staged modification, worktree clean — skip
+            continue;
+        } else if x == 'R' {
             "R" // Renamed
+        } else if x == 'A' {
+            "A" // Added
         } else {
-            "M" // Fallback
+            continue; // Unknown, skip
         };
 
         statuses.insert(file_path, serde_json::Value::String(status.to_string()));
