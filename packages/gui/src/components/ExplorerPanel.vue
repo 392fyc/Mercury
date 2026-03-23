@@ -99,15 +99,40 @@ async function loadGitStatus() {
   }
 }
 
+// Build a map that includes parent directory status bubbling (like VS Code).
+// If a child has M, all ancestor dirs get M; if only U, ancestors get U.
+// Priority: M > D > U (M overrides U at parent level).
+const gitStatusMap = computed<Record<string, string>>(() => {
+  const raw = gitStatus.value;
+  const map: Record<string, string> = {};
+  const STATUS_PRIORITY: Record<string, number> = { M: 3, D: 2, U: 1, A: 1, R: 2 };
+
+  for (const [relPath, status] of Object.entries(raw)) {
+    // Set file itself
+    map[relPath] = status;
+    // Bubble up to all parent directories
+    const parts = relPath.split("/");
+    for (let i = 1; i < parts.length; i++) {
+      const dirKey = parts.slice(0, i).join("/");
+      const existing = map[dirKey];
+      const newPri = STATUS_PRIORITY[status] ?? 0;
+      const existPri = existing ? (STATUS_PRIORITY[existing] ?? 0) : 0;
+      if (newPri > existPri) {
+        map[dirKey] = status;
+      }
+    }
+  }
+  return map;
+});
+
 function getFileGitStatus(filePath: string): string | null {
   const dir = workDir.value;
   if (!dir) return null;
-  // Convert absolute path to relative
   const normalized = filePath.replace(/\\/g, "/");
   const base = dir.replace(/\\/g, "/");
   let rel = normalized.startsWith(base) ? normalized.slice(base.length) : normalized;
   if (rel.startsWith("/")) rel = rel.slice(1);
-  return gitStatus.value[rel] ?? null;
+  return gitStatusMap.value[rel] ?? null;
 }
 
 // ─── Directory loading ───
@@ -322,12 +347,16 @@ onMounted(() => {
           <span class="ep-file-icon">{{ fileIcon(entry.node.name, entry.node.isDir) }}</span>
           <span class="ep-name" :class="{ 'is-dir': entry.node.isDir }">{{ entry.node.name }}</span>
           <span v-if="entry.node.loading" class="ep-node-spinner" />
-          <!-- Git status badge -->
+          <!-- Git status: files=letter badge, dirs=colored dot (bubbled from children) -->
+          <!-- Vue 3 class binding array syntax: https://vuejs.org/guide/essentials/class-and-style.html -->
           <span
-            v-if="!entry.node.isDir && getFileGitStatus(entry.node.path)"
+            v-if="getFileGitStatus(entry.node.path)"
             class="ep-git-badge"
-            :class="'git-' + getFileGitStatus(entry.node.path)!.toLowerCase()"
-          >{{ getFileGitStatus(entry.node.path) }}</span>
+            :class="[
+              'git-' + getFileGitStatus(entry.node.path)!.toLowerCase(),
+              { 'is-dot': entry.node.isDir }
+            ]"
+          >{{ entry.node.isDir ? '' : getFileGitStatus(entry.node.path) }}</span>
         </div>
       </template>
     </div>
@@ -487,6 +516,22 @@ onMounted(() => {
 .ep-git-badge.git-a { color: #73c991; background: rgba(115, 201, 145, 0.12); } /* Added = green */
 .ep-git-badge.git-d { color: #f14c4c; background: rgba(241, 76, 76, 0.12); }  /* Deleted = red */
 .ep-git-badge.git-r { color: #6ec1e4; background: rgba(110, 193, 228, 0.12); } /* Renamed = blue */
+
+/* Directory dot style (VS Code-like colored dot instead of letter) */
+.ep-git-badge.is-dot {
+  width: 7px;
+  height: 7px;
+  min-width: 7px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 0;
+  line-height: 0;
+}
+.ep-git-badge.is-dot.git-u { background: #73c991; }
+.ep-git-badge.is-dot.git-m { background: #e2c08d; }
+.ep-git-badge.is-dot.git-a { background: #73c991; }
+.ep-git-badge.is-dot.git-d { background: #f14c4c; }
+.ep-git-badge.is-dot.git-r { background: #6ec1e4; }
 
 .ep-node-spinner {
   width: 10px; height: 10px;
