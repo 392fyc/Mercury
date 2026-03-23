@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { nextTick, onMounted, ref } from "vue";
 import TitleBar from "./components/TitleBar.vue";
 import AgentPanel from "./components/AgentPanel.vue";
 import EventLog from "./components/EventLog.vue";
@@ -38,6 +38,16 @@ const activeView = ref<"agents" | "tasks">("agents");
 const showEventLog = ref(false);
 const showAgentRoleSelector = ref(false);
 
+// Splitpanes initial size fix: force recalculation after mount
+// See: https://github.com/antoniandre/splitpanes/issues/108
+const splitpanesKey = ref(0);
+
+function forceSplitpanesRecalc() {
+  nextTick(() => {
+    splitpanesKey.value++;
+  });
+}
+
 function handleOpenSession(panelKey: string) {
   openFloatingTab(panelKey);
 }
@@ -53,6 +63,8 @@ onMounted(async () => {
   await initEventListeners();
   await initTaskListeners();
   await loadTasks();
+  // Force splitpanes recalculation after everything is mounted
+  forceSplitpanesRecalc();
 });
 </script>
 
@@ -78,7 +90,7 @@ onMounted(async () => {
         <!-- Agents View -->
         <div v-show="activeView === 'agents'" class="workspace-view">
           <div v-if="agents.length > 0" class="agents-area">
-            <Splitpanes class="default-theme mercury-splitpanes">
+            <Splitpanes :key="splitpanesKey" class="default-theme mercury-splitpanes">
               <!-- Explorer pane: resizable -->
               <Pane :size="15" :min-size="8" :max-size="25">
                 <ExplorerPanel

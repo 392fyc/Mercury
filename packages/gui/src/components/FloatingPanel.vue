@@ -101,7 +101,7 @@ function minimizeAll() {
   position: absolute;
   top: 16px;
   bottom: 16px;
-  right: 204px; /* sessions panel width (200px) + gap */
+  right: 304px; /* sessions panel width (300px) + gap */
   width: 33%;
   min-width: 360px;
   display: flex;
