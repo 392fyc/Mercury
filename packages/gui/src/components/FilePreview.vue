@@ -1,15 +1,15 @@
 <script setup lang="ts">
 /**
- * FilePreview — displays file content with syntax highlighting, image preview, or markdown rendering.
+ * FilePreview — file viewer/editor with syntax highlighting, minimap, edit mode.
  *
  * Uses:
- * - @tauri-apps/plugin-fs readTextFile / readFile (v2 API: https://v2.tauri.app/reference/javascript/fs/)
- * - @tauri-apps/api/core convertFileSrc for image asset protocol
+ * - @tauri-apps/plugin-fs readTextFile / writeTextFile (v2: https://v2.tauri.app/reference/javascript/fs/)
+ * - @tauri-apps/api/core convertFileSrc (asset protocol: https://v2.tauri.app/reference/javascript/api/namespacecore/)
  * - shiki v4 codeToHtml (https://shiki.matsu.io/guide/install)
- * - marked for Markdown rendering (already installed)
+ * - marked for Markdown rendering
  */
-import { computed, ref, watch } from "vue";
-import { readTextFile, readFile } from "@tauri-apps/plugin-fs";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
+import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
@@ -20,35 +20,55 @@ const props = defineProps<{
 }>();
 
 const content = ref("");
+const editContent = ref("");
 const htmlContent = ref("");
 const imageUrl = ref("");
 const fileType = ref<"code" | "image" | "markdown" | "binary" | "loading" | "error">("loading");
 const errorMsg = ref("");
 const fileSize = ref(0);
+const isEditing = ref(false);
+const isDirty = ref(false);
+const isSaving = ref(false);
+
+// Refs for scroll sync
+const codeContainerEl = ref<HTMLDivElement | null>(null);
+const minimapEl = ref<HTMLDivElement | null>(null);
+const minimapThumbEl = ref<HTMLDivElement | null>(null);
+const editAreaEl = ref<HTMLTextAreaElement | null>(null);
 
 // ─── File type detection ───
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico"]);
 const MARKDOWN_EXTS = new Set(["md", "mdx", "markdown"]);
 const BINARY_EXTS = new Set(["pdf", "zip", "tar", "gz", "7z", "rar", "exe", "dll", "so", "dylib", "wasm", "mp3", "mp4", "avi", "mov", "mkv"]);
+const EDITABLE_EXTS = new Set([
+  "md", "mdx", "markdown", "txt", "json", "yaml", "yml", "toml",
+  "js", "jsx", "ts", "tsx", "vue", "html", "css", "scss", "less",
+  "py", "rs", "go", "java", "c", "cpp", "h", "hpp", "sh", "bash",
+  "sql", "xml", "svg", "ini", "conf", "env", "dockerfile", "makefile",
+  "lua", "rb", "php", "swift", "dart", "r", "ps1", "bat", "cmd",
+]);
 
-const MAX_TEXT_SIZE = 512 * 1024; // 512KB max for text preview
+const MAX_TEXT_SIZE = 512 * 1024;
 
 function getExtension(name: string): string {
   const dot = name.lastIndexOf(".");
   return dot >= 0 ? name.slice(dot + 1).toLowerCase() : "";
 }
 
-// ─── Shiki lazy loader (loads only once) ───
-let shikiPromise: Promise<typeof import("shiki")> | null = null;
+const canEdit = computed(() => {
+  const ext = getExtension(props.fileName);
+  return EDITABLE_EXTS.has(ext) || MARKDOWN_EXTS.has(ext);
+});
 
+const isMarkdown = computed(() => MARKDOWN_EXTS.has(getExtension(props.fileName)));
+
+// ─── Shiki lazy loader ───
+let shikiPromise: Promise<typeof import("shiki")> | null = null;
 function getShiki() {
-  if (!shikiPromise) {
-    shikiPromise = import("shiki");
-  }
+  if (!shikiPromise) shikiPromise = import("shiki");
   return shikiPromise;
 }
 
-// Map file extensions to shiki language identifiers
 function extToLang(ext: string): string {
   const map: Record<string, string> = {
     js: "javascript", jsx: "jsx", ts: "typescript", tsx: "tsx",
@@ -62,8 +82,8 @@ function extToLang(ext: string): string {
     lua: "lua", ruby: "ruby", rb: "ruby", php: "php",
     swift: "swift", dart: "dart", r: "r",
     ps1: "powershell", bat: "batch", cmd: "batch",
-    conf: "ini", ini: "ini", env: "bash",
-    lock: "json", // package-lock.json etc.
+    conf: "ini", ini: "ini", env: "bash", lock: "json",
+    md: "markdown", mdx: "markdown", markdown: "markdown",
   };
   return map[ext] || "text";
 }
@@ -72,16 +92,17 @@ function extToLang(ext: string): string {
 async function loadFile() {
   fileType.value = "loading";
   content.value = "";
+  editContent.value = "";
   htmlContent.value = "";
   imageUrl.value = "";
   errorMsg.value = "";
+  isEditing.value = false;
+  isDirty.value = false;
 
   const ext = getExtension(props.fileName);
 
   try {
     if (IMAGE_EXTS.has(ext)) {
-      // Image: use convertFileSrc for asset protocol
-      // Ref: https://v2.tauri.app/reference/javascript/api/namespacecore/
       imageUrl.value = convertFileSrc(props.filePath);
       fileType.value = "image";
       return;
@@ -92,46 +113,176 @@ async function loadFile() {
       return;
     }
 
-    // Text file: read content
+    // Tauri v2 readTextFile: https://v2.tauri.app/reference/javascript/fs/
     const text = await readTextFile(props.filePath);
     fileSize.value = text.length;
 
     if (text.length > MAX_TEXT_SIZE) {
       content.value = text.slice(0, MAX_TEXT_SIZE);
-      errorMsg.value = `File truncated (showing first ${(MAX_TEXT_SIZE / 1024).toFixed(0)}KB of ${(text.length / 1024).toFixed(0)}KB)`;
+      errorMsg.value = `Truncated (${(MAX_TEXT_SIZE / 1024).toFixed(0)}KB of ${(text.length / 1024).toFixed(0)}KB)`;
     } else {
       content.value = text;
     }
+    editContent.value = content.value;
 
     if (MARKDOWN_EXTS.has(ext)) {
-      // Markdown: render to HTML
       const raw = await marked(content.value);
       htmlContent.value = DOMPurify.sanitize(raw);
       fileType.value = "markdown";
     } else {
-      // Code: syntax highlight with shiki
       fileType.value = "code";
       try {
         const shiki = await getShiki();
         const lang = extToLang(ext);
-        // shiki v4 codeToHtml API: https://shiki.matsu.io/guide/install
+        // shiki v4 codeToHtml: https://shiki.matsu.io/guide/install
         const highlighted = await shiki.codeToHtml(content.value, {
           lang,
           theme: "github-dark",
         });
         htmlContent.value = highlighted;
       } catch {
-        // Fallback: plain text (shiki might not support the lang)
         htmlContent.value = "";
       }
     }
+
+    // Update minimap after render
+    nextTick(() => updateMinimapThumb());
   } catch (err: unknown) {
     fileType.value = "error";
     errorMsg.value = err instanceof Error ? err.message : String(err);
   }
 }
 
-// Watch for file path changes
+// ─── Edit mode ───
+function toggleEdit() {
+  if (isEditing.value) {
+    // Switch back to preview
+    isEditing.value = false;
+    if (isDirty.value) {
+      // Re-render preview with edited content
+      content.value = editContent.value;
+      renderPreview();
+    }
+  } else {
+    editContent.value = content.value;
+    isEditing.value = true;
+    isDirty.value = false;
+    nextTick(() => editAreaEl.value?.focus());
+  }
+}
+
+function onEditInput() {
+  isDirty.value = editContent.value !== content.value;
+}
+
+async function saveFile() {
+  if (!isDirty.value || isSaving.value) return;
+  isSaving.value = true;
+  try {
+    // Tauri v2 writeTextFile: https://v2.tauri.app/reference/javascript/fs/
+    await writeTextFile(props.filePath, editContent.value);
+    content.value = editContent.value;
+    isDirty.value = false;
+    fileSize.value = editContent.value.length;
+    await renderPreview();
+  } catch (err) {
+    errorMsg.value = `Save failed: ${err instanceof Error ? err.message : String(err)}`;
+  } finally {
+    isSaving.value = false;
+  }
+}
+
+async function renderPreview() {
+  const ext = getExtension(props.fileName);
+  if (MARKDOWN_EXTS.has(ext)) {
+    const raw = await marked(content.value);
+    htmlContent.value = DOMPurify.sanitize(raw);
+  } else {
+    try {
+      const shiki = await getShiki();
+      const highlighted = await shiki.codeToHtml(content.value, {
+        lang: extToLang(ext),
+        theme: "github-dark",
+      });
+      htmlContent.value = highlighted;
+    } catch {
+      htmlContent.value = "";
+    }
+  }
+}
+
+// ─── Minimap (canvas-based scroll overview) ───
+// Ref: https://www.ben-knight.dev/blog/web/documentscroll/
+const minimapVisible = computed(() =>
+  (fileType.value === "code" || fileType.value === "markdown") && !isEditing.value && lineCount.value > 30
+);
+
+function updateMinimapThumb() {
+  const container = codeContainerEl.value;
+  const thumb = minimapThumbEl.value;
+  const minimap = minimapEl.value;
+  if (!container || !thumb || !minimap) return;
+
+  const { scrollTop, scrollHeight, clientHeight } = container;
+  const minimapHeight = minimap.clientHeight;
+  if (scrollHeight <= 0) return;
+
+  const thumbH = Math.max(20, (clientHeight / scrollHeight) * minimapHeight);
+  const thumbTop = (scrollTop / scrollHeight) * minimapHeight;
+
+  thumb.style.height = thumbH + "px";
+  thumb.style.top = thumbTop + "px";
+}
+
+function onCodeScroll() {
+  updateMinimapThumb();
+}
+
+let minimapDragging = false;
+
+function onMinimapMouseDown(e: MouseEvent) {
+  e.preventDefault();
+  minimapDragging = true;
+  scrollToMinimapY(e.clientY);
+  window.addEventListener("mousemove", onMinimapMouseMove);
+  window.addEventListener("mouseup", onMinimapMouseUp);
+}
+
+function onMinimapMouseMove(e: MouseEvent) {
+  if (!minimapDragging) return;
+  scrollToMinimapY(e.clientY);
+}
+
+function onMinimapMouseUp() {
+  minimapDragging = false;
+  window.removeEventListener("mousemove", onMinimapMouseMove);
+  window.removeEventListener("mouseup", onMinimapMouseUp);
+}
+
+function scrollToMinimapY(clientY: number) {
+  const container = codeContainerEl.value;
+  const minimap = minimapEl.value;
+  if (!container || !minimap) return;
+
+  const rect = minimap.getBoundingClientRect();
+  const ratio = (clientY - rect.top) / rect.height;
+  container.scrollTop = ratio * (container.scrollHeight - container.clientHeight);
+}
+
+onBeforeUnmount(() => {
+  window.removeEventListener("mousemove", onMinimapMouseMove);
+  window.removeEventListener("mouseup", onMinimapMouseUp);
+});
+
+// ─── Keyboard shortcut: Ctrl+S to save ───
+function onKeydown(e: KeyboardEvent) {
+  if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+    e.preventDefault();
+    if (isEditing.value && isDirty.value) saveFile();
+  }
+}
+
+// Watch for file changes
 watch(() => props.filePath, () => {
   if (props.filePath) loadFile();
 }, { immediate: true });
@@ -140,10 +291,49 @@ const lineCount = computed(() => {
   if (!content.value) return 0;
   return content.value.split("\n").length;
 });
+
+// Minimap lines (scaled-down representation)
+const minimapLines = computed(() => {
+  if (!content.value) return [];
+  return content.value.split("\n").map((line) => {
+    const trimmed = line.replace(/\t/g, "  ");
+    const len = Math.min(trimmed.length, 120);
+    return len;
+  });
+});
 </script>
 
 <template>
-  <div class="file-preview">
+  <div class="file-preview" @keydown="onKeydown">
+    <!-- Toolbar -->
+    <div v-if="fileType !== 'loading' && fileType !== 'error' && fileType !== 'binary' && fileType !== 'image'" class="fp-toolbar">
+      <div class="fp-toolbar-left">
+        <button
+          v-if="canEdit"
+          class="fp-tool-btn"
+          :class="{ active: isEditing }"
+          @click="toggleEdit"
+          :title="isEditing ? 'Switch to Preview' : 'Edit'"
+        >
+          {{ isEditing ? '👁 Preview' : '✏️ Edit' }}
+        </button>
+        <button
+          v-if="isEditing && isDirty"
+          class="fp-tool-btn fp-save-btn"
+          :disabled="isSaving"
+          @click="saveFile"
+          title="Save (Ctrl+S)"
+        >
+          {{ isSaving ? '💾 Saving...' : '💾 Save' }}
+        </button>
+        <span v-if="isDirty" class="fp-dirty-dot" title="Unsaved changes" />
+      </div>
+      <div class="fp-toolbar-right">
+        <span class="fp-toolbar-info">{{ lineCount }} lines</span>
+        <span v-if="fileSize > 0" class="fp-toolbar-info">{{ (fileSize / 1024).toFixed(1) }}KB</span>
+      </div>
+    </div>
+
     <!-- Loading -->
     <div v-if="fileType === 'loading'" class="fp-center">
       <span class="fp-spinner" />
@@ -167,24 +357,77 @@ const lineCount = computed(() => {
       <img :src="imageUrl" :alt="fileName" class="fp-image" />
     </div>
 
-    <!-- Markdown -->
-    <div v-else-if="fileType === 'markdown'" class="fp-markdown-container">
-      <div class="fp-markdown" v-html="htmlContent" />
+    <!-- Edit mode -->
+    <div v-else-if="isEditing" class="fp-edit-container">
+      <textarea
+        ref="editAreaEl"
+        v-model="editContent"
+        class="fp-edit-textarea"
+        spellcheck="false"
+        @input="onEditInput"
+      />
     </div>
 
-    <!-- Code -->
-    <div v-else-if="fileType === 'code'" class="fp-code-container">
-      <!-- Highlighted code -->
-      <div v-if="htmlContent" class="fp-code-html" v-html="htmlContent" />
-      <!-- Fallback: plain text -->
-      <pre v-else class="fp-code-plain"><code>{{ content }}</code></pre>
+    <!-- Markdown preview -->
+    <div v-else-if="fileType === 'markdown'" class="fp-content-wrapper">
+      <div
+        ref="codeContainerEl"
+        class="fp-markdown-container"
+        @scroll="onCodeScroll"
+      >
+        <div class="fp-markdown" v-html="htmlContent" />
+      </div>
+      <!-- Minimap -->
+      <div
+        v-if="minimapVisible"
+        ref="minimapEl"
+        class="fp-minimap"
+        @mousedown="onMinimapMouseDown"
+      >
+        <div class="fp-minimap-lines">
+          <div
+            v-for="(len, i) in minimapLines"
+            :key="i"
+            class="fp-minimap-line"
+            :style="{ width: Math.max(2, len * 0.5) + 'px' }"
+          />
+        </div>
+        <div ref="minimapThumbEl" class="fp-minimap-thumb" />
+      </div>
+    </div>
+
+    <!-- Code preview -->
+    <div v-else-if="fileType === 'code'" class="fp-content-wrapper">
+      <div
+        ref="codeContainerEl"
+        class="fp-code-container"
+        @scroll="onCodeScroll"
+      >
+        <div v-if="htmlContent" class="fp-code-html" v-html="htmlContent" />
+        <pre v-else class="fp-code-plain"><code>{{ content }}</code></pre>
+      </div>
+      <!-- Minimap -->
+      <div
+        v-if="minimapVisible"
+        ref="minimapEl"
+        class="fp-minimap"
+        @mousedown="onMinimapMouseDown"
+      >
+        <div class="fp-minimap-lines">
+          <div
+            v-for="(len, i) in minimapLines"
+            :key="i"
+            class="fp-minimap-line"
+            :style="{ width: Math.max(2, len * 0.5) + 'px' }"
+          />
+        </div>
+        <div ref="minimapThumbEl" class="fp-minimap-thumb" />
+      </div>
     </div>
 
     <!-- Status bar -->
     <div v-if="fileType !== 'loading' && fileType !== 'error'" class="fp-status-bar">
       <span class="fp-status-item">{{ fileName }}</span>
-      <span v-if="lineCount > 0" class="fp-status-item">{{ lineCount }} lines</span>
-      <span v-if="fileSize > 0" class="fp-status-item">{{ (fileSize / 1024).toFixed(1) }}KB</span>
       <span v-if="errorMsg" class="fp-status-warn">{{ errorMsg }}</span>
     </div>
   </div>
@@ -200,6 +443,52 @@ const lineCount = computed(() => {
   overflow: hidden;
 }
 
+/* ─── Toolbar ─── */
+.fp-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 12px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+.fp-toolbar-left, .fp-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.fp-tool-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.fp-tool-btn:hover { background: rgba(255, 255, 255, 0.06); color: var(--text-primary); }
+.fp-tool-btn.active { border-color: var(--accent-main); color: var(--accent-main); }
+
+.fp-save-btn { border-color: var(--accent-success); color: var(--accent-success); }
+.fp-save-btn:hover { background: rgba(0, 230, 118, 0.08); }
+
+.fp-dirty-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-warn);
+}
+
+.fp-toolbar-info {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
 /* ─── Centered states ─── */
 .fp-center {
   display: flex;
@@ -211,30 +500,21 @@ const lineCount = computed(() => {
   color: var(--text-muted);
   font-size: 12px;
 }
-
 .fp-error { color: var(--accent-error); }
 .fp-error-icon { font-size: 24px; }
 .fp-binary-icon { font-size: 24px; opacity: 0.5; }
 
 .fp-spinner {
-  width: 18px;
-  height: 18px;
+  width: 18px; height: 18px;
   border: 2px solid var(--border);
   border-top-color: var(--accent-main);
   border-radius: 50%;
   animation: fp-spin 0.6s linear infinite;
 }
+@keyframes fp-spin { to { transform: rotate(360deg); } }
+.fp-loading-text { font-size: 11px; }
 
-@keyframes fp-spin {
-  to { transform: rotate(360deg); }
-}
-
-.fp-loading-text {
-  color: var(--text-muted);
-  font-size: 11px;
-}
-
-/* ─── Image preview ─── */
+/* ─── Image ─── */
 .fp-image-container {
   flex: 1;
   min-height: 0;
@@ -244,7 +524,6 @@ const lineCount = computed(() => {
   padding: 16px;
   overflow: auto;
 }
-
 .fp-image {
   max-width: 100%;
   max-height: 100%;
@@ -253,10 +532,19 @@ const lineCount = computed(() => {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
-/* ─── Code preview ─── */
+/* ─── Content wrapper (code/md + minimap side by side) ─── */
+.fp-content-wrapper {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ─── Code preview — always left-aligned ─── */
 .fp-code-container {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   overflow: auto;
 }
 
@@ -268,11 +556,9 @@ const lineCount = computed(() => {
   font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
   background: transparent !important;
   overflow-x: auto;
+  text-align: left;
 }
-
-.fp-code-html :deep(code) {
-  font-family: inherit;
-}
+.fp-code-html :deep(code) { font-family: inherit; }
 
 .fp-code-plain {
   margin: 0;
@@ -283,14 +569,17 @@ const lineCount = computed(() => {
   color: var(--text-primary);
   white-space: pre;
   overflow-x: auto;
+  text-align: left;
 }
 
-/* ─── Markdown preview ─── */
+/* ─── Markdown preview — left-aligned ─── */
 .fp-markdown-container {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   overflow: auto;
   padding: 16px 20px;
+  text-align: left;
 }
 
 .fp-markdown :deep(h1),
@@ -299,7 +588,6 @@ const lineCount = computed(() => {
   color: var(--text-primary);
   margin: 16px 0 8px;
 }
-
 .fp-markdown :deep(h1) { font-size: 20px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
 .fp-markdown :deep(h2) { font-size: 16px; }
 .fp-markdown :deep(h3) { font-size: 14px; }
@@ -325,40 +613,85 @@ const lineCount = computed(() => {
   border-radius: 6px;
   overflow-x: auto;
   font-size: 12px;
-}
-
-.fp-markdown :deep(pre code) {
-  background: none;
-  padding: 0;
-}
-
-.fp-markdown :deep(a) {
-  color: var(--accent-main);
-}
-
-.fp-markdown :deep(table) {
-  border-collapse: collapse;
-  width: 100%;
-  font-size: 12px;
-}
-
-.fp-markdown :deep(th),
-.fp-markdown :deep(td) {
-  border: 1px solid var(--border);
-  padding: 6px 10px;
   text-align: left;
 }
+.fp-markdown :deep(pre code) { background: none; padding: 0; }
+.fp-markdown :deep(a) { color: var(--accent-main); }
 
-.fp-markdown :deep(th) {
-  background: var(--bg-secondary);
-  font-weight: 600;
-}
+.fp-markdown :deep(table) { border-collapse: collapse; width: 100%; font-size: 12px; }
+.fp-markdown :deep(th), .fp-markdown :deep(td) { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
+.fp-markdown :deep(th) { background: var(--bg-secondary); font-weight: 600; }
 
 .fp-markdown :deep(blockquote) {
   border-left: 3px solid var(--accent-main);
   margin: 8px 0;
   padding: 4px 12px;
   color: var(--text-muted);
+}
+
+/* ─── Edit mode ─── */
+.fp-edit-container {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.fp-edit-textarea {
+  width: 100%;
+  height: 100%;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border: none;
+  outline: none;
+  resize: none;
+  padding: 12px 16px;
+  font-size: 12px;
+  line-height: 1.6;
+  font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
+  tab-size: 2;
+  white-space: pre;
+  overflow: auto;
+}
+
+.fp-edit-textarea:focus {
+  box-shadow: inset 0 0 0 1px rgba(0, 212, 255, 0.15);
+}
+
+/* ─── Minimap ─── */
+.fp-minimap {
+  position: relative;
+  width: 60px;
+  flex-shrink: 0;
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border);
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.fp-minimap-lines {
+  padding: 4px 4px;
+}
+
+.fp-minimap-line {
+  height: 2px;
+  margin-bottom: 1px;
+  background: rgba(200, 200, 220, 0.15);
+  border-radius: 1px;
+}
+
+.fp-minimap-thumb {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: rgba(0, 212, 255, 0.12);
+  border: 1px solid rgba(0, 212, 255, 0.2);
+  border-radius: 2px;
+  min-height: 20px;
+  transition: top 0.05s;
+}
+
+.fp-minimap:hover .fp-minimap-thumb {
+  background: rgba(0, 212, 255, 0.18);
 }
 
 /* ─── Status bar ─── */
