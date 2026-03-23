@@ -117,6 +117,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_project_info,
             commands::get_git_info,
+            commands::get_git_file_status,
             commands::list_git_branches,
             commands::checkout_branch,
             commands::get_agents,

@@ -532,9 +532,9 @@ const minimapLines = computed(() => {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
-/* ─── Content wrapper (code/md + minimap side by side) ─── */
+/* ─── Content wrapper (code/md with overlay minimap) ─── */
 .fp-content-wrapper {
-  display: flex;
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow: hidden;
@@ -542,7 +542,8 @@ const minimapLines = computed(() => {
 
 /* ─── Code preview — always left-aligned ─── */
 .fp-code-container {
-  flex: 1;
+  width: 100%;
+  height: 100%;
   min-height: 0;
   min-width: 0;
   overflow: auto;
@@ -574,7 +575,8 @@ const minimapLines = computed(() => {
 
 /* ─── Markdown preview — left-aligned ─── */
 .fp-markdown-container {
-  flex: 1;
+  width: 100%;
+  height: 100%;
   min-height: 0;
   min-width: 0;
   overflow: auto;
@@ -633,10 +635,14 @@ const minimapLines = computed(() => {
 .fp-edit-container {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
+  display: flex;
 }
 
 .fp-edit-textarea {
+  flex: 1;
+  min-width: 0;
   width: 100%;
   height: 100%;
   background: var(--bg-primary);
@@ -651,21 +657,31 @@ const minimapLines = computed(() => {
   tab-size: 2;
   white-space: pre;
   overflow: auto;
+  box-sizing: border-box;
 }
 
 .fp-edit-textarea:focus {
   box-shadow: inset 0 0 0 1px rgba(0, 212, 255, 0.15);
 }
 
-/* ─── Minimap ─── */
+/* ─── Minimap (VS Code-style overlay, right-top) ─── */
 .fp-minimap {
-  position: relative;
-  width: 60px;
-  flex-shrink: 0;
-  background: var(--bg-secondary);
-  border-left: 1px solid var(--border);
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 64px;
+  height: 100%;
+  background: rgba(30, 30, 50, 0.6);
+  backdrop-filter: blur(2px);
   overflow: hidden;
   cursor: pointer;
+  z-index: 5;
+  opacity: 0.5;
+  transition: opacity 0.2s;
+}
+
+.fp-content-wrapper:hover .fp-minimap {
+  opacity: 0.9;
 }
 
 .fp-minimap-lines {
@@ -675,7 +691,7 @@ const minimapLines = computed(() => {
 .fp-minimap-line {
   height: 2px;
   margin-bottom: 1px;
-  background: rgba(200, 200, 220, 0.15);
+  background: rgba(200, 200, 220, 0.2);
   border-radius: 1px;
 }
 
@@ -683,15 +699,14 @@ const minimapLines = computed(() => {
   position: absolute;
   left: 0;
   right: 0;
-  background: rgba(0, 212, 255, 0.12);
-  border: 1px solid rgba(0, 212, 255, 0.2);
-  border-radius: 2px;
+  background: rgba(0, 212, 255, 0.15);
+  border-left: 2px solid rgba(0, 212, 255, 0.5);
   min-height: 20px;
   transition: top 0.05s;
 }
 
 .fp-minimap:hover .fp-minimap-thumb {
-  background: rgba(0, 212, 255, 0.18);
+  background: rgba(0, 212, 255, 0.25);
 }
 
 /* ─── Status bar ─── */

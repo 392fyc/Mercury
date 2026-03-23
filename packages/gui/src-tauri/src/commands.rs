@@ -54,6 +54,54 @@ pub fn get_git_info(path: String) -> Result<serde_json::Value, String> {
     }))
 }
 
+/// Get git file status (modified/untracked) for all files in a directory.
+/// Uses `git status --porcelain` (https://git-scm.com/docs/git-status).
+/// Returns a map of relative_path -> status_code (M=modified, ?=untracked, A=added, D=deleted).
+#[tauri::command]
+pub fn get_git_file_status(path: String) -> Result<serde_json::Value, String> {
+    let output = Command::new("git")
+        .args(["status", "--porcelain", "-uall"])
+        .current_dir(&path)
+        .output()
+        .map_err(|e| format!("git status failed: {}", e))?;
+
+    if !output.status.success() {
+        return Ok(serde_json::json!({}));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut statuses = serde_json::Map::new();
+
+    for line in stdout.lines() {
+        if line.len() < 4 {
+            continue;
+        }
+        // Porcelain format: XY filename
+        // X = index status, Y = worktree status
+        let xy = &line[..2];
+        let file_path = line[3..].trim_matches('"').to_string();
+
+        // Determine display status
+        let status = if xy == "??" {
+            "U" // Untracked
+        } else if xy.contains('M') || xy.contains('m') {
+            "M" // Modified
+        } else if xy.contains('A') {
+            "A" // Added
+        } else if xy.contains('D') {
+            "D" // Deleted
+        } else if xy.contains('R') {
+            "R" // Renamed
+        } else {
+            "M" // Fallback
+        };
+
+        statuses.insert(file_path, serde_json::Value::String(status.to_string()));
+    }
+
+    Ok(serde_json::Value::Object(statuses))
+}
+
 /// List all local and remote git branches for a given directory.
 #[tauri::command]
 pub fn list_git_branches(path: String) -> Result<serde_json::Value, String> {

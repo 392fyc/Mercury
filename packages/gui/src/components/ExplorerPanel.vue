@@ -1,13 +1,16 @@
 <script setup lang="ts">
 /**
- * ExplorerPanel — workspace file tree with context menu.
+ * ExplorerPanel — workspace file tree with context menu and git status.
  *
  * Uses @tauri-apps/plugin-fs (v2): readDir, writeTextFile, mkdir
  * Ref: https://v2.tauri.app/reference/javascript/fs/
+ * Git status via Tauri command: git status --porcelain
+ * Ref: https://git-scm.com/docs/git-status
  */
 import { computed, onMounted, ref, watch } from "vue";
 import { readDir, writeTextFile, mkdir } from "@tauri-apps/plugin-fs";
 import { useAgentStore } from "../stores/agents";
+import { getGitFileStatus } from "../lib/tauri-bridge";
 
 const emit = defineEmits<{
   "open-file": [path: string, name: string];
@@ -37,17 +40,14 @@ const shortWorkDir = computed(() => {
   return parts[parts.length - 1] || parts[parts.length - 2] || dir;
 });
 
-// ─── Show hidden files toggle ───
-const showHidden = ref(true); // Default: show dotfiles
-
 // ─── File tree ───
 interface TreeNode {
   name: string;
   path: string;
   isDir: boolean;
-  children?: TreeNode[];
-  expanded?: boolean;
-  loading?: boolean;
+  children: TreeNode[];
+  expanded: boolean;
+  loading: boolean;
   depth: number;
 }
 
@@ -55,26 +55,47 @@ const tree = ref<TreeNode[]>([]);
 const loading = ref(false);
 const error = ref<string | null>(null);
 
-// Heavy dirs: collapsed by default, shown in tree but not auto-expanded
-const HEAVY_DIRS = new Set(["node_modules", "target", "dist", ".git", "__pycache__", ".venv"]);
+// ─── Git file status ───
+const gitStatus = ref<Record<string, string>>({});
 
+async function loadGitStatus() {
+  const dir = workDir.value;
+  if (!dir) return;
+  try {
+    gitStatus.value = await getGitFileStatus(dir);
+  } catch {
+    gitStatus.value = {};
+  }
+}
+
+function getFileGitStatus(filePath: string): string | null {
+  const dir = workDir.value;
+  if (!dir) return null;
+  // Convert absolute path to relative
+  const normalized = filePath.replace(/\\/g, "/");
+  const base = dir.replace(/\\/g, "/");
+  let rel = normalized.startsWith(base) ? normalized.slice(base.length) : normalized;
+  if (rel.startsWith("/")) rel = rel.slice(1);
+  return gitStatus.value[rel] ?? null;
+}
+
+// ─── Directory loading ───
 async function loadDir(dirPath: string, depth: number): Promise<TreeNode[]> {
   try {
+    // Tauri v2 readDir: https://v2.tauri.app/reference/javascript/fs/
     const entries = await readDir(dirPath);
     const nodes: TreeNode[] = [];
     for (const entry of entries) {
-      // Filter hidden files when toggle is off
-      if (!showHidden.value && entry.name.startsWith(".")) continue;
       nodes.push({
         name: entry.name,
         path: `${dirPath}/${entry.name}`.replace(/\\/g, "/"),
         isDir: entry.isDirectory,
-        children: undefined,
+        children: [],
         expanded: false,
+        loading: false,
         depth,
       });
     }
-    // Sort: dirs first, then alphabetical (case-insensitive)
     nodes.sort((a, b) => {
       if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
       return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
@@ -93,6 +114,7 @@ async function loadRoot() {
   error.value = null;
   try {
     tree.value = await loadDir(dir, 0);
+    loadGitStatus();
   } catch (e) {
     error.value = String(e);
   } finally {
@@ -115,17 +137,18 @@ async function toggleExpand(node: TreeNode) {
   node.loading = false;
 }
 
-// ─── Flatten tree for virtual rendering ───
-interface FlatNode extends TreeNode {
+// ─── Flatten tree (references original nodes, no spread) ───
+interface FlatEntry {
+  node: TreeNode;
   indent: number;
 }
 
-const flatTree = computed<FlatNode[]>(() => {
-  const result: FlatNode[] = [];
+const flatTree = computed<FlatEntry[]>(() => {
+  const result: FlatEntry[] = [];
   function walk(nodes: TreeNode[], indent: number) {
     for (const n of nodes) {
-      result.push({ ...n, indent });
-      if (n.isDir && n.expanded && n.children) {
+      result.push({ node: n, indent });
+      if (n.isDir && n.expanded && n.children.length > 0) {
         walk(n.children, indent + 1);
       }
     }
@@ -139,11 +162,7 @@ function refreshTree() {
 }
 
 function fileIcon(name: string, isDir: boolean): string {
-  if (isDir) {
-    if (HEAVY_DIRS.has(name)) return "📦";
-    if (name.startsWith(".")) return "📁";
-    return "📁";
-  }
+  if (isDir) return "📁";
   const ext = name.split(".").pop()?.toLowerCase() ?? "";
   const map: Record<string, string> = {
     vue: "🟢", ts: "🔷", tsx: "🔷", js: "🟡", jsx: "🟡",
@@ -156,7 +175,7 @@ function fileIcon(name: string, isDir: boolean): string {
 }
 
 // ─── Context menu ───
-const ctxMenu = ref<{ x: number; y: number; node: TreeNode | null; isBackground: boolean } | null>(null);
+const ctxMenu = ref<{ x: number; y: number; node: TreeNode | null } | null>(null);
 const newItemName = ref("");
 const newItemType = ref<"file" | "folder" | null>(null);
 const newItemParentPath = ref("");
@@ -166,31 +185,22 @@ function showContextMenu(e: MouseEvent, node: TreeNode | null) {
   e.stopPropagation();
   const x = Math.min(e.clientX, window.innerWidth - 180);
   const y = Math.min(e.clientY, window.innerHeight - 200);
-  ctxMenu.value = { x, y, node, isBackground: node === null };
+  ctxMenu.value = { x, y, node };
 }
 
-function hideContextMenu() {
-  ctxMenu.value = null;
-}
+function hideContextMenu() { ctxMenu.value = null; }
 
 function ctxCopyPath() {
-  if (ctxMenu.value?.node) {
-    navigator.clipboard.writeText(ctxMenu.value.node.path);
-  }
+  if (ctxMenu.value?.node) navigator.clipboard.writeText(ctxMenu.value.node.path);
   hideContextMenu();
 }
-
 function ctxCopyName() {
-  if (ctxMenu.value?.node) {
-    navigator.clipboard.writeText(ctxMenu.value.node.name);
-  }
+  if (ctxMenu.value?.node) navigator.clipboard.writeText(ctxMenu.value.node.name);
   hideContextMenu();
 }
 
 function ctxNewFile() {
-  const parent = ctxMenu.value?.node?.isDir
-    ? ctxMenu.value.node.path
-    : workDir.value;
+  const parent = ctxMenu.value?.node?.isDir ? ctxMenu.value.node.path : workDir.value;
   if (!parent) return;
   newItemParentPath.value = parent;
   newItemType.value = "file";
@@ -199,9 +209,7 @@ function ctxNewFile() {
 }
 
 function ctxNewFolder() {
-  const parent = ctxMenu.value?.node?.isDir
-    ? ctxMenu.value.node.path
-    : workDir.value;
+  const parent = ctxMenu.value?.node?.isDir ? ctxMenu.value.node.path : workDir.value;
   if (!parent) return;
   newItemParentPath.value = parent;
   newItemType.value = "folder";
@@ -211,17 +219,12 @@ function ctxNewFolder() {
 
 async function confirmNewItem() {
   const name = newItemName.value.trim();
-  if (!name || !newItemType.value) {
-    newItemType.value = null;
-    return;
-  }
+  if (!name || !newItemType.value) { newItemType.value = null; return; }
   const fullPath = `${newItemParentPath.value}/${name}`;
   try {
     if (newItemType.value === "folder") {
-      // Tauri v2 mkdir: https://v2.tauri.app/reference/javascript/fs/
       await mkdir(fullPath, { recursive: true });
     } else {
-      // Tauri v2 writeTextFile: https://v2.tauri.app/reference/javascript/fs/
       await writeTextFile(fullPath, "");
     }
     refreshTree();
@@ -232,13 +235,9 @@ async function confirmNewItem() {
   newItemName.value = "";
 }
 
-function cancelNewItem() {
-  newItemType.value = null;
-  newItemName.value = "";
-}
+function cancelNewItem() { newItemType.value = null; newItemName.value = ""; }
 
 watch(workDir, () => loadRoot(), { immediate: false });
-watch(showHidden, () => loadRoot());
 
 onMounted(() => {
   if (workDir.value) loadRoot();
@@ -247,30 +246,22 @@ onMounted(() => {
 
 <template>
   <div class="explorer-panel" @contextmenu="showContextMenu($event, null)">
-    <!-- Header -->
     <div class="ep-header">
       <span class="ep-title">Explorer</span>
-      <button
-        class="ep-toggle-hidden"
-        :class="{ active: showHidden }"
-        :title="showHidden ? 'Hide dotfiles' : 'Show dotfiles'"
-        @click="showHidden = !showHidden"
-      >.*</button>
     </div>
 
-    <!-- Workspace directory -->
     <button v-if="workDir" class="ep-workspace-dir" :title="workDir">
       <span class="ep-ws-icon">📂</span>
       <span class="ep-ws-name">{{ shortWorkDir }}</span>
     </button>
 
-    <!-- New item inline input -->
+    <!-- New item inline -->
     <div v-if="newItemType" class="ep-new-item">
       <span class="ep-new-icon">{{ newItemType === 'folder' ? '📁' : '📄' }}</span>
       <input
         v-model="newItemName"
         class="ep-new-input"
-        :placeholder="newItemType === 'folder' ? 'New folder name...' : 'New file name...'"
+        :placeholder="newItemType === 'folder' ? 'folder name...' : 'file name...'"
         autofocus
         @keydown.enter="confirmNewItem"
         @keydown.esc="cancelNewItem"
@@ -285,23 +276,29 @@ onMounted(() => {
       <div v-else-if="tree.length === 0" class="ep-empty">No workspace</div>
       <template v-else>
         <div
-          v-for="node in flatTree"
-          :key="node.path"
+          v-for="entry in flatTree"
+          :key="entry.node.path"
           class="ep-node"
-          :class="{ dir: node.isDir }"
-          :style="{ paddingLeft: (12 + node.indent * 16) + 'px' }"
-          @click="toggleExpand(node)"
-          @contextmenu="showContextMenu($event, node)"
+          :class="{ dir: entry.node.isDir }"
+          :style="{ paddingLeft: (12 + entry.indent * 16) + 'px' }"
+          @click="toggleExpand(entry.node)"
+          @contextmenu="showContextMenu($event, entry.node)"
         >
-          <span v-if="node.isDir" class="ep-arrow" :class="{ expanded: node.expanded }">▶</span>
-          <span class="ep-file-icon">{{ fileIcon(node.name, node.isDir) }}</span>
-          <span class="ep-name" :class="{ 'is-dir': node.isDir }">{{ node.name }}</span>
-          <span v-if="node.loading" class="ep-node-spinner" />
+          <span v-if="entry.node.isDir" class="ep-arrow" :class="{ expanded: entry.node.expanded }">▶</span>
+          <span class="ep-file-icon">{{ fileIcon(entry.node.name, entry.node.isDir) }}</span>
+          <span class="ep-name" :class="{ 'is-dir': entry.node.isDir }">{{ entry.node.name }}</span>
+          <span v-if="entry.node.loading" class="ep-node-spinner" />
+          <!-- Git status badge -->
+          <span
+            v-if="!entry.node.isDir && getFileGitStatus(entry.node.path)"
+            class="ep-git-badge"
+            :class="'git-' + getFileGitStatus(entry.node.path)!.toLowerCase()"
+          >{{ getFileGitStatus(entry.node.path) }}</span>
         </div>
       </template>
     </div>
 
-    <!-- Footer: branch + refresh -->
+    <!-- Footer -->
     <div class="ep-footer">
       <button v-if="gitBranch" class="ep-branch-btn" :title="'Branch: ' + gitBranch">
         <span class="ep-branch-icon">⎇</span>
@@ -313,11 +310,7 @@ onMounted(() => {
     <!-- Context menu -->
     <Teleport to="body">
       <div v-if="ctxMenu" class="ep-ctx-backdrop" @click="hideContextMenu" @contextmenu.prevent="hideContextMenu" />
-      <div
-        v-if="ctxMenu"
-        class="ep-ctx-menu"
-        :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }"
-      >
+      <div v-if="ctxMenu" class="ep-ctx-menu" :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }">
         <button class="ep-ctx-item" @click="ctxNewFile">📄 New File</button>
         <button class="ep-ctx-item" @click="ctxNewFolder">📁 New Folder</button>
         <div class="ep-ctx-sep" />
@@ -328,9 +321,7 @@ onMounted(() => {
           v-if="ctxMenu.node && !ctxMenu.node.isDir"
           class="ep-ctx-item"
           @click="emit('open-file', ctxMenu.node!.path, ctxMenu.node!.name); hideContextMenu()"
-        >
-          👁 Open Preview
-        </button>
+        >👁 Open Preview</button>
       </div>
     </Teleport>
   </div>
@@ -351,7 +342,6 @@ onMounted(() => {
 .ep-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   padding: 12px 12px 8px;
   flex-shrink: 0;
 }
@@ -364,25 +354,6 @@ onMounted(() => {
   color: var(--text-secondary);
 }
 
-.ep-toggle-hidden {
-  background: none;
-  border: 1px solid transparent;
-  border-radius: 3px;
-  color: var(--text-muted);
-  font-size: 10px;
-  font-family: var(--font-mono);
-  cursor: pointer;
-  padding: 1px 4px;
-  transition: all 0.12s;
-}
-
-.ep-toggle-hidden.active {
-  color: var(--accent-main);
-  border-color: rgba(0, 212, 255, 0.3);
-  background: rgba(0, 212, 255, 0.06);
-}
-
-/* ─── Workspace dir ─── */
 .ep-workspace-dir {
   display: flex;
   align-items: center;
@@ -403,7 +374,6 @@ onMounted(() => {
 .ep-ws-icon { font-size: 12px; flex-shrink: 0; }
 .ep-ws-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* ─── New item inline ─── */
 .ep-new-item {
   display: flex;
   align-items: center;
@@ -423,7 +393,6 @@ onMounted(() => {
   outline: none;
 }
 
-/* ─── Tree ─── */
 .ep-tree {
   flex: 1;
   overflow-y: auto;
@@ -456,25 +425,29 @@ onMounted(() => {
 }
 .ep-arrow.expanded { transform: rotate(90deg); }
 
-.ep-file-icon {
-  font-size: 10px;
-  width: 14px;
-  text-align: center;
-  flex-shrink: 0;
-}
+.ep-file-icon { font-size: 10px; width: 14px; text-align: center; flex-shrink: 0; }
+.ep-name { overflow: hidden; text-overflow: ellipsis; flex: 1; }
+.ep-name.is-dir { color: var(--text-primary); font-weight: 500; }
 
-.ep-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* ─── Git status badges ─── */
+.ep-git-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 0 3px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  line-height: 14px;
+  min-width: 14px;
+  text-align: center;
 }
-.ep-name.is-dir {
-  color: var(--text-primary);
-  font-weight: 500;
-}
+.ep-git-badge.git-u { color: #73c991; background: rgba(115, 201, 145, 0.12); } /* Untracked = green */
+.ep-git-badge.git-m { color: #e2c08d; background: rgba(226, 192, 141, 0.12); } /* Modified = yellow */
+.ep-git-badge.git-a { color: #73c991; background: rgba(115, 201, 145, 0.12); } /* Added = green */
+.ep-git-badge.git-d { color: #f14c4c; background: rgba(241, 76, 76, 0.12); }  /* Deleted = red */
+.ep-git-badge.git-r { color: #6ec1e4; background: rgba(110, 193, 228, 0.12); } /* Renamed = blue */
 
 .ep-node-spinner {
-  width: 10px;
-  height: 10px;
+  width: 10px; height: 10px;
   border: 1.5px solid var(--border);
   border-top-color: var(--accent-main);
   border-radius: 50%;
@@ -492,7 +465,6 @@ onMounted(() => {
 }
 .ep-error { color: var(--accent-error); }
 
-/* ─── Footer ─── */
 .ep-footer {
   padding: 4px 8px;
   flex-shrink: 0;
@@ -501,7 +473,6 @@ onMounted(() => {
   gap: 4px;
   background: var(--bg-secondary);
 }
-
 .ep-branch-btn {
   display: inline-flex;
   align-items: center;
@@ -523,13 +494,11 @@ onMounted(() => {
 .ep-branch-btn:hover { background: rgba(0, 230, 118, 0.08); }
 .ep-branch-icon { font-size: 11px; flex-shrink: 0; }
 .ep-branch-text { overflow: hidden; text-overflow: ellipsis; }
-
 .ep-refresh-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 22px; height: 22px;
   padding: 0;
   background: none;
   border: none;
@@ -543,12 +512,7 @@ onMounted(() => {
 .ep-refresh-btn:hover { background: rgba(255, 255, 255, 0.06); color: var(--text-secondary); }
 
 /* ─── Context Menu ─── */
-.ep-ctx-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 9998;
-}
-
+.ep-ctx-backdrop { position: fixed; inset: 0; z-index: 9998; }
 .ep-ctx-menu {
   position: fixed;
   z-index: 9999;
@@ -559,7 +523,6 @@ onMounted(() => {
   min-width: 160px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
-
 .ep-ctx-item {
   display: block;
   width: 100%;
@@ -571,14 +534,6 @@ onMounted(() => {
   text-align: left;
   cursor: pointer;
 }
-.ep-ctx-item:hover {
-  background: rgba(0, 212, 255, 0.08);
-  color: var(--text-primary);
-}
-
-.ep-ctx-sep {
-  height: 1px;
-  background: var(--border);
-  margin: 3px 8px;
-}
+.ep-ctx-item:hover { background: rgba(0, 212, 255, 0.08); color: var(--text-primary); }
+.ep-ctx-sep { height: 1px; background: var(--border); margin: 3px 8px; }
 </style>

@@ -103,6 +103,12 @@ export async function getGitInfo(path: string): Promise<GitInfo> {
   return invoke<GitInfo>("get_git_info", { path });
 }
 
+/** Get git file status (M/U/A/D) for all changed files.
+ * Uses `git status --porcelain` — see https://git-scm.com/docs/git-status */
+export async function getGitFileStatus(path: string): Promise<Record<string, string>> {
+  return invoke<Record<string, string>>("get_git_file_status", { path });
+}
+
 export interface GitBranchList {
   current: string;
   local: string[];
