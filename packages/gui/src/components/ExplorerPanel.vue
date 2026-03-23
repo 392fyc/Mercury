@@ -13,13 +13,14 @@ import { readDir, writeTextFile, mkdir } from "@tauri-apps/plugin-fs";
 // Ref: https://v2.tauri.app/plugin/dialog/
 import { open } from "@tauri-apps/plugin-dialog";
 import { useAgentStore } from "../stores/agents";
-import { getGitFileStatus, setAgentCwd } from "../lib/tauri-bridge";
+// Tauri invoke bridge: https://v2.tauri.app/develop/calling-rust/
+import { getGitFileStatus, setAgentCwd, getGitInfo } from "../lib/tauri-bridge";
 
 const emit = defineEmits<{
   "open-file": [path: string, name: string];
 }>();
 
-const { defaultWorkDir, getWorkDir, getGitBranch, setWorkDir, mainAgent } = useAgentStore();
+const { defaultWorkDir, getWorkDir, getGitBranch, setWorkDir, setGitBranch, mainAgent } = useAgentStore();
 
 const mainPanelKey = computed(() => {
   const { mainAgent } = useAgentStore();
@@ -45,7 +46,7 @@ const shortWorkDir = computed(() => {
 
 // ─── Change workspace directory ───
 async function changeWorkDir() {
-  // Tauri v2 dialog open: https://v2.tauri.app/reference/javascript/dialog/
+  // Tauri v2 dialog open({directory:true}): https://v2.tauri.app/reference/javascript/dialog/
   const selected = await open({
     directory: true,
     multiple: false,
@@ -54,10 +55,18 @@ async function changeWorkDir() {
   if (!selected || typeof selected !== "string") return;
   const pk = mainPanelKey.value;
   if (pk) {
+    // Sync with store + backend (same as AgentPanel.handleChangeDir)
     setWorkDir(pk, selected);
     const agent = mainAgent.value;
     if (agent) {
       try { await setAgentCwd(agent.id, selected); } catch { /* ignore */ }
+    }
+    // Refresh git branch for new directory
+    try {
+      const info = await getGitInfo(selected);
+      setGitBranch(pk, info.gitBranch);
+    } catch {
+      setGitBranch(pk, null);
     }
   }
 }
