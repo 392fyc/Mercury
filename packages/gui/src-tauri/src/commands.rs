@@ -64,9 +64,10 @@ pub fn get_git_file_status(path: String) -> Result<serde_json::Value, String> {
     let mut statuses = serde_json::Map::new();
 
     // 1. Files with actual worktree diff (M = modified)
-    // `git diff --name-only` only lists files with real content changes
+    // --ignore-cr-at-eol: ignore CRLF/LF differences on Windows
+    // Ref: https://git-scm.com/docs/diff-options
     if let Ok(output) = Command::new("git")
-        .args(["diff", "--name-only"])
+        .args(["diff", "--name-only", "--ignore-cr-at-eol"])
         .current_dir(&path)
         .output()
     {
@@ -100,7 +101,7 @@ pub fn get_git_file_status(path: String) -> Result<serde_json::Value, String> {
     // 3. Deleted files (D)
     // `git diff --name-only --diff-filter=D` lists worktree deletions
     if let Ok(output) = Command::new("git")
-        .args(["diff", "--name-only", "--diff-filter=D"])
+        .args(["diff", "--name-only", "--diff-filter=D", "--ignore-cr-at-eol"])
         .current_dir(&path)
         .output()
     {
@@ -122,7 +123,7 @@ pub fn get_git_file_status(path: String) -> Result<serde_json::Value, String> {
 #[tauri::command]
 pub fn get_git_diff(repo_path: String, file_path: String) -> Result<String, String> {
     let output = Command::new("git")
-        .args(["diff", "--", &file_path])
+        .args(["diff", "--ignore-cr-at-eol", "--", &file_path])
         .current_dir(&repo_path)
         .output()
         .map_err(|e| format!("git diff failed: {}", e))?;
@@ -130,7 +131,7 @@ pub fn get_git_diff(repo_path: String, file_path: String) -> Result<String, Stri
     if !output.status.success() {
         // Try staged diff
         let staged = Command::new("git")
-            .args(["diff", "--cached", "--", &file_path])
+            .args(["diff", "--cached", "--ignore-cr-at-eol", "--", &file_path])
             .current_dir(&repo_path)
             .output()
             .map_err(|e| format!("git diff --cached failed: {}", e))?;
