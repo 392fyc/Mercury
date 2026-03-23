@@ -117,10 +117,21 @@ async function handleMerge(prNumber: number) {
     pending[prNumber] = false;
   }
 }
+
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === "Escape") emit("close");
+}
 </script>
 
 <template>
-  <div class="pr-overlay" @click.self="emit('close')">
+  <div
+    class="pr-overlay"
+    role="dialog"
+    aria-modal="true"
+    aria-label="PR Monitor"
+    @click.self="emit('close')"
+    @keydown="onKeydown"
+  >
     <div class="pr-panel">
       <div class="pr-header">
         <div class="pr-title-row">
@@ -132,6 +143,7 @@ async function handleMerge(prNumber: number) {
           <button
             class="ctrl-btn"
             :class="{ active: polling }"
+            :aria-label="polling ? 'Stop auto-refresh' : 'Start auto-refresh'"
             :title="polling ? 'Stop auto-refresh' : 'Start auto-refresh (60s)'"
             @click="polling ? stopPolling() : startPolling(60)"
           >
@@ -139,11 +151,12 @@ async function handleMerge(prNumber: number) {
           </button>
           <button
             class="ctrl-btn"
+            aria-label="Refresh now"
             title="Refresh now"
             :disabled="loading"
             @click="fetchPrs()"
           >🔄</button>
-          <button class="ctrl-btn close-btn" title="Close" @click="emit('close')">✕</button>
+          <button class="ctrl-btn close-btn" aria-label="Close" title="Close" @click="emit('close')">✕</button>
         </div>
       </div>
 
