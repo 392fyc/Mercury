@@ -11,6 +11,8 @@ import ApprovalQueue from "./components/ApprovalQueue.vue";
 import SessionsPanel from "./components/SessionsPanel.vue";
 import ExplorerPanel from "./components/ExplorerPanel.vue";
 import FloatingPanel from "./components/FloatingPanel.vue";
+// Local SFC import — https://vuejs.org/guide/components/registration
+import FilePreview from "./components/FilePreview.vue";
 import AgentRoleSelector from "./components/AgentRoleSelector.vue";
 import RemoteControlPanel from "./components/RemoteControlPanel.vue";
 import PRMonitorPanel from "./components/PRMonitorPanel.vue";
@@ -200,10 +202,7 @@ onBeforeUnmount(() => {
 
                 <!-- File Preview (shown when a file is open) -->
                 <div v-if="centerTab === 'file'" class="file-preview-area">
-                  <div class="file-preview-placeholder">
-                    <span class="file-preview-path">{{ openFilePath }}</span>
-                    <p class="file-preview-note">File preview — coming soon</p>
-                  </div>
+                  <FilePreview :filePath="openFilePath" :fileName="openFileName" />
                 </div>
 
                 <!-- Floating sub-agent panel (overlays right side) -->
@@ -458,23 +457,6 @@ onBeforeUnmount(() => {
   background: var(--bg-primary);
 }
 
-.file-preview-placeholder {
-  text-align: center;
-  color: var(--text-muted);
-}
-
-.file-preview-path {
-  font-size: 12px;
-  font-family: 'Cascadia Code', 'Fira Code', monospace;
-  color: var(--text-secondary);
-  word-break: break-all;
-}
-
-.file-preview-note {
-  margin-top: 8px;
-  font-size: 11px;
-  opacity: 0.6;
-}
 
 :global(body.explorer-resizing) {
   cursor: col-resize;
