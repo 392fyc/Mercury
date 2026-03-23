@@ -202,11 +202,12 @@ function roleColor(role: string): string {
 .sessions-panel {
   display: flex;
   flex-direction: column;
-  width: 100%;
+  width: 200px;
   height: 100%;
   background: var(--bg-secondary);
   border-left: 1px solid var(--border);
   user-select: none;
+  flex-shrink: 0;
   overflow: hidden;
 }
 

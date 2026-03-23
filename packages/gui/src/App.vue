@@ -79,14 +79,14 @@ onMounted(async () => {
         <div v-show="activeView === 'agents'" class="workspace-view">
           <div v-if="agents.length > 0" class="agents-area">
             <Splitpanes class="default-theme mercury-splitpanes">
-              <!-- Explorer pane -->
-              <Pane :size="15" :min-size="8" :max-size="30">
+              <!-- Explorer pane: resizable -->
+              <Pane :size="15" :min-size="8" :max-size="25">
                 <ExplorerPanel
                   @open-file="(_path, _name) => { /* TODO: open file in center area */ }"
                 />
               </Pane>
               <!-- Center pane: Agent chat area -->
-              <Pane :min-size="40">
+              <Pane :min-size="50">
                 <div class="center-pane">
                   <div class="main-agent-area">
                     <AgentPanel
@@ -101,14 +101,12 @@ onMounted(async () => {
                   <FloatingPanel />
                 </div>
               </Pane>
-              <!-- Sessions pane -->
-              <Pane :size="12" :min-size="6" :max-size="20">
-                <SessionsPanel
-                  @open-session="handleOpenSession"
-                  @create-session="handleCreateSession"
-                />
-              </Pane>
             </Splitpanes>
+            <!-- Sessions panel: fixed width, not resizable -->
+            <SessionsPanel
+              @open-session="handleOpenSession"
+              @create-session="handleCreateSession"
+            />
           </div>
           <div v-else class="loading-state">
             <p v-if="!sidecarReady">Connecting to orchestrator...</p>
@@ -187,7 +185,7 @@ onMounted(async () => {
 }
 
 .agents-area {
-  position: relative;
+  display: flex;
   min-height: 0;
   height: 100%;
   flex: 1;
@@ -231,7 +229,8 @@ onMounted(async () => {
 
 /* ─── Splitpanes dark theme overrides ─── */
 .agents-area :deep(.mercury-splitpanes) {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   height: 100%;
 }
 
