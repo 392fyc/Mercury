@@ -1,9 +1,14 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # RESET: clear review flag after successful git commit.
 # Token cost: ZERO. No external deps.
 
 INPUT=$(cat)
-COMMAND=$(echo "$INPUT" | grep -oP '"command"\s*:\s*"\K[^"]*')
+# Extract command (jq preferred, sed fallback — no grep -oP for portability)
+if command -v jq >/dev/null 2>&1; then
+  COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
+else
+  COMMAND=$(echo "$INPUT" | sed -n 's/.*"command"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+fi
 
 echo "$COMMAND" | grep -qE 'git\s+commit' || exit 0
 

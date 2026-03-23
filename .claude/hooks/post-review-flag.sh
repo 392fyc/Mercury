@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # FLAG: mark review as completed after code-review skill or review Agent runs.
 # Token cost: ZERO. No external deps.
 

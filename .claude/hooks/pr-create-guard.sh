@@ -21,13 +21,24 @@ echo "$INPUT" | grep -qE '(--assignee|--add-assignee)' || MISSING="${MISSING}  -
 # Check --label or --add-label
 echo "$INPUT" | grep -qE '(--label|--add-label)' || MISSING="${MISSING}  - --label (required: bug/enhancement/etc.)\n"
 
+# Extract --base value (supports --base develop, --base=develop, --base "develop")
+BASE_VAL=$(echo "$INPUT" | grep -oE '\-\-base[[:space:]=]+[^[:space:]"]+' | sed 's/.*[[:space:]=]//' | head -1)
+# Also check --base="value" form
+[ -z "$BASE_VAL" ] && BASE_VAL=$(echo "$INPUT" | grep -oE '\-\-base[[:space:]=]+"[^"]+"' | sed 's/.*["]//' | sed 's/"//' | head -1)
+
+if [ -z "$BASE_VAL" ]; then
+  MISSING="${MISSING}  - --base develop (required: all PRs must target develop)\n"
+elif [ "$BASE_VAL" != "develop" ]; then
+  MISSING="${MISSING}  - --base must be 'develop', got '${BASE_VAL}' (Mercury git-flow rule)\n"
+fi
+
 if [ -n "$MISSING" ]; then
   cat >&2 <<MSG
 BLOCKED: PR creation missing required metadata (Mercury standard flow).
 Missing flags:
 $(printf '%b' "$MISSING")
-All PRs must include assignee and label. Use pr-flow skill or add flags manually.
-Example: gh pr create --title "..." --body "..." --assignee 392fyc --label enhancement
+All PRs must include assignee, label, and --base develop.
+Example: gh pr create --title "..." --body "..." --base develop --assignee 392fyc --label enhancement
 MSG
   exit 2
 fi

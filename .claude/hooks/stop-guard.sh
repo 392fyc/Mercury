@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # GATE: block stop if staged uncommitted changes exist.
 # Token cost: ZERO. No external deps.
 
