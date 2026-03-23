@@ -98,6 +98,8 @@ async function handleTriggerReview(pr: PullRequest) {
   try {
     await requestCoderabbitReview(pr.number);
     await fetchPrs();
+  } catch {
+    // Error already stored in lastError by the store
   } finally {
     pending[pr.number] = false;
   }
@@ -105,10 +107,12 @@ async function handleTriggerReview(pr: PullRequest) {
 
 async function handleMerge(prNumber: number) {
   if (pending[prNumber]) return;
-  confirmMerge.value = null;
   pending[prNumber] = true;
   try {
     await requestMerge(prNumber);
+    confirmMerge.value = null;
+  } catch {
+    // Error already stored in lastError by the store; keep confirm dialog visible
   } finally {
     pending[prNumber] = false;
   }

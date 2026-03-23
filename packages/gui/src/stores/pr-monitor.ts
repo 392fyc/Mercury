@@ -72,6 +72,7 @@ async function requestCoderabbitReview(prNumber: number) {
     await triggerCoderabbitReview(prNumber);
   } catch (e) {
     lastError.value = String(e);
+    throw e;
   }
 }
 
@@ -82,6 +83,7 @@ async function requestMerge(prNumber: number) {
     await fetchPrs();
   } catch (e) {
     lastError.value = String(e);
+    throw e;
   }
 }
 

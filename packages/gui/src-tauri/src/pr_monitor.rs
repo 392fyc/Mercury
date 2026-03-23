@@ -114,7 +114,7 @@ impl PrMonitor {
             return Err("Polling already active".to_string());
         }
 
-        let interval = interval_secs.unwrap_or(60);
+        let interval = interval_secs.unwrap_or(60).max(10);
         {
             let mut guard = self.interval_secs.lock().await;
             *guard = interval;
