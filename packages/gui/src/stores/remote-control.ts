@@ -63,24 +63,18 @@ async function refreshStatus() {
   }
 }
 
-/** Apply a backend RemoteControlState snapshot to the reactive store values. */
+/** Apply a backend RemoteControlState snapshot to the reactive store values.
+ *  All status variants are now unit variants (plain strings), so no object
+ *  parsing is needed. Error details arrive in the separate `error_message` field. */
 function applyState(state: RemoteControlState) {
-  // Map snake_case enum variants to our TS type
-  const statusMap: Record<string, RemoteControlStatus> = {
-    stopped: "stopped",
-    starting: "starting",
-    waiting_for_connection: "waiting_for_connection",
-    connected: "connected",
-  };
-  if (typeof state.status === "string") {
-    status.value = statusMap[state.status] ?? "stopped";
-  } else if (typeof state.status === "object" && state.status !== null) {
-    // Rust enum serialization: { "error": "message" }
-    const errObj = state.status as Record<string, string>;
-    if ("error" in errObj) {
-      status.value = "error";
-      error.value = errObj.error;
-    }
+  const validStatuses: RemoteControlStatus[] = [
+    "stopped", "starting", "waiting_for_connection", "connected", "error",
+  ];
+  status.value = validStatuses.includes(state.status as RemoteControlStatus)
+    ? (state.status as RemoteControlStatus)
+    : "stopped";
+  if (state.status === "error" && state.error_message) {
+    error.value = state.error_message;
   }
   sessionUrl.value = state.session_url;
   if (state.session_name) {

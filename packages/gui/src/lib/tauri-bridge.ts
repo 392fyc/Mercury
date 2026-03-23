@@ -617,6 +617,8 @@ export interface RemoteControlState {
   status: RemoteControlStatus;
   session_url: string | null;
   session_name: string | null;
+  /** Present only when `status === "error"`; carries the error description. */
+  error_message?: string | null;
 }
 
 /** Start a `claude remote-control` subprocess with an optional session name. */

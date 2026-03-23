@@ -30,6 +30,9 @@ pub struct RemoteControlManager {
     generation: Arc<AtomicU64>,
 }
 
+/// Remote control session status.
+/// All variants are unit variants so they serialise as plain strings
+/// (e.g. `"stopped"`, `"error"`), matching the front-end TypeScript union type.
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RemoteControlStatus {
@@ -37,7 +40,7 @@ pub enum RemoteControlStatus {
     Starting,
     WaitingForConnection,
     Connected,
-    Error(String),
+    Error,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -45,6 +48,9 @@ pub struct RemoteControlState {
     pub status: RemoteControlStatus,
     pub session_url: Option<String>,
     pub session_name: Option<String>,
+    /// Present only when `status == "error"`; carries the error description.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
 }
 
 impl RemoteControlManager {
@@ -96,6 +102,7 @@ impl RemoteControlManager {
             status: RemoteControlStatus::Starting,
             session_url: None,
             session_name: session_name.clone(),
+        error_message: None,
         });
 
         // Build command: `claude remote-control --verbose`
@@ -109,6 +116,11 @@ impl RemoteControlManager {
             }
             c.arg("--verbose");
             c.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            // Force UTF-8 encoding to prevent codepage 936/GBK garbling on CJK Windows.
+            // Mirrors sidecar.rs environment setup for consistency.
+            c.env("LANG", "en_US.UTF-8");
+            c.env("LC_ALL", "en_US.UTF-8");
+            c.env("PYTHONIOENCODING", "utf-8");
             c
         };
 
@@ -140,12 +152,14 @@ impl RemoteControlManager {
                     let mut name = self.session_name.lock().await;
                     *name = None;
                 }
+                let err_msg = format!("Failed to spawn claude remote-control: {}", e);
                 let _ = app_handle.emit("remote-control-status", RemoteControlState {
-                    status: RemoteControlStatus::Stopped,
+                    status: RemoteControlStatus::Error,
                     session_url: None,
                     session_name: None,
+                    error_message: Some(err_msg.clone()),
                 });
-                return Err(format!("Failed to spawn claude remote-control: {}", e));
+                return Err(err_msg);
             }
         };
 
@@ -197,6 +211,7 @@ impl RemoteControlManager {
                             status: RemoteControlStatus::WaitingForConnection,
                             session_url: Some(url.clone()),
                             session_name: name_for_stdout.clone(),
+                        error_message: None,
                         });
                         let _ = app_stdout.emit("remote-control-url", serde_json::json!({
                             "url": url,
@@ -220,6 +235,7 @@ impl RemoteControlManager {
                         status: RemoteControlStatus::Connected,
                         session_url: url_val,
                         session_name: name_for_stdout.clone(),
+                    error_message: None,
                     });
                 }
             }
@@ -245,6 +261,7 @@ impl RemoteControlManager {
                     status: RemoteControlStatus::Stopped,
                     session_url: None,
                     session_name: name_for_stdout.clone(),
+                error_message: None,
                 });
             }
         });
@@ -307,6 +324,7 @@ impl RemoteControlManager {
                     status: RemoteControlStatus::Stopped,
                     session_url: None,
                     session_name: name_for_stderr,
+                error_message: None,
                 });
             }
         });
@@ -350,6 +368,7 @@ impl RemoteControlManager {
             status,
             session_url,
             session_name,
+        error_message: None,
         }
     }
 
