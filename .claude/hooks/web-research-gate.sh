@@ -1,6 +1,7 @@
-#!/bin/bash
-# GATE: block Write/Edit containing technical claims unless web research was done recently.
-# Scope: SDK imports, version numbers, API signatures, CLI flags, npm packages, URLs as evidence.
+#!/usr/bin/env bash
+# GATE (Layer 1): block Write/Edit containing technical claims unless web research was done recently.
+# Scope: SDK imports, version numbers, API signatures, CLI flags, model names, config identifiers.
+# Layer 2 (prompt hook in settings.json) provides LLM-based judgment for cases regex cannot catch.
 # Applies to ALL agents via .claude/settings.json PreToolUse(Edit|Write).
 # Token cost: ZERO. No external deps.
 

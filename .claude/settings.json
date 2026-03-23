@@ -13,6 +13,11 @@
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/web-research-gate.sh\"",
             "timeout": 5
+          },
+          {
+            "type": "prompt",
+            "prompt": "You are a verification gate. Examine the content being written (in tool_input.new_string or tool_input.content). Determine if it contains ANY external technical claims that could be wrong if not verified against current documentation. This includes but is not limited to: model names (e.g. gpt-*, o3, claude-*, gemini-*), SDK/API method signatures, package versions, CLI flags/arguments, configuration values that reference external services, endpoint URLs, or protocol specifications. Internal project code (variable names, business logic, comments about project architecture) does NOT need verification. If the content contains external technical claims, respond {\"ok\": false, \"reason\": \"Unverified external claim detected: [specific claim]. Use WebSearch to verify before writing.\"}. If the content is purely internal project code or has no external technical claims, respond {\"ok\": true}.",
+            "timeout": 30
           }
         ]
       },
