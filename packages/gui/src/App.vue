@@ -78,29 +78,31 @@ onMounted(async () => {
         <!-- Agents View -->
         <div v-show="activeView === 'agents'" class="workspace-view">
           <div v-if="agents.length > 0" class="agents-area">
-            <Splitpanes class="default-theme" @resized="() => {}">
-              <!-- Explorer pane: resizable, default 15% -->
-              <Pane :size="15" :min-size="8" :max-size="35">
+            <Splitpanes class="default-theme mercury-splitpanes">
+              <!-- Explorer pane -->
+              <Pane :size="15" :min-size="8" :max-size="30">
                 <ExplorerPanel
                   @open-file="(_path, _name) => { /* TODO: open file in center area */ }"
                 />
               </Pane>
               <!-- Center pane: Agent chat area -->
-              <Pane :min-size="35">
-                <div class="main-agent-area">
-                  <AgentPanel
-                    v-if="mainAgent"
-                    :agentId="mainAgent.id"
-                    :agentName="mainAgent.displayName"
-                    :role="'main'"
-                    :panelKey="`main:${mainAgent.id}`"
-                  />
+              <Pane :min-size="40">
+                <div class="center-pane">
+                  <div class="main-agent-area">
+                    <AgentPanel
+                      v-if="mainAgent"
+                      :agentId="mainAgent.id"
+                      :agentName="mainAgent.displayName"
+                      :role="'main'"
+                      :panelKey="`main:${mainAgent.id}`"
+                    />
+                  </div>
+                  <!-- Floating sub-agent panel (overlays right side) -->
+                  <FloatingPanel />
                 </div>
-                <!-- Floating sub-agent panel (overlays right side) -->
-                <FloatingPanel />
               </Pane>
-              <!-- Sessions pane: resizable, min 8%, default 14% -->
-              <Pane :size="14" :min-size="8" :max-size="25">
+              <!-- Sessions pane -->
+              <Pane :size="12" :min-size="6" :max-size="20">
                 <SessionsPanel
                   @open-session="handleOpenSession"
                   @create-session="handleCreateSession"
@@ -185,12 +187,18 @@ onMounted(async () => {
 }
 
 .agents-area {
-  display: flex;
   position: relative;
   min-height: 0;
   height: 100%;
   flex: 1;
-  gap: 0;
+}
+
+.center-pane {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 .main-agent-area {
@@ -204,7 +212,6 @@ onMounted(async () => {
   height: 100%;
   border: none;
   border-radius: 0;
-  border-right: 1px solid rgba(0, 212, 255, 0.08);
 }
 
 .loading-state {
@@ -223,7 +230,8 @@ onMounted(async () => {
 }
 
 /* ─── Splitpanes dark theme overrides ─── */
-.agents-area :deep(.splitpanes) {
+.agents-area :deep(.mercury-splitpanes) {
+  width: 100%;
   height: 100%;
 }
 
@@ -248,5 +256,6 @@ onMounted(async () => {
 
 .agents-area :deep(.splitpanes__pane) {
   overflow: hidden;
+  height: 100%;
 }
 </style>

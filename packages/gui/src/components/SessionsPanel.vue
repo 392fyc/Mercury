@@ -157,7 +157,7 @@ function roleColor(role: string): string {
               </div>
               <div class="sp-meta">
                 {{ bm.status === 'active' ? 'active' : 'idle' }}
-                · {{ formatTime(bm.lastActiveAt) }}
+                <template v-if="formatTime(bm.lastActiveAt)">· {{ formatTime(bm.lastActiveAt) }}</template>
               </div>
             </div>
             <button
