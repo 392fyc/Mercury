@@ -9,14 +9,17 @@
  */
 import { computed, onMounted, ref, watch } from "vue";
 import { readDir, writeTextFile, mkdir } from "@tauri-apps/plugin-fs";
+// Tauri v2 dialog: open({directory:true}) for folder picker
+// Ref: https://v2.tauri.app/plugin/dialog/
+import { open } from "@tauri-apps/plugin-dialog";
 import { useAgentStore } from "../stores/agents";
-import { getGitFileStatus } from "../lib/tauri-bridge";
+import { getGitFileStatus, setAgentCwd } from "../lib/tauri-bridge";
 
 const emit = defineEmits<{
   "open-file": [path: string, name: string];
 }>();
 
-const { defaultWorkDir, getWorkDir, getGitBranch } = useAgentStore();
+const { defaultWorkDir, getWorkDir, getGitBranch, setWorkDir, mainAgent } = useAgentStore();
 
 const mainPanelKey = computed(() => {
   const { mainAgent } = useAgentStore();
@@ -39,6 +42,25 @@ const shortWorkDir = computed(() => {
   const parts = dir.replace(/\\/g, "/").split("/");
   return parts[parts.length - 1] || parts[parts.length - 2] || dir;
 });
+
+// ─── Change workspace directory ───
+async function changeWorkDir() {
+  // Tauri v2 dialog open: https://v2.tauri.app/reference/javascript/dialog/
+  const selected = await open({
+    directory: true,
+    multiple: false,
+    title: "Select workspace directory",
+  });
+  if (!selected || typeof selected !== "string") return;
+  const pk = mainPanelKey.value;
+  if (pk) {
+    setWorkDir(pk, selected);
+    const agent = mainAgent.value;
+    if (agent) {
+      try { await setAgentCwd(agent.id, selected); } catch { /* ignore */ }
+    }
+  }
+}
 
 // ─── File tree ───
 interface TreeNode {
@@ -252,9 +274,10 @@ onMounted(() => {
       <span class="ep-title">Explorer</span>
     </div>
 
-    <button v-if="workDir" class="ep-workspace-dir" :title="workDir">
+    <button v-if="workDir" class="ep-workspace-dir" :title="workDir + ' — click to change'" @click="changeWorkDir">
       <span class="ep-ws-icon">📂</span>
       <span class="ep-ws-name">{{ shortWorkDir }}</span>
+      <span class="ep-ws-change">⋯</span>
     </button>
 
     <!-- New item inline -->
@@ -282,7 +305,7 @@ onMounted(() => {
           :key="entry.node.path"
           class="ep-node"
           :class="{ dir: entry.node.isDir }"
-          :style="{ paddingLeft: (12 + entry.indent * 16) + 'px' }"
+          :style="{ paddingLeft: (20 + entry.indent * 16) + 'px' }"
           @click="toggleExpand(entry.node)"
           @contextmenu="showContextMenu($event, entry.node)"
         >
@@ -374,7 +397,15 @@ onMounted(() => {
 }
 .ep-workspace-dir:hover { background: rgba(255, 255, 255, 0.04); }
 .ep-ws-icon { font-size: 12px; flex-shrink: 0; }
-.ep-ws-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ep-ws-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.ep-ws-change {
+  color: var(--text-muted);
+  font-size: 14px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.ep-workspace-dir:hover .ep-ws-change { opacity: 1; }
 
 .ep-new-item {
   display: flex;

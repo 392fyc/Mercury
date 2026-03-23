@@ -346,10 +346,10 @@ onBeforeUnmount(() => {
 
 .sessions-rail {
   display: flex;
-  flex: 0 0 390px;
-  width: 390px;
-  min-width: 390px;
-  max-width: 390px;
+  flex: 0 0 312px;
+  width: 312px;
+  min-width: 312px;
+  max-width: 312px;
   min-height: 0;
   overflow: hidden;
   background: var(--bg-secondary);

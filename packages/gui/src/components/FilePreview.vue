@@ -773,14 +773,15 @@ const minimapLines = computed(() => {
   box-shadow: inset 0 0 0 1px rgba(0, 212, 255, 0.15);
 }
 
-/* ─── Minimap (VS Code-style overlay, right-top, content-height) ─── */
+/* ─── Minimap (VS Code-style overlay, right-top with margin) ─── */
 .fp-minimap {
   position: absolute;
-  top: 0;
-  right: 0;
+  top: 8px;
+  right: 12px;
   width: 64px;
-  max-height: 100%;
+  max-height: calc(100% - 16px);
   background: rgba(30, 30, 50, 0.5);
+  border-radius: 3px;
   overflow: hidden;
   cursor: pointer;
   z-index: 5;
