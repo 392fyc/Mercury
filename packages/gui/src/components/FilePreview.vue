@@ -140,8 +140,6 @@ const canEdit = computed(() => {
   return EDITABLE_EXTS.has(ext) || MARKDOWN_EXTS.has(ext);
 });
 
-const isMarkdown = computed(() => MARKDOWN_EXTS.has(getExtension(props.fileName)));
-
 // ─── Shiki lazy loader ───
 let shikiPromise: Promise<typeof import("shiki")> | null = null;
 function getShiki() {
