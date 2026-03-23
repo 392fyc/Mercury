@@ -8,7 +8,8 @@ import TaskDashboard from "./components/TaskDashboard.vue";
 import SessionPicker from "./components/SessionPicker.vue";
 import HistoryPanel from "./components/HistoryPanel.vue";
 import ApprovalQueue from "./components/ApprovalQueue.vue";
-import BookmarkRail from "./components/BookmarkRail.vue";
+import SessionsPanel from "./components/SessionsPanel.vue";
+import ExplorerPanel from "./components/ExplorerPanel.vue";
 import FloatingPanel from "./components/FloatingPanel.vue";
 import AgentRoleSelector from "./components/AgentRoleSelector.vue";
 import RemoteControlPanel from "./components/RemoteControlPanel.vue";
@@ -75,7 +76,11 @@ onMounted(async () => {
         <!-- Agents View -->
         <div v-show="activeView === 'agents'" class="workspace-view">
           <div v-if="agents.length > 0" class="agents-area">
-            <!-- Main Agent: full width -->
+            <!-- Explorer: left file tree -->
+            <ExplorerPanel
+              @open-file="(_path, _name) => { /* TODO: open file in center area */ }"
+            />
+            <!-- Main Agent: center area -->
             <div class="main-agent-area">
               <AgentPanel
                 v-if="mainAgent"
@@ -87,11 +92,10 @@ onMounted(async () => {
             </div>
             <!-- Floating sub-agent panel (overlays right side) -->
             <FloatingPanel />
-            <!-- Bookmark rail (right edge) -->
-            <BookmarkRail
+            <!-- Sessions panel: right edge -->
+            <SessionsPanel
               @open-session="handleOpenSession"
               @create-session="handleCreateSession"
-              @open-archived="() => {/* TODO: open archived sessions panel */}"
             />
           </div>
           <div v-else class="loading-state">

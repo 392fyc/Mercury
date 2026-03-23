@@ -325,6 +325,8 @@ watch(inputText, (val) => {
   if (!val.startsWith("/")) {
     slashCommandSelected.value = false;
   }
+  // Auto-resize textarea whenever input changes (programmatic or user-typed)
+  nextTick(() => resizeTextarea());
 });
 
 /** Fetch backend slash commands. Skips if already loaded unless force is true. */
@@ -429,7 +431,8 @@ async function handleSend() {
   pendingImages.value = [];
   historyIndex.value = -1;
   savedInput.value = "";
-  resizeTextarea();
+  // Reset textarea height after Vue updates the DOM with empty value
+  nextTick(() => resizeTextarea());
   // Use empty prompt for image-only sends — adapter handles content block construction
   await sendPrompt(props.panelKey, prompt, images);
 }
