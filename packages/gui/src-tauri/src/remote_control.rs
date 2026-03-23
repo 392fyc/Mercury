@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::Emitter;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -11,6 +12,9 @@ pub struct RemoteControlManager {
     child: Arc<Mutex<Option<Child>>>,
     session_url: Arc<Mutex<Option<String>>>,
     status: Arc<Mutex<RemoteControlStatus>>,
+    session_name: Arc<Mutex<Option<String>>>,
+    /// Ensures cleanup logic runs exactly once when stdout/stderr tasks race.
+    cleanup_done: Arc<AtomicBool>,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -36,6 +40,8 @@ impl RemoteControlManager {
             child: Arc::new(Mutex::new(None)),
             session_url: Arc::new(Mutex::new(None)),
             status: Arc::new(Mutex::new(RemoteControlStatus::Stopped)),
+            session_name: Arc::new(Mutex::new(None)),
+            cleanup_done: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -52,6 +58,13 @@ impl RemoteControlManager {
                 return Err("Remote control is already running".to_string());
             }
         }
+
+        // Persist session name and reset cleanup flag
+        {
+            let mut name = self.session_name.lock().await;
+            *name = session_name.clone();
+        }
+        self.cleanup_done.store(false, Ordering::SeqCst);
 
         // Update status
         {
@@ -111,6 +124,7 @@ impl RemoteControlManager {
         let url_clone = self.session_url.clone();
         let status_clone = self.status.clone();
         let child_clone = self.child.clone();
+        let cleanup_flag_stdout = self.cleanup_done.clone();
         let app_stdout = app_handle.clone();
         let name_for_stdout = session_name.clone();
         tokio::spawn(async move {
@@ -165,25 +179,28 @@ impl RemoteControlManager {
                 }
             }
 
-            // Process exited
-            {
-                let mut status_guard = status_clone.lock().await;
-                *status_guard = RemoteControlStatus::Stopped;
+            // Process exited — only the first task to reach here runs cleanup
+            if !cleanup_flag_stdout.swap(true, Ordering::SeqCst) {
+                {
+                    let mut status_guard = status_clone.lock().await;
+                    *status_guard = RemoteControlStatus::Stopped;
+                }
+                {
+                    let mut child_guard = child_clone.lock().await;
+                    *child_guard = None;
+                }
+                let _ = app_stdout.emit("remote-control-status", RemoteControlState {
+                    status: RemoteControlStatus::Stopped,
+                    session_url: None,
+                    session_name: name_for_stdout.clone(),
+                });
             }
-            {
-                let mut child_guard = child_clone.lock().await;
-                *child_guard = None;
-            }
-            let _ = app_stdout.emit("remote-control-status", RemoteControlState {
-                status: RemoteControlStatus::Stopped,
-                session_url: None,
-                session_name: name_for_stdout.clone(),
-            });
         });
 
         // Monitor stderr for errors and logs
         let status_stderr = self.status.clone();
         let child_stderr = self.child.clone();
+        let cleanup_flag_stderr = self.cleanup_done.clone();
         let app_stderr = app_handle.clone();
         let name_for_stderr = session_name;
         tokio::spawn(async move {
@@ -208,22 +225,22 @@ impl RemoteControlManager {
                 }
             }
 
-            // stderr closed — process likely exited
-            {
-                let mut status_guard = status_stderr.lock().await;
-                if !matches!(*status_guard, RemoteControlStatus::Stopped) {
+            // stderr closed — only the first task to reach here runs cleanup
+            if !cleanup_flag_stderr.swap(true, Ordering::SeqCst) {
+                {
+                    let mut status_guard = status_stderr.lock().await;
                     *status_guard = RemoteControlStatus::Stopped;
                 }
+                {
+                    let mut child_guard = child_stderr.lock().await;
+                    *child_guard = None;
+                }
+                let _ = app_stderr.emit("remote-control-status", RemoteControlState {
+                    status: RemoteControlStatus::Stopped,
+                    session_url: None,
+                    session_name: name_for_stderr,
+                });
             }
-            {
-                let mut child_guard = child_stderr.lock().await;
-                *child_guard = None;
-            }
-            let _ = app_stderr.emit("remote-control-status", RemoteControlState {
-                status: RemoteControlStatus::Stopped,
-                session_url: None,
-                session_name: name_for_stderr,
-            });
         });
 
         Ok(())
@@ -233,6 +250,12 @@ impl RemoteControlManager {
         let mut child = self.child.lock().await;
         if let Some(ref mut c) = *child {
             let _ = c.kill().await;
+            // Wait for the child process to fully exit (timeout 5s) to avoid zombies.
+            // See: https://docs.rs/tokio/latest/tokio/process/struct.Child.html
+            let _ = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                c.wait(),
+            ).await;
             *child = None;
         }
         {
@@ -243,12 +266,18 @@ impl RemoteControlManager {
             let mut url = self.session_url.lock().await;
             *url = None;
         }
+        {
+            let mut name = self.session_name.lock().await;
+            *name = None;
+        }
         Ok(())
     }
 
-    pub async fn get_state(&self, session_name: Option<String>) -> RemoteControlState {
+    /// Returns the current state, reading `session_name` from internal storage.
+    pub async fn get_state(&self) -> RemoteControlState {
         let status = self.status.lock().await.clone();
         let session_url = self.session_url.lock().await.clone();
+        let session_name = self.session_name.lock().await.clone();
         RemoteControlState {
             status,
             session_url,

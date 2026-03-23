@@ -799,6 +799,6 @@ pub async fn get_remote_control_status(
     rc: State<'_, SharedRemoteControl>,
 ) -> Result<serde_json::Value, String> {
     let mgr = rc.lock().await;
-    let state = mgr.get_state(None).await;
+    let state = mgr.get_state().await;
     serde_json::to_value(&state).map_err(|e| e.to_string())
 }

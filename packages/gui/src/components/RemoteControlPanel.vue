@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted } from "vue";
+import { ref, onMounted, onUnmounted } from "vue";
 import { useRemoteControlStore } from "../stores/remote-control";
 
 const emit = defineEmits<{ close: [] }>();
@@ -15,6 +15,9 @@ const {
   initRemoteControlListeners,
 } = useRemoteControlStore();
 
+const copyFeedback = ref<string | null>(null);
+const unlistenFns: Array<() => void> = [];
+
 async function handleStart() {
   await start("Mercury");
 }
@@ -25,7 +28,15 @@ async function handleStop() {
 
 function copyUrl() {
   if (sessionUrl.value) {
-    navigator.clipboard.writeText(sessionUrl.value);
+    navigator.clipboard.writeText(sessionUrl.value)
+      .then(() => {
+        copyFeedback.value = "Copied";
+        setTimeout(() => (copyFeedback.value = null), 2000);
+      })
+      .catch(() => {
+        copyFeedback.value = "Failed";
+        setTimeout(() => (copyFeedback.value = null), 2000);
+      });
   }
 }
 
@@ -52,7 +63,12 @@ const statusColors: Record<string, string> = {
 };
 
 onMounted(async () => {
-  await initRemoteControlListeners();
+  const fns = await initRemoteControlListeners();
+  unlistenFns.push(...fns);
+});
+
+onUnmounted(() => {
+  unlistenFns.forEach((fn) => fn());
 });
 </script>
 
@@ -87,7 +103,7 @@ onMounted(async () => {
           <code class="rc-url-text">{{ sessionUrl }}</code>
           <div class="rc-url-actions">
             <button class="rc-btn rc-btn-small" @click="copyUrl" title="Copy URL">
-              Copy
+              {{ copyFeedback ?? "Copy" }}
             </button>
             <button class="rc-btn rc-btn-small" @click="openInBrowser" title="Open in browser">
               Open

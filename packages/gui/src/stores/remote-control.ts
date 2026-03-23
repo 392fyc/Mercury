@@ -27,6 +27,7 @@ const isRunning = computed(() =>
 
 const isConnected = computed(() => status.value === "connected");
 
+/** Start a remote control session, spawning the `claude remote-control` subprocess. */
 async function start(name?: string) {
   error.value = null;
   logs.value = [];
@@ -39,25 +40,30 @@ async function start(name?: string) {
   }
 }
 
+/** Stop the running remote control subprocess and reset state. */
 async function stop() {
   try {
     await invokeStop();
+    status.value = "stopped";
+    sessionUrl.value = null;
   } catch (e) {
     error.value = String(e);
+    status.value = "error";
   }
-  status.value = "stopped";
-  sessionUrl.value = null;
 }
 
+/** Fetch the current remote control status from the Tauri backend. */
 async function refreshStatus() {
   try {
     const state = await invokeGetStatus();
+    /** Sync reactive store with fetched backend state. */
     applyState(state);
   } catch {
     // Ignore — sidecar may not be ready yet
   }
 }
 
+/** Apply a backend RemoteControlState snapshot to the reactive store values. */
 function applyState(state: RemoteControlState) {
   // Map snake_case enum variants to our TS type
   const statusMap: Record<string, RemoteControlStatus> = {
@@ -82,16 +88,27 @@ function applyState(state: RemoteControlState) {
   }
 }
 
-async function initRemoteControlListeners() {
-  await onRemoteControlStatus((state) => {
+let listenersInitialized = false;
+
+/** Register Tauri event listeners for remote control status, URL, and log updates.
+ *  Returns an array of unlisten functions for cleanup on component unmount. */
+async function initRemoteControlListeners(): Promise<Array<() => void>> {
+  if (listenersInitialized) {
+    console.warn("[remote-control] Listeners already initialized");
+    return [];
+  }
+  listenersInitialized = true;
+
+  const unlistenStatus = await onRemoteControlStatus((state) => {
+    /** Update store from status event. */
     applyState(state);
   });
 
-  await onRemoteControlUrl((data) => {
+  const unlistenUrl = await onRemoteControlUrl((data) => {
     sessionUrl.value = data.url;
   });
 
-  await onRemoteControlLog((data) => {
+  const unlistenLog = await onRemoteControlLog((data) => {
     logs.value = [...logs.value.slice(-99), `[${data.level}] ${data.message}`];
     if (data.level === "error") {
       error.value = data.message;
@@ -100,8 +117,15 @@ async function initRemoteControlListeners() {
 
   // Fetch initial status
   await refreshStatus();
+
+  return [
+    () => { unlistenStatus(); listenersInitialized = false; },
+    unlistenUrl,
+    unlistenLog,
+  ];
 }
 
+/** Composable that exposes remote control reactive state and actions. */
 export function useRemoteControlStore() {
   return {
     status,
