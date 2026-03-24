@@ -22,19 +22,21 @@ BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
 LAST_COMMIT=$(git log -1 --oneline 2>/dev/null || echo "unknown")
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 GIT_STATUS=$(git status --porcelain 2>/dev/null | head -20)
-# Read vault name from config (default: Mercury_KB)
-VAULT_NAME=$(node -e "try{console.log(require('$CLAUDE_PROJECT_DIR/mercury.config.json').obsidian.vaultName||'Mercury_KB')}catch(e){console.log('Mercury_KB')}" 2>/dev/null)
+# Read vault config via jq (primary) or node (fallback)
+if command -v jq &>/dev/null && [ -f "$CLAUDE_PROJECT_DIR/mercury.config.json" ]; then
+  VAULT_NAME=$(jq -r '.obsidian.vaultName // "Mercury_KB"' "$CLAUDE_PROJECT_DIR/mercury.config.json" 2>/dev/null)
+  KB_VAULT_PATH=$(jq -r '.obsidian.vaultPath // empty' "$CLAUDE_PROJECT_DIR/mercury.config.json" 2>/dev/null)
+else
+  VAULT_NAME=$(node -e "try{const c=require('$CLAUDE_PROJECT_DIR/mercury.config.json');console.log(c.obsidian.vaultName||'Mercury_KB')}catch(e){console.log('Mercury_KB')}" 2>/dev/null)
+  KB_VAULT_PATH=$(node -e "try{console.log(require('$CLAUDE_PROJECT_DIR/mercury.config.json').obsidian.vaultPath)}catch(e){}" 2>/dev/null)
+fi
 # Detect active tasks via Obsidian CLI (preferred) or config-resolved path (fallback)
+# Task ID formats: TASK-NAME-NNN (manual) or TASK-hexhexhex (shortId)
 ACTIVE_TASKS=""
 if command -v obsidian &>/dev/null; then
   ACTIVE_TASKS=$(obsidian vault="$VAULT_NAME" search query="in_progress" 2>/dev/null \
-    | grep -oE 'TASK-[A-Z][A-Z0-9-]+-[0-9]+' | head -5 | sort -u)
+    | grep -oE 'TASK-[A-Za-z0-9-]+' | head -5 | sort -u)
 else
-  # Fallback: resolve vault path from mercury.config.json using node (handles JSON escaping)
-  KB_VAULT_PATH=""
-  if [ -f "$CLAUDE_PROJECT_DIR/mercury.config.json" ]; then
-    KB_VAULT_PATH=$(node -e "try{console.log(require('$CLAUDE_PROJECT_DIR/mercury.config.json').obsidian.vaultPath)}catch(e){}" 2>/dev/null)
-  fi
   if [ -n "$KB_VAULT_PATH" ] && [ -d "$KB_VAULT_PATH/10-tasks" ]; then
     ACTIVE_TASKS=$(find "$KB_VAULT_PATH/10-tasks" -name "*.json" -not -name "*.receipt.json" \
       -exec grep -lE '"status":[[:space:]]*"(in_progress|dispatched|implementation_done)"' {} \; 2>/dev/null \

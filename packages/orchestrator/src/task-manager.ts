@@ -950,8 +950,12 @@ export function buildReferencePrompt(
   handoffFilePath?: string,
 ): string {
   // Defensive: warn if path looks like absolute or has Mercury_KB prefix
-  if (taskFilePath.includes("Mercury_KB") || /^[A-Z]:[/\\]|^\//.test(taskFilePath)) {
+  const isNotVaultRelative = (p: string) => p.includes("Mercury_KB") || /^[A-Z]:[/\\]|^\//.test(p);
+  if (isNotVaultRelative(taskFilePath)) {
     console.warn(`[buildReferencePrompt] taskFilePath should be vault-relative, got: ${taskFilePath}`);
+  }
+  if (handoffFilePath && isNotVaultRelative(handoffFilePath)) {
+    console.warn(`[buildReferencePrompt] handoffFilePath should be vault-relative, got: ${handoffFilePath}`);
   }
   const lines: string[] = [];
 

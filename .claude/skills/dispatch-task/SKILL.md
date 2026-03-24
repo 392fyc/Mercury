@@ -53,7 +53,7 @@ Build the JSON payload for `create_task`. The orchestrator generates `taskId`, `
   "allowedWriteScope": {
     "codePaths": ["<paths the worker may modify>"]
   },
-  "docsMustNotTouch": ["CLAUDE.md", "AGENTS.md", "Mercury_KB/99-templates/"],
+  "docsMustNotTouch": ["CLAUDE.md", "AGENTS.md", "99-templates/"],
   "definitionOfDone": ["<objectively verifiable criterion 1>", "<criterion 2>"],
   "requiredEvidence": ["<test output, runtime proof, screenshots>"]
 }
@@ -117,4 +117,4 @@ After dispatch succeeds:
 - **Empty definitionOfDone**: Without verifiable criteria, acceptance review cannot function. Each criterion should be objectively testable.
 - **Overly broad allowedWriteScope**: Scope the worker tightly. `["packages/"]` is too broad — prefer `["packages/orchestrator/src/"]`.
 - **Missing readScope docs**: If the worker needs context docs to understand the task, list them. The orchestrator injects these into the dispatch prompt.
-- **Forgetting docsMustNotTouch defaults**: Always include `CLAUDE.md`, `AGENTS.md`, and `Mercury_KB/99-templates/` unless the task specifically requires modifying them.
+- **Forgetting docsMustNotTouch defaults**: Always include `CLAUDE.md`, `AGENTS.md`, and `99-templates/` unless the task specifically requires modifying them.
