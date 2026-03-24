@@ -30,18 +30,23 @@ else
   VAULT_NAME=$(node -e "try{const c=require('$CLAUDE_PROJECT_DIR/mercury.config.json');console.log(c.obsidian.vaultName||'Mercury_KB')}catch(e){console.log('Mercury_KB')}" 2>/dev/null)
   KB_VAULT_PATH=$(node -e "try{console.log(require('$CLAUDE_PROJECT_DIR/mercury.config.json').obsidian.vaultPath)}catch(e){}" 2>/dev/null)
 fi
+# Scan a tasks directory for active task IDs
+scan_active_tasks() {
+  local tasks_dir="$1"
+  find "$tasks_dir" -name "*.json" -not -name "*.receipt.json" \
+    -exec grep -lE '"status":[[:space:]]*"(in_progress|dispatched|implementation_done)"' {} \; 2>/dev/null \
+    | head -5 | while read -r f; do basename "$f" .json; done
+}
 # Detect active tasks via Obsidian CLI (preferred) or config-resolved path (fallback)
 # Task ID formats: TASK-NAME-NNN (manual) or TASK-hexhexhex (shortId)
 ACTIVE_TASKS=""
 if command -v obsidian &>/dev/null; then
-  ACTIVE_TASKS=$(obsidian vault="$VAULT_NAME" search query="in_progress" 2>/dev/null \
+  ACTIVE_TASKS=$(obsidian vault="$VAULT_NAME" search query="in_progress" format=json 2>/dev/null \
     | grep -oE 'TASK-[A-Za-z0-9-]+' | head -5 | sort -u)
 fi
 # Fallback 1: filesystem scan using config-resolved vaultPath
 if [ -z "$ACTIVE_TASKS" ] && [ -n "$KB_VAULT_PATH" ] && [ -d "$KB_VAULT_PATH/10-tasks" ]; then
-  ACTIVE_TASKS=$(find "$KB_VAULT_PATH/10-tasks" -name "*.json" -not -name "*.receipt.json" \
-    -exec grep -lE '"status":[[:space:]]*"(in_progress|dispatched|implementation_done)"' {} \; 2>/dev/null \
-    | head -5 | while read -r f; do basename "$f" .json; done)
+  ACTIVE_TASKS=$(scan_active_tasks "$KB_VAULT_PATH/10-tasks")
 fi
 # Fallback 2: sibling vault convention ({ProjectName}_KB alongside project)
 if [ -z "$ACTIVE_TASKS" ]; then
@@ -53,9 +58,7 @@ if [ -z "$ACTIVE_TASKS" ]; then
     SIBLING_KB="$(dirname "$CLAUDE_PROJECT_DIR")/${VAULT_NAME}"
   fi
   if [ -d "$SIBLING_KB/10-tasks" ]; then
-    ACTIVE_TASKS=$(find "$SIBLING_KB/10-tasks" -name "*.json" -not -name "*.receipt.json" \
-      -exec grep -lE '"status":[[:space:]]*"(in_progress|dispatched|implementation_done)"' {} \; 2>/dev/null \
-      | head -5 | while read -r f; do basename "$f" .json; done)
+    ACTIVE_TASKS=$(scan_active_tasks "$SIBLING_KB/10-tasks")
   fi
 fi
 
