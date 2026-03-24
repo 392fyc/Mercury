@@ -528,9 +528,12 @@ export class TaskManager {
       }
     }
 
-    // Check docsUpdated against docsMustNotTouch
+    // Check docsUpdated against docsMustNotTouch (supports prefix matching for directories)
     for (const doc of receipt.docsUpdated) {
-      if (task.docsMustNotTouch.includes(doc)) {
+      const blocked = task.docsMustNotTouch.some(
+        (entry) => doc === entry || (entry.endsWith("/") && doc.startsWith(entry))
+      );
+      if (blocked) {
         violations.push({ file: doc, reason: "Listed in docsMustNotTouch" });
       }
     }
@@ -921,6 +924,11 @@ function fallbackDevTemplate(): string {
     "# Dispatch: {{taskId}}",
     "",
     "{{context}}",
+    "",
+    "## KB Access",
+    "KB vault: `{{vaultName}}` — use Obsidian MCP (`mcp__obsidian__*`) or CLI (`obsidian vault=\"{{vaultName}}\"`).",
+    "Task bundle: `{{taskFilePath}}` (vault-relative path).",
+    "Never construct `Mercury_KB/...` paths from the project CWD.",
     "",
     "## Task Bundle (machine-readable)",
     "```json",
