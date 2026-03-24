@@ -28,11 +28,10 @@ if command -v obsidian &>/dev/null; then
   ACTIVE_TASKS=$(obsidian vault="Mercury_KB" search query="in_progress" 2>/dev/null \
     | grep -oE 'TASK-[A-Z][A-Z0-9-]+-[0-9]+' | head -5 | sort -u)
 else
-  # Fallback: resolve vault path from mercury.config.json
+  # Fallback: resolve vault path from mercury.config.json using node (handles JSON escaping)
   KB_VAULT_PATH=""
   if [ -f "$CLAUDE_PROJECT_DIR/mercury.config.json" ]; then
-    KB_VAULT_PATH=$(grep -o '"vaultPath"[[:space:]]*:[[:space:]]*"[^"]*"' "$CLAUDE_PROJECT_DIR/mercury.config.json" \
-      | head -1 | sed 's/.*"vaultPath"[[:space:]]*:[[:space:]]*"//' | sed 's/"$//' | tr '\\\\' '/')
+    KB_VAULT_PATH=$(node -e "try{console.log(require('$CLAUDE_PROJECT_DIR/mercury.config.json').obsidian.vaultPath)}catch(e){}" 2>/dev/null)
   fi
   if [ -n "$KB_VAULT_PATH" ] && [ -d "$KB_VAULT_PATH/10-tasks" ]; then
     ACTIVE_TASKS=$(find "$KB_VAULT_PATH/10-tasks" -name "*.json" -not -name "*.receipt.json" \

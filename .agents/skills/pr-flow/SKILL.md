@@ -34,7 +34,8 @@ if ! [[ "$TASK_ID" =~ ^TASK- ]]; then
   TASK_ID=$(echo "$BRANCH" | grep -oE 'TASK-[A-Z][A-Z0-9-]+-[0-9]+' | head -1)
 fi
 # Resolve KB vault path from mercury.config.json (KB is outside project CWD)
-KB_VAULT_PATH=$(jq -r '.obsidian.vaultPath // empty' mercury.config.json 2>/dev/null)
+KB_VAULT_PATH=$(jq -r '.obsidian.vaultPath // empty' mercury.config.json 2>/dev/null \
+  || node -e "try{console.log(require('./mercury.config.json').obsidian.vaultPath)}catch(e){}" 2>/dev/null)
 TASK_FILE=""
 if [ -n "$TASK_ID" ] && [ -n "$KB_VAULT_PATH" ] && [ -f "$KB_VAULT_PATH/10-tasks/$TASK_ID.json" ]; then
   TASK_FILE="$KB_VAULT_PATH/10-tasks/$TASK_ID.json"
