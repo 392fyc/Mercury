@@ -22,10 +22,12 @@ BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
 LAST_COMMIT=$(git log -1 --oneline 2>/dev/null || echo "unknown")
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 GIT_STATUS=$(git status --porcelain 2>/dev/null | head -20)
+# Read vault name from config (default: Mercury_KB)
+VAULT_NAME=$(node -e "try{console.log(require('$CLAUDE_PROJECT_DIR/mercury.config.json').obsidian.vaultName||'Mercury_KB')}catch(e){console.log('Mercury_KB')}" 2>/dev/null)
 # Detect active tasks via Obsidian CLI (preferred) or config-resolved path (fallback)
 ACTIVE_TASKS=""
 if command -v obsidian &>/dev/null; then
-  ACTIVE_TASKS=$(obsidian vault="Mercury_KB" search query="in_progress" 2>/dev/null \
+  ACTIVE_TASKS=$(obsidian vault="$VAULT_NAME" search query="in_progress" 2>/dev/null \
     | grep -oE 'TASK-[A-Z][A-Z0-9-]+-[0-9]+' | head -5 | sort -u)
 else
   # Fallback: resolve vault path from mercury.config.json using node (handles JSON escaping)

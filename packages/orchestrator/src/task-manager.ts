@@ -884,11 +884,20 @@ export function buildDevPrompt(
 
   const scopeDisplay = formatWriteScope(task.allowedWriteScope);
 
+  // Read vault name from config for template injection
+  let vaultName = "Mercury_KB";
+  try {
+    const configPath = resolve(basePath, "mercury.config.json");
+    const config = JSON.parse(readFileSync(configPath, "utf-8"));
+    vaultName = config.obsidian?.vaultName ?? vaultName;
+  } catch { /* use default */ }
+
   // Single-pass template substitution to prevent cross-replacement
   const placeholders: Record<string, string> = {
     "{{taskId}}": `${task.title} [${task.taskId}]`,
     "{{context}}": task.context,
     "{{taskFilePath}}": `10-tasks/${task.taskId}.json`,
+    "{{vaultName}}": vaultName,
     "{{allowedWriteScope}}": scopeDisplay,
     "{{docsMustNotTouch}}": task.docsMustNotTouch.join(", ") || "无",
     "{{bundleJson}}": JSON.stringify(bundleMeta, null, 2),
@@ -940,6 +949,10 @@ export function buildReferencePrompt(
   taskFilePath: string,
   handoffFilePath?: string,
 ): string {
+  // Defensive: warn if path looks like absolute or has Mercury_KB prefix
+  if (taskFilePath.includes("Mercury_KB") || /^[A-Z]:[/\\]|^\//.test(taskFilePath)) {
+    console.warn(`[buildReferencePrompt] taskFilePath should be vault-relative, got: ${taskFilePath}`);
+  }
   const lines: string[] = [];
 
   lines.push(`实现任务 ${task.taskId}: ${task.title}`);

@@ -8,7 +8,7 @@
 
 ## KB Access
 
-KB 文件位于 Obsidian vault `Mercury_KB`，**不在项目目录内**。
+KB 文件位于 Obsidian vault `{{vaultName}}`，**不在项目目录内**。
 - 使用 `mcp__obsidian__obsidian_get_file_contents` 读取，filepath 为 vault-relative 路径（如 `{{taskFilePath}}`）
 - 使用 `mcp__obsidian__obsidian_simple_search` 搜索
 - **禁止**从项目 CWD 拼接 `Mercury_KB/xxx` 路径
