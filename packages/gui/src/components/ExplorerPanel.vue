@@ -385,7 +385,7 @@ watch(workDir, () => loadRoot(), { immediate: true });
         <button
           v-if="ctxMenu.node && !ctxMenu.node.isDir"
           class="ep-ctx-item"
-          @click="emit('open-file', ctxMenu.node!.path, ctxMenu.node!.name); hideContextMenu()"
+          @click="emit('open-file', ctxMenu.node?.path ?? '', ctxMenu.node?.name ?? ''); hideContextMenu()"
         >👁 Open Preview</button>
       </div>
     </Teleport>

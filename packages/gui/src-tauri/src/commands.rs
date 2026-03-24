@@ -119,7 +119,8 @@ pub fn get_git_file_status(path: String) -> Result<serde_json::Value, String> {
         if output.status.success() {
             for line in String::from_utf8_lossy(&output.stdout).lines() {
                 let f = line.trim();
-                if !f.is_empty() {
+                if !f.is_empty() && !statuses.contains_key(f) {
+                    // Only set D if not already M (priority: M > D > U)
                     statuses.insert(f.to_string(), serde_json::Value::String("D".to_string()));
                 }
             }

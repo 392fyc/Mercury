@@ -84,6 +84,7 @@ async function handleDeleteSession(panelKey: string, event: Event) {
       await rpcDeleteSession(agentId, sessionId);
     }
     removeBookmark(panelKey);
+    hideContextMenu();
   } catch (err) {
     console.warn("[SessionsPanel] deleteSession RPC failed:", err);
   } finally {
@@ -129,16 +130,18 @@ function roleColor(role: string): string {
     <!-- Session list -->
     <div class="sp-list">
       <template v-for="group in groupedSessions" :key="group.role">
-        <!-- Group header -->
-        <div
+        <!-- Group header (WAI-ARIA disclosure pattern) -->
+        <button
+          type="button"
           class="sp-group-header"
           :class="{ collapsed: collapsedGroups.has(group.role) }"
+          :aria-expanded="!collapsedGroups.has(group.role)"
           @click="toggleGroup(group.role)"
         >
           <span class="sp-arrow">▼</span>
           <span class="sp-group-label">{{ group.role }}</span>
           <span class="sp-group-count">{{ group.items.length }}</span>
-        </div>
+        </button>
 
         <!-- Group items -->
         <div
@@ -150,13 +153,16 @@ function roleColor(role: string): string {
             :key="bm.panelKey"
             class="sp-item"
             :class="{ active: isTabOpen(bm.panelKey) }"
+            role="button"
+            tabindex="0"
             @click="emit('open-session', bm.panelKey)"
+            @keydown.enter="emit('open-session', bm.panelKey)"
             @contextmenu="showContextMenu(bm.panelKey, $event)"
           >
             <span
               class="sp-dot"
               :class="{ running: bm.status === 'active' }"
-              :style="{ background: roleColor(bm.role) }"
+              :style="{ '--dot-color': roleColor(bm.role), background: roleColor(bm.role) }"
             />
             <div class="sp-info">
               <div class="sp-name">
@@ -259,6 +265,7 @@ function roleColor(role: string): string {
   display: flex;
   align-items: center;
   gap: 6px;
+  width: 100%;
   padding: 12px 8px 6px;
   cursor: pointer;
   font-size: 11px;
@@ -266,6 +273,9 @@ function roleColor(role: string): string {
   text-transform: uppercase;
   letter-spacing: 0.8px;
   color: var(--text-secondary);
+  background: none;
+  border: none;
+  text-align: left;
   transition: color 0.15s;
 }
 
@@ -346,7 +356,7 @@ function roleColor(role: string): string {
   position: absolute;
   inset: -3px;
   border-radius: 50%;
-  border: 1.5px solid currentColor;
+  border: 1.5px solid var(--dot-color, currentColor);
   opacity: 0.4;
   animation: sp-pulse 2s infinite;
 }
@@ -404,6 +414,13 @@ function roleColor(role: string): string {
 .sp-delete:hover {
   color: var(--accent-error) !important;
   background: rgba(255, 82, 82, 0.15);
+}
+
+/* Focus-visible: keyboard nav reveals delete button */
+.sp-item:focus-within .sp-delete,
+.sp-delete:focus-visible {
+  opacity: 1;
+  color: var(--text-secondary);
 }
 
 /* ─── Empty state ─── */
