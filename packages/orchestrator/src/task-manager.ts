@@ -820,6 +820,29 @@ export class TaskManager {
 // ─── Prompt Builders ───
 
 /** Format allowedWriteScope for human-readable display (codePaths + kbPaths). */
+/**
+ * Resolve the Obsidian vault name from mercury.config.json.
+ * Priority: obsidian.vaultName > basename(obsidian.vaultPath) > null.
+ * Returns null when config is missing or has no obsidian section.
+ */
+function resolveVaultName(basePath: string): string | null {
+  try {
+    const configPath = resolve(basePath, "mercury.config.json");
+    const config = JSON.parse(readFileSync(configPath, "utf-8"));
+    const obs = config.obsidian;
+    if (!obs) return null;
+    if (obs.vaultName) return obs.vaultName;
+    if (obs.vaultPath) {
+      // Derive vault name from the last segment of the configured path
+      const segments = obs.vaultPath.replace(/[\\/]+$/, "").split(/[\\/]/);
+      return segments[segments.length - 1] || null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function formatWriteScope(scope: TaskBundle["allowedWriteScope"]): string {
   const parts: string[] = [];
   if (scope.codePaths.length) parts.push(`code: ${scope.codePaths.join(", ")}`);
@@ -887,20 +910,15 @@ export function buildDevPrompt(
 
   const scopeDisplay = formatWriteScope(task.allowedWriteScope);
 
-  // Read vault name from config for template injection
-  let vaultName = "Mercury_KB";
-  try {
-    const configPath = resolve(basePath, "mercury.config.json");
-    const config = JSON.parse(readFileSync(configPath, "utf-8"));
-    vaultName = config.obsidian?.vaultName ?? vaultName;
-  } catch { /* use default */ }
+  // Resolve vault name: prefer vaultName, derive from vaultPath basename, or null
+  const vaultName = resolveVaultName(basePath);
 
   // Single-pass template substitution to prevent cross-replacement
   const placeholders: Record<string, string> = {
     "{{taskId}}": `${task.title} [${task.taskId}]`,
     "{{context}}": task.context,
     "{{taskFilePath}}": `10-tasks/${task.taskId}.json`,
-    "{{vaultName}}": vaultName,
+    "{{vaultName}}": vaultName ?? "Mercury_KB",
     "{{allowedWriteScope}}": scopeDisplay,
     "{{docsMustNotTouch}}": task.docsMustNotTouch.join(", ") || "无",
     "{{bundleJson}}": JSON.stringify(bundleMeta, null, 2),

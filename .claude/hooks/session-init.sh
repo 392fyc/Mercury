@@ -37,11 +37,20 @@ if command -v obsidian &>/dev/null; then
   ACTIVE_TASKS=$(obsidian vault="$VAULT_NAME" search query="in_progress" 2>/dev/null \
     | grep -oE 'TASK-[A-Za-z0-9-]+' | head -5 | sort -u)
 fi
-# Fallback: filesystem scan when CLI unavailable or returned no results
+# Fallback 1: filesystem scan using config-resolved vaultPath
 if [ -z "$ACTIVE_TASKS" ] && [ -n "$KB_VAULT_PATH" ] && [ -d "$KB_VAULT_PATH/10-tasks" ]; then
   ACTIVE_TASKS=$(find "$KB_VAULT_PATH/10-tasks" -name "*.json" -not -name "*.receipt.json" \
     -exec grep -lE '"status":[[:space:]]*"(in_progress|dispatched|implementation_done)"' {} \; 2>/dev/null \
     | head -5 | while read -r f; do basename "$f" .json; done)
+fi
+# Fallback 2: sibling vault convention ({ProjectDir}_KB alongside project)
+if [ -z "$ACTIVE_TASKS" ]; then
+  SIBLING_KB="$(dirname "$CLAUDE_PROJECT_DIR")/${VAULT_NAME}"
+  if [ -d "$SIBLING_KB/10-tasks" ]; then
+    ACTIVE_TASKS=$(find "$SIBLING_KB/10-tasks" -name "*.json" -not -name "*.receipt.json" \
+      -exec grep -lE '"status":[[:space:]]*"(in_progress|dispatched|implementation_done)"' {} \; 2>/dev/null \
+      | head -5 | while read -r f; do basename "$f" .json; done)
+  fi
 fi
 
 # Write current-session.md (ensure directory exists)
