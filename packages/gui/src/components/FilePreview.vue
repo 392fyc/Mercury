@@ -370,14 +370,26 @@ const lineCount = computed(() => {
   return content.value.split("\n").length;
 });
 
-// Minimap lines (scaled-down representation)
+// Minimap lines (scaled-down representation — proportional to container)
 const minimapLines = computed(() => {
   if (!content.value) return [];
   return content.value.split("\n").map((line) => {
     const trimmed = line.replace(/\t/g, "  ");
-    const len = Math.min(trimmed.length, 120);
-    return len;
+    return Math.min(trimmed.length, 120);
   });
+});
+
+// Proportional line height: scale all lines to fit within minimap container
+const minimapLineHeight = computed(() => {
+  const count = minimapLines.value.length;
+  if (count <= 0) return 2;
+  // Use actual minimap container height if available, else estimate
+  const el = minimapEl.value;
+  const availableH = el ? el.clientHeight - 8 : 400; // subtract padding
+  // Each line = height + ~30% gap; total per line = height * 1.3
+  // availableH = count * lineH * 1.3  →  lineH = availableH / (count * 1.3)
+  const raw = availableH / (count * 1.3);
+  return Math.max(1, Math.min(3, raw));
 });
 </script>
 
@@ -496,7 +508,7 @@ const minimapLines = computed(() => {
             v-for="(len, i) in minimapLines"
             :key="i"
             class="fp-minimap-line"
-            :style="{ width: Math.max(2, len * 0.5) + 'px' }"
+            :style="{ width: Math.max(2, len * 0.5) + 'px', height: minimapLineHeight + 'px', marginBottom: Math.max(0, minimapLineHeight * 0.3) + 'px' }"
           />
         </div>
         <div ref="minimapThumbEl" class="fp-minimap-thumb" />
@@ -525,7 +537,7 @@ const minimapLines = computed(() => {
             v-for="(len, i) in minimapLines"
             :key="i"
             class="fp-minimap-line"
-            :style="{ width: Math.max(2, len * 0.5) + 'px' }"
+            :style="{ width: Math.max(2, len * 0.5) + 'px', height: minimapLineHeight + 'px', marginBottom: Math.max(0, minimapLineHeight * 0.3) + 'px' }"
           />
         </div>
         <div ref="minimapThumbEl" class="fp-minimap-thumb" />
@@ -796,10 +808,10 @@ const minimapLines = computed(() => {
 }
 
 .fp-minimap-line {
-  height: 2px;
-  margin-bottom: 1px;
+  /* height and margin-bottom set via inline style for proportional scaling */
   background: rgba(200, 200, 220, 0.2);
   border-radius: 1px;
+  min-height: 1px;
 }
 
 .fp-minimap-thumb {

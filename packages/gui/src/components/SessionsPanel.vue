@@ -255,7 +255,7 @@ function roleColor(role: string): string {
   padding: 12px 8px 6px;
   cursor: pointer;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.8px;
   color: var(--text-secondary);
