@@ -54,13 +54,24 @@ pub fn get_git_info(path: String) -> Result<serde_json::Value, String> {
     }))
 }
 
-/// Get git file status (modified/untracked) for all files in a directory.
-/// Uses `git diff --name-only` for actual worktree changes and
-/// `git ls-files --others --exclude-standard` for untracked files.
-/// This avoids false positives from stat cache or CRLF differences.
+/// Get git file status (modified/untracked/deleted) for all files in a directory.
+///
+/// Returns a map of `{ "relative/path": "M"|"D"|"U" }` where:
+/// - **M** (Modified): files with actual worktree diff via `git diff --name-only --ignore-cr-at-eol`
+/// - **D** (Deleted): worktree deletions via `git diff --name-only --diff-filter=D --ignore-cr-at-eol`
+/// - **U** (Untracked): non-ignored untracked files via `git ls-files --others --exclude-standard`
+///
+/// Priority on conflict: M > D > U (M overwrites D/U; D overwrites U).
+///
+/// Uses `--ignore-cr-at-eol` to avoid false positives from CRLF differences on Windows.
 /// Refs: https://git-scm.com/docs/git-diff, https://git-scm.com/docs/git-ls-files
 #[tauri::command]
 pub fn get_git_file_status(path: String) -> Result<serde_json::Value, String> {
+    // Canonicalize path to prevent symlink/traversal attacks
+    let canonical = std::fs::canonicalize(&path)
+        .map_err(|e| format!("Invalid path '{}': {}", path, e))?;
+    let dir = canonical.to_string_lossy().to_string();
+
     let mut statuses = serde_json::Map::new();
 
     // 1. Files with actual worktree diff (M = modified)
@@ -68,7 +79,7 @@ pub fn get_git_file_status(path: String) -> Result<serde_json::Value, String> {
     // Ref: https://git-scm.com/docs/diff-options
     if let Ok(output) = Command::new("git")
         .args(["diff", "--name-only", "--ignore-cr-at-eol"])
-        .current_dir(&path)
+        .current_dir(&dir)
         .output()
     {
         if output.status.success() {
@@ -85,7 +96,7 @@ pub fn get_git_file_status(path: String) -> Result<serde_json::Value, String> {
     // `git ls-files --others --exclude-standard` lists untracked, non-ignored files
     if let Ok(output) = Command::new("git")
         .args(["ls-files", "--others", "--exclude-standard"])
-        .current_dir(&path)
+        .current_dir(&dir)
         .output()
     {
         if output.status.success() {
@@ -102,7 +113,7 @@ pub fn get_git_file_status(path: String) -> Result<serde_json::Value, String> {
     // `git diff --name-only --diff-filter=D` lists worktree deletions
     if let Ok(output) = Command::new("git")
         .args(["diff", "--name-only", "--diff-filter=D", "--ignore-cr-at-eol"])
-        .current_dir(&path)
+        .current_dir(&dir)
         .output()
     {
         if output.status.success() {
@@ -118,27 +129,41 @@ pub fn get_git_file_status(path: String) -> Result<serde_json::Value, String> {
     Ok(serde_json::Value::Object(statuses))
 }
 
-/// Get git diff for a specific file (unstaged changes).
-/// Returns the raw unified diff output.
+/// Get git diff for a specific file.
+///
+/// First tries unstaged diff (`git diff`). If the command succeeds but returns
+/// empty output (no unstaged changes), falls back to staged diff (`git diff --cached`).
+/// If the command fails (non-zero exit), returns an error with stderr.
+///
+/// Uses `--ignore-cr-at-eol` (Git v2.16+) to suppress CRLF noise on Windows.
+/// Ref: https://git-scm.com/docs/git-diff
 #[tauri::command]
 pub fn get_git_diff(repo_path: String, file_path: String) -> Result<String, String> {
     let output = Command::new("git")
         .args(["diff", "--ignore-cr-at-eol", "--", &file_path])
         .current_dir(&repo_path)
         .output()
-        .map_err(|e| format!("git diff failed: {}", e))?;
+        .map_err(|e| format!("git diff failed to spawn: {}", e))?;
 
     if !output.status.success() {
-        // Try staged diff
-        let staged = Command::new("git")
-            .args(["diff", "--cached", "--ignore-cr-at-eol", "--", &file_path])
-            .current_dir(&repo_path)
-            .output()
-            .map_err(|e| format!("git diff --cached failed: {}", e))?;
-        return Ok(String::from_utf8_lossy(&staged.stdout).to_string());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git diff failed: {}", stderr.trim()));
     }
 
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    let unstaged = String::from_utf8_lossy(&output.stdout).to_string();
+    if !unstaged.is_empty() {
+        return Ok(unstaged);
+    }
+
+    // No unstaged changes — try staged diff (git diff --cached)
+    // Ref: https://git-scm.com/docs/git-diff
+    let staged = Command::new("git")
+        .args(["diff", "--cached", "--ignore-cr-at-eol", "--", &file_path])
+        .current_dir(&repo_path)
+        .output()
+        .map_err(|e| format!("git diff --cached failed: {}", e))?;
+
+    Ok(String::from_utf8_lossy(&staged.stdout).to_string())
 }
 
 /// List all local and remote git branches for a given directory.

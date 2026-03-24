@@ -16,6 +16,7 @@
     "fs:allow-stat",
     {
       "identifier": "fs:scope",
+      "_comment": "Broad scope required: user picks arbitrary workspace dirs via dialog. TODO: migrate to runtime dynamic scoping via app.fs_scope().allow_directory() per Tauri v2 best practice.",
       "allow": [
         { "path": "$APPDATA/**" },
         { "path": "$HOME/**" },

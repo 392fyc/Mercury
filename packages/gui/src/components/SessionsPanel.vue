@@ -70,18 +70,25 @@ function formatTime(ts: number): string {
   return `${diffD}d`;
 }
 
+const deletingKeys = ref<Set<string>>(new Set());
+
 async function handleDeleteSession(panelKey: string, event: Event) {
   event.stopPropagation();
-  const { agentId } = parsePanelKey(panelKey);
-  const sessionId = getSession(panelKey);
-  if (sessionId && agentId) {
-    try {
+  // Guard against duplicate clicks / concurrent deletes
+  if (deletingKeys.value.has(panelKey)) return;
+  deletingKeys.value.add(panelKey);
+  try {
+    const { agentId } = parsePanelKey(panelKey);
+    const sessionId = getSession(panelKey);
+    if (sessionId && agentId) {
       await rpcDeleteSession(agentId, sessionId);
-    } catch (err) {
-      console.warn("[SessionsPanel] deleteSession RPC failed:", err);
     }
+    removeBookmark(panelKey);
+  } catch (err) {
+    console.warn("[SessionsPanel] deleteSession RPC failed:", err);
+  } finally {
+    deletingKeys.value.delete(panelKey);
   }
-  removeBookmark(panelKey);
 }
 
 // ─── Context menu ───

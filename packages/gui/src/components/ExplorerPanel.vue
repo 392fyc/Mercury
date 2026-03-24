@@ -7,7 +7,7 @@
  * Git status via Tauri command: git status --porcelain
  * Ref: https://git-scm.com/docs/git-status
  */
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { readDir, writeTextFile, mkdir } from "@tauri-apps/plugin-fs";
 // Tauri v2 dialog: open({directory:true}) for folder picker
 // Ref: https://v2.tauri.app/plugin/dialog/
@@ -23,7 +23,6 @@ const emit = defineEmits<{
 const { defaultWorkDir, getWorkDir, getGitBranch, setWorkDir, setGitBranch, mainAgent } = useAgentStore();
 
 const mainPanelKey = computed(() => {
-  const { mainAgent } = useAgentStore();
   return mainAgent.value ? `main:${mainAgent.value.id}` : "";
 });
 
@@ -278,6 +277,13 @@ function ctxNewFolder() {
 async function confirmNewItem() {
   const name = newItemName.value.trim();
   if (!name || !newItemType.value) { newItemType.value = null; return; }
+  // Sanitize: reject path traversal and embedded separators
+  if (/[/\\]/.test(name) || name === ".." || name === "." || name.includes("..")) {
+    console.warn("[ExplorerPanel] Invalid filename rejected:", name);
+    newItemType.value = null;
+    newItemName.value = "";
+    return;
+  }
   const fullPath = `${newItemParentPath.value}/${name}`;
   try {
     if (newItemType.value === "folder") {
@@ -295,11 +301,7 @@ async function confirmNewItem() {
 
 function cancelNewItem() { newItemType.value = null; newItemName.value = ""; }
 
-watch(workDir, () => loadRoot(), { immediate: false });
-
-onMounted(() => {
-  if (workDir.value) loadRoot();
-});
+watch(workDir, () => loadRoot(), { immediate: true });
 </script>
 
 <template>
@@ -353,7 +355,7 @@ onMounted(() => {
             v-if="getFileGitStatus(entry.node.path)"
             class="ep-git-badge"
             :class="[
-              'git-' + getFileGitStatus(entry.node.path)!.toLowerCase(),
+              'git-' + (getFileGitStatus(entry.node.path) ?? '').toLowerCase(),
               { 'is-dot': entry.node.isDir }
             ]"
           >{{ entry.node.isDir ? '' : getFileGitStatus(entry.node.path) }}</span>

@@ -356,7 +356,7 @@ onBeforeUnmount(() => {
 function onKeydown(e: KeyboardEvent) {
   if ((e.ctrlKey || e.metaKey) && e.key === "s") {
     e.preventDefault();
-    if (isEditing.value && isDirty.value) saveFile();
+    if (isEditing.value && isDirty.value) void saveFile();
   }
 }
 
