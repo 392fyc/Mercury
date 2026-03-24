@@ -43,9 +43,15 @@ if [ -z "$ACTIVE_TASKS" ] && [ -n "$KB_VAULT_PATH" ] && [ -d "$KB_VAULT_PATH/10-
     -exec grep -lE '"status":[[:space:]]*"(in_progress|dispatched|implementation_done)"' {} \; 2>/dev/null \
     | head -5 | while read -r f; do basename "$f" .json; done)
 fi
-# Fallback 2: sibling vault convention ({ProjectDir}_KB alongside project)
+# Fallback 2: sibling vault convention ({ProjectName}_KB alongside project)
 if [ -z "$ACTIVE_TASKS" ]; then
-  SIBLING_KB="$(dirname "$CLAUDE_PROJECT_DIR")/${VAULT_NAME}"
+  # Prefer configured vault name; derive from {ProjectName}_KB when using default
+  if [ "$VAULT_NAME" = "Mercury_KB" ]; then
+    PROJECT_NAME=$(basename "$CLAUDE_PROJECT_DIR")
+    SIBLING_KB="$(dirname "$CLAUDE_PROJECT_DIR")/${PROJECT_NAME}_KB"
+  else
+    SIBLING_KB="$(dirname "$CLAUDE_PROJECT_DIR")/${VAULT_NAME}"
+  fi
   if [ -d "$SIBLING_KB/10-tasks" ]; then
     ACTIVE_TASKS=$(find "$SIBLING_KB/10-tasks" -name "*.json" -not -name "*.receipt.json" \
       -exec grep -lE '"status":[[:space:]]*"(in_progress|dispatched|implementation_done)"' {} \; 2>/dev/null \
