@@ -22,11 +22,44 @@ BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
 LAST_COMMIT=$(git log -1 --oneline 2>/dev/null || echo "unknown")
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 GIT_STATUS=$(git status --porcelain 2>/dev/null | head -20)
-ACTIVE_TASKS=""
-if [ -d "Mercury_KB/10-tasks" ]; then
-  ACTIVE_TASKS=$(find Mercury_KB/10-tasks -name "*.json" -not -name "*.receipt.json" \
+# Read vault config via jq (primary) or node (fallback)
+if command -v jq &>/dev/null && [ -f "$CLAUDE_PROJECT_DIR/mercury.config.json" ]; then
+  VAULT_NAME=$(jq -r '.obsidian.vaultName // "Mercury_KB"' "$CLAUDE_PROJECT_DIR/mercury.config.json" 2>/dev/null)
+  KB_VAULT_PATH=$(jq -r '.obsidian.vaultPath // empty' "$CLAUDE_PROJECT_DIR/mercury.config.json" 2>/dev/null)
+else
+  VAULT_NAME=$(node -e "try{const c=require('$CLAUDE_PROJECT_DIR/mercury.config.json');console.log(c.obsidian.vaultName||'Mercury_KB')}catch(e){console.log('Mercury_KB')}" 2>/dev/null)
+  KB_VAULT_PATH=$(node -e "try{console.log(require('$CLAUDE_PROJECT_DIR/mercury.config.json').obsidian.vaultPath)}catch(e){}" 2>/dev/null)
+fi
+# Scan a tasks directory for active task IDs
+scan_active_tasks() {
+  local tasks_dir="$1"
+  find "$tasks_dir" -name "*.json" -not -name "*.receipt.json" \
     -exec grep -lE '"status":[[:space:]]*"(in_progress|dispatched|implementation_done)"' {} \; 2>/dev/null \
-    | head -5 | while read -r f; do basename "$f" .json; done)
+    | head -5 | while read -r f; do basename "$f" .json; done
+}
+# Detect active tasks via Obsidian CLI (preferred) or config-resolved path (fallback)
+# Task ID formats: TASK-NAME-NNN (manual) or TASK-hexhexhex (shortId)
+ACTIVE_TASKS=""
+if command -v obsidian &>/dev/null; then
+  ACTIVE_TASKS=$(obsidian vault="$VAULT_NAME" search query="in_progress" format=json 2>/dev/null \
+    | grep -oE 'TASK-[A-Za-z0-9-]+' | head -5 | sort -u)
+fi
+# Fallback 1: filesystem scan using config-resolved vaultPath
+if [ -z "$ACTIVE_TASKS" ] && [ -n "$KB_VAULT_PATH" ] && [ -d "$KB_VAULT_PATH/10-tasks" ]; then
+  ACTIVE_TASKS=$(scan_active_tasks "$KB_VAULT_PATH/10-tasks")
+fi
+# Fallback 2: sibling vault convention ({ProjectName}_KB alongside project)
+if [ -z "$ACTIVE_TASKS" ]; then
+  # Prefer configured vault name; derive from {ProjectName}_KB when using default
+  if [ "$VAULT_NAME" = "Mercury_KB" ]; then
+    PROJECT_NAME=$(basename "$CLAUDE_PROJECT_DIR")
+    SIBLING_KB="$(dirname "$CLAUDE_PROJECT_DIR")/${PROJECT_NAME}_KB"
+  else
+    SIBLING_KB="$(dirname "$CLAUDE_PROJECT_DIR")/${VAULT_NAME}"
+  fi
+  if [ -d "$SIBLING_KB/10-tasks" ]; then
+    ACTIVE_TASKS=$(scan_active_tasks "$SIBLING_KB/10-tasks")
+  fi
 fi
 
 # Write current-session.md (ensure directory exists)

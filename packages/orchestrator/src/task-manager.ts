@@ -528,9 +528,12 @@ export class TaskManager {
       }
     }
 
-    // Check docsUpdated against docsMustNotTouch
+    // Check docsUpdated against docsMustNotTouch (supports prefix matching for directories)
     for (const doc of receipt.docsUpdated) {
-      if (task.docsMustNotTouch.includes(doc)) {
+      const blocked = task.docsMustNotTouch.some(
+        (entry) => doc === entry || (entry.endsWith("/") && doc.startsWith(entry))
+      );
+      if (blocked) {
         violations.push({ file: doc, reason: "Listed in docsMustNotTouch" });
       }
     }
@@ -817,6 +820,29 @@ export class TaskManager {
 // ─── Prompt Builders ───
 
 /** Format allowedWriteScope for human-readable display (codePaths + kbPaths). */
+/**
+ * Resolve the Obsidian vault name from mercury.config.json.
+ * Priority: obsidian.vaultName > basename(obsidian.vaultPath) > null.
+ * Returns null when config is missing or has no obsidian section.
+ */
+function resolveVaultName(basePath: string): string | null {
+  try {
+    const configPath = resolve(basePath, "mercury.config.json");
+    const config = JSON.parse(readFileSync(configPath, "utf-8"));
+    const obs = config.obsidian;
+    if (!obs) return null;
+    if (obs.vaultName) return obs.vaultName;
+    if (obs.vaultPath) {
+      // Derive vault name from the last segment of the configured path
+      const segments = obs.vaultPath.replace(/[\\/]+$/, "").split(/[\\/]/);
+      return segments[segments.length - 1] || null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function formatWriteScope(scope: TaskBundle["allowedWriteScope"]): string {
   const parts: string[] = [];
   if (scope.codePaths.length) parts.push(`code: ${scope.codePaths.join(", ")}`);
@@ -884,11 +910,15 @@ export function buildDevPrompt(
 
   const scopeDisplay = formatWriteScope(task.allowedWriteScope);
 
+  // Resolve vault name: prefer vaultName, derive from vaultPath basename, or null
+  const vaultName = resolveVaultName(basePath);
+
   // Single-pass template substitution to prevent cross-replacement
   const placeholders: Record<string, string> = {
     "{{taskId}}": `${task.title} [${task.taskId}]`,
     "{{context}}": task.context,
-    "{{taskFilePath}}": `{Project}_KB/10-tasks/${task.taskId}.json`,
+    "{{taskFilePath}}": `10-tasks/${task.taskId}.json`,
+    "{{vaultName}}": vaultName ?? "Mercury_KB",
     "{{allowedWriteScope}}": scopeDisplay,
     "{{docsMustNotTouch}}": task.docsMustNotTouch.join(", ") || "无",
     "{{bundleJson}}": JSON.stringify(bundleMeta, null, 2),
@@ -912,6 +942,11 @@ function fallbackDevTemplate(): string {
     "# Dispatch: {{taskId}}",
     "",
     "{{context}}",
+    "",
+    "## KB Access",
+    "KB vault: `{{vaultName}}` — use Obsidian MCP (`mcp__obsidian__*`) or CLI (`obsidian vault=\"{{vaultName}}\"`).",
+    "Task bundle: `{{taskFilePath}}` (vault-relative path).",
+    "Never construct `Mercury_KB/...` paths from the project CWD.",
     "",
     "## Task Bundle (machine-readable)",
     "```json",
@@ -940,14 +975,24 @@ export function buildReferencePrompt(
   taskFilePath: string,
   handoffFilePath?: string,
 ): string {
+  // Defensive: warn if path looks like absolute or has Mercury_KB prefix
+  const isNotVaultRelative = (p: string) => p.includes("Mercury_KB") || /^[A-Z]:[/\\]|^\//.test(p);
+  if (isNotVaultRelative(taskFilePath)) {
+    console.warn(`[buildReferencePrompt] taskFilePath should be vault-relative, got: ${taskFilePath}`);
+  }
+  if (handoffFilePath && isNotVaultRelative(handoffFilePath)) {
+    console.warn(`[buildReferencePrompt] handoffFilePath should be vault-relative, got: ${handoffFilePath}`);
+  }
   const lines: string[] = [];
 
   lines.push(`实现任务 ${task.taskId}: ${task.title}`);
   lines.push("");
-  lines.push(`任务详情: 读取 ${taskFilePath}`);
+  lines.push(`任务详情: 使用 Obsidian MCP 读取 ${taskFilePath} (vault-relative 路径)`);
   if (handoffFilePath) {
-    lines.push(`项目上下文: 读取 ${handoffFilePath}`);
+    lines.push(`项目上下文: 使用 Obsidian MCP 读取 ${handoffFilePath}`);
   }
+  lines.push("");
+  lines.push("KB 访问: 使用 mcp__obsidian__obsidian_get_file_contents，禁止从项目 CWD 拼接 Mercury_KB/ 路径");
   lines.push("");
   lines.push("完成后:");
   lines.push(`1. 将 implementation receipt 写入 ${taskFilePath} 的 implementationReceipt 字段`);
