@@ -53,20 +53,27 @@ async function changeWorkDir() {
   });
   if (!selected || typeof selected !== "string") return;
   const pk = mainPanelKey.value;
-  if (pk) {
-    // Sync with store + backend (same as AgentPanel.handleChangeDir)
-    setWorkDir(pk, selected);
-    const agent = mainAgent.value;
-    if (agent) {
-      try { await setAgentCwd(agent.id, selected); } catch { /* ignore */ }
-    }
-    // Refresh git branch for new directory
+  if (!pk) {
+    console.warn("[ExplorerPanel] No main agent panel key — cannot switch workspace");
+    return;
+  }
+  // Sync backend first; only update frontend state on success
+  const agent = mainAgent.value;
+  if (agent) {
     try {
-      const info = await getGitInfo(selected);
-      setGitBranch(pk, info.gitBranch);
-    } catch {
-      setGitBranch(pk, null);
+      await setAgentCwd(agent.id, selected);
+    } catch (err) {
+      console.error("[ExplorerPanel] Backend setAgentCwd failed:", err);
+      return; // Don't update frontend if backend rejected
     }
+  }
+  setWorkDir(pk, selected);
+  // Refresh git branch for new directory
+  try {
+    const info = await getGitInfo(selected);
+    setGitBranch(pk, info.gitBranch);
+  } catch {
+    setGitBranch(pk, null);
   }
 }
 
@@ -336,13 +343,18 @@ watch(workDir, () => loadRoot(), { immediate: true });
       <div v-else-if="error" class="ep-error">{{ error }}</div>
       <div v-else-if="tree.length === 0" class="ep-empty">No workspace</div>
       <template v-else>
-        <div
+        <button
           v-for="entry in flatTree"
           :key="entry.node.path"
+          type="button"
           class="ep-node"
           :class="{ dir: entry.node.isDir }"
           :style="{ paddingLeft: (20 + entry.indent * 16) + 'px' }"
+          role="treeitem"
+          :aria-expanded="entry.node.isDir ? entry.node.expanded : undefined"
           @click="toggleExpand(entry.node)"
+          @keydown.enter="toggleExpand(entry.node)"
+          @keydown.space.prevent="toggleExpand(entry.node)"
           @contextmenu="showContextMenu($event, entry.node)"
         >
           <span v-if="entry.node.isDir" class="ep-arrow" :class="{ expanded: entry.node.expanded }">▶</span>
@@ -359,7 +371,7 @@ watch(workDir, () => loadRoot(), { immediate: true });
               { 'is-dot': entry.node.isDir }
             ]"
           >{{ entry.node.isDir ? '' : getFileGitStatus(entry.node.path) }}</span>
-        </div>
+        </button>
       </template>
     </div>
 
@@ -477,11 +489,15 @@ watch(workDir, () => loadRoot(), { immediate: true });
   display: flex;
   align-items: center;
   gap: 4px;
+  width: 100%;
   padding: 3px 8px;
+  border: none;
+  background: none;
   border-radius: 4px;
   cursor: pointer;
   font-size: 12px;
   color: var(--text-secondary);
+  text-align: left;
   transition: background 0.12s;
   white-space: nowrap;
   overflow: hidden;

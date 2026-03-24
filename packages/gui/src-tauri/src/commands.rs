@@ -127,6 +127,39 @@ pub fn get_git_file_status(path: String) -> Result<serde_json::Value, String> {
         }
     }
 
+    // 4. Staged modifications (M) — files that are `git add`-ed
+    // git diff --cached --name-only: https://git-scm.com/docs/git-diff
+    if let Ok(output) = Command::new("git")
+        .args(["diff", "--cached", "--name-only", "--ignore-cr-at-eol"])
+        .current_dir(&dir)
+        .output()
+    {
+        if output.status.success() {
+            for line in String::from_utf8_lossy(&output.stdout).lines() {
+                let f = line.trim();
+                if !f.is_empty() && !statuses.contains_key(f) {
+                    statuses.insert(f.to_string(), serde_json::Value::String("M".to_string()));
+                }
+            }
+        }
+    }
+
+    // 5. Staged deletions (D)
+    if let Ok(output) = Command::new("git")
+        .args(["diff", "--cached", "--name-only", "--diff-filter=D", "--ignore-cr-at-eol"])
+        .current_dir(&dir)
+        .output()
+    {
+        if output.status.success() {
+            for line in String::from_utf8_lossy(&output.stdout).lines() {
+                let f = line.trim();
+                if !f.is_empty() && !statuses.contains_key(f) {
+                    statuses.insert(f.to_string(), serde_json::Value::String("D".to_string()));
+                }
+            }
+        }
+    }
+
     Ok(serde_json::Value::Object(statuses))
 }
 
@@ -156,13 +189,18 @@ pub fn get_git_diff(repo_path: String, file_path: String) -> Result<String, Stri
         return Ok(unstaged);
     }
 
-    // No unstaged changes — try staged diff (git diff --cached)
-    // Ref: https://git-scm.com/docs/git-diff
+    // No unstaged changes — try staged diff
+    // git diff --cached: https://git-scm.com/docs/git-diff
     let staged = Command::new("git")
         .args(["diff", "--cached", "--ignore-cr-at-eol", "--", &file_path])
         .current_dir(&repo_path)
         .output()
-        .map_err(|e| format!("git diff --cached failed: {}", e))?;
+        .map_err(|e| format!("git diff --cached failed to spawn: {}", e))?;
+
+    if !staged.status.success() {
+        let stderr = String::from_utf8_lossy(&staged.stderr);
+        return Err(format!("git diff --cached failed: {}", stderr.trim()));
+    }
 
     Ok(String::from_utf8_lossy(&staged.stdout).to_string())
 }

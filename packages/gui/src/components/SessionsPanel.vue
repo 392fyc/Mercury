@@ -1,8 +1,21 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+// Vue 3 Composition API lifecycle: https://vuejs.org/api/composition-api-lifecycle.html
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useAgentStore } from "../stores/agents";
 import { deleteSession as rpcDeleteSession } from "../lib/tauri-bridge";
 import type { BookmarkInfo } from "../stores/agents";
+
+// Reactive minute ticker so formatTime re-evaluates as time passes
+const currentMinute = ref(Math.floor(Date.now() / 60000));
+let tickerInterval: ReturnType<typeof setInterval> | null = null;
+onMounted(() => {
+  tickerInterval = setInterval(() => {
+    currentMinute.value = Math.floor(Date.now() / 60000);
+  }, 60000);
+});
+onBeforeUnmount(() => {
+  if (tickerInterval) clearInterval(tickerInterval);
+});
 
 const emit = defineEmits<{
   "open-session": [panelKey: string];
@@ -58,6 +71,8 @@ function isTabOpen(panelKey: string): boolean {
 
 function formatTime(ts: number): string {
   if (!ts) return "";
+  // Touch reactive ticker to trigger re-render each minute
+  void currentMinute.value;
   const d = new Date(ts);
   const now = new Date();
   const diffMs = now.getTime() - d.getTime();
