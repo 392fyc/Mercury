@@ -325,6 +325,8 @@ watch(inputText, (val) => {
   if (!val.startsWith("/")) {
     slashCommandSelected.value = false;
   }
+  // Auto-resize textarea whenever input changes (programmatic or user-typed)
+  nextTick(() => resizeTextarea());
 });
 
 /** Fetch backend slash commands. Skips if already loaded unless force is true. */
@@ -429,7 +431,16 @@ async function handleSend() {
   pendingImages.value = [];
   historyIndex.value = -1;
   savedInput.value = "";
-  resizeTextarea();
+  // Force textarea back to single-line height after send
+  // The generic resizeTextarea() measures scrollHeight of empty content which
+  // can retain the previous multi-line height until a new input event fires.
+  nextTick(() => {
+    const el = textareaEl.value;
+    if (el) {
+      el.style.height = "34px";
+      el.style.overflowY = "hidden";
+    }
+  });
   // Use empty prompt for image-only sends — adapter handles content block construction
   await sendPrompt(props.panelKey, prompt, images);
 }

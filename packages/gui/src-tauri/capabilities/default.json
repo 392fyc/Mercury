@@ -6,6 +6,22 @@
   "permissions": [
     "core:default",
     "opener:default",
-    "dialog:default"
+    "dialog:default",
+    "fs:default",
+    "fs:allow-read-dir",
+    "fs:allow-read-file",
+    "fs:allow-write-file",
+    "fs:allow-write-text-file",
+    "fs:allow-mkdir",
+    "fs:allow-stat",
+    {
+      "identifier": "fs:scope",
+      "_comment": "Broad scope required: user picks arbitrary workspace dirs via dialog. TODO: migrate to runtime dynamic scoping via app.fs_scope().allow_directory() per Tauri v2 best practice.",
+      "allow": [
+        { "path": "$APPDATA/**" },
+        { "path": "$HOME/**" },
+        { "path": "**" }
+      ]
+    }
   ]
 }

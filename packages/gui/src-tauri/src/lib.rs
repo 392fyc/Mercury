@@ -68,6 +68,7 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
             let app_handle = app.handle().clone();
@@ -116,6 +117,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_project_info,
             commands::get_git_info,
+            commands::get_git_file_status,
+            commands::get_git_diff,
             commands::list_git_branches,
             commands::checkout_branch,
             commands::get_agents,
