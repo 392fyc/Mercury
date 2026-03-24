@@ -888,7 +888,7 @@ export function buildDevPrompt(
   const placeholders: Record<string, string> = {
     "{{taskId}}": `${task.title} [${task.taskId}]`,
     "{{context}}": task.context,
-    "{{taskFilePath}}": `{Project}_KB/10-tasks/${task.taskId}.json`,
+    "{{taskFilePath}}": `10-tasks/${task.taskId}.json`,
     "{{allowedWriteScope}}": scopeDisplay,
     "{{docsMustNotTouch}}": task.docsMustNotTouch.join(", ") || "无",
     "{{bundleJson}}": JSON.stringify(bundleMeta, null, 2),
@@ -944,10 +944,12 @@ export function buildReferencePrompt(
 
   lines.push(`实现任务 ${task.taskId}: ${task.title}`);
   lines.push("");
-  lines.push(`任务详情: 读取 ${taskFilePath}`);
+  lines.push(`任务详情: 使用 Obsidian MCP 读取 ${taskFilePath} (vault-relative 路径)`);
   if (handoffFilePath) {
-    lines.push(`项目上下文: 读取 ${handoffFilePath}`);
+    lines.push(`项目上下文: 使用 Obsidian MCP 读取 ${handoffFilePath}`);
   }
+  lines.push("");
+  lines.push("KB 访问: 使用 mcp__obsidian__obsidian_get_file_contents，禁止从项目 CWD 拼接 Mercury_KB/ 路径");
   lines.push("");
   lines.push("完成后:");
   lines.push(`1. 将 implementation receipt 写入 ${taskFilePath} 的 implementationReceipt 字段`);

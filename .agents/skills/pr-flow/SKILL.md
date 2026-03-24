@@ -33,9 +33,11 @@ TASK_ID=${BRANCH##*/}
 if ! [[ "$TASK_ID" =~ ^TASK- ]]; then
   TASK_ID=$(echo "$BRANCH" | grep -oE 'TASK-[A-Z][A-Z0-9-]+-[0-9]+' | head -1)
 fi
+# Resolve KB vault path from mercury.config.json (KB is outside project CWD)
+KB_VAULT_PATH=$(jq -r '.obsidian.vaultPath // empty' mercury.config.json 2>/dev/null)
 TASK_FILE=""
-if [ -n "$TASK_ID" ] && [ -f "Mercury_KB/10-tasks/$TASK_ID.json" ]; then
-  TASK_FILE="Mercury_KB/10-tasks/$TASK_ID.json"
+if [ -n "$TASK_ID" ] && [ -n "$KB_VAULT_PATH" ] && [ -f "$KB_VAULT_PATH/10-tasks/$TASK_ID.json" ]; then
+  TASK_FILE="$KB_VAULT_PATH/10-tasks/$TASK_ID.json"
 fi
 # When TASK_FILE is absent (non-task branches), ALLOWED_SCOPE stays empty → scope checks pass all files.
 declare -a ALLOWED_SCOPE=()
@@ -48,8 +50,8 @@ gh api rate_limit --jq '.resources.core.remaining'
 1. **Create or reuse the PR**
 
 ```bash
-SUMMARY=$(jq -r '.summary // "PR update"' Mercury_KB/10-tasks/"$TASK_ID".receipt.json 2>/dev/null || echo "PR update")
-DOD_COUNT=$(jq -r '(.definitionOfDone // []) | length' Mercury_KB/10-tasks/"$TASK_ID".json 2>/dev/null || echo "unknown")
+SUMMARY=$(jq -r '.summary // "PR update"' "$KB_VAULT_PATH/10-tasks/$TASK_ID.receipt.json" 2>/dev/null || echo "PR update")
+DOD_COUNT=$(jq -r '(.definitionOfDone // []) | length' "$TASK_FILE" 2>/dev/null || echo "unknown")
 PR_BODY=$(cat <<EOF
 ## Summary
 $SUMMARY

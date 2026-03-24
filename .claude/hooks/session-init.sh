@@ -22,11 +22,23 @@ BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
 LAST_COMMIT=$(git log -1 --oneline 2>/dev/null || echo "unknown")
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 GIT_STATUS=$(git status --porcelain 2>/dev/null | head -20)
+# Detect active tasks via Obsidian CLI (preferred) or config-resolved path (fallback)
 ACTIVE_TASKS=""
-if [ -d "Mercury_KB/10-tasks" ]; then
-  ACTIVE_TASKS=$(find Mercury_KB/10-tasks -name "*.json" -not -name "*.receipt.json" \
-    -exec grep -lE '"status":[[:space:]]*"(in_progress|dispatched|implementation_done)"' {} \; 2>/dev/null \
-    | head -5 | while read -r f; do basename "$f" .json; done)
+if command -v obsidian &>/dev/null; then
+  ACTIVE_TASKS=$(obsidian vault="Mercury_KB" search query="in_progress" 2>/dev/null \
+    | grep -oE 'TASK-[A-Z][A-Z0-9-]+-[0-9]+' | head -5 | sort -u)
+else
+  # Fallback: resolve vault path from mercury.config.json
+  KB_VAULT_PATH=""
+  if [ -f "$CLAUDE_PROJECT_DIR/mercury.config.json" ]; then
+    KB_VAULT_PATH=$(grep -o '"vaultPath"[[:space:]]*:[[:space:]]*"[^"]*"' "$CLAUDE_PROJECT_DIR/mercury.config.json" \
+      | head -1 | sed 's/.*"vaultPath"[[:space:]]*:[[:space:]]*"//' | sed 's/"$//' | tr '\\\\' '/')
+  fi
+  if [ -n "$KB_VAULT_PATH" ] && [ -d "$KB_VAULT_PATH/10-tasks" ]; then
+    ACTIVE_TASKS=$(find "$KB_VAULT_PATH/10-tasks" -name "*.json" -not -name "*.receipt.json" \
+      -exec grep -lE '"status":[[:space:]]*"(in_progress|dispatched|implementation_done)"' {} \; 2>/dev/null \
+      | head -5 | while read -r f; do basename "$f" .json; done)
+  fi
 fi
 
 # Write current-session.md (ensure directory exists)

@@ -61,7 +61,7 @@ Build the JSON payload for `create_task`. The orchestrator generates `taskId`, `
 
 Optional fields (include when needed): `phaseId`, `branch`, `docsMustUpdate`, `reviewConfig`, `handoffToAcceptance`, `maxReworks`.
 
-The full template with all fields is at `Mercury_KB/99-templates/task-bundle.template.json` — read it for the complete schema including resilience and contextInjection.
+The full template with all fields is at `99-templates/task-bundle.template.json` in the KB vault — read it via Obsidian MCP (`mcp__obsidian__obsidian_get_file_contents` with filepath `99-templates/task-bundle.template.json`).
 
 ## Step 3: Persist via RPC
 
