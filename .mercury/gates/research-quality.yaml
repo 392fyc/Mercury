@@ -42,8 +42,8 @@ gates:
       question_answer_rate: ">= 0.8"    # Answered / total questions
       citation_density: ">= 0.6"        # Claims with URL / total claims
       unverified_rate: "<= 0.2"         # UNVERIFIED / total claims
+      iteration_depth: ">= 3"           # Enforced minimum research rounds
     recommended:
-      iteration_depth: ">= 3"           # Minimum research rounds
       source_diversity: ">= 3"          # Unique domains cited
     limits:
       max_iterations: 10                 # Hard cap on research rounds
@@ -63,9 +63,14 @@ verification:
       weight: 0.2
   pass_threshold: 3.5                    # Weighted average ≥ 3.5/5
   verdicts:
-    PASS: "Submit for human review"
-    PARTIAL: "Address gaps, re-verify"
-    FAIL: "Continue research rounds"
+    on_gate_passed:
+      PASS: "Submit for human review"
+      PARTIAL: "Address gaps, re-verify"
+      FAIL: "Continue research rounds"
+    on_max_iterations_reached:
+      PASS: "Submit for human review"
+      PARTIAL: "Submit with gaps flagged for human attention"
+      FAIL: "Submit with FAIL status — human must decide next steps"
 
 # Canonical JSONL schema for results-{ISSUE_NUM}.jsonl
 # Single source of truth — referenced by:
@@ -122,6 +127,12 @@ jsonl_schema:
       type: number
       range: "0.0-5.0"
       description: "Weighted average from verification dimensions (only on final round)"
+    - name: verification_dimensions
+      type: "object"
+      description: "Per-dimension scores from verification subagent, e.g. {question_coverage: 4, citation_density: 3.5, actionability: 4, risk_honesty: 4}"
+    - name: verification_gaps
+      type: "string[]"
+      description: "List of unanswered questions or uncited claims identified by verification subagent"
 
 # Cost budget (per deep research task, USD)
 cost:
