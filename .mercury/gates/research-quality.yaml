@@ -12,10 +12,12 @@ routing:
     - explicit_scope: "deep"            # TaskBundle.researchScope === "deep"
     - explicit_invocation: true          # /deep-research or "深度调研"
 
-  # Default: light research (in-agent, web-search gate)
-  light:  # ALL conditions must hold (AND logic)
-    - research_questions_count: "< 3"
-    - single_source_sufficient: true
+  # Default fallback: light research (in-agent, web-search gate)
+  # Any task not matching deep conditions falls here — this is the else branch
+  light:  # ELSE — everything not matched by deep
+    description: "Fallback for tasks with fewer questions and no multi-source requirement"
+    # Note: tasks with < 3 questions BUT requiring multi-source verification
+    # are escalated to deep via the cross_source_verification condition above
 
 # Quality gate thresholds
 gates:
@@ -102,6 +104,18 @@ jsonl_schema:
     - name: notes
       type: string
       description: "Free-text notes on gaps or next steps"
+    - name: termination_reason
+      type: string
+      enum: ["gate_passed", "max_iterations", "human_interrupt", "error"]
+      description: "Why the research loop ended (only on final round)"
+    - name: verification_verdict
+      type: string
+      enum: ["PASS", "PARTIAL", "FAIL"]
+      description: "Independent verification subagent result (only on final round)"
+    - name: verification_score
+      type: number
+      range: "0.0-5.0"
+      description: "Weighted average from verification dimensions (only on final round)"
 
 # Cost budget (per deep research task)
 cost:
