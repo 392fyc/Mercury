@@ -5,9 +5,6 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
-
 /// Manages a `claude remote-control` child process.
 /// Parses stdout for session URL, emits Tauri events for GUI updates.
 ///
@@ -346,31 +343,10 @@ impl RemoteControlManager {
     }
 
     /// Stop the remote-control session, killing the child process and resetting all state.
-    ///
-    /// On Windows, `child.kill()` only terminates the direct child (cmd.exe), leaving the
-    /// actual `claude` process alive as an orphan. We use `taskkill /T /F /PID` to kill
-    /// the entire process tree instead.
     pub async fn stop(&self) -> Result<(), String> {
         let mut child = self.child.lock().await;
         if let Some(ref mut c) = *child {
-            #[cfg(target_os = "windows")]
-            {
-                // taskkill /T /F /PID kills the entire process tree rooted at the child PID.
-                // This ensures cmd.exe, claude.exe, and any grandchild processes are all terminated.
-                if let Some(pid) = c.id() {
-                    let _ = std::process::Command::new("taskkill")
-                        .args(["/T", "/F", "/PID", &pid.to_string()])
-                        .creation_flags(0x08000000) // CREATE_NO_WINDOW
-                        .output();
-                } else {
-                    // Fallback: process may have already exited, try normal kill.
-                    let _ = c.kill().await;
-                }
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                let _ = c.kill().await;
-            }
+            let _ = c.kill().await;
             // Wait for the child process to fully exit (timeout 5s) to avoid zombies.
             let _ = tokio::time::timeout(
                 std::time::Duration::from_secs(5),
