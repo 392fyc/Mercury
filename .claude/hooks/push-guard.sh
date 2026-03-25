@@ -12,16 +12,17 @@ else
 fi
 
 # Only intercept git push commands
-printf '%s' "$COMMAND" | grep -qE 'git\s+push' || exit 0
+printf '%s' "$COMMAND" | grep -qE '\bgit\s+push\b' || exit 0
 
 # Block push to protected branches (develop, master, main)
 # Check if the push target includes a protected branch name
 if printf '%s' "$COMMAND" | grep -qE 'git\s+push.*\b(origin\s+)?(develop|master|main)\b'; then
   # Allow if pushing a feature branch that happens to contain the word
   # e.g. "git push -u origin fix/develop-typo" should NOT be blocked
-  # Only block when the protected branch IS the push target (last argument)
+  # Only block when the protected branch IS the push target (last argument),
+  # including refspec syntax like HEAD:develop or feature:main.
   LAST_ARG=$(printf '%s' "$COMMAND" | grep -oE '\S+$')
-  if [ "$LAST_ARG" = "develop" ] || [ "$LAST_ARG" = "master" ] || [ "$LAST_ARG" = "main" ]; then
+  if printf '%s' "$LAST_ARG" | grep -qE '^(develop|master|main)$|:(develop|master|main)$'; then
     cat >&2 <<'MSG'
 BLOCKED: Direct push to develop/master is forbidden (CLAUDE.md rule).
 All merges into develop must go through a Pull Request.

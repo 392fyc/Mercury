@@ -5,8 +5,6 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
 
 /// Manages a `claude remote-control` child process.
 /// Parses stdout for session URL, emits Tauri events for GUI updates.
@@ -358,12 +356,27 @@ impl RemoteControlManager {
                 // taskkill /T /F /PID kills the entire process tree rooted at the child PID.
                 // This ensures cmd.exe, claude.exe, and any grandchild processes are all terminated.
                 if let Some(pid) = c.id() {
-                    let _ = std::process::Command::new("taskkill")
+                    let mut kill_cmd = Command::new("taskkill");
+                    kill_cmd
                         .args(["/T", "/F", "/PID", &pid.to_string()])
-                        .creation_flags(0x08000000) // CREATE_NO_WINDOW
-                        .output();
+                        .creation_flags(0x08000000); // CREATE_NO_WINDOW
+                    match kill_cmd.output().await {
+                        Ok(output) if !output.status.success() => {
+                            #[cfg(debug_assertions)]
+                            eprintln!(
+                                "[remote-control] taskkill failed: {}",
+                                String::from_utf8_lossy(&output.stderr)
+                            );
+                        }
+                        Err(e) => {
+                            #[cfg(debug_assertions)]
+                            eprintln!("[remote-control] taskkill spawn error: {}", e);
+                        }
+                        _ => {}
+                    }
                 } else {
-                    // Fallback: process may have already exited, try normal kill.
+                    // id() returns None when the child has already been reaped by the OS
+                    // or was never successfully spawned. Attempt normal kill as best-effort.
                     let _ = c.kill().await;
                 }
             }
