@@ -1,0 +1,183 @@
+# Mercury Research Quality Gate Configuration
+# Location: .mercury/gates/research-quality.yaml
+# Referenced by:
+#   - .claude/skills/deep-research/SKILL.md (deep path protocol)
+#   - .agents/skills/deep-research/SKILL.md (Codex deep path)
+#   - .claude/skills/web-research/SKILL.md (light gate thresholds)
+#   - .agents/skills/web-research/SKILL.md (Codex light gate)
+
+# Tiered research routing
+routing:
+  # Conditions that trigger deep research (Research Agent)
+  deep:  # ANY of these conditions triggers deep path (OR logic)
+    - research_questions_count: ">= 3"
+    - cross_source_verification: ">= 3"
+    - task_type: "architectural_decision"
+    - explicit_scope: "deep"            # TaskBundle.researchScope === "deep"
+    - explicit_invocation: true          # /deep-research or "深度调研"
+
+  # Default fallback: light research (in-agent, web-search gate)
+  # Any task not matching deep conditions falls here — this is the else branch
+  light:  # ELSE — everything not matched by deep
+    description: "Fallback for tasks with fewer questions and no multi-source requirement"
+    # Note: tasks with < 3 questions BUT requiring multi-source verification
+    # are escalated to deep via the cross_source_verification condition above
+
+# Quality gate thresholds
+gates:
+  # Light path: applied within any agent's web-research skill
+  light:
+    mandatory:
+      web_search_executed: true          # Must have done at least 1 search
+      source_url_present: true           # Claims must have source URLs
+      unverified_marked: true            # Unverifiable claims tagged UNVERIFIED
+    monitoring:
+      max_uses_per_question: 5           # Web searches per question
+      total_search_budget: 15            # Total searches per task
+      sdk_api_verification_budget: 20    # Extended budget for SDK/API verification
+
+  # Deep path: applied per-round in deep-research skill
+  deep:
+    mandatory:
+      question_answer_rate: ">= 0.8"    # Answered / total questions
+      citation_density: ">= 0.6"        # Claims with URL / total claims
+      unverified_rate: "<= 0.2"         # UNVERIFIED / total claims
+      iteration_depth: ">= 3"           # Enforced minimum research rounds
+    recommended:
+      source_diversity: ">= 3"          # Unique domains cited
+    limits:
+      max_iterations: 10                 # Hard cap on research rounds
+      max_web_searches_per_round: 20     # API max_uses per round
+
+# Verification subagent configuration
+verification:
+  trigger: "gate_passed OR max_iterations_reached"
+  dimensions:
+    - name: question_coverage
+      weight: 0.3
+    - name: citation_density
+      weight: 0.25
+    - name: actionability
+      weight: 0.25
+    - name: risk_honesty
+      weight: 0.2
+  pass_threshold: 3.5                    # Weighted average ≥ 3.5/5
+  verdicts:
+    on_gate_passed:
+      PASS: "Submit for human review"
+      PARTIAL: "Address gaps, re-verify"
+      FAIL: "Continue research rounds"
+    on_max_iterations_reached:
+      PASS: "Submit for human review"
+      PARTIAL: "Submit with gaps flagged for human attention"
+      FAIL: "Submit with FAIL status — human must decide next steps"
+
+# Canonical JSONL schema for results-{ISSUE_NUM}.jsonl
+# Single source of truth — referenced by:
+#   - .claude/skills/deep-research/SKILL.md (Round 1 Bootstrap section)
+#   - .agents/skills/deep-research/SKILL.md (State Files section)
+jsonl_schema:
+  file_pattern: "results-{ISSUE_NUM}.jsonl"
+  path: "Mercury_KB/04-research/.research-state/"
+  required_fields:
+    - name: round
+      type: integer
+      description: "1-indexed iteration number"
+    - name: timestamp
+      type: string
+      format: "ISO 8601 UTC"
+      description: "Round completion time"
+    - name: question_answer_rate
+      type: number
+      range: "0.0-1.0"
+      description: "Answered questions / total questions"
+    - name: citation_density
+      type: number
+      range: "0.0-1.0"
+      description: "Claims with source URL / total claims"
+    - name: unverified_rate
+      type: number
+      range: "0.0-1.0"
+      description: "UNVERIFIED tags / total claims"
+    - name: gate_passed
+      type: boolean
+      description: "Whether all mandatory thresholds were met"
+  optional_fields:
+    - name: questions_targeted
+      type: "string[]"
+      description: "Which research questions this round focused on"
+    - name: sources_found
+      type: integer
+      description: "Total sources discovered"
+    - name: sources_verified
+      type: integer
+      description: "Sources confirmed against official docs"
+    - name: notes
+      type: string
+      description: "Free-text notes on gaps or next steps"
+    - name: termination_reason
+      type: string
+      enum: ["gate_passed", "max_iterations_reached", "human_interrupt", "error"]
+      description: "Why the research loop ended (only on final round)"
+    - name: verification_verdict
+      type: string
+      enum: ["PASS", "PARTIAL", "FAIL"]
+      description: "Independent verification subagent result (only on final round)"
+    - name: verification_score
+      type: number
+      range: "0.0-5.0"
+      description: "Weighted average from verification dimensions (only on final round)"
+    - name: verification_dimensions
+      type: "object"
+      description: "Per-dimension scores from verification subagent, e.g. {question_coverage: 4, citation_density: 3.5, actionability: 4, risk_honesty: 4}"
+    - name: verification_gaps
+      type: "string[]"
+      description: "List of unanswered questions or uncited claims identified by verification subagent"
+
+# Cost budget (per deep research task, USD)
+cost:
+  currency: "USD"
+  opus_4_6:
+    estimated_per_task: 6.10
+    web_search_per_1000: 10
+    input_per_mtok: 5
+    output_per_mtok: 25
+  sonnet_4_6:
+    estimated_per_task: 3.60
+    input_per_mtok: 3
+    output_per_mtok: 15
+
+# API tool configuration for deep research
+api_tools:
+  # Preferred: dynamic filtering (Opus/Sonnet 4.6 only)
+  # NOTE: NOT ZDR-compatible by default (uses code_execution internally).
+  # For ZDR compliance, add `allowed_callers: ["direct"]` to disable dynamic filtering,
+  # or use the fallback path instead.
+  # Ref: https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool
+  preferred:
+    - type: "web_search_20260209"
+      name: "web_search"
+      max_uses: 20
+      # zdr_override: { allowed_callers: ["direct"] }  # Uncomment for ZDR
+    - type: "code_execution_20250522"
+      name: "code_execution"
+
+  # Fallback: basic search (all models, ZDR compatible)
+  fallback:
+    - type: "web_search_20250305"
+      name: "web_search"
+      max_uses: 20
+
+  # Optional: URL fetching for direct doc verification
+  optional:
+    - type: "web_fetch"
+      name: "web_fetch"
+
+# Codex compatibility notes
+codex:
+  # Codex agents use the same gate thresholds
+  # Codex does not support Claude Code hooks — gate is skill-enforced only
+  # Codex subagent delegation replaces Claude Agent() tool
+  supported: true
+  delegation_mechanism: "native"         # Use Codex's own task delegation
+  state_format: "results-{ISSUE_NUM}.jsonl"  # Schema defined in jsonl_schema above
