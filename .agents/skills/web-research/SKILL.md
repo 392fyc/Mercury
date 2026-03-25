@@ -62,3 +62,18 @@ Status: VERIFIED | UNVERIFIED
 - Preserve the official doc URL and the npm or PyPI URL for each external dependency.
 - Keep the verified package name, version, import path, and signature you actually used.
 - If anything stayed `UNVERIFIED`, state the gap explicitly in the final answer or code comment.
+
+## Research Scope Routing
+
+This skill handles **light research** (1-2 questions, SDK/API verification). For larger investigations (≥ 3 questions, cross-source verification, architectural decisions), escalate to the `deep-research` skill.
+
+### Light Gate Thresholds (`.mercury/gates/research-quality.yaml`)
+
+| Rule | Threshold |
+|------|-----------|
+| Web search executed | Must be true |
+| Source URL present | All claims must have URLs |
+| UNVERIFIED marked | Unverifiable claims tagged |
+| Max searches per question | 5 |
+| Total search budget | 15 |
+| SDK/API verification budget | 20 (extended) |

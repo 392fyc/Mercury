@@ -1,0 +1,104 @@
+# Mercury Research Quality Gate Configuration
+# Used by: deep-research skill, web-research skill, acceptance review
+# Location: .mercury/gates/research-quality.yaml
+
+# Tiered research routing
+routing:
+  # Conditions that trigger deep research (Research Agent)
+  deep:
+    - research_questions_count: ">= 3"
+    - cross_source_verification: ">= 3"
+    - task_type: "architectural_decision"
+    - explicit_scope: "deep"            # TaskBundle.researchScope === "deep"
+    - explicit_invocation: true          # /deep-research or "深度调研"
+
+  # Default: light research (in-agent, web-search gate)
+  light:
+    - research_questions_count: "< 3"
+    - single_source_sufficient: true
+
+# Quality gate thresholds
+gates:
+  # Light path: applied within any agent's web-research skill
+  light:
+    mandatory:
+      web_search_executed: true          # Must have done at least 1 search
+      source_url_present: true           # Claims must have source URLs
+      unverified_marked: true            # Unverifiable claims tagged UNVERIFIED
+    monitoring:
+      max_uses_per_question: 5           # Web searches per question
+      total_search_budget: 15            # Total searches per task
+      sdk_api_verification_budget: 20    # Extended budget for SDK/API verification
+
+  # Deep path: applied per-round in deep-research skill
+  deep:
+    mandatory:
+      question_answer_rate: ">= 0.8"    # Answered / total questions
+      citation_density: ">= 0.6"        # Claims with URL / total claims
+      unverified_rate: "<= 0.2"         # UNVERIFIED / total claims
+    recommended:
+      iteration_depth: ">= 3"           # Minimum research rounds
+      source_diversity: ">= 3"          # Unique domains cited
+    limits:
+      max_iterations: 10                 # Hard cap on research rounds
+      max_web_searches_per_round: 20     # API max_uses per round
+
+# Verification subagent configuration
+verification:
+  trigger: "gate_passed OR max_iterations_reached"
+  dimensions:
+    - name: question_coverage
+      weight: 0.3
+    - name: citation_density
+      weight: 0.25
+    - name: actionability
+      weight: 0.25
+    - name: risk_honesty
+      weight: 0.2
+  pass_threshold: 3.5                    # Weighted average ≥ 3.5/5
+  verdicts:
+    PASS: "Submit for human review"
+    PARTIAL: "Address gaps, re-verify"
+    FAIL: "Continue research rounds"
+
+# Cost budget (per deep research task)
+cost:
+  opus_4_6:
+    estimated_per_task: "$6.10"
+    web_search_per_1000: "$10"
+    input_per_mtok: "$5"
+    output_per_mtok: "$25"
+  sonnet_4_6:
+    estimated_per_task: "$3.60"
+    input_per_mtok: "$3"
+    output_per_mtok: "$15"
+
+# API tool configuration for deep research
+api_tools:
+  # Preferred: dynamic filtering (Opus/Sonnet 4.6 only)
+  preferred:
+    - type: "web_search_20260209"
+      name: "web_search"
+      max_uses: 20
+    - type: "code_execution_20250522"
+      name: "code_execution"
+
+  # Fallback: basic search (all models, ZDR compatible)
+  fallback:
+    - type: "web_search_20250305"
+      name: "web_search"
+      max_uses: 20
+
+  # Optional: URL fetching for direct doc verification
+  optional:
+    - type: "web_fetch"
+      name: "web_fetch"
+
+# Codex compatibility notes
+codex:
+  # Codex agents use the same gate thresholds
+  # Codex does not support Claude Code hooks — gate is skill-enforced only
+  # Codex subagent delegation replaces Claude Agent() tool
+  supported: true
+  delegation_mechanism: "native"         # Use Codex's own task delegation
+  state_format: "results.jsonl"          # Same format, same path

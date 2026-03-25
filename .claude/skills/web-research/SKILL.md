@@ -85,3 +85,36 @@ Mercury has automated enforcement via hooks:
 These hooks are a safety net — this skill provides the proactive workflow to follow so you rarely hit the gate.
 
 > **Single source of truth**: Research-intent keywords are defined in `user-prompt-submit.sh`. This skill's description mirrors those keywords for trigger alignment. When updating keywords, change both locations in the same commit.
+
+## Research Scope Routing
+
+This skill handles **light research** (1-2 questions, single-source verification, SDK/API checks). For larger investigations, route to the `deep-research` skill.
+
+### When to Escalate to Deep Research
+
+- Research questions ≥ 3
+- Cross-verification across ≥ 3 independent sources needed
+- Architectural decision analysis (comparing multiple alternatives)
+- TaskBundle `researchScope` is `"deep"`
+
+### Light Gate Thresholds
+
+Applied automatically within this skill's workflow (see `.mercury/gates/research-quality.yaml`):
+
+| Rule | Threshold |
+|------|-----------|
+| Web search executed | Must be true |
+| Source URL present | All claims must have URLs |
+| UNVERIFIED marked | Unverifiable claims tagged |
+| Max searches per question | 5 |
+| Total search budget per task | 15 |
+| SDK/API verification budget | 20 (extended) |
+
+### Quality Checklist (self-check before declaring done)
+
+Before completing a web-research task, verify:
+- [ ] Every SDK import path confirmed against official docs
+- [ ] Package version verified on npm/PyPI registry
+- [ ] API method signatures match vendor documentation
+- [ ] Source URLs recorded for each verified claim
+- [ ] Unverifiable claims explicitly marked UNVERIFIED
