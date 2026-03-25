@@ -31,6 +31,11 @@
           },
           {
             "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/push-guard.sh\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/pr-create-guard.sh\"",
             "timeout": 5
           },
