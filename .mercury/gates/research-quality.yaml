@@ -1,6 +1,10 @@
 # Mercury Research Quality Gate Configuration
-# Used by: deep-research skill, web-research skill, acceptance review
 # Location: .mercury/gates/research-quality.yaml
+# Referenced by:
+#   - .claude/skills/deep-research/SKILL.md (deep path protocol)
+#   - .agents/skills/deep-research/SKILL.md (Codex deep path)
+#   - .claude/skills/web-research/SKILL.md (light gate thresholds)
+#   - .agents/skills/web-research/SKILL.md (Codex light gate)
 
 # Tiered research routing
 routing:
@@ -64,7 +68,9 @@ verification:
     FAIL: "Continue research rounds"
 
 # Canonical JSONL schema for results-{ISSUE_NUM}.jsonl
-# Single source of truth — .claude and .agents SKILL.md files reference this definition
+# Single source of truth — referenced by:
+#   - .claude/skills/deep-research/SKILL.md (Round 1 Bootstrap section)
+#   - .agents/skills/deep-research/SKILL.md (State Files section)
 jsonl_schema:
   file_pattern: "results-{ISSUE_NUM}.jsonl"
   path: "Mercury_KB/04-research/.research-state/"
@@ -106,7 +112,7 @@ jsonl_schema:
       description: "Free-text notes on gaps or next steps"
     - name: termination_reason
       type: string
-      enum: ["gate_passed", "max_iterations", "human_interrupt", "error"]
+      enum: ["gate_passed", "max_iterations_reached", "human_interrupt", "error"]
       description: "Why the research loop ended (only on final round)"
     - name: verification_verdict
       type: string
@@ -117,25 +123,31 @@ jsonl_schema:
       range: "0.0-5.0"
       description: "Weighted average from verification dimensions (only on final round)"
 
-# Cost budget (per deep research task)
+# Cost budget (per deep research task, USD)
 cost:
+  currency: "USD"
   opus_4_6:
-    estimated_per_task: "$6.10"
-    web_search_per_1000: "$10"
-    input_per_mtok: "$5"
-    output_per_mtok: "$25"
+    estimated_per_task: 6.10
+    web_search_per_1000: 10
+    input_per_mtok: 5
+    output_per_mtok: 25
   sonnet_4_6:
-    estimated_per_task: "$3.60"
-    input_per_mtok: "$3"
-    output_per_mtok: "$15"
+    estimated_per_task: 3.60
+    input_per_mtok: 3
+    output_per_mtok: 15
 
 # API tool configuration for deep research
 api_tools:
   # Preferred: dynamic filtering (Opus/Sonnet 4.6 only)
+  # NOTE: NOT ZDR-compatible by default (uses code_execution internally).
+  # For ZDR compliance, add `allowed_callers: ["direct"]` to disable dynamic filtering,
+  # or use the fallback path instead.
+  # Ref: https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool
   preferred:
     - type: "web_search_20260209"
       name: "web_search"
       max_uses: 20
+      # zdr_override: { allowed_callers: ["direct"] }  # Uncomment for ZDR
     - type: "code_execution_20250522"
       name: "code_execution"
 
