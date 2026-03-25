@@ -5,7 +5,7 @@
 # Tiered research routing
 routing:
   # Conditions that trigger deep research (Research Agent)
-  deep:
+  deep:  # ANY of these conditions triggers deep path (OR logic)
     - research_questions_count: ">= 3"
     - cross_source_verification: ">= 3"
     - task_type: "architectural_decision"
@@ -13,7 +13,7 @@ routing:
     - explicit_invocation: true          # /deep-research or "深度调研"
 
   # Default: light research (in-agent, web-search gate)
-  light:
+  light:  # ALL conditions must hold (AND logic)
     - research_questions_count: "< 3"
     - single_source_sufficient: true
 

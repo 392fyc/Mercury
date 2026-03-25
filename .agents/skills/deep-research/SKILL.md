@@ -44,7 +44,7 @@ For lighter research (1-2 questions, single-source verification), use the `web-r
 
 ### Round Structure
 
-```
+```text
 Round N:
   1. CONTEXT  — Read results.jsonl + existing KB report to restore state
   2. PLAN     — Identify which sub-questions to tackle this round
@@ -69,14 +69,25 @@ All metrics are mechanically countable — no LLM self-evaluation for mandatory 
 
 ### State Files
 
-```
+```text
 Mercury_KB/04-research/RESEARCH-{TOPIC}-{ISSUE}.md     — report
 Mercury_KB/04-research/.research-state/results-{ISSUE}.jsonl — iteration log
 ```
 
-Each `results.jsonl` line:
+Each `results.jsonl` line (schema matches `.claude/` version — see `.mercury/gates/research-quality.yaml`):
 ```json
-{"round":1,"timestamp":"...","question_answer_rate":0.6,"citation_density":0.75,"unverified_rate":0.1,"gate_passed":false}
+{
+  "round": 1,
+  "timestamp": "2026-03-25T10:30:00Z",
+  "questions_targeted": ["Q1", "Q3"],
+  "sources_found": 5,
+  "sources_verified": 4,
+  "question_answer_rate": 0.6,
+  "citation_density": 0.75,
+  "unverified_rate": 0.1,
+  "gate_passed": false,
+  "notes": "Q2 and Q5 need deeper investigation"
+}
 ```
 
 ## Verification

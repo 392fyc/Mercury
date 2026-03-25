@@ -44,7 +44,7 @@ For lighter research (1-2 questions, single-source verification), use the `web-r
 
 ### Round Structure
 
-```
+```text
 Round N:
   1. CONTEXT  — Read results.jsonl + existing KB report to restore state
   2. PLAN     — Identify which sub-questions to tackle this round
@@ -61,7 +61,7 @@ Round N:
 
 On the first round, create the state files:
 
-```
+```text
 Mercury_KB/04-research/RESEARCH-{TOPIC}-{ISSUE_NUM}.md  — the report
 Mercury_KB/04-research/.research-state/results-{ISSUE_NUM}.jsonl — iteration log
 ```
@@ -124,7 +124,7 @@ No LLM self-evaluation for mandatory metrics — they are mechanically countable
 
 When the quality gate passes (or max iterations reached), spawn a verification subagent:
 
-```
+```text
 Agent(
   description: "Verify research quality",
   prompt: """
