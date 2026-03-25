@@ -61,6 +61,48 @@ verification:
     PARTIAL: "Address gaps, re-verify"
     FAIL: "Continue research rounds"
 
+# Canonical JSONL schema for results-{ISSUE_NUM}.jsonl
+# Single source of truth — .claude and .agents SKILL.md files reference this definition
+jsonl_schema:
+  file_pattern: "results-{ISSUE_NUM}.jsonl"
+  path: "Mercury_KB/04-research/.research-state/"
+  required_fields:
+    - name: round
+      type: integer
+      description: "1-indexed iteration number"
+    - name: timestamp
+      type: string
+      format: "ISO 8601 UTC"
+      description: "Round completion time"
+    - name: question_answer_rate
+      type: number
+      range: "0.0-1.0"
+      description: "Answered questions / total questions"
+    - name: citation_density
+      type: number
+      range: "0.0-1.0"
+      description: "Claims with source URL / total claims"
+    - name: unverified_rate
+      type: number
+      range: "0.0-1.0"
+      description: "UNVERIFIED tags / total claims"
+    - name: gate_passed
+      type: boolean
+      description: "Whether all mandatory thresholds were met"
+  optional_fields:
+    - name: questions_targeted
+      type: "string[]"
+      description: "Which research questions this round focused on"
+    - name: sources_found
+      type: integer
+      description: "Total sources discovered"
+    - name: sources_verified
+      type: integer
+      description: "Sources confirmed against official docs"
+    - name: notes
+      type: string
+      description: "Free-text notes on gaps or next steps"
+
 # Cost budget (per deep research task)
 cost:
   opus_4_6:
@@ -101,4 +143,4 @@ codex:
   # Codex subagent delegation replaces Claude Agent() tool
   supported: true
   delegation_mechanism: "native"         # Use Codex's own task delegation
-  state_format: "results.jsonl"          # Same format, same path
+  state_format: "results-{ISSUE_NUM}.jsonl"  # Schema defined in jsonl_schema above
