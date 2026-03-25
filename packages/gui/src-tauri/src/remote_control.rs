@@ -360,19 +360,23 @@ impl RemoteControlManager {
                     kill_cmd
                         .args(["/T", "/F", "/PID", &pid.to_string()])
                         .creation_flags(0x08000000); // CREATE_NO_WINDOW
-                    match kill_cmd.output().await {
-                        Ok(output) if !output.status.success() => {
-                            #[cfg(debug_assertions)]
+                    let taskkill_ok = match kill_cmd.output().await {
+                        Ok(output) if output.status.success() => true,
+                        Ok(output) => {
                             eprintln!(
                                 "[remote-control] taskkill failed: {}",
                                 String::from_utf8_lossy(&output.stderr)
                             );
+                            false
                         }
                         Err(e) => {
-                            #[cfg(debug_assertions)]
                             eprintln!("[remote-control] taskkill spawn error: {}", e);
+                            false
                         }
-                        _ => {}
+                    };
+                    if !taskkill_ok {
+                        // Best-effort fallback: try normal kill if taskkill failed.
+                        let _ = c.kill().await;
                     }
                 } else {
                     // id() returns None when the child has already been reaped by the OS
@@ -385,11 +389,22 @@ impl RemoteControlManager {
                 let _ = c.kill().await;
             }
             // Wait for the child process to fully exit (timeout 5s) to avoid zombies.
-            let _ = tokio::time::timeout(
+            // If the child does not exit within the timeout, treat stop as failed.
+            match tokio::time::timeout(
                 std::time::Duration::from_secs(5),
                 c.wait(),
-            ).await;
-            *child = None;
+            ).await {
+                Ok(_) => {
+                    *child = None;
+                }
+                Err(_) => {
+                    // Child still alive after timeout — do NOT clear state.
+                    // Return error so the GUI knows the process may still be running.
+                    return Err(
+                        "Stop timed out: child process may still be running".to_string()
+                    );
+                }
+            }
         }
         {
             let mut status = self.status.lock().await;
