@@ -7,7 +7,9 @@ INPUT=$(cat)
 
 # Debug: log raw input for diagnosing guard bypass
 STATE_DIR="$(dirname "$0")/state"
-mkdir -p "$STATE_DIR"
+if ! mkdir -p "$STATE_DIR"; then
+  echo "WARNING: cannot create state dir: $STATE_DIR" >&2
+fi
 # Truncate debug log if > 100KB to prevent unbounded growth
 LOG_FILE="$STATE_DIR/pre-commit-guard-debug.log"
 if [ -f "$LOG_FILE" ] && [ "$(wc -c < "$LOG_FILE")" -gt 102400 ]; then

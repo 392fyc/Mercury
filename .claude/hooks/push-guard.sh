@@ -6,7 +6,10 @@ INPUT=$(cat)
 
 # Debug: log raw input for diagnosing guard bypass (consistent with pre-commit-guard.sh)
 STATE_DIR="$(dirname "$0")/state"
-mkdir -p "$STATE_DIR"
+if ! mkdir -p "$STATE_DIR"; then
+  echo "WARNING: cannot create state dir: $STATE_DIR" >&2
+  # Continue execution — only debug logging is affected
+fi
 LOG_FILE="$STATE_DIR/push-guard-debug.log"
 if [ -f "$LOG_FILE" ] && [ "$(wc -c < "$LOG_FILE")" -gt 102400 ]; then
   tail -100 "$LOG_FILE" > "$LOG_FILE.tmp" && mv "$LOG_FILE.tmp" "$LOG_FILE"
