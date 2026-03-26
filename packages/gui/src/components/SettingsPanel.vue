@@ -353,8 +353,10 @@ async function openRoleEditor(role: RoleContextKey) {
   } catch (e) {
     if (requestId !== roleEditorRequestId) return;
     roleEditorError.value = e instanceof Error ? e.message : String(e);
+    // Preserve local override so user can still see/edit their config
+    const localOverride = editObsidian.value.roleInstructionOverrides?.[role];
     roleDefaultContent.value = "";
-    roleEditorContent.value = "";
+    roleEditorContent.value = localOverride ?? "";
   } finally {
     if (requestId === roleEditorRequestId) {
       roleEditorLoading.value = false;
@@ -692,8 +694,18 @@ function handleKeydown(event: KeyboardEvent) {
 
                 <div v-if="roleContextExpanded" class="role-context-grid">
                   <template v-for="role in ROLE_CONTEXT_DEFS" :key="`instr-${role.value}`">
-                    <!-- Skip acceptance — uses a separate prompt builder not wired to overrides yet -->
-                    <template v-if="role.value !== 'acceptance'">
+                    <!-- Acceptance uses buildAcceptanceRolePrompt — show disabled card -->
+                    <div v-if="role.value === 'acceptance'" class="role-context-card role-card-disabled">
+                      <div class="role-context-card-header">
+                        <div>
+                          <h4>{{ role.label }}</h4>
+                          <p class="hint compact">{{ role.hint }}</p>
+                        </div>
+                        <button class="cap-add" disabled title="Acceptance uses a dedicated prompt builder">Edit</button>
+                      </div>
+                      <span class="role-override-badge">Not editable — uses dedicated acceptance prompt</span>
+                    </div>
+                    <template v-else>
                       <div v-if="editingRole !== role.value" class="role-context-card">
                         <div class="role-context-card-header">
                           <div>
@@ -725,9 +737,9 @@ function handleKeydown(event: KeyboardEvent) {
                         </div>
 
                         <div v-if="roleEditorLoading" class="role-editor-loading">Loading instructions...</div>
-                        <div v-else-if="roleEditorError" class="role-editor-error">{{ roleEditorError }}</div>
+                        <div v-if="roleEditorError && !roleEditorLoading" class="role-editor-error">{{ roleEditorError }}</div>
                         <textarea
-                          v-else
+                          v-if="!roleEditorLoading"
                           v-model="roleEditorContent"
                           class="role-editor-textarea"
                           spellcheck="false"
@@ -1417,6 +1429,15 @@ function handleKeydown(event: KeyboardEvent) {
 
 .role-editor-error {
   color: var(--accent-error);
+}
+
+.role-card-disabled {
+  opacity: 0.55;
+}
+
+.role-card-disabled .cap-add:disabled {
+  cursor: default;
+  opacity: 0.4;
 }
 
 .context-status-info {
