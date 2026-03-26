@@ -504,6 +504,8 @@ export interface SessionListItem {
   active: boolean;
   parentSessionId?: string;
   promptHash?: string;
+  currentPromptHash?: string;
+  legacyRoleConfig?: boolean;
 }
 
 /** List sessions, optionally filtered by agent, role, or terminal status. */

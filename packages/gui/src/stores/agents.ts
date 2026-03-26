@@ -359,8 +359,8 @@ async function hydrateSessionMeta(): Promise<void> {
           status: match.status,
           lastActiveAt: match.lastActiveAt,
           promptHash: match.promptHash,
-          currentPromptHash: (match as typeof match & { currentPromptHash?: string }).currentPromptHash,
-          legacyRoleConfig: (match as typeof match & { legacyRoleConfig?: boolean }).legacyRoleConfig,
+          currentPromptHash: match.currentPromptHash,
+          legacyRoleConfig: match.legacyRoleConfig,
         });
       }
       if (pruned) saveSessions();
