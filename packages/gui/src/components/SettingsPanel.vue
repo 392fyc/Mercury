@@ -13,6 +13,7 @@ const activeTab = ref<"agents" | "project" | "display">("agents");
 const saving = ref(false);
 const saveMsg = ref("");
 const roleContextExpanded = ref(true);
+const roleInstructionsExpanded = ref(true);
 
 type RoleContextKey = "main" | "dev" | "acceptance" | "research" | "design";
 type ContextTarget = "global" | RoleContextKey;
@@ -365,14 +366,15 @@ async function openRoleEditor(role: RoleContextKey) {
 }
 
 function closeRoleEditor() {
-  if (roleEditorLoading.value || roleEditorError.value) {
-    // Don't persist changes when loading failed — just close without modifying overrides
+  if (roleEditorLoading.value) {
+    // Still loading — close without persisting
     editingRole.value = null;
     roleEditorContent.value = "";
     roleDefaultContent.value = "";
     roleEditorError.value = "";
     return;
   }
+  // Error state but user may have edited local content — persist if non-empty
   if (editingRole.value) {
     const role = editingRole.value;
     const content = roleEditorContent.value;
@@ -684,15 +686,15 @@ function handleKeydown(event: KeyboardEvent) {
 
               <!-- Role Instructions — independent of autoInjectContext -->
               <div class="role-context-shell">
-                <button class="section-toggle" @click="roleContextExpanded = !roleContextExpanded">
+                <button class="section-toggle" @click="roleInstructionsExpanded = !roleInstructionsExpanded">
                   <span>Role Instructions</span>
-                  <span class="section-toggle-state">{{ roleContextExpanded ? "Hide" : "Show" }}</span>
+                  <span class="section-toggle-state">{{ roleInstructionsExpanded ? "Hide" : "Show" }}</span>
                 </button>
                 <p class="hint compact">
                   Edit the system-prompt instructions injected for each role. Overrides are saved in config; defaults come from .mercury/roles/.
                 </p>
 
-                <div v-if="roleContextExpanded" class="role-context-grid">
+                <div v-if="roleInstructionsExpanded" class="role-context-grid">
                   <template v-for="role in ROLE_CONTEXT_DEFS" :key="`instr-${role.value}`">
                     <!-- Acceptance uses buildAcceptanceRolePrompt — show disabled card -->
                     <div v-if="role.value === 'acceptance'" class="role-context-card role-card-disabled">
