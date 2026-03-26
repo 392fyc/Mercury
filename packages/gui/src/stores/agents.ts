@@ -347,8 +347,11 @@ async function hydrateSessionMeta(): Promise<void> {
         if (!match) {
           // Stale session in localStorage that backend no longer knows — prune it.
           // Skip per-item persist; we batch-save after the loop.
+          // Mirror the full cleanup from agent.session.end/delete.
           cleanupPanelState(panelKey, sessionId, true);
           statuses.value.delete(panelKey);
+          workDirs.value.delete(panelKey);
+          gitBranches.value.delete(panelKey);
           removeBookmark(panelKey);
           pruned = true;
           continue;
@@ -365,6 +368,8 @@ async function hydrateSessionMeta(): Promise<void> {
       }
       if (pruned) {
         triggerRef(statuses);
+        triggerRef(workDirs);
+        triggerRef(gitBranches);
         saveSessions();
       }
     } catch {
@@ -445,14 +450,19 @@ async function initAgents() {
         : `${payload.role}:${event.agentId}:${event.sessionId}`;
 
       // Deduplicate: if any existing panelKey already maps to this sessionId
-      // (e.g. a legacy key restored from localStorage), clean it up first to
-      // prevent ghost duplicates in the bookmark rail.
+      // (e.g. a legacy key restored from localStorage), unbind the old panel
+      // without clearing sessionPromptState — the same sessionId will be
+      // re-registered under the new panelKey by setSessionInfo below.
       if (payload.role !== "main") {
         for (const [existingKey, existingSid] of sessions.value) {
           if (existingSid === event.sessionId && existingKey !== panelKey) {
-            cleanupPanelState(existingKey, existingSid);
+            clearSession(existingKey);
             statuses.value.delete(existingKey);
             triggerRef(statuses);
+            workDirs.value.delete(existingKey);
+            triggerRef(workDirs);
+            gitBranches.value.delete(existingKey);
+            triggerRef(gitBranches);
             removeBookmark(existingKey);
             break;
           }
