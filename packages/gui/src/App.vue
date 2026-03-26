@@ -137,13 +137,15 @@ onMounted(async () => {
     initEventListeners(),
     initTaskListeners(),
   ]);
-  if (import.meta.env.DEV) {
-    results.forEach((r, i) => {
-      if (r.status === "rejected") {
-        console.warn(`[Mercury] ${INIT_MODULES[i]} failed:`, r.reason);
+  results.forEach((r, i) => {
+    if (r.status === "rejected") {
+      // Always log module name at error level for production observability
+      console.error(`[Mercury] ${INIT_MODULES[i]} failed`);
+      if (import.meta.env.DEV) {
+        console.error(`  Detail:`, r.reason);
       }
-    });
-  }
+    }
+  });
 });
 
 onBeforeUnmount(() => {

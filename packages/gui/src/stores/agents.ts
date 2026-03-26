@@ -165,9 +165,13 @@ function updateSessionPromptState(sessionId: string, info: Partial<SessionMeta>)
     return;
   }
   const existing = sessionPromptState.value.get(sessionId);
+  // Only patch explicitly-returned fields — omit undefined to preserve cache
+  const defined = Object.fromEntries(
+    Object.entries(nextState).filter(([, v]) => v !== undefined),
+  );
   sessionPromptState.value.set(sessionId, {
     ...existing,
-    ...nextState,
+    ...defined,
   });
   triggerRef(sessionPromptState);
 }
@@ -482,6 +486,9 @@ async function initAgents() {
       // Deduplicate: collect ALL existing panelKeys that map to this sessionId
       // (e.g. legacy keys restored from localStorage). Snapshot first to avoid
       // mutating sessions.value while iterating.
+      // Preserve sessionName from old panel before clearing, in case the event
+      // doesn't carry one — prevents sessions losing their human-readable name.
+      let preservedSessionName: string | undefined;
       if (payload.role !== "main") {
         const duplicateKeys: string[] = [];
         for (const [existingKey, existingSid] of sessions.value) {
@@ -489,7 +496,11 @@ async function initAgents() {
             duplicateKeys.push(existingKey);
           }
         }
+        // Read sessionName BEFORE clearing metadata
         for (const dupKey of duplicateKeys) {
+          if (!preservedSessionName) {
+            preservedSessionName = sessionMeta.value.get(dupKey)?.sessionName;
+          }
           clearSession(dupKey);
           statuses.value.delete(dupKey);
           workDirs.value.delete(dupKey);
@@ -507,7 +518,7 @@ async function initAgents() {
       // panelKey→sessionId mapping needed by resolvePanelKey in messages.ts.
       setSessionInfo(panelKey, {
         sessionId: event.sessionId,
-        sessionName: payload.sessionName,
+        sessionName: payload.sessionName ?? preservedSessionName,
         status: "active",
         lastActiveAt: event.timestamp,
         promptHash: payload.promptHash,
