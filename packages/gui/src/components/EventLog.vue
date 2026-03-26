@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useEventStore } from "../stores/events";
 
-const { events, eventCount } = useEventStore();
+const { events, eventCount, clearEvents } = useEventStore();
 
 function typeColor(type: string): string {
   if (type.startsWith("agent.error")) return "var(--accent-error)";
@@ -20,6 +20,7 @@ function payloadPreview(payload: Record<string, unknown>): string {
     <div class="log-header">
       <span class="log-title">Event Log</span>
       <span class="log-count">{{ eventCount }} events</span>
+      <button class="log-clear-btn" @click="clearEvents" title="Clear event log">Clear</button>
     </div>
     <div class="log-body">
       <div v-if="events.length === 0" class="empty-state">
@@ -69,6 +70,24 @@ function payloadPreview(payload: Record<string, unknown>): string {
 .log-count {
   font-size: 10px;
   color: var(--text-muted);
+}
+
+.log-clear-btn {
+  margin-left: 8px;
+  padding: 2px 8px;
+  font-size: 10px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-muted);
+  cursor: pointer;
+  line-height: 1.4;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.log-clear-btn:hover {
+  color: var(--accent-error);
+  border-color: var(--accent-error);
 }
 
 .log-body {

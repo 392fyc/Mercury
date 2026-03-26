@@ -177,24 +177,69 @@ pub fn run() {
                 let rc = app.state::<SharedRemoteControl>().inner().clone();
                 let pm = app.state::<SharedPrMonitor>().inner().clone();
                 tauri::async_runtime::block_on(async {
-                    // Stop PR monitor polling
-                    if pm.is_polling() {
-                        eprintln!("[tauri] Stopping PR monitor polling");
-                        pm.stop_polling();
-                    }
-                    // Shutdown remote control first
-                    {
-                        let mgr = rc.lock().await;
-                        if mgr.is_running().await {
-                            eprintln!("[tauri] Shutting down remote control");
-                            let _ = mgr.stop().await;
+                    let shutdown = async {
+                        // Stop PR monitor polling (synchronous, no timeout needed)
+                        if pm.is_polling() {
+                            eprintln!("[tauri] Stopping PR monitor polling");
+                            pm.stop_polling();
                         }
-                    }
-                    // Then shutdown sidecar
-                    let guard = shared.lock().await;
-                    if let Some(mgr) = guard.as_ref() {
-                        eprintln!("[tauri] Shutting down orchestrator sidecar");
-                        mgr.shutdown().await;
+
+                        // Shutdown remote control first (3 s timeout)
+                        {
+                            let mgr = rc.lock().await;
+                            if mgr.is_running().await {
+                                eprintln!("[tauri] Shutting down remote control");
+                                match tokio::time::timeout(
+                                    tokio::time::Duration::from_secs(3),
+                                    mgr.stop(),
+                                )
+                                .await
+                                {
+                                    Ok(_) => {}
+                                    Err(_) => eprintln!(
+                                        "[tauri] WARNING: remote control shutdown timed out"
+                                    ),
+                                }
+                            }
+                        }
+
+                        // Shutdown sidecar (3 s graceful timeout, then force-kill)
+                        {
+                            let guard = shared.lock().await;
+                            if let Some(mgr) = guard.as_ref() {
+                                eprintln!("[tauri] Shutting down orchestrator sidecar");
+                                match tokio::time::timeout(
+                                    tokio::time::Duration::from_secs(3),
+                                    mgr.shutdown(),
+                                )
+                                .await
+                                {
+                                    Ok(_) => {}
+                                    Err(_) => {
+                                        eprintln!(
+                                            "[tauri] WARNING: sidecar graceful shutdown timed out, force-killing"
+                                        );
+                                        // Force-kill if still alive after graceful timeout
+                                        if mgr.is_alive().await {
+                                            mgr.shutdown().await;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    };
+
+                    // Global 5 s timeout around the entire shutdown sequence
+                    match tokio::time::timeout(
+                        tokio::time::Duration::from_secs(5),
+                        shutdown,
+                    )
+                    .await
+                    {
+                        Ok(_) => {}
+                        Err(_) => eprintln!(
+                            "[tauri] WARNING: exit cleanup exceeded 5-second global timeout"
+                        ),
                     }
                 });
             }

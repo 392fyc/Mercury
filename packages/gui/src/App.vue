@@ -1,21 +1,23 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from "vue";
+import { defineAsyncComponent, onBeforeUnmount, onMounted, ref } from "vue";
 import TitleBar from "./components/TitleBar.vue";
 import AgentPanel from "./components/AgentPanel.vue";
 import EventLog from "./components/EventLog.vue";
-import SettingsPanel from "./components/SettingsPanel.vue";
 import TaskDashboard from "./components/TaskDashboard.vue";
-import SessionPicker from "./components/SessionPicker.vue";
-import HistoryPanel from "./components/HistoryPanel.vue";
-import ApprovalQueue from "./components/ApprovalQueue.vue";
 import SessionsPanel from "./components/SessionsPanel.vue";
 import ExplorerPanel from "./components/ExplorerPanel.vue";
 import FloatingPanel from "./components/FloatingPanel.vue";
 // Local SFC import — https://vuejs.org/guide/components/registration
 import FilePreview from "./components/FilePreview.vue";
-import AgentRoleSelector from "./components/AgentRoleSelector.vue";
-import RemoteControlPanel from "./components/RemoteControlPanel.vue";
-import PRMonitorPanel from "./components/PRMonitorPanel.vue";
+
+// Lazy-loaded modal/conditional components
+const SettingsPanel = defineAsyncComponent(() => import("./components/SettingsPanel.vue"));
+const RemoteControlPanel = defineAsyncComponent(() => import("./components/RemoteControlPanel.vue"));
+const PRMonitorPanel = defineAsyncComponent(() => import("./components/PRMonitorPanel.vue"));
+const SessionPicker = defineAsyncComponent(() => import("./components/SessionPicker.vue"));
+const HistoryPanel = defineAsyncComponent(() => import("./components/HistoryPanel.vue"));
+const ApprovalQueue = defineAsyncComponent(() => import("./components/ApprovalQueue.vue"));
+const AgentRoleSelector = defineAsyncComponent(() => import("./components/AgentRoleSelector.vue"));
 import { useAgentStore } from "./stores/agents";
 import { useApprovalStore } from "./stores/approvals";
 import { useMessageStore } from "./stores/messages";
@@ -126,11 +128,14 @@ function handleCreateSession() {
 }
 
 onMounted(async () => {
-  await initAgents();
-  await initMessageListeners();
-  await initApprovalStore();
-  await initEventListeners();
-  await initTaskListeners();
+  await Promise.allSettled([
+    initAgents(),
+    initMessageListeners(),
+    initApprovalStore(),
+    initEventListeners(),
+    initTaskListeners(),
+  ]);
+  // loadTasks depends on agents being loaded first
   await loadTasks();
 });
 

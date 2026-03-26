@@ -5,7 +5,7 @@
  * enabling independent message history per role panel.
  */
 
-import { ref } from "vue";
+import { ref, shallowRef, triggerRef } from "vue";
 import type { ImageAttachment } from "../lib/tauri-bridge";
 import {
   sendPrompt as bridgeSendPrompt,
@@ -41,10 +41,10 @@ export interface StreamingState {
 const STORAGE_KEY = "mercury:messages";
 const MAX_MESSAGES_PER_PANEL = 200;
 
-const messages = ref<Map<string, DisplayMessage[]>>(new Map());
+const messages = shallowRef<Map<string, DisplayMessage[]>>(new Map());
 
 /** Live streaming content per panel — cleared when stream ends or full message arrives. */
-const streamingState = ref<Map<string, StreamingState>>(new Map());
+const streamingState = shallowRef<Map<string, StreamingState>>(new Map());
 
 /** Reverse map: sessionId → panelKey, populated when we get sessionIds back */
 const sessionToPanelKey = new Map<string, string>();
@@ -136,32 +136,36 @@ function handleStreamingEvent(panelKey: string, eventKind: AgentStreamingEventKi
       break;
   }
 
-  streamingState.value = new Map(streamingState.value).set(panelKey, { ...current });
+  streamingState.value.set(panelKey, { ...current });
+  triggerRef(streamingState);
 }
 
 /** Clear streaming state for a panel (on stream end or full message arrival). */
 function clearStreamingState(panelKey: string) {
-  const next = new Map(streamingState.value);
-  next.delete(panelKey);
-  streamingState.value = next;
+  streamingState.value.delete(panelKey);
+  triggerRef(streamingState);
 }
 
 /** Append a message to a panel's history and persist to localStorage. */
 function appendMessage(panelKey: string, msg: DisplayMessage) {
   const current = messages.value.get(panelKey) ?? [];
-  messages.value = new Map(messages.value).set(panelKey, [...current, msg]);
+  current.push(msg);
+  messages.value.set(panelKey, current);
+  triggerRef(messages);
   saveToStorage();
 }
 
 /** Clear all messages for a panel and persist to localStorage. */
 function clearMessages(panelKey: string) {
-  messages.value = new Map(messages.value).set(panelKey, []);
+  messages.value.set(panelKey, []);
+  triggerRef(messages);
   saveToStorage();
 }
 
 /** Replace all messages for a panel in a single reactive update. */
 function setMessages(panelKey: string, msgs: DisplayMessage[]) {
-  messages.value = new Map(messages.value).set(panelKey, msgs);
+  messages.value.set(panelKey, msgs);
+  triggerRef(messages);
   saveToStorage();
 }
 

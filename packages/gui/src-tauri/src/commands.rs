@@ -6,26 +6,40 @@ use tauri::State;
 use crate::sidecar::SidecarManager;
 use crate::{ProjectRoot, SharedPrMonitor, SharedRemoteControl, SharedSidecar};
 
+/// Run a blocking Command in a spawned thread to avoid blocking the tokio runtime.
+async fn run_git_command(
+    cmd_fn: impl FnOnce() -> std::io::Result<std::process::Output> + Send + 'static,
+) -> Result<std::process::Output, String> {
+    tokio::task::spawn_blocking(cmd_fn)
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
+        .map_err(|e| format!("git command failed: {}", e))
+}
+
 // ─── Project Info (direct, no sidecar) ───
 
 #[tauri::command]
-pub fn get_project_info(root: State<'_, ProjectRoot>) -> Result<serde_json::Value, String> {
-    let project_root = &root.0;
+pub async fn get_project_info(root: State<'_, ProjectRoot>) -> Result<serde_json::Value, String> {
+    let project_root = root.0.clone();
 
     // Detect git branch via `git rev-parse --abbrev-ref HEAD`
-    let git_branch = Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(project_root)
-        .output()
-        .ok()
-        .and_then(|o| {
-            if o.status.success() {
-                Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
-            } else {
-                None
-            }
-        });
+    let output = run_git_command(move || {
+        Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .current_dir(&project_root)
+            .output()
+    })
+    .await;
 
+    let git_branch = output.ok().and_then(|o| {
+        if o.status.success() {
+            Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+        } else {
+            None
+        }
+    });
+
+    let project_root = root.0.clone();
     Ok(serde_json::json!({
         "projectRoot": project_root,
         "gitBranch": git_branch,
@@ -34,19 +48,23 @@ pub fn get_project_info(root: State<'_, ProjectRoot>) -> Result<serde_json::Valu
 
 /// Get git branch for an arbitrary directory (no sidecar needed).
 #[tauri::command]
-pub fn get_git_info(path: String) -> Result<serde_json::Value, String> {
-    let git_branch = Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(&path)
-        .output()
-        .ok()
-        .and_then(|o| {
-            if o.status.success() {
-                Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
-            } else {
-                None
-            }
-        });
+pub async fn get_git_info(path: String) -> Result<serde_json::Value, String> {
+    let path_clone = path.clone();
+    let output = run_git_command(move || {
+        Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .current_dir(&path_clone)
+            .output()
+    })
+    .await;
+
+    let git_branch = output.ok().and_then(|o| {
+        if o.status.success() {
+            Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+        } else {
+            None
+        }
+    });
 
     Ok(serde_json::json!({
         "path": path,
@@ -57,105 +75,75 @@ pub fn get_git_info(path: String) -> Result<serde_json::Value, String> {
 /// Get git file status (modified/untracked/deleted) for all files in a directory.
 ///
 /// Returns a map of `{ "relative/path": "M"|"D"|"U" }` where:
-/// - **M** (Modified): files with actual worktree diff via `git diff --name-only --ignore-cr-at-eol`
-/// - **D** (Deleted): worktree deletions via `git diff --name-only --diff-filter=D --ignore-cr-at-eol`
-/// - **U** (Untracked): non-ignored untracked files via `git ls-files --others --exclude-standard`
+/// - **M** (Modified): staged (X=M/A) or unstaged (Y=M) modifications
+/// - **D** (Deleted): staged (X=D) or unstaged (Y=D) deletions
+/// - **U** (Untracked): non-ignored untracked files (XY=??)
 ///
-/// Priority on conflict: M > D > U (M overwrites D/U; D overwrites U).
+/// Priority on conflict: M > D > U.
 ///
-/// Uses `--ignore-cr-at-eol` to avoid false positives from CRLF differences on Windows.
-/// Refs: https://git-scm.com/docs/git-diff, https://git-scm.com/docs/git-ls-files
+/// Uses `git status --porcelain=v1` (single call) for efficiency.
+/// Refs: https://git-scm.com/docs/git-status#_output_format
 #[tauri::command]
-pub fn get_git_file_status(path: String) -> Result<serde_json::Value, String> {
+pub async fn get_git_file_status(path: String) -> Result<serde_json::Value, String> {
     // Canonicalize path to prevent symlink/traversal attacks
     let canonical = std::fs::canonicalize(&path)
         .map_err(|e| format!("Invalid path '{}': {}", path, e))?;
     let dir = canonical.to_string_lossy().to_string();
 
+    // Single call: git status --porcelain=v1
+    // Output format: "XY filename" where X=staged status, Y=worktree status
+    let output = run_git_command(move || {
+        Command::new("git")
+            .args(["status", "--porcelain=v1"])
+            .current_dir(&dir)
+            .output()
+    })
+    .await?;
+
     let mut statuses = serde_json::Map::new();
 
-    // 1. Files with actual worktree diff (M = modified)
-    // --ignore-cr-at-eol: ignore CRLF/LF differences on Windows
-    // Ref: https://git-scm.com/docs/diff-options
-    if let Ok(output) = Command::new("git")
-        .args(["diff", "--name-only", "--ignore-cr-at-eol"])
-        .current_dir(&dir)
-        .output()
-    {
-        if output.status.success() {
-            for line in String::from_utf8_lossy(&output.stdout).lines() {
-                let f = line.trim();
-                if !f.is_empty() {
-                    statuses.insert(f.to_string(), serde_json::Value::String("M".to_string()));
-                }
+    if output.status.success() {
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            // Each line is at least 3 chars: "XY filename"
+            if line.len() < 3 {
+                continue;
             }
-        }
-    }
-
-    // 2. Untracked files (U)
-    // `git ls-files --others --exclude-standard` lists untracked, non-ignored files
-    if let Ok(output) = Command::new("git")
-        .args(["ls-files", "--others", "--exclude-standard"])
-        .current_dir(&dir)
-        .output()
-    {
-        if output.status.success() {
-            for line in String::from_utf8_lossy(&output.stdout).lines() {
-                let f = line.trim();
-                if !f.is_empty() && !statuses.contains_key(f) {
-                    statuses.insert(f.to_string(), serde_json::Value::String("U".to_string()));
-                }
+            let xy: Vec<char> = line.chars().take(2).collect();
+            let (x, y) = (xy[0], xy[1]);
+            let filename = line[3..].trim();
+            if filename.is_empty() {
+                continue;
             }
-        }
-    }
 
-    // 3. Deleted files (D)
-    // `git diff --name-only --diff-filter=D` lists worktree deletions
-    if let Ok(output) = Command::new("git")
-        .args(["diff", "--name-only", "--diff-filter=D", "--ignore-cr-at-eol"])
-        .current_dir(&dir)
-        .output()
-    {
-        if output.status.success() {
-            for line in String::from_utf8_lossy(&output.stdout).lines() {
-                let f = line.trim();
-                if !f.is_empty() && !statuses.contains_key(f) {
-                    // Only set D if not already M (priority: M > D > U)
-                    statuses.insert(f.to_string(), serde_json::Value::String("D".to_string()));
-                }
-            }
-        }
-    }
+            let status = if x == '?' && y == '?' {
+                // Untracked file
+                "U"
+            } else if x == 'M' || x == 'A' {
+                // Staged modification or addition → M
+                "M"
+            } else if y == 'M' {
+                // Unstaged modification → M
+                "M"
+            } else if x == 'D' {
+                // Staged deletion → D
+                "D"
+            } else if y == 'D' {
+                // Unstaged deletion → D
+                "D"
+            } else {
+                // Other statuses (R, C, etc.) treated as M
+                "M"
+            };
 
-    // 4. Staged modifications (M) — files that are `git add`-ed
-    // git diff --cached --name-only: https://git-scm.com/docs/git-diff
-    if let Ok(output) = Command::new("git")
-        .args(["diff", "--cached", "--name-only", "--ignore-cr-at-eol"])
-        .current_dir(&dir)
-        .output()
-    {
-        if output.status.success() {
-            for line in String::from_utf8_lossy(&output.stdout).lines() {
-                let f = line.trim();
-                if !f.is_empty() && !statuses.contains_key(f) {
-                    statuses.insert(f.to_string(), serde_json::Value::String("M".to_string()));
-                }
-            }
-        }
-    }
-
-    // 5. Staged deletions (D)
-    if let Ok(output) = Command::new("git")
-        .args(["diff", "--cached", "--name-only", "--diff-filter=D", "--ignore-cr-at-eol"])
-        .current_dir(&dir)
-        .output()
-    {
-        if output.status.success() {
-            for line in String::from_utf8_lossy(&output.stdout).lines() {
-                let f = line.trim();
-                if !f.is_empty() && !statuses.contains_key(f) {
-                    statuses.insert(f.to_string(), serde_json::Value::String("D".to_string()));
-                }
+            // Apply priority: M > D > U — only insert if not already a higher-priority status
+            let existing = statuses.get(filename).and_then(|v| v.as_str()).unwrap_or("");
+            let should_insert = match existing {
+                "M" => false,               // M already set; nothing beats M
+                "D" => status == "M",       // D already set; only M can overwrite
+                _ => true,                  // U or absent; anything overwrites
+            };
+            if should_insert {
+                statuses.insert(filename.to_string(), serde_json::Value::String(status.to_string()));
             }
         }
     }
@@ -172,12 +160,17 @@ pub fn get_git_file_status(path: String) -> Result<serde_json::Value, String> {
 /// Uses `--ignore-cr-at-eol` (Git v2.16+) to suppress CRLF noise on Windows.
 /// Ref: https://git-scm.com/docs/git-diff
 #[tauri::command]
-pub fn get_git_diff(repo_path: String, file_path: String) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(["diff", "--ignore-cr-at-eol", "--", &file_path])
-        .current_dir(&repo_path)
-        .output()
-        .map_err(|e| format!("git diff failed to spawn: {}", e))?;
+pub async fn get_git_diff(repo_path: String, file_path: String) -> Result<String, String> {
+    let repo_clone = repo_path.clone();
+    let file_clone = file_path.clone();
+    let output = run_git_command(move || {
+        Command::new("git")
+            .args(["diff", "--ignore-cr-at-eol", "--", &file_clone])
+            .current_dir(&repo_clone)
+            .output()
+    })
+    .await
+    .map_err(|e| format!("git diff failed to spawn: {}", e))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -191,11 +184,14 @@ pub fn get_git_diff(repo_path: String, file_path: String) -> Result<String, Stri
 
     // No unstaged changes — try staged diff
     // git diff --cached: https://git-scm.com/docs/git-diff
-    let staged = Command::new("git")
-        .args(["diff", "--cached", "--ignore-cr-at-eol", "--", &file_path])
-        .current_dir(&repo_path)
-        .output()
-        .map_err(|e| format!("git diff --cached failed to spawn: {}", e))?;
+    let staged = run_git_command(move || {
+        Command::new("git")
+            .args(["diff", "--cached", "--ignore-cr-at-eol", "--", &file_path])
+            .current_dir(&repo_path)
+            .output()
+    })
+    .await
+    .map_err(|e| format!("git diff --cached failed to spawn: {}", e))?;
 
     if !staged.status.success() {
         let stderr = String::from_utf8_lossy(&staged.stderr);
@@ -207,12 +203,17 @@ pub fn get_git_diff(repo_path: String, file_path: String) -> Result<String, Stri
 
 /// List all local and remote git branches for a given directory.
 #[tauri::command]
-pub fn list_git_branches(path: String) -> Result<serde_json::Value, String> {
+pub async fn list_git_branches(path: String) -> Result<serde_json::Value, String> {
     // Current branch
-    let current = Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(&path)
-        .output()
+    let path_clone = path.clone();
+    let current_output = run_git_command(move || {
+        Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .current_dir(&path_clone)
+            .output()
+    })
+    .await;
+    let current = current_output
         .ok()
         .and_then(|o| {
             if o.status.success() {
@@ -224,11 +225,15 @@ pub fn list_git_branches(path: String) -> Result<serde_json::Value, String> {
         .unwrap_or_default();
 
     // Local branches
-    let local_output = Command::new("git")
-        .args(["branch", "--format=%(refname:short)"])
-        .current_dir(&path)
-        .output()
-        .map_err(|e| format!("Failed to list local branches: {}", e))?;
+    let path_clone = path.clone();
+    let local_output = run_git_command(move || {
+        Command::new("git")
+            .args(["branch", "--format=%(refname:short)"])
+            .current_dir(&path_clone)
+            .output()
+    })
+    .await
+    .map_err(|e| format!("Failed to list local branches: {}", e))?;
     if !local_output.status.success() {
         let stderr = String::from_utf8_lossy(&local_output.stderr);
         return Err(format!("git branch failed: {}", stderr.trim()));
@@ -240,11 +245,14 @@ pub fn list_git_branches(path: String) -> Result<serde_json::Value, String> {
         .collect();
 
     // Remote branches
-    let remote_output = Command::new("git")
-        .args(["branch", "-r", "--format=%(refname:short)"])
-        .current_dir(&path)
-        .output()
-        .map_err(|e| format!("Failed to list remote branches: {}", e))?;
+    let remote_output = run_git_command(move || {
+        Command::new("git")
+            .args(["branch", "-r", "--format=%(refname:short)"])
+            .current_dir(&path)
+            .output()
+    })
+    .await
+    .map_err(|e| format!("Failed to list remote branches: {}", e))?;
     if !remote_output.status.success() {
         let stderr = String::from_utf8_lossy(&remote_output.stderr);
         return Err(format!("git branch -r failed: {}", stderr.trim()));
@@ -265,7 +273,7 @@ pub fn list_git_branches(path: String) -> Result<serde_json::Value, String> {
 /// Checkout a git branch in the specified directory.
 /// Validates branch name format before executing to prevent injection.
 #[tauri::command]
-pub fn checkout_branch(path: String, branch: String) -> Result<serde_json::Value, String> {
+pub async fn checkout_branch(path: String, branch: String) -> Result<serde_json::Value, String> {
     // Basic branch name validation: reject empty, whitespace, or shell metacharacters
     if branch.is_empty()
         || branch.contains(|c: char| c.is_whitespace() || ";|&$`".contains(c))
@@ -273,14 +281,18 @@ pub fn checkout_branch(path: String, branch: String) -> Result<serde_json::Value
     {
         return Err(format!("Invalid branch name: {}", branch));
     }
-    let output = Command::new("git")
-        .args(["checkout", &branch])
-        .current_dir(&path)
-        .output()
-        .map_err(|e| format!("Failed to checkout branch: {}", e))?;
+    let branch_name = branch.clone();
+    let output = run_git_command(move || {
+        Command::new("git")
+            .args(["checkout", &branch])
+            .current_dir(&path)
+            .output()
+    })
+    .await
+    .map_err(|e| format!("Failed to checkout branch: {}", e))?;
 
     if output.status.success() {
-        Ok(serde_json::json!({ "ok": true, "branch": branch }))
+        Ok(serde_json::json!({ "ok": true, "branch": branch_name }))
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
         Err(format!("git checkout failed: {}", stderr))
@@ -778,14 +790,9 @@ pub async fn get_context_status(
 
 // ─── Session History Commands (direct filesystem, no sidecar) ───
 
-/// Read native CLI session history from JSONL files.
-///
-/// Claude Code: ~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl
-/// Codex CLI:   ~/.codex/sessions/<threadId>.jsonl (via app-server)
-///
-/// Returns parsed messages from the JSONL file for history backfill on resume.
+/// Read native session history from JSONL files on disk.
 #[tauri::command]
-pub fn read_session_history(
+pub async fn read_session_history(
     root: State<'_, ProjectRoot>,
     cli_type: String,
     session_id: String,
@@ -813,8 +820,15 @@ pub fn read_session_history(
         return Ok(serde_json::json!({ "messages": [], "source": path.display().to_string() }));
     }
 
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read session file: {}", e))?;
+    // Read the file in a blocking thread to avoid stalling the tokio runtime
+    let (content, source) = tokio::task::spawn_blocking(move || {
+        let source = path.display().to_string();
+        let content = fs::read_to_string(&path)
+            .map_err(|e| format!("Failed to read session file: {}", e))?;
+        Ok::<_, String>((content, source))
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))??;
 
     let mut messages = Vec::new();
     for line in content.lines() {
@@ -831,7 +845,7 @@ pub fn read_session_history(
 
     Ok(serde_json::json!({
         "messages": messages,
-        "source": path.display().to_string(),
+        "source": source,
         "total": messages.len(),
     }))
 }
