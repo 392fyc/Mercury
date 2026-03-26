@@ -14,7 +14,7 @@ export default defineConfig(async () => ({
   clearScreen: false,
 
   build: {
-    target: 'esnext',
+    target: ['chrome105', 'safari13'],
     rollupOptions: {
       output: {
         manualChunks: {

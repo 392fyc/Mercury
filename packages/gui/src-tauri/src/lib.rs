@@ -185,13 +185,13 @@ pub fn run() {
                             pm.stop_polling();
                         }
 
-                        // Shutdown remote control first (3 s timeout)
+                        // Shutdown remote control first (5 s timeout)
                         {
                             let mgr = rc.lock().await;
                             if mgr.is_running().await {
                                 eprintln!("[tauri] Shutting down remote control");
                                 match tokio::time::timeout(
-                                    tokio::time::Duration::from_secs(3),
+                                    tokio::time::Duration::from_secs(5),
                                     mgr.stop(),
                                 )
                                 .await

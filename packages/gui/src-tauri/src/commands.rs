@@ -100,10 +100,14 @@ pub async fn get_git_file_status(path: String) -> Result<serde_json::Value, Stri
     })
     .await?;
 
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git status failed: {}", stderr.trim()));
+    }
+
     let mut statuses = serde_json::Map::new();
 
-    if output.status.success() {
-        for line in String::from_utf8_lossy(&output.stdout).lines() {
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
             // Each line is at least 3 chars: "XY filename"
             if line.len() < 3 {
                 continue;
@@ -146,7 +150,6 @@ pub async fn get_git_file_status(path: String) -> Result<serde_json::Value, Stri
                 statuses.insert(filename.to_string(), serde_json::Value::String(status.to_string()));
             }
         }
-    }
 
     Ok(serde_json::Value::Object(statuses))
 }

@@ -893,7 +893,13 @@ export class Orchestrator {
         };
       case "get_role_instructions": {
         const targetRole = params.role as AgentRole;
-        const card = loadRoleCard(targetRole, this.getProjectRoot());
+        let defaultInstructions = "";
+        try {
+          const card = loadRoleCard(targetRole, this.getProjectRoot());
+          defaultInstructions = card.instructions ?? "";
+        } catch {
+          // Role YAML file not found — return empty defaults
+        }
         const override =
           this.projectConfig?.obsidian?.roleInstructionOverrides?.[
             targetRole as keyof NonNullable<
@@ -902,7 +908,7 @@ export class Orchestrator {
           ];
         return {
           role: targetRole,
-          defaultInstructions: card.instructions ?? "",
+          defaultInstructions,
           override: override ?? null,
           isOverridden: !!override,
         };

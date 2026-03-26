@@ -327,30 +327,50 @@ const roleEditorError = ref("");
 
 function hasRoleOverride(role: RoleContextKey): boolean {
   const overrides = editObsidian.value.roleInstructionOverrides;
-  return !!overrides?.[role];
+  return overrides != null && role in overrides && overrides[role] !== undefined;
 }
 
+let roleEditorRequestId = 0;
+
 async function openRoleEditor(role: RoleContextKey) {
+  // Save current edits before switching
+  if (editingRole.value) {
+    closeRoleEditor();
+  }
+
+  const requestId = ++roleEditorRequestId;
   editingRole.value = role;
   roleEditorLoading.value = true;
   roleEditorError.value = "";
 
   try {
     const result = await getRoleInstructions(role);
+    if (requestId !== roleEditorRequestId) return; // stale response
     roleDefaultContent.value = result.defaultInstructions;
     // Show override if it exists in local edit state, else from backend, else default
     const localOverride = editObsidian.value.roleInstructionOverrides?.[role];
     roleEditorContent.value = localOverride ?? result.override ?? result.defaultInstructions;
   } catch (e) {
+    if (requestId !== roleEditorRequestId) return;
     roleEditorError.value = e instanceof Error ? e.message : String(e);
     roleDefaultContent.value = "";
     roleEditorContent.value = "";
   } finally {
-    roleEditorLoading.value = false;
+    if (requestId === roleEditorRequestId) {
+      roleEditorLoading.value = false;
+    }
   }
 }
 
 function closeRoleEditor() {
+  if (roleEditorLoading.value || roleEditorError.value) {
+    // Don't persist changes when loading failed — just close without modifying overrides
+    editingRole.value = null;
+    roleEditorContent.value = "";
+    roleDefaultContent.value = "";
+    roleEditorError.value = "";
+    return;
+  }
   if (editingRole.value) {
     const role = editingRole.value;
     const content = roleEditorContent.value;
