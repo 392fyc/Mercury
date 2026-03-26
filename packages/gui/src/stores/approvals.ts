@@ -87,11 +87,12 @@ async function deny(requestId: string, reason?: string): Promise<void> {
 function cancelPendingApprovalsForSession(sessionId: string, reason: string): void {
   const now = Date.now();
   let changed = false;
+  const next = new Map(approvalRequests.value);
   for (const [, request] of approvalRequests.value) {
     if (request.sessionId === sessionId && request.status === "pending") {
-      upsertRequest({
+      next.set(request.id, {
         ...request,
-        status: "cancelled" as ApprovalRequest["status"],
+        status: "cancelled",
         resolvedAt: now,
         decisionBy: "system",
         decisionReason: reason,
@@ -100,6 +101,7 @@ function cancelPendingApprovalsForSession(sessionId: string, reason: string): vo
     }
   }
   if (changed) {
+    approvalRequests.value = next;
     // Refresh from backend to ensure consistency
     void refreshApprovals();
   }

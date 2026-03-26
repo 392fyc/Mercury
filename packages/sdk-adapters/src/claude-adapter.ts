@@ -11,17 +11,18 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type {
-  AdapterYield,
-  AgentAdapter,
-  AgentApprovalRequest,
-  AgentConfig,
-  AgentMessage,
-  AgentSendHooks,
-  AgentStreamingEvent,
-  ImageAttachment,
-  SessionInfo,
-  SlashCommand,
+import {
+  isTransportCrashError,
+  type AdapterYield,
+  type AgentAdapter,
+  type AgentApprovalRequest,
+  type AgentConfig,
+  type AgentMessage,
+  type AgentSendHooks,
+  type AgentStreamingEvent,
+  type ImageAttachment,
+  type SessionInfo,
+  type SlashCommand,
 } from "@mercury/core";
 
 /** Extract text content from SDK message content blocks. */
@@ -57,15 +58,6 @@ class AsyncMutex {
       this.locked = false;
     }
   }
-}
-
-/** Check if an error is a ProcessTransport "not ready" crash. */
-function isTransportNotReady(err: unknown): boolean {
-  if (err instanceof Error) {
-    return err.message.includes("not ready for writing")
-      || err.message.includes("ProcessTransport");
-  }
-  return String(err).includes("not ready for writing");
 }
 
 export class ClaudeAdapter implements AgentAdapter {
@@ -612,7 +604,7 @@ export class ClaudeAdapter implements AgentAdapter {
       // race condition when concurrent approval responses hit the transport.
       // Convert to a structured error that the orchestrator can handle gracefully
       // instead of letting it crash the entire session unrecoverably.
-      if (isTransportNotReady(err)) {
+      if (isTransportCrashError(err)) {
         const transportError = new Error(
           `[transport:crash] SDK ProcessTransport disconnected during session ${sessionId}. ` +
           `The session may be resumable via its SDK session ID.`,

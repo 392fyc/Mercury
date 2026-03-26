@@ -579,6 +579,14 @@ export function isStreamingEvent(value: AdapterYield): value is AgentStreamingEv
   return "type" in value && (value as AgentStreamingEvent).type === "streaming";
 }
 
+/** Check if an error indicates a ProcessTransport "not ready for writing" crash. */
+export function isTransportCrashError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.includes("[transport:crash]")
+    || msg.includes("not ready for writing")
+    || msg.includes("ProcessTransport");
+}
+
 export interface AgentOneShotOptions {
   model?: string;
   sandbox?: string;

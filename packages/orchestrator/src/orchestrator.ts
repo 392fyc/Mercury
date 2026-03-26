@@ -7,7 +7,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { copyFile, mkdir, readdir, writeFile, rename, unlink } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
-import { EventBus, isStreamingEvent, makeRoleSlotKey } from "@mercury/core";
+import { EventBus, isStreamingEvent, isTransportCrashError, makeRoleSlotKey } from "@mercury/core";
 import type {
   AgentConfig,
   AgentSendHooks,
@@ -1574,9 +1574,7 @@ export class Orchestrator {
       return { completed: true, lastAssistantMessage };
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      const isTransportCrash = errorMsg.includes("[transport:crash]")
-        || errorMsg.includes("not ready for writing")
-        || errorMsg.includes("ProcessTransport");
+      const isTransportCrash = isTransportCrashError(err);
       this.cancelPendingApprovalsForSession(
         sessionId,
         isTransportCrash
