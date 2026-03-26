@@ -5,7 +5,7 @@
  * panelKey (roleSlotKey = "{role}:{agentId}"), NOT by raw agentId.
  */
 
-import { ref, computed } from "vue";
+import { ref, computed, shallowRef, triggerRef } from "vue";
 import type { AgentConfig, MercuryEvent } from "../lib/tauri-bridge";
 import {
   getAgents as fetchAgents,
@@ -54,23 +54,23 @@ export interface BookmarkInfo {
 const SESSIONS_STORAGE_KEY = "mercury:sessions";
 
 const agents = ref<AgentConfig[]>([]);
-const statuses = ref<Map<string, "idle" | "active" | "error">>(new Map()); // panelKey → status
-const sessions = ref<Map<string, string>>(new Map()); // panelKey → sessionId
-const sessionMeta = ref<Map<string, SessionMeta>>(new Map()); // panelKey → session metadata
-const sessionPromptState = ref<Map<string, SessionPromptState>>(new Map()); // sessionId → prompt metadata
-const workDirs = ref<Map<string, string>>(new Map()); // panelKey → cwd
-const gitBranches = ref<Map<string, string | null>>(new Map()); // panelKey → branch
+const statuses = shallowRef<Map<string, "idle" | "active" | "error">>(new Map()); // panelKey → status
+const sessions = shallowRef<Map<string, string>>(new Map()); // panelKey → sessionId
+const sessionMeta = shallowRef<Map<string, SessionMeta>>(new Map()); // panelKey → session metadata
+const sessionPromptState = shallowRef<Map<string, SessionPromptState>>(new Map()); // sessionId → prompt metadata
+const workDirs = shallowRef<Map<string, string>>(new Map()); // panelKey → cwd
+const gitBranches = shallowRef<Map<string, string | null>>(new Map()); // panelKey → branch
 const defaultWorkDir = ref("");
 const sidecarReady = ref(false);
 const sidecarError = ref<string | null>(null);
 
 // ─── Bookmark Rail State ───
 /** Manually created sub-agent bookmarks (panelKey → true). Auto-created when session starts. */
-const bookmarks = ref<Map<string, boolean>>(new Map());
+const bookmarks = shallowRef<Map<string, boolean>>(new Map());
 /** Which panelKeys are currently open as floating tabs */
 const openFloatingTabs = ref<string[]>([]);
 /** Model cache: agentId → last fetched model list */
-const modelCache = ref<Map<string, { id: string; name: string }[]>>(new Map());
+const modelCache = shallowRef<Map<string, { id: string; name: string }[]>>(new Map());
 
 const mainAgent = computed(() => agents.value.find((a) => a.roles.includes("main")));
 
@@ -97,7 +97,8 @@ const subAgents = computed(() =>
 );
 
 function setStatus(panelKey: string, status: "idle" | "active" | "error") {
-  statuses.value = new Map(statuses.value).set(panelKey, status);
+  statuses.value.set(panelKey, status);
+  triggerRef(statuses);
 }
 
 function getStatus(panelKey: string): "idle" | "active" | "error" {
@@ -131,16 +132,18 @@ function loadSessions(): void {
     for (const panelKey of map.keys()) {
       const { role } = parsePanelKey(panelKey);
       if (role !== "main") {
-        bookmarks.value = new Map(bookmarks.value).set(panelKey, true);
+        bookmarks.value.set(panelKey, true);
       }
     }
+    triggerRef(bookmarks);
   } catch {
     // Corrupted — start fresh
   }
 }
 
 function setSession(panelKey: string, sessionId: string) {
-  sessions.value = new Map(sessions.value).set(panelKey, sessionId);
+  sessions.value.set(panelKey, sessionId);
+  triggerRef(sessions);
   saveSessions();
 }
 
@@ -162,10 +165,11 @@ function updateSessionPromptState(sessionId: string, info: Partial<SessionMeta>)
     return;
   }
   const existing = sessionPromptState.value.get(sessionId);
-  sessionPromptState.value = new Map(sessionPromptState.value).set(sessionId, {
+  sessionPromptState.value.set(sessionId, {
     ...existing,
     ...nextState,
   });
+  triggerRef(sessionPromptState);
 }
 
 function setSessionInfo(panelKey: string, info: SessionMeta) {
@@ -177,7 +181,8 @@ function setSessionInfo(panelKey: string, info: SessionMeta) {
     existing?.sessionId === info.sessionId
       ? { ...existing, ...info, ...promptState }
       : { ...info, ...promptState };
-  sessionMeta.value = new Map(sessionMeta.value).set(panelKey, merged);
+  sessionMeta.value.set(panelKey, merged);
+  triggerRef(sessionMeta);
 }
 
 function getSession(panelKey: string): string | undefined {
@@ -189,17 +194,16 @@ function getSessionInfo(panelKey: string): SessionMeta | undefined {
 }
 
 function clearSession(panelKey: string) {
-  const next = new Map(sessions.value);
-  next.delete(panelKey);
-  sessions.value = next;
-  const nextMeta = new Map(sessionMeta.value);
-  nextMeta.delete(panelKey);
-  sessionMeta.value = nextMeta;
+  sessions.value.delete(panelKey);
+  triggerRef(sessions);
+  sessionMeta.value.delete(panelKey);
+  triggerRef(sessionMeta);
   saveSessions();
 }
 
 function setWorkDir(panelKey: string, cwd: string) {
-  workDirs.value = new Map(workDirs.value).set(panelKey, cwd);
+  workDirs.value.set(panelKey, cwd);
+  triggerRef(workDirs);
 }
 
 function getWorkDir(panelKey: string): string {
@@ -207,7 +211,8 @@ function getWorkDir(panelKey: string): string {
 }
 
 function setGitBranch(panelKey: string, branch: string | null) {
-  gitBranches.value = new Map(gitBranches.value).set(panelKey, branch);
+  gitBranches.value.set(panelKey, branch);
+  triggerRef(gitBranches);
 }
 
 function getGitBranch(panelKey: string): string | null {
@@ -283,13 +288,13 @@ function isSessionOpen(sessionId: string): boolean {
 }
 
 function addBookmark(panelKey: string) {
-  bookmarks.value = new Map(bookmarks.value).set(panelKey, true);
+  bookmarks.value.set(panelKey, true);
+  triggerRef(bookmarks);
 }
 
 function removeBookmark(panelKey: string) {
-  const next = new Map(bookmarks.value);
-  next.delete(panelKey);
-  bookmarks.value = next;
+  bookmarks.value.delete(panelKey);
+  triggerRef(bookmarks);
   // Also close floating tab if open
   openFloatingTabs.value = openFloatingTabs.value.filter((k) => k !== panelKey);
 }
@@ -309,7 +314,8 @@ function getModelCache(agentId: string): { id: string; name: string }[] | undefi
 }
 
 function setModelCache(agentId: string, models: { id: string; name: string }[]) {
-  modelCache.value = new Map(modelCache.value).set(agentId, models);
+  modelCache.value.set(agentId, models);
+  triggerRef(modelCache);
 }
 
 async function hydrateSessionMeta(): Promise<void> {
@@ -364,6 +370,7 @@ async function loadAgents() {
         }
       }
     }
+    triggerRef(statuses);
     await hydrateSessionMeta();
   } catch (e) {
     console.error("Failed to fetch agents:", e);
@@ -372,9 +379,8 @@ async function loadAgents() {
 
 /** Shared cleanup for session end/delete: removes prompt state and session mapping. */
 function cleanupPanelState(panelKey: string, sessionId: string): void {
-  const nextPromptState = new Map(sessionPromptState.value);
-  nextPromptState.delete(sessionId);
-  sessionPromptState.value = nextPromptState;
+  sessionPromptState.value.delete(sessionId);
+  triggerRef(sessionPromptState);
   clearSession(panelKey);
 }
 
@@ -454,17 +460,14 @@ async function initAgents() {
         }
 
         // Full removal for delete events and non-main end events
-        const nextStatuses = new Map(statuses.value);
-        nextStatuses.delete(panelKey);
-        statuses.value = nextStatuses;
+        statuses.value.delete(panelKey);
+        triggerRef(statuses);
 
-        const nextWorkDirs = new Map(workDirs.value);
-        nextWorkDirs.delete(panelKey);
-        workDirs.value = nextWorkDirs;
+        workDirs.value.delete(panelKey);
+        triggerRef(workDirs);
 
-        const nextBranches = new Map(gitBranches.value);
-        nextBranches.delete(panelKey);
-        gitBranches.value = nextBranches;
+        gitBranches.value.delete(panelKey);
+        triggerRef(gitBranches);
 
         removeBookmark(panelKey);
         break;
@@ -477,29 +480,31 @@ async function initAgents() {
         if (sessionId !== event.sessionId) continue;
         const info = sessionMeta.value.get(panelKey);
         if (!info) break;
-        sessionMeta.value = new Map(sessionMeta.value).set(panelKey, {
+        sessionMeta.value.set(panelKey, {
           ...info,
           lastActiveAt: event.timestamp,
           status: "active",
         });
+        triggerRef(sessionMeta);
         break;
       }
     }
   });
 
   // Fallback: if ready event was missed (race), poll until sidecar responds
-  const poll = setInterval(async () => {
-    if (sidecarReady.value) {
-      clearInterval(poll);
-      return;
-    }
+  // Uses exponential backoff to avoid hammering a slow sidecar
+  let pollDelay = 500;
+  const MAX_POLL_DELAY = 5000;
+  const pollFn = async () => {
+    if (sidecarReady.value) return;
     try {
       await loadAgents();
-      clearInterval(poll);
     } catch {
-      // sidecar not ready yet, keep polling
+      pollDelay = Math.min(pollDelay * 2, MAX_POLL_DELAY);
+      setTimeout(pollFn, pollDelay);
     }
-  }, 1000);
+  };
+  setTimeout(pollFn, pollDelay);
 }
 
 export function useAgentStore() {

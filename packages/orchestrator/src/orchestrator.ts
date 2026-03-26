@@ -49,6 +49,7 @@ import {
   buildRoleSystemPrompt,
   buildAcceptanceRolePrompt,
 } from "./role-prompt-builder.js";
+import { loadRoleCard } from "./role-loader.js";
 import { SessionPersistence } from "./session-persistence.js";
 import type { PersistedSessionState } from "./session-persistence.js";
 import { TranscriptPersistence } from "./transcript-persistence.js";
@@ -88,7 +89,7 @@ type TaskCallbackPayload = {
   recommendations?: string[];
 };
 
-const ROLE_CONTEXT_ROLES = ["main", "dev", "acceptance"] as const;
+const ROLE_CONTEXT_ROLES = ["main", "dev", "acceptance", "research", "design"] as const;
 type RoleContextKey = (typeof ROLE_CONTEXT_ROLES)[number];
 
 export class Orchestrator {
@@ -276,12 +277,17 @@ export class Orchestrator {
   }
 
   private buildSystemRolePrompt(role: AgentRole, task?: TaskBundle): string {
+    const overrides = this.projectConfig?.obsidian?.roleInstructionOverrides;
+    const overrideKey = role as keyof NonNullable<typeof overrides>;
+    const roleInstructions = overrides && overrideKey in overrides
+      ? overrides[overrideKey]
+      : undefined;
     return buildRoleSystemPrompt(
       role,
       task,
       this.sharedContext || undefined,
       this.getRoleSpecificContext(role),
-      undefined, // instructions loaded from YAML via basePath
+      roleInstructions,
       this.getProjectRoot(),
     );
   }
@@ -887,6 +893,31 @@ export class Orchestrator {
           contextFiles: this.projectConfig?.obsidian?.contextFiles ?? [],
           roleContextFiles: this.projectConfig?.obsidian?.roleContextFiles ?? {},
         };
+      case "get_role_instructions": {
+        const targetRole = params.role as AgentRole;
+        let defaultInstructions = "";
+        try {
+          const card = loadRoleCard(targetRole, this.getProjectRoot());
+          defaultInstructions = card.instructions ?? "";
+        } catch (err: unknown) {
+          // Only downgrade file-not-found; re-throw YAML parse or other errors
+          const msg = err instanceof Error ? err.message : String(err);
+          if (msg.includes("ENOENT") || msg.includes("not found") || msg.includes("Could not find")) {
+            // Role YAML file not found — return empty defaults
+          } else {
+            throw err;
+          }
+        }
+        const overrides = this.projectConfig?.obsidian?.roleInstructionOverrides;
+        const overrideKey = targetRole as keyof NonNullable<typeof overrides>;
+        const hasOverride = overrides != null && overrideKey in overrides && overrides[overrideKey] !== undefined;
+        return {
+          role: targetRole,
+          defaultInstructions,
+          override: hasOverride ? (overrides![overrideKey] as string) : null,
+          isOverridden: hasOverride,
+        };
+      }
       case "build_reference_prompt": {
         const refTask = this.taskManager.getTask(params.taskId as string);
         if (!refTask) throw new Error(`Task not found: ${params.taskId}`);

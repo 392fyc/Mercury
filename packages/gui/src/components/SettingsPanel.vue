@@ -2,7 +2,7 @@
 import { ref, onMounted, watch } from "vue";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useConfigStore } from "../stores/config";
-import { refreshContext, getContextStatus, kbList } from "../lib/tauri-bridge";
+import { refreshContext, getContextStatus, kbList, getRoleInstructions } from "../lib/tauri-bridge";
 import type { AgentConfig, ContextStatus, ObsidianConfig } from "../lib/tauri-bridge";
 
 const emit = defineEmits<{ close: [] }>();
@@ -13,8 +13,9 @@ const activeTab = ref<"agents" | "project" | "display">("agents");
 const saving = ref(false);
 const saveMsg = ref("");
 const roleContextExpanded = ref(true);
+const roleInstructionsExpanded = ref(true);
 
-type RoleContextKey = "main" | "dev" | "acceptance";
+type RoleContextKey = "main" | "dev" | "acceptance" | "research" | "design";
 type ContextTarget = "global" | RoleContextKey;
 
 interface CliPreset {
@@ -84,9 +85,11 @@ const ROLE_DEFS: RoleDef[] = [
 ];
 
 const ROLE_CONTEXT_DEFS: Array<{ value: RoleContextKey; label: string; hint: string }> = [
-  { value: "main", label: "Main", hint: "Added only to main/orchestrator prompts." },
-  { value: "dev", label: "Dev", hint: "Added only to implementation agent prompts." },
-  { value: "acceptance", label: "Acceptance", hint: "Added only to blind review and verification prompts." },
+  { value: "main", label: "Main", hint: "Orchestrator — user talks to this agent directly." },
+  { value: "dev", label: "Dev", hint: "Worker — receives tasks, writes code." },
+  { value: "acceptance", label: "Acceptance", hint: "Reviewer — blind acceptance testing." },
+  { value: "research", label: "Research", hint: "Analyst — gathers information, reads docs." },
+  { value: "design", label: "Design", hint: "Designer — UI/UX mockups and design specs." },
 ];
 
 function createEmptyRoleContextFiles(): NonNullable<ObsidianConfig["roleContextFiles"]> {
@@ -94,6 +97,8 @@ function createEmptyRoleContextFiles(): NonNullable<ObsidianConfig["roleContextF
     main: [],
     dev: [],
     acceptance: [],
+    research: [],
+    design: [],
   };
 }
 
@@ -107,6 +112,7 @@ function createEmptyObsidianConfig(): ObsidianConfig {
     autoInjectContext: false,
     contextFiles: [],
     roleContextFiles: createEmptyRoleContextFiles(),
+    roleInstructionOverrides: {},
   };
 }
 
@@ -116,6 +122,8 @@ function normalizeObsidianConfig(source?: ObsidianConfig | null): ObsidianConfig
     roleContextFiles.main = [...(source.roleContextFiles.main ?? [])];
     roleContextFiles.dev = [...(source.roleContextFiles.dev ?? [])];
     roleContextFiles.acceptance = [...(source.roleContextFiles.acceptance ?? [])];
+    roleContextFiles.research = [...(source.roleContextFiles.research ?? [])];
+    roleContextFiles.design = [...(source.roleContextFiles.design ?? [])];
   }
 
   return {
@@ -124,6 +132,9 @@ function normalizeObsidianConfig(source?: ObsidianConfig | null): ObsidianConfig
     kbPaths: source?.kbPaths ? { ...source.kbPaths } : undefined,
     contextFiles: [...(source?.contextFiles ?? [])],
     roleContextFiles,
+    roleInstructionOverrides: source?.roleInstructionOverrides
+      ? { ...source.roleInstructionOverrides }
+      : {},
   };
 }
 
@@ -307,6 +318,86 @@ function removeContextFile(index: number, target: ContextTarget = "global") {
   targetFiles.splice(index, 1);
 }
 
+// ─── Role Instructions Editor ───
+
+const editingRole = ref<RoleContextKey | null>(null);
+const roleEditorContent = ref("");
+const roleDefaultContent = ref("");
+const roleEditorLoading = ref(false);
+const roleEditorError = ref("");
+
+function hasRoleOverride(role: RoleContextKey): boolean {
+  const overrides = editObsidian.value.roleInstructionOverrides;
+  return overrides != null && role in overrides && overrides[role] !== undefined;
+}
+
+let roleEditorRequestId = 0;
+
+async function openRoleEditor(role: RoleContextKey) {
+  // Save current edits before switching
+  if (editingRole.value) {
+    closeRoleEditor();
+  }
+
+  const requestId = ++roleEditorRequestId;
+  editingRole.value = role;
+  roleEditorLoading.value = true;
+  roleEditorError.value = "";
+
+  try {
+    const result = await getRoleInstructions(role);
+    if (requestId !== roleEditorRequestId) return; // stale response
+    roleDefaultContent.value = result.defaultInstructions;
+    // Show override if it exists in local edit state, else from backend, else default
+    const localOverride = editObsidian.value.roleInstructionOverrides?.[role];
+    roleEditorContent.value = localOverride ?? result.override ?? result.defaultInstructions;
+  } catch (e) {
+    if (requestId !== roleEditorRequestId) return;
+    roleEditorError.value = e instanceof Error ? e.message : String(e);
+    // Preserve local override so user can still see/edit their config
+    const localOverride = editObsidian.value.roleInstructionOverrides?.[role];
+    roleDefaultContent.value = "";
+    roleEditorContent.value = localOverride ?? "";
+  } finally {
+    if (requestId === roleEditorRequestId) {
+      roleEditorLoading.value = false;
+    }
+  }
+}
+
+function closeRoleEditor() {
+  if (roleEditorLoading.value) {
+    // Still loading — close without persisting
+    editingRole.value = null;
+    roleEditorContent.value = "";
+    roleDefaultContent.value = "";
+    roleEditorError.value = "";
+    return;
+  }
+  // Error state but user may have edited local content — persist if non-empty
+  if (editingRole.value) {
+    const role = editingRole.value;
+    const content = roleEditorContent.value;
+    const isDefault = content === roleDefaultContent.value;
+    if (!editObsidian.value.roleInstructionOverrides) {
+      editObsidian.value.roleInstructionOverrides = {};
+    }
+    if (isDefault) {
+      delete editObsidian.value.roleInstructionOverrides[role];
+    } else {
+      editObsidian.value.roleInstructionOverrides[role] = content;
+    }
+  }
+  editingRole.value = null;
+  roleEditorContent.value = "";
+  roleDefaultContent.value = "";
+  roleEditorError.value = "";
+}
+
+function restoreRoleDefault() {
+  roleEditorContent.value = roleDefaultContent.value;
+}
+
 const contextStatus = ref<ContextStatus | null>(null);
 const refreshing = ref(false);
 const refreshMsg = ref("");
@@ -340,6 +431,11 @@ async function handleRefreshContext() {
 }
 
 async function handleSave() {
+  // Flush any open role editor draft before saving
+  if (editingRole.value && !roleEditorLoading.value && !roleEditorError.value) {
+    closeRoleEditor();
+  }
+
   saving.value = true;
   saveMsg.value = "";
 
@@ -523,6 +619,36 @@ function handleKeydown(event: KeyboardEvent) {
                   <p v-else class="empty-state">No global context files selected.</p>
                 </div>
 
+                <div class="context-status-section">
+                  <div class="context-status-row">
+                    <div class="context-status-info">
+                      <span class="cap-label">Prompt Context Cache</span>
+                      <span v-if="contextStatus?.hasContext" class="status-badge active">
+                        Active ({{ (contextStatus.contextLength / 1024).toFixed(1) }}KB)
+                      </span>
+                      <span v-else class="status-badge inactive">Not built</span>
+                    </div>
+                    <button
+                      class="refresh-btn"
+                      @click="handleRefreshContext"
+                      :disabled="refreshing"
+                      title="Rebuild global and role-specific KB prompt context"
+                    >
+                      {{ refreshing ? "Refreshing..." : "Refresh Context" }}
+                    </button>
+                  </div>
+                  <p
+                    v-if="refreshMsg"
+                    class="refresh-msg"
+                    :class="refreshMsg.startsWith('Error') ? 'error-text' : 'success-text'"
+                  >
+                    {{ refreshMsg }}
+                  </p>
+                  <p class="hint compact">
+                    Rebuilds the prompt cache for global and role-specific files. Acceptance sessions only receive
+                    acceptance-scoped additions.
+                  </p>
+                </div>
                 <div class="role-context-shell">
                   <button class="section-toggle" @click="roleContextExpanded = !roleContextExpanded">
                     <span>Role-Specific Context</span>
@@ -556,38 +682,83 @@ function handleKeydown(event: KeyboardEvent) {
                     </div>
                   </div>
                 </div>
-
-                <div class="context-status-section">
-                  <div class="context-status-row">
-                    <div class="context-status-info">
-                      <span class="cap-label">Prompt Context Cache</span>
-                      <span v-if="contextStatus?.hasContext" class="status-badge active">
-                        Active ({{ (contextStatus.contextLength / 1024).toFixed(1) }}KB)
-                      </span>
-                      <span v-else class="status-badge inactive">Not built</span>
-                    </div>
-                    <button
-                      class="refresh-btn"
-                      @click="handleRefreshContext"
-                      :disabled="refreshing"
-                      title="Rebuild global and role-specific KB prompt context"
-                    >
-                      {{ refreshing ? "Refreshing..." : "Refresh Context" }}
-                    </button>
-                  </div>
-                  <p
-                    v-if="refreshMsg"
-                    class="refresh-msg"
-                    :class="refreshMsg.startsWith('Error') ? 'error-text' : 'success-text'"
-                  >
-                    {{ refreshMsg }}
-                  </p>
-                  <p class="hint compact">
-                    Rebuilds the prompt cache for global and role-specific files. Acceptance sessions only receive
-                    acceptance-scoped additions.
-                  </p>
-                </div>
               </template>
+
+              <!-- Role Instructions — independent of autoInjectContext -->
+              <div class="role-context-shell">
+                <button class="section-toggle" @click="roleInstructionsExpanded = !roleInstructionsExpanded">
+                  <span>Role Instructions</span>
+                  <span class="section-toggle-state">{{ roleInstructionsExpanded ? "Hide" : "Show" }}</span>
+                </button>
+                <p class="hint compact">
+                  Edit the system-prompt instructions injected for each role. Overrides are saved in config; defaults come from .mercury/roles/.
+                </p>
+
+                <div v-if="roleInstructionsExpanded" class="role-context-grid">
+                  <template v-for="role in ROLE_CONTEXT_DEFS" :key="`instr-${role.value}`">
+                    <!-- Acceptance uses buildAcceptanceRolePrompt — show disabled card -->
+                    <div v-if="role.value === 'acceptance'" class="role-context-card role-card-disabled">
+                      <div class="role-context-card-header">
+                        <div>
+                          <h4>{{ role.label }}</h4>
+                          <p class="hint compact">{{ role.hint }}</p>
+                        </div>
+                        <button class="cap-add" disabled title="Acceptance uses a dedicated prompt builder">Edit</button>
+                      </div>
+                      <span class="role-override-badge">Not editable — uses dedicated acceptance prompt</span>
+                    </div>
+                    <template v-else>
+                      <div v-if="editingRole !== role.value" class="role-context-card">
+                        <div class="role-context-card-header">
+                          <div>
+                            <h4>{{ role.label }}</h4>
+                            <p class="hint compact">{{ role.hint }}</p>
+                          </div>
+                          <button class="cap-add" @click="openRoleEditor(role.value)">Edit</button>
+                        </div>
+                        <span
+                          class="role-override-badge"
+                          :class="{ overridden: hasRoleOverride(role.value) }"
+                        >
+                          {{ hasRoleOverride(role.value) ? "Custom override" : "Using default" }}
+                        </span>
+                      </div>
+
+                      <div v-else class="role-editor-card">
+                        <div class="role-editor-header">
+                          <h4>Editing: {{ role.label }} Role Instructions</h4>
+                          <div class="role-editor-actions">
+                            <button
+                              class="role-editor-restore"
+                              @click="restoreRoleDefault"
+                              :disabled="roleEditorContent === roleDefaultContent"
+                              title="Revert to default instructions from .mercury/roles/"
+                            >Restore Default</button>
+                            <button class="role-editor-close" @click="closeRoleEditor">Done</button>
+                          </div>
+                        </div>
+
+                        <div v-if="roleEditorLoading" class="role-editor-loading">Loading instructions...</div>
+                        <div v-if="roleEditorError && !roleEditorLoading" class="role-editor-error">{{ roleEditorError }}</div>
+                        <textarea
+                          v-if="!roleEditorLoading"
+                          v-model="roleEditorContent"
+                          class="role-editor-textarea"
+                          spellcheck="false"
+                          placeholder="Role instructions (Markdown)"
+                        ></textarea>
+
+                        <span
+                          class="role-override-badge"
+                          :class="{ overridden: roleEditorContent !== roleDefaultContent }"
+                        >
+                          {{ roleEditorContent !== roleDefaultContent ? "Modified — will be saved as override" : "Matches default — no override" }}
+                        </span>
+                      </div>
+                    </template>
+                  </template>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1149,6 +1320,126 @@ function handleKeydown(event: KeyboardEvent) {
   margin: 0 0 4px;
   font-size: 13px;
   font-weight: 600;
+}
+
+.role-override-badge {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.role-override-badge.overridden {
+  color: var(--accent-main);
+}
+
+.role-editor-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--accent-main);
+  border-radius: 10px;
+  grid-column: 1 / -1;
+}
+
+.role-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.role-editor-header h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.role-editor-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.role-editor-restore {
+  padding: 4px 10px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.role-editor-restore:hover:not(:disabled) {
+  color: var(--text-secondary);
+  border-color: var(--text-muted);
+}
+
+.role-editor-restore:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.role-editor-close {
+  padding: 4px 12px;
+  background: var(--accent-main);
+  border: none;
+  border-radius: 6px;
+  color: var(--bg-primary);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.role-editor-close:hover {
+  filter: brightness(1.1);
+}
+
+.role-editor-textarea {
+  width: 100%;
+  min-height: 280px;
+  max-height: 420px;
+  padding: 12px 14px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-family: "Cascadia Code", "Fira Code", "JetBrains Mono", "SF Mono", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  tab-size: 2;
+  resize: vertical;
+  white-space: pre;
+  overflow: auto;
+}
+
+.role-editor-textarea:focus {
+  outline: none;
+  border-color: var(--accent-main);
+}
+
+.role-editor-loading,
+.role-editor-error {
+  padding: 20px;
+  text-align: center;
+  font-size: 12px;
+}
+
+.role-editor-loading {
+  color: var(--text-muted);
+}
+
+.role-editor-error {
+  color: var(--accent-error);
+}
+
+.role-card-disabled {
+  opacity: 0.55;
+}
+
+.role-card-disabled .cap-add:disabled {
+  cursor: default;
+  opacity: 0.4;
 }
 
 .context-status-info {

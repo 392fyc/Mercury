@@ -5,6 +5,7 @@ use tauri::Emitter;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{oneshot, Mutex};
+use tokio::time::{timeout, Duration};
 
 use crate::types::RpcRequest;
 
@@ -71,6 +72,7 @@ impl SidecarManager {
             while let Ok(Some(line)) = lines.next_line().await {
                 let line = line.trim().to_string();
                 if line.is_empty() {
+                    tokio::task::yield_now().await;
                     continue;
                 }
 
@@ -98,6 +100,7 @@ impl SidecarManager {
                         eprintln!("[tauri] Failed to parse sidecar message: {} — {}", e, line);
                     }
                 }
+                tokio::task::yield_now().await;
             }
         });
 
@@ -108,6 +111,7 @@ impl SidecarManager {
 
             while let Ok(Some(line)) = lines.next_line().await {
                 eprintln!("[sidecar] {}", line);
+                tokio::task::yield_now().await;
             }
         });
 
@@ -154,9 +158,24 @@ impl SidecarManager {
             stdin.flush().await.map_err(|e| e.to_string())?;
         }
 
-        let response = rx
-            .await
-            .map_err(|_| "Sidecar response channel closed".to_string())?;
+        let response = match timeout(Duration::from_secs(30), rx).await {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(_)) => {
+                // Channel closed — remove pending entry (already consumed by drop, but be safe)
+                let mut pending = self.pending.lock().await;
+                pending.remove(&id);
+                return Err("Sidecar response channel closed".to_string());
+            }
+            Err(_elapsed) => {
+                // Timed out — remove the pending entry to avoid a leak
+                let mut pending = self.pending.lock().await;
+                pending.remove(&id);
+                return Err(format!(
+                    "Sidecar request '{}' timed out after 30 seconds",
+                    method
+                ));
+            }
+        };
 
         // Check for error
         if let Some(err) = response.get("error") {

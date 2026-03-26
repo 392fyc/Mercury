@@ -218,6 +218,15 @@ export interface ObsidianConfig {
     main?: string[];
     dev?: string[];
     acceptance?: string[];
+    research?: string[];
+    design?: string[];
+  };
+  roleInstructionOverrides?: {
+    main?: string;
+    dev?: string;
+    acceptance?: string;
+    research?: string;
+    design?: string;
   };
 }
 
@@ -614,6 +623,19 @@ export async function refreshContext(): Promise<{ injected: boolean; agentCount:
 /** Get the current shared context injection status and configuration. */
 export async function getContextStatus(): Promise<ContextStatus> {
   return invoke<ContextStatus>("get_context_status");
+}
+
+/** Result of loading role instructions (default from YAML + optional config override). */
+export interface RoleInstructionsResult {
+  role: string;
+  defaultInstructions: string;
+  override: string | null;
+  isOverridden: boolean;
+}
+
+/** Get the default and overridden instructions for a specific role. */
+export async function getRoleInstructions(role: string): Promise<RoleInstructionsResult> {
+  return invoke<RoleInstructionsResult>("get_role_instructions", { role });
 }
 
 // ─── Remote Control Operations ───

@@ -12,6 +12,20 @@ export default defineConfig(async () => ({
   //
   // 1. prevent Vite from obscuring rust errors
   clearScreen: false,
+
+  build: {
+    target: ['chrome105', 'safari13'],
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-vue': ['vue'],
+          'vendor-marked': ['marked'],
+          'vendor-shiki': ['shiki'],
+        },
+      },
+    },
+  },
+
   // 2. tauri expects a fixed port, fail if that port is not available
   server: {
     port: 1420,
