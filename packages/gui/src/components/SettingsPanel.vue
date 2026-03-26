@@ -2,7 +2,7 @@
 import { ref, onMounted, watch } from "vue";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useConfigStore } from "../stores/config";
-import { refreshContext, getContextStatus, kbList } from "../lib/tauri-bridge";
+import { refreshContext, getContextStatus, kbList, getRoleInstructions } from "../lib/tauri-bridge";
 import type { AgentConfig, ContextStatus, ObsidianConfig } from "../lib/tauri-bridge";
 
 const emit = defineEmits<{ close: [] }>();
@@ -107,6 +107,7 @@ function createEmptyObsidianConfig(): ObsidianConfig {
     autoInjectContext: false,
     contextFiles: [],
     roleContextFiles: createEmptyRoleContextFiles(),
+    roleInstructionOverrides: {},
   };
 }
 
@@ -124,6 +125,9 @@ function normalizeObsidianConfig(source?: ObsidianConfig | null): ObsidianConfig
     kbPaths: source?.kbPaths ? { ...source.kbPaths } : undefined,
     contextFiles: [...(source?.contextFiles ?? [])],
     roleContextFiles,
+    roleInstructionOverrides: source?.roleInstructionOverrides
+      ? { ...source.roleInstructionOverrides }
+      : {},
   };
 }
 
@@ -305,6 +309,63 @@ function closeVaultBrowser() {
 function removeContextFile(index: number, target: ContextTarget = "global") {
   const targetFiles = getContextFilesForTarget(target);
   targetFiles.splice(index, 1);
+}
+
+// ─── Role Instructions Editor ───
+
+const editingRole = ref<RoleContextKey | null>(null);
+const roleEditorContent = ref("");
+const roleDefaultContent = ref("");
+const roleEditorLoading = ref(false);
+const roleEditorError = ref("");
+
+function hasRoleOverride(role: RoleContextKey): boolean {
+  const overrides = editObsidian.value.roleInstructionOverrides;
+  return !!overrides?.[role];
+}
+
+async function openRoleEditor(role: RoleContextKey) {
+  editingRole.value = role;
+  roleEditorLoading.value = true;
+  roleEditorError.value = "";
+
+  try {
+    const result = await getRoleInstructions(role);
+    roleDefaultContent.value = result.defaultInstructions;
+    // Show override if it exists in local edit state, else from backend, else default
+    const localOverride = editObsidian.value.roleInstructionOverrides?.[role];
+    roleEditorContent.value = localOverride ?? result.override ?? result.defaultInstructions;
+  } catch (e) {
+    roleEditorError.value = e instanceof Error ? e.message : String(e);
+    roleDefaultContent.value = "";
+    roleEditorContent.value = "";
+  } finally {
+    roleEditorLoading.value = false;
+  }
+}
+
+function closeRoleEditor() {
+  if (editingRole.value) {
+    const role = editingRole.value;
+    const content = roleEditorContent.value;
+    const isDefault = content === roleDefaultContent.value;
+    if (!editObsidian.value.roleInstructionOverrides) {
+      editObsidian.value.roleInstructionOverrides = {};
+    }
+    if (isDefault) {
+      delete editObsidian.value.roleInstructionOverrides[role];
+    } else {
+      editObsidian.value.roleInstructionOverrides[role] = content;
+    }
+  }
+  editingRole.value = null;
+  roleEditorContent.value = "";
+  roleDefaultContent.value = "";
+  roleEditorError.value = "";
+}
+
+function restoreRoleDefault() {
+  roleEditorContent.value = roleDefaultContent.value;
 }
 
 const contextStatus = ref<ContextStatus | null>(null);
@@ -525,35 +586,65 @@ function handleKeydown(event: KeyboardEvent) {
 
                 <div class="role-context-shell">
                   <button class="section-toggle" @click="roleContextExpanded = !roleContextExpanded">
-                    <span>Role-Specific Context</span>
+                    <span>Role Instructions</span>
                     <span class="section-toggle-state">{{ roleContextExpanded ? "Hide" : "Show" }}</span>
                   </button>
                   <p class="hint compact">
-                    These files are merged with global Context Files only for the selected role.
+                    Edit the system-prompt instructions injected for each role. Overrides are saved in config; defaults come from .mercury/roles/.
                   </p>
 
                   <div v-if="roleContextExpanded" class="role-context-grid">
-                    <div v-for="role in ROLE_CONTEXT_DEFS" :key="role.value" class="role-context-card">
-                      <div class="role-context-card-header">
-                        <div>
-                          <h4>{{ role.label }}</h4>
-                          <p class="hint compact">{{ role.hint }}</p>
+                    <!-- Role instruction cards (collapsed view) -->
+                    <template v-for="role in ROLE_CONTEXT_DEFS" :key="role.value">
+                      <div v-if="editingRole !== role.value" class="role-context-card">
+                        <div class="role-context-card-header">
+                          <div>
+                            <h4>{{ role.label }}</h4>
+                            <p class="hint compact">{{ role.hint }}</p>
+                          </div>
+                          <button class="cap-add" @click="openRoleEditor(role.value)">Edit</button>
                         </div>
-                        <button class="cap-add" @click="browseVaultFiles(role.value)">+ Add File</button>
+                        <span
+                          class="role-override-badge"
+                          :class="{ overridden: hasRoleOverride(role.value) }"
+                        >
+                          {{ hasRoleOverride(role.value) ? "Custom override" : "Using default" }}
+                        </span>
                       </div>
 
-                      <div v-if="getContextFilesForTarget(role.value).length > 0" class="context-file-list">
-                        <div
-                          v-for="(file, fileIndex) in getContextFilesForTarget(role.value)"
-                          :key="`${role.value}-${fileIndex}`"
-                          class="context-file-row"
-                        >
-                          <span class="context-file">{{ file }}</span>
-                          <button class="remove-btn small" @click="removeContextFile(fileIndex, role.value)">X</button>
+                      <!-- Role instruction editor (expanded view) -->
+                      <div v-else class="role-editor-card">
+                        <div class="role-editor-header">
+                          <h4>Editing: {{ role.label }} Role Instructions</h4>
+                          <div class="role-editor-actions">
+                            <button
+                              class="role-editor-restore"
+                              @click="restoreRoleDefault"
+                              :disabled="roleEditorContent === roleDefaultContent"
+                              title="Revert to default instructions from .mercury/roles/"
+                            >Restore Default</button>
+                            <button class="role-editor-close" @click="closeRoleEditor">Done</button>
+                          </div>
                         </div>
+
+                        <div v-if="roleEditorLoading" class="role-editor-loading">Loading instructions...</div>
+                        <div v-else-if="roleEditorError" class="role-editor-error">{{ roleEditorError }}</div>
+                        <textarea
+                          v-else
+                          v-model="roleEditorContent"
+                          class="role-editor-textarea"
+                          spellcheck="false"
+                          placeholder="Role instructions (Markdown)"
+                        ></textarea>
+
+                        <span
+                          class="role-override-badge"
+                          :class="{ overridden: roleEditorContent !== roleDefaultContent }"
+                        >
+                          {{ roleEditorContent !== roleDefaultContent ? "Modified — will be saved as override" : "Matches default — no override" }}
+                        </span>
                       </div>
-                      <p v-else class="empty-state">No role-specific files selected.</p>
-                    </div>
+                    </template>
                   </div>
                 </div>
 
@@ -1149,6 +1240,117 @@ function handleKeydown(event: KeyboardEvent) {
   margin: 0 0 4px;
   font-size: 13px;
   font-weight: 600;
+}
+
+.role-override-badge {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.role-override-badge.overridden {
+  color: var(--accent-main);
+}
+
+.role-editor-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--accent-main);
+  border-radius: 10px;
+  grid-column: 1 / -1;
+}
+
+.role-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.role-editor-header h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.role-editor-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.role-editor-restore {
+  padding: 4px 10px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.role-editor-restore:hover:not(:disabled) {
+  color: var(--text-secondary);
+  border-color: var(--text-muted);
+}
+
+.role-editor-restore:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.role-editor-close {
+  padding: 4px 12px;
+  background: var(--accent-main);
+  border: none;
+  border-radius: 6px;
+  color: var(--bg-primary);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.role-editor-close:hover {
+  filter: brightness(1.1);
+}
+
+.role-editor-textarea {
+  width: 100%;
+  min-height: 280px;
+  max-height: 420px;
+  padding: 12px 14px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-family: "Cascadia Code", "Fira Code", "JetBrains Mono", "SF Mono", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  tab-size: 2;
+  resize: vertical;
+  white-space: pre;
+  overflow: auto;
+}
+
+.role-editor-textarea:focus {
+  outline: none;
+  border-color: var(--accent-main);
+}
+
+.role-editor-loading,
+.role-editor-error {
+  padding: 20px;
+  text-align: center;
+  font-size: 12px;
+}
+
+.role-editor-loading {
+  color: var(--text-muted);
+}
+
+.role-editor-error {
+  color: var(--accent-error);
 }
 
 .context-status-info {

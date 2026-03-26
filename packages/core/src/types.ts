@@ -77,6 +77,11 @@ export interface ObsidianConfig {
     dev?: string[];
     acceptance?: string[];
   };
+  roleInstructionOverrides?: {
+    main?: string;
+    dev?: string;
+    acceptance?: string;
+  };
 }
 
 export interface RTKConfig {

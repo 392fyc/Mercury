@@ -156,6 +156,7 @@ pub fn run() {
             commands::deny_request,
             commands::refresh_context,
             commands::get_context_status,
+            commands::get_role_instructions,
             commands::list_models,
             commands::set_model,
             commands::read_session_history,

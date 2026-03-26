@@ -788,6 +788,16 @@ pub async fn get_context_status(
         .await
 }
 
+#[tauri::command]
+pub async fn get_role_instructions(
+    sidecar: State<'_, SharedSidecar>,
+    role: String,
+) -> Result<serde_json::Value, String> {
+    let mgr = get_sidecar(&sidecar).await?;
+    mgr.send_request("get_role_instructions", serde_json::json!({ "role": role }))
+        .await
+}
+
 // ─── Session History Commands (direct filesystem, no sidecar) ───
 
 /// Read native session history from JSONL files on disk.
