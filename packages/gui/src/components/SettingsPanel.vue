@@ -427,6 +427,11 @@ async function handleRefreshContext() {
 }
 
 async function handleSave() {
+  // Flush any open role editor draft before saving
+  if (editingRole.value && !roleEditorLoading.value && !roleEditorError.value) {
+    closeRoleEditor();
+  }
+
   saving.value = true;
   saveMsg.value = "";
 

@@ -230,16 +230,16 @@ pub fn run() {
                         }
                     };
 
-                    // Global 5 s timeout around the entire shutdown sequence
+                    // Global timeout covers RC (5s) + sidecar (3s) + margin
                     match tokio::time::timeout(
-                        tokio::time::Duration::from_secs(5),
+                        tokio::time::Duration::from_secs(10),
                         shutdown,
                     )
                     .await
                     {
                         Ok(_) => {}
                         Err(_) => eprintln!(
-                            "[tauri] WARNING: exit cleanup exceeded 5-second global timeout"
+                            "[tauri] WARNING: exit cleanup exceeded 10-second global timeout"
                         ),
                     }
                 });

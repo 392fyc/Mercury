@@ -67,7 +67,7 @@ export function buildRoleSystemPrompt(
 
   // Role-specific instructions: explicit parameter overrides YAML
   const instructions = roleInstructions ?? card.instructions;
-  if (instructions) {
+  if (instructions !== undefined && instructions !== null) {
     lines.push("## Role-Specific Instructions");
     lines.push(instructions);
     lines.push("");
