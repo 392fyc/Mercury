@@ -67,10 +67,13 @@ async function refreshTask(taskId: string) {
 
 let taskListenersInitialized = false;
 const taskUnlisteners: UnlistenFn[] = [];
+let taskListenersInitPromise: Promise<void> | null = null;
 
 async function initTaskListeners() {
   if (taskListenersInitialized) return;
+  if (taskListenersInitPromise) return taskListenersInitPromise;
 
+  taskListenersInitPromise = (async () => {
   const pending: UnlistenFn[] = [];
   try {
     // Reload tasks whenever sidecar becomes ready (handles F5 page refresh where
@@ -95,8 +98,12 @@ async function initTaskListeners() {
   } catch (e) {
     // Rollback: unregister any listeners that were successfully created
     for (const unlisten of pending) unlisten();
+    taskListenersInitPromise = null;
     console.error("Failed to init task listeners:", e);
   }
+  })();
+
+  return taskListenersInitPromise;
 }
 
 export function useTaskStore() {

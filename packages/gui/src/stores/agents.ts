@@ -363,7 +363,10 @@ async function hydrateSessionMeta(): Promise<void> {
           legacyRoleConfig: match.legacyRoleConfig,
         });
       }
-      if (pruned) saveSessions();
+      if (pruned) {
+        triggerRef(statuses);
+        saveSessions();
+      }
     } catch {
       // Best-effort hydration only
     }
@@ -449,6 +452,7 @@ async function initAgents() {
           if (existingSid === event.sessionId && existingKey !== panelKey) {
             cleanupPanelState(existingKey, existingSid);
             statuses.value.delete(existingKey);
+            triggerRef(statuses);
             removeBookmark(existingKey);
             break;
           }

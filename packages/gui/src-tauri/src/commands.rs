@@ -221,14 +221,20 @@ pub async fn get_git_diff(repo_path: String, file_path: String) -> Result<String
     .await
     .map_err(|e| format!("git diff --no-index failed to spawn: {}", e))?;
 
-    // git diff --no-index exits 1 when there ARE differences (which is expected
-    // for a new file vs /dev/null), so we only treat exit code >= 128 as an error.
-    if noindex_output.status.code().unwrap_or(128) >= 128 {
-        let stderr = String::from_utf8_lossy(&noindex_output.stderr);
+    // git diff --no-index exit codes:
+    //   0 = no differences (shouldn't happen for new file vs /dev/null)
+    //   1 = differences found (expected for a new file)
+    //  ≥128 = fatal error (bad args, etc.)
+    // Exit code 1 with empty stdout but non-empty stderr indicates a file access
+    // error (e.g. permission denied, symlink loop) rather than a real diff.
+    let exit_code = noindex_output.status.code().unwrap_or(128);
+    let stderr = String::from_utf8_lossy(&noindex_output.stderr);
+    let noindex_diff = String::from_utf8_lossy(&noindex_output.stdout).to_string();
+
+    if exit_code >= 128 || (exit_code != 0 && noindex_diff.is_empty() && !stderr.is_empty()) {
         return Err(format!("git diff --no-index failed: {}", stderr.trim()));
     }
 
-    let noindex_diff = String::from_utf8_lossy(&noindex_output.stdout).to_string();
     if !noindex_diff.is_empty() {
         return Ok(noindex_diff);
     }
