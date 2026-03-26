@@ -193,12 +193,12 @@ function getSessionInfo(panelKey: string): SessionMeta | undefined {
   return sessionMeta.value.get(panelKey);
 }
 
-function clearSession(panelKey: string) {
+function clearSession(panelKey: string, skipPersist = false) {
   sessions.value.delete(panelKey);
   triggerRef(sessions);
   sessionMeta.value.delete(panelKey);
   triggerRef(sessionMeta);
-  saveSessions();
+  if (!skipPersist) saveSessions();
 }
 
 function setWorkDir(panelKey: string, cwd: string) {
@@ -341,13 +341,16 @@ async function hydrateSessionMeta(): Promise<void> {
         groupEntries.push([panelKey, sessionId]);
       }
 
+      let pruned = false;
       for (const [panelKey, sessionId] of groupEntries) {
         const match = knownSessions.find((s) => s.sessionId === sessionId);
         if (!match) {
-          // Stale session in localStorage that backend no longer knows — prune it
-          cleanupPanelState(panelKey, sessionId);
+          // Stale session in localStorage that backend no longer knows — prune it.
+          // Skip per-item persist; we batch-save after the loop.
+          cleanupPanelState(panelKey, sessionId, true);
           statuses.value.delete(panelKey);
           removeBookmark(panelKey);
+          pruned = true;
           continue;
         }
         setSessionInfo(panelKey, {
@@ -360,6 +363,7 @@ async function hydrateSessionMeta(): Promise<void> {
           legacyRoleConfig: (match as typeof match & { legacyRoleConfig?: boolean }).legacyRoleConfig,
         });
       }
+      if (pruned) saveSessions();
     } catch {
       // Best-effort hydration only
     }
@@ -390,10 +394,10 @@ async function loadAgents() {
 }
 
 /** Shared cleanup for session end/delete: removes prompt state and session mapping. */
-function cleanupPanelState(panelKey: string, sessionId: string): void {
+function cleanupPanelState(panelKey: string, sessionId: string, skipPersist = false): void {
   sessionPromptState.value.delete(sessionId);
   triggerRef(sessionPromptState);
-  clearSession(panelKey);
+  clearSession(panelKey, skipPersist);
 }
 
 let agentListenersInitialized = false;

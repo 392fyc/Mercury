@@ -208,43 +208,29 @@ pub async fn get_git_diff(repo_path: String, file_path: String) -> Result<String
     }
 
     // Both diffs empty — check if this is an untracked (new) file.
-    // For untracked files, synthesise a diff showing all lines as additions.
-    let repo_for_ls = repo_path.clone();
-    let file_for_ls = file_path.clone();
-    let ls_output = run_git_command(move || {
+    // Use `git diff --no-index /dev/null <file>` to let Git handle encoding,
+    // binary detection, and symlink semantics natively instead of manual assembly.
+    let repo_for_noindex = repo_path.clone();
+    let file_for_noindex = file_path.clone();
+    let noindex_output = run_git_command(move || {
         Command::new("git")
-            .args(["ls-files", "--others", "--exclude-standard", "--", &file_for_ls])
-            .current_dir(&repo_for_ls)
+            .args(["diff", "--no-index", "--ignore-cr-at-eol", "--", "/dev/null", &file_for_noindex])
+            .current_dir(&repo_for_noindex)
             .output()
     })
     .await
-    .map_err(|e| format!("git ls-files failed to spawn: {}", e))?;
+    .map_err(|e| format!("git diff --no-index failed to spawn: {}", e))?;
 
-    if ls_output.status.success() {
-        let ls_stdout = String::from_utf8_lossy(&ls_output.stdout).to_string();
-        if !ls_stdout.trim().is_empty() {
-            // File is untracked — read its contents and build a synthetic unified diff
-            let full_path = std::path::Path::new(&repo_path).join(&file_path);
-            let content = tokio::task::spawn_blocking(move || {
-                std::fs::read_to_string(&full_path)
-                    .map_err(|e| format!("Failed to read new file: {}", e))
-            })
-            .await
-            .map_err(|e| format!("Task join error: {}", e))??;
+    // git diff --no-index exits 1 when there ARE differences (which is expected
+    // for a new file vs /dev/null), so we only treat exit code >= 128 as an error.
+    if noindex_output.status.code().unwrap_or(128) >= 128 {
+        let stderr = String::from_utf8_lossy(&noindex_output.stderr);
+        return Err(format!("git diff --no-index failed: {}", stderr.trim()));
+    }
 
-            let lines: Vec<&str> = content.lines().collect();
-            let line_count = lines.len();
-            let mut diff = format!(
-                "--- /dev/null\n+++ b/{}\n@@ -0,0 +1,{} @@\n",
-                file_path, line_count
-            );
-            for line in &lines {
-                diff.push('+');
-                diff.push_str(line);
-                diff.push('\n');
-            }
-            return Ok(diff);
-        }
+    let noindex_diff = String::from_utf8_lossy(&noindex_output.stdout).to_string();
+    if !noindex_diff.is_empty() {
+        return Ok(noindex_diff);
     }
 
     // Truly no changes
