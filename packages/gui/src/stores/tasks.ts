@@ -40,12 +40,21 @@ function setFilter(status: TaskStatus | null) {
   statusFilter.value = status;
 }
 
+let loadTasksInflight: Promise<void> | null = null;
+
 async function loadTasks() {
-  try {
-    tasks.value = await listTasks();
-  } catch (e) {
-    console.error("Failed to load tasks:", e);
-  }
+  if (loadTasksInflight) return loadTasksInflight;
+  loadTasksInflight = (async () => {
+    try {
+      tasks.value = await listTasks();
+    } catch (e) {
+      console.error("Failed to load tasks:", e);
+      throw e; // re-throw so callers (e.g. handleRefresh) can catch
+    } finally {
+      loadTasksInflight = null;
+    }
+  })();
+  return loadTasksInflight;
 }
 
 /** Refresh a single task by ID (e.g. after event notification). */

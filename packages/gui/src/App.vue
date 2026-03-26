@@ -31,7 +31,7 @@ const {
 const { initMessageListeners } = useMessageStore();
 const { initApprovalStore } = useApprovalStore();
 const { initEventListeners } = useEventStore();
-const { loadTasks, initTaskListeners } = useTaskStore();
+const { initTaskListeners, disposeTaskListeners } = useTaskStore();
 
 const showSettings = ref(false);
 const showRemoteControl = ref(false);
@@ -135,12 +135,11 @@ onMounted(async () => {
     initEventListeners(),
     initTaskListeners(),
   ]);
-  // loadTasks depends on agents being loaded first
-  await loadTasks();
 });
 
 onBeforeUnmount(() => {
   stopExplorerResize();
+  disposeTaskListeners();
 });
 </script>
 

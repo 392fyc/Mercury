@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { useTaskStore } from "../stores/tasks";
 import type { TaskStatus } from "../lib/tauri-bridge";
 import { dispatchBundleTask, createAcceptance } from "../lib/tauri-bridge";
@@ -16,14 +16,19 @@ const {
   loadTasks,
 } = useTaskStore();
 
-import { ref } from "vue";
 const isRefreshing = ref(false);
+const refreshError = ref(false);
 
 async function handleRefresh() {
   if (isRefreshing.value) return;
   isRefreshing.value = true;
+  refreshError.value = false;
   try {
     await loadTasks();
+  } catch (e) {
+    console.error("Task refresh failed:", e);
+    refreshError.value = true;
+    setTimeout(() => (refreshError.value = false), 3000);
   } finally {
     isRefreshing.value = false;
   }
@@ -139,12 +144,12 @@ async function handleCreateAcceptance(taskId: string) {
 
       <button
         class="refresh-btn"
-        :class="{ spinning: isRefreshing }"
+        :class="{ spinning: isRefreshing, 'refresh-error': refreshError }"
         :disabled="isRefreshing"
-        title="Reload tasks"
+        :title="refreshError ? 'Refresh failed — click to retry' : 'Reload tasks'"
         @click="handleRefresh"
       >
-        ↻
+        {{ refreshError ? '✕' : '↻' }}
       </button>
     </div>
 
@@ -317,6 +322,11 @@ async function handleCreateAcceptance(taskId: string) {
 
 .refresh-btn.spinning {
   animation: spin 0.8s linear infinite;
+}
+
+.refresh-btn.refresh-error {
+  color: #ef4444;
+  border-color: #ef4444;
 }
 
 @keyframes spin {

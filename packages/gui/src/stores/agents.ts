@@ -319,27 +319,26 @@ function setModelCache(agentId: string, models: { id: string; name: string }[]) 
 }
 
 async function hydrateSessionMeta(): Promise<void> {
-  // Group by {role}:{agentId} (ignoring optional session suffix)
-  const byAgent = new Map<string, string[]>();
+  // Group by {role}:{agentId} — snapshot panelKey→sessionId BEFORE any await
+  // to prevent TOCTOU: sessions arriving during fetchSessions won't be
+  // mistakenly pruned as stale.
+  const byAgent = new Map<string, [string, string][]>();
   for (const [panelKey, sessionId] of sessions.value) {
     const { role, agentId } = parsePanelKey(panelKey);
     const groupKey = `${role}:${agentId}`;
     const list = byAgent.get(groupKey) ?? [];
-    list.push(sessionId);
+    list.push([panelKey, sessionId]);
     byAgent.set(groupKey, list);
   }
 
-  for (const groupKey of byAgent.keys()) {
+  for (const [groupKey, groupEntries] of byAgent) {
     const { role, agentId } = parsePanelKey(groupKey);
     try {
       const knownSessions = await fetchSessions(agentId, role, false);
-      // Collect panelKeys for this group to iterate safely while mutating
-      const groupEntries: [string, string][] = [];
-      for (const [panelKey, sessionId] of sessions.value) {
-        const pk = parsePanelKey(panelKey);
-        if (pk.role !== role || pk.agentId !== agentId) continue;
-        groupEntries.push([panelKey, sessionId]);
-      }
+      // O(1) lookup instead of O(n) find per entry
+      const knownById = new Map(
+        knownSessions.map((s) => [s.sessionId, s] as const),
+      );
 
       let pruned = false;
       // Track which sessionIds have been assigned a canonical panelKey.
@@ -347,7 +346,7 @@ async function hydrateSessionMeta(): Promise<void> {
       const seenSessionIds = new Map<string, string>();
 
       for (const [panelKey, sessionId] of groupEntries) {
-        const match = knownSessions.find((s) => s.sessionId === sessionId);
+        const match = knownById.get(sessionId);
         if (!match) {
           // Stale session in localStorage that backend no longer knows — prune it.
           // Skip per-item persist; we batch-save after the loop.
