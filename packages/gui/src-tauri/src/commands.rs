@@ -186,11 +186,12 @@ pub async fn get_git_diff(repo_path: String, file_path: String) -> Result<String
     }
 
     // No unstaged changes — try staged diff
-    // git diff --cached: https://git-scm.com/docs/git-diff
+    let repo_for_staged = repo_path.clone();
+    let file_for_staged = file_path.clone();
     let staged = run_git_command(move || {
         Command::new("git")
-            .args(["diff", "--cached", "--ignore-cr-at-eol", "--", &file_path])
-            .current_dir(&repo_path)
+            .args(["diff", "--cached", "--ignore-cr-at-eol", "--", &file_for_staged])
+            .current_dir(&repo_for_staged)
             .output()
     })
     .await
@@ -201,7 +202,53 @@ pub async fn get_git_diff(repo_path: String, file_path: String) -> Result<String
         return Err(format!("git diff --cached failed: {}", stderr.trim()));
     }
 
-    Ok(String::from_utf8_lossy(&staged.stdout).to_string())
+    let staged_diff = String::from_utf8_lossy(&staged.stdout).to_string();
+    if !staged_diff.is_empty() {
+        return Ok(staged_diff);
+    }
+
+    // Both diffs empty — check if this is an untracked (new) file.
+    // For untracked files, synthesise a diff showing all lines as additions.
+    let repo_for_ls = repo_path.clone();
+    let file_for_ls = file_path.clone();
+    let ls_output = run_git_command(move || {
+        Command::new("git")
+            .args(["ls-files", "--others", "--exclude-standard", "--", &file_for_ls])
+            .current_dir(&repo_for_ls)
+            .output()
+    })
+    .await
+    .map_err(|e| format!("git ls-files failed to spawn: {}", e))?;
+
+    if ls_output.status.success() {
+        let ls_stdout = String::from_utf8_lossy(&ls_output.stdout).to_string();
+        if !ls_stdout.trim().is_empty() {
+            // File is untracked — read its contents and build a synthetic unified diff
+            let full_path = std::path::Path::new(&repo_path).join(&file_path);
+            let content = tokio::task::spawn_blocking(move || {
+                std::fs::read_to_string(&full_path)
+                    .map_err(|e| format!("Failed to read new file: {}", e))
+            })
+            .await
+            .map_err(|e| format!("Task join error: {}", e))??;
+
+            let lines: Vec<&str> = content.lines().collect();
+            let line_count = lines.len();
+            let mut diff = format!(
+                "--- /dev/null\n+++ b/{}\n@@ -0,0 +1,{} @@\n",
+                file_path, line_count
+            );
+            for line in &lines {
+                diff.push('+');
+                diff.push_str(line);
+                diff.push('\n');
+            }
+            return Ok(diff);
+        }
+    }
+
+    // Truly no changes
+    Ok(String::new())
 }
 
 /// List all local and remote git branches for a given directory.

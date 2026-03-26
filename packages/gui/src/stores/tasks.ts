@@ -8,7 +8,7 @@ import type {
   TaskStatus,
   MercuryEvent,
 } from "../lib/tauri-bridge";
-import { listTasks, getTask, onMercuryEvent } from "../lib/tauri-bridge";
+import { listTasks, getTask, onMercuryEvent, onSidecarReady } from "../lib/tauri-bridge";
 
 const tasks = ref<TaskBundle[]>([]);
 const selectedTaskId = ref<string | null>(null);
@@ -69,6 +69,10 @@ let taskListenersInitialized = false;
 async function initTaskListeners() {
   if (taskListenersInitialized) return;
   taskListenersInitialized = true;
+
+  // Reload tasks whenever sidecar becomes ready (handles F5 page refresh where
+  // sidecar may not be available yet when onMounted fires).
+  await onSidecarReady(() => loadTasks());
 
   await onMercuryEvent((event: MercuryEvent) => {
     if (event.type.startsWith("orchestrator.task.") || event.type.startsWith("orchestrator.acceptance.")) {

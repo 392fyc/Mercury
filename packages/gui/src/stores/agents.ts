@@ -333,11 +333,23 @@ async function hydrateSessionMeta(): Promise<void> {
     const { role, agentId } = parsePanelKey(groupKey);
     try {
       const knownSessions = await fetchSessions(agentId, role, false);
+      // Collect panelKeys for this group to iterate safely while mutating
+      const groupEntries: [string, string][] = [];
       for (const [panelKey, sessionId] of sessions.value) {
         const pk = parsePanelKey(panelKey);
         if (pk.role !== role || pk.agentId !== agentId) continue;
+        groupEntries.push([panelKey, sessionId]);
+      }
+
+      for (const [panelKey, sessionId] of groupEntries) {
         const match = knownSessions.find((s) => s.sessionId === sessionId);
-        if (!match) continue;
+        if (!match) {
+          // Stale session in localStorage that backend no longer knows — prune it
+          cleanupPanelState(panelKey, sessionId);
+          statuses.value.delete(panelKey);
+          removeBookmark(panelKey);
+          continue;
+        }
         setSessionInfo(panelKey, {
           sessionId: match.sessionId,
           sessionName: match.sessionName,
@@ -424,6 +436,20 @@ async function initAgents() {
       const panelKey = payload.role === "main"
         ? `${payload.role}:${event.agentId}`
         : `${payload.role}:${event.agentId}:${event.sessionId}`;
+
+      // Deduplicate: if any existing panelKey already maps to this sessionId
+      // (e.g. a legacy key restored from localStorage), clean it up first to
+      // prevent ghost duplicates in the bookmark rail.
+      if (payload.role !== "main") {
+        for (const [existingKey, existingSid] of sessions.value) {
+          if (existingSid === event.sessionId && existingKey !== panelKey) {
+            cleanupPanelState(existingKey, existingSid);
+            statuses.value.delete(existingKey);
+            removeBookmark(existingKey);
+            break;
+          }
+        }
+      }
 
       // setSessionInfo internally calls setSession, which registers the
       // panelKey→sessionId mapping needed by resolvePanelKey in messages.ts.
