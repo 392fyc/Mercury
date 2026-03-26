@@ -615,18 +615,85 @@ function handleKeydown(event: KeyboardEvent) {
                   <p v-else class="empty-state">No global context files selected.</p>
                 </div>
 
+                <div class="context-status-section">
+                  <div class="context-status-row">
+                    <div class="context-status-info">
+                      <span class="cap-label">Prompt Context Cache</span>
+                      <span v-if="contextStatus?.hasContext" class="status-badge active">
+                        Active ({{ (contextStatus.contextLength / 1024).toFixed(1) }}KB)
+                      </span>
+                      <span v-else class="status-badge inactive">Not built</span>
+                    </div>
+                    <button
+                      class="refresh-btn"
+                      @click="handleRefreshContext"
+                      :disabled="refreshing"
+                      title="Rebuild global and role-specific KB prompt context"
+                    >
+                      {{ refreshing ? "Refreshing..." : "Refresh Context" }}
+                    </button>
+                  </div>
+                  <p
+                    v-if="refreshMsg"
+                    class="refresh-msg"
+                    :class="refreshMsg.startsWith('Error') ? 'error-text' : 'success-text'"
+                  >
+                    {{ refreshMsg }}
+                  </p>
+                  <p class="hint compact">
+                    Rebuilds the prompt cache for global and role-specific files. Acceptance sessions only receive
+                    acceptance-scoped additions.
+                  </p>
+                </div>
                 <div class="role-context-shell">
                   <button class="section-toggle" @click="roleContextExpanded = !roleContextExpanded">
-                    <span>Role Instructions</span>
+                    <span>Role-Specific Context</span>
                     <span class="section-toggle-state">{{ roleContextExpanded ? "Hide" : "Show" }}</span>
                   </button>
                   <p class="hint compact">
-                    Edit the system-prompt instructions injected for each role. Overrides are saved in config; defaults come from .mercury/roles/.
+                    These files are merged with global Context Files only for the selected role.
                   </p>
 
                   <div v-if="roleContextExpanded" class="role-context-grid">
-                    <!-- Role instruction cards (collapsed view) -->
-                    <template v-for="role in ROLE_CONTEXT_DEFS" :key="role.value">
+                    <div v-for="role in ROLE_CONTEXT_DEFS" :key="role.value" class="role-context-card">
+                      <div class="role-context-card-header">
+                        <div>
+                          <h4>{{ role.label }}</h4>
+                          <p class="hint compact">{{ role.hint }}</p>
+                        </div>
+                        <button class="cap-add" @click="browseVaultFiles(role.value)">+ Add File</button>
+                      </div>
+
+                      <div v-if="getContextFilesForTarget(role.value).length > 0" class="context-file-list">
+                        <div
+                          v-for="(file, fileIndex) in getContextFilesForTarget(role.value)"
+                          :key="`${role.value}-${fileIndex}`"
+                          class="context-file-row"
+                        >
+                          <span class="context-file">{{ file }}</span>
+                          <button class="remove-btn small" @click="removeContextFile(fileIndex, role.value)">X</button>
+                        </div>
+                      </div>
+                      <p v-else class="empty-state">No role-specific files selected.</p>
+                    </div>
+                  </div>
+                </div>
+              </template>
+
+              <!-- Role Instructions — independent of autoInjectContext -->
+              <div class="role-context-shell">
+                <button class="section-toggle" @click="roleContextExpanded = !roleContextExpanded">
+                  <span>Role Instructions</span>
+                  <span class="section-toggle-state">{{ roleContextExpanded ? "Hide" : "Show" }}</span>
+                </button>
+                <p class="hint compact">
+                  Edit the system-prompt instructions injected for each role. Overrides are saved in config; defaults come from .mercury/roles/.
+                </p>
+
+                <div v-if="roleContextExpanded" class="role-context-grid">
+                  <template v-for="role in ROLE_CONTEXT_DEFS" :key="`instr-${role.value}`">
+                    <!-- Skip acceptance — uses a separate prompt builder not wired to overrides yet -->
+                    <template v-if="role.value !== 'acceptance'">
                       <div v-if="editingRole !== role.value" class="role-context-card">
                         <div class="role-context-card-header">
                           <div>
@@ -643,7 +710,6 @@ function handleKeydown(event: KeyboardEvent) {
                         </span>
                       </div>
 
-                      <!-- Role instruction editor (expanded view) -->
                       <div v-else class="role-editor-card">
                         <div class="role-editor-header">
                           <h4>Editing: {{ role.label }} Role Instructions</h4>
@@ -676,40 +742,9 @@ function handleKeydown(event: KeyboardEvent) {
                         </span>
                       </div>
                     </template>
-                  </div>
+                  </template>
                 </div>
-
-                <div class="context-status-section">
-                  <div class="context-status-row">
-                    <div class="context-status-info">
-                      <span class="cap-label">Prompt Context Cache</span>
-                      <span v-if="contextStatus?.hasContext" class="status-badge active">
-                        Active ({{ (contextStatus.contextLength / 1024).toFixed(1) }}KB)
-                      </span>
-                      <span v-else class="status-badge inactive">Not built</span>
-                    </div>
-                    <button
-                      class="refresh-btn"
-                      @click="handleRefreshContext"
-                      :disabled="refreshing"
-                      title="Rebuild global and role-specific KB prompt context"
-                    >
-                      {{ refreshing ? "Refreshing..." : "Refresh Context" }}
-                    </button>
-                  </div>
-                  <p
-                    v-if="refreshMsg"
-                    class="refresh-msg"
-                    :class="refreshMsg.startsWith('Error') ? 'error-text' : 'success-text'"
-                  >
-                    {{ refreshMsg }}
-                  </p>
-                  <p class="hint compact">
-                    Rebuilds the prompt cache for global and role-specific files. Acceptance sessions only receive
-                    acceptance-scoped additions.
-                  </p>
-                </div>
-              </template>
+              </div>
             </div>
           </div>
         </div>

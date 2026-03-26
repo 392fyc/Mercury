@@ -196,7 +196,10 @@ pub fn run() {
                                 )
                                 .await
                                 {
-                                    Ok(_) => {}
+                                    Ok(Ok(_)) => {}
+                                    Ok(Err(e)) => eprintln!(
+                                        "[tauri] WARNING: remote control stop failed: {e}"
+                                    ),
                                     Err(_) => eprintln!(
                                         "[tauri] WARNING: remote control shutdown timed out"
                                     ),
@@ -218,12 +221,9 @@ pub fn run() {
                                     Ok(_) => {}
                                     Err(_) => {
                                         eprintln!(
-                                            "[tauri] WARNING: sidecar graceful shutdown timed out, force-killing"
+                                            "[tauri] WARNING: sidecar graceful shutdown timed out"
                                         );
-                                        // Force-kill if still alive after graceful timeout
-                                        if mgr.is_alive().await {
-                                            mgr.shutdown().await;
-                                        }
+                                        // shutdown() already calls kill(); no point re-calling
                                     }
                                 }
                             }
