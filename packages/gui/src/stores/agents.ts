@@ -342,12 +342,15 @@ async function hydrateSessionMeta(): Promise<void> {
       }
 
       let pruned = false;
+      // Track which sessionIds have been assigned a canonical panelKey.
+      // Prefer session-unique keys (3 segments) over legacy keys (2 segments).
+      const seenSessionIds = new Map<string, string>();
+
       for (const [panelKey, sessionId] of groupEntries) {
         const match = knownSessions.find((s) => s.sessionId === sessionId);
         if (!match) {
           // Stale session in localStorage that backend no longer knows — prune it.
           // Skip per-item persist; we batch-save after the loop.
-          // Mirror the full cleanup from agent.session.end/delete.
           cleanupPanelState(panelKey, sessionId, true);
           statuses.value.delete(panelKey);
           workDirs.value.delete(panelKey);
@@ -356,6 +359,27 @@ async function hydrateSessionMeta(): Promise<void> {
           pruned = true;
           continue;
         }
+
+        // Deduplicate: if another panelKey already claimed this sessionId,
+        // keep the one with more segments (new format {role}:{agentId}:{sid}).
+        const existingKey = seenSessionIds.get(sessionId);
+        if (existingKey) {
+          const existingSegments = existingKey.split(":").length;
+          const currentSegments = panelKey.split(":").length;
+          const keyToRemove = currentSegments > existingSegments ? existingKey : panelKey;
+          const keyToKeep = currentSegments > existingSegments ? panelKey : existingKey;
+          clearSession(keyToRemove, true);
+          statuses.value.delete(keyToRemove);
+          workDirs.value.delete(keyToRemove);
+          gitBranches.value.delete(keyToRemove);
+          removeBookmark(keyToRemove);
+          seenSessionIds.set(sessionId, keyToKeep);
+          pruned = true;
+          if (keyToRemove === panelKey) continue;
+        } else {
+          seenSessionIds.set(sessionId, panelKey);
+        }
+
         setSessionInfo(panelKey, {
           sessionId: match.sessionId,
           sessionName: match.sessionName,

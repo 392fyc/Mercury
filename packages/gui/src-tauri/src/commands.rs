@@ -208,13 +208,18 @@ pub async fn get_git_diff(repo_path: String, file_path: String) -> Result<String
     }
 
     // Both diffs empty — check if this is an untracked (new) file.
-    // Use `git diff --no-index /dev/null <file>` to let Git handle encoding,
+    // Use `git diff --no-index <null> <file>` to let Git handle encoding,
     // binary detection, and symlink semantics natively instead of manual assembly.
+    #[cfg(windows)]
+    let null_path = "NUL";
+    #[cfg(not(windows))]
+    let null_path = "/dev/null";
+
     let repo_for_noindex = repo_path.clone();
     let file_for_noindex = file_path.clone();
     let noindex_output = run_git_command(move || {
         Command::new("git")
-            .args(["diff", "--no-index", "--ignore-cr-at-eol", "--", "/dev/null", &file_for_noindex])
+            .args(["diff", "--no-index", "--ignore-cr-at-eol", "--", null_path, &file_for_noindex])
             .current_dir(&repo_for_noindex)
             .output()
     })
