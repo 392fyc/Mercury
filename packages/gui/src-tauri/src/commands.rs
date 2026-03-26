@@ -207,9 +207,35 @@ pub async fn get_git_diff(repo_path: String, file_path: String) -> Result<String
         return Ok(staged_diff);
     }
 
-    // Both diffs empty — check if this is an untracked (new) file.
-    // Use `git diff --no-index <null> <file>` to let Git handle encoding,
-    // binary detection, and symlink semantics natively instead of manual assembly.
+    // Both diffs empty — verify the file is actually untracked before falling
+    // back to --no-index. A clean tracked file also produces empty diffs, and
+    // without this guard it would be incorrectly rendered as a "new file".
+    let repo_for_status = repo_path.clone();
+    let file_for_status = file_path.clone();
+    let status_output = run_git_command(move || {
+        Command::new("git")
+            .args(["status", "--porcelain=v1", "--", &file_for_status])
+            .current_dir(&repo_for_status)
+            .output()
+    })
+    .await
+    .map_err(|e| format!("git status failed to spawn: {}", e))?;
+
+    if !status_output.status.success() {
+        let stderr = String::from_utf8_lossy(&status_output.stderr);
+        return Err(format!("git status failed: {}", stderr.trim()));
+    }
+
+    let is_untracked = String::from_utf8_lossy(&status_output.stdout)
+        .lines()
+        .any(|line| line.starts_with("?? "));
+    if !is_untracked {
+        // File is tracked and clean — no changes to show.
+        return Ok(String::new());
+    }
+
+    // File is untracked (new) — use `git diff --no-index <null> <file>` to let
+    // Git handle encoding, binary detection, and symlink semantics natively.
     #[cfg(windows)]
     let null_path = "NUL";
     #[cfg(not(windows))]

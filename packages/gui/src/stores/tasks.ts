@@ -80,6 +80,10 @@ async function initTaskListeners() {
     // sidecar may not be available yet when onMounted fires).
     pending.push(await onSidecarReady(() => loadTasks()));
 
+    // Attempt immediate load in case sidecar is already ready — the ready
+    // event may have been emitted before we registered the listener above.
+    void loadTasks();
+
     pending.push(await onMercuryEvent((event: MercuryEvent) => {
       if (event.type.startsWith("orchestrator.task.") || event.type.startsWith("orchestrator.acceptance.")) {
         const taskId =
@@ -106,6 +110,14 @@ async function initTaskListeners() {
   return taskListenersInitPromise;
 }
 
+/** Teardown all task event listeners — useful for tests and HMR cleanup. */
+function disposeTaskListeners() {
+  for (const unlisten of taskUnlisteners) unlisten();
+  taskUnlisteners.length = 0;
+  taskListenersInitialized = false;
+  taskListenersInitPromise = null;
+}
+
 export function useTaskStore() {
   return {
     tasks,
@@ -119,5 +131,6 @@ export function useTaskStore() {
     loadTasks,
     refreshTask,
     initTaskListeners,
+    disposeTaskListeners,
   };
 }
