@@ -1574,8 +1574,19 @@ export class Orchestrator {
       return { completed: true, lastAssistantMessage };
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      this.cancelPendingApprovalsForSession(sessionId, "Session failed while approval was pending");
-      this.bus.emit("agent.error", agentId, sessionId, { error: errorMsg });
+      const isTransportCrash = errorMsg.includes("[transport:crash]")
+        || errorMsg.includes("not ready for writing")
+        || errorMsg.includes("ProcessTransport");
+      this.cancelPendingApprovalsForSession(
+        sessionId,
+        isTransportCrash
+          ? "Transport disconnected — approvals cancelled"
+          : "Session failed while approval was pending",
+      );
+      this.bus.emit("agent.error", agentId, sessionId, {
+        error: errorMsg,
+        isTransportCrash,
+      });
       // Ensure frontend streaming state is always closed, even on errors
       this.transport.sendNotification("agent_stream_end", {
         agentId,
@@ -1585,6 +1596,7 @@ export class Orchestrator {
         agentId,
         sessionId,
         error: errorMsg,
+        isTransportCrash,
       });
 
       // Keep failed sessions in history, but detach them from active role routing.

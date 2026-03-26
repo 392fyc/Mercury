@@ -814,6 +814,8 @@ export interface AgentErrorEvent {
   agentId: string;
   sessionId: string;
   error: string;
+  /** True when the error was caused by SDK ProcessTransport disconnecting. */
+  isTransportCrash?: boolean;
 }
 
 export interface SidecarReadyEvent {

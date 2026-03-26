@@ -34,6 +34,40 @@ function extractTextFromBlocks(content: unknown): string {
     .join("\n");
 }
 
+/** Simple mutex for serializing async operations. */
+class AsyncMutex {
+  private queue: (() => void)[] = [];
+  private locked = false;
+
+  async acquire(): Promise<() => void> {
+    if (!this.locked) {
+      this.locked = true;
+      return () => this.release();
+    }
+    return new Promise<() => void>((resolve) => {
+      this.queue.push(() => resolve(() => this.release()));
+    });
+  }
+
+  private release(): void {
+    const next = this.queue.shift();
+    if (next) {
+      next();
+    } else {
+      this.locked = false;
+    }
+  }
+}
+
+/** Check if an error is a ProcessTransport "not ready" crash. */
+function isTransportNotReady(err: unknown): boolean {
+  if (err instanceof Error) {
+    return err.message.includes("not ready for writing")
+      || err.message.includes("ProcessTransport");
+  }
+  return String(err).includes("not ready for writing");
+}
+
 export class ClaudeAdapter implements AgentAdapter {
   readonly agentId: string;
   readonly config: AgentConfig;
@@ -44,6 +78,8 @@ export class ClaudeAdapter implements AgentAdapter {
   private sharedSystemPrompt?: string;
   private activeQueries = new Map<string, AsyncGenerator<unknown, void> & { supportedModels?(): Promise<unknown[]>; setModel?(model?: string): Promise<void> }>();
   private modelsCache: { id: string; name: string }[] | null = null;
+  /** Per-session mutex to serialize approval responses and prevent concurrent transport writes. */
+  private approvalMutex = new Map<string, AsyncMutex>();
 
   constructor(config?: Partial<AgentConfig>) {
     this.config = {
@@ -312,6 +348,15 @@ export class ClaudeAdapter implements AgentAdapter {
     }
 
     const onApprovalRequest = hooks?.onApprovalRequest;
+    // Ensure per-session mutex exists for serializing approval write-backs.
+    // Multiple concurrent canUseTool calls from the SDK can race to write
+    // control_response to the transport, causing "not ready for writing".
+    // Ref: https://platform.claude.com/docs/en/agent-sdk/permissions
+    if (!this.approvalMutex.has(sessionId)) {
+      this.approvalMutex.set(sessionId, new AsyncMutex());
+    }
+    const mutex = this.approvalMutex.get(sessionId)!;
+
     if (onApprovalRequest) {
       options.canUseTool = async (
         toolName: string,
@@ -343,19 +388,27 @@ export class ClaudeAdapter implements AgentAdapter {
         };
 
         const decision = await onApprovalRequest(approvalRequest);
-        if (decision.action === "approve") {
+
+        // Serialize the response through a mutex to prevent concurrent
+        // transport writes that cause "not ready for writing" crashes.
+        const release = await mutex.acquire();
+        try {
+          if (decision.action === "approve") {
+            return {
+              behavior: "allow",
+              updatedInput: decision.updatedInput,
+              toolUseID: requestOptions.toolUseID,
+            };
+          }
           return {
-            behavior: "allow",
-            updatedInput: decision.updatedInput,
+            behavior: "deny",
+            message: decision.reason ?? `Mercury denied ${toolName}`,
+            interrupt: true,
             toolUseID: requestOptions.toolUseID,
           };
+        } finally {
+          release();
         }
-        return {
-          behavior: "deny",
-          message: decision.reason ?? `Mercury denied ${toolName}`,
-          interrupt: true,
-          toolUseID: requestOptions.toolUseID,
-        };
       };
     }
 
@@ -423,138 +476,159 @@ export class ClaudeAdapter implements AgentAdapter {
     // sdk.query() accepts string | AsyncIterable<SDKUserMessage> — both paths converge here
     const queryIter = sdk.query(queryArgs as { prompt: string; options: Record<string, unknown> });
     this.activeQueries.set(sessionId, queryIter as Parameters<typeof this.activeQueries.set>[1]);
-    for await (const message of queryIter) {
-      session.lastActiveAt = Date.now();
+    try {
+      for await (const message of queryIter) {
+        session.lastActiveAt = Date.now();
 
-      if (typeof message !== "object" || message === null || !("type" in message)) {
-        continue;
-      }
+        if (typeof message !== "object" || message === null || !("type" in message)) {
+          continue;
+        }
 
-      const msg = message as Record<string, unknown>;
+        const msg = message as Record<string, unknown>;
 
-      // Capture SDK session ID from init message
-      if (msg.type === "system" && msg.subtype === "init" && msg.session_id) {
-        sdkSessionId = msg.session_id as string;
-      }
+        // Capture SDK session ID from init message
+        if (msg.type === "system" && msg.subtype === "init" && msg.session_id) {
+          sdkSessionId = msg.session_id as string;
+        }
 
-      // Streaming events — incremental content from includePartialMessages: true
-      // Type: SDKPartialAssistantMessage { type: "stream_event", event: RawMessageStreamEvent }
-      // Ref: https://platform.claude.com/docs/en/agent-sdk/streaming-output
-      if (msg.type === "stream_event") {
-        const event = msg.event as Record<string, unknown> | undefined;
-        if (!event) continue;
+        // Streaming events — incremental content from includePartialMessages: true
+        // Type: SDKPartialAssistantMessage { type: "stream_event", event: RawMessageStreamEvent }
+        // Ref: https://platform.claude.com/docs/en/agent-sdk/streaming-output
+        if (msg.type === "stream_event") {
+          const event = msg.event as Record<string, unknown> | undefined;
+          if (!event) continue;
 
-        const eventType = event.type as string;
-        const now = Date.now();
+          const eventType = event.type as string;
+          const now = Date.now();
 
-        // Extract token usage from message_start (input tokens) and message_delta (output tokens).
-        // Per Claude API docs: message_start.message.usage has initial {input_tokens, output_tokens},
-        // message_delta.usage.output_tokens is CUMULATIVE for this message.
-        // Ref: https://platform.claude.com/docs/en/build-with-claude/streaming
-        if (eventType === "message_start") {
-          const message = event.message as Record<string, unknown> | undefined;
-          const usage = message?.usage as Record<string, unknown> | undefined;
-          if (usage?.input_tokens) {
-            inputTokens = usage.input_tokens as number;
-            cumulativeTokenCount = inputTokens + ((usage.output_tokens as number) ?? 0);
-            session.tokenUsage = cumulativeTokenCount;
+          // Extract token usage from message_start (input tokens) and message_delta (output tokens).
+          // Per Claude API docs: message_start.message.usage has initial {input_tokens, output_tokens},
+          // message_delta.usage.output_tokens is CUMULATIVE for this message.
+          // Ref: https://platform.claude.com/docs/en/build-with-claude/streaming
+          if (eventType === "message_start") {
+            const message = event.message as Record<string, unknown> | undefined;
+            const usage = message?.usage as Record<string, unknown> | undefined;
+            if (usage?.input_tokens) {
+              inputTokens = usage.input_tokens as number;
+              cumulativeTokenCount = inputTokens + ((usage.output_tokens as number) ?? 0);
+              session.tokenUsage = cumulativeTokenCount;
+            }
+          } else if (eventType === "message_delta") {
+            const usage = event.usage as Record<string, unknown> | undefined;
+            if (usage?.output_tokens) {
+              cumulativeTokenCount = inputTokens + (usage.output_tokens as number);
+              session.tokenUsage = cumulativeTokenCount;
+            }
           }
-        } else if (eventType === "message_delta") {
-          const usage = event.usage as Record<string, unknown> | undefined;
-          if (usage?.output_tokens) {
-            cumulativeTokenCount = inputTokens + (usage.output_tokens as number);
-            session.tokenUsage = cumulativeTokenCount;
+
+          if (eventType === "content_block_start") {
+            const contentBlock = event.content_block as Record<string, unknown> | undefined;
+            inToolBlock = contentBlock?.type === "tool_use";
+            if (inToolBlock) {
+              yield {
+                type: "streaming",
+                eventKind: "tool_start",
+                toolName: contentBlock!.name as string,
+                tokenCount: cumulativeTokenCount || undefined,
+                timestamp: now,
+              } satisfies AgentStreamingEvent;
+            }
+          } else if (eventType === "content_block_delta") {
+            const delta = event.delta as Record<string, unknown> | undefined;
+            if (delta?.type === "text_delta") {
+              yield {
+                type: "streaming",
+                eventKind: "text_delta",
+                content: delta.text as string,
+                tokenCount: cumulativeTokenCount || undefined,
+                timestamp: now,
+              } satisfies AgentStreamingEvent;
+            } else if (delta?.type === "input_json_delta") {
+              yield {
+                type: "streaming",
+                eventKind: "tool_delta",
+                toolInput: delta.partial_json as string,
+                tokenCount: cumulativeTokenCount || undefined,
+                timestamp: now,
+              } satisfies AgentStreamingEvent;
+            }
+          } else if (eventType === "content_block_stop") {
+            // Only emit tool_end if the ending block was a tool_use.
+            // content_block_stop fires for all block types (text + tool_use).
+            if (inToolBlock) {
+              yield {
+                type: "streaming",
+                eventKind: "tool_end",
+                tokenCount: cumulativeTokenCount || undefined,
+                timestamp: now,
+              } satisfies AgentStreamingEvent;
+              inToolBlock = false;
+            }
+          }
+          continue;
+        }
+
+        // Assistant messages — content is an array of blocks [{text: "..."}, {name: "ToolName"}]
+        if (msg.type === "assistant") {
+          const content = msg.message
+            ? extractTextFromBlocks((msg.message as Record<string, unknown>).content)
+            : extractTextFromBlocks(msg.content);
+
+          if (content) {
+            hasYieldedAssistant = true;
+            yield {
+              role: "assistant",
+              content,
+              timestamp: Date.now(),
+              metadata: { sdkSessionId },
+            };
           }
         }
 
-        if (eventType === "content_block_start") {
-          const contentBlock = event.content_block as Record<string, unknown> | undefined;
-          inToolBlock = contentBlock?.type === "tool_use";
-          if (inToolBlock) {
+        // Result messages — only yield if no assistant messages were emitted.
+        // SDK streams content via assistant messages (possibly chunked), then emits
+        // a result with the full concatenated text. Showing both causes duplication.
+        if (msg.type === "result" && !hasYieldedAssistant) {
+          const resultText =
+            typeof msg.result === "string"
+              ? msg.result
+              : extractTextFromBlocks(msg.result);
+          if (resultText) {
             yield {
-              type: "streaming",
-              eventKind: "tool_start",
-              toolName: contentBlock!.name as string,
-              tokenCount: cumulativeTokenCount || undefined,
-              timestamp: now,
-            } satisfies AgentStreamingEvent;
-          }
-        } else if (eventType === "content_block_delta") {
-          const delta = event.delta as Record<string, unknown> | undefined;
-          if (delta?.type === "text_delta") {
-            yield {
-              type: "streaming",
-              eventKind: "text_delta",
-              content: delta.text as string,
-              tokenCount: cumulativeTokenCount || undefined,
-              timestamp: now,
-            } satisfies AgentStreamingEvent;
-          } else if (delta?.type === "input_json_delta") {
-            yield {
-              type: "streaming",
-              eventKind: "tool_delta",
-              toolInput: delta.partial_json as string,
-              tokenCount: cumulativeTokenCount || undefined,
-              timestamp: now,
-            } satisfies AgentStreamingEvent;
-          }
-        } else if (eventType === "content_block_stop") {
-          // Only emit tool_end if the ending block was a tool_use.
-          // content_block_stop fires for all block types (text + tool_use).
-          if (inToolBlock) {
-            yield {
-              type: "streaming",
-              eventKind: "tool_end",
-              tokenCount: cumulativeTokenCount || undefined,
-              timestamp: now,
-            } satisfies AgentStreamingEvent;
-            inToolBlock = false;
+              role: "assistant",
+              content: resultText,
+              timestamp: Date.now(),
+              metadata: {
+                sdkSessionId,
+                isResult: true,
+                subtype: msg.subtype as string | undefined,
+              },
+            };
           }
         }
-        continue;
       }
-
-      // Assistant messages — content is an array of blocks [{text: "..."}, {name: "ToolName"}]
-      if (msg.type === "assistant") {
-        const content = msg.message
-          ? extractTextFromBlocks((msg.message as Record<string, unknown>).content)
-          : extractTextFromBlocks(msg.content);
-
-        if (content) {
-          hasYieldedAssistant = true;
-          yield {
-            role: "assistant",
-            content,
-            timestamp: Date.now(),
-            metadata: { sdkSessionId },
-          };
+    } catch (err) {
+      // Detect ProcessTransport "not ready for writing" — this is a known SDK
+      // race condition when concurrent approval responses hit the transport.
+      // Convert to a structured error that the orchestrator can handle gracefully
+      // instead of letting it crash the entire session unrecoverably.
+      if (isTransportNotReady(err)) {
+        const transportError = new Error(
+          `[transport:crash] SDK ProcessTransport disconnected during session ${sessionId}. ` +
+          `The session may be resumable via its SDK session ID.`,
+        );
+        transportError.cause = err;
+        // Preserve resume token so the orchestrator can attempt recovery
+        if (sdkSessionId) {
+          session.resumeToken = sdkSessionId;
         }
+        throw transportError;
       }
-
-      // Result messages — only yield if no assistant messages were emitted.
-      // SDK streams content via assistant messages (possibly chunked), then emits
-      // a result with the full concatenated text. Showing both causes duplication.
-      if (msg.type === "result" && !hasYieldedAssistant) {
-        const resultText =
-          typeof msg.result === "string"
-            ? msg.result
-            : extractTextFromBlocks(msg.result);
-        if (resultText) {
-          yield {
-            role: "assistant",
-            content: resultText,
-            timestamp: Date.now(),
-            metadata: {
-              sdkSessionId,
-              isResult: true,
-              subtype: msg.subtype as string | undefined,
-            },
-          };
-        }
-      }
+      throw err;
+    } finally {
+      this.activeQueries.delete(sessionId);
+      this.approvalMutex.delete(sessionId);
     }
-
-    this.activeQueries.delete(sessionId);
 
     // Store SDK session ID for future resume after restart.
     if (sdkSessionId) {
@@ -591,6 +665,7 @@ export class ClaudeAdapter implements AgentAdapter {
     if (session) {
       session.status = "completed";
     }
+    this.approvalMutex.delete(sessionId);
   }
 
   /**

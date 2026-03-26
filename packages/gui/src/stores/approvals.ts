@@ -6,6 +6,7 @@ import {
   getApprovalMode as bridgeGetApprovalMode,
   listApprovalRequests as bridgeListApprovalRequests,
   onMercuryEvent,
+  onAgentError,
   setApprovalMode as bridgeSetApprovalMode,
 } from "../lib/tauri-bridge";
 
@@ -79,6 +80,31 @@ async function deny(requestId: string, reason?: string): Promise<void> {
   }
 }
 
+/**
+ * Immediately cancel all pending approvals for a given session.
+ * Called when a transport crash makes approval buttons unresponsive.
+ */
+function cancelPendingApprovalsForSession(sessionId: string, reason: string): void {
+  const now = Date.now();
+  let changed = false;
+  for (const [, request] of approvalRequests.value) {
+    if (request.sessionId === sessionId && request.status === "pending") {
+      upsertRequest({
+        ...request,
+        status: "cancelled" as ApprovalRequest["status"],
+        resolvedAt: now,
+        decisionBy: "system",
+        decisionReason: reason,
+      });
+      changed = true;
+    }
+  }
+  if (changed) {
+    // Refresh from backend to ensure consistency
+    void refreshApprovals();
+  }
+}
+
 let approvalsInitialized = false;
 
 async function initApprovalStore(): Promise<void> {
@@ -102,6 +128,17 @@ async function initApprovalStore(): Promise<void> {
     const payload = event.payload as unknown as ApprovalRequest;
     if (payload?.id) {
       upsertRequest(payload);
+    }
+  });
+
+  // When a transport crash occurs, immediately cancel pending approvals for
+  // that session so the GUI doesn't show stale, unresponsive approval buttons.
+  await onAgentError((data) => {
+    if (data.isTransportCrash) {
+      cancelPendingApprovalsForSession(
+        data.sessionId,
+        "Transport disconnected — approval cancelled",
+      );
     }
   });
 }
