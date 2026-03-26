@@ -186,11 +186,12 @@ pub async fn get_git_diff(repo_path: String, file_path: String) -> Result<String
     }
 
     // No unstaged changes — try staged diff
-    // git diff --cached: https://git-scm.com/docs/git-diff
+    let repo_for_staged = repo_path.clone();
+    let file_for_staged = file_path.clone();
     let staged = run_git_command(move || {
         Command::new("git")
-            .args(["diff", "--cached", "--ignore-cr-at-eol", "--", &file_path])
-            .current_dir(&repo_path)
+            .args(["diff", "--cached", "--ignore-cr-at-eol", "--", &file_for_staged])
+            .current_dir(&repo_for_staged)
             .output()
     })
     .await
@@ -201,7 +202,76 @@ pub async fn get_git_diff(repo_path: String, file_path: String) -> Result<String
         return Err(format!("git diff --cached failed: {}", stderr.trim()));
     }
 
-    Ok(String::from_utf8_lossy(&staged.stdout).to_string())
+    let staged_diff = String::from_utf8_lossy(&staged.stdout).to_string();
+    if !staged_diff.is_empty() {
+        return Ok(staged_diff);
+    }
+
+    // Both diffs empty — verify the file is actually untracked before falling
+    // back to --no-index. A clean tracked file also produces empty diffs, and
+    // without this guard it would be incorrectly rendered as a "new file".
+    let repo_for_status = repo_path.clone();
+    let file_for_status = file_path.clone();
+    let status_output = run_git_command(move || {
+        Command::new("git")
+            .args(["status", "--porcelain=v1", "--", &file_for_status])
+            .current_dir(&repo_for_status)
+            .output()
+    })
+    .await
+    .map_err(|e| format!("git status failed to spawn: {}", e))?;
+
+    if !status_output.status.success() {
+        let stderr = String::from_utf8_lossy(&status_output.stderr);
+        return Err(format!("git status failed: {}", stderr.trim()));
+    }
+
+    let is_untracked = String::from_utf8_lossy(&status_output.stdout)
+        .lines()
+        .any(|line| line.starts_with("?? "));
+    if !is_untracked {
+        // File is tracked and clean — no changes to show.
+        return Ok(String::new());
+    }
+
+    // File is untracked (new) — use `git diff --no-index <null> <file>` to let
+    // Git handle encoding, binary detection, and symlink semantics natively.
+    #[cfg(windows)]
+    let null_path = "NUL";
+    #[cfg(not(windows))]
+    let null_path = "/dev/null";
+
+    let repo_for_noindex = repo_path.clone();
+    let file_for_noindex = file_path.clone();
+    let noindex_output = run_git_command(move || {
+        Command::new("git")
+            .args(["diff", "--no-index", "--ignore-cr-at-eol", "--", null_path, &file_for_noindex])
+            .current_dir(&repo_for_noindex)
+            .output()
+    })
+    .await
+    .map_err(|e| format!("git diff --no-index failed to spawn: {}", e))?;
+
+    // git diff --no-index exit codes:
+    //   0 = no differences (shouldn't happen for new file vs /dev/null)
+    //   1 = differences found (expected for a new file)
+    //  ≥128 = fatal error (bad args, etc.)
+    // Exit code 1 with empty stdout but non-empty stderr indicates a file access
+    // error (e.g. permission denied, symlink loop) rather than a real diff.
+    let exit_code = noindex_output.status.code().unwrap_or(128);
+    let stderr = String::from_utf8_lossy(&noindex_output.stderr);
+    let noindex_diff = String::from_utf8_lossy(&noindex_output.stdout).to_string();
+
+    if exit_code >= 128 || (exit_code != 0 && noindex_diff.is_empty() && !stderr.is_empty()) {
+        return Err(format!("git diff --no-index failed: {}", stderr.trim()));
+    }
+
+    if !noindex_diff.is_empty() {
+        return Ok(noindex_diff);
+    }
+
+    // Truly no changes
+    Ok(String::new())
 }
 
 /// List all local and remote git branches for a given directory.

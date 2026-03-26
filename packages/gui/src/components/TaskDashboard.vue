@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { useTaskStore } from "../stores/tasks";
 import type { TaskStatus } from "../lib/tauri-bridge";
 import { dispatchBundleTask, createAcceptance } from "../lib/tauri-bridge";
@@ -13,7 +13,26 @@ const {
   selectTask,
   setFilter,
   refreshTask,
+  loadTasks,
 } = useTaskStore();
+
+const isRefreshing = ref(false);
+const refreshError = ref(false);
+
+async function handleRefresh() {
+  if (isRefreshing.value) return;
+  isRefreshing.value = true;
+  refreshError.value = false;
+  try {
+    await loadTasks();
+  } catch (e) {
+    console.error("Task refresh failed:", e);
+    refreshError.value = true;
+    setTimeout(() => (refreshError.value = false), 3000);
+  } finally {
+    isRefreshing.value = false;
+  }
+}
 
 const { agents } = useAgentStore();
 
@@ -121,6 +140,16 @@ async function handleCreateAcceptance(taskId: string) {
         <span class="badge-count">{{
           s.status === null ? totalCount : (statusCounts[s.status] ?? 0)
         }}</span>
+      </button>
+
+      <button
+        class="refresh-btn"
+        :class="{ spinning: isRefreshing, 'refresh-error': refreshError }"
+        :disabled="isRefreshing"
+        :title="refreshError ? 'Refresh failed — click to retry' : 'Reload tasks'"
+        @click="handleRefresh"
+      >
+        {{ refreshError ? '✕' : '↻' }}
       </button>
     </div>
 
@@ -248,7 +277,7 @@ async function handleCreateAcceptance(taskId: string) {
 .task-dashboard {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
   min-height: 0;
   height: 100%;
 }
@@ -259,8 +288,50 @@ async function handleCreateAcceptance(taskId: string) {
   padding: 6px 8px;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius) var(--radius) 0 0;
   flex-wrap: wrap;
+  align-items: center;
+}
+
+.refresh-btn {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 16px;
+  cursor: pointer;
+  transition: transform 0.2s, color 0.2s;
+  flex-shrink: 0;
+}
+
+.refresh-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-panel);
+}
+
+.refresh-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.refresh-btn.spinning {
+  animation: spin 0.8s linear infinite;
+}
+
+.refresh-btn.refresh-error {
+  color: #ef4444;
+  border-color: #ef4444;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .status-badge {
@@ -300,7 +371,7 @@ async function handleCreateAcceptance(taskId: string) {
 .dashboard-body {
   display: grid;
   grid-template-columns: 3fr 2fr;
-  gap: 8px;
+  gap: 0;
   min-height: 0;
   flex: 1;
 }
@@ -308,7 +379,8 @@ async function handleCreateAcceptance(taskId: string) {
 .task-list {
   background: var(--bg-secondary);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-top: none;
+  border-radius: 0 0 0 var(--radius);
   overflow-y: auto;
   padding: 4px;
 }
@@ -382,7 +454,9 @@ async function handleCreateAcceptance(taskId: string) {
 .task-detail {
   background: var(--bg-secondary);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-top: none;
+  border-left: none;
+  border-radius: 0 0 var(--radius) 0;
   overflow-y: auto;
   padding: 12px;
 }

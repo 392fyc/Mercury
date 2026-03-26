@@ -8,7 +8,8 @@ import type {
   TaskStatus,
   MercuryEvent,
 } from "../lib/tauri-bridge";
-import { listTasks, getTask, onMercuryEvent } from "../lib/tauri-bridge";
+import type { UnlistenFn } from "@tauri-apps/api/event";
+import { listTasks, getTask, onMercuryEvent, onSidecarReady } from "../lib/tauri-bridge";
 
 const tasks = ref<TaskBundle[]>([]);
 const selectedTaskId = ref<string | null>(null);
@@ -39,12 +40,21 @@ function setFilter(status: TaskStatus | null) {
   statusFilter.value = status;
 }
 
+let loadTasksInflight: Promise<void> | null = null;
+
 async function loadTasks() {
-  try {
-    tasks.value = await listTasks();
-  } catch (e) {
-    console.error("Failed to load tasks:", e);
-  }
+  if (loadTasksInflight) return loadTasksInflight;
+  loadTasksInflight = (async () => {
+    try {
+      tasks.value = await listTasks();
+    } catch (e) {
+      console.error("Failed to load tasks:", e);
+      throw e; // re-throw so callers (e.g. handleRefresh) can catch
+    } finally {
+      loadTasksInflight = null;
+    }
+  })();
+  return loadTasksInflight;
 }
 
 /** Refresh a single task by ID (e.g. after event notification). */
@@ -65,22 +75,56 @@ async function refreshTask(taskId: string) {
 }
 
 let taskListenersInitialized = false;
+const taskUnlisteners: UnlistenFn[] = [];
+let taskListenersInitPromise: Promise<void> | null = null;
 
 async function initTaskListeners() {
   if (taskListenersInitialized) return;
-  taskListenersInitialized = true;
+  if (taskListenersInitPromise) return taskListenersInitPromise;
 
-  await onMercuryEvent((event: MercuryEvent) => {
-    if (event.type.startsWith("orchestrator.task.") || event.type.startsWith("orchestrator.acceptance.")) {
-      const taskId =
-        (event.payload as Record<string, unknown>).taskId as string | undefined;
-      if (taskId) {
-        refreshTask(taskId);
-      } else {
-        loadTasks();
+  taskListenersInitPromise = (async () => {
+  const pending: UnlistenFn[] = [];
+  try {
+    // Reload tasks whenever sidecar becomes ready (handles F5 page refresh where
+    // sidecar may not be available yet when onMounted fires).
+    pending.push(await onSidecarReady(() => loadTasks()));
+
+    // Attempt immediate load in case sidecar is already ready — the ready
+    // event may have been emitted before we registered the listener above.
+    void loadTasks();
+
+    pending.push(await onMercuryEvent((event: MercuryEvent) => {
+      if (event.type.startsWith("orchestrator.task.") || event.type.startsWith("orchestrator.acceptance.")) {
+        const taskId =
+          (event.payload as Record<string, unknown>).taskId as string | undefined;
+        if (taskId) {
+          refreshTask(taskId);
+        } else {
+          loadTasks();
+        }
       }
-    }
-  });
+    }));
+
+    // All listeners registered — commit
+    taskListenersInitialized = true;
+    taskUnlisteners.push(...pending);
+  } catch (e) {
+    // Rollback: unregister any listeners that were successfully created
+    for (const unlisten of pending) unlisten();
+    taskListenersInitPromise = null;
+    console.error("Failed to init task listeners:", e);
+  }
+  })();
+
+  return taskListenersInitPromise;
+}
+
+/** Teardown all task event listeners — useful for tests and HMR cleanup. */
+function disposeTaskListeners() {
+  for (const unlisten of taskUnlisteners) unlisten();
+  taskUnlisteners.length = 0;
+  taskListenersInitialized = false;
+  taskListenersInitPromise = null;
 }
 
 export function useTaskStore() {
@@ -96,5 +140,6 @@ export function useTaskStore() {
     loadTasks,
     refreshTask,
     initTaskListeners,
+    disposeTaskListeners,
   };
 }

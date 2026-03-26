@@ -31,7 +31,7 @@ const {
 const { initMessageListeners } = useMessageStore();
 const { initApprovalStore } = useApprovalStore();
 const { initEventListeners } = useEventStore();
-const { loadTasks, initTaskListeners } = useTaskStore();
+const { initTaskListeners, disposeTaskListeners } = useTaskStore();
 
 const showSettings = ref(false);
 const showRemoteControl = ref(false);
@@ -127,20 +127,30 @@ function handleCreateSession() {
   showAgentRoleSelector.value = true;
 }
 
+const INIT_MODULES = ["initAgents", "initMessageListeners", "initApprovalStore", "initEventListeners", "initTaskListeners"] as const;
+
 onMounted(async () => {
-  await Promise.allSettled([
+  const results = await Promise.allSettled([
     initAgents(),
     initMessageListeners(),
     initApprovalStore(),
     initEventListeners(),
     initTaskListeners(),
   ]);
-  // loadTasks depends on agents being loaded first
-  await loadTasks();
+  results.forEach((r, i) => {
+    if (r.status === "rejected") {
+      // Always log module name at error level for production observability
+      console.error(`[Mercury] ${INIT_MODULES[i]} failed`);
+      if (import.meta.env.DEV) {
+        console.error(`  Detail:`, r.reason);
+      }
+    }
+  });
 });
 
 onBeforeUnmount(() => {
   stopExplorerResize();
+  disposeTaskListeners();
 });
 </script>
 

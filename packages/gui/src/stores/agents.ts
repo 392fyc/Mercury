@@ -165,9 +165,13 @@ function updateSessionPromptState(sessionId: string, info: Partial<SessionMeta>)
     return;
   }
   const existing = sessionPromptState.value.get(sessionId);
+  // Only patch explicitly-returned fields — omit undefined to preserve cache
+  const defined = Object.fromEntries(
+    Object.entries(nextState).filter(([, v]) => v !== undefined),
+  );
   sessionPromptState.value.set(sessionId, {
     ...existing,
-    ...nextState,
+    ...defined,
   });
   triggerRef(sessionPromptState);
 }
@@ -193,12 +197,12 @@ function getSessionInfo(panelKey: string): SessionMeta | undefined {
   return sessionMeta.value.get(panelKey);
 }
 
-function clearSession(panelKey: string) {
+function clearSession(panelKey: string, skipPersist = false) {
   sessions.value.delete(panelKey);
   triggerRef(sessions);
   sessionMeta.value.delete(panelKey);
   triggerRef(sessionMeta);
-  saveSessions();
+  if (!skipPersist) saveSessions();
 }
 
 function setWorkDir(panelKey: string, cwd: string) {
@@ -319,34 +323,88 @@ function setModelCache(agentId: string, models: { id: string; name: string }[]) 
 }
 
 async function hydrateSessionMeta(): Promise<void> {
-  // Group by {role}:{agentId} (ignoring optional session suffix)
-  const byAgent = new Map<string, string[]>();
+  // Group by {role}:{agentId} — snapshot panelKey→sessionId BEFORE any await
+  // to prevent TOCTOU: sessions arriving during fetchSessions won't be
+  // mistakenly pruned as stale.
+  const byAgent = new Map<string, [string, string][]>();
   for (const [panelKey, sessionId] of sessions.value) {
     const { role, agentId } = parsePanelKey(panelKey);
     const groupKey = `${role}:${agentId}`;
     const list = byAgent.get(groupKey) ?? [];
-    list.push(sessionId);
+    list.push([panelKey, sessionId]);
     byAgent.set(groupKey, list);
   }
 
-  for (const groupKey of byAgent.keys()) {
+  for (const [groupKey, groupEntries] of byAgent) {
     const { role, agentId } = parsePanelKey(groupKey);
     try {
       const knownSessions = await fetchSessions(agentId, role, false);
-      for (const [panelKey, sessionId] of sessions.value) {
-        const pk = parsePanelKey(panelKey);
-        if (pk.role !== role || pk.agentId !== agentId) continue;
-        const match = knownSessions.find((s) => s.sessionId === sessionId);
-        if (!match) continue;
+      // O(1) lookup instead of O(n) find per entry
+      const knownById = new Map(
+        knownSessions.map((s) => [s.sessionId, s] as const),
+      );
+
+      let pruned = false;
+      // Track which sessionIds have been assigned a canonical panelKey.
+      // Prefer session-unique keys (3 segments) over legacy keys (2 segments).
+      const seenSessionIds = new Map<string, string>();
+
+      for (const [panelKey, sessionId] of groupEntries) {
+        // Guard: verify snapshot is still current — a concurrent session.start
+        // during the await may have re-bound this panelKey to a different session.
+        if (sessions.value.get(panelKey) !== sessionId) continue;
+
+        const match = knownById.get(sessionId);
+        if (!match) {
+          // Stale session in localStorage that backend no longer knows — prune it.
+          // Skip per-item persist; we batch-save after the loop.
+          cleanupPanelState(panelKey, sessionId, true);
+          statuses.value.delete(panelKey);
+          workDirs.value.delete(panelKey);
+          gitBranches.value.delete(panelKey);
+          removeBookmark(panelKey);
+          pruned = true;
+          continue;
+        }
+
+        // Deduplicate: if another panelKey already claimed this sessionId,
+        // keep the one with more segments (new format {role}:{agentId}:{sid}).
+        const existingKey = seenSessionIds.get(sessionId);
+        if (existingKey) {
+          const existingSegments = existingKey.split(":").length;
+          const currentSegments = panelKey.split(":").length;
+          const keyToRemove = currentSegments > existingSegments ? existingKey : panelKey;
+          const keyToKeep = currentSegments > existingSegments ? panelKey : existingKey;
+          // Re-check that the key-to-remove hasn't been re-bound during await
+          if (sessions.value.get(keyToRemove) === sessionId) {
+            clearSession(keyToRemove, true);
+            statuses.value.delete(keyToRemove);
+            workDirs.value.delete(keyToRemove);
+            gitBranches.value.delete(keyToRemove);
+            removeBookmark(keyToRemove);
+          }
+          seenSessionIds.set(sessionId, keyToKeep);
+          pruned = true;
+          if (keyToRemove === panelKey) continue;
+        } else {
+          seenSessionIds.set(sessionId, panelKey);
+        }
+
         setSessionInfo(panelKey, {
           sessionId: match.sessionId,
           sessionName: match.sessionName,
           status: match.status,
           lastActiveAt: match.lastActiveAt,
           promptHash: match.promptHash,
-          currentPromptHash: (match as typeof match & { currentPromptHash?: string }).currentPromptHash,
-          legacyRoleConfig: (match as typeof match & { legacyRoleConfig?: boolean }).legacyRoleConfig,
+          currentPromptHash: match.currentPromptHash,
+          legacyRoleConfig: match.legacyRoleConfig,
         });
+      }
+      if (pruned) {
+        triggerRef(statuses);
+        triggerRef(workDirs);
+        triggerRef(gitBranches);
+        saveSessions();
       }
     } catch {
       // Best-effort hydration only
@@ -378,10 +436,10 @@ async function loadAgents() {
 }
 
 /** Shared cleanup for session end/delete: removes prompt state and session mapping. */
-function cleanupPanelState(panelKey: string, sessionId: string): void {
+function cleanupPanelState(panelKey: string, sessionId: string, skipPersist = false): void {
   sessionPromptState.value.delete(sessionId);
   triggerRef(sessionPromptState);
-  clearSession(panelKey);
+  clearSession(panelKey, skipPersist);
 }
 
 let agentListenersInitialized = false;
@@ -425,11 +483,42 @@ async function initAgents() {
         ? `${payload.role}:${event.agentId}`
         : `${payload.role}:${event.agentId}:${event.sessionId}`;
 
+      // Deduplicate: collect ALL existing panelKeys that map to this sessionId
+      // (e.g. legacy keys restored from localStorage). Snapshot first to avoid
+      // mutating sessions.value while iterating.
+      // Preserve sessionName from old panel before clearing, in case the event
+      // doesn't carry one — prevents sessions losing their human-readable name.
+      let preservedSessionName: string | undefined;
+      if (payload.role !== "main") {
+        const duplicateKeys: string[] = [];
+        for (const [existingKey, existingSid] of sessions.value) {
+          if (existingSid === event.sessionId && existingKey !== panelKey) {
+            duplicateKeys.push(existingKey);
+          }
+        }
+        // Read sessionName BEFORE clearing metadata
+        for (const dupKey of duplicateKeys) {
+          if (!preservedSessionName) {
+            preservedSessionName = sessionMeta.value.get(dupKey)?.sessionName;
+          }
+          clearSession(dupKey);
+          statuses.value.delete(dupKey);
+          workDirs.value.delete(dupKey);
+          gitBranches.value.delete(dupKey);
+          removeBookmark(dupKey);
+        }
+        if (duplicateKeys.length) {
+          triggerRef(statuses);
+          triggerRef(workDirs);
+          triggerRef(gitBranches);
+        }
+      }
+
       // setSessionInfo internally calls setSession, which registers the
       // panelKey→sessionId mapping needed by resolvePanelKey in messages.ts.
       setSessionInfo(panelKey, {
         sessionId: event.sessionId,
-        sessionName: payload.sessionName,
+        sessionName: payload.sessionName ?? preservedSessionName,
         status: "active",
         lastActiveAt: event.timestamp,
         promptHash: payload.promptHash,
