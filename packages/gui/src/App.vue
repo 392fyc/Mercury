@@ -127,14 +127,23 @@ function handleCreateSession() {
   showAgentRoleSelector.value = true;
 }
 
+const INIT_MODULES = ["initAgents", "initMessageListeners", "initApprovalStore", "initEventListeners", "initTaskListeners"] as const;
+
 onMounted(async () => {
-  await Promise.allSettled([
+  const results = await Promise.allSettled([
     initAgents(),
     initMessageListeners(),
     initApprovalStore(),
     initEventListeners(),
     initTaskListeners(),
   ]);
+  if (import.meta.env.DEV) {
+    results.forEach((r, i) => {
+      if (r.status === "rejected") {
+        console.warn(`[Mercury] ${INIT_MODULES[i]} failed:`, r.reason);
+      }
+    });
+  }
 });
 
 onBeforeUnmount(() => {

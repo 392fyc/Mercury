@@ -346,6 +346,10 @@ async function hydrateSessionMeta(): Promise<void> {
       const seenSessionIds = new Map<string, string>();
 
       for (const [panelKey, sessionId] of groupEntries) {
+        // Guard: verify snapshot is still current — a concurrent session.start
+        // during the await may have re-bound this panelKey to a different session.
+        if (sessions.value.get(panelKey) !== sessionId) continue;
+
         const match = knownById.get(sessionId);
         if (!match) {
           // Stale session in localStorage that backend no longer knows — prune it.
@@ -367,11 +371,14 @@ async function hydrateSessionMeta(): Promise<void> {
           const currentSegments = panelKey.split(":").length;
           const keyToRemove = currentSegments > existingSegments ? existingKey : panelKey;
           const keyToKeep = currentSegments > existingSegments ? panelKey : existingKey;
-          clearSession(keyToRemove, true);
-          statuses.value.delete(keyToRemove);
-          workDirs.value.delete(keyToRemove);
-          gitBranches.value.delete(keyToRemove);
-          removeBookmark(keyToRemove);
+          // Re-check that the key-to-remove hasn't been re-bound during await
+          if (sessions.value.get(keyToRemove) === sessionId) {
+            clearSession(keyToRemove, true);
+            statuses.value.delete(keyToRemove);
+            workDirs.value.delete(keyToRemove);
+            gitBranches.value.delete(keyToRemove);
+            removeBookmark(keyToRemove);
+          }
           seenSessionIds.set(sessionId, keyToKeep);
           pruned = true;
           if (keyToRemove === panelKey) continue;
@@ -472,23 +479,27 @@ async function initAgents() {
         ? `${payload.role}:${event.agentId}`
         : `${payload.role}:${event.agentId}:${event.sessionId}`;
 
-      // Deduplicate: if any existing panelKey already maps to this sessionId
-      // (e.g. a legacy key restored from localStorage), unbind the old panel
-      // without clearing sessionPromptState — the same sessionId will be
-      // re-registered under the new panelKey by setSessionInfo below.
+      // Deduplicate: collect ALL existing panelKeys that map to this sessionId
+      // (e.g. legacy keys restored from localStorage). Snapshot first to avoid
+      // mutating sessions.value while iterating.
       if (payload.role !== "main") {
+        const duplicateKeys: string[] = [];
         for (const [existingKey, existingSid] of sessions.value) {
           if (existingSid === event.sessionId && existingKey !== panelKey) {
-            clearSession(existingKey);
-            statuses.value.delete(existingKey);
-            triggerRef(statuses);
-            workDirs.value.delete(existingKey);
-            triggerRef(workDirs);
-            gitBranches.value.delete(existingKey);
-            triggerRef(gitBranches);
-            removeBookmark(existingKey);
-            break;
+            duplicateKeys.push(existingKey);
           }
+        }
+        for (const dupKey of duplicateKeys) {
+          clearSession(dupKey);
+          statuses.value.delete(dupKey);
+          workDirs.value.delete(dupKey);
+          gitBranches.value.delete(dupKey);
+          removeBookmark(dupKey);
+        }
+        if (duplicateKeys.length) {
+          triggerRef(statuses);
+          triggerRef(workDirs);
+          triggerRef(gitBranches);
         }
       }
 
