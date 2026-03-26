@@ -218,11 +218,15 @@ export interface ObsidianConfig {
     main?: string[];
     dev?: string[];
     acceptance?: string[];
+    research?: string[];
+    design?: string[];
   };
   roleInstructionOverrides?: {
     main?: string;
     dev?: string;
     acceptance?: string;
+    research?: string;
+    design?: string;
   };
 }
 

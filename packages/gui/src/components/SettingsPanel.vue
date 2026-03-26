@@ -14,7 +14,7 @@ const saving = ref(false);
 const saveMsg = ref("");
 const roleContextExpanded = ref(true);
 
-type RoleContextKey = "main" | "dev" | "acceptance";
+type RoleContextKey = "main" | "dev" | "acceptance" | "research" | "design";
 type ContextTarget = "global" | RoleContextKey;
 
 interface CliPreset {
@@ -84,9 +84,11 @@ const ROLE_DEFS: RoleDef[] = [
 ];
 
 const ROLE_CONTEXT_DEFS: Array<{ value: RoleContextKey; label: string; hint: string }> = [
-  { value: "main", label: "Main", hint: "Added only to main/orchestrator prompts." },
-  { value: "dev", label: "Dev", hint: "Added only to implementation agent prompts." },
-  { value: "acceptance", label: "Acceptance", hint: "Added only to blind review and verification prompts." },
+  { value: "main", label: "Main", hint: "Orchestrator — user talks to this agent directly." },
+  { value: "dev", label: "Dev", hint: "Worker — receives tasks, writes code." },
+  { value: "acceptance", label: "Acceptance", hint: "Reviewer — blind acceptance testing." },
+  { value: "research", label: "Research", hint: "Analyst — gathers information, reads docs." },
+  { value: "design", label: "Design", hint: "Designer — UI/UX mockups and design specs." },
 ];
 
 function createEmptyRoleContextFiles(): NonNullable<ObsidianConfig["roleContextFiles"]> {
@@ -94,6 +96,8 @@ function createEmptyRoleContextFiles(): NonNullable<ObsidianConfig["roleContextF
     main: [],
     dev: [],
     acceptance: [],
+    research: [],
+    design: [],
   };
 }
 
@@ -117,6 +121,8 @@ function normalizeObsidianConfig(source?: ObsidianConfig | null): ObsidianConfig
     roleContextFiles.main = [...(source.roleContextFiles.main ?? [])];
     roleContextFiles.dev = [...(source.roleContextFiles.dev ?? [])];
     roleContextFiles.acceptance = [...(source.roleContextFiles.acceptance ?? [])];
+    roleContextFiles.research = [...(source.roleContextFiles.research ?? [])];
+    roleContextFiles.design = [...(source.roleContextFiles.design ?? [])];
   }
 
   return {
