@@ -5,6 +5,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
+
 /// Manages a `claude remote-control` child process.
 /// Parses stdout for session URL, emits Tauri events for GUI updates.
 ///
@@ -343,16 +344,67 @@ impl RemoteControlManager {
     }
 
     /// Stop the remote-control session, killing the child process and resetting all state.
+    ///
+    /// On Windows, `child.kill()` only terminates the direct child (cmd.exe), leaving the
+    /// actual `claude` process alive as an orphan. We use `taskkill /T /F /PID` to kill
+    /// the entire process tree instead.
     pub async fn stop(&self) -> Result<(), String> {
         let mut child = self.child.lock().await;
         if let Some(ref mut c) = *child {
-            let _ = c.kill().await;
+            #[cfg(target_os = "windows")]
+            {
+                // taskkill /T /F /PID kills the entire process tree rooted at the child PID.
+                // This ensures cmd.exe, claude.exe, and any grandchild processes are all terminated.
+                if let Some(pid) = c.id() {
+                    let mut kill_cmd = Command::new("taskkill");
+                    kill_cmd
+                        .args(["/T", "/F", "/PID", &pid.to_string()])
+                        .creation_flags(0x08000000); // CREATE_NO_WINDOW
+                    let taskkill_ok = match kill_cmd.output().await {
+                        Ok(output) if output.status.success() => true,
+                        Ok(output) => {
+                            eprintln!(
+                                "[remote-control] taskkill failed: {}",
+                                String::from_utf8_lossy(&output.stderr)
+                            );
+                            false
+                        }
+                        Err(e) => {
+                            eprintln!("[remote-control] taskkill spawn error: {}", e);
+                            false
+                        }
+                    };
+                    if !taskkill_ok {
+                        // Best-effort fallback: try normal kill if taskkill failed.
+                        let _ = c.kill().await;
+                    }
+                } else {
+                    // id() returns None when the child has already been reaped by the OS
+                    // or was never successfully spawned. Attempt normal kill as best-effort.
+                    let _ = c.kill().await;
+                }
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                let _ = c.kill().await;
+            }
             // Wait for the child process to fully exit (timeout 5s) to avoid zombies.
-            let _ = tokio::time::timeout(
+            // If the child does not exit within the timeout, treat stop as failed.
+            match tokio::time::timeout(
                 std::time::Duration::from_secs(5),
                 c.wait(),
-            ).await;
-            *child = None;
+            ).await {
+                Ok(_) => {
+                    *child = None;
+                }
+                Err(_) => {
+                    // Child still alive after timeout — do NOT clear state.
+                    // Return error so the GUI knows the process may still be running.
+                    return Err(
+                        "Stop timed out: child process may still be running".to_string()
+                    );
+                }
+            }
         }
         {
             let mut status = self.status.lock().await;
