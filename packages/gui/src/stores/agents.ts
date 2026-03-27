@@ -237,7 +237,7 @@ const anyError = computed(() =>
  * Returns empty strings for malformed keys to prevent downstream crashes.
  */
 type AgentRole = "main" | "dev" | "acceptance" | "critic" | "research" | "design";
-const VALID_ROLES: ReadonlySet<string> = new Set<AgentRole>(["main", "dev", "acceptance", "research", "design"]);
+const VALID_ROLES: ReadonlySet<string> = new Set<AgentRole>(["main", "dev", "acceptance", "critic", "research", "design"]);
 
 /**
  * Parse a composite panelKey into role + agentId.

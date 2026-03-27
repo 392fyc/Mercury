@@ -76,6 +76,7 @@ export interface ObsidianConfig {
     main?: string[];
     dev?: string[];
     acceptance?: string[];
+    critic?: string[];
     research?: string[];
     design?: string[];
   };
@@ -83,6 +84,7 @@ export interface ObsidianConfig {
     main?: string;
     dev?: string;
     acceptance?: string;
+    critic?: string;
     research?: string;
     design?: string;
   };

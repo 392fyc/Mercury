@@ -82,6 +82,7 @@ const ROLE_DEFS: RoleDef[] = [
   { value: "acceptance", label: "Acceptance", hint: "Reviewer — performs blind acceptance testing on completed tasks" },
   { value: "research", label: "Research", hint: "Analyst — gathers information, reads docs, answers questions without writing code" },
   { value: "design", label: "Design", hint: "Designer — generates UI/UX mockups, design specs, and visual assets" },
+  { value: "critic", label: "Critic", hint: "Code reviewer — evaluates code quality, style, and correctness" },
 ];
 
 const ROLE_CONTEXT_DEFS: Array<{ value: RoleContextKey; label: string; hint: string }> = [
@@ -90,6 +91,7 @@ const ROLE_CONTEXT_DEFS: Array<{ value: RoleContextKey; label: string; hint: str
   { value: "acceptance", label: "Acceptance", hint: "Reviewer — blind acceptance testing." },
   { value: "research", label: "Research", hint: "Analyst — gathers information, reads docs." },
   { value: "design", label: "Design", hint: "Designer — UI/UX mockups and design specs." },
+  { value: "critic", label: "Critic", hint: "Code reviewer — evaluates code quality." },
 ];
 
 function createEmptyRoleContextFiles(): NonNullable<ObsidianConfig["roleContextFiles"]> {
@@ -97,6 +99,7 @@ function createEmptyRoleContextFiles(): NonNullable<ObsidianConfig["roleContextF
     main: [],
     dev: [],
     acceptance: [],
+    critic: [],
     research: [],
     design: [],
   };
