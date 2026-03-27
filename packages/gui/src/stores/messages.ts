@@ -348,10 +348,14 @@ async function initMessageListeners() {
   await onAgentError((data) => {
     const panelKey = resolvePanelKey(data.agentId, data.sessionId);
     if (!panelKey) return;
+    const userMessage = data.isTransportCrash
+      ? "Agent connection lost (transport disconnected). Pending approvals have been cancelled. You may start a new session."
+      : `Error: ${data.error}`;
     appendMessage(panelKey, {
       role: "system",
-      content: `Error: ${data.error}`,
+      content: userMessage,
       timestamp: Date.now(),
+      metadata: data.isTransportCrash ? { isTransportCrash: true } : undefined,
     });
     setStatus(panelKey, "error");
   });
