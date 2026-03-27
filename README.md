@@ -111,7 +111,7 @@ Define your agents in `mercury.config.json` at the project root. See `mercury.co
 }
 ```
 
-If `mercury.config.json` is missing, the orchestrator falls back to `mercury.config.example.json`. Validation errors are logged to the sidecar console.
+**Config loading order:** `mercury.config.example.json` is loaded first as a template, then merged with `mercury.config.json` (project) or `~/.mercury/config.json` (home). If neither exists, the template (or built-in defaults) is used and written to `mercury.config.json` automatically.
 
 ## License
 
