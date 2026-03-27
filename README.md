@@ -40,6 +40,15 @@ packages/
   | opencode | `opencode` | See [opencode.ai/download](https://opencode.ai/download) |
   | Gemini CLI | `gemini` | `npm i -g @google/gemini-cli` |
 
+  After installing, verify the CLI is on your `PATH`:
+
+  ```bash
+  claude --version     # Claude Code
+  opencode --version   # opencode
+  ```
+
+  Mercury auto-detects installed CLIs at startup. If none are found, the GUI shows a setup prompt.
+
 ### Windows
 
 - [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) — install with "Desktop development with C++" workload
@@ -112,6 +121,8 @@ Define your agents in `mercury.config.json` at the project root. See `mercury.co
 ```
 
 **Config loading order:** `mercury.config.example.json` is loaded first as a template, then merged with `mercury.config.json` (project) or `~/.mercury/config.json` (home). If neither exists, the template (or built-in defaults) is used and written to `mercury.config.json` automatically.
+
+**Validation:** If the config file is missing or contains invalid JSON, Mercury falls back to built-in defaults and logs a warning in the GUI console. Required fields (`id`, `displayName`, `cli`, `roles`, `integration`, `capabilities`, `restrictions`, `maxConcurrentSessions`) are validated at load time — agents with missing fields are skipped with a warning. Config changes require an app restart; hot-reload is not currently supported.
 
 ## License
 

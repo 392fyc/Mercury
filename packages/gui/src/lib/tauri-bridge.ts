@@ -11,7 +11,7 @@ export interface AgentConfig {
   displayName: string;
   cli: string;
   model?: string; // e.g. "claude-opus-4-6", "gpt-5.4"
-  roles: ("main" | "dev" | "acceptance" | "research" | "design")[];
+  roles: ("main" | "dev" | "acceptance" | "critic" | "research" | "design")[];
   integration: string;
   capabilities: string[];
   restrictions: string[];
