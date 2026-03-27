@@ -96,10 +96,31 @@ export interface RTKConfig {
   commands: string[]; // command basenames to wrap, e.g. ["codex", "gemini"]
 }
 
+export interface TransportsConfig {
+  stdio?: boolean;
+  http?: {
+    enabled?: boolean;
+    host?: string;
+    port?: number;
+  };
+  mcp?: {
+    enabled?: boolean;
+    path?: string;
+  };
+  sse?: {
+    enabled?: boolean;
+    path?: string;
+    maxConnections?: number;
+    heartbeatIntervalMs?: number;
+  };
+}
+
 export interface MercuryConfig {
   agents: AgentConfig[];
   workDir?: string;
+  /** @deprecated Use transports.http.port instead. Both work; this is kept for backward compat. */
   rpcPort?: number;
+  transports?: TransportsConfig;
   obsidian?: ObsidianConfig;
   rtk?: RTKConfig;
 }
