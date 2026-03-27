@@ -12,7 +12,7 @@ export interface LoadedRoleCard extends RoleCard {
   instructions: string;
 }
 
-const VALID_ROLES: ReadonlySet<string> = new Set(["main", "dev", "acceptance", "research", "design"]);
+const VALID_ROLES: ReadonlySet<string> = new Set(["main", "dev", "acceptance", "critic", "research", "design"]);
 
 function isAgentRole(value: unknown): value is AgentRole {
   return typeof value === "string" && VALID_ROLES.has(value);

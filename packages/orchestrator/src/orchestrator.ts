@@ -89,7 +89,7 @@ type TaskCallbackPayload = {
   recommendations?: string[];
 };
 
-const ROLE_CONTEXT_ROLES = ["main", "dev", "acceptance", "research", "design"] as const;
+const ROLE_CONTEXT_ROLES = ["main", "dev", "acceptance", "critic", "research", "design"] as const;
 type RoleContextKey = (typeof ROLE_CONTEXT_ROLES)[number];
 
 export class Orchestrator {

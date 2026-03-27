@@ -21,7 +21,7 @@ import {
 
 export interface RolePanel {
   agentId: string;
-  role: "main" | "dev" | "acceptance" | "research" | "design";
+  role: "main" | "dev" | "acceptance" | "critic" | "research" | "design";
   displayName: string;
   panelKey: string; // "{role}:{agentId}"
 }
@@ -44,7 +44,7 @@ export interface BookmarkInfo {
   panelKey: string;
   sessionId: string;
   agentId: string;
-  role: "main" | "dev" | "acceptance" | "research" | "design";
+  role: "main" | "dev" | "acceptance" | "critic" | "research" | "design";
   displayName: string;
   sessionName?: string;
   status: "idle" | "active" | "error";
@@ -236,8 +236,8 @@ const anyError = computed(() =>
  * Supports both legacy "{role}:{agentId}" and session-unique "{role}:{agentId}:{shortSid}" formats.
  * Returns empty strings for malformed keys to prevent downstream crashes.
  */
-type AgentRole = "main" | "dev" | "acceptance" | "research" | "design";
-const VALID_ROLES: ReadonlySet<string> = new Set<AgentRole>(["main", "dev", "acceptance", "research", "design"]);
+type AgentRole = "main" | "dev" | "acceptance" | "critic" | "research" | "design";
+const VALID_ROLES: ReadonlySet<string> = new Set<AgentRole>(["main", "dev", "acceptance", "critic", "research", "design"]);
 
 /**
  * Parse a composite panelKey into role + agentId.

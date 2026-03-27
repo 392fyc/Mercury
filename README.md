@@ -1,103 +1,128 @@
-# Mercury — Multi-Agent GUI Orchestrator
+# Mercury
 
-> One human + one Main Agent + N Sub Agents = automated multi-agent collaboration
+Mercury is a desktop application for multi-agent orchestration. It lets a human operator manage multiple AI coding agents — Claude Code (`claude`), Codex CLI (`codex`), opencode (`opencode`), Gemini CLI (`gemini`), etc. — through a single GUI, where a Main Agent can programmatically dispatch tasks to Sub Agents without manual copy-paste relay.
 
-## What is Mercury?
-
-Mercury is a desktop GUI application that enables a human operator to manage multiple AI coding agents (Claude Code, Codex CLI, opencode, Gemini CLI, etc.) through a unified interface. The Main Agent can directly open, drive, and monitor Sub Agent sessions — eliminating manual copy-paste relay that plagues current multi-agent workflows.
-
-## Status
-
-**Phase 1 MVP** — Core architecture implemented, Tauri GUI shell running
-
-## Architecture
-
-```
-Vue Frontend ←invoke/events→ Tauri Rust ←JSON-RPC→ Node.js Orchestrator → SDK Adapters
-```
+Built with Tauri 2 (Rust) + Vue 3 frontend and a Node.js orchestrator sidecar.
 
 ## Project Structure
 
-```
-mercury/
-├── package.json                        # pnpm monorepo root
-├── mercury.config.json                 # User-defined agent configuration
-├── packages/
-│   ├── core/                           # @mercury/core
-│   │   └── src/
-│   │       ├── types.ts                # AgentConfig, MercuryEvent, SessionInfo, etc.
-│   │       └── event-bus.ts            # Append-only typed event bus
-│   ├── sdk-adapters/                   # @mercury/sdk-adapters
-│   │   └── src/
-│   │       ├── claude-adapter.ts       # Claude Agent SDK adapter
-│   │       ├── codex-adapter.ts        # Codex CLI SDK adapter
-│   │       └── opencode-adapter.ts     # opencode HTTP adapter
-│   ├── orchestrator/                   # @mercury/orchestrator
-│   │   └── src/
-│   │       ├── rpc-transport.ts        # JSON-RPC 2.0 over stdio
-│   │       ├── agent-registry.ts       # Agent config → adapter mapping
-│   │       ├── orchestrator.ts         # Session, prompt, dispatch management
-│   │       └── index.ts                # Sidecar entry point
-│   ├── gui/                            # @mercury/gui (Tauri 2 + Vue 3)
-│   │   ├── src/
-│   │   │   ├── components/             # AgentPanel, EventLog, TitleBar
-│   │   │   ├── stores/                 # Reactive state (agents, messages, events)
-│   │   │   └── lib/tauri-bridge.ts     # Typed Tauri IPC wrappers
-│   │   └── src-tauri/                  # Rust backend
-│   │       └── src/
-│   │           ├── sidecar.rs          # Node.js orchestrator lifecycle
-│   │           ├── commands.rs         # Tauri command handlers
-│   │           └── lib.rs              # App setup + plugin registration
-│   └── poc/                            # @mercury/poc (Phase 0 verification)
-│       └── src/                        # 6 PoC tests (SDK, EventBus, cross-agent)
-└── docs/
-    ├── design/                         # Architecture & workflow analysis
-    ├── research/                       # 40+ source research synthesis
-    └── poc-report.md                   # Phase 0 feasibility report
+```text
+packages/
+├── core/               # @mercury/core — shared types, event bus, utility functions
+├── sdk-adapters/       # @mercury/sdk-adapters — adapter implementations per AI SDK
+│   └── src/
+│       ├── claude-adapter.ts
+│       ├── codex-adapter.ts
+│       └── opencode-adapter.ts
+├── orchestrator/       # @mercury/orchestrator — session/prompt/dispatch management
+│   └── src/
+│       ├── orchestrator.ts
+│       ├── rpc-transport.ts
+│       └── agent-registry.ts
+└── gui/                # @mercury/gui — Tauri 2 + Vue 3 desktop app
+    ├── src/            # Vue frontend (components, stores, tauri-bridge)
+    └── src-tauri/      # Rust backend (sidecar lifecycle, IPC commands)
 ```
 
-## Key Features
+## Prerequisites
 
-- **User-configurable agents** — Main Agent role is not hardcoded; any agent can be primary
-- **Zero-handoff orchestration** — Main Agent dispatches to Sub Agents programmatically
-- **Event-sourced audit trail** — Append-only immutable event log for all interactions
-- **Session continuity** — Automatic handoff on context overflow with summary inheritance
-- **SDK-first integration** — Claude Agent SDK, Codex SDK, opencode HTTP
+### All Platforms
 
-## Configuration
+- [Node.js](https://nodejs.org/) >= 20
+- [pnpm](https://pnpm.io/) >= 9
+- [Rust](https://rustup.rs/) (stable toolchain)
+- At least one supported AI CLI installed:
 
-Edit `mercury.config.json` to define your agents:
+  | Product | CLI | Install |
+  |---------|-----|---------|
+  | Claude Code | `claude` | `npm i -g @anthropic-ai/claude-code` |
+  | Codex CLI | `codex` | `npm i -g @openai/codex` |
+  | opencode | `opencode` | See [opencode.ai/download](https://opencode.ai/download) |
+  | Gemini CLI | `gemini` | `npm i -g @google/gemini-cli` |
 
-```json
-{
-  "agents": [
-    { "id": "claude-code", "displayName": "Claude Code", "cli": "claude", "role": "main", ... },
-    { "id": "codex-cli", "displayName": "Codex CLI", "cli": "codex", "role": "dev", ... }
-  ]
-}
+  After installing, verify the CLI is on your `PATH`:
+
+  ```bash
+  claude --version     # Claude Code
+  opencode --version   # opencode
+  ```
+
+  Mercury auto-detects installed CLIs at startup. If none are found, the GUI shows a setup prompt.
+
+### Windows
+
+- [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) — install with "Desktop development with C++" workload
+- WebView2 (pre-installed on Windows 10 1803+ and Windows 11)
+
+### Linux (Debian/Ubuntu)
+
+```bash
+sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
+  libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
 ```
 
-## Getting Started
+### macOS
 
-### Prerequisites
+- Xcode Command Line Tools: `xcode-select --install`
 
-- [Node.js](https://nodejs.org/) (v18+)
-- [pnpm](https://pnpm.io/) (v9+)
-- [Rust](https://rustup.rs/) (latest stable)
-- At least one supported AI CLI tool installed (e.g. `claude`, `codex`, `opencode`)
-
-### Build & Run
+## Setup & Run
 
 ```bash
 # Install dependencies
 pnpm install
 
-# Run in development mode
+# Development mode (from repo root — runs @mercury/gui via workspace filter)
+pnpm dev
+
+# Or from the gui package directly
 cd packages/gui && pnpm tauri dev
 
-# Build for production
-cd packages/gui && pnpm tauri build
+# Production build (from repo root)
+pnpm build
 ```
+
+## Configuration
+
+Define your agents in `mercury.config.json` at the project root. See `mercury.config.example.json` for a full example.
+
+**Required fields per agent:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `string` | Unique agent identifier |
+| `displayName` | `string` | Display name in GUI |
+| `cli` | `string` | CLI executable name |
+| `roles` | `AgentRole[]` | Assigned roles (see below) |
+| `integration` | `string` | `"sdk"` \| `"mcp"` \| `"http"` \| `"pty"` \| `"rpc"` |
+| `capabilities` | `string[]` | e.g. `["code", "review", "orchestration"]` |
+| `restrictions` | `string[]` | Scope restrictions |
+| `maxConcurrentSessions` | `number` | Max parallel sessions |
+
+**Optional:** `model` (e.g. `"claude-opus-4-6"`, `"o3"`)
+
+**Valid roles:** `"main"` | `"dev"` | `"acceptance"` | `"critic"` | `"research"` | `"design"`
+
+```json
+{
+  "agents": [
+    {
+      "id": "claude-code",
+      "displayName": "Claude Code",
+      "cli": "claude",
+      "model": "claude-opus-4-6",
+      "roles": ["main", "design"],
+      "integration": "sdk",
+      "capabilities": ["code", "review", "orchestration"],
+      "restrictions": [],
+      "maxConcurrentSessions": 3
+    }
+  ]
+}
+```
+
+**Config loading order:** `mercury.config.example.json` is loaded first as a template, then merged with `mercury.config.json` (project) or `~/.mercury/config.json` (home). If neither exists, the template (or built-in defaults) is used and written to `mercury.config.json` automatically.
+
+**Validation:** If the config file is missing or contains invalid JSON, Mercury falls back to built-in defaults and logs a warning in the GUI console. Required fields (`id`, `displayName`, `cli`, `roles`, `integration`, `capabilities`, `restrictions`, `maxConcurrentSessions`) are validated at load time — agents with missing fields are skipped with a warning. Config changes require an app restart; hot-reload is not currently supported.
 
 ## License
 
