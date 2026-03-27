@@ -112,7 +112,6 @@ onUnmounted(() => {
   width: 22px;
   height: 22px;
   object-fit: contain;
-  filter: invert(1);
 }
 
 .title {
