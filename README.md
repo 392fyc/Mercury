@@ -1,6 +1,6 @@
 # Mercury
 
-Mercury is a desktop application for multi-agent orchestration. It lets a human operator manage multiple AI coding agents (Claude Code, Codex CLI, opencode, Gemini CLI, etc.) through a single GUI, where a Main Agent can programmatically dispatch tasks to Sub Agents without manual copy-paste relay.
+Mercury is a desktop application for multi-agent orchestration. It lets a human operator manage multiple AI coding agents — Claude Code (`claude`), Codex CLI (`codex`), opencode (`opencode`), Gemini CLI (`gemini`), etc. — through a single GUI, where a Main Agent can programmatically dispatch tasks to Sub Agents without manual copy-paste relay.
 
 Built with Tauri 2 (Rust) + Vue 3 frontend and a Node.js orchestrator sidecar.
 
@@ -31,7 +31,14 @@ packages/
 - [Node.js](https://nodejs.org/) >= 20
 - [pnpm](https://pnpm.io/) >= 9
 - [Rust](https://rustup.rs/) (stable toolchain)
-- At least one supported AI CLI installed (`claude`, `codex`, `opencode`, etc.)
+- At least one supported AI CLI installed:
+
+  | Product | CLI executable |
+  |---------|---------------|
+  | Claude Code | `claude` |
+  | Codex CLI | `codex` |
+  | opencode | `opencode` |
+  | Gemini CLI | `gemini` |
 
 ### Windows
 
@@ -55,7 +62,7 @@ sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
 # Install dependencies
 pnpm install
 
-# Development mode (from repo root)
+# Development mode (from repo root — runs @mercury/gui via workspace filter)
 pnpm dev
 
 # Or from the gui package directly
@@ -67,7 +74,7 @@ pnpm build
 
 ## Configuration
 
-Define your agents in `mercury.config.json` at the project root:
+Define your agents in `mercury.config.json` at the project root. Required fields: `id`, `displayName`, `cli`. Optional: `role` (`"main"` | `"dev"` | `"review"`, default `"dev"`).
 
 ```json
 {
