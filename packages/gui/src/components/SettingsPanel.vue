@@ -15,7 +15,7 @@ const saveMsg = ref("");
 const roleContextExpanded = ref(true);
 const roleInstructionsExpanded = ref(true);
 
-type RoleContextKey = "main" | "dev" | "acceptance" | "research" | "design";
+type RoleContextKey = "main" | "dev" | "acceptance" | "critic" | "research" | "design";
 type ContextTarget = "global" | RoleContextKey;
 
 interface CliPreset {
@@ -122,6 +122,7 @@ function normalizeObsidianConfig(source?: ObsidianConfig | null): ObsidianConfig
     roleContextFiles.main = [...(source.roleContextFiles.main ?? [])];
     roleContextFiles.dev = [...(source.roleContextFiles.dev ?? [])];
     roleContextFiles.acceptance = [...(source.roleContextFiles.acceptance ?? [])];
+    roleContextFiles.critic = [...(source.roleContextFiles.critic ?? [])];
     roleContextFiles.research = [...(source.roleContextFiles.research ?? [])];
     roleContextFiles.design = [...(source.roleContextFiles.design ?? [])];
   }

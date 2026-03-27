@@ -15,7 +15,7 @@ import ApprovalCard from "./ApprovalCard.vue";
 const props = defineProps<{
   agentId: string;
   agentName: string;
-  role: "main" | "dev" | "acceptance" | "research" | "design";
+  role: "main" | "dev" | "acceptance" | "critic" | "research" | "design";
   panelKey: string;
   isFloating?: boolean;
 }>();
