@@ -33,12 +33,12 @@ packages/
 - [Rust](https://rustup.rs/) (stable toolchain)
 - At least one supported AI CLI installed:
 
-  | Product | CLI executable |
-  |---------|---------------|
-  | Claude Code | `claude` |
-  | Codex CLI | `codex` |
-  | opencode | `opencode` |
-  | Gemini CLI | `gemini` |
+  | Product | CLI | Install |
+  |---------|-----|---------|
+  | Claude Code | `claude` | `npm i -g @anthropic-ai/claude-code` |
+  | Codex CLI | `codex` | `npm i -g @openai/codex` |
+  | opencode | `opencode` | See [opencode.ai/download](https://opencode.ai/download) |
+  | Gemini CLI | `gemini` | `npm i -g @anthropic-ai/gemini-cli` (UNVERIFIED) |
 
 ### Windows
 
@@ -74,16 +74,44 @@ pnpm build
 
 ## Configuration
 
-Define your agents in `mercury.config.json` at the project root. Required fields: `id`, `displayName`, `cli`. Optional: `role` (`"main"` | `"dev"` | `"review"`, default `"dev"`).
+Define your agents in `mercury.config.json` at the project root. See `mercury.config.example.json` for a full example.
+
+**Required fields per agent:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `string` | Unique agent identifier |
+| `displayName` | `string` | Display name in GUI |
+| `cli` | `string` | CLI executable name |
+| `roles` | `AgentRole[]` | Assigned roles (see below) |
+| `integration` | `string` | `"sdk"` \| `"mcp"` \| `"http"` \| `"pty"` \| `"rpc"` |
+| `capabilities` | `string[]` | e.g. `["code", "review", "orchestration"]` |
+| `restrictions` | `string[]` | Scope restrictions |
+| `maxConcurrentSessions` | `number` | Max parallel sessions |
+
+**Optional:** `model` (e.g. `"claude-opus-4-6"`, `"o3"`)
+
+**Valid roles:** `"main"` | `"dev"` | `"acceptance"` | `"critic"` | `"research"` | `"design"`
 
 ```json
 {
   "agents": [
-    { "id": "claude-code", "displayName": "Claude Code", "cli": "claude", "role": "main" },
-    { "id": "codex-cli", "displayName": "Codex CLI", "cli": "codex", "role": "dev" }
+    {
+      "id": "claude-code",
+      "displayName": "Claude Code",
+      "cli": "claude",
+      "model": "claude-opus-4-6",
+      "roles": ["main", "design"],
+      "integration": "sdk",
+      "capabilities": ["code", "review", "orchestration"],
+      "restrictions": [],
+      "maxConcurrentSessions": 3
+    }
   ]
 }
 ```
+
+If `mercury.config.json` is missing, the orchestrator falls back to `mercury.config.example.json`. Validation errors are logged to the sidecar console.
 
 ## License
 
