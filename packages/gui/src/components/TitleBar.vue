@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from "vue";
 import { getProjectInfo } from "../lib/tauri-bridge";
+import mercuryLogo from "../assets/mercury-logo.png";
 
 const props = defineProps<{
   activeView: "agents" | "tasks";
@@ -48,7 +49,7 @@ onUnmounted(() => {
 <template>
   <header class="titlebar" data-tauri-drag-region>
     <div class="titlebar-left">
-      <span class="logo">☿</span>
+      <img class="logo" :src="mercuryLogo" alt="Mercury" />
       <span class="title">Mercury</span>
       <span class="badge">v0.1.0</span>
       <div class="view-tabs">
@@ -108,7 +109,10 @@ onUnmounted(() => {
 }
 
 .logo {
-  font-size: 20px;
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  filter: invert(1);
 }
 
 .title {
