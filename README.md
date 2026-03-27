@@ -26,10 +26,28 @@ packages/
 
 ## Prerequisites
 
+### All Platforms
+
 - [Node.js](https://nodejs.org/) >= 20
 - [pnpm](https://pnpm.io/) >= 9
 - [Rust](https://rustup.rs/) (stable toolchain)
 - At least one supported AI CLI installed (`claude`, `codex`, `opencode`, etc.)
+
+### Windows
+
+- [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) — install with "Desktop development with C++" workload
+- WebView2 (pre-installed on Windows 10 1803+ and Windows 11)
+
+### Linux (Debian/Ubuntu)
+
+```bash
+sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
+  libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+```
+
+### macOS
+
+- Xcode Command Line Tools: `xcode-select --install`
 
 ## Setup & Run
 
