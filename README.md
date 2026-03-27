@@ -6,7 +6,7 @@ Built with Tauri 2 (Rust) + Vue 3 frontend and a Node.js orchestrator sidecar.
 
 ## Project Structure
 
-```
+```text
 packages/
 ├── core/               # @mercury/core — shared types, event bus, utility functions
 ├── sdk-adapters/       # @mercury/sdk-adapters — adapter implementations per AI SDK
@@ -55,11 +55,14 @@ sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
 # Install dependencies
 pnpm install
 
-# Development mode
+# Development mode (from repo root)
+pnpm dev
+
+# Or from the gui package directly
 cd packages/gui && pnpm tauri dev
 
-# Production build
-cd packages/gui && pnpm tauri build
+# Production build (from repo root)
+pnpm build
 ```
 
 ## Configuration

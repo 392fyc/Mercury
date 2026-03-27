@@ -49,7 +49,7 @@ onUnmounted(() => {
 <template>
   <header class="titlebar" data-tauri-drag-region>
     <div class="titlebar-left">
-      <img class="logo" :src="mercuryLogo" alt="Mercury" />
+      <img class="logo" :src="mercuryLogo" alt="" aria-hidden="true" />
       <span class="title">Mercury</span>
       <span class="badge">v0.1.0</span>
       <div class="view-tabs">
