@@ -38,7 +38,7 @@ packages/
   | Claude Code | `claude` | `npm i -g @anthropic-ai/claude-code` |
   | Codex CLI | `codex` | `npm i -g @openai/codex` |
   | opencode | `opencode` | See [opencode.ai/download](https://opencode.ai/download) |
-  | Gemini CLI | `gemini` | `npm i -g @anthropic-ai/gemini-cli` (UNVERIFIED) |
+  | Gemini CLI | `gemini` | `npm i -g @google/gemini-cli` |
 
 ### Windows
 
