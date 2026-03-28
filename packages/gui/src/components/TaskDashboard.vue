@@ -217,7 +217,7 @@ async function handleCreateAcceptance(taskId: string) {
       </div>
 
       <!-- Task Detail -->
-      <div class="task-detail" v-if="selectedTask">
+      <div class="task-detail" v-if="selectedTask && roleFilteredTasks.some(t => t.taskId === selectedTask!.taskId)">
         <div class="detail-header">
           <h3>{{ selectedTask.title }}</h3>
           <span class="detail-id">{{ selectedTask.taskId }}</span>
