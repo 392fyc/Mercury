@@ -71,6 +71,12 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
+            // Open DevTools in debug builds (Ctrl+Shift+I also works at runtime)
+            #[cfg(debug_assertions)]
+            if let Some(window) = app.get_webview_window("main") {
+                window.open_devtools();
+            }
+
             let app_handle = app.handle().clone();
 
             // Register shared sidecar state synchronously (avoids race condition)
