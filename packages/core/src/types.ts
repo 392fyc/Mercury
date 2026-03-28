@@ -96,10 +96,34 @@ export interface RTKConfig {
   commands: string[]; // command basenames to wrap, e.g. ["codex", "gemini"]
 }
 
+export interface TransportsConfig {
+  /** HTTP JSON-RPC server. Enabled by default on 127.0.0.1:7654. */
+  http?: {
+    enabled?: boolean;
+    host?: string;
+    port?: number;
+  };
+  /** MCP Streamable HTTP on /mcp. Requires http to be enabled. */
+  mcp?: {
+    enabled?: boolean;
+    path?: string;
+    maxSessions?: number;
+  };
+  /** Native SSE event stream on /events. Disabled by default. */
+  sse?: {
+    enabled?: boolean;
+    path?: string;
+    maxConnections?: number;
+    heartbeatIntervalMs?: number;
+  };
+}
+
 export interface MercuryConfig {
   agents: AgentConfig[];
   workDir?: string;
+  /** @deprecated Use transports.http.port instead. Both work; this is kept for backward compat. */
   rpcPort?: number;
+  transports?: TransportsConfig;
   obsidian?: ObsidianConfig;
   rtk?: RTKConfig;
 }

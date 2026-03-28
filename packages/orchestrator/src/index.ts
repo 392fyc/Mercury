@@ -13,12 +13,13 @@ process.stderr.setDefaultEncoding("utf-8");
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
-import type { MercuryConfig, AgentConfig, ObsidianConfig } from "@mercury/core";
+import type { MercuryConfig, AgentConfig, ObsidianConfig, TransportsConfig } from "@mercury/core";
 import { RpcTransport } from "./rpc-transport.js";
 import { AgentRegistry } from "./agent-registry.js";
 import { Orchestrator } from "./orchestrator.js";
 import { KnowledgeService } from "./knowledge-service.js";
-import { createMcpServer } from "./mcp-server.js";
+import { createMcpServer, McpHttpSessionManager } from "./mcp-server.js";
+import { NotificationBroadcaster } from "./notification-broadcaster.js";
 
 const DEFAULT_RPC_PORT = 7654;
 
@@ -238,7 +239,7 @@ function parseRpcPort(raw: string | undefined): number | null {
   return port;
 }
 
-/** Determine RPC port from env, config, or default. */
+/** Determine RPC port from env, config (transports.http.port or legacy rpcPort), or default. */
 function resolveRpcPort(config: MercuryConfig): number {
   const envPort = parseRpcPort(process.env.MERCURY_RPC_PORT);
   if (envPort !== null) {
@@ -251,18 +252,60 @@ function resolveRpcPort(config: MercuryConfig): number {
     );
   }
 
-  if (typeof config.rpcPort === "number" && Number.isInteger(config.rpcPort)) {
+  // New config path: transports.http.port
+  const httpPort = config.transports?.http?.port;
+  if (typeof httpPort === "number" && Number.isInteger(httpPort) && httpPort >= 1 && httpPort <= 65535) {
+    return httpPort;
+  }
+  if (httpPort !== undefined) {
+    transport.log(`Invalid transports.http.port=${httpPort}, falling back to config/default`);
+  }
+
+  // Legacy config path: rpcPort
+  if (typeof config.rpcPort === "number" && Number.isInteger(config.rpcPort) && config.rpcPort >= 1 && config.rpcPort <= 65535) {
     return config.rpcPort;
+  }
+  if (config.rpcPort !== undefined) {
+    transport.log(`Invalid rpcPort=${config.rpcPort}, falling back to default`);
   }
 
   return DEFAULT_RPC_PORT;
 }
 
-/** Set permissive CORS headers on an HTTP response. */
-function setCorsHeaders(res: ServerResponse): void {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+// Phase 1: only accept loopback hosts (127.0.0.1, ::1, localhost) for security.
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
+
+/** Resolve transports config with defaults. stdio is not user-configurable (always on in sidecar). */
+function resolveTransports(config: MercuryConfig): TransportsConfig {
+  const userHost = config.transports?.http?.host;
+  const host = userHost && LOOPBACK_HOSTS.has(userHost) ? userHost : "127.0.0.1";
+  if (userHost && !LOOPBACK_HOSTS.has(userHost)) {
+    transport.log(`Ignoring non-loopback transports.http.host="${userHost}", using 127.0.0.1 (localhost-only binding)`);
+  }
+  return {
+    http: { enabled: true, ...config.transports?.http, host },
+    mcp: { enabled: true, path: "/mcp", ...config.transports?.mcp },
+    sse: { enabled: false, path: "/events", maxConnections: 10, heartbeatIntervalMs: 30000, ...config.transports?.sse },
+  };
+}
+
+const ALLOWED_ORIGINS = new Set([
+  "http://localhost:1420",   // Tauri dev server
+  "http://127.0.0.1:1420",
+  "http://localhost:7654",
+  "http://127.0.0.1:7654",
+  "tauri://localhost",       // Tauri production webview
+]);
+
+/** Set CORS headers on an HTTP response, restricted to known localhost origins. */
+function setCorsHeaders(res: ServerResponse, req?: IncomingMessage): void {
+  const origin = req?.headers.origin;
+  if (origin && ALLOWED_ORIGINS.has(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  }
+  // No Access-Control-Allow-Origin header if origin not in allowlist
+  res.setHeader("Access-Control-Allow-Methods", "POST, GET, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, MCP-Session-Id");
 }
 
 /** Send a JSON-RPC response with CORS headers. */
@@ -270,8 +313,9 @@ function sendHttpJson(
   res: ServerResponse,
   statusCode: number,
   payload: JsonRpcHttpResponse,
+  req?: IncomingMessage,
 ): void {
-  setCorsHeaders(res);
+  setCorsHeaders(res, req);
   res.statusCode = statusCode;
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   res.end(JSON.stringify(payload));
@@ -323,77 +367,183 @@ function mapRpcError(err: unknown): { code: number; message: string } {
   return { code: -32603, message };
 }
 
-/** Create an HTTP server that handles JSON-RPC 2.0 requests via the orchestrator. */
-function createHttpRpcServer(orchestrator: Orchestrator, port: number): Server {
-  return createServer(async (req, res) => {
-    setCorsHeaders(res);
+/** Handle a JSON-RPC 2.0 POST request (used by /rpc and legacy root routes). */
+async function handleJsonRpcPost(
+  orchestrator: Orchestrator,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  if (req.method !== "POST") {
+    res.statusCode = 405;
+    res.end("Method Not Allowed");
+    return;
+  }
 
+  let body = "";
+  try {
+    body = await readRequestBody(req);
+  } catch (err) {
+    sendHttpJson(res, 500, { jsonrpc: "2.0", error: mapRpcError(err), id: null }, req);
+    return;
+  }
+
+  let payload: unknown;
+  try {
+    payload = JSON.parse(body);
+  } catch {
+    sendHttpJson(res, 400, { jsonrpc: "2.0", error: { code: -32700, message: "Parse error" }, id: null }, req);
+    return;
+  }
+
+  if (!isJsonRpcRequest(payload)) {
+    sendHttpJson(res, 400, { jsonrpc: "2.0", error: { code: -32600, message: "Invalid Request" }, id: null }, req);
+    return;
+  }
+
+  try {
+    const result = await orchestrator.handleRpc(payload.method, payload.params ?? {});
+    sendHttpJson(res, 200, { jsonrpc: "2.0", result, id: payload.id }, req);
+  } catch (err) {
+    sendHttpJson(res, 500, { jsonrpc: "2.0", error: mapRpcError(err), id: payload.id }, req);
+  }
+}
+
+/** Native SSE event stream for non-MCP clients. */
+function handleSseConnection(
+  req: IncomingMessage,
+  res: ServerResponse,
+  broadcaster: NotificationBroadcaster,
+  sseConfig: NonNullable<TransportsConfig["sse"]>,
+): void {
+  if (req.method !== "GET") {
+    res.statusCode = 405;
+    res.end("Method Not Allowed");
+    return;
+  }
+
+  const maxConns = sseConfig.maxConnections ?? 10;
+  if (broadcaster.countByPrefix("sse:") >= maxConns) {
+    res.statusCode = 503;
+    res.end("Too many SSE connections");
+    return;
+  }
+
+  const origin = req.headers.origin;
+  const corsOrigin = origin && ALLOWED_ORIGINS.has(origin) ? origin : undefined;
+  const headers: Record<string, string> = {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+  };
+  if (corsOrigin) headers["Access-Control-Allow-Origin"] = corsOrigin;
+  res.writeHead(200, headers);
+  res.write(":ok\n\n");
+
+  const channelName = `sse:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const heartbeatMs = sseConfig.heartbeatIntervalMs ?? 30000;
+  const heartbeat = setInterval(() => {
+    res.write(":heartbeat\n\n");
+  }, heartbeatMs);
+
+  let cleanedUp = false;
+  const cleanup = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    clearInterval(heartbeat);
+    broadcaster.removeChannel(channelName);
+    if (!res.writableEnded) res.end();
+  };
+
+  broadcaster.addChannel({
+    name: channelName,
+    send: (method: string, params: Record<string, unknown>) => {
+      res.write(`event: ${method}\ndata: ${JSON.stringify(params)}\n\n`);
+    },
+    close: cleanup,
+  });
+
+  req.once("close", cleanup);
+  res.once("close", cleanup);
+  res.once("error", cleanup);
+}
+
+interface HttpServerContext {
+  orchestrator: Orchestrator;
+  mcpSessions: McpHttpSessionManager | null;
+  broadcaster: NotificationBroadcaster;
+  transportsConfig: ReturnType<typeof resolveTransports>;
+}
+
+/**
+ * Create an HTTP server with path-based routing:
+ *   POST /rpc        — JSON-RPC 2.0 (existing, backward compat)
+ *   POST|GET|DELETE /mcp  — MCP Streamable HTTP
+ *   GET  /events     — Native SSE stream
+ *   GET  /health     — Health check
+ *   POST /           — Legacy JSON-RPC (backward compat with TASK-ARCH-005 clients)
+ */
+function createHttpServer(ctx: HttpServerContext, host: string, port: number): Server {
+  const { orchestrator, mcpSessions, broadcaster, transportsConfig } = ctx;
+  const mcpPath = transportsConfig.mcp?.path ?? "/mcp";
+  const ssePath = transportsConfig.sse?.path ?? "/events";
+
+  return createServer(async (req, res) => {
+    const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+    const pathname = url.pathname;
+
+    // CORS preflight
     if (req.method === "OPTIONS") {
+      setCorsHeaders(res, req);
       res.statusCode = 204;
       res.end();
       return;
     }
 
-    if (req.method !== "POST") {
-      res.statusCode = 405;
-      res.end("Method Not Allowed");
+    // Health check
+    if (pathname === "/health") {
+      res.statusCode = 200;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({
+        status: "ok",
+        mcpSessions: mcpSessions?.sessionCount ?? 0,
+        broadcasterChannels: broadcaster.channelCount,
+        timestamp: Date.now(),
+      }));
       return;
     }
 
-    let body = "";
-    try {
-      body = await readRequestBody(req);
-    } catch (err) {
-      sendHttpJson(res, 500, {
-        jsonrpc: "2.0",
-        error: mapRpcError(err),
-        id: null,
-      });
+    // MCP Streamable HTTP
+    if (pathname === mcpPath && mcpSessions && transportsConfig.mcp?.enabled !== false) {
+      // MCP transport handles its own CORS/headers
+      await mcpSessions.handleRequest(req, res);
       return;
     }
 
-    let payload: unknown;
-    try {
-      payload = JSON.parse(body);
-    } catch {
-      sendHttpJson(res, 400, {
-        jsonrpc: "2.0",
-        error: { code: -32700, message: "Parse error" },
-        id: null,
-      });
+    // Native SSE
+    if (pathname === ssePath && transportsConfig.sse?.enabled) {
+      handleSseConnection(req, res, broadcaster, transportsConfig.sse);
       return;
     }
 
-    if (!isJsonRpcRequest(payload)) {
-      sendHttpJson(res, 400, {
-        jsonrpc: "2.0",
-        error: { code: -32603, message: "Invalid JSON-RPC request" },
-        id: null,
-      });
+    // JSON-RPC: /rpc or root / (CORS set by sendHttpJson inside handler)
+    if (pathname === "/rpc" || pathname === "/") {
+      await handleJsonRpcPost(orchestrator, req, res);
       return;
     }
 
-    try {
-      const result = await orchestrator.handleRpc(payload.method, payload.params ?? {});
-      sendHttpJson(res, 200, {
-        jsonrpc: "2.0",
-        result,
-        id: payload.id,
-      });
-    } catch (err) {
-      sendHttpJson(res, 500, {
-        jsonrpc: "2.0",
-        error: mapRpcError(err),
-        id: payload.id,
-      });
-    }
-  }).listen(port, "127.0.0.1", () => {
-    transport.log(`HTTP JSON-RPC listening on http://127.0.0.1:${port}`);
+    res.statusCode = 404;
+    res.end("Not Found");
+  }).listen(port, host, () => {
+    const routes = ["POST /rpc (JSON-RPC)"];
+    if (transportsConfig.mcp?.enabled !== false) routes.push(`POST|GET|DELETE ${mcpPath} (MCP)`);
+    if (transportsConfig.sse?.enabled) routes.push(`GET ${ssePath} (SSE)`);
+    routes.push("GET /health");
+    transport.log(`HTTP server listening on http://${host}:${port} — routes: ${routes.join(", ")}`);
   });
 }
 
-/** Wire process shutdown signals to gracefully close the HTTP server. */
-function wireShutdown(server: Server): void {
+/** Wire process shutdown signals to gracefully close the HTTP server and MCP sessions. */
+function wireShutdown(server: Server, mcpSessions: McpHttpSessionManager | null, broadcaster: NotificationBroadcaster): void {
   const originalExit = process.exit.bind(process);
   let shuttingDown = false;
 
@@ -405,15 +555,19 @@ function wireShutdown(server: Server): void {
       return;
     }
     shuttingDown = true;
-    transport.log(`Shutting down HTTP JSON-RPC server (${reason})`);
-    server.close((err) => {
-      process.exit = originalExit;
-      if (err) {
-        transport.log(`HTTP JSON-RPC shutdown error: ${err instanceof Error ? err.message : err}`);
-      }
-      if (exitCode !== undefined) {
-        originalExit(err ? 1 : exitCode);
-      }
+    transport.log(`Shutting down HTTP server (${reason})`);
+    broadcaster.closeAll();
+    const mcpCleanup = mcpSessions?.closeAll().catch(() => {}) ?? Promise.resolve();
+    mcpCleanup.then(() => {
+      server.close((err) => {
+        process.exit = originalExit;
+        if (err) {
+          transport.log(`HTTP server shutdown error: ${err instanceof Error ? err.message : err}`);
+        }
+        if (exitCode !== undefined) {
+          originalExit(err ? 1 : exitCode);
+        }
+      });
     });
   };
 
@@ -433,13 +587,49 @@ function wireShutdown(server: Server): void {
   });
 }
 
-/** Start stdin/stdout RPC transport and HTTP JSON-RPC server, then signal ready. */
+/** Start stdin/stdout RPC transport, HTTP server with MCP + SSE, then signal ready. */
 function startTransports(orchestrator: Orchestrator, registry: AgentRegistry, config: MercuryConfig): void {
+  const transportsConfig = resolveTransports(config);
+  const port = resolveRpcPort(config);
+
+  // Wire NotificationBroadcaster: replaces single-channel sendNotification
+  const broadcaster = NotificationBroadcaster.wrapTransport(transport);
+
+  // Start stdio transport (primary, always enabled in sidecar mode)
   transport.start((method, params) => orchestrator.handleRpc(method, params));
-  const httpServer = createHttpRpcServer(orchestrator, resolveRpcPort(config));
-  wireShutdown(httpServer);
+
+  const httpEnabled = transportsConfig.http?.enabled !== false;
+  const mcpEnabled = httpEnabled && transportsConfig.mcp?.enabled !== false;
+  let mcpSessions: McpHttpSessionManager | null = null;
+
+  if (httpEnabled) {
+    const mcpMaxSessions = transportsConfig.mcp?.maxSessions ?? 10;
+    mcpSessions = mcpEnabled
+      ? new McpHttpSessionManager(orchestrator, broadcaster, (msg) => transport.log(msg), mcpMaxSessions)
+      : null;
+
+    const httpHost = transportsConfig.http?.host ?? "127.0.0.1";
+    const httpServer = createHttpServer({ orchestrator, mcpSessions, broadcaster, transportsConfig }, httpHost, port);
+    wireShutdown(httpServer, mcpSessions, broadcaster);
+  } else {
+    // Basic signal handling when HTTP server is not started (per Node.js process docs)
+    const gracefulExit = (reason: string) => {
+      transport.log(`Shutting down (${reason})`);
+      broadcaster.closeAll();
+      process.exit(0);
+    };
+    process.once("SIGINT", () => gracefulExit("SIGINT"));
+    process.once("SIGTERM", () => gracefulExit("SIGTERM"));
+  }
+
   transport.sendNotification("ready", {
     agents: registry.listAgents().map((a) => a.id),
+    transports: {
+      stdio: true,
+      http: httpEnabled,
+      mcp: mcpSessions !== null,
+      sse: httpEnabled && (transportsConfig.sse?.enabled ?? false),
+    },
     timestamp: Date.now(),
   });
 }

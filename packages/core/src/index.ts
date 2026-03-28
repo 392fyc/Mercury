@@ -46,5 +46,6 @@ export type {
   TaskComplexity,
   TaskPriority,
   TaskStatus,
+  TransportsConfig,
   ModelRecommendation,
 } from "./types.js";

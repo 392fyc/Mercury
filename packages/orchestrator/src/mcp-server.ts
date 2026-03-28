@@ -22,9 +22,13 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Orchestrator } from "./orchestrator.js";
 import type { RpcTransport } from "./rpc-transport.js";
+import type { NotificationBroadcaster } from "./notification-broadcaster.js";
 
 // ─── Shared Schema Fragments ───
 
@@ -59,14 +63,10 @@ function rpcTool(
   }
 }
 
-// ─── Factory ───
+// ─── Shared Tool Registration ───
 
-export function createMcpServer(orchestrator: Orchestrator, transport: RpcTransport) {
-  const server = new McpServer(
-    { name: "mercury-orchestrator", version: "0.1.0" },
-    { capabilities: { tools: {} } },
-  );
-
+/** Register all Mercury RPC methods as MCP tools on the given McpServer instance. */
+function registerMcpTools(server: McpServer, orchestrator: Orchestrator): void {
   // ─── Agent Management ───
 
   rpcTool(server, orchestrator, "get_agents",
@@ -369,8 +369,17 @@ export function createMcpServer(orchestrator: Orchestrator, transport: RpcTransp
 
   rpcTool(server, orchestrator, "ping",
     "Health check — returns pong with timestamp");
+}
 
-  // ─── Start Function ───
+// ─── Factory: stdio MCP Server (--mcp flag) ───
+
+export function createMcpServer(orchestrator: Orchestrator, transport: RpcTransport) {
+  const server = new McpServer(
+    { name: "mercury-orchestrator", version: "0.1.0" },
+    { capabilities: { tools: {} } },
+  );
+
+  registerMcpTools(server, orchestrator);
 
   async function start(): Promise<void> {
     const stdioTransport = new StdioServerTransport();
@@ -401,4 +410,154 @@ export function createMcpServer(orchestrator: Orchestrator, transport: RpcTransp
   }
 
   return { start, server };
+}
+
+// ─── Factory: HTTP MCP Sessions (shared HTTP server) ───
+// Uses StreamableHTTPServerTransport from @modelcontextprotocol/sdk (^1.27.1, verified npm 2026-03-28)
+
+export interface McpHttpSession {
+  server: McpServer;
+  transport: StreamableHTTPServerTransport;
+}
+
+/**
+ * Manages per-session MCP servers over Streamable HTTP.
+ * Each MCP client gets its own McpServer + StreamableHTTPServerTransport pair.
+ */
+export class McpHttpSessionManager {
+  private sessions = new Map<string, McpHttpSession>();
+  private log: (msg: string) => void;
+  private maxSessions: number;
+  private closing = false;
+
+  constructor(
+    private orchestrator: Orchestrator,
+    private broadcaster: NotificationBroadcaster | null,
+    logger: (msg: string) => void,
+    maxSessions = 10,
+  ) {
+    this.log = logger;
+    this.maxSessions = maxSessions;
+  }
+
+  private cleanupSession(sid: string): void {
+    if (this.closing) return;
+    this.sessions.delete(sid);
+    if (this.broadcaster) {
+      this.broadcaster.removeChannel(`mcp-http:${sid}`);
+    }
+    this.log(`MCP HTTP session closed: ${sid}`);
+  }
+
+  get sessionCount(): number {
+    return this.sessions.size;
+  }
+
+  /**
+   * Handle an incoming HTTP request on the /mcp route.
+   * POST without session: creates new session (MCP initialize).
+   * POST/GET/DELETE with session: routes to existing session transport.
+   */
+  async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const sessionId = req.headers["mcp-session-id"] as string | undefined;
+
+    // Existing session: route to its transport
+    if (sessionId && this.sessions.has(sessionId)) {
+      const session = this.sessions.get(sessionId)!;
+      await session.transport.handleRequest(req, res);
+      return;
+    }
+
+    // New session: only via POST without session header (MCP initialize)
+    if (req.method === "POST" && !sessionId) {
+      if (this.sessions.size >= this.maxSessions) {
+        res.statusCode = 503;
+        res.end(JSON.stringify({ error: "Too many MCP sessions" }));
+        return;
+      }
+      await this.createSession(req, res);
+      return;
+    }
+
+    // POST with invalid/expired session ID → 404
+    if (sessionId) {
+      res.statusCode = 404;
+      res.end(JSON.stringify({ error: "Session not found" }));
+      return;
+    }
+
+    // GET/DELETE without session header
+    res.statusCode = 400;
+    res.end(JSON.stringify({ error: "Missing MCP-Session-Id header" }));
+  }
+
+  private async createSession(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const server = new McpServer(
+      { name: "mercury-orchestrator", version: "0.1.0" },
+      { capabilities: { tools: {} } },
+    );
+
+    registerMcpTools(server, this.orchestrator);
+
+    // sessionId is generated inside handleRequest() during MCP initialize,
+    // so we register the session in onsessioninitialized — the SDK hook
+    // designed for multi-session tracking (verified: MCP TS SDK docs).
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+      onsessioninitialized: (sid) => {
+        // Double-check limit (guard against TOCTOU race)
+        if (this.sessions.size >= this.maxSessions) {
+          this.log(`MCP HTTP session rejected (over limit): ${sid}`);
+          transport.close();
+          return;
+        }
+        this.log(`MCP HTTP session initialized: ${sid}`);
+        this.sessions.set(sid, { server, transport });
+
+        // Register as broadcaster channel for event fan-out
+        if (this.broadcaster) {
+          this.broadcaster.addChannel({
+            name: `mcp-http:${sid}`,
+            send: (method: string, params: Record<string, unknown>) => {
+              server.server.sendLoggingMessage({
+                level: method === "log" ? "info" : "debug",
+                logger: "mercury",
+                data: { method, ...params },
+              }).catch(() => {});
+            },
+            close: () => {},
+          });
+        }
+      },
+    });
+
+    // Wire session lifecycle cleanup (guarded against closeAll race)
+    transport.onclose = () => {
+      const sid = transport.sessionId;
+      if (sid) {
+        this.cleanupSession(sid);
+      }
+    };
+
+    await server.connect(transport);
+
+    // Handle the initial request — this triggers sessionId generation
+    await transport.handleRequest(req, res);
+  }
+
+  async closeAll(): Promise<void> {
+    this.closing = true;
+    for (const [sid, session] of this.sessions) {
+      try {
+        await session.transport.close();
+      } catch {
+        // best-effort
+      }
+      if (this.broadcaster) {
+        this.broadcaster.removeChannel(`mcp-http:${sid}`);
+      }
+    }
+    this.sessions.clear();
+    this.closing = false;
+  }
 }
