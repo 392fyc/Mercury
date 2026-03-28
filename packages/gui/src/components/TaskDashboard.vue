@@ -70,8 +70,8 @@ function statusColor(status: TaskStatus): string {
 }
 
 /** Convert a priority slug (e.g. "P1") to an uppercase display label. */
-function priorityLabel(p: string): string {
-  return p.toUpperCase();
+function priorityLabel(p: string | undefined | null): string {
+  return p ? p.toUpperCase() : "-";
 }
 
 /** Format an ISO date string for display; returns "-" for invalid dates. */

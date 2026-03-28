@@ -459,6 +459,8 @@ const minimapLineHeight = computed(() => {
     <!-- Edit mode -->
     <div v-else-if="isEditing" class="fp-edit-container">
       <textarea
+        id="file-edit-content"
+        name="file-edit-content"
         ref="editAreaEl"
         v-model="editContent"
         class="fp-edit-textarea"

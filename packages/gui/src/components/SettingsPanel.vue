@@ -507,7 +507,7 @@ function handleKeydown(event: KeyboardEvent) {
             <div class="card-fields">
               <label>
                 <span>CLI Tool</span>
-                <select v-model="agent.cli" class="field-input" @change="onCliChange(agent)">
+                <select :id="`agent-cli-${i}`" :name="`agent-cli-${i}`" v-model="agent.cli" class="field-input" @change="onCliChange(agent)">
                   <option v-for="p in CLI_PRESETS" :key="p.cli" :value="p.cli" :disabled="p.disabled">
                     {{ p.label }}
                   </option>
@@ -517,22 +517,22 @@ function handleKeydown(event: KeyboardEvent) {
                 <span>Roles</span>
                 <div class="role-checkboxes">
                   <label v-for="r in ROLE_DEFS" :key="r.value" class="role-checkbox">
-                    <input type="checkbox" :value="r.value" v-model="agent.roles" />
+                    <input type="checkbox" :id="`agent-role-${i}-${r.value}`" :name="`agent-role-${i}`" :value="r.value" v-model="agent.roles" />
                     <span>{{ r.label }}</span>
                   </label>
                 </div>
               </label>
               <label>
                 <span>Max Sessions</span>
-                <input v-model.number="agent.maxConcurrentSessions" type="number" min="1" max="10" class="field-input" />
+                <input :id="`agent-max-sessions-${i}`" :name="`agent-max-sessions-${i}`" v-model.number="agent.maxConcurrentSessions" type="number" min="1" max="10" class="field-input" />
               </label>
               <label>
                 <span>Display Name</span>
-                <input v-model="agent.displayName" class="field-input" />
+                <input :id="`agent-display-name-${i}`" :name="`agent-display-name-${i}`" v-model="agent.displayName" class="field-input" />
               </label>
               <label>
                 <span>Model</span>
-                <input v-model="agent.model" class="field-input" placeholder="e.g. claude-opus-4-6, gpt-5.4, gpt-5.3-codex" />
+                <input :id="`agent-model-${i}`" :name="`agent-model-${i}`" v-model="agent.model" class="field-input" placeholder="e.g. claude-opus-4-6, gpt-5.4, gpt-5.3-codex" />
               </label>
             </div>
             <div class="capabilities">
@@ -558,7 +558,7 @@ function handleKeydown(event: KeyboardEvent) {
             <h3>Working Directory</h3>
             <p class="hint compact">Default workspace for agent sessions and sidecar operations.</p>
             <div class="dir-input-row">
-              <input v-model="editWorkDir" class="field-input dir-field" />
+              <input id="work-dir" name="work-dir" v-model="editWorkDir" class="field-input dir-field" />
               <button class="browse-btn" @click="browseWorkDir" title="Browse working directory">Browse</button>
             </div>
           </div>
@@ -570,7 +570,7 @@ function handleKeydown(event: KeyboardEvent) {
             </p>
             <label class="toggle-row">
               <span class="toggle-switch">
-                <input type="checkbox" v-model="editObsidian.enabled" />
+                <input type="checkbox" id="obsidian-enabled" name="obsidian-enabled" v-model="editObsidian.enabled" />
                 <span class="toggle-track"><span class="toggle-thumb"></span></span>
               </span>
               <span>Enable Obsidian CLI integration</span>
@@ -579,12 +579,14 @@ function handleKeydown(event: KeyboardEvent) {
             <div v-if="editObsidian.enabled" class="kb-config">
               <label>
                 <span>Vault Name</span>
-                <input v-model="editObsidian.vaultName" class="field-input full-width" placeholder="Mercury-KB" />
+                <input id="obsidian-vault-name" name="obsidian-vault-name" v-model="editObsidian.vaultName" class="field-input full-width" placeholder="Mercury-KB" />
               </label>
               <label>
                 <span>KB Path (vault file system path)</span>
                 <div class="dir-input-row">
                   <input
+                    id="obsidian-vault-path"
+                    name="obsidian-vault-path"
                     v-model="editObsidian.vaultPath"
                     class="field-input dir-field"
                     placeholder="D:/Mercury/Mercury_KB"
@@ -594,11 +596,11 @@ function handleKeydown(event: KeyboardEvent) {
               </label>
               <label>
                 <span>Obsidian Binary Path</span>
-                <input v-model="editObsidian.obsidianBin" class="field-input full-width" placeholder="auto-detect" />
+                <input id="obsidian-bin" name="obsidian-bin" v-model="editObsidian.obsidianBin" class="field-input full-width" placeholder="auto-detect" />
               </label>
               <label class="toggle-row">
                 <span class="toggle-switch">
-                  <input type="checkbox" v-model="editObsidian.autoInjectContext" />
+                  <input type="checkbox" id="obsidian-auto-inject" name="obsidian-auto-inject" v-model="editObsidian.autoInjectContext" />
                   <span class="toggle-track"><span class="toggle-thumb"></span></span>
                 </span>
                 <span>Auto-inject KB context into agent prompts</span>
@@ -746,6 +748,8 @@ function handleKeydown(event: KeyboardEvent) {
                         <div v-if="roleEditorError && !roleEditorLoading" class="role-editor-error">{{ roleEditorError }}</div>
                         <textarea
                           v-if="!roleEditorLoading"
+                          id="role-editor"
+                          name="role-editor"
                           v-model="roleEditorContent"
                           class="role-editor-textarea"
                           spellcheck="false"
