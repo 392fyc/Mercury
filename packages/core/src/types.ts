@@ -107,6 +107,7 @@ export interface TransportsConfig {
   mcp?: {
     enabled?: boolean;
     path?: string;
+    maxSessions?: number;
   };
   /** Native SSE event stream on /events. Disabled by default. */
   sse?: {

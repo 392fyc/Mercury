@@ -427,13 +427,16 @@ export interface McpHttpSession {
 export class McpHttpSessionManager {
   private sessions = new Map<string, McpHttpSession>();
   private log: (msg: string) => void;
+  private maxSessions: number;
 
   constructor(
     private orchestrator: Orchestrator,
     private broadcaster: NotificationBroadcaster | null,
     logger: (msg: string) => void,
+    maxSessions = 10,
   ) {
     this.log = logger;
+    this.maxSessions = maxSessions;
   }
 
   get sessionCount(): number {
@@ -457,6 +460,11 @@ export class McpHttpSessionManager {
 
     // New session: only via POST without session header (MCP initialize)
     if (req.method === "POST" && !sessionId) {
+      if (this.sessions.size >= this.maxSessions) {
+        res.statusCode = 503;
+        res.end(JSON.stringify({ error: "Too many MCP sessions" }));
+        return;
+      }
       await this.createSession(req, res);
       return;
     }

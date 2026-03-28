@@ -525,9 +525,8 @@ function createHttpServer(ctx: HttpServerContext, host: string, port: number): S
       return;
     }
 
-    // JSON-RPC: /rpc or root /
+    // JSON-RPC: /rpc or root / (CORS set by sendHttpJson inside handler)
     if (pathname === "/rpc" || pathname === "/") {
-      setCorsHeaders(res, req);
       await handleJsonRpcPost(orchestrator, req, res);
       return;
     }
@@ -558,15 +557,17 @@ function wireShutdown(server: Server, mcpSessions: McpHttpSessionManager | null,
     shuttingDown = true;
     transport.log(`Shutting down HTTP server (${reason})`);
     broadcaster.closeAll();
-    mcpSessions?.closeAll().catch(() => {});
-    server.close((err) => {
-      process.exit = originalExit;
-      if (err) {
-        transport.log(`HTTP server shutdown error: ${err instanceof Error ? err.message : err}`);
-      }
-      if (exitCode !== undefined) {
-        originalExit(err ? 1 : exitCode);
-      }
+    const mcpCleanup = mcpSessions?.closeAll().catch(() => {}) ?? Promise.resolve();
+    mcpCleanup.then(() => {
+      server.close((err) => {
+        process.exit = originalExit;
+        if (err) {
+          transport.log(`HTTP server shutdown error: ${err instanceof Error ? err.message : err}`);
+        }
+        if (exitCode !== undefined) {
+          originalExit(err ? 1 : exitCode);
+        }
+      });
     });
   };
 
@@ -602,13 +603,23 @@ function startTransports(orchestrator: Orchestrator, registry: AgentRegistry, co
   let mcpSessions: McpHttpSessionManager | null = null;
 
   if (httpEnabled) {
+    const mcpMaxSessions = transportsConfig.mcp?.maxSessions ?? 10;
     mcpSessions = mcpEnabled
-      ? new McpHttpSessionManager(orchestrator, broadcaster, (msg) => transport.log(msg))
+      ? new McpHttpSessionManager(orchestrator, broadcaster, (msg) => transport.log(msg), mcpMaxSessions)
       : null;
 
     const httpHost = transportsConfig.http?.host ?? "127.0.0.1";
     const httpServer = createHttpServer({ orchestrator, mcpSessions, broadcaster, transportsConfig }, httpHost, port);
     wireShutdown(httpServer, mcpSessions, broadcaster);
+  } else {
+    // Basic signal handling when HTTP server is not started (per Node.js process docs)
+    const gracefulExit = (reason: string) => {
+      transport.log(`Shutting down (${reason})`);
+      broadcaster.closeAll();
+      process.exit(0);
+    };
+    process.once("SIGINT", () => gracefulExit("SIGINT"));
+    process.once("SIGTERM", () => gracefulExit("SIGTERM"));
   }
 
   transport.sendNotification("ready", {
