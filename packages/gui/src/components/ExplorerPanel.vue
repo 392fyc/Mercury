@@ -327,6 +327,8 @@ watch(workDir, () => loadRoot(), { immediate: true });
     <div v-if="newItemType" class="ep-new-item">
       <span class="ep-new-icon">{{ newItemType === 'folder' ? '📁' : '📄' }}</span>
       <input
+        id="explorer-new-item"
+        name="explorer-new-item"
         v-model="newItemName"
         class="ep-new-input"
         :placeholder="newItemType === 'folder' ? 'folder name...' : 'file name...'"

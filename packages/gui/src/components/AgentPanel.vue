@@ -561,6 +561,8 @@ watch(
         <span class="inline-status-text">{{ status === 'active' ? 'Running' : status === 'error' ? 'Error' : 'Ready' }}</span>
         <div class="inline-approval">
           <select
+            id="approval-mode-select"
+            name="approval-mode"
             class="inline-approval-select"
             :value="approvalMode"
             @change="(e) => setApprovalMode((e.target as HTMLSelectElement).value as 'main_agent_review' | 'auto_accept')"
@@ -769,6 +771,8 @@ watch(
           <span class="status-spinner-sm"></span>
         </span>
         <textarea
+          id="agent-prompt-input"
+          name="agent-prompt"
           ref="textareaEl"
           v-model="inputText"
           :placeholder="status === 'active' ? 'working... (type to queue)' : `Send to ${agentName}...`"
