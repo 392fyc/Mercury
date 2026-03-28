@@ -1844,20 +1844,28 @@ export class Orchestrator {
     };
 
     // Fast-track through full state machine: in_progress → implementation_done → main_review → acceptance → verified → closed
-    this.taskManager.transitionTask(task.taskId, "implementation_done", agentId);
-    this.taskManager.updateTaskField(task.taskId, "implementationReceipt", receipt);
-    this.taskManager.transitionTask(task.taskId, "main_review", agentId);
-    this.taskManager.transitionTask(task.taskId, "acceptance", agentId);
+    try {
+      this.taskManager.transitionTask(task.taskId, "implementation_done", agentId);
+      this.taskManager.updateTaskField(task.taskId, "implementationReceipt", receipt);
+      this.taskManager.transitionTask(task.taskId, "main_review", agentId);
+      this.taskManager.transitionTask(task.taskId, "acceptance", agentId);
 
-    // Persist synthetic acceptance so getTaskResult() returns verdict
-    this.taskManager.persistSyntheticAcceptance(task.taskId, agentId, {
-      verdict: "pass",
-      findings: findingsArr,
-      recommendations: recommendationsArr,
-    });
+      // Persist synthetic acceptance so getTaskResult() returns verdict
+      this.taskManager.persistSyntheticAcceptance(task.taskId, agentId, {
+        verdict: "pass",
+        findings: findingsArr,
+        recommendations: recommendationsArr,
+      });
 
-    this.taskManager.transitionTask(task.taskId, "verified", agentId);
-    this.taskManager.transitionTask(task.taskId, "closed", agentId);
+      this.taskManager.transitionTask(task.taskId, "verified", agentId);
+      this.taskManager.transitionTask(task.taskId, "closed", agentId);
+    } catch (err) {
+      this.transport.sendNotification("log", {
+        message: `[task] Research fast-track failed for ${task.taskId} at status ${this.taskManager.getTask(task.taskId)?.status ?? "unknown"}: ${err instanceof Error ? err.message : err}`,
+      });
+      try { this.taskManager.transitionTask(task.taskId, "failed", agentId); } catch { /* already terminal */ }
+      return;
+    }
 
     // Emit callback so originator is notified
     this.bus.emit("orchestrator.task.callback", agentId, "orchestrator", {
@@ -1899,20 +1907,28 @@ export class Orchestrator {
     };
 
     // Fast-track through full state machine: in_progress → ... → closed
-    this.taskManager.transitionTask(task.taskId, "implementation_done", agentId);
-    this.taskManager.updateTaskField(task.taskId, "implementationReceipt", receipt);
-    this.taskManager.transitionTask(task.taskId, "main_review", agentId);
-    this.taskManager.transitionTask(task.taskId, "acceptance", agentId);
+    try {
+      this.taskManager.transitionTask(task.taskId, "implementation_done", agentId);
+      this.taskManager.updateTaskField(task.taskId, "implementationReceipt", receipt);
+      this.taskManager.transitionTask(task.taskId, "main_review", agentId);
+      this.taskManager.transitionTask(task.taskId, "acceptance", agentId);
 
-    // Persist synthetic acceptance so getTaskResult() returns verdict
-    this.taskManager.persistSyntheticAcceptance(task.taskId, agentId, {
-      verdict: "pass",
-      findings: designFindings,
-      recommendations: designRecommendations,
-    });
+      // Persist synthetic acceptance so getTaskResult() returns verdict
+      this.taskManager.persistSyntheticAcceptance(task.taskId, agentId, {
+        verdict: "pass",
+        findings: designFindings,
+        recommendations: designRecommendations,
+      });
 
-    this.taskManager.transitionTask(task.taskId, "verified", agentId);
-    this.taskManager.transitionTask(task.taskId, "closed", agentId);
+      this.taskManager.transitionTask(task.taskId, "verified", agentId);
+      this.taskManager.transitionTask(task.taskId, "closed", agentId);
+    } catch (err) {
+      this.transport.sendNotification("log", {
+        message: `[task] Design fast-track failed for ${task.taskId} at status ${this.taskManager.getTask(task.taskId)?.status ?? "unknown"}: ${err instanceof Error ? err.message : err}`,
+      });
+      try { this.taskManager.transitionTask(task.taskId, "failed", agentId); } catch { /* already terminal */ }
+      return;
+    }
 
     // Emit callback so originator is notified
     this.bus.emit("orchestrator.task.callback", agentId, "orchestrator", {
