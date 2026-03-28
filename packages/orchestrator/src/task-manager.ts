@@ -289,8 +289,13 @@ export class TaskManager {
     const explicitAssignedTo = params.assignedTo?.trim();
     const assignedTo = explicitAssignedTo || this.autoSelectAgent(params, taskId);
 
-    // Validate assignedTo references a registered agent with the required role
-    const requiredRole = (params.role ?? "dev") as AgentRole;
+    // Validate role is a known dispatch role
+    const VALID_DISPATCH_ROLES: readonly string[] = ["dev", "research", "design"];
+    const rawRole = params.role ?? "dev";
+    if (!VALID_DISPATCH_ROLES.includes(rawRole)) {
+      throw new Error(`createTask validation failed: invalid role "${rawRole}" (must be one of: ${VALID_DISPATCH_ROLES.join(", ")})`);
+    }
+    const requiredRole = rawRole as AgentRole;
     if (this.agentConfigLookup) {
       const agentConfig = this.agentConfigLookup(assignedTo);
       if (!agentConfig) {
@@ -657,6 +662,42 @@ export class TaskManager {
 
   getAcceptance(acceptanceId: string): AcceptanceBundle | undefined {
     return this.acceptances.get(acceptanceId);
+  }
+
+  /** Persist a synthetic acceptance for fast-tracked tasks (research/design) so getTaskResult() returns a verdict. */
+  persistSyntheticAcceptance(
+    taskId: string,
+    acceptorId: string,
+    results: { verdict: AcceptanceVerdict; findings: string[]; recommendations: string[] },
+  ): void {
+    const acceptanceId = `ACC-${shortId()}`;
+    const acceptance: AcceptanceBundle = {
+      acceptanceId,
+      linkedTaskId: taskId,
+      status: "completed",
+      acceptor: acceptorId,
+      scope: { filesToReview: [], docsToCheck: [], runtimeChecks: [] },
+      blindInputPolicy: { allowed: [], forbidden: [] },
+      results,
+      completedAt: Date.now(),
+    };
+    this.acceptances.set(acceptanceId, acceptance);
+    this.persistAcceptance(acceptance);
+
+    // Link to task
+    const task = this.tasks.get(taskId);
+    if (task) {
+      if (!task.handoffToAcceptance) {
+        task.handoffToAcceptance = {
+          acceptanceBundleId: acceptanceId,
+          blindInputPolicy: acceptance.blindInputPolicy,
+          acceptanceFocus: task.definitionOfDone,
+        };
+      } else {
+        task.handoffToAcceptance.acceptanceBundleId = acceptanceId;
+      }
+      this.persistTask(task);
+    }
   }
 
   /** Find the latest acceptance for a given task ID. */

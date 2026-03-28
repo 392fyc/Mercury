@@ -1829,12 +1829,15 @@ export class Orchestrator {
 
     // Store a lightweight receipt
     const parsed = this.tryParseJsonRecord(finalMessage);
+    const evidenceArr = this.readStringArray(parsed?.evidence);
+    const findingsArr = this.readStringArray(parsed?.findings);
+    const recommendationsArr = this.readStringArray(parsed?.recommendations);
     const receipt: ImplementationReceipt = {
       implementer: agentId,
       branch: "",
       summary: this.readString(parsed?.summary) ?? finalMessage.slice(0, 500),
       changedFiles: [],
-      evidence: this.readStringArray(parsed?.findings) ?? this.readStringArray(parsed?.evidence) ?? [],
+      evidence: evidenceArr.length > 0 ? evidenceArr : findingsArr,
       docsUpdated: [],
       residualRisks: [],
       completedAt: Date.now(),
@@ -1845,6 +1848,14 @@ export class Orchestrator {
     this.taskManager.updateTaskField(task.taskId, "implementationReceipt", receipt);
     this.taskManager.transitionTask(task.taskId, "main_review", agentId);
     this.taskManager.transitionTask(task.taskId, "acceptance", agentId);
+
+    // Persist synthetic acceptance so getTaskResult() returns verdict
+    this.taskManager.persistSyntheticAcceptance(task.taskId, agentId, {
+      verdict: "pass",
+      findings: findingsArr,
+      recommendations: recommendationsArr,
+    });
+
     this.taskManager.transitionTask(task.taskId, "verified", agentId);
     this.taskManager.transitionTask(task.taskId, "closed", agentId);
 
@@ -1853,8 +1864,8 @@ export class Orchestrator {
       taskId: task.taskId,
       originatorSessionId: task.originatorSessionId,
       verdict: "pass",
-      findings: this.readStringArray(parsed?.findings) ?? [],
-      recommendations: this.readStringArray(parsed?.recommendations) ?? [],
+      findings: findingsArr,
+      recommendations: recommendationsArr,
     });
   }
 
@@ -1873,12 +1884,15 @@ export class Orchestrator {
     });
 
     const parsed = this.tryParseJsonRecord(finalMessage);
+    const artifactsArr = this.readStringArray(parsed?.artifacts);
+    const designFindings = this.readStringArray(parsed?.findings);
+    const designRecommendations = this.readStringArray(parsed?.recommendations);
     const receipt: ImplementationReceipt = {
       implementer: agentId,
       branch: "",
       summary: this.readString(parsed?.summary) ?? finalMessage.slice(0, 500),
       changedFiles: [],
-      evidence: this.readStringArray(parsed?.artifacts) ?? [],
+      evidence: artifactsArr,
       docsUpdated: [],
       residualRisks: [],
       completedAt: Date.now(),
@@ -1889,6 +1903,14 @@ export class Orchestrator {
     this.taskManager.updateTaskField(task.taskId, "implementationReceipt", receipt);
     this.taskManager.transitionTask(task.taskId, "main_review", agentId);
     this.taskManager.transitionTask(task.taskId, "acceptance", agentId);
+
+    // Persist synthetic acceptance so getTaskResult() returns verdict
+    this.taskManager.persistSyntheticAcceptance(task.taskId, agentId, {
+      verdict: "pass",
+      findings: designFindings,
+      recommendations: designRecommendations,
+    });
+
     this.taskManager.transitionTask(task.taskId, "verified", agentId);
     this.taskManager.transitionTask(task.taskId, "closed", agentId);
 
@@ -1897,8 +1919,8 @@ export class Orchestrator {
       taskId: task.taskId,
       originatorSessionId: task.originatorSessionId,
       verdict: "pass",
-      findings: [],
-      recommendations: [],
+      findings: designFindings,
+      recommendations: designRecommendations,
     });
   }
 
@@ -2527,13 +2549,13 @@ export class Orchestrator {
     this.bus.emit("agent.message.send", agentId, sessionId, {
       prompt: prompt.slice(0, 200),
       hasImages: 0,
-      role: "dev",
+      role,
       oneShot: true,
     });
     this.transport.sendNotification("agent_working", {
       agentId,
       sessionId,
-      role: "dev",
+      role,
       startedAt,
       oneShot: true,
     });
