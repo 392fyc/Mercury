@@ -80,6 +80,11 @@ const MIGRATIONS = [
       );
     `,
   },
+  {
+    version: 2,
+    description: "add_task_role_column",
+    sql: `ALTER TABLE tasks ADD COLUMN role TEXT DEFAULT 'dev';`,
+  },
 ];
 
 function applyMigrations(db: Database.Database, log: Log): void {
@@ -138,13 +143,13 @@ export class TaskPersistenceSqlite implements TaskPersistence {
           created_at, closed_at, failed_at, assigned_to, branch,
           context, dispatch_attempts, max_dispatch_attempts,
           last_dispatch_error, rework_count, max_reworks,
-          originator_session_id, raw_json
+          originator_session_id, role, raw_json
         ) VALUES (
           @task_id, @title, @status, @priority, @phase_id,
           @created_at, @closed_at, @failed_at, @assigned_to, @branch,
           @context, @dispatch_attempts, @max_dispatch_attempts,
           @last_dispatch_error, @rework_count, @max_reworks,
-          @originator_session_id, @raw_json
+          @originator_session_id, @role, @raw_json
         )
       `),
 
@@ -164,14 +169,14 @@ export class TaskPersistenceSqlite implements TaskPersistence {
         )
       `),
 
-      selectAllTasks: this.db.prepare("SELECT raw_json FROM tasks"),
+      selectAllTasks: this.db.prepare("SELECT raw_json, role FROM tasks"),
       selectAllIssues: this.db.prepare("SELECT raw_json FROM issues"),
       selectAllAcceptances: this.db.prepare("SELECT raw_json FROM acceptances"),
-      selectTask: this.db.prepare("SELECT raw_json FROM tasks WHERE task_id = ?"),
-      selectTasksByStatus: this.db.prepare("SELECT raw_json FROM tasks WHERE status = ?"),
-      selectTasksByAssigned: this.db.prepare("SELECT raw_json FROM tasks WHERE assigned_to = ?"),
-      selectTasksByBoth: this.db.prepare("SELECT raw_json FROM tasks WHERE status = ? AND assigned_to = ?"),
-      selectAllTasksList: this.db.prepare("SELECT raw_json FROM tasks"),
+      selectTask: this.db.prepare("SELECT raw_json, role FROM tasks WHERE task_id = ?"),
+      selectTasksByStatus: this.db.prepare("SELECT raw_json, role FROM tasks WHERE status = ?"),
+      selectTasksByAssigned: this.db.prepare("SELECT raw_json, role FROM tasks WHERE assigned_to = ?"),
+      selectTasksByBoth: this.db.prepare("SELECT raw_json, role FROM tasks WHERE status = ? AND assigned_to = ?"),
+      selectAllTasksList: this.db.prepare("SELECT raw_json, role FROM tasks"),
     };
   }
 
@@ -229,7 +234,8 @@ export class TaskPersistenceSqlite implements TaskPersistence {
       rework_count: task.reworkCount ?? 0,
       max_reworks: task.maxReworks ?? 2,
       originator_session_id: task.originatorSessionId ?? null,
-      raw_json: JSON.stringify({ ...task, priority }),
+      role: task.role ?? "dev",
+      raw_json: JSON.stringify({ ...task, priority, role: task.role ?? "dev" }),
     });
   }
 
@@ -256,6 +262,16 @@ export class TaskPersistenceSqlite implements TaskPersistence {
     });
   }
 
+  /** Parse a task row, backfilling role from the column if missing in raw_json. */
+  private parseTaskRow(row: unknown): TaskBundle | null {
+    const { raw_json, role } = row as { raw_json: string; role?: string };
+    const task = this.parseJson<TaskBundle>(raw_json);
+    if (task && !task.role) {
+      task.role = (role as TaskBundle["role"]) ?? "dev";
+    }
+    return task;
+  }
+
   /** Load all tasks, acceptances, and issues from SQLite. */
   async loadAll(): Promise<{
     tasks: TaskBundle[];
@@ -263,7 +279,7 @@ export class TaskPersistenceSqlite implements TaskPersistence {
     issues: IssueBundle[];
   }> {
     const tasks = this.stmts.selectAllTasks.all()
-      .map((r: unknown) => this.parseJson<TaskBundle>((r as { raw_json: string }).raw_json))
+      .map((r: unknown) => this.parseTaskRow(r))
       .filter((t): t is TaskBundle => t !== null);
 
     const acceptances = this.stmts.selectAllAcceptances.all()
@@ -280,9 +296,9 @@ export class TaskPersistenceSqlite implements TaskPersistence {
 
   /** Load a single task by ID from SQLite. */
   async loadTask(taskId: string): Promise<TaskBundle | null> {
-    const row = this.stmts.selectTask.get(taskId) as { raw_json: string } | undefined;
+    const row = this.stmts.selectTask.get(taskId) as { raw_json: string; role?: string } | undefined;
     if (!row) return null;
-    return this.parseJson<TaskBundle>(row.raw_json);
+    return this.parseTaskRow(row);
   }
 
   /** Load tasks with optional status/assignedTo filter — uses indexed queries. */
@@ -298,7 +314,7 @@ export class TaskPersistenceSqlite implements TaskPersistence {
       rows = this.stmts.selectAllTasksList.all();
     }
     return rows
-      .map((r: unknown) => this.parseJson<TaskBundle>((r as { raw_json: string }).raw_json))
+      .map((r: unknown) => this.parseTaskRow(r))
       .filter((t): t is TaskBundle => t !== null);
   }
 

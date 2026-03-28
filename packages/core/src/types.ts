@@ -341,6 +341,7 @@ export interface TaskBundle {
   closedAt: string | null; // ISO 8601, set by TaskManager when status → closed/verified
   failedAt: string | null; // ISO 8601, set by TaskManager when status → failed
   assignedTo: string;
+  role?: AgentRole; // Task dispatch role: dev, research, design (default: dev)
   assignee?: TaskAssignee; // Agents First: structured agent+model+session metadata
   branch?: string;
 

@@ -52,6 +52,7 @@ export interface CreateTaskParams {
   phaseId?: string;
   priority: TaskBundle["priority"];
   assignedTo?: string; // Optional: auto-assigned via G9 modelRecommendation if omitted
+  role?: string; // Task dispatch role: dev, research, design (default: dev)
   branch?: string;
   codeScope: TaskBundle["codeScope"];
   readScope: TaskBundle["readScope"];
@@ -127,11 +128,12 @@ export class TaskManager {
       throw new Error("agentListLookup not injected — Orchestrator wiring incomplete");
     }
     const agents = this.agentListLookup();
-    // Only consider agents with "dev" role
-    const devAgents = agents.filter((a) => a.roles.includes("dev"));
-    if (devAgents.length === 0) {
+    // Filter agents by the requested role (default: dev)
+    const targetRole = params.role ?? "dev";
+    const roleAgents = agents.filter((a) => a.roles.includes(targetRole as AgentRole));
+    if (roleAgents.length === 0) {
       throw new Error(
-        `No agents with 'dev' role in registry (${agents.length} total agents) — cannot auto-assign task`,
+        `No agents with '${targetRole}' role in registry (${agents.length} total agents) — cannot auto-assign task`,
       );
     }
 
@@ -151,8 +153,8 @@ export class TaskManager {
       return agentId;
     };
 
-    if (devAgents.length === 1) {
-      return selectAndEmit(devAgents[0].id, "single-dev-agent");
+    if (roleAgents.length === 1) {
+      return selectAndEmit(roleAgents[0].id, `single-${targetRole}-agent`);
     }
 
     const rawRec = params.modelRecommendation;
@@ -161,12 +163,12 @@ export class TaskManager {
     const hasCaps = !!rawRec?.requiredCapabilities?.some((c) => c.trim().length > 0);
     const hasComplexity = !!rawRec?.complexity;
     if (!rawRec || (!hasModel && !hasCaps && !hasComplexity)) {
-      return selectAndEmit(devAgents[0].id, "no-recommendation-fallback");
+      return selectAndEmit(roleAgents[0].id, "no-recommendation-fallback");
     }
     const rec = rawRec;
 
-    // Score each dev agent
-    const scored = devAgents.map((agent) => {
+    // Score each candidate agent
+    const scored = roleAgents.map((agent) => {
       let score = 0;
 
       // Preferred model match: trim + lowercase to handle whitespace in MCP/JSON inputs
@@ -287,14 +289,20 @@ export class TaskManager {
     const explicitAssignedTo = params.assignedTo?.trim();
     const assignedTo = explicitAssignedTo || this.autoSelectAgent(params, taskId);
 
-    // Validate assignedTo references a registered agent with 'dev' role
+    // Validate role is a known dispatch role
+    const VALID_DISPATCH_ROLES: readonly string[] = ["dev", "research", "design"];
+    const rawRole = params.role ?? "dev";
+    if (!VALID_DISPATCH_ROLES.includes(rawRole)) {
+      throw new Error(`createTask validation failed: invalid role "${rawRole}" (must be one of: ${VALID_DISPATCH_ROLES.join(", ")})`);
+    }
+    const requiredRole = rawRole as AgentRole;
     if (this.agentConfigLookup) {
       const agentConfig = this.agentConfigLookup(assignedTo);
       if (!agentConfig) {
         throw new Error(`createTask validation failed: agent "${assignedTo}" is not registered`);
       }
-      if (!agentConfig.roles.includes("dev")) {
-        throw new Error(`createTask validation failed: agent "${assignedTo}" does not have 'dev' role`);
+      if (!agentConfig.roles.includes(requiredRole)) {
+        throw new Error(`createTask validation failed: agent "${assignedTo}" does not have '${requiredRole}' role`);
       }
     }
 
@@ -308,6 +316,7 @@ export class TaskManager {
       closedAt: null,
       failedAt: null,
       assignedTo,
+      role: requiredRole,
       branch: params.branch,
       codeScope: params.codeScope,
       readScope: params.readScope,
@@ -655,6 +664,42 @@ export class TaskManager {
     return this.acceptances.get(acceptanceId);
   }
 
+  /** Persist a synthetic acceptance for fast-tracked tasks (research/design) so getTaskResult() returns a verdict. */
+  persistSyntheticAcceptance(
+    taskId: string,
+    acceptorId: string,
+    results: { verdict: AcceptanceVerdict; findings: string[]; recommendations: string[] },
+  ): void {
+    const acceptanceId = `ACC-${shortId()}`;
+    const acceptance: AcceptanceBundle = {
+      acceptanceId,
+      linkedTaskId: taskId,
+      status: "completed",
+      acceptor: acceptorId,
+      scope: { filesToReview: [], docsToCheck: [], runtimeChecks: [] },
+      blindInputPolicy: { allowed: [], forbidden: [] },
+      results,
+      completedAt: Date.now(),
+    };
+    this.acceptances.set(acceptanceId, acceptance);
+    this.persistAcceptance(acceptance);
+
+    // Link to task
+    const task = this.tasks.get(taskId);
+    if (task) {
+      if (!task.handoffToAcceptance) {
+        task.handoffToAcceptance = {
+          acceptanceBundleId: acceptanceId,
+          blindInputPolicy: acceptance.blindInputPolicy,
+          acceptanceFocus: task.definitionOfDone,
+        };
+      } else {
+        task.handoffToAcceptance.acceptanceBundleId = acceptanceId;
+      }
+      this.persistTask(task);
+    }
+  }
+
   /** Find the latest acceptance for a given task ID. */
   getAcceptanceByTaskId(taskId: string): AcceptanceBundle | undefined {
     let latest: AcceptanceBundle | undefined;
@@ -959,6 +1004,106 @@ function fallbackDevTemplate(): string {
     "{{receiptTemplate}}",
     "```",
   ].join("\n");
+}
+
+/**
+ * Build a research-role dispatch prompt.
+ * Research tasks produce findings/reports, not code commits.
+ */
+export function buildResearchPrompt(
+  task: TaskBundle,
+  kbContext?: string,
+): string {
+  const lines = [
+    `# Research Task: ${task.title} [${task.taskId}]`,
+    "",
+    task.context,
+    "",
+    "## Task Bundle",
+    "```json",
+    JSON.stringify({
+      taskId: task.taskId,
+      priority: task.priority,
+      definitionOfDone: task.definitionOfDone,
+      readScope: task.readScope,
+      allowedWriteScope: task.allowedWriteScope,
+    }, null, 2),
+    "```",
+    "",
+    "## Research Instructions",
+    "- Conduct deep research on the topic described above.",
+    "- Use web search, codebase analysis, and KB resources as needed.",
+    "- Produce structured findings with evidence and recommendations.",
+    "- No code commits expected — output your research report as your final message.",
+    "",
+    "## Output Format",
+    "Return a JSON research report as your final message:",
+    "```json",
+    JSON.stringify({
+      researcher: "",
+      summary: "",
+      findings: [""],
+      recommendations: [""],
+      evidence: [""],
+      completedAt: "",
+    }, null, 2),
+    "```",
+  ];
+
+  if (kbContext) {
+    lines.push("", "## Project Knowledge Base Context", kbContext);
+  }
+
+  return lines.join("\n");
+}
+
+/**
+ * Build a design-role dispatch prompt.
+ * Design tasks produce design artifacts, not code commits.
+ */
+export function buildDesignPrompt(
+  task: TaskBundle,
+  kbContext?: string,
+): string {
+  const lines = [
+    `# Design Task: ${task.title} [${task.taskId}]`,
+    "",
+    task.context,
+    "",
+    "## Task Bundle",
+    "```json",
+    JSON.stringify({
+      taskId: task.taskId,
+      priority: task.priority,
+      definitionOfDone: task.definitionOfDone,
+      readScope: task.readScope,
+      allowedWriteScope: task.allowedWriteScope,
+    }, null, 2),
+    "```",
+    "",
+    "## Design Instructions",
+    "- Produce design artifacts (specs, diagrams, architecture docs) for the topic above.",
+    "- Reference existing code patterns and KB docs as needed.",
+    "- No code implementation expected — output your design document as your final message.",
+    "",
+    "## Output Format",
+    "Return a JSON design report as your final message:",
+    "```json",
+    JSON.stringify({
+      designer: "",
+      summary: "",
+      designDoc: "",
+      artifacts: [""],
+      completedAt: "",
+    }, null, 2),
+    "```",
+  ];
+
+  if (kbContext) {
+    lines.push("", "## Project Knowledge Base Context", kbContext);
+  }
+
+  return lines.join("\n");
 }
 
 /**
