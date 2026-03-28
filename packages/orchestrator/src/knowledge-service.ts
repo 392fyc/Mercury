@@ -251,6 +251,7 @@ export class KnowledgeService {
     try {
       const { stdout } = await execFileAsync(this.obsidianBin, fullArgs, {
         timeout: 15_000,
+        windowsHide: true,
       });
       return stdout;
     } catch (err) {
@@ -387,10 +388,12 @@ export class KnowledgeService {
       await execFileAsync("git", ["add", "-A"], {
         cwd: vaultPath,
         timeout: 10_000,
+        windowsHide: true,
       });
       await execFileAsync("git", ["commit", "-m", message, "--allow-empty"], {
         cwd: vaultPath,
         timeout: 10_000,
+        windowsHide: true,
       });
     } catch {
       // Fire-and-forget: log but never throw
