@@ -281,6 +281,7 @@ export interface TaskBundle {
   closedAt: string | null;
   failedAt: string | null;
   assignedTo: string;
+  role?: string;
   assignee?: TaskAssignee;
   branch?: string;
   codeScope: { include: string[]; exclude: string[] };

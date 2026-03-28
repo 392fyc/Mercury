@@ -16,6 +16,16 @@ const {
   loadTasks,
 } = useTaskStore();
 
+/** Role filter — null means "all roles". */
+const roleFilter = ref<string | null>(null);
+
+const ROLE_LABELS: { role: string | null; label: string; color: string }[] = [
+  { role: null, label: "All Roles", color: "var(--text-secondary)" },
+  { role: "dev", label: "Dev", color: "var(--accent-sub)" },
+  { role: "research", label: "Research", color: "var(--accent-success)" },
+  { role: "design", label: "Design", color: "var(--accent-info, #a78bfa)" },
+];
+
 const isRefreshing = ref(false);
 const refreshError = ref(false);
 
@@ -89,9 +99,16 @@ const totalCount = computed(() =>
   Object.values(statusCounts.value).reduce((a, b) => a + (b ?? 0), 0),
 );
 
-/** Tasks sorted by status priority, then by most recent timestamp descending. */
+/** Tasks filtered by role, then sorted by status priority and timestamp. */
+const roleFilteredTasks = computed(() => {
+  if (!roleFilter.value) return filteredTasks.value;
+  return filteredTasks.value.filter(
+    (t) => (t.role ?? "dev") === roleFilter.value,
+  );
+});
+
 const sortedTasks = computed(() =>
-  [...filteredTasks.value].sort((a, b) => {
+  [...roleFilteredTasks.value].sort((a, b) => {
     const sa = STATUS_ORDER[a.status] ?? 99;
     const sb = STATUS_ORDER[b.status] ?? 99;
     if (sa !== sb) {
@@ -103,6 +120,11 @@ const sortedTasks = computed(() =>
     return timeB.localeCompare(timeA);
   }),
 );
+
+/** Return the color for a task role. */
+function roleColor(role: string | undefined): string {
+  return ROLE_LABELS.find((r) => r.role === (role ?? "dev"))?.color ?? "var(--text-muted)";
+}
 
 /** Dispatch a drafted task and refresh its local state. */
 async function handleDispatch(taskId: string) {
@@ -157,6 +179,20 @@ async function handleCreateAcceptance(taskId: string) {
       </button>
     </div>
 
+    <!-- Role Filter -->
+    <div class="role-bar">
+      <button
+        v-for="r in ROLE_LABELS"
+        :key="r.label"
+        class="role-badge"
+        :class="{ active: roleFilter === r.role }"
+        @click="roleFilter = r.role"
+      >
+        <span class="badge-dot" :style="{ background: r.color }"></span>
+        <span class="badge-label">{{ r.label }}</span>
+      </button>
+    </div>
+
     <div class="dashboard-body">
       <!-- Task List -->
       <div class="task-list">
@@ -171,6 +207,7 @@ async function handleCreateAcceptance(taskId: string) {
           <span class="task-id">{{ task.taskId }}</span>
           <span class="task-title">{{ task.title }}</span>
           <span class="task-assignee">{{ task.assignee?.agentId ?? task.assignedTo }}</span>
+          <span class="task-role" :style="{ color: roleColor(task.role) }">{{ task.role ?? 'dev' }}</span>
           <span class="task-priority" :class="task.priority">{{ priorityLabel(task.priority) }}</span>
         </div>
 
@@ -197,6 +234,12 @@ async function handleCreateAcceptance(taskId: string) {
             <span class="meta-label">Priority</span>
             <span class="meta-value" :class="selectedTask.priority">
               {{ priorityLabel(selectedTask.priority) }}
+            </span>
+          </div>
+          <div class="meta-row">
+            <span class="meta-label">Role</span>
+            <span class="meta-value" :style="{ color: roleColor(selectedTask.role) }">
+              {{ selectedTask.role ?? 'dev' }}
             </span>
           </div>
           <div class="meta-row">
@@ -372,6 +415,39 @@ async function handleCreateAcceptance(taskId: string) {
   color: var(--text-muted);
 }
 
+.role-bar {
+  display: flex;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+
+.role-badge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 10px;
+  cursor: pointer;
+  font-family: var(--font-mono);
+}
+
+.role-badge:hover {
+  background: var(--bg-panel);
+}
+
+.role-badge.active {
+  background: var(--bg-panel);
+  border-color: var(--accent-main);
+  color: var(--text-primary);
+}
+
 .dashboard-body {
   display: grid;
   grid-template-columns: 3fr 2fr;
@@ -431,6 +507,12 @@ async function handleCreateAcceptance(taskId: string) {
 .task-assignee {
   color: var(--text-secondary);
   font-size: 11px;
+}
+
+.task-role {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
 }
 
 .task-priority {
