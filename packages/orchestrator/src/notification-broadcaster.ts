@@ -37,6 +37,15 @@ export class NotificationBroadcaster {
     return this.channels.size;
   }
 
+  /** Count channels whose name starts with the given prefix. */
+  countByPrefix(prefix: string): number {
+    let count = 0;
+    for (const name of this.channels.keys()) {
+      if (name.startsWith(prefix)) count++;
+    }
+    return count;
+  }
+
   broadcast(method: string, params: Record<string, unknown>): void {
     for (const ch of this.channels.values()) {
       try {

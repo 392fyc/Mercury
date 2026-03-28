@@ -455,30 +455,25 @@ export class McpHttpSessionManager {
       return;
     }
 
-    // New session: only via POST (MCP initialize)
-    if (req.method === "POST") {
+    // New session: only via POST without session header (MCP initialize)
+    if (req.method === "POST" && !sessionId) {
       await this.createSession(req, res);
       return;
     }
 
-    // GET/DELETE without valid session
+    // POST with invalid/expired session ID → 404
     if (sessionId) {
       res.statusCode = 404;
       res.end(JSON.stringify({ error: "Session not found" }));
-    } else {
-      res.statusCode = 400;
-      res.end(JSON.stringify({ error: "Missing MCP-Session-Id header" }));
+      return;
     }
+
+    // GET/DELETE without session header
+    res.statusCode = 400;
+    res.end(JSON.stringify({ error: "Missing MCP-Session-Id header" }));
   }
 
   private async createSession(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID(),
-      onsessioninitialized: (sid) => {
-        this.log(`MCP HTTP session initialized: ${sid}`);
-      },
-    });
-
     const server = new McpServer(
       { name: "mercury-orchestrator", version: "0.1.0" },
       { capabilities: { tools: {} } },
@@ -486,7 +481,33 @@ export class McpHttpSessionManager {
 
     registerMcpTools(server, this.orchestrator);
 
-    // Wire session lifecycle
+    // sessionId is generated inside handleRequest() during MCP initialize,
+    // so we register the session in onsessioninitialized — the SDK hook
+    // designed for multi-session tracking (verified: MCP TS SDK docs).
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+      onsessioninitialized: (sid) => {
+        this.log(`MCP HTTP session initialized: ${sid}`);
+        this.sessions.set(sid, { server, transport });
+
+        // Register as broadcaster channel for event fan-out
+        if (this.broadcaster) {
+          this.broadcaster.addChannel({
+            name: `mcp-http:${sid}`,
+            send: (method: string, params: Record<string, unknown>) => {
+              server.server.sendLoggingMessage({
+                level: method === "log" ? "info" : "debug",
+                logger: "mercury",
+                data: { method, ...params },
+              }).catch(() => {});
+            },
+            close: () => {},
+          });
+        }
+      },
+    });
+
+    // Wire session lifecycle cleanup
     transport.onclose = () => {
       const sid = transport.sessionId;
       if (sid) {
@@ -500,27 +521,7 @@ export class McpHttpSessionManager {
 
     await server.connect(transport);
 
-    // Register as broadcaster channel for event fan-out
-    const sid = transport.sessionId;
-    if (sid) {
-      this.sessions.set(sid, { server, transport });
-
-      if (this.broadcaster) {
-        this.broadcaster.addChannel({
-          name: `mcp-http:${sid}`,
-          send: (method: string, params: Record<string, unknown>) => {
-            server.server.sendLoggingMessage({
-              level: method === "log" ? "info" : "debug",
-              logger: "mercury",
-              data: { method, ...params },
-            }).catch(() => {});
-          },
-          close: () => {},
-        });
-      }
-    }
-
-    // Handle the initial request that created this session
+    // Handle the initial request — this triggers sessionId generation
     await transport.handleRequest(req, res);
   }
 

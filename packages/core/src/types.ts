@@ -97,16 +97,18 @@ export interface RTKConfig {
 }
 
 export interface TransportsConfig {
-  stdio?: boolean;
+  /** HTTP JSON-RPC server. Enabled by default on 127.0.0.1:7654. */
   http?: {
     enabled?: boolean;
     host?: string;
     port?: number;
   };
+  /** MCP Streamable HTTP on /mcp. Requires http to be enabled. */
   mcp?: {
     enabled?: boolean;
     path?: string;
   };
+  /** Native SSE event stream on /events. Disabled by default. */
   sse?: {
     enabled?: boolean;
     path?: string;
