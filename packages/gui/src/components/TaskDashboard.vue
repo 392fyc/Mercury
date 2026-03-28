@@ -69,9 +69,13 @@ function statusColor(status: TaskStatus): string {
   return STATUS_LABELS.find((s) => s.status === status)?.color ?? "var(--text-muted)";
 }
 
+const KNOWN_PRIORITIES = new Set(["P0", "P1", "P2", "P3"]);
+
 /** Convert a priority slug (e.g. "P1") to an uppercase display label. */
 function priorityLabel(p: string | undefined | null): string {
-  return p ? p.toUpperCase() : "-";
+  if (!p) return "-";
+  const normalized = p.toUpperCase();
+  return KNOWN_PRIORITIES.has(normalized) ? normalized : "-";
 }
 
 /** Format an ISO date string for display; returns "-" for invalid dates. */
