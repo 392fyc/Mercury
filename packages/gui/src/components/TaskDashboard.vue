@@ -467,7 +467,7 @@ async function handleCreateAcceptance(taskId: string) {
 
 .task-row {
   display: grid;
-  grid-template-columns: 10px 90px 1fr auto auto;
+  grid-template-columns: 10px 90px 1fr auto auto auto;
   align-items: center;
   gap: 8px;
   padding: 6px 8px;
