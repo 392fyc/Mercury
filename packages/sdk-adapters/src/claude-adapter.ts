@@ -316,22 +316,41 @@ export class ClaudeAdapter implements AgentAdapter {
     if (!session) throw new Error(`Session ${sessionId} not found`);
 
     const cwd = this.sessionCwd.get(sessionId) ?? process.cwd();
+    // Built-in tool names derived from ToolInputSchemas in the Agent SDK.
+    // Verified: https://platform.claude.com/docs/en/agent-sdk/typescript
     const options: Record<string, unknown> = {
       allowedTools: [
+        // Core file & code tools
         "Read",
         "Edit",
         "Write",
         "Bash",
         "Glob",
         "Grep",
+        "NotebookEdit",
+        // Agent & task management
         "Agent",
+        "TodoWrite",
+        "TaskOutput",
+        "TaskStop",
+        // Web research — required for CLAUDE.md web-verify mandate
+        "WebSearch",
+        "WebFetch",
+        // Interactive & planning
+        "AskUserQuestion",
+        "ExitPlanMode",
+        "EnterWorktree",
+        // MCP tools — auto-loaded from .mcp.json in project cwd.
+        // Wildcard grants all orchestrator tools (kb, task, session, etc.).
+        // Verified: https://platform.claude.com/docs/en/agent-sdk/mcp
+        "mcp__mercury-orchestrator__*",
       ],
       permissionMode: "acceptEdits",
       maxTurns: 30,
       cwd,
       // Enable partial message streaming — yields StreamEvent objects alongside
       // AssistantMessage/ResultMessage for real-time token display.
-      // Ref: https://platform.claude.com/docs/en/agent-sdk/streaming-output
+      // Verified: https://platform.claude.com/docs/en/agent-sdk/streaming-output
       includePartialMessages: true,
     };
 
