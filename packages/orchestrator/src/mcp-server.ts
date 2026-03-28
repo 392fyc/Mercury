@@ -505,6 +505,12 @@ export class McpHttpSessionManager {
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (sid) => {
+        // Double-check limit (guard against TOCTOU race)
+        if (this.sessions.size >= this.maxSessions) {
+          this.log(`MCP HTTP session rejected (over limit): ${sid}`);
+          transport.close();
+          return;
+        }
         this.log(`MCP HTTP session initialized: ${sid}`);
         this.sessions.set(sid, { server, transport });
 
