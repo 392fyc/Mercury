@@ -254,22 +254,36 @@ function resolveRpcPort(config: MercuryConfig): number {
 
   // New config path: transports.http.port
   const httpPort = config.transports?.http?.port;
-  if (typeof httpPort === "number" && Number.isInteger(httpPort)) {
+  if (typeof httpPort === "number" && Number.isInteger(httpPort) && httpPort >= 1 && httpPort <= 65535) {
     return httpPort;
+  }
+  if (httpPort !== undefined) {
+    transport.log(`Invalid transports.http.port=${httpPort}, falling back to config/default`);
   }
 
   // Legacy config path: rpcPort
-  if (typeof config.rpcPort === "number" && Number.isInteger(config.rpcPort)) {
+  if (typeof config.rpcPort === "number" && Number.isInteger(config.rpcPort) && config.rpcPort >= 1 && config.rpcPort <= 65535) {
     return config.rpcPort;
+  }
+  if (config.rpcPort !== undefined) {
+    transport.log(`Invalid rpcPort=${config.rpcPort}, falling back to default`);
   }
 
   return DEFAULT_RPC_PORT;
 }
 
+// Phase 1: only accept loopback hosts (127.0.0.1, ::1, localhost) for security.
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
+
 /** Resolve transports config with defaults. stdio is not user-configurable (always on in sidecar). */
 function resolveTransports(config: MercuryConfig): TransportsConfig {
+  const userHost = config.transports?.http?.host;
+  const host = userHost && LOOPBACK_HOSTS.has(userHost) ? userHost : "127.0.0.1";
+  if (userHost && !LOOPBACK_HOSTS.has(userHost)) {
+    transport.log(`Ignoring non-loopback transports.http.host="${userHost}", using 127.0.0.1 (localhost-only binding)`);
+  }
   return {
-    http: { enabled: true, host: "127.0.0.1", ...config.transports?.http },
+    http: { enabled: true, ...config.transports?.http, host },
     mcp: { enabled: true, path: "/mcp", ...config.transports?.mcp },
     sse: { enabled: false, path: "/events", maxConnections: 10, heartbeatIntervalMs: 30000, ...config.transports?.sse },
   };
@@ -382,7 +396,7 @@ async function handleJsonRpcPost(
   }
 
   if (!isJsonRpcRequest(payload)) {
-    sendHttpJson(res, 400, { jsonrpc: "2.0", error: { code: -32603, message: "Invalid JSON-RPC request" }, id: null }, req);
+    sendHttpJson(res, 400, { jsonrpc: "2.0", error: { code: -32600, message: "Invalid Request" }, id: null }, req);
     return;
   }
 
@@ -431,21 +445,26 @@ function handleSseConnection(
     res.write(":heartbeat\n\n");
   }, heartbeatMs);
 
+  let cleanedUp = false;
+  const cleanup = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    clearInterval(heartbeat);
+    broadcaster.removeChannel(channelName);
+    if (!res.writableEnded) res.end();
+  };
+
   broadcaster.addChannel({
     name: channelName,
     send: (method: string, params: Record<string, unknown>) => {
       res.write(`event: ${method}\ndata: ${JSON.stringify(params)}\n\n`);
     },
-    close: () => {
-      clearInterval(heartbeat);
-      if (!res.writableEnded) res.end();
-    },
+    close: cleanup,
   });
 
-  req.on("close", () => {
-    clearInterval(heartbeat);
-    broadcaster.removeChannel(channelName);
-  });
+  req.once("close", cleanup);
+  res.once("close", cleanup);
+  res.once("error", cleanup);
 }
 
 interface HttpServerContext {
@@ -463,7 +482,7 @@ interface HttpServerContext {
  *   GET  /health     — Health check
  *   POST /           — Legacy JSON-RPC (backward compat with TASK-ARCH-005 clients)
  */
-function createHttpServer(ctx: HttpServerContext, port: number): Server {
+function createHttpServer(ctx: HttpServerContext, host: string, port: number): Server {
   const { orchestrator, mcpSessions, broadcaster, transportsConfig } = ctx;
   const mcpPath = transportsConfig.mcp?.path ?? "/mcp";
   const ssePath = transportsConfig.sse?.path ?? "/events";
@@ -515,12 +534,12 @@ function createHttpServer(ctx: HttpServerContext, port: number): Server {
 
     res.statusCode = 404;
     res.end("Not Found");
-  }).listen(port, "127.0.0.1", () => {
+  }).listen(port, host, () => {
     const routes = ["POST /rpc (JSON-RPC)"];
     if (transportsConfig.mcp?.enabled !== false) routes.push(`POST|GET|DELETE ${mcpPath} (MCP)`);
     if (transportsConfig.sse?.enabled) routes.push(`GET ${ssePath} (SSE)`);
     routes.push("GET /health");
-    transport.log(`HTTP server listening on http://127.0.0.1:${port} — routes: ${routes.join(", ")}`);
+    transport.log(`HTTP server listening on http://${host}:${port} — routes: ${routes.join(", ")}`);
   });
 }
 
@@ -587,7 +606,8 @@ function startTransports(orchestrator: Orchestrator, registry: AgentRegistry, co
       ? new McpHttpSessionManager(orchestrator, broadcaster, (msg) => transport.log(msg))
       : null;
 
-    const httpServer = createHttpServer({ orchestrator, mcpSessions, broadcaster, transportsConfig }, port);
+    const httpHost = transportsConfig.http?.host ?? "127.0.0.1";
+    const httpServer = createHttpServer({ orchestrator, mcpSessions, broadcaster, transportsConfig }, httpHost, port);
     wireShutdown(httpServer, mcpSessions, broadcaster);
   }
 
