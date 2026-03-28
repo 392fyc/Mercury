@@ -80,6 +80,11 @@ const MIGRATIONS = [
       );
     `,
   },
+  {
+    version: 2,
+    description: "add_task_role_column",
+    sql: `ALTER TABLE tasks ADD COLUMN role TEXT DEFAULT 'dev';`,
+  },
 ];
 
 function applyMigrations(db: Database.Database, log: Log): void {
@@ -138,13 +143,13 @@ export class TaskPersistenceSqlite implements TaskPersistence {
           created_at, closed_at, failed_at, assigned_to, branch,
           context, dispatch_attempts, max_dispatch_attempts,
           last_dispatch_error, rework_count, max_reworks,
-          originator_session_id, raw_json
+          originator_session_id, role, raw_json
         ) VALUES (
           @task_id, @title, @status, @priority, @phase_id,
           @created_at, @closed_at, @failed_at, @assigned_to, @branch,
           @context, @dispatch_attempts, @max_dispatch_attempts,
           @last_dispatch_error, @rework_count, @max_reworks,
-          @originator_session_id, @raw_json
+          @originator_session_id, @role, @raw_json
         )
       `),
 
@@ -229,6 +234,7 @@ export class TaskPersistenceSqlite implements TaskPersistence {
       rework_count: task.reworkCount ?? 0,
       max_reworks: task.maxReworks ?? 2,
       originator_session_id: task.originatorSessionId ?? null,
+      role: task.role ?? "dev",
       raw_json: JSON.stringify({ ...task, priority }),
     });
   }

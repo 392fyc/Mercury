@@ -35,6 +35,8 @@ import type { RpcTransport } from "./rpc-transport.js";
 import {
   TaskManager,
   buildDevPrompt,
+  buildResearchPrompt,
+  buildDesignPrompt,
   buildReferencePrompt,
   buildAcceptancePrompt,
   buildReworkPrompt,
@@ -755,8 +757,20 @@ export class Orchestrator {
           params.taskId as string,
           (params.oneShot as boolean | null) ?? undefined,
         );
-      case "create_task":
-        return this.taskManager.createTask(params as unknown as CreateTaskParams);
+      case "create_task": {
+        const createParams = params as unknown as CreateTaskParams & { _mcpOriginatorSessionId?: string };
+        const mcpOriginatorId = createParams._mcpOriginatorSessionId;
+        delete (createParams as unknown as Record<string, unknown>)._mcpOriginatorSessionId;
+        const created = this.taskManager.createTask(createParams);
+        // If dispatched from MCP HTTP client, store originator for callback routing
+        if (mcpOriginatorId && typeof created === "object" && created !== null) {
+          const taskId = (created as { taskId: string }).taskId;
+          if (taskId) {
+            this.taskManager.updateTaskField(taskId, "originatorSessionId", mcpOriginatorId);
+          }
+        }
+        return created;
+      }
       case "get_task":
         return (await this.taskManager.getTaskAsync(params.taskId as string)) ?? null;
       case "get_task_result":
@@ -1721,6 +1735,15 @@ export class Orchestrator {
     }
     if (role === "acceptance") {
       await this.handleAcceptanceStreamComplete(task, finalMessage);
+      return;
+    }
+    if (role === "research") {
+      await this.handleResearchStreamComplete(task, agentId, finalMessage);
+      return;
+    }
+    if (role === "design") {
+      await this.handleDesignStreamComplete(task, agentId, finalMessage);
+      return;
     }
   }
 
@@ -1788,6 +1811,95 @@ export class Orchestrator {
       return;
     }
     await this.recordAcceptanceFlow(acceptanceId, results);
+  }
+
+  /**
+   * Handle research task completion — fast-track to closed (no review/acceptance cycle).
+   */
+  private async handleResearchStreamComplete(
+    task: TaskBundle,
+    agentId: string,
+    finalMessage: string,
+  ): Promise<void> {
+    if (task.status !== "in_progress") return;
+
+    this.transport.sendNotification("log", {
+      message: `[task] Research task ${task.taskId} completed by ${agentId}, fast-tracking to closed`,
+    });
+
+    // Store a lightweight receipt
+    const parsed = this.tryParseJsonRecord(finalMessage);
+    const receipt: ImplementationReceipt = {
+      implementer: agentId,
+      branch: "",
+      summary: this.readString(parsed?.summary) ?? finalMessage.slice(0, 500),
+      changedFiles: [],
+      evidence: this.readStringArray(parsed?.findings) ?? this.readStringArray(parsed?.evidence) ?? [],
+      docsUpdated: [],
+      residualRisks: [],
+      completedAt: Date.now(),
+    };
+
+    // Fast-track through full state machine: in_progress → implementation_done → main_review → acceptance → verified → closed
+    this.taskManager.transitionTask(task.taskId, "implementation_done", agentId);
+    this.taskManager.updateTaskField(task.taskId, "implementationReceipt", receipt);
+    this.taskManager.transitionTask(task.taskId, "main_review", agentId);
+    this.taskManager.transitionTask(task.taskId, "acceptance", agentId);
+    this.taskManager.transitionTask(task.taskId, "verified", agentId);
+    this.taskManager.transitionTask(task.taskId, "closed", agentId);
+
+    // Emit callback so originator is notified
+    this.bus.emit("orchestrator.task.callback", agentId, "orchestrator", {
+      taskId: task.taskId,
+      originatorSessionId: task.originatorSessionId,
+      verdict: "pass",
+      findings: this.readStringArray(parsed?.findings) ?? [],
+      recommendations: this.readStringArray(parsed?.recommendations) ?? [],
+    });
+  }
+
+  /**
+   * Handle design task completion — fast-track to closed (no review/acceptance cycle).
+   */
+  private async handleDesignStreamComplete(
+    task: TaskBundle,
+    agentId: string,
+    finalMessage: string,
+  ): Promise<void> {
+    if (task.status !== "in_progress") return;
+
+    this.transport.sendNotification("log", {
+      message: `[task] Design task ${task.taskId} completed by ${agentId}, fast-tracking to closed`,
+    });
+
+    const parsed = this.tryParseJsonRecord(finalMessage);
+    const receipt: ImplementationReceipt = {
+      implementer: agentId,
+      branch: "",
+      summary: this.readString(parsed?.summary) ?? finalMessage.slice(0, 500),
+      changedFiles: [],
+      evidence: this.readStringArray(parsed?.artifacts) ?? [],
+      docsUpdated: [],
+      residualRisks: [],
+      completedAt: Date.now(),
+    };
+
+    // Fast-track through full state machine: in_progress → ... → closed
+    this.taskManager.transitionTask(task.taskId, "implementation_done", agentId);
+    this.taskManager.updateTaskField(task.taskId, "implementationReceipt", receipt);
+    this.taskManager.transitionTask(task.taskId, "main_review", agentId);
+    this.taskManager.transitionTask(task.taskId, "acceptance", agentId);
+    this.taskManager.transitionTask(task.taskId, "verified", agentId);
+    this.taskManager.transitionTask(task.taskId, "closed", agentId);
+
+    // Emit callback so originator is notified
+    this.bus.emit("orchestrator.task.callback", agentId, "orchestrator", {
+      taskId: task.taskId,
+      originatorSessionId: task.originatorSessionId,
+      verdict: "pass",
+      findings: [],
+      recommendations: [],
+    });
   }
 
   private parseImplementationReceipt(
@@ -2277,7 +2389,7 @@ export class Orchestrator {
   private async prepareBundleTaskExecution(taskId: string): Promise<{
     task: TaskBundle;
     prompt: string;
-    devRolePrompt: string;
+    rolePrompt: string;
     baseRolePrompt: string;
   }> {
     const task = await this.taskManager.getTaskAsync(taskId);
@@ -2288,15 +2400,20 @@ export class Orchestrator {
       task.assignedTo = (task.assignedTo as unknown as { agentId: string }).agentId;
     }
 
-    const mainAgentId = this.findMainAgentId();
-    if (mainAgentId) {
-      const mainSlot = makeRoleSlotKey("main", mainAgentId);
-      this.taskManager.updateTaskField(
-        taskId,
-        "originatorSessionId",
-        this.roleSessions.get(mainSlot),
-      );
+    // Only set originatorSessionId if not already set (preserves MCP originator)
+    if (!task.originatorSessionId) {
+      const mainAgentId = this.findMainAgentId();
+      if (mainAgentId) {
+        const mainSlot = makeRoleSlotKey("main", mainAgentId);
+        this.taskManager.updateTaskField(
+          taskId,
+          "originatorSessionId",
+          this.roleSessions.get(mainSlot),
+        );
+      }
     }
+
+    const role: AgentRole = task.role ?? "dev";
 
     let kbContext: string | undefined;
     if (this.kb?.isEnabled() && task.readScope.requiredDocs.length > 0) {
@@ -2307,11 +2424,21 @@ export class Orchestrator {
       }
     }
 
+    // Build role-appropriate prompt
+    let prompt: string;
+    if (role === "research") {
+      prompt = buildResearchPrompt(task, kbContext);
+    } else if (role === "design") {
+      prompt = buildDesignPrompt(task, kbContext);
+    } else {
+      prompt = buildDevPrompt(task, kbContext, this.getProjectRoot());
+    }
+
     return {
       task,
-      prompt: buildDevPrompt(task, kbContext, this.getProjectRoot()),
-      devRolePrompt: this.buildSystemRolePrompt("dev", task),
-      baseRolePrompt: this.buildSystemRolePrompt("dev"),
+      prompt,
+      rolePrompt: this.buildSystemRolePrompt(role, task),
+      baseRolePrompt: this.buildSystemRolePrompt(role),
     };
   }
 
@@ -2335,9 +2462,10 @@ export class Orchestrator {
       };
     }
 
-    const { task, prompt, devRolePrompt, baseRolePrompt } =
+    const { task, prompt, rolePrompt, baseRolePrompt } =
       await this.prepareBundleTaskExecution(taskId);
     const agentId = task.assignedTo;
+    const role: AgentRole = task.role ?? "dev";
     const adapter = this.registry.getAdapter(agentId);
     if (!adapter.executeOneShot) {
       throw new Error(`Agent ${agentId} does not support executeOneShot()`);
@@ -2352,9 +2480,9 @@ export class Orchestrator {
 
     const cwd = this.agentCwds.get(agentId) ?? process.cwd();
     const startedAt = Date.now();
-    const sessionName = this.buildRoleSessionName(agentId, "dev", task.title);
+    const sessionName = this.buildRoleSessionName(agentId, role, task.title);
     const result = await adapter.executeOneShot(
-      this.wrapPromptWithRoleContext(prompt, devRolePrompt),
+      this.wrapPromptWithRoleContext(prompt, rolePrompt),
       cwd,
     );
 
@@ -2370,8 +2498,8 @@ export class Orchestrator {
     const session: SessionInfo = {
       sessionId,
       agentId,
-      role: "dev",
-      frozenRole: "dev",
+      role,
+      frozenRole: role,
       sessionName,
       cwd: nativeInfo?.cwd ?? cwd,
       startedAt: nativeInfo?.startedAt ?? startedAt,
@@ -2380,16 +2508,16 @@ export class Orchestrator {
       tokenLimit: nativeInfo?.tokenLimit,
       status: "completed",
       resumeToken: result.threadId,
-      frozenSystemPrompt: devRolePrompt,
+      frozenSystemPrompt: rolePrompt,
       baseRolePromptHash: this.hashPrompt(baseRolePrompt),
-      promptHash: this.hashPrompt(devRolePrompt),
+      promptHash: this.hashPrompt(rolePrompt),
     };
 
     this.sessions.set(sessionId, session);
     this.taskManager.bindSession(taskId, sessionId);
 
     this.bus.emit("agent.session.start", agentId, sessionId, {
-      role: "dev",
+      role,
       sessionName,
       promptHash: session.promptHash,
       currentPromptHash: undefined,
@@ -2501,7 +2629,8 @@ export class Orchestrator {
         // This try/catch only catches synchronous failures (session creation,
         // state transitions). Streaming failures trigger G2 crash recovery
         // in streamMessages() catch handler — automatic re-dispatch.
-        const { task: freshTask, prompt, devRolePrompt } = await this.prepareBundleTaskExecution(taskId);
+        const { task: freshTask, prompt, rolePrompt } = await this.prepareBundleTaskExecution(taskId);
+        const role: AgentRole = freshTask.role ?? "dev";
 
         // Transition: drafted → dispatched → in_progress
         if (freshTask.status === "drafted") {
@@ -2509,7 +2638,7 @@ export class Orchestrator {
         }
 
         // Start role-scoped session for assigned agent
-        const session = await this.startRoleSession(freshTask.assignedTo, "dev", freshTask.title, devRolePrompt);
+        const session = await this.startRoleSession(freshTask.assignedTo, role, freshTask.title, rolePrompt);
         this.taskManager.bindSession(taskId, session.sessionId);
 
         // Transition to in_progress (only if not already there)
@@ -2522,9 +2651,9 @@ export class Orchestrator {
           freshTask.assignedTo,
           prompt,
           undefined,
-          "dev",
+          role,
           freshTask.title,
-          devRolePrompt,
+          rolePrompt,
           freshTask.taskId,
         );
 
@@ -2563,6 +2692,15 @@ export class Orchestrator {
    * Called when acceptance result (pass/fail/partial/blocked) is recorded.
    */
   private async deliverTaskCallback(payload: TaskCallbackPayload): Promise<void> {
+    // If originator is an external MCP client, broadcaster already delivered the event.
+    // Do NOT activate internal Main Agent session — the MCP client receives via mercury_event.
+    if (payload.originatorSessionId?.startsWith("mcp-http:")) {
+      this.transport.sendNotification("log", {
+        message: `[orchestrator] Task callback for ${payload.taskId} — MCP originator (${payload.originatorSessionId}), relying on broadcaster`,
+      });
+      return;
+    }
+
     const mainAgentId = this.findMainAgentId();
     if (!mainAgentId) return;
 
@@ -2573,6 +2711,16 @@ export class Orchestrator {
       this.transport.sendNotification("log", {
         message: `[orchestrator] No active Main Agent session for callback delivery (task: ${payload.taskId})`,
       });
+      return;
+    }
+
+    // Stale session guard: validate session exists and is not completed/overflow
+    const session = this.sessions.get(activeSessionId);
+    if (!session || session.status === "completed" || session.status === "overflow") {
+      this.transport.sendNotification("log", {
+        message: `[orchestrator] Main Agent session ${activeSessionId} is stale (${session?.status ?? "missing"}), skipping callback for ${payload.taskId}`,
+      });
+      this.roleSessions.delete(mainSlot);
       return;
     }
 
@@ -2866,15 +3014,16 @@ export class Orchestrator {
         effectiveReason ?? "Main Agent review: sent back for rework",
       );
 
-      // Send rework directive to dev agent
+      // Send rework directive to the agent in its original role
+      const reworkRole: AgentRole = task.role ?? "dev";
       const reworkPrompt = `# Rework Required [${task.taskId}]\n\nMain Agent review returned this task for rework.\n\n**Reason:** ${effectiveReason ?? "Unspecified"}\n\nPlease address and resubmit.`;
       if (newSession) {
-        const devRolePrompt = this.buildSystemRolePrompt("dev", task);
+        const reworkRolePrompt = this.buildSystemRolePrompt(reworkRole, task);
         const session = await this.startRoleSession(
           task.assignedTo,
-          "dev",
+          reworkRole,
           task.title,
-          devRolePrompt,
+          reworkRolePrompt,
         );
         this.taskManager.bindSession(taskId, session.sessionId);
       }
@@ -2882,9 +3031,9 @@ export class Orchestrator {
         task.assignedTo,
         reworkPrompt,
         undefined,
-        "dev",
+        reworkRole,
         task.title,
-        this.buildSystemRolePrompt("dev", task),
+        this.buildSystemRolePrompt(reworkRole, task),
         task.taskId,
       );
 

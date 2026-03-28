@@ -49,7 +49,11 @@ function rpcTool(
   description: string,
   inputSchema?: Record<string, z.ZodTypeAny>,
 ) {
-  const cb = async (args: Record<string, unknown>) => {
+  const cb = async (args: Record<string, unknown>, extra?: { sessionId?: string }) => {
+    // Inject MCP session ID for task creation so callback routing knows the originator
+    if (name === "create_task" && extra?.sessionId) {
+      args = { ...args, _mcpOriginatorSessionId: `mcp-http:${extra.sessionId}` };
+    }
     const result = await orchestrator.handleRpc(name, args);
     return {
       content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
@@ -163,6 +167,7 @@ function registerMcpTools(server: McpServer, orchestrator: Orchestrator): void {
       title: z.string().describe("Short task title"),
       priority: z.enum(["P0", "P1", "P2", "P3"]).optional().describe("Task priority level"),
       assignedTo: agentId.optional().describe("Agent to assign (auto-selected if omitted)"),
+      role: z.enum(["dev", "research", "design"]).optional().describe("Task dispatch role (default: dev)"),
       description: z.string().optional().describe("Detailed task description"),
       context: z.string().describe("Task context for dev agent"),
       codeScope: z.record(z.string(), z.unknown()).optional().describe("Code scope boundaries"),
