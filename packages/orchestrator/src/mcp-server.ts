@@ -428,6 +428,7 @@ export class McpHttpSessionManager {
   private sessions = new Map<string, McpHttpSession>();
   private log: (msg: string) => void;
   private maxSessions: number;
+  private closing = false;
 
   constructor(
     private orchestrator: Orchestrator,
@@ -437,6 +438,15 @@ export class McpHttpSessionManager {
   ) {
     this.log = logger;
     this.maxSessions = maxSessions;
+  }
+
+  private cleanupSession(sid: string): void {
+    if (this.closing) return;
+    this.sessions.delete(sid);
+    if (this.broadcaster) {
+      this.broadcaster.removeChannel(`mcp-http:${sid}`);
+    }
+    this.log(`MCP HTTP session closed: ${sid}`);
   }
 
   get sessionCount(): number {
@@ -515,15 +525,11 @@ export class McpHttpSessionManager {
       },
     });
 
-    // Wire session lifecycle cleanup
+    // Wire session lifecycle cleanup (guarded against closeAll race)
     transport.onclose = () => {
       const sid = transport.sessionId;
       if (sid) {
-        this.sessions.delete(sid);
-        if (this.broadcaster) {
-          this.broadcaster.removeChannel(`mcp-http:${sid}`);
-        }
-        this.log(`MCP HTTP session closed: ${sid}`);
+        this.cleanupSession(sid);
       }
     };
 
@@ -534,6 +540,7 @@ export class McpHttpSessionManager {
   }
 
   async closeAll(): Promise<void> {
+    this.closing = true;
     for (const [sid, session] of this.sessions) {
       try {
         await session.transport.close();
@@ -545,5 +552,6 @@ export class McpHttpSessionManager {
       }
     }
     this.sessions.clear();
+    this.closing = false;
   }
 }
