@@ -95,7 +95,9 @@ The check prompt should:
    fi
    ```
 
-5. When reviews arrive, cancel the cron job, clean up counter files, and proceed to Phase 3
+5. When reviews arrive:
+   - **Single-PR mode**: cancel the cron job, clean up counter files, proceed to Phase 3
+   - **Multi-PR mode**: only cancel the global cron when ALL tracked PRs have reviews or are merged/closed; process each PR's reviews independently via Phase 3
 
 ### Phase 3: Respond to ALL Review Threads
 
@@ -128,8 +130,9 @@ This includes:
 1. **Read** the relevant code sections before editing
 2. **Edit** files to address valid feedback
 3. **Build** to verify: `pnpm build` (or project-specific build command)
-4. **Commit** with descriptive message referencing what was fixed
-5. **Push**: `git push`
+4. **Milestone code review** — review the diff before committing (per team rule: every milestone must be code-reviewed before commit)
+5. **Commit** with descriptive message referencing what was fixed
+6. **Push**: `git push`
 
 ### Phase 5: Resolve Threads
 
@@ -138,34 +141,48 @@ This includes:
 #### Inline threads — resolve via GraphQL:
 
 The `gh` CLI does not have a native command for resolving review threads.
-Use `gh api graphql` with the `resolveReviewThread` mutation:
+Use `gh api graphql` with the `resolveReviewThread` mutation.
+
+**Note**: `reviewThreads(first: 100)` is paginated. For PRs with >100 threads, use cursor-based pagination (`after: endCursor`) to collect all nodes. Most PRs have <100 threads, but the loop pattern is shown below.
 
 ```bash
-# Get all unresolved thread IDs
-gh api graphql -f query='
-query {
-  repository(owner: "<OWNER>", name: "<NAME>") {
-    pullRequest(number: <N>) {
-      reviewThreads(first: 100) {
-        nodes { id isResolved path }
+# Get all unresolved thread IDs (with pagination for >100 threads)
+CURSOR=""
+ALL_THREADS="[]"
+while true; do
+  AFTER_ARG=""
+  [ -n "$CURSOR" ] && AFTER_ARG=", after: \"$CURSOR\""
+  RESULT=$(gh api graphql -f query="
+  query {
+    repository(owner: \"<OWNER>\", name: \"<NAME>\") {
+      pullRequest(number: <N>) {
+        reviewThreads(first: 100${AFTER_ARG}) {
+          pageInfo { hasNextPage endCursor }
+          nodes { id isResolved path }
+        }
       }
     }
-  }
-}'
+  }")
+  NODES=$(echo "$RESULT" | jq '.data.repository.pullRequest.reviewThreads.nodes')
+  ALL_THREADS=$(echo "$ALL_THREADS $NODES" | jq -s '.[0] + .[1]')
+  HAS_NEXT=$(echo "$RESULT" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage')
+  [ "$HAS_NEXT" != "true" ] && break
+  CURSOR=$(echo "$RESULT" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor')
+done
+
+# Filter unresolved
+UNRESOLVED=$(echo "$ALL_THREADS" | jq '[.[] | select(.isResolved==false)]')
 
 # Resolve each thread using the GraphQL node ID (PRRT_...)
-gh api graphql -F threadId="<THREAD_ID>" -f query='
-mutation($threadId: ID!) {
-  resolveReviewThread(input: { threadId: $threadId }) {
-    thread { id isResolved }
-  }
-}'
+for THREAD_ID in $(echo "$UNRESOLVED" | jq -r '.[].id'); do
+  gh api graphql -f query="mutation { resolveReviewThread(input: {threadId: \"$THREAD_ID\"}) { thread { id isResolved } } }"
+done
 ```
 
 #### Verify all threads resolved:
 
 ```bash
-# Count remaining unresolved threads
+# Count remaining unresolved threads (simple check — for most PRs first:100 suffices)
 gh api graphql -f query='
 query {
   repository(owner: "<OWNER>", name: "<NAME>") {
