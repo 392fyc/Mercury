@@ -17,6 +17,9 @@
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
   --radius: 6px;
   --panel-gap: 4px;
+  --link-color: #4ade80;
+  --link-hover: #86efac;
+  --link-visited: #6ee7b7;
 }
 
 * {
@@ -52,4 +55,18 @@ html, body, #app {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--text-muted);
+}
+
+/* Link styles — LVHA order: link, visited, hover, active */
+a {
+  color: var(--link-color);
+  text-decoration: none;
+}
+a:visited {
+  color: var(--link-visited);
+}
+a:hover,
+a:focus {
+  color: var(--link-hover);
+  text-decoration: underline;
 }

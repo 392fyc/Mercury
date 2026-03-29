@@ -1424,6 +1424,18 @@ watch(
   padding-left: 10px;
   color: var(--text-secondary);
 }
+.markdown-body :deep(a) {
+  color: var(--link-color);
+  text-decoration: none;
+}
+.markdown-body :deep(a:visited) {
+  color: var(--link-visited);
+}
+.markdown-body :deep(a:hover),
+.markdown-body :deep(a:focus) {
+  color: var(--link-hover);
+  text-decoration: underline;
+}
 
 /* Workspace bar above input */
 .workspace-bar {
