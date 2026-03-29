@@ -1428,12 +1428,12 @@ watch(
   color: var(--link-color);
   text-decoration: none;
 }
+.markdown-body :deep(a:visited) {
+  color: var(--link-visited);
+}
 .markdown-body :deep(a:hover) {
   color: var(--link-hover);
   text-decoration: underline;
-}
-.markdown-body :deep(a:visited) {
-  color: var(--link-visited);
 }
 
 /* Workspace bar above input */

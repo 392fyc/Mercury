@@ -17,6 +17,9 @@
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
   --radius: 6px;
   --panel-gap: 4px;
+  --link-color: #4ade80;
+  --link-hover: #86efac;
+  --link-visited: #6ee7b7;
 }
 
 * {
@@ -54,21 +57,15 @@ html, body, #app {
   background: var(--text-muted);
 }
 
-/* Link color variables for dark theme */
-:root {
-  --link-color: #4ade80;
-  --link-hover: #86efac;
-  --link-visited: #6ee7b7;
-}
-
+/* Link styles — LVHA order: link, visited, hover, active */
 a {
   color: var(--link-color);
   text-decoration: none;
 }
+a:visited {
+  color: var(--link-visited);
+}
 a:hover {
   color: var(--link-hover);
   text-decoration: underline;
-}
-a:visited {
-  color: var(--link-visited);
 }
