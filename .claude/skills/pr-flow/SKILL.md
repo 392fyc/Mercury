@@ -101,7 +101,7 @@ The check prompt should:
 
 ### Phase 3: Respond to ALL Review Threads
 
-**Iteration cap**: Track review-fix iterations (Phase 2→5 cycles). Default `MAX_ITERATIONS=3`. If reached:
+**Iteration cap**: Track review-fix iterations (Phase 2→5 cycles). Default `MAX_ITERATIONS=5`. If reached:
 - Log a warning: "Max review iterations reached, requesting human intervention"
 - Post a PR comment notifying the user
 - Stop automatic rework and wait for human guidance
@@ -123,6 +123,7 @@ This includes:
 1. These appear in the review body, not as inline threads
 2. **IMPORTANT**: When posting PR comments (non-direct thread replies), always include `@coderabbitai` mention so CodeRabbit can detect and track the response
 3. Address them in a PR comment summarizing all fixes:
+
    ```bash
    gh pr comment <PR_NUMBER> --body "@coderabbitai
    ## Addressed CodeRabbit review
@@ -131,6 +132,7 @@ This includes:
    ### Outside-diff comments (N/N resolved):
    1. **Issue** (lines X-Y) — fixed in <sha>"
    ```
+
 
 ### Phase 4: Fix Issues and Push
 
@@ -188,9 +190,33 @@ done
 
 #### Verify all threads resolved:
 
-Reuse `ALL_THREADS` from the pagination loop above. Do NOT use a single `first: 100` query — it will miss threads beyond page 1.
+**Important**: After `resolveReviewThread` mutations, `ALL_THREADS` is stale. Re-run the pagination query to get fresh `isResolved` values:
 
 ```bash
+# Re-query threads after resolution (same CURSOR-based loop as above)
+CURSOR=""
+ALL_THREADS="[]"
+while true; do
+  AFTER_ARG=""
+  [ -n "$CURSOR" ] && AFTER_ARG=", after: \"$CURSOR\""
+  RESULT=$(gh api graphql -f query="
+  query {
+    repository(owner: \"<OWNER>\", name: \"<NAME>\") {
+      pullRequest(number: <N>) {
+        reviewThreads(first: 100${AFTER_ARG}) {
+          pageInfo { hasNextPage endCursor }
+          nodes { id isResolved path }
+        }
+      }
+    }
+  }")
+  NODES=$(echo "$RESULT" | jq '.data.repository.pullRequest.reviewThreads.nodes')
+  ALL_THREADS=$(echo "$ALL_THREADS $NODES" | jq -s '.[0] + .[1]')
+  HAS_NEXT=$(echo "$RESULT" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage')
+  [ "$HAS_NEXT" != "true" ] && break
+  CURSOR=$(echo "$RESULT" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor')
+done
+
 UNRESOLVED_COUNT=$(echo "$ALL_THREADS" | jq '[.[] | select(.isResolved==false)] | length')
 if [ "$UNRESOLVED_COUNT" -gt 0 ]; then
   echo "WARNING: $UNRESOLVED_COUNT unresolved threads remain"
@@ -202,12 +228,13 @@ fi
 Increment iteration counter before looping back:
 
 ```bash
+MAX_ITERATIONS=${MAX_ITERATIONS:-5}
 ITER_FILE=".pr-flow-iteration-${PR_NUMBER}"
 ITER=0; [ -f "$ITER_FILE" ] && ITER=$(<"$ITER_FILE")
 ITER=$((ITER + 1)); echo "$ITER" > "$ITER_FILE"
 
-if [ "$ITER" -ge 5 ]; then
-  echo "Max review iterations (5) reached. Requesting human intervention."
+if [ "$ITER" -ge "$MAX_ITERATIONS" ]; then
+  echo "Max review iterations ($MAX_ITERATIONS) reached. Requesting human intervention."
   # Post PR comment and wait for user guidance
   # Optionally file remaining issues as follow-up tasks
 fi
@@ -229,8 +256,30 @@ gh pr checks "$PR_NUMBER"
 gh pr view "$PR_NUMBER" --json reviewDecision --jq '.reviewDecision'
 
 # 3. No unresolved threads (any unresolved thread blocks merge)
-# Reuse the Phase 5 pagination loop to count ALL unresolved threads
-# (see Phase 5 for the full CURSOR-based loop collecting ALL_THREADS)
+# Re-run the Phase 5 CURSOR-based pagination to freshly populate ALL_THREADS
+CURSOR=""
+ALL_THREADS="[]"
+while true; do
+  AFTER_ARG=""
+  [ -n "$CURSOR" ] && AFTER_ARG=", after: \"$CURSOR\""
+  RESULT=$(gh api graphql -f query="
+  query {
+    repository(owner: \"<OWNER>\", name: \"<NAME>\") {
+      pullRequest(number: <N>) {
+        reviewThreads(first: 100${AFTER_ARG}) {
+          pageInfo { hasNextPage endCursor }
+          nodes { id isResolved }
+        }
+      }
+    }
+  }")
+  NODES=$(echo "$RESULT" | jq '.data.repository.pullRequest.reviewThreads.nodes')
+  ALL_THREADS=$(echo "$ALL_THREADS $NODES" | jq -s '.[0] + .[1]')
+  HAS_NEXT=$(echo "$RESULT" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage')
+  [ "$HAS_NEXT" != "true" ] && break
+  CURSOR=$(echo "$RESULT" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor')
+done
+
 UNRESOLVED_COUNT=$(echo "$ALL_THREADS" | jq '[.[] | select(.isResolved==false)] | length')
 if [ "$UNRESOLVED_COUNT" -gt 0 ]; then
   echo "Blocked: $UNRESOLVED_COUNT unresolved review threads remain"
