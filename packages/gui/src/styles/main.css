@@ -54,15 +54,21 @@ html, body, #app {
   background: var(--text-muted);
 }
 
-/* Link styles for dark theme */
+/* Link color variables for dark theme */
+:root {
+  --link-color: #4ade80;
+  --link-hover: #86efac;
+  --link-visited: #6ee7b7;
+}
+
 a {
-  color: #4ade80;
+  color: var(--link-color);
   text-decoration: none;
 }
 a:hover {
-  color: #86efac;
+  color: var(--link-hover);
   text-decoration: underline;
 }
 a:visited {
-  color: #6ee7b7;
+  color: var(--link-visited);
 }

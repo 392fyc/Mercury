@@ -1425,12 +1425,15 @@ watch(
   color: var(--text-secondary);
 }
 .markdown-body :deep(a) {
-  color: #4ade80;
+  color: var(--link-color);
   text-decoration: none;
 }
 .markdown-body :deep(a:hover) {
-  color: #86efac;
+  color: var(--link-hover);
   text-decoration: underline;
+}
+.markdown-body :deep(a:visited) {
+  color: var(--link-visited);
 }
 
 /* Workspace bar above input */
