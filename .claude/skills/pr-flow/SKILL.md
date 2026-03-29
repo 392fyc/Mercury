@@ -116,9 +116,11 @@ This includes:
 
 #### For outside-diff comments:
 1. These appear in the review body, not as inline threads
-2. Address them in a PR comment summarizing all fixes:
+2. **IMPORTANT**: When posting PR comments (non-direct thread replies), always include `@coderabbitai` mention so CodeRabbit can detect and track the response
+3. Address them in a PR comment summarizing all fixes:
    ```bash
-   gh pr comment <PR_NUMBER> --body "## Addressed CodeRabbit review
+   gh pr comment <PR_NUMBER> --body "@coderabbitai
+   ## Addressed CodeRabbit review
    ### Inline comments (N/N resolved):
    1. **Issue** — fixed in <sha>
    ### Outside-diff comments (N/N resolved):
@@ -274,8 +276,9 @@ When running multiple PRs in parallel:
 | Nitpick/style suggestion | Evaluate: fix if trivial, explain if opinionated, resolve |
 | Out-of-scope suggestion | Acknowledge, explain it is out of scope, resolve thread |
 
-**Rule**: Even threads you disagree with MUST be commented on and resolved.
-CodeRabbit will not re-approve while unresolved threads remain.
+**Rules**:
+- Even threads you disagree with MUST be commented on and resolved. CodeRabbit will not re-approve while unresolved threads remain.
+- When posting non-direct replies (PR comments instead of thread replies), always include `@coderabbitai` so CodeRabbit can detect the response.
 
 ## Output
 
