@@ -162,7 +162,21 @@ export class Orchestrator {
       // Fire-and-forget: deliver callback to Main Agent
       void this.deliverTaskCallback(payload);
     });
+
+    // Auto-handoff: when a session crosses the 70% token threshold, trigger handoff
+    this.bus.on("orchestrator.context.compact", (event) => {
+      void this.triggerSessionHandoff(
+        event.agentId,
+        event.sessionId,
+        event.payload as { tokenUsage: number; tokenLimit: number; ratio: number },
+      );
+    });
   }
+
+  /** Track recent tool calls per session for loop detection. */
+  private recentToolCalls = new Map<string, string[]>();
+  private static readonly LOOP_DETECTION_WINDOW = 6;
+  private static readonly LOOP_DETECTION_THRESHOLD = 3;
 
   /** Inject optional knowledge service + wire up task persistence (with optional SQLite dual-write). */
   setKnowledgeService(kb: KnowledgeService) {
@@ -1543,6 +1557,10 @@ export class Orchestrator {
               timestamp: yielded.timestamp,
             },
           });
+          // Loop detection: track tool calls and warn if repeating
+          if (yielded.toolName && yielded.eventKind === "tool_start") {
+            this.detectToolLoop(sessionId, yielded.toolName);
+          }
           continue;
         }
 
@@ -1688,6 +1706,90 @@ export class Orchestrator {
       // Persist session state so checkpoint survives a crash
       this.persistSessionState(session);
     }
+  }
+
+  /**
+   * Trigger automatic session handoff when context window is near exhaustion.
+   * Creates a new session inheriting context from the old one.
+   */
+  private async triggerSessionHandoff(
+    agentId: string,
+    sessionId: string,
+    info: { tokenUsage: number; tokenLimit: number; ratio: number },
+  ): Promise<void> {
+    const adapter = this.registry.getAdapter(agentId);
+    const session = this.sessions.get(sessionId);
+    if (!session || session.status !== "active") return;
+
+    const summary = [
+      `Session ${sessionId} reached ${Math.round(info.ratio * 100)}% token usage.`,
+      `Role: ${session.role ?? "unknown"}, Task: ${session.sessionName ?? "none"}.`,
+      "Automatically handing off to a new session to continue work.",
+    ].join(" ");
+
+    this.transport.sendNotification("log", {
+      message: `[harness] Auto-handoff triggered for ${agentId}:${sessionId} at ${Math.round(info.ratio * 100)}% token usage`,
+    });
+
+    try {
+      const newSession = await adapter.handoffSession(sessionId, summary);
+      newSession.role = session.role;
+      newSession.frozenRole = session.frozenRole;
+      newSession.sessionName = session.sessionName;
+      this.sessions.set(newSession.sessionId, newSession);
+
+      if (session.role) {
+        const slotKey = makeRoleSlotKey(session.role, agentId);
+        this.roleSessions.set(slotKey, newSession.sessionId);
+      }
+
+      const taskId = this.taskManager.getTaskForSession(sessionId);
+      if (taskId) {
+        this.taskManager.bindSession(taskId, newSession.sessionId);
+      }
+
+      this.bus.emit("orchestrator.session.handoff", agentId, newSession.sessionId, {
+        fromSession: sessionId,
+        toSession: newSession.sessionId,
+        reason: "token_threshold",
+        tokenUsage: info.tokenUsage,
+        tokenLimit: info.tokenLimit,
+      });
+
+      this.persistState(true);
+    } catch (err) {
+      this.transport.sendNotification("log", {
+        message: `[harness] Auto-handoff failed for ${agentId}:${sessionId}: ${err instanceof Error ? err.message : err}`,
+      });
+    }
+  }
+
+  /**
+   * Detect tool-call loops in agent sessions.
+   * Returns true if the same tool has been called N+ times consecutively.
+   */
+  detectToolLoop(sessionId: string, toolName: string): boolean {
+    let recent = this.recentToolCalls.get(sessionId);
+    if (!recent) {
+      recent = [];
+      this.recentToolCalls.set(sessionId, recent);
+    }
+
+    recent.push(toolName);
+    if (recent.length > Orchestrator.LOOP_DETECTION_WINDOW) {
+      recent.shift();
+    }
+
+    if (recent.length >= Orchestrator.LOOP_DETECTION_THRESHOLD) {
+      const lastN = recent.slice(-Orchestrator.LOOP_DETECTION_THRESHOLD);
+      if (lastN.every((t) => t === lastN[0])) {
+        this.transport.sendNotification("log", {
+          message: `[harness] Loop detected in session ${sessionId}: tool "${toolName}" called ${Orchestrator.LOOP_DETECTION_THRESHOLD}+ times consecutively`,
+        });
+        return true;
+      }
+    }
+    return false;
   }
 
   /** Persist session info to session-persistence (fire-and-forget). */
