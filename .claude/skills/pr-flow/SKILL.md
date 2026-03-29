@@ -52,15 +52,16 @@ When changes should be split by task category (e.g., feature + bugfix + UI):
 1. Stash all changes: `git stash`
 2. For each category:
    - Create branch from develop: `git checkout -b <branch-name> develop`
-   - Restore relevant files: `git stash pop` or selective `git checkout stash -- <files>`
+   - Selectively restore only this category's files: `git checkout stash@{0} -- <file1> <file2> ...`
    - Commit, push, create PR
-3. Track all PR numbers for parallel review monitoring
+3. After all branches created: `git stash drop`
+4. Track all PR numbers for parallel review monitoring
 
 ### Phase 2: Poll for CodeRabbit Review (Non-Blocking)
 
 **DO NOT** use blocking `sleep` loops. Use `CronCreate` for periodic checks:
 
-```
+```yaml
 CronCreate:
   cron: "*/10 * * * *"
   prompt: <check-review-prompt>
@@ -70,12 +71,31 @@ CronCreate:
 The check prompt should:
 1. Fetch review status for all tracked PRs via `gh pr view <N> --json reviews`
 2. Check for new inline comments via `gh api repos/{owner}/{repo}/pulls/<N>/comments`
-3. Track consecutive checks with no new activity
-4. After **3 consecutive checks with no CodeRabbit activity**, proactively trigger:
+3. Track consecutive checks via file-based counter (cron jobs are stateless across invocations):
+
    ```bash
-   gh pr comment <PR_NUMBER> --body "@coderabbitai review"
+   COUNT_FILE=".pr-flow-check-count-${PR_NUMBER}"
+   COUNT=0; [ -f "$COUNT_FILE" ] && COUNT=$(<"$COUNT_FILE")
+   if [ "$HAS_NEW_ACTIVITY" = "false" ]; then
+     COUNT=$((COUNT + 1)); echo "$COUNT" > "$COUNT_FILE"
+   else
+     rm -f "$COUNT_FILE"  # reset on activity
+   fi
    ```
-5. When reviews arrive, cancel the cron job and proceed to Phase 3
+
+4. After **3 consecutive checks with no CodeRabbit activity**, proactively trigger (with dedup):
+
+   ```bash
+   if [ "$COUNT" -ge 3 ]; then
+     # Only trigger if no existing @coderabbitai review comment
+     if ! gh api repos/{owner}/{repo}/issues/${PR_NUMBER}/comments --jq '.[].body' | grep -Fq "@coderabbitai review"; then
+       gh pr comment "$PR_NUMBER" --body "@coderabbitai review"
+     fi
+     rm -f "$COUNT_FILE"
+   fi
+   ```
+
+5. When reviews arrive, cancel the cron job, clean up counter files, and proceed to Phase 3
 
 ### Phase 3: Respond to ALL Review Threads
 
@@ -143,9 +163,19 @@ mutation($threadId: ID!) {
 ```
 
 #### Verify all threads resolved:
+
 ```bash
 # Count remaining unresolved threads
-gh api graphql -f query='...' --jq '[.data...nodes[] | select(.isResolved==false)] | length'
+gh api graphql -f query='
+query {
+  repository(owner: "<OWNER>", name: "<NAME>") {
+    pullRequest(number: <N>) {
+      reviewThreads(first: 100) {
+        nodes { id isResolved }
+      }
+    }
+  }
+}' --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved==false)] | length'
 ```
 
 ### Phase 6: Wait for Re-Review
@@ -157,6 +187,7 @@ Typical convergence: 1-2 iterations for most PRs.
 ### Phase 7: Merge
 
 #### Pre-merge gate checks:
+
 ```bash
 # 1. CI status
 gh pr checks "$PR_NUMBER"
@@ -164,7 +195,21 @@ gh pr checks "$PR_NUMBER"
 # 2. Review approval — must be "APPROVED"
 gh pr view "$PR_NUMBER" --json reviewDecision --jq '.reviewDecision'
 
-# 3. No unresolved critical/major threads (use GraphQL)
+# 3. No unresolved threads (any unresolved thread blocks merge)
+UNRESOLVED=$(gh api graphql -f query='
+query {
+  repository(owner: "<OWNER>", name: "<NAME>") {
+    pullRequest(number: <N>) {
+      reviewThreads(first: 100) {
+        nodes { id isResolved }
+      }
+    }
+  }
+}' --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved==false)] | length')
+if [ "$UNRESOLVED" -gt 0 ]; then
+  echo "Blocked: $UNRESOLVED unresolved review threads remain"
+  exit 1
+fi
 ```
 
 #### Merge:
@@ -182,11 +227,25 @@ After merge, update related GitHub issues and Mercury task state:
 ## Multi-PR Coordination
 
 When running multiple PRs in parallel:
-1. Create all PRs first (Phase 1)
-2. Set ONE cron job that checks ALL PRs simultaneously
-3. Process reviews independently per PR
-4. Merge in dependency order (foundation PRs first)
-5. Cancel cron job after all PRs are merged
+
+1. Create all PRs first (Phase 1), persist PR numbers:
+
+   ```bash
+   echo "$PR1 $PR2 $PR3" > .pr-flow-multi.txt
+   ```
+
+2. Set ONE cron job that checks ALL PRs simultaneously — the cron prompt reads `.pr-flow-multi.txt`
+3. Process reviews independently per PR (each gets its own counter file)
+4. Merge in dependency order (foundation PRs first). Define order as an ordered list:
+
+   ```bash
+   # Merge in order: types → orchestrator → GUI
+   for PR in $PR_FOUNDATION $PR_FEATURE $PR_UI; do
+     gh pr merge "$PR" --squash --delete-branch
+   done
+   ```
+
+5. After all PRs merged: `CronDelete`, then `rm -f .pr-flow-multi.txt .pr-flow-check-count-*`
 
 ## Review Response Protocol
 
