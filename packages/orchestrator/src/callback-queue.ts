@@ -18,6 +18,8 @@ export interface TaskCallbackPayload {
   verdict: string;
   findings?: string[];
   recommendations?: string[];
+  /** Stable rework count used for idempotency key generation. */
+  reworkCount?: number;
 }
 
 export interface CallbackQueueEntry {
@@ -80,12 +82,13 @@ export class CallbackQueue {
   }
 
   /**
-   * Generate idempotency key from payload.
-   * Uses a 10-second time bucket to deduplicate rapid retries of the same verdict.
+   * Generate a stable idempotency key from payload.
+   * Uses taskId + verdict + reworkCount so the same logical callback always maps
+   * to the same key regardless of timing (restarts, retries, slow paths).
    */
   static makeIdempotencyKey(payload: TaskCallbackPayload): string {
-    const bucket = Math.floor(Date.now() / 10_000);
-    return `${payload.taskId}:${payload.verdict}:${bucket}`;
+    const rework = payload.reworkCount ?? 0;
+    return `${payload.taskId}:${payload.verdict}:rework${rework}`;
   }
 
   /**

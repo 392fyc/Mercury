@@ -568,6 +568,20 @@ export class Orchestrator {
     if (approvalsChanged) {
       this.persistState(true);
     }
+
+    // Cold-start drain for restored Main sessions: deliver any pending callbacks
+    // that accumulated while Mercury was offline. startRoleSession only handles
+    // newly created sessions; restored sessions need this explicit drain.
+    for (const [key] of this.roleSessions) {
+      if (key.startsWith("main:")) {
+        void this.attemptCallbackDelivery().catch((err) => {
+          this.transport.sendNotification("log", {
+            message: `[orchestrator] Restored-session callback drain failed: ${err instanceof Error ? err.message : err}`,
+          });
+        });
+        break; // Only need one drain for all pending callbacks
+      }
+    }
   }
 
   /**
@@ -1880,6 +1894,7 @@ export class Orchestrator {
       verdict: "pass",
       findings: findingsArr,
       recommendations: recommendationsArr,
+      reworkCount: task.reworkCount,
     });
   }
 
@@ -1943,6 +1958,7 @@ export class Orchestrator {
       verdict: "pass",
       findings: designFindings,
       recommendations: designRecommendations,
+      reworkCount: task.reworkCount,
     });
   }
 
@@ -2753,17 +2769,68 @@ export class Orchestrator {
         });
         return;
       }
+      // Step 2: Attempt immediate delivery of all pending callbacks
+      await this.attemptCallbackDelivery();
+    } else {
+      // Fallback: no SQLite queue available — attempt best-effort direct delivery
+      this.transport.sendNotification("log", {
+        message: `[orchestrator] No callback queue (SQLite unavailable), attempting direct delivery for ${payload.taskId}`,
+      });
+      await this.attemptDirectCallbackDelivery(payload);
     }
+  }
 
-    // Step 2: Attempt immediate delivery of all pending callbacks
-    await this.attemptCallbackDelivery();
+  /**
+   * Best-effort direct delivery when no SQLite callback queue is available.
+   * Does not persist — if delivery fails, the callback is lost.
+   */
+  private async attemptDirectCallbackDelivery(payload: TaskCallbackPayload): Promise<void> {
+    const mainAgentId = this.findMainAgentId();
+    if (!mainAgentId) return;
+
+    const mainSlot = makeRoleSlotKey("main", mainAgentId);
+    const activeSessionId = this.roleSessions.get(mainSlot);
+    if (!activeSessionId) return;
+
+    const session = this.sessions.get(activeSessionId);
+    if (!session || session.status === "completed" || session.status === "overflow") return;
+
+    const prompt = this.formatCallbackPrompt(payload);
+    try {
+      await this.sendPrompt(mainAgentId, prompt, undefined, "main");
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      this.transport.sendNotification("log", {
+        message: `[orchestrator] Direct callback delivery failed for ${payload.taskId}: ${errorMsg}`,
+      });
+    }
   }
 
   /**
    * Attempt to deliver all pending callbacks to the active Main Agent session.
    * Called from deliverTaskCallback (immediate) and startRoleSession (cold-start drain).
+   *
+   * Serialized via callbackDrainLock to prevent concurrent drains from
+   * reading the same pending rows and double-delivering.
    */
+  private callbackDrainLock: Promise<void> = Promise.resolve();
+
   private async attemptCallbackDelivery(): Promise<void> {
+    // Serialize: chain onto the existing drain lock to prevent concurrent reads
+    const prev = this.callbackDrainLock;
+    let resolve!: () => void;
+    this.callbackDrainLock = new Promise<void>((r) => { resolve = r; });
+    await prev;
+
+    try {
+      await this.drainCallbackQueue();
+    } finally {
+      resolve();
+    }
+  }
+
+  /** Internal drain logic — must only be called under callbackDrainLock. */
+  private async drainCallbackQueue(): Promise<void> {
     if (!this.callbackQueue) return;
 
     const mainAgentId = this.findMainAgentId();
@@ -2791,6 +2858,9 @@ export class Orchestrator {
       const prompt = this.formatCallbackPrompt(entryPayload);
 
       try {
+        // sendPrompt initiates streaming; marking delivered after the call
+        // succeeds means the transport accepted the prompt. This is
+        // at-least-once delivery — acceptable since callbacks are idempotent.
         await this.sendPrompt(mainAgentId, prompt, undefined, "main");
         this.callbackQueue.markDelivered(entry.id);
       } catch (err) {
@@ -2804,29 +2874,57 @@ export class Orchestrator {
     }
   }
 
-  /** Format a callback payload into a prompt string for the Main Agent. */
+  /**
+   * Format a callback payload into a prompt string for the Main Agent.
+   * Includes full task context so the Main session can act on the callback
+   * even if it was created after the task, or context has been compacted.
+   */
   private formatCallbackPrompt(payload: TaskCallbackPayload): string {
     const task = this.taskManager.getTask(payload.taskId);
     const taskTitle = task?.title ?? payload.taskId;
-    const findings = payload.findings?.length
-      ? `\nFindings:\n${payload.findings.map((f) => `- ${f}`).join("\n")}`
-      : "";
-    const recommendations = payload.recommendations?.length
-      ? `\nRecommendations:\n${payload.recommendations.map((r) => `- ${r}`).join("\n")}`
-      : "";
 
-    return [
+    // Build rich context lines from task state
+    const lines: string[] = [
       `[Task Callback] ${taskTitle}`,
       `Task ID: ${payload.taskId}`,
       `Acceptance Verdict: ${payload.verdict.toUpperCase()}`,
-      findings,
-      recommendations,
+    ];
+
+    if (task) {
+      lines.push(`Status: ${task.status}`);
+      lines.push(`Assigned To: ${task.assignedTo}`);
+      if (task.context) {
+        lines.push(`Description: ${task.context}`);
+      }
+      if (task.branch) {
+        lines.push(`Branch: ${task.branch}`);
+      }
+      lines.push(`Rework: ${task.reworkCount}/${task.maxReworks}`);
+      if (task.implementationReceipt) {
+        const receipt = task.implementationReceipt;
+        const summary = receipt.summary ?? receipt.changedFiles?.join(", ");
+        if (summary) {
+          lines.push(`Implementation Summary: ${summary}`);
+        }
+      }
+    }
+
+    if (payload.findings?.length) {
+      lines.push(`\nFindings:\n${payload.findings.map((f) => `- ${f}`).join("\n")}`);
+    }
+    if (payload.recommendations?.length) {
+      lines.push(`\nRecommendations:\n${payload.recommendations.map((r) => `- ${r}`).join("\n")}`);
+    }
+
+    lines.push(
       payload.verdict === "pass"
         ? "Task has been verified and closed."
         : payload.verdict === "blocked"
           ? "Task is blocked. Manual intervention required."
           : "Rework has been triggered. Dev agent will receive updated instructions.",
-    ].filter(Boolean).join("\n");
+    );
+
+    return lines.filter(Boolean).join("\n");
   }
 
   /**
@@ -2931,6 +3029,7 @@ export class Orchestrator {
           taskId: task.taskId,
           originatorSessionId: task.originatorSessionId,
           verdict: "pass",
+          reworkCount: task.reworkCount,
         },
       );
 
@@ -2971,6 +3070,7 @@ export class Orchestrator {
           verdict: results.verdict,
           findings: results.findings,
           recommendations: results.recommendations,
+          reworkCount: task.reworkCount,
         },
       );
 
@@ -2992,6 +3092,7 @@ export class Orchestrator {
           verdict: "blocked",
           findings: results.findings,
           recommendations: results.recommendations,
+          reworkCount: task.reworkCount,
         },
       );
 
