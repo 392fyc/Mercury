@@ -101,6 +101,11 @@ The check prompt should:
 
 ### Phase 3: Respond to ALL Review Threads
 
+**Iteration cap**: Track review-fix iterations (Phase 2→5 cycles). Default `MAX_ITERATIONS=3`. If reached:
+- Log a warning: "Max review iterations reached, requesting human intervention"
+- Post a PR comment notifying the user
+- Stop automatic rework and wait for human guidance
+
 **CRITICAL RULE**: Every CodeRabbit comment MUST receive a response, even if you disagree.
 This includes:
 - **Inline comments** (accessible via `gh api repos/{owner}/{repo}/pulls/<N>/comments`)
@@ -183,25 +188,34 @@ done
 
 #### Verify all threads resolved:
 
+Reuse `ALL_THREADS` from the pagination loop above. Do NOT use a single `first: 100` query — it will miss threads beyond page 1.
+
 ```bash
-# Count remaining unresolved threads (simple check — for most PRs first:100 suffices)
-gh api graphql -f query='
-query {
-  repository(owner: "<OWNER>", name: "<NAME>") {
-    pullRequest(number: <N>) {
-      reviewThreads(first: 100) {
-        nodes { id isResolved }
-      }
-    }
-  }
-}' --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved==false)] | length'
+UNRESOLVED_COUNT=$(echo "$ALL_THREADS" | jq '[.[] | select(.isResolved==false)] | length')
+if [ "$UNRESOLVED_COUNT" -gt 0 ]; then
+  echo "WARNING: $UNRESOLVED_COUNT unresolved threads remain"
+fi
 ```
 
 ### Phase 6: Wait for Re-Review
 
+Increment iteration counter before looping back:
+
+```bash
+ITER_FILE=".pr-flow-iteration-${PR_NUMBER}"
+ITER=0; [ -f "$ITER_FILE" ] && ITER=$(<"$ITER_FILE")
+ITER=$((ITER + 1)); echo "$ITER" > "$ITER_FILE"
+
+if [ "$ITER" -ge 5 ]; then
+  echo "Max review iterations (5) reached. Requesting human intervention."
+  # Post PR comment and wait for user guidance
+  # Optionally file remaining issues as follow-up tasks
+fi
+```
+
 Return to **Phase 2** polling. Repeat the Phase 2-5 cycle until CodeRabbit approves.
 
-Typical convergence: 1-2 iterations for most PRs.
+Typical convergence: 1-2 iterations for most PRs. Clean up `$ITER_FILE` after merge.
 
 ### Phase 7: Merge
 
@@ -215,23 +229,17 @@ gh pr checks "$PR_NUMBER"
 gh pr view "$PR_NUMBER" --json reviewDecision --jq '.reviewDecision'
 
 # 3. No unresolved threads (any unresolved thread blocks merge)
-UNRESOLVED=$(gh api graphql -f query='
-query {
-  repository(owner: "<OWNER>", name: "<NAME>") {
-    pullRequest(number: <N>) {
-      reviewThreads(first: 100) {
-        nodes { id isResolved }
-      }
-    }
-  }
-}' --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved==false)] | length')
-if [ "$UNRESOLVED" -gt 0 ]; then
-  echo "Blocked: $UNRESOLVED unresolved review threads remain"
+# Reuse the Phase 5 pagination loop to count ALL unresolved threads
+# (see Phase 5 for the full CURSOR-based loop collecting ALL_THREADS)
+UNRESOLVED_COUNT=$(echo "$ALL_THREADS" | jq '[.[] | select(.isResolved==false)] | length')
+if [ "$UNRESOLVED_COUNT" -gt 0 ]; then
+  echo "Blocked: $UNRESOLVED_COUNT unresolved review threads remain"
   exit 1
 fi
 ```
 
 #### Merge:
+
 ```bash
 MERGE_STRATEGY=${MERGE_STRATEGY:-squash}
 gh pr merge "$PR_NUMBER" "--$MERGE_STRATEGY" --delete-branch
@@ -241,7 +249,19 @@ gh pr merge "$PR_NUMBER" "--$MERGE_STRATEGY" --delete-branch
 
 After merge, update related GitHub issues and Mercury task state:
 - Close related issues if PR body contains "Closes #N"
-- Update Mercury task status via orchestrator RPC if available
+- Signal task completion to Mercury orchestrator if available (actual state transition is Main Agent's responsibility):
+
+  ```bash
+  # Extract taskId from branch name convention
+  TASK_ID=$(git branch --show-current | grep -oE 'TASK-[A-Z][A-Z0-9-]+-[0-9]+' || echo "")
+
+  # Check if Mercury RPC is available
+  if [ -n "$TASK_ID" ] && [ -f .mercury/dispatch.sh ]; then
+    bash .mercury/dispatch.sh "$TASK_ID" || echo "RPC call failed; Main Agent will handle manually"
+  fi
+  ```
+
+- Clean up iteration/counter files: `rm -f .pr-flow-iteration-* .pr-flow-check-count-*`
 
 ## Multi-PR Coordination
 
