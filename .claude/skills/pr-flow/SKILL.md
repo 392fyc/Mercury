@@ -1,350 +1,360 @@
 ---
 name: pr-flow
 description: |
-  Automate the full PR lifecycle: create PR, wait for CI checks, read CodeRabbit and reviewer comments, dispatch fixes if needed, and merge. Use this skill when the user says "PR", "pull request", "create PR", "merge PR", "提PR", "合并", "PR流程", "开PR", "check PR status", "review comments". Use this skill after dev work reaches `implementation_done`, the branch is pushed, and the task has passed `main_review`. It replaces the manual C4-C7 steps in the Mercury workflow.
+  Automate the full PR lifecycle: create PR, poll for CodeRabbit review, respond to ALL threads (inline + outside-diff), fix issues, resolve threads, re-review, and merge after approval. Use this skill when the user says "PR", "pull request", "create PR", "merge PR", "提PR", "合并", "PR流程", "开PR", "check PR status", "review comments", "标准PR流程". Use this skill after dev work reaches `implementation_done`, the branch is pushed, and the task has passed `main_review`. It replaces the manual C4-C7 steps in the Mercury workflow.
 user-invocable: true
-allowed-tools: Bash, Read, Grep, Glob, WebFetch
+allowed-tools: Bash, Read, Grep, Glob, Edit, Write, WebSearch, WebFetch, Agent, TodoWrite, CronCreate, CronDelete
 ---
 
 # PR Flow
+
+## Overview
+
+This skill automates the complete PR lifecycle with **non-blocking polling** and **comprehensive review thread handling**. It supports both single-PR and multi-PR (split by task category) workflows.
 
 ## Prerequisites
 
 - `gh` CLI v2.x+ (authenticated)
 - `git` with push access to the PR branch
-- `jq` for JSON parsing
-- `python3` (used by merge gate for GraphQL pagination parsing)
 - Current branch must not be `develop` or `main`
-- TaskBundle JSON must include `allowedWriteScope.codePaths`
 
 ## Pipeline
 
-### Step 0: Verify Prerequisites
+### Phase 1: Create PR(s)
+
+#### Single-PR Mode (default)
+When all changes belong to one logical task:
 
 ```bash
-set -euo pipefail
-gh --version
-gh auth status
-git remote -v
-jq --version
 BRANCH=$(git branch --show-current)
-test "$BRANCH" != "develop" && test "$BRANCH" != "main"
-# Extract TASK_ID: try branch suffix first, then scan branch name for TASK-XXX pattern
-TASK_ID=${BRANCH##*/}
-if ! [[ "$TASK_ID" =~ ^TASK- ]]; then
-  TASK_ID=$(echo "$BRANCH" | grep -oE 'TASK-[A-Z][A-Z0-9-]+-[0-9]+' | head -1)
-fi
-# Resolve KB vault path from mercury.config.json (KB is outside project CWD)
-KB_VAULT_PATH=$(jq -r '.obsidian.vaultPath // empty' mercury.config.json 2>/dev/null \
-  || node -e "try{console.log(require('./mercury.config.json').obsidian.vaultPath)}catch(e){}" 2>/dev/null)
-TASK_FILE=""
-if [ -n "$TASK_ID" ] && [ -n "$KB_VAULT_PATH" ] && [ -f "$KB_VAULT_PATH/10-tasks/$TASK_ID.json" ]; then
-  TASK_FILE="$KB_VAULT_PATH/10-tasks/$TASK_ID.json"
-fi
-# When TASK_FILE is absent (non-task branches), ALLOWED_SCOPE stays empty → scope checks pass all files.
-declare -a ALLOWED_SCOPE=()
-if [ -n "$TASK_FILE" ]; then
-  while IFS= read -r path; do [ -n "$path" ] && ALLOWED_SCOPE+=("$path"); done < <(jq -r '.allowedWriteScope.codePaths[]? // empty' "$TASK_FILE")
-fi
-gh api rate_limit --jq '.resources.core.remaining'
-```
-
-### Step 1: Create or Reuse the PR
-
-```bash
-SUMMARY=$(jq -r '.summary // "PR update"' "$KB_VAULT_PATH/10-tasks/$TASK_ID.receipt.json" 2>/dev/null || echo "PR update")
-DOD_COUNT=$(jq -r '(.definitionOfDone // []) | length' "$TASK_FILE" 2>/dev/null || echo "unknown")
-PR_BODY=$(cat <<EOF
+# Ensure pushed
+git push -u origin "$BRANCH"
+# Create PR with required metadata (Mercury hook requires --assignee and --label)
+gh pr create --base develop \
+  --title "<type>(<scope>): description (#issue)" \
+  --body "$(cat <<'BODY'
 ## Summary
-$SUMMARY
+- bullet points
 
-## Task
-- TaskId: $TASK_ID
-- Branch: $BRANCH
-- DoD items completed: $DOD_COUNT
-EOF
-)
-# ── Label derivation: task-type label + severity label ──
-case "$TASK_ID" in
-  TASK-BUG-*|TASK-FIX-*|TASK-SB-FIX-*|TASK-KB-FIX-*) TYPE_LABEL=bugfix ;;
-  TASK-DOC-*)                                          TYPE_LABEL=documentation ;;
-  TASK-GUI-*|TASK-UI-*)                                TYPE_LABEL=enhancement ;;
-  TASK-WF-*)                                           TYPE_LABEL=workflow ;;
-  TASK-PROMPT-*|TASK-ARCH-*)                           TYPE_LABEL=refactor ;;
-  TASK-SDK-*|TASK-MCP-*)                               TYPE_LABEL=infrastructure ;;
-  TASK-PERF-*)                                         TYPE_LABEL=performance ;;
-  *)                                                   TYPE_LABEL=refactor ;;
-esac
-SEV_LABEL=""
-if [ -n "$TASK_FILE" ]; then
-  SEV=$(jq -r '.priority // empty' "$TASK_FILE" 2>/dev/null)
-  [ -n "$SEV" ] && SEV_LABEL="$SEV"
-fi
-LABELS="$TYPE_LABEL"
-[ -n "$SEV_LABEL" ] && LABELS="$LABELS,$SEV_LABEL"
+## Test plan
+- [ ] test items
 
-# ── Ensure labels exist (gh pr create fails on missing labels) ──
-EXISTING_LABELS=$(gh label list --json name --jq '.[].name' 2>/dev/null)
-IFS=',' read -ra LABEL_ARRAY <<< "$LABELS"
-for LBL in "${LABEL_ARRAY[@]}"; do
-  echo "$EXISTING_LABELS" | grep -Fxq "$LBL" || gh label create "$LBL" --color "ededed" 2>/dev/null || true
-done
-
-# ── Create or reuse the PR (with --assignee and --label baked in) ──
-EXISTING_PR=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number // empty')
-if [ -n "$EXISTING_PR" ]; then
-  PR_NUMBER=$EXISTING_PR
-  # Ensure labels/assignee are set even on reused PRs
-  gh pr edit "$PR_NUMBER" --add-assignee "@me" --add-label "$LABELS" 2>/dev/null || true
-else
-  git push -u origin "$BRANCH"
-  PR_URL=$(gh pr create --base develop \
-    --title "$TASK_ID: $SUMMARY" \
-    --body "$PR_BODY" \
-    --assignee "@me" \
-    --label "$LABELS")
-  PR_NUMBER=$(gh pr view "$PR_URL" --json number --jq '.number')
-fi
-
-# ── Trigger CodeRabbit review if not already requested ──
-CR_ALREADY=$(gh api "repos/{owner}/{repo}/issues/${PR_NUMBER}/comments" --jq '[.[] | select(.body | test("@coderabbitai review"))] | length' 2>/dev/null || echo "0")
-if [ "$CR_ALREADY" = "0" ]; then
-  gh pr comment "$PR_NUMBER" --body "@coderabbitai review"
-fi
+Generated with Claude Code
+BODY
+)" \
+  --assignee 392fyc \
+  --label "<bug|enhancement|refactor>"
 ```
 
-### Step 2: Poll CI Checks
+#### Multi-PR Mode
+When changes should be split by task category (e.g., feature + bugfix + UI):
 
-```bash
-extract_changed_paths() { jq -r '.[]?.path // empty'; }
-is_within_scope() { local p="$1"; shift; for root in "$@"; do case "$p" in "$root"/*|"$root") return 0;; esac; done; return 1; }
-if ! gh pr checks "$PR_NUMBER" --watch; then echo "CI failed — inspect output before continuing"; exit 1; fi
+1. Stash all changes: `git stash`
+2. For each category:
+   - Create branch from develop: `git checkout -b <branch-name> develop`
+   - Selectively restore only this category's files: `git checkout stash@{0} -- <file1> <file2> ...`
+   - Commit, push, create PR
+3. After all branches created: `git stash drop`
+4. Track all PR numbers for parallel review monitoring
+
+### Phase 2: Poll for CodeRabbit Review (Non-Blocking)
+
+**DO NOT** use blocking `sleep` loops. Use `CronCreate` for periodic checks:
+
+```yaml
+CronCreate:
+  cron: "*/10 * * * *"
+  prompt: <check-review-prompt>
+  recurring: true
 ```
 
-### Step 3: Wait for CodeRabbit Review
+The check prompt should:
+1. Fetch review status for all tracked PRs via `gh pr view <N> --json reviews`
+2. Check for new inline comments via `gh api repos/{owner}/{repo}/pulls/<N>/comments`
+3. Track consecutive checks via file-based counter (cron jobs are stateless across invocations):
+
+   ```bash
+   COUNT_FILE=".pr-flow-check-count-${PR_NUMBER}"
+   COUNT=0; [ -f "$COUNT_FILE" ] && COUNT=$(<"$COUNT_FILE")
+   if [ "$HAS_NEW_ACTIVITY" = "false" ]; then
+     COUNT=$((COUNT + 1)); echo "$COUNT" > "$COUNT_FILE"
+   else
+     rm -f "$COUNT_FILE"  # reset on activity
+   fi
+   ```
+
+4. After **3 consecutive checks with no CodeRabbit activity**, proactively trigger (with dedup):
+
+   ```bash
+   if [ "$COUNT" -ge 3 ]; then
+     # Only trigger if no existing @coderabbitai review comment
+     if ! gh api repos/{owner}/{repo}/issues/${PR_NUMBER}/comments --jq '.[].body' | grep -Fq "@coderabbitai review"; then
+       gh pr comment "$PR_NUMBER" --body "@coderabbitai review"
+     fi
+     rm -f "$COUNT_FILE"
+   fi
+   ```
+
+5. When reviews arrive:
+   - **Single-PR mode**: cancel the cron job, clean up counter files, proceed to Phase 3
+   - **Multi-PR mode**: only cancel the global cron when ALL tracked PRs have reviews or are merged/closed; process each PR's reviews independently via Phase 3
+
+### Phase 3: Respond to ALL Review Threads
+
+**Iteration cap**: Track review-fix iterations (Phase 2→5 cycles). Default `MAX_ITERATIONS=5`. If reached:
+- Log a warning: "Max review iterations reached, requesting human intervention"
+- Post a PR comment notifying the user
+- Stop automatic rework and wait for human guidance
+
+**CRITICAL RULE**: Every CodeRabbit comment MUST receive a response, even if you disagree.
+This includes:
+- **Inline comments** (accessible via `gh api repos/{owner}/{repo}/pulls/<N>/comments`)
+- **Outside-diff comments** (embedded in review body, not inline — address in PR comment)
+- **Review body suggestions** (often contain actionable architecture feedback)
+
+#### For each inline comment:
+1. Read the full comment body
+2. Assess: is the issue valid?
+   - **Valid**: Fix the code, reply with commit SHA and what changed
+   - **Disagree**: Reply explaining why the current approach is correct
+3. Reply via `gh api repos/{owner}/{repo}/pulls/comments/<ID>/replies -f body="..."`
+
+#### For outside-diff comments:
+1. These appear in the review body, not as inline threads
+2. **IMPORTANT**: When posting PR comments (non-direct thread replies), always include `@coderabbitai` mention so CodeRabbit can detect and track the response
+3. Address them in a PR comment summarizing all fixes:
+
+   ```bash
+   gh pr comment <PR_NUMBER> --body "@coderabbitai
+   ## Addressed CodeRabbit review
+   ### Inline comments (N/N resolved):
+   1. **Issue** — fixed in <sha>
+   ### Outside-diff comments (N/N resolved):
+   1. **Issue** (lines X-Y) — fixed in <sha>"
+   ```
+
+
+### Phase 4: Fix Issues and Push
+
+1. **Read** the relevant code sections before editing
+2. **Edit** files to address valid feedback
+3. **Build** to verify: `pnpm build` (or project-specific build command)
+4. **Milestone code review** — review the diff before committing (per team rule: every milestone must be code-reviewed before commit)
+5. **Commit** with descriptive message referencing what was fixed
+6. **Push**: `git push`
+
+### Phase 5: Resolve Threads
+
+**IMPORTANT**: Resolve threads AFTER pushing fixes, not before.
+
+#### Inline threads — resolve via GraphQL:
+
+The `gh` CLI does not have a native command for resolving review threads.
+Use `gh api graphql` with the `resolveReviewThread` mutation.
+
+**Note**: `reviewThreads(first: 100)` is paginated. For PRs with >100 threads, use cursor-based pagination (`after: endCursor`) to collect all nodes. Most PRs have <100 threads, but the loop pattern is shown below.
 
 ```bash
-MAX_POLLS=15
-for i in $(seq 1 "$MAX_POLLS"); do
-  REVIEW_DECISION=$(gh pr view "$PR_NUMBER" --json reviewDecision --jq '.reviewDecision // "REVIEW_REQUIRED"') || { sleep $((i * 10)); continue; }
-  [ "$REVIEW_DECISION" = "APPROVED" ] && break
-  [ "$REVIEW_DECISION" = "CHANGES_REQUESTED" ] && break
-  sleep 60
-done
-```
-
-### Step 4: Parse and Classify CodeRabbit Feedback
-
-```bash
-TYPE_REGEX='Potential issue|Nitpick|Verification successful'
-SEVERITY_REGEX='Critical|Major|Minor|Trivial'
-COMMENTS=$(gh api repos/{owner}/{repo}/pulls/"$PR_NUMBER"/comments)
-ACTIONABLE=$(echo "$COMMENTS" | jq -cr '
-  .[]
-  | .firstLine = (.body | split("\n")[0])
-  | .severity = (if (.firstLine | test("Critical")) then "Critical"
-                 elif (.firstLine | test("Major")) then "Major"
-                 elif (.firstLine | test("Minor")) then "Minor"
-                 elif (.firstLine | test("Trivial")) then "Trivial"
-                 else "Info" end)
-  | select(.severity == "Critical" or .severity == "Major")
-  | {id, path, severity, body}
-')
-```
-
-### Step 5: Apply Fixes, Validate, Resolve Threads, and Re-Review
-
-**CRITICAL RULE**: Every fix commit MUST be immediately followed by resolving
-the corresponding review threads. This is a single atomic operation:
-  commit fix → push → resolve threads → request re-review.
-Skipping the resolve step causes CodeRabbit to re-issue CHANGES_REQUESTED
-on already-fixed issues.
-
-This applies to both automated patch application AND manual code fixes.
-When fixing issues manually (not via `git apply`), map each fixed file back
-to its review thread(s) and resolve them after push.
-
-```bash
-OWNER=$(gh repo view --json owner --jq '.owner.login')
-NAME=$(gh repo view --json name --jq '.name')
-
-# ── Helper: resolve a review thread by GraphQL ID ──
-resolve_thread() {
-  local tid="$1"
-  local result
-  result=$(gh api graphql -f query="mutation { resolveReviewThread(input: {threadId: \"$tid\"}) { thread { isResolved } } }" 2>&1)
-  if [ $? -ne 0 ] || ! echo "$result" | jq -e '.data.resolveReviewThread.thread.isResolved' >/dev/null 2>&1; then
-    echo "warn: failed to resolve thread $tid: $result" >&2
-    return 1
-  fi
-}
-
-# ── Helper: get thread ID for a given file path ──
-# Returns all unresolved thread IDs whose first comment matches the given path.
-get_thread_ids_for_path() {
-  local target_path="$1"
-  local cursor="" after_arg=""
-  while true; do
-    [ -n "$cursor" ] && after_arg=", after: \"$cursor\""
-    local result
-    result=$(gh api graphql -f query="
-      { repository(owner: \"$OWNER\", name: \"$NAME\") {
-          pullRequest(number: $PR_NUMBER) {
-            reviewThreads(first: 100${after_arg}) {
-              pageInfo { hasNextPage endCursor }
-              nodes { id isResolved path }
-            }
-          }
+# Get all unresolved thread IDs (with pagination for >100 threads)
+CURSOR=""
+ALL_THREADS="[]"
+while true; do
+  AFTER_ARG=""
+  [ -n "$CURSOR" ] && AFTER_ARG=", after: \"$CURSOR\""
+  RESULT=$(gh api graphql -f query="
+  query {
+    repository(owner: \"<OWNER>\", name: \"<NAME>\") {
+      pullRequest(number: <N>) {
+        reviewThreads(first: 100${AFTER_ARG}) {
+          pageInfo { hasNextPage endCursor }
+          nodes { id isResolved path }
         }
-      }" 2>/dev/null)
-    echo "$result" | jq -r ".data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false and .path == \"$target_path\") | .id" 2>/dev/null
-    local has_next
-    has_next=$(echo "$result" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' 2>/dev/null)
-    [ "$has_next" = "true" ] || break
-    cursor=$(echo "$result" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor' 2>/dev/null)
-  done
-}
+      }
+    }
+  }")
+  NODES=$(echo "$RESULT" | jq '.data.repository.pullRequest.reviewThreads.nodes')
+  ALL_THREADS=$(echo "$ALL_THREADS $NODES" | jq -s '.[0] + .[1]')
+  HAS_NEXT=$(echo "$RESULT" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage')
+  [ "$HAS_NEXT" != "true" ] && break
+  CURSOR=$(echo "$RESULT" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor')
+done
 
-# ── Helper: resolve all unresolved threads for given file paths ──
-resolve_threads_for_paths() {
-  local resolved_count=0
-  for fpath in "$@"; do
-    while IFS= read -r tid; do
-      [ -n "$tid" ] && resolve_thread "$tid" && resolved_count=$((resolved_count + 1))
-    done < <(get_thread_ids_for_path "$fpath")
-  done
-  echo "Resolved $resolved_count review threads"
-}
+# Filter unresolved
+UNRESOLVED=$(echo "$ALL_THREADS" | jq '[.[] | select(.isResolved==false)]')
 
-normalize_patch() {
-  local path="$1" body="$2" diff suggestion
-  diff=$(printf '%s\n' "$body" | sed -n '/```diff/,/```/p' | sed '1d;$d')
-  [ -n "$diff" ] && { printf '%s\n' "$diff"; return 0; }
-  suggestion=$(printf '%s\n' "$body" | sed -n '/```suggestion/,/```/p' | sed '1d;$d')
-  [ -n "$suggestion" ] || return 1
-  printf 'skip: suggestion-only comment for %s (no patch builder implemented)\n' "$path" >&2; return 1
-}
-extract_patch_paths() { printf '%s\n' "$1" | sed -n 's/^+++ b\///p'; }
-validate_scope() { [ ${#ALLOWED_SCOPE[@]} -eq 0 ] && return 0; is_within_scope "$1" "${ALLOWED_SCOPE[@]}"; }
-refresh_actionable() { COMMENTS=$(gh api repos/{owner}/{repo}/pulls/"$PR_NUMBER"/comments); ACTIONABLE=$(echo "$COMMENTS" | jq -cr '.[] | .firstLine = (.body | split("\n")[0]) | .severity = (if (.firstLine | test("Critical")) then "Critical" elif (.firstLine | test("Major")) then "Major" else "Other" end) | select(.severity == "Critical" or .severity == "Major") | {id, path, severity, body}'); }
-# NOTE: || true is intentional — CI check here is observational (wait for new review), not a gate.
-# The hard CI gate is in Step 6 check_ready_to_merge() before merge.
-wait_for_refresh() { gh pr checks "$PR_NUMBER" --watch || true; for i in $(seq 1 10); do refresh_actionable; [ -n "$ACTIONABLE" ] || break; sleep 30; done; }
-MAX_ITERATIONS=3 # CodeRabbit usually converges in 1-2 rounds; keep 1 buffer.
-ITERATION=1
-while [ "$ITERATION" -le "$MAX_ITERATIONS" ] && [ -n "$ACTIONABLE" ]; do
-  # Collect all fixed paths in this iteration for thread resolution.
-  # IMPORTANT: use process substitution (< <(...)) instead of pipe to avoid
-  # subshell — pipe would discard FIXED_PATHS modifications on loop exit.
-  declare -a FIXED_PATHS=()
-  while read -r item; do
-    COMMENT_ID=$(echo "$item" | jq -r '.id'); PATHNAME=$(echo "$item" | jq -r '.path')
-    COMMENT_BODY=$(gh api repos/{owner}/{repo}/pulls/comments/"$COMMENT_ID" --jq '.body')
-    PATCH_BODY=$(normalize_patch "$PATHNAME" "$COMMENT_BODY") || { echo "skip: no diff/suggestion for $COMMENT_ID"; continue; }
-    PATCH_PATHS=$(extract_patch_paths "$PATCH_BODY"); [ -n "$PATCH_PATHS" ] || PATCH_PATHS="$PATHNAME"
-    SCOPE_OK=1; while read -r TARGET_PATH; do [ -n "$TARGET_PATH" ] && ! validate_scope "$TARGET_PATH" && SCOPE_OK=0; done <<EOF
-$PATCH_PATHS
-EOF
-    [ "$SCOPE_OK" -eq 1 ] || { echo "skip: out of scope patch $COMMENT_ID"; continue; }
-    printf '%s\n' "$PATCH_BODY" | git apply --check || { while read -r p; do [ -n "$p" ] && git checkout -- "$p" 2>/dev/null; done <<< "$PATCH_PATHS"; continue; }
-    printf '%s\n' "$PATCH_BODY" | git apply
-    npx tsc --noEmit || { while read -r p; do [ -n "$p" ] && git checkout -- "$p" 2>/dev/null; done <<< "$PATCH_PATHS"; continue; }
-    while read -r TARGET_PATH; do [ -n "$TARGET_PATH" ] && git add "$TARGET_PATH"; done <<EOF
-$PATCH_PATHS
-EOF
-    git diff --cached --quiet && { echo "skip: no staged changes for $COMMENT_ID"; continue; }
-    git commit -m "fix(PR-feedback): address comment $COMMENT_ID"
-    # Track fixed paths for thread resolution
-    FIXED_PATHS+=("$PATHNAME")
-  done < <(echo "$ACTIONABLE")
-  git push
-  # ── Resolve threads for all fixed paths in this iteration ──
-  [ ${#FIXED_PATHS[@]} -gt 0 ] && resolve_threads_for_paths "${FIXED_PATHS[@]}"
-  wait_for_refresh
-  ITERATION=$((ITERATION + 1))
+# Resolve each thread using the GraphQL node ID (PRRT_...)
+for THREAD_ID in $(echo "$UNRESOLVED" | jq -r '.[].id'); do
+  gh api graphql -f query="mutation { resolveReviewThread(input: {threadId: \"$THREAD_ID\"}) { thread { id isResolved } } }"
 done
 ```
 
-**Manual fix scenario**: When fixing CR feedback by writing code directly
-(not via auto-patch), you MUST still resolve threads after pushing:
+#### Verify all threads resolved:
+
+**Important**: After `resolveReviewThread` mutations, `ALL_THREADS` is stale. Re-run the pagination query to get fresh `isResolved` values:
 
 ```bash
-# After committing and pushing manual fixes, resolve threads and request re-review:
-mapfile -t CHANGED_FILES < <(git diff --name-only HEAD~1)
-resolve_threads_for_paths "${CHANGED_FILES[@]}"
-# Request re-review from CodeRabbit (completes the atomic operation)
-gh pr comment "$PR_NUMBER" --body "@coderabbitai review"
+# Re-query threads after resolution (same CURSOR-based loop as above)
+CURSOR=""
+ALL_THREADS="[]"
+while true; do
+  AFTER_ARG=""
+  [ -n "$CURSOR" ] && AFTER_ARG=", after: \"$CURSOR\""
+  RESULT=$(gh api graphql -f query="
+  query {
+    repository(owner: \"<OWNER>\", name: \"<NAME>\") {
+      pullRequest(number: <N>) {
+        reviewThreads(first: 100${AFTER_ARG}) {
+          pageInfo { hasNextPage endCursor }
+          nodes { id isResolved path }
+        }
+      }
+    }
+  }")
+  NODES=$(echo "$RESULT" | jq '.data.repository.pullRequest.reviewThreads.nodes')
+  ALL_THREADS=$(echo "$ALL_THREADS $NODES" | jq -s '.[0] + .[1]')
+  HAS_NEXT=$(echo "$RESULT" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage')
+  [ "$HAS_NEXT" != "true" ] && break
+  CURSOR=$(echo "$RESULT" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor')
+done
+
+UNRESOLVED_COUNT=$(echo "$ALL_THREADS" | jq '[.[] | select(.isResolved==false)] | length')
+if [ "$UNRESOLVED_COUNT" -gt 0 ]; then
+  echo "WARNING: $UNRESOLVED_COUNT unresolved threads remain"
+fi
 ```
 
-### Step 6: Merge and Update Mercury State
+### Phase 6: Wait for Re-Review
+
+Increment iteration counter before looping back:
 
 ```bash
-check_ci_status() { gh pr checks "$PR_NUMBER" >/dev/null; }
-check_review_state() { [ "$(gh pr view "$PR_NUMBER" --json reviewDecision --jq '.reviewDecision // "REVIEW_REQUIRED"')" = "APPROVED" ]; }
-# Use GraphQL to get accurate resolved/unresolved status for review threads.
-# REST API does not expose thread resolution state.
-check_unresolved_critical_comments() {
-  # Re-declare OWNER/NAME — Step 5 and Step 6 are separate bash blocks with no shared state.
-  OWNER=$(gh repo view --json owner --jq '.owner.login')
-  NAME=$(gh repo view --json name --jq '.name')
-  # Paginate all review threads (handles PRs with >50 threads)
-  CURSOR=""
-  TOTAL_CRITICAL=0
-  while true; do
-    AFTER_ARG=""
-    [ -n "$CURSOR" ] && AFTER_ARG=", after: \"$CURSOR\""
-    RESULT=$(gh api graphql -f query="
-      { repository(owner: \"$OWNER\", name: \"$NAME\") {
-          pullRequest(number: $PR_NUMBER) {
-            reviewThreads(first: 50${AFTER_ARG}) {
-              pageInfo { hasNextPage endCursor }
-              nodes { isResolved comments(first: 1) { nodes { body } } }
-            }
-          }
+MAX_ITERATIONS=${MAX_ITERATIONS:-5}
+ITER_FILE=".pr-flow-iteration-${PR_NUMBER}"
+ITER=0; [ -f "$ITER_FILE" ] && ITER=$(<"$ITER_FILE")
+ITER=$((ITER + 1)); echo "$ITER" > "$ITER_FILE"
+
+if [ "$ITER" -ge "$MAX_ITERATIONS" ]; then
+  echo "Max review iterations ($MAX_ITERATIONS) reached. Requesting human intervention."
+  # Post PR comment and wait for user guidance
+  # Optionally file remaining issues as follow-up tasks
+fi
+```
+
+Return to **Phase 2** polling. Repeat the Phase 2-5 cycle until CodeRabbit approves.
+
+Typical convergence: 1-2 iterations for most PRs. Clean up `$ITER_FILE` after merge.
+
+### Phase 7: Merge
+
+#### Pre-merge gate checks:
+
+```bash
+# 1. CI status
+gh pr checks "$PR_NUMBER"
+
+# 2. Review approval — must be "APPROVED"
+gh pr view "$PR_NUMBER" --json reviewDecision --jq '.reviewDecision'
+
+# 3. No unresolved threads (any unresolved thread blocks merge)
+# Re-run the Phase 5 CURSOR-based pagination to freshly populate ALL_THREADS
+CURSOR=""
+ALL_THREADS="[]"
+while true; do
+  AFTER_ARG=""
+  [ -n "$CURSOR" ] && AFTER_ARG=", after: \"$CURSOR\""
+  RESULT=$(gh api graphql -f query="
+  query {
+    repository(owner: \"<OWNER>\", name: \"<NAME>\") {
+      pullRequest(number: <N>) {
+        reviewThreads(first: 100${AFTER_ARG}) {
+          pageInfo { hasNextPage endCursor }
+          nodes { id isResolved }
         }
-      }")
-    PAGE_CRITICAL=$(echo "$RESULT" | python3 -c "
-import sys,json
-d=json.loads(sys.stdin.read())
-nodes=d['data']['repository']['pullRequest']['reviewThreads']['nodes']
-import re
-count=sum(1 for n in nodes if not n['isResolved'] and n['comments']['nodes'] and re.search(r'Critical|Major',n['comments']['nodes'][0].get('body','')))
-print(count)")
-    TOTAL_CRITICAL=$((TOTAL_CRITICAL + PAGE_CRITICAL))
-    HAS_NEXT=$(echo "$RESULT" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print(d['data']['repository']['pullRequest']['reviewThreads']['pageInfo']['hasNextPage'])")
-    [ "$HAS_NEXT" = "True" ] || break
-    CURSOR=$(echo "$RESULT" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print(d['data']['repository']['pullRequest']['reviewThreads']['pageInfo']['endCursor'])")
-  done
-  [ "$TOTAL_CRITICAL" -eq 0 ]
-}
-check_ready_to_merge() { check_ci_status && check_review_state && check_unresolved_critical_comments; }
+      }
+    }
+  }")
+  NODES=$(echo "$RESULT" | jq '.data.repository.pullRequest.reviewThreads.nodes')
+  ALL_THREADS=$(echo "$ALL_THREADS $NODES" | jq -s '.[0] + .[1]')
+  HAS_NEXT=$(echo "$RESULT" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage')
+  [ "$HAS_NEXT" != "true" ] && break
+  CURSOR=$(echo "$RESULT" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor')
+done
+
+UNRESOLVED_COUNT=$(echo "$ALL_THREADS" | jq '[.[] | select(.isResolved==false)] | length')
+if [ "$UNRESOLVED_COUNT" -gt 0 ]; then
+  echo "Blocked: $UNRESOLVED_COUNT unresolved review threads remain"
+  exit 1
+fi
+```
+
+#### Merge:
+
+```bash
 MERGE_STRATEGY=${MERGE_STRATEGY:-squash}
-DELETE_BRANCH=${DELETE_BRANCH:-true}
-[ "$DELETE_BRANCH" = "true" ] && DELETE_FLAG="--delete-branch" || DELETE_FLAG=""
-check_ready_to_merge || { echo "blocked: merge gates failed"; exit 1; }
-if [ "${CONFIRM_MERGE:-}" != "yes" ]; then
-  read -r -p "Merge PR #$PR_NUMBER and transition $TASK_ID? [y/N] " CONFIRM
-  [ "$CONFIRM" = "y" ] || [ "$CONFIRM" = "Y" ] || { echo "merge cancelled"; exit 1; }
-fi
-gh pr merge "$PR_NUMBER" "--$MERGE_STRATEGY" $DELETE_FLAG
-# Transition task with retry (max 3 attempts)
-for attempt in 1 2 3; do
-  if curl -sf --max-time 5 http://localhost:${MERCURY_RPC_PORT:-7654}/rpc -X POST -H "Content-Type: application/json" -d "{\"method\":\"transition_task\",\"params\":{\"taskId\":\"$TASK_ID\",\"to\":\"done\"}}"; then break
-  elif [ "$attempt" -eq 3 ]; then echo "warn: Mercury RPC unavailable — transition $TASK_ID manually"
-  else sleep $((2 * attempt)); fi
-done
+gh pr merge "$PR_NUMBER" "--$MERGE_STRATEGY" --delete-branch
 ```
+
+### Phase 8: Update Issues and Tasks
+
+After merge, update related GitHub issues and Mercury task state:
+- Close related issues if PR body contains "Closes #N"
+- Signal task completion to Mercury orchestrator if available (actual state transition is Main Agent's responsibility):
+
+  ```bash
+  # Extract taskId from branch name convention
+  TASK_ID=$(git branch --show-current | grep -oE 'TASK-[A-Z][A-Z0-9-]+-[0-9]+' || echo "")
+
+  # Check if Mercury RPC is available
+  if [ -n "$TASK_ID" ] && [ -f .mercury/dispatch.sh ]; then
+    bash .mercury/dispatch.sh "$TASK_ID" || echo "RPC call failed; Main Agent will handle manually"
+  fi
+  ```
+
+- Clean up iteration/counter files: `rm -f .pr-flow-iteration-* .pr-flow-check-count-*`
+
+## Multi-PR Coordination
+
+When running multiple PRs in parallel:
+
+1. Create all PRs first (Phase 1), persist PR numbers:
+
+   ```bash
+   echo "$PR1 $PR2 $PR3" > .pr-flow-multi.txt
+   ```
+
+2. Set ONE cron job that checks ALL PRs simultaneously — the cron prompt reads `.pr-flow-multi.txt`
+3. Process reviews independently per PR (each gets its own counter file)
+4. Merge in dependency order (foundation PRs first). Define order as an ordered list:
+
+   ```bash
+   # Merge in order: types → orchestrator → GUI
+   for PR in $PR_FOUNDATION $PR_FEATURE $PR_UI; do
+     gh pr merge "$PR" --squash --delete-branch
+   done
+   ```
+
+5. After all PRs merged: `CronDelete`, then `rm -f .pr-flow-multi.txt .pr-flow-check-count-*`
+
+## Review Response Protocol
+
+| Situation | Action |
+|---|---|
+| Valid inline issue | Fix code, reply with SHA, resolve thread |
+| Valid outside-diff issue | Fix code, post PR comment (no thread to resolve) |
+| Disagree with suggestion | Reply explaining reasoning, resolve thread |
+| Nitpick/style suggestion | Evaluate: fix if trivial, explain if opinionated, resolve |
+| Out-of-scope suggestion | Acknowledge, explain it is out of scope, resolve thread |
+
+**Rules**:
+- Even threads you disagree with MUST be commented on and resolved. CodeRabbit will not re-approve while unresolved threads remain.
+- When posting non-direct replies (PR comments instead of thread replies), always include `@coderabbitai` so CodeRabbit can detect the response.
 
 ## Output
 
-The agent assembles the following summary from variables collected during execution:
-
 ```text
 PR: #<number> (<url>)
-CI Checks: PASS | FAIL | FAIL (<job>: <error>)
-CodeRabbit: approved | pending | timeout | unavailable
-Feedback: <N> critical, <N> major, <N> addressed, iteration=<N>
-Merge: merged | waiting | blocked | failed - <reason>
-Mercury State: <taskId> -> done | pending manual transition
-Evidence: pr-flow: PR #<number> status=<merged|blocked> strategy=<mergeStrategy> ci=<pass|fail> coderabbit=<approved|timeout> iterations=<N> approvers=<login,...> mergeCommit=<sha|pending> task=<taskId>
+CodeRabbit: approved | changes_requested | pending
+Feedback: <N> inline, <N> outside-diff, <N> addressed, iteration=<N>
+Merge: merged | waiting | blocked
+Task: <taskId> -> done | pending
 ```
