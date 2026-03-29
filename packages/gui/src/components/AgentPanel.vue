@@ -1424,6 +1424,14 @@ watch(
   padding-left: 10px;
   color: var(--text-secondary);
 }
+.markdown-body :deep(a) {
+  color: #4ade80;
+  text-decoration: none;
+}
+.markdown-body :deep(a:hover) {
+  color: #86efac;
+  text-decoration: underline;
+}
 
 /* Workspace bar above input */
 .workspace-bar {
