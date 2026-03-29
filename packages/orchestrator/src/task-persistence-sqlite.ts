@@ -85,6 +85,26 @@ const MIGRATIONS = [
     description: "add_task_role_column",
     sql: `ALTER TABLE tasks ADD COLUMN role TEXT DEFAULT 'dev';`,
   },
+  {
+    version: 3,
+    description: "add_callback_queue_table",
+    sql: `
+      CREATE TABLE IF NOT EXISTS callback_queue (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        task_id TEXT NOT NULL,
+        verdict TEXT NOT NULL CHECK(verdict IN ('pass','partial','fail','blocked')),
+        payload_json TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','delivered','failed')),
+        created_at INTEGER NOT NULL,
+        delivered_at INTEGER,
+        delivery_attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_cbq_status ON callback_queue(status);
+      CREATE INDEX IF NOT EXISTS idx_cbq_task ON callback_queue(task_id);
+    `,
+  },
 ];
 
 function applyMigrations(db: Database.Database, log: Log): void {
@@ -355,6 +375,11 @@ export class TaskPersistenceSqlite implements TaskPersistence {
       "SELECT (SELECT COUNT(*) FROM tasks) + (SELECT COUNT(*) FROM issues) + (SELECT COUNT(*) FROM acceptances) as total"
     ).get() as { total: number };
     return row.total === 0;
+  }
+
+  /** Expose underlying database for shared-table modules (e.g. CallbackQueue). */
+  getDatabase(): Database.Database {
+    return this.db;
   }
 
   /** Close the database connection. */
