@@ -65,7 +65,8 @@ a {
 a:visited {
   color: var(--link-visited);
 }
-a:hover {
+a:hover,
+a:focus {
   color: var(--link-hover);
   text-decoration: underline;
 }

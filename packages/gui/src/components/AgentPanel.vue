@@ -1431,7 +1431,8 @@ watch(
 .markdown-body :deep(a:visited) {
   color: var(--link-visited);
 }
-.markdown-body :deep(a:hover) {
+.markdown-body :deep(a:hover),
+.markdown-body :deep(a:focus) {
   color: var(--link-hover);
   text-decoration: underline;
 }
