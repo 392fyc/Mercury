@@ -1733,9 +1733,14 @@ export class Orchestrator {
 
     try {
       const newSession = await adapter.handoffSession(sessionId, summary);
+      // Mark old session as overflow so it's not treated as active
+      session.status = "overflow";
+      session.lastActiveAt = Date.now();
+
       newSession.role = session.role;
       newSession.frozenRole = session.frozenRole;
       newSession.sessionName = session.sessionName;
+      newSession.parentSessionId = sessionId;
       this.sessions.set(newSession.sessionId, newSession);
 
       if (session.role) {
@@ -1768,7 +1773,7 @@ export class Orchestrator {
    * Detect tool-call loops in agent sessions.
    * Returns true if the same tool has been called N+ times consecutively.
    */
-  detectToolLoop(sessionId: string, toolName: string): boolean {
+  private detectToolLoop(sessionId: string, toolName: string): boolean {
     let recent = this.recentToolCalls.get(sessionId);
     if (!recent) {
       recent = [];
@@ -2442,6 +2447,7 @@ export class Orchestrator {
     }
 
     this.bus.emit("agent.session.end", agentId, sessionId, {});
+    this.recentToolCalls.delete(sessionId);
     this.persistState(true);
   }
 
@@ -2465,6 +2471,7 @@ export class Orchestrator {
       }
     }
     this.bus.emit("agent.session.delete", agentId, sessionId, {});
+    this.recentToolCalls.delete(sessionId);
     this.persistState(true);
   }
 
