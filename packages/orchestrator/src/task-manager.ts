@@ -1007,6 +1007,27 @@ function fallbackDevTemplate(): string {
 }
 
 /**
+ * Derive deterministic KB write instructions from allowedWriteScope.kbPaths.
+ * If a kbPath ends with ".md", use it as-is; otherwise treat it as a prefix
+ * and append `${taskId}.md` to produce an explicit filename.
+ */
+function deriveKbWriteInstructions(task: TaskBundle): string[] {
+  const kbPaths = task.allowedWriteScope?.kbPaths ?? [];
+  if (kbPaths.length === 0) {
+    return ["No KB output path specified — skip KB write."];
+  }
+  const target = kbPaths[0].endsWith(".md")
+    ? kbPaths[0]
+    : `${kbPaths[0].replace(/\/+$/, "")}/${task.taskId}.md`;
+  return [
+    "Write your full report to the knowledge base using `mcp__mercury-orchestrator__kb_write`:",
+    `  - \`name\`: \`${target}\``,
+    "  - `content`: your complete Markdown report",
+    "This persists the report for future reference.",
+  ];
+}
+
+/**
  * Build a research-role dispatch prompt.
  * Research tasks produce findings/reports, not code commits.
  */
@@ -1034,17 +1055,21 @@ export function buildResearchPrompt(
     "- Conduct deep research on the topic described above.",
     "- Use web search, codebase analysis, and KB resources as needed.",
     "- Produce structured findings with evidence and recommendations.",
-    "- No code commits expected — output your research report as your final message.",
+    "- No code commits expected.",
+    "",
+    "## Writing to KB",
+    ...deriveKbWriteInstructions(task),
     "",
     "## Output Format",
-    "Return a JSON research report as your final message:",
+    "After writing the KB file (if applicable), return a JSON summary as your final message.",
+    "Keep each finding/recommendation as a cohesive paragraph (not split by line):",
     "```json",
     JSON.stringify({
       researcher: "",
       summary: "",
-      findings: [""],
-      recommendations: [""],
-      evidence: [""],
+      findings: ["<finding 1 as one complete paragraph>", "<finding 2 ...>"],
+      recommendations: ["<recommendation 1 as one complete paragraph>"],
+      evidence: ["<source URL or file reference>"],
       completedAt: "",
     }, null, 2),
     "```",
@@ -1084,7 +1109,10 @@ export function buildDesignPrompt(
     "## Design Instructions",
     "- Produce design artifacts (specs, diagrams, architecture docs) for the topic above.",
     "- Reference existing code patterns and KB docs as needed.",
-    "- No code implementation expected — output your design document as your final message.",
+    "- No code implementation expected.",
+    "",
+    "## Writing to KB",
+    ...deriveKbWriteInstructions(task),
     "",
     "## Output Format",
     "Return a JSON design report as your final message:",
