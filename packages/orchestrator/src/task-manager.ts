@@ -841,11 +841,13 @@ export class TaskManager {
     if (task.dispatchAttempts >= task.maxDispatchAttempts) {
       return `Task ${taskId} exceeded max dispatch attempts (${task.dispatchAttempts}/${task.maxDispatchAttempts})`;
     }
-    // Research/design tasks must have at least one kbPath for report output
+    // Research/design tasks must have at least one non-empty kbPath for report output
     const role = task.role ?? "dev";
-    if ((role === "research" || role === "design") &&
-        (!task.allowedWriteScope?.kbPaths?.length)) {
-      return `Task ${taskId} (${role}) requires at least one allowedWriteScope.kbPaths entry for report output`;
+    if (role === "research" || role === "design") {
+      const validKbPaths = (task.allowedWriteScope?.kbPaths ?? []).filter((p) => p.trim().length > 0);
+      if (validKbPaths.length === 0) {
+        return `Task ${taskId} (${role}) requires at least one non-empty allowedWriteScope.kbPaths entry for report output`;
+      }
     }
     return null;
   }
@@ -1069,7 +1071,7 @@ export function buildResearchPrompt(
     "## MANDATORY: Write Report to KB (Step 1)",
     "Before outputting your final JSON summary, you MUST write the full report to KB.",
     ...deriveKbWriteInstructions(task),
-    "If kb_write fails, fall back to the Bash tool: `cat > '<path>' << 'REPORT' ... REPORT`.",
+    "If kb_write fails, retry once. If it still fails, do NOT proceed to Step 2 — report the error as your final message.",
     "",
     "## Output Format (Step 2)",
     "After writing the KB file, return a JSON summary as your final message.",
@@ -1125,7 +1127,7 @@ export function buildDesignPrompt(
     "## MANDATORY: Write Report to KB (Step 1)",
     "Before outputting your final JSON summary, you MUST write the full report to KB.",
     ...deriveKbWriteInstructions(task),
-    "If kb_write fails, fall back to the Bash tool: `cat > '<path>' << 'REPORT' ... REPORT`.",
+    "If kb_write fails, retry once. If it still fails, do NOT proceed to Step 2 — report the error as your final message.",
     "",
     "## Output Format (Step 2)",
     "After writing the KB file, return a JSON design report as your final message:",
