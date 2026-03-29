@@ -1007,6 +1007,27 @@ function fallbackDevTemplate(): string {
 }
 
 /**
+ * Derive deterministic KB write instructions from allowedWriteScope.kbPaths.
+ * If a kbPath ends with ".md", use it as-is; otherwise treat it as a prefix
+ * and append `${taskId}.md` to produce an explicit filename.
+ */
+function deriveKbWriteInstructions(task: TaskBundle): string[] {
+  const kbPaths = task.allowedWriteScope?.kbPaths ?? [];
+  if (kbPaths.length === 0) {
+    return ["No KB output path specified — skip KB write."];
+  }
+  const target = kbPaths[0].endsWith(".md")
+    ? kbPaths[0]
+    : `${kbPaths[0].replace(/\/+$/, "")}/${task.taskId}.md`;
+  return [
+    "Write your full report to the knowledge base using `mcp__mercury-orchestrator__kb_write`:",
+    `  - \`name\`: \`${target}\``,
+    "  - `content`: your complete Markdown report",
+    "This persists the report for future reference.",
+  ];
+}
+
+/**
  * Build a research-role dispatch prompt.
  * Research tasks produce findings/reports, not code commits.
  */
@@ -1037,11 +1058,7 @@ export function buildResearchPrompt(
     "- No code commits expected.",
     "",
     "## Writing to KB",
-    "If `allowedWriteScope.kbPaths` specifies a KB output path, write your full research",
-    "report there using the `mcp__mercury-orchestrator__kb_write` tool:",
-    "  - `name`: the kbPath value (e.g. `04-research/RESEARCH-XXX.md`)",
-    "  - `content`: your complete Markdown report",
-    "This persists the report in the knowledge base for future reference.",
+    ...deriveKbWriteInstructions(task),
     "",
     "## Output Format",
     "After writing the KB file (if applicable), return a JSON summary as your final message.",
@@ -1093,8 +1110,9 @@ export function buildDesignPrompt(
     "- Produce design artifacts (specs, diagrams, architecture docs) for the topic above.",
     "- Reference existing code patterns and KB docs as needed.",
     "- No code implementation expected.",
-    "- If `allowedWriteScope.kbPaths` specifies a KB output path, write your full design",
-    "  document there using `mcp__mercury-orchestrator__kb_write` before outputting the JSON summary.",
+    "",
+    "## Writing to KB",
+    ...deriveKbWriteInstructions(task),
     "",
     "## Output Format",
     "Return a JSON design report as your final message:",
