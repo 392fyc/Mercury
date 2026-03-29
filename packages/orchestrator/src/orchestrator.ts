@@ -57,6 +57,8 @@ import type { PersistedSessionState } from "./session-persistence.js";
 import { TranscriptPersistence } from "./transcript-persistence.js";
 import type { TranscriptMessage } from "./transcript-persistence.js";
 import { installRTKCommandWrapper, isRTKAvailable } from "./rtk-wrapper.js";
+import { CallbackQueue } from "./callback-queue.js";
+import type { TaskCallbackPayload } from "./callback-queue.js";
 
 type NativeSessionBridge = {
   listNativeSessions?: (cwd?: string) => Promise<SessionInfo[]>;
@@ -82,14 +84,7 @@ type ParsedMainReviewDecision = {
   structured: StructuredReviewResult;
 };
 
-/** Shared type for orchestrator.task.callback event payload. */
-type TaskCallbackPayload = {
-  taskId: string;
-  originatorSessionId?: string;
-  verdict: AcceptanceVerdict;
-  findings?: string[];
-  recommendations?: string[];
-};
+// TaskCallbackPayload imported from ./callback-queue.js
 
 const ROLE_CONTEXT_ROLES = ["main", "dev", "acceptance", "critic", "research", "design"] as const;
 type RoleContextKey = (typeof ROLE_CONTEXT_ROLES)[number];
@@ -122,6 +117,7 @@ export class Orchestrator {
   >();
   private kb: KnowledgeService | null = null;
   private sqliteDb: TaskPersistenceSqlite | null = null;
+  private callbackQueue: CallbackQueue | null = null;
   private projectConfig: MercuryConfig | null = null;
   private configFilePath: string | null = null;
   private taskManager: TaskManager;
@@ -185,9 +181,10 @@ export class Orchestrator {
       }
       const dbPath = join(mercuryDir, "mercury.db");
       this.sqliteDb = new TaskPersistenceSqlite(dbPath, logFn);
+      this.callbackQueue = new CallbackQueue(this.sqliteDb.getDatabase(), logFn);
       const dualPersistence = new TaskPersistenceDual(this.sqliteDb, kbPersistence, logFn);
       this.taskManager.setPersistence(dualPersistence);
-      logFn("[orchestrator] Persistence: SQLite (primary) + KB (sync)");
+      logFn("[orchestrator] Persistence: SQLite (primary) + KB (sync), callback queue enabled");
     } catch (err) {
       // Fallback to KB-only if SQLite fails to initialize
       logFn(`[orchestrator] SQLite init failed, falling back to KB-only: ${err instanceof Error ? err.message : err}`);
@@ -1408,6 +1405,15 @@ export class Orchestrator {
       currentPromptHash: promptState.currentPromptHash,
       legacyRoleConfig: promptState.legacyRoleConfig,
     });
+
+    // Cold-start drain: deliver pending callbacks when a Main Agent session starts
+    if (effectiveRole === "main") {
+      void this.attemptCallbackDelivery().catch((err) => {
+        this.transport.sendNotification("log", {
+          message: `[orchestrator] Cold-start callback drain failed: ${err instanceof Error ? err.message : err}`,
+        });
+      });
+    }
 
     this.persistState(true);
     return session;
@@ -2731,7 +2737,6 @@ export class Orchestrator {
    */
   private async deliverTaskCallback(payload: TaskCallbackPayload): Promise<void> {
     // If originator is an external MCP client, broadcaster already delivered the event.
-    // Do NOT activate internal Main Agent session — the MCP client receives via mercury_event.
     if (payload.originatorSessionId?.startsWith("mcp-http:")) {
       this.transport.sendNotification("log", {
         message: `[orchestrator] Task callback for ${payload.taskId} — MCP originator (${payload.originatorSessionId}), relying on broadcaster`,
@@ -2739,29 +2744,68 @@ export class Orchestrator {
       return;
     }
 
+    // Step 1: Persist to callback queue (crash-safe)
+    if (this.callbackQueue) {
+      const enqueued = this.callbackQueue.enqueue(payload);
+      if (!enqueued) {
+        this.transport.sendNotification("log", {
+          message: `[orchestrator] Callback already queued (idempotent skip) for ${payload.taskId}:${payload.verdict}`,
+        });
+        return;
+      }
+    }
+
+    // Step 2: Attempt immediate delivery of all pending callbacks
+    await this.attemptCallbackDelivery();
+  }
+
+  /**
+   * Attempt to deliver all pending callbacks to the active Main Agent session.
+   * Called from deliverTaskCallback (immediate) and startRoleSession (cold-start drain).
+   */
+  private async attemptCallbackDelivery(): Promise<void> {
+    if (!this.callbackQueue) return;
+
     const mainAgentId = this.findMainAgentId();
     if (!mainAgentId) return;
 
-    // Only deliver if there's an active Main Agent session (avoid spawning new session)
     const mainSlot = makeRoleSlotKey("main", mainAgentId);
     const activeSessionId = this.roleSessions.get(mainSlot);
-    if (!activeSessionId) {
-      this.transport.sendNotification("log", {
-        message: `[orchestrator] No active Main Agent session for callback delivery (task: ${payload.taskId})`,
-      });
-      return;
-    }
+    if (!activeSessionId) return;
 
-    // Stale session guard: validate session exists and is not completed/overflow
     const session = this.sessions.get(activeSessionId);
     if (!session || session.status === "completed" || session.status === "overflow") {
-      this.transport.sendNotification("log", {
-        message: `[orchestrator] Main Agent session ${activeSessionId} is stale (${session?.status ?? "missing"}), skipping callback for ${payload.taskId}`,
-      });
       this.roleSessions.delete(mainSlot);
       return;
     }
 
+    const pending = this.callbackQueue.getPending();
+    if (pending.length === 0) return;
+
+    this.transport.sendNotification("log", {
+      message: `[orchestrator] Delivering ${pending.length} pending callback(s) to Main Agent session ${activeSessionId}`,
+    });
+
+    for (const entry of pending) {
+      const entryPayload = JSON.parse(entry.payload_json) as TaskCallbackPayload;
+      const prompt = this.formatCallbackPrompt(entryPayload);
+
+      try {
+        await this.sendPrompt(mainAgentId, prompt, undefined, "main");
+        this.callbackQueue.markDelivered(entry.id);
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        this.callbackQueue.markAttemptFailed(entry.id, errorMsg);
+        this.transport.sendNotification("log", {
+          message: `[orchestrator] Callback delivery failed for ${entry.task_id}: ${errorMsg}`,
+        });
+        break; // Stop — session may be dead
+      }
+    }
+  }
+
+  /** Format a callback payload into a prompt string for the Main Agent. */
+  private formatCallbackPrompt(payload: TaskCallbackPayload): string {
     const task = this.taskManager.getTask(payload.taskId);
     const taskTitle = task?.title ?? payload.taskId;
     const findings = payload.findings?.length
@@ -2771,7 +2815,7 @@ export class Orchestrator {
       ? `\nRecommendations:\n${payload.recommendations.map((r) => `- ${r}`).join("\n")}`
       : "";
 
-    const callbackPrompt = [
+    return [
       `[Task Callback] ${taskTitle}`,
       `Task ID: ${payload.taskId}`,
       `Acceptance Verdict: ${payload.verdict.toUpperCase()}`,
@@ -2783,15 +2827,6 @@ export class Orchestrator {
           ? "Task is blocked. Manual intervention required."
           : "Rework has been triggered. Dev agent will receive updated instructions.",
     ].filter(Boolean).join("\n");
-
-    try {
-      await this.sendPrompt(mainAgentId, callbackPrompt, undefined, "main");
-    } catch (err) {
-      // Non-fatal: callback delivery is best-effort
-      this.transport.sendNotification("log", {
-        message: `[orchestrator] Failed to deliver task callback to Main Agent: ${err instanceof Error ? err.message : err}`,
-      });
-    }
   }
 
   /**
