@@ -841,6 +841,14 @@ export class TaskManager {
     if (task.dispatchAttempts >= task.maxDispatchAttempts) {
       return `Task ${taskId} exceeded max dispatch attempts (${task.dispatchAttempts}/${task.maxDispatchAttempts})`;
     }
+    // Research/design tasks must have at least one non-empty kbPath for report output
+    const role = task.role ?? "dev";
+    if (role === "research" || role === "design") {
+      const validKbPaths = (task.allowedWriteScope?.kbPaths ?? []).filter((p) => p.trim().length > 0);
+      if (validKbPaths.length === 0) {
+        return `Task ${taskId} (${role}) requires at least one non-empty allowedWriteScope.kbPaths entry for report output`;
+      }
+    }
     return null;
   }
 
@@ -1010,11 +1018,14 @@ function fallbackDevTemplate(): string {
  * Derive deterministic KB write instructions from allowedWriteScope.kbPaths.
  * If a kbPath ends with ".md", use it as-is; otherwise treat it as a prefix
  * and append `${taskId}.md` to produce an explicit filename.
+ *
+ * Note: validateDispatch() ensures research/design tasks always have at least
+ * one kbPath, so the empty-array branch is only reachable for dev tasks.
  */
 function deriveKbWriteInstructions(task: TaskBundle): string[] {
   const kbPaths = task.allowedWriteScope?.kbPaths ?? [];
   if (kbPaths.length === 0) {
-    return ["No KB output path specified — skip KB write."];
+    return ["No KB output path configured for this task."];
   }
   const target = kbPaths[0].endsWith(".md")
     ? kbPaths[0]
@@ -1057,11 +1068,13 @@ export function buildResearchPrompt(
     "- Produce structured findings with evidence and recommendations.",
     "- No code commits expected.",
     "",
-    "## Writing to KB",
+    "## MANDATORY: Write Report to KB (Step 1)",
+    "Before outputting your final JSON summary, you MUST write the full report to KB.",
     ...deriveKbWriteInstructions(task),
+    "If kb_write fails, retry once. If it still fails, do NOT proceed to Step 2 — report the error as your final message.",
     "",
-    "## Output Format",
-    "After writing the KB file (if applicable), return a JSON summary as your final message.",
+    "## Output Format (Step 2)",
+    "After writing the KB file, return a JSON summary as your final message.",
     "Keep each finding/recommendation as a cohesive paragraph (not split by line):",
     "```json",
     JSON.stringify({
@@ -1111,11 +1124,13 @@ export function buildDesignPrompt(
     "- Reference existing code patterns and KB docs as needed.",
     "- No code implementation expected.",
     "",
-    "## Writing to KB",
+    "## MANDATORY: Write Report to KB (Step 1)",
+    "Before outputting your final JSON summary, you MUST write the full report to KB.",
     ...deriveKbWriteInstructions(task),
+    "If kb_write fails, retry once. If it still fails, do NOT proceed to Step 2 — report the error as your final message.",
     "",
-    "## Output Format",
-    "Return a JSON design report as your final message:",
+    "## Output Format (Step 2)",
+    "After writing the KB file, return a JSON design report as your final message:",
     "```json",
     JSON.stringify({
       designer: "",
