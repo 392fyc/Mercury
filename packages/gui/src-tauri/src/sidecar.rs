@@ -29,9 +29,9 @@ impl SidecarManager {
             let mut c = Command::new("cmd");
             c.args(["/c", "pnpm", "exec", "tsx"]);
             c.arg(&orchestrator_entry);
-            c.creation_flags(0x08000000); // CREATE_NO_WINDOW
             // Force UTF-8 encoding to prevent codepage 936/GBK garbling on CJK Windows.
             // PYTHONIOENCODING: protects any Python subprocess spawned downstream.
+            c.creation_flags(0x08000000); // CREATE_NO_WINDOW
             c.env("LANG", "en_US.UTF-8");
             c.env("LC_ALL", "en_US.UTF-8");
             c.env("PYTHONIOENCODING", "utf-8");
@@ -221,7 +221,46 @@ impl SidecarManager {
 
     pub async fn shutdown(&self) {
         let mut child = self.child.lock().await;
-        let _ = child.kill().await;
+        #[cfg(target_os = "windows")]
+        {
+            // The sidecar is launched via `cmd /c pnpm exec tsx ...`, so killing the
+            // direct child is not enough. Use taskkill to terminate the whole tree,
+            // otherwise the Node.js orchestrator can survive and keep 127.0.0.1:7654 bound.
+            if let Some(pid) = child.id() {
+                let mut kill_cmd = Command::new("taskkill");
+                kill_cmd
+                    .args(["/T", "/F", "/PID", &pid.to_string()])
+                    .creation_flags(0x08000000); // CREATE_NO_WINDOW
+
+                match kill_cmd.output().await {
+                    Ok(output) if output.status.success() => {}
+                    Ok(output) => {
+                        eprintln!(
+                            "[tauri] sidecar taskkill failed: {}",
+                            String::from_utf8_lossy(&output.stderr)
+                        );
+                        let _ = child.kill().await;
+                    }
+                    Err(e) => {
+                        eprintln!("[tauri] sidecar taskkill spawn error: {}", e);
+                        let _ = child.kill().await;
+                    }
+                }
+            } else {
+                let _ = child.kill().await;
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = child.kill().await;
+        }
+
+        match timeout(Duration::from_secs(5), child.wait()).await {
+            Ok(Ok(_status)) => {}
+            Ok(Err(e)) => eprintln!("[tauri] sidecar wait failed during shutdown: {}", e),
+            Err(_) => eprintln!("[tauri] sidecar wait timed out during shutdown"),
+        }
     }
 }
 
