@@ -25,18 +25,19 @@ git rev-parse --abbrev-ref HEAD
 4. When recovering from an accidental protected-branch local commit:
    - create a fresh worktree or branch from `origin/develop`
    - cherry-pick or re-commit the work there
-   - keep Claude-specific hooks and `.claude/` logic untouched unless the user explicitly asks to modify them
+   - if the repository still uses Claude-specific hooks or a `.claude/` directory, prefer leaving them untouched unless the user explicitly asks to modify them
 5. Stage files through the safe wrapper:
-   - run `powershell -File scripts/codex/git-safe.ps1 add <path> [more paths...]`
+   - run `powershell -ExecutionPolicy Bypass -File scripts/codex/git-safe.ps1 add <path> [more paths...]`
    - never use raw `git add .`, `git add -A`, or `git add --all`
 6. Before `git commit`:
    - complete a code review
-   - run `powershell -File scripts/codex/guard.ps1 mark-review`
+   - run `powershell -ExecutionPolicy Bypass -File scripts/codex/guard.ps1 mark-review`
    - invoke the `auto-verify` skill
-   - run `powershell -File scripts/codex/git-safe.ps1 commit -Message "<message>"`
+   - if `mark-review` or `auto-verify` fails with a non-zero exit code or throws, stop immediately and do not commit
+   - run `powershell -ExecutionPolicy Bypass -File scripts/codex/git-safe.ps1 commit -Message "<message>"`
 7. After a successful commit, the wrapper clears the review flag automatically.
 8. Before `git push`:
-   - run `powershell -File scripts/codex/git-safe.ps1 push origin <branch>`
+   - run `powershell -ExecutionPolicy Bypass -File scripts/codex/git-safe.ps1 push origin <branch>`
    - never target `develop`, `master`, or `main`
 9. If the task touches external SDK/API/CLI behavior, invoke `web-research` before editing.
 

@@ -16,6 +16,7 @@ $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path (Join-Path $scriptDir "..\\..")).Path
 $guardScript = Join-Path $scriptDir "guard.ps1"
+$powerShellHost = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
 
 function Invoke-Guard {
   param(
@@ -28,7 +29,7 @@ function Invoke-Guard {
     $cmd += @("-PushCommand", $PushCommandText)
   }
 
-  & powershell @cmd
+  & $powerShellHost @cmd
   if ($LASTEXITCODE -ne 0) {
     throw "Guard action '$GuardAction' failed."
   }
@@ -103,7 +104,11 @@ switch ($Action) {
     Assert-HasStagedChanges
     $gitArgs = @("-C", $repoRoot, "commit", "-m", $Message)
     Invoke-Git -GitArgs $gitArgs
-    Invoke-Guard -GuardAction "clear-review"
+    try {
+      Invoke-Guard -GuardAction "clear-review"
+    } catch {
+      Write-Warning "Commit succeeded, but review flag cleanup failed: $($_.Exception.Message)"
+    }
     exit 0
   }
   "push" {
