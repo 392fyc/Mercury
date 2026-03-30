@@ -274,6 +274,11 @@ export class TaskManager {
     if (normCodePaths.length === 0 && normKbPaths.length === 0) {
       errors.push("allowedWriteScope must have at least 1 codePath or kbPath");
     }
+    // Research/design tasks must have kbPath for report output (fail-fast)
+    const taskRole = params.role ?? "dev";
+    if ((taskRole === "research" || taskRole === "design") && normKbPaths.length === 0) {
+      errors.push(`${taskRole} tasks require at least one non-empty allowedWriteScope.kbPaths entry for report output`);
+    }
     if (errors.length > 0) {
       throw new Error(`createTask validation failed:\n  - ${errors.join("\n  - ")}`);
     }

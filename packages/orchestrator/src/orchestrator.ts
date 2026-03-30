@@ -254,8 +254,21 @@ export class Orchestrator {
     await this.buildAndInjectContext();
   }
 
-  /** Graceful shutdown — close SQLite connection and release resources. */
+  private shuttingDown = false;
+
+  /** Graceful shutdown — quiesce drain, clean up queue, close SQLite. */
   async shutdown(): Promise<void> {
+    // Prevent new enqueues and drain attempts during shutdown
+    this.shuttingDown = true;
+    try {
+      const cleaned = this.callbackQueue?.cleanup();
+      if (cleaned) {
+        this.transport.sendNotification("log", {
+          message: `[orchestrator] Cleaned up ${cleaned} delivered callback(s) on shutdown`,
+        });
+      }
+    } catch { /* best-effort */ }
+    this.callbackQueue = null;
     this.sqliteDb?.close();
     this.sqliteDb = null;
   }
@@ -1577,9 +1590,18 @@ export class Orchestrator {
               timestamp: yielded.timestamp,
             },
           });
-          // Loop detection: track tool calls and warn if repeating
+          // Loop detection: track tool calls and intervene if looping
           if (yielded.toolName && yielded.eventKind === "tool_start") {
-            this.detectToolLoop(sessionId, yielded.toolName);
+            if (this.detectToolLoop(sessionId, yielded.toolName)) {
+              // Inject warning into the current session's role slot
+              const loopSession = this.sessions.get(sessionId);
+              void this.sendPrompt(
+                agentId,
+                `[LOOP DETECTED] You have called "${yielded.toolName}" ${Orchestrator.LOOP_DETECTION_THRESHOLD}+ times consecutively. This suggests a loop. Stop repeating the same action and try a different approach.`,
+                undefined,
+                loopSession?.role,
+              ).catch(() => { /* best-effort warning injection */ });
+            }
           }
           continue;
         }
@@ -1811,6 +1833,8 @@ export class Orchestrator {
         this.transport.sendNotification("log", {
           message: `[harness] Loop detected in session ${sessionId}: tool "${toolName}" called ${Orchestrator.LOOP_DETECTION_THRESHOLD}+ times consecutively`,
         });
+        // Reset window to avoid repeated warnings on every subsequent call
+        recent.length = 0;
         return true;
       }
     }
@@ -1954,19 +1978,43 @@ export class Orchestrator {
       message: `[task] Research task ${task.taskId} completed by ${agentId}, fast-tracking to closed`,
     });
 
+    // Verify KB write: derive the same target path as deriveKbWriteInstructions
+    const kbPaths = (task.allowedWriteScope?.kbPaths ?? []).filter((p) => p.trim().length > 0);
+    let expectedKbFile: string | undefined;
+    if (kbPaths.length > 0) {
+      expectedKbFile = kbPaths[0].endsWith(".md")
+        ? kbPaths[0]
+        : `${kbPaths[0].replace(/\/+$/, "")}/${task.taskId}.md`;
+    }
+    let kbWriteVerified = false;
+    if (expectedKbFile && this.kb?.isEnabled()) {
+      try {
+        const content = await this.kb.read(expectedKbFile);
+        kbWriteVerified = !!content && content.length > 100;
+      } catch {
+        // KB file not found or not readable
+      }
+      if (!kbWriteVerified) {
+        this.transport.sendNotification("log", {
+          message: `[task] WARNING: Research task ${task.taskId} did not write expected KB file "${expectedKbFile}". Findings may be lost.`,
+        });
+      }
+    }
+
     // Store a lightweight receipt
     const parsed = this.tryParseJsonRecord(finalMessage);
     const evidenceArr = this.readStringArray(parsed?.evidence);
     const findingsArr = this.readStringArray(parsed?.findings);
     const recommendationsArr = this.readStringArray(parsed?.recommendations);
+    const docsUpdated = kbWriteVerified && expectedKbFile ? [expectedKbFile] : [];
     const receipt: ImplementationReceipt = {
       implementer: agentId,
       branch: "",
       summary: this.readString(parsed?.summary) ?? finalMessage.slice(0, 500),
       changedFiles: [],
       evidence: evidenceArr.length > 0 ? evidenceArr : findingsArr,
-      docsUpdated: [],
-      residualRisks: [],
+      docsUpdated,
+      residualRisks: kbWriteVerified ? [] : ["KB write not verified — research output may only exist in task result"],
       completedAt: Date.now(),
     };
 
@@ -2870,6 +2918,7 @@ export class Orchestrator {
     }
 
     // Step 1: Persist to callback queue (crash-safe)
+    if (this.shuttingDown) return;
     if (this.callbackQueue) {
       const enqueued = this.callbackQueue.enqueue(payload);
       if (!enqueued) {
@@ -2925,6 +2974,7 @@ export class Orchestrator {
   private callbackDrainLock: Promise<void> = Promise.resolve();
 
   private async attemptCallbackDelivery(): Promise<void> {
+    if (this.shuttingDown) return;
     // Serialize: chain onto the existing drain lock to prevent concurrent reads
     const prev = this.callbackDrainLock;
     let resolve!: () => void;
@@ -2963,13 +3013,19 @@ export class Orchestrator {
     });
 
     for (const entry of pending) {
-      const entryPayload = JSON.parse(entry.payload_json) as TaskCallbackPayload;
+      let entryPayload: TaskCallbackPayload;
+      try {
+        entryPayload = JSON.parse(entry.payload_json) as TaskCallbackPayload;
+      } catch {
+        this.transport.sendNotification("log", {
+          message: `[orchestrator] Corrupt callback payload (id=${entry.id}), marking failed and skipping`,
+        });
+        this.callbackQueue.markAttemptFailed(entry.id, "corrupt payload JSON", 1);
+        continue; // Skip this entry, continue with next
+      }
       const prompt = this.formatCallbackPrompt(entryPayload);
 
       try {
-        // sendPrompt initiates streaming; marking delivered after the call
-        // succeeds means the transport accepted the prompt. This is
-        // at-least-once delivery — acceptable since callbacks are idempotent.
         await this.sendPrompt(mainAgentId, prompt, undefined, "main");
         this.callbackQueue.markDelivered(entry.id);
       } catch (err) {
