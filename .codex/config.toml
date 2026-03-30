@@ -12,4 +12,9 @@ MANDATORY: Before writing ANY code that imports an external SDK/API package or r
 3. GitHub source code alone is NOT sufficient (repos may show dev versions)
 4. Include source URLs when reporting technical findings
 5. If web_search fails, mark claims as UNVERIFIED
+6. Never commit or push directly on develop, master, or main
+7. If the current branch is protected or does not match feature/TASK-*, stop and move the work to a task branch before committing
+8. Before every commit, complete a code review, invoke the auto-verify skill or equivalent local checks, run `scripts/codex/guard.ps1 mark-review`, and then run `scripts/codex/guard.ps1 pre-commit`
+9. Before every push, run `scripts/codex/guard.ps1 pre-push -PushCommand "<git push ...>"` and do not target develop, master, or main
+10. On Windows, do not assume Codex hooks will run; use AGENTS.md and repo skills/scripts as the enforcement path
 """

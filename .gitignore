@@ -55,3 +55,4 @@ CLAUDE.md
 .mercury/mercury.db-shm
 mercury.config.json
 .claude/current-session.md
+.codex/state/

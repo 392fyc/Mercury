@@ -11,6 +11,7 @@ This note defines how `.agents/skills/` should use `openai.yaml` in the Codex en
 - `deep-research`: `allow_implicit_invocation: true`
 - `sot-workflow`: `allow_implicit_invocation: true`
 - `auto-verify`: `allow_implicit_invocation: true`
+- `codex-git-guard`: `allow_implicit_invocation: true`
 
 ## Rationale
 
@@ -30,6 +31,7 @@ Choose `allow_implicit_invocation: true` when the skill:
 - provides background workflow knowledge
 - verifies external dependency claims
 - runs a local quality gate before commit
+- blocks protected-branch git mutations through explicit preflight checks
 
 ## Consistency
 

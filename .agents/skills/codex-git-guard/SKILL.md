@@ -1,0 +1,55 @@
+---
+name: codex-git-guard
+description: |
+  Use this skill when the user asks to commit, push, create a branch, open a PR, merge, or otherwise mutate git state from Codex. Trigger proactively on English and Chinese requests such as "commit", "push", "branch", "PR", "merge", "提交", "推送", "分支", "建分支", "提PR", "合并". This skill enforces Mercury's protected-branch workflow for Codex, including the Windows limitation that Codex hooks are unavailable and guardrails must run through repo instructions, skills, and scripts.
+---
+
+# Codex Git Guard
+
+## When
+
+- Use before any `git commit`, `git push`, `gh pr create`, `gh pr merge`, or branch-changing request in Codex sessions.
+- Use even if the user only asked for code changes when the task is likely to end in a commit.
+- Do not use for read-only git commands such as `git status`, `git diff`, or `git log`.
+
+## Pipeline
+
+1. Check the current branch first:
+
+```powershell
+git rev-parse --abbrev-ref HEAD
+```
+
+2. If the branch is `develop`, `master`, or `main`, stop. Do not commit or push there.
+3. If the branch does not match `feature/TASK-*`, stop and move the work to a task branch before mutating git state.
+4. When recovering from an accidental protected-branch local commit:
+   - create a fresh worktree or branch from `origin/develop`
+   - cherry-pick or re-commit the work there
+   - keep Claude-specific hooks and `.claude/` logic untouched unless the user explicitly asks to modify them
+5. Before `git commit`:
+   - complete a code review
+   - run `powershell -File scripts/codex/guard.ps1 mark-review`
+   - invoke the `auto-verify` skill
+   - run `powershell -File scripts/codex/guard.ps1 pre-commit`
+   - stage only intended files; never use `git add .` or `git add -A`
+6. After a successful commit:
+   - run `powershell -File scripts/codex/guard.ps1 clear-review`
+7. Before `git push`:
+   - run `powershell -File scripts/codex/guard.ps1 pre-push -PushCommand "<git push ...>"`
+   - never target `develop`, `master`, or `main`
+8. If the task touches external SDK/API/CLI behavior, invoke `web-research` before editing.
+
+## Output
+
+Use a compact status note:
+
+```text
+## Codex Git Guard
+Branch: PASS | FAIL
+ReviewFlag: PASS | FAIL | SKIP
+PushTarget: PASS | FAIL | SKIP
+Overall: PASS | FAIL
+```
+
+- State the exact blocking condition when a check fails.
+- Do not recommend committing or pushing while the guard status is `FAIL`.
