@@ -63,6 +63,7 @@ const gitBranches = shallowRef<Map<string, string | null>>(new Map()); // panelK
 const defaultWorkDir = ref("");
 const sidecarReady = ref(false);
 const sidecarError = ref<string | null>(null);
+const SIDECAR_READY_TIMEOUT_MS = 30_000;
 
 // ─── Bookmark Rail State ───
 /** Manually created sub-agent bookmarks (panelKey → true). Auto-created when session starts. */
@@ -430,8 +431,12 @@ async function loadAgents() {
     }
     triggerRef(statuses);
     await hydrateSessionMeta();
+    return;
   } catch (e) {
     console.error("Failed to fetch agents:", e);
+    sidecarReady.value = false;
+    sidecarError.value = e instanceof Error ? e.message : String(e);
+    throw e;
   }
 }
 
@@ -459,7 +464,9 @@ async function initAgents() {
   }
 
   // Listen for sidecar ready event
-  await onSidecarReady(() => loadAgents());
+  await onSidecarReady(() => {
+    void loadAgents().catch(() => {});
+  });
 
   await onSidecarError((data) => {
     sidecarReady.value = false;
@@ -597,21 +604,36 @@ async function initAgents() {
   setTimeout(pollFn, pollDelay);
 }
 
-function waitForSidecarReady(): Promise<void> {
+function waitForSidecarReady(timeoutMs = SIDECAR_READY_TIMEOUT_MS): Promise<void> {
   if (sidecarReady.value) return Promise.resolve();
   if (sidecarError.value) return Promise.reject(new Error(sidecarError.value));
 
   return new Promise((resolve, reject) => {
-    const stop = watch(
+    let settled = false;
+    let stop: (() => void) | null = null;
+    const timer = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      stop?.();
+      reject(new Error(`Timed out waiting for sidecar readiness after ${timeoutMs} ms.`));
+    }, timeoutMs);
+
+    stop = watch(
       [sidecarReady, sidecarError],
       ([ready, error]) => {
         if (ready) {
-          stop();
+          if (settled) return;
+          settled = true;
+          stop?.();
+          window.clearTimeout(timer);
           resolve();
           return;
         }
         if (error) {
-          stop();
+          if (settled) return;
+          settled = true;
+          stop?.();
+          window.clearTimeout(timer);
           reject(new Error(error));
         }
       },

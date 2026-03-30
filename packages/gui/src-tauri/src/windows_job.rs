@@ -20,6 +20,11 @@ use windows_sys::Win32::System::JobObjects::{
 /// Windows Job Object wrapper that terminates the assigned process tree when the
 /// job handle is closed. This protects against orphaned sidecar/CLI children when
 /// the GUI or dev terminal is closed abruptly.
+///
+/// The assignment still happens after `spawn()`, so there is a small Windows-only
+/// race before `AssignProcessToJobObject` succeeds. Callers keep `taskkill /T`
+/// shutdown fallbacks in place to clean up that narrow failure window until the
+/// spawn path is migrated to an API that supports atomic job assignment.
 #[cfg(target_os = "windows")]
 pub struct ProcessJob {
     handle: OwnedHandle,

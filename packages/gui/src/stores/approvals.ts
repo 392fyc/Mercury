@@ -1,4 +1,5 @@
 import { computed, ref } from "vue";
+import type { UnlistenFn } from "@tauri-apps/api/event";
 import type { ApprovalMode, ApprovalRequest, MercuryEvent } from "../lib/tauri-bridge";
 import {
   approveRequest as bridgeApproveRequest,
@@ -109,48 +110,69 @@ function cancelPendingApprovalsForSession(sessionId: string, reason: string): vo
 }
 
 let approvalsInitialized = false;
+let approvalsInitPromise: Promise<void> | null = null;
+const approvalUnlisteners: UnlistenFn[] = [];
 
 async function initApprovalStore(): Promise<void> {
   if (approvalsInitialized) return;
-  approvalsInitialized = true;
-  try {
+  if (approvalsInitPromise) return approvalsInitPromise;
+
+  approvalsInitPromise = (async () => {
     const { waitForSidecarReady } = useAgentStore();
-    await waitForSidecarReady();
+    const pending: UnlistenFn[] = [];
+    try {
+      await waitForSidecarReady();
 
-    const [modeResult, requests] = await Promise.all([
-      bridgeGetApprovalMode(),
-      bridgeListApprovalRequests(),
-    ]);
-    approvalMode.value = modeResult.mode;
-    const next = new Map<string, ApprovalRequest>();
-    for (const request of requests) next.set(request.id, request);
-    approvalRequests.value = next;
+      const [modeResult, requests] = await Promise.all([
+        bridgeGetApprovalMode(),
+        bridgeListApprovalRequests(),
+      ]);
+      approvalMode.value = modeResult.mode;
+      const next = new Map<string, ApprovalRequest>();
+      for (const request of requests) next.set(request.id, request);
+      approvalRequests.value = next;
 
-    await onMercuryEvent((event: MercuryEvent) => {
-      if (event.type !== "agent.approval.requested" && event.type !== "agent.approval.resolved") {
-        return;
-      }
+      pending.push(await onMercuryEvent((event: MercuryEvent) => {
+        if (event.type !== "agent.approval.requested" && event.type !== "agent.approval.resolved") {
+          return;
+        }
 
-      const payload = event.payload as unknown as ApprovalRequest;
-      if (payload?.id) {
-        upsertRequest(payload);
-      }
-    });
+        const payload = event.payload as unknown as ApprovalRequest;
+        if (payload?.id) {
+          upsertRequest(payload);
+        }
+      }));
 
-    // When a transport crash occurs, immediately cancel pending approvals for
-    // that session so the GUI doesn't show stale, unresponsive approval buttons.
-    await onAgentError((data) => {
-      if (data.isTransportCrash) {
-        cancelPendingApprovalsForSession(
-          data.sessionId,
-          "Transport disconnected — approval cancelled",
-        );
-      }
-    });
-  } catch (e) {
-    approvalsInitialized = false;
-    throw e;
-  }
+      // When a transport crash occurs, immediately cancel pending approvals for
+      // that session so the GUI doesn't show stale, unresponsive approval buttons.
+      pending.push(await onAgentError((data) => {
+        if (data.isTransportCrash) {
+          cancelPendingApprovalsForSession(
+            data.sessionId,
+            "Transport disconnected — approval cancelled",
+          );
+        }
+      }));
+
+      approvalUnlisteners.push(...pending);
+      approvalsInitialized = true;
+    } catch (e) {
+      for (const unlisten of pending) unlisten();
+      approvalsInitialized = false;
+      throw e;
+    } finally {
+      approvalsInitPromise = null;
+    }
+  })();
+
+  return approvalsInitPromise;
+}
+
+function disposeApprovalStoreListeners(): void {
+  for (const unlisten of approvalUnlisteners) unlisten();
+  approvalUnlisteners.length = 0;
+  approvalsInitialized = false;
+  approvalsInitPromise = null;
 }
 
 export function useApprovalStore() {
@@ -168,5 +190,6 @@ export function useApprovalStore() {
     approve,
     deny,
     initApprovalStore,
+    disposeApprovalStoreListeners,
   };
 }

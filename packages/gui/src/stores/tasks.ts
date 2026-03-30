@@ -116,6 +116,7 @@ async function initTaskListeners() {
       for (const unlisten of pending) unlisten();
       taskListenersInitPromise = null;
       console.error("Failed to init task listeners:", e);
+      throw e;
     }
   })();
 
