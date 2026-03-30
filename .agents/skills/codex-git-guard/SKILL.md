@@ -26,18 +26,19 @@ git rev-parse --abbrev-ref HEAD
    - create a fresh worktree or branch from `origin/develop`
    - cherry-pick or re-commit the work there
    - keep Claude-specific hooks and `.claude/` logic untouched unless the user explicitly asks to modify them
-5. Before `git commit`:
+5. Stage files through the safe wrapper:
+   - run `powershell -File scripts/codex/git-safe.ps1 add <path> [more paths...]`
+   - never use raw `git add .`, `git add -A`, or `git add --all`
+6. Before `git commit`:
    - complete a code review
    - run `powershell -File scripts/codex/guard.ps1 mark-review`
    - invoke the `auto-verify` skill
-   - run `powershell -File scripts/codex/guard.ps1 pre-commit`
-   - stage only intended files; never use `git add .` or `git add -A`
-6. After a successful commit:
-   - run `powershell -File scripts/codex/guard.ps1 clear-review`
-7. Before `git push`:
-   - run `powershell -File scripts/codex/guard.ps1 pre-push -PushCommand "<git push ...>"`
+   - run `powershell -File scripts/codex/git-safe.ps1 commit -Message "<message>"`
+7. After a successful commit, the wrapper clears the review flag automatically.
+8. Before `git push`:
+   - run `powershell -File scripts/codex/git-safe.ps1 push origin <branch>`
    - never target `develop`, `master`, or `main`
-8. If the task touches external SDK/API/CLI behavior, invoke `web-research` before editing.
+9. If the task touches external SDK/API/CLI behavior, invoke `web-research` before editing.
 
 ## Output
 

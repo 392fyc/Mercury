@@ -45,4 +45,4 @@ Read these docs on demand when you need the corresponding information:
 ## Agent-Specific Notes
 
 - Codex sandbox may block network access — git push failures are expected, Main Agent handles push.
-- Codex on Windows: hooks are currently disabled, so strong guardrails live in `.codex/config.toml`, repo skills, and `scripts/codex/guard.ps1`.
+- Codex on Windows: hooks are currently disabled, so strong guardrails live in `.codex/config.toml`, `.codex/rules/`, repo skills, and `scripts/codex/*.ps1`.

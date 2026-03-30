@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true, Position = 0)]
-  [ValidateSet("status", "mark-review", "clear-review", "pre-commit", "pre-push")]
+  [ValidateSet("status", "mark-review", "clear-review", "pre-stage", "pre-commit", "pre-push")]
   [string]$Action,
 
   [string]$PushCommand
@@ -104,6 +104,11 @@ switch ($Action) {
   "clear-review" {
     Clear-ReviewFlag
     Write-Output "review_flag=cleared"
+    exit 0
+  }
+  "pre-stage" {
+    Assert-TaskBranch -Branch $branch
+    Write-Output "pre_stage=pass"
     exit 0
   }
   "pre-commit" {
