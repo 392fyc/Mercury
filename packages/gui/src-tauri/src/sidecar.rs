@@ -8,11 +8,15 @@ use tokio::sync::{oneshot, Mutex};
 use tokio::time::{timeout, Duration};
 
 use crate::types::RpcRequest;
+#[cfg(target_os = "windows")]
+use crate::windows_job::ProcessJob;
 
 #[derive(Clone)]
 pub struct SidecarManager {
     stdin: Arc<Mutex<tokio::process::ChildStdin>>,
     child: Arc<Mutex<Child>>,
+    #[cfg(target_os = "windows")]
+    _job: Option<Arc<ProcessJob>>,
     pending: Arc<Mutex<HashMap<u64, oneshot::Sender<serde_json::Value>>>>,
     next_id: Arc<Mutex<u64>>,
 }
@@ -20,6 +24,17 @@ pub struct SidecarManager {
 impl SidecarManager {
     pub async fn spawn(app_handle: tauri::AppHandle, project_dir: String) -> Result<Self, String> {
         let orchestrator_entry = resolve_orchestrator_entry(&project_dir)?;
+        #[cfg(target_os = "windows")]
+        let job = match ProcessJob::new_kill_on_close() {
+            Ok(job) => Some(Arc::new(job)),
+            Err(e) => {
+                eprintln!(
+                    "[tauri] WARNING: failed to create sidecar job object: {}",
+                    e
+                );
+                None
+            }
+        };
 
         // In dev mode, use pnpm exec tsx to run the orchestrator.
         // Using pnpm instead of npx avoids npm warn noise from inherited env vars.
@@ -54,6 +69,15 @@ impl SidecarManager {
         let mut child = cmd
             .spawn()
             .map_err(|e| format!("Failed to spawn orchestrator: {}", e))?;
+        #[cfg(target_os = "windows")]
+        if let Some(job) = job.as_ref() {
+            if let Err(e) = job.assign(&child) {
+                eprintln!(
+                    "[tauri] WARNING: failed to assign sidecar to job object: {}",
+                    e
+                );
+            }
+        }
 
         let stdin = child.stdin.take().ok_or("Failed to get stdin")?;
         let stdout = child.stdout.take().ok_or("Failed to get stdout")?;
@@ -102,6 +126,18 @@ impl SidecarManager {
                 }
                 tokio::task::yield_now().await;
             }
+
+            eprintln!("[tauri] Orchestrator sidecar stdout closed");
+            {
+                let mut pending = pending_clone.lock().await;
+                pending.clear();
+            }
+            let _ = app_clone.emit(
+                "sidecar-error",
+                serde_json::json!({
+                    "error": "Orchestrator sidecar disconnected before replying. Check sidecar stderr for the root cause."
+                }),
+            );
         });
 
         // Read stderr (log messages)
@@ -118,6 +154,8 @@ impl SidecarManager {
         Ok(Self {
             stdin: Arc::new(Mutex::new(stdin)),
             child: Arc::new(Mutex::new(child)),
+            #[cfg(target_os = "windows")]
+            _job: job,
             pending,
             next_id: Arc::new(Mutex::new(1)),
         })
@@ -128,6 +166,10 @@ impl SidecarManager {
         method: &str,
         params: serde_json::Value,
     ) -> Result<serde_json::Value, String> {
+        if !self.is_alive().await {
+            return Err("Orchestrator sidecar is not running".to_string());
+        }
+
         let id = {
             let mut next = self.next_id.lock().await;
             let id = *next;
@@ -197,6 +239,10 @@ impl SidecarManager {
         method: &str,
         params: serde_json::Value,
     ) -> Result<(), String> {
+        if !self.is_alive().await {
+            return Err("Orchestrator sidecar is not running".to_string());
+        }
+
         let request = RpcRequest {
             jsonrpc: "2.0".to_string(),
             method: method.to_string(),

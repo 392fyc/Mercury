@@ -10,6 +10,7 @@ import type {
 } from "../lib/tauri-bridge";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { listTasks, getTask, onMercuryEvent, onSidecarReady } from "../lib/tauri-bridge";
+import { useAgentStore } from "./agents";
 
 const tasks = ref<TaskBundle[]>([]);
 const selectedTaskId = ref<string | null>(null);
@@ -83,37 +84,39 @@ async function initTaskListeners() {
   if (taskListenersInitPromise) return taskListenersInitPromise;
 
   taskListenersInitPromise = (async () => {
-  const pending: UnlistenFn[] = [];
-  try {
-    // Reload tasks whenever sidecar becomes ready (handles F5 page refresh where
-    // sidecar may not be available yet when onMounted fires).
-    pending.push(await onSidecarReady(() => loadTasks()));
+    const { waitForSidecarReady } = useAgentStore();
+    const pending: UnlistenFn[] = [];
+    try {
+      // Reload tasks whenever sidecar becomes ready (handles F5 page refresh where
+      // sidecar may not be available yet when onMounted fires).
+      pending.push(await onSidecarReady(() => loadTasks()));
 
-    // Attempt immediate load in case sidecar is already ready — the ready
-    // event may have been emitted before we registered the listener above.
-    void loadTasks();
+      // If the ready event was emitted before we registered the listener above,
+      // wait on the shared sidecar-ready state that agents.ts keeps in sync.
+      await waitForSidecarReady();
+      await loadTasks();
 
-    pending.push(await onMercuryEvent((event: MercuryEvent) => {
-      if (event.type.startsWith("orchestrator.task.") || event.type.startsWith("orchestrator.acceptance.")) {
-        const taskId =
-          (event.payload as Record<string, unknown>).taskId as string | undefined;
-        if (taskId) {
-          refreshTask(taskId);
-        } else {
-          loadTasks();
+      pending.push(await onMercuryEvent((event: MercuryEvent) => {
+        if (event.type.startsWith("orchestrator.task.") || event.type.startsWith("orchestrator.acceptance.")) {
+          const taskId =
+            (event.payload as Record<string, unknown>).taskId as string | undefined;
+          if (taskId) {
+            refreshTask(taskId);
+          } else {
+            loadTasks();
+          }
         }
-      }
-    }));
+      }));
 
-    // All listeners registered — commit
-    taskListenersInitialized = true;
-    taskUnlisteners.push(...pending);
-  } catch (e) {
-    // Rollback: unregister any listeners that were successfully created
-    for (const unlisten of pending) unlisten();
-    taskListenersInitPromise = null;
-    console.error("Failed to init task listeners:", e);
-  }
+      // All listeners registered — commit
+      taskListenersInitialized = true;
+      taskUnlisteners.push(...pending);
+    } catch (e) {
+      // Rollback: unregister any listeners that were successfully created
+      for (const unlisten of pending) unlisten();
+      taskListenersInitPromise = null;
+      console.error("Failed to init task listeners:", e);
+    }
   })();
 
   return taskListenersInitPromise;
