@@ -3,6 +3,8 @@ mod pr_monitor;
 mod remote_control;
 mod sidecar;
 mod types;
+#[cfg(target_os = "windows")]
+mod windows_job;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -31,7 +33,12 @@ fn find_project_root(start: PathBuf) -> Option<PathBuf> {
     loop {
         if dir.join("pnpm-workspace.yaml").exists()
             && dir.join("package.json").exists()
-            && dir.join("packages").join("orchestrator").join("src").join("index.ts").exists()
+            && dir
+                .join("packages")
+                .join("orchestrator")
+                .join("src")
+                .join("index.ts")
+                .exists()
         {
             return Some(dir);
         }
@@ -53,9 +60,15 @@ pub fn run() {
             // Restore and focus the existing window regardless of its current state
             // (minimized, hidden, or normal). Order matters: show → unminimize → focus.
             if let Some(w) = app.get_webview_window("main") {
-                if let Err(e) = w.show() { eprintln!("[single-instance] show failed: {e}"); }
-                if let Err(e) = w.unminimize() { eprintln!("[single-instance] unminimize failed: {e}"); }
-                if let Err(e) = w.set_focus() { eprintln!("[single-instance] set_focus failed: {e}"); }
+                if let Err(e) = w.show() {
+                    eprintln!("[single-instance] show failed: {e}");
+                }
+                if let Err(e) = w.unminimize() {
+                    eprintln!("[single-instance] unminimize failed: {e}");
+                }
+                if let Err(e) = w.set_focus() {
+                    eprintln!("[single-instance] set_focus failed: {e}");
+                }
             } else {
                 eprintln!("[single-instance] main window not found");
             }
@@ -237,11 +250,7 @@ pub fn run() {
                     };
 
                     // Global timeout covers RC (5s) + sidecar (3s) + margin
-                    match tokio::time::timeout(
-                        tokio::time::Duration::from_secs(10),
-                        shutdown,
-                    )
-                    .await
+                    match tokio::time::timeout(tokio::time::Duration::from_secs(10), shutdown).await
                     {
                         Ok(_) => {}
                         Err(_) => eprintln!(

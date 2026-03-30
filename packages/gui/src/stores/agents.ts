@@ -5,7 +5,7 @@
  * panelKey (roleSlotKey = "{role}:{agentId}"), NOT by raw agentId.
  */
 
-import { ref, computed, shallowRef, triggerRef } from "vue";
+import { ref, computed, shallowRef, triggerRef, watch } from "vue";
 import type { AgentConfig, MercuryEvent } from "../lib/tauri-bridge";
 import {
   getAgents as fetchAgents,
@@ -462,6 +462,7 @@ async function initAgents() {
   await onSidecarReady(() => loadAgents());
 
   await onSidecarError((data) => {
+    sidecarReady.value = false;
     sidecarError.value = data.error;
   });
 
@@ -596,6 +597,29 @@ async function initAgents() {
   setTimeout(pollFn, pollDelay);
 }
 
+function waitForSidecarReady(): Promise<void> {
+  if (sidecarReady.value) return Promise.resolve();
+  if (sidecarError.value) return Promise.reject(new Error(sidecarError.value));
+
+  return new Promise((resolve, reject) => {
+    const stop = watch(
+      [sidecarReady, sidecarError],
+      ([ready, error]) => {
+        if (ready) {
+          stop();
+          resolve();
+          return;
+        }
+        if (error) {
+          stop();
+          reject(new Error(error));
+        }
+      },
+      { immediate: true },
+    );
+  });
+}
+
 export function useAgentStore() {
   return {
     agents,
@@ -622,6 +646,7 @@ export function useAgentStore() {
     getGitBranch,
     defaultWorkDir,
     initAgents,
+    waitForSidecarReady,
     // Bookmark Rail
     bookmarks,
     bookmarkList,
