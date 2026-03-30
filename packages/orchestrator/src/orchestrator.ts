@@ -254,8 +254,17 @@ export class Orchestrator {
     await this.buildAndInjectContext();
   }
 
-  /** Graceful shutdown — close SQLite connection and release resources. */
+  /** Graceful shutdown — clean up callback queue and close SQLite. */
   async shutdown(): Promise<void> {
+    try {
+      const cleaned = this.callbackQueue?.cleanup();
+      if (cleaned) {
+        this.transport.sendNotification("log", {
+          message: `[orchestrator] Cleaned up ${cleaned} delivered callback(s) on shutdown`,
+        });
+      }
+    } catch { /* best-effort */ }
+    this.callbackQueue = null;
     this.sqliteDb?.close();
     this.sqliteDb = null;
   }
@@ -1577,9 +1586,20 @@ export class Orchestrator {
               timestamp: yielded.timestamp,
             },
           });
-          // Loop detection: track tool calls and warn if repeating
+          // Loop detection: track tool calls and intervene if looping
           if (yielded.toolName && yielded.eventKind === "tool_start") {
-            this.detectToolLoop(sessionId, yielded.toolName);
+            if (this.detectToolLoop(sessionId, yielded.toolName)) {
+              // Inject warning into the session to break the loop
+              void this.sendPrompt(
+                agentId,
+                `[LOOP DETECTED] You have called "${yielded.toolName}" ${Orchestrator.LOOP_DETECTION_THRESHOLD}+ times consecutively. This suggests a loop. Stop repeating the same action and try a different approach.`,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+              ).catch(() => { /* best-effort warning injection */ });
+            }
           }
           continue;
         }
@@ -1811,6 +1831,8 @@ export class Orchestrator {
         this.transport.sendNotification("log", {
           message: `[harness] Loop detected in session ${sessionId}: tool "${toolName}" called ${Orchestrator.LOOP_DETECTION_THRESHOLD}+ times consecutively`,
         });
+        // Reset window to avoid repeated warnings on every subsequent call
+        recent.length = 0;
         return true;
       }
     }
@@ -1954,19 +1976,38 @@ export class Orchestrator {
       message: `[task] Research task ${task.taskId} completed by ${agentId}, fast-tracking to closed`,
     });
 
+    // Verify KB write: check if the expected KB file was actually created
+    const kbPaths = task.allowedWriteScope?.kbPaths ?? [];
+    const expectedKbFile = kbPaths[0];
+    let kbWriteVerified = false;
+    if (expectedKbFile && this.kb?.isEnabled()) {
+      try {
+        const content = await this.kb.read(expectedKbFile);
+        kbWriteVerified = !!content && content.length > 100;
+      } catch {
+        // KB file not found or not readable
+      }
+      if (!kbWriteVerified) {
+        this.transport.sendNotification("log", {
+          message: `[task] WARNING: Research task ${task.taskId} did not write expected KB file "${expectedKbFile}". Findings may be lost.`,
+        });
+      }
+    }
+
     // Store a lightweight receipt
     const parsed = this.tryParseJsonRecord(finalMessage);
     const evidenceArr = this.readStringArray(parsed?.evidence);
     const findingsArr = this.readStringArray(parsed?.findings);
     const recommendationsArr = this.readStringArray(parsed?.recommendations);
+    const docsUpdated = kbWriteVerified && expectedKbFile ? [expectedKbFile] : [];
     const receipt: ImplementationReceipt = {
       implementer: agentId,
       branch: "",
       summary: this.readString(parsed?.summary) ?? finalMessage.slice(0, 500),
       changedFiles: [],
       evidence: evidenceArr.length > 0 ? evidenceArr : findingsArr,
-      docsUpdated: [],
-      residualRisks: [],
+      docsUpdated,
+      residualRisks: kbWriteVerified ? [] : ["KB write not verified — research output may only exist in task result"],
       completedAt: Date.now(),
     };
 
@@ -2963,13 +3004,19 @@ export class Orchestrator {
     });
 
     for (const entry of pending) {
-      const entryPayload = JSON.parse(entry.payload_json) as TaskCallbackPayload;
+      let entryPayload: TaskCallbackPayload;
+      try {
+        entryPayload = JSON.parse(entry.payload_json) as TaskCallbackPayload;
+      } catch {
+        this.transport.sendNotification("log", {
+          message: `[orchestrator] Corrupt callback payload (id=${entry.id}), marking failed and skipping`,
+        });
+        this.callbackQueue.markAttemptFailed(entry.id, "corrupt payload JSON", 1);
+        continue; // Skip this entry, continue with next
+      }
       const prompt = this.formatCallbackPrompt(entryPayload);
 
       try {
-        // sendPrompt initiates streaming; marking delivered after the call
-        // succeeds means the transport accepted the prompt. This is
-        // at-least-once delivery — acceptable since callbacks are idempotent.
         await this.sendPrompt(mainAgentId, prompt, undefined, "main");
         this.callbackQueue.markDelivered(entry.id);
       } catch (err) {

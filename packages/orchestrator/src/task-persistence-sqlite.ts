@@ -103,6 +103,7 @@ const MIGRATIONS = [
       );
       CREATE INDEX IF NOT EXISTS idx_cbq_status ON callback_queue(status);
       CREATE INDEX IF NOT EXISTS idx_cbq_task ON callback_queue(task_id);
+      CREATE INDEX IF NOT EXISTS idx_cbq_created ON callback_queue(created_at);
     `,
   },
 ];
