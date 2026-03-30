@@ -87,7 +87,9 @@ After getting the `taskId`, create the working branch from `develop`.
 Preferred Codex-safe pattern:
 
 ```powershell
-git worktree add -b "feature/$taskId" "D:\Mercury\worktrees\$taskId" origin/develop
+$wtRoot = Join-Path $env:TEMP "Mercury-worktrees"
+New-Item -ItemType Directory -Force -Path $wtRoot | Out-Null
+git worktree add -b "feature/$taskId" (Join-Path $wtRoot $taskId) origin/develop
 ```
 
 Fallback pattern, only when current guard rules permit branch switching in the session:

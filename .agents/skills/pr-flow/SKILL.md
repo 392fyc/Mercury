@@ -21,7 +21,8 @@ Codex adaptation:
 - `gh` CLI v2.x+ (authenticated)
 - `git` with push access to the PR branch
 - `jq` for JSON parsing
-- current branch must not be `develop` or `main`
+- current branch must not be `develop`, `main`, or `master`
+- follow `.mercury/docs/guides/git-flow.md` as the authoritative branching policy
 
 ## Pipeline
 
@@ -49,7 +50,8 @@ When changes should be split by category:
 
 1. Create separate worktrees from `origin/develop`
 2. Restore only the intended files into each worktree
-3. Commit and push from each worktree through `git-safe.ps1`
+3. In each worktree directory, run guarded staging/commit/push commands that target that worktree's HEAD
+   (or extend `git-safe.ps1` with a worktree path parameter before using it for multi-worktree mode)
 4. Create one PR per worktree
 5. Track all PR numbers for parallel monitoring
 
@@ -95,7 +97,7 @@ This includes:
 2. Assess whether the issue is valid
 3. If valid, fix the code and reply with commit SHA and what changed
 4. If you disagree, reply with the reasoning
-5. Reply via `gh api repos/{owner}/{repo}/pulls/comments/<ID>/replies -f body="..."`
+5. Reply via `gh api repos/{owner}/{repo}/pulls/<PR_NUMBER>/comments/<ID>/replies -f body="..."`
 
 #### For outside-diff comments
 
@@ -124,19 +126,19 @@ gh pr comment <PR_NUMBER> --body "@coderabbitai
 powershell -ExecutionPolicy Bypass -File scripts/codex/git-safe.ps1 add <path> [more paths...]
 ```
 
-6. Mark review complete:
+1. Mark review complete:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/codex/guard.ps1 mark-review
 ```
 
-7. Commit through the wrapper:
+1. Commit through the wrapper:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/codex/git-safe.ps1 commit -Message "fix(PR-feedback): address comment <ID>"
 ```
 
-8. Push through the wrapper:
+1. Push through the wrapper:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/codex/git-safe.ps1 push origin <branch>
@@ -188,6 +190,27 @@ Pre-merge checks:
 1. CI status passes
 2. `reviewDecision == APPROVED`
 3. unresolved review thread count is zero
+
+Run explicit checks first; abort merge if any check fails:
+
+```powershell
+$pr = gh pr view <PR_NUMBER> --json reviewDecision,statusCheckRollup
+# parse: reviewDecision must be APPROVED and all status checks successful
+
+$query = @"
+query {
+  repository(owner: "<OWNER>", name: "<NAME>") {
+    pullRequest(number: <N>) {
+      reviewThreads(first: 100) {
+        nodes { isResolved }
+      }
+    }
+  }
+}
+"@
+$threads = gh api graphql -f query="$query"
+# parse: unresolved review thread count must be 0
+```
 
 Then merge:
 

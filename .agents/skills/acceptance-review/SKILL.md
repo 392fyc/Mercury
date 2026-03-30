@@ -25,7 +25,7 @@ $body = @{
   method  = "main_review_result"
   params  = @{
     taskId     = "<TASK-id>"
-    decision   = "approve"
+    decision   = "APPROVE_FOR_ACCEPTANCE"
     reason     = "Receipt complete"
     acceptorId = "<acceptance-agent-id>"
   }
@@ -35,9 +35,10 @@ $body = @{
 Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$port" -ContentType "application/json" -Body $body
 ```
 
-The `decision` field accepts `"approve"` or `"reject"`. If approved with an `acceptorId`, the orchestrator automatically triggers the acceptance flow. If you want to trigger it manually, omit `acceptorId` and proceed to Step 1.
+The `decision` field accepts `"APPROVE_FOR_ACCEPTANCE"` or `"SEND_BACK"`.
+When `APPROVE_FOR_ACCEPTANCE` is used with an `acceptorId`, the orchestrator automatically triggers the acceptance flow. If you want to trigger it manually, omit `acceptorId` and proceed to Step 1.
 
-If rejected, provide a `reason` and the task returns to `in_progress` for rework.
+If `SEND_BACK`, provide a `reason` and the task returns to `in_progress` for rework.
 
 ## Step 1: Create Acceptance Flow (if not auto-triggered)
 

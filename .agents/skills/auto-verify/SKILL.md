@@ -30,12 +30,14 @@ git diff --cached --name-only
    - Other languages or no type system: record `SKIP` with a note
 
 ```powershell
-pnpm typecheck 2>$null
-if ($LASTEXITCODE -ne 0) {
-  npm run typecheck 2>$null
-}
-if ($LASTEXITCODE -ne 0) {
+if (Get-Command pnpm -ErrorAction SilentlyContinue) {
+  pnpm typecheck
+} elseif (Get-Command npm -ErrorAction SilentlyContinue) {
+  npm run typecheck
+} elseif (Get-Command npx -ErrorAction SilentlyContinue) {
   npx tsc --noEmit
+} else {
+  throw "No supported package runner found for type-check."
 }
 ```
 
@@ -59,9 +61,11 @@ npx eslint --max-warnings 0 <changed-files>
 ```powershell
 git diff --cached --name-only -- '*.ts' | ForEach-Object {
   $f = $_
-  $total = (Select-String -Path $f -Pattern '^\s*(export (class|function|async function|const)|^\s+(async )?(get |set )?[a-z]\w*\()' -AllMatches -ErrorAction SilentlyContinue | ForEach-Object { $_.Matches.Count } | Measure-Object -Sum).Sum
+  $content = Get-Content -Path $f -Raw
+  $total = ([regex]::Matches($content, '(?m)^\s*(export (class|function|async function|const)\b|(async )?(get |set )?[a-z]\w*\()')).Count
   if (-not $total) { $total = 0 }
-  $documented = (Select-String -Path $f -Pattern '^\s*\*/' -AllMatches -ErrorAction SilentlyContinue | Measure-Object).Count
+  $documented = ([regex]::Matches($content, '/\*\*[\s\S]*?\*/\s*(export (class|function|async function|const)\b|(async )?(get |set )?[a-z]\w*\()')).Count
+  if (-not $documented) { $documented = 0 }
   $pct = if ($total -gt 0) { [math]::Floor(($documented * 100) / $total) } else { 100 }
   if ($pct -lt 50) {
     Write-Output "WARN: $f docstring coverage $pct% ($documented/$total)"
