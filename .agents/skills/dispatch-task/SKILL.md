@@ -41,6 +41,7 @@ Build the JSON payload for `create_task`. The orchestrator generates `taskId`, `
   "title": "<one-line summary>",
   "priority": "<sev-0|sev-1|sev-2|sev-3>",
   "assignedTo": "<agent-id>",
+  "role": "<dev|research|design>",
   "context": "<detailed description>",
   "codeScope": {
     "include": ["<paths to read>"],
@@ -98,7 +99,7 @@ Fallback pattern, only when current guard rules permit branch switching in the s
 git switch develop
 git pull origin develop
 git switch -c "feature/$taskId"
-git push -u origin "feature/$taskId"
+powershell -ExecutionPolicy Bypass -File scripts/codex/git-safe.ps1 push -u origin "feature/$taskId"
 ```
 
 Branch naming follows `.mercury/docs/guides/git-flow.md`: `feature/{taskId}` from `develop`.

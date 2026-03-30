@@ -26,6 +26,13 @@ const pendingRequests = computed(() =>
 
 const pendingCount = computed(() => pendingRequests.value.length);
 
+function applyApprovalSnapshot(mode: ApprovalMode, requests: ApprovalRequest[]): void {
+  approvalMode.value = mode;
+  const next = new Map<string, ApprovalRequest>();
+  for (const request of requests) next.set(request.id, request);
+  approvalRequests.value = next;
+}
+
 function upsertRequest(request: ApprovalRequest): void {
   approvalRequests.value = new Map(approvalRequests.value).set(request.id, request);
 }
@@ -123,15 +130,6 @@ async function initApprovalStore(): Promise<void> {
     try {
       await waitForSidecarReady();
 
-      const [modeResult, requests] = await Promise.all([
-        bridgeGetApprovalMode(),
-        bridgeListApprovalRequests(),
-      ]);
-      approvalMode.value = modeResult.mode;
-      const next = new Map<string, ApprovalRequest>();
-      for (const request of requests) next.set(request.id, request);
-      approvalRequests.value = next;
-
       pending.push(await onMercuryEvent((event: MercuryEvent) => {
         if (event.type !== "agent.approval.requested" && event.type !== "agent.approval.resolved") {
           return;
@@ -153,6 +151,20 @@ async function initApprovalStore(): Promise<void> {
           );
         }
       }));
+
+      const [modeResult, requests] = await Promise.all([
+        bridgeGetApprovalMode(),
+        bridgeListApprovalRequests(),
+      ]);
+      applyApprovalSnapshot(modeResult.mode, requests);
+
+      // Close the snapshot/subscribe window by reconciling once after listeners
+      // are active so events that raced with the initial fetch are not lost.
+      const [reconciledMode, reconciledRequests] = await Promise.all([
+        bridgeGetApprovalMode(),
+        bridgeListApprovalRequests(),
+      ]);
+      applyApprovalSnapshot(reconciledMode.mode, reconciledRequests);
 
       approvalUnlisteners.push(...pending);
       approvalsInitialized = true;

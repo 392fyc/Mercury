@@ -1,10 +1,12 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true, Position = 0)]
-  [ValidateSet("status", "mark-review", "clear-review", "pre-stage", "pre-commit", "pre-push")]
+  [ValidateSet("status", "mark-review", "clear-review", "pre-stage", "pre-commit", "pre-push", "pre-merge")]
   [string]$Action,
 
-  [string]$PushCommand
+  [string]$PushCommand,
+
+  [int]$PullRequestNumber
 )
 
 Set-StrictMode -Version Latest
@@ -17,7 +19,7 @@ $reviewFlag = Join-Path $stateDir "review-passed"
 $protectedBranches = @("develop", "main", "master")
 $featureTaskPattern = "^feature/TASK-[A-Za-z0-9._-]+$"
 
-function Ensure-StateDir {
+function Initialize-StateDir {
   if (-not (Test-Path -LiteralPath $stateDir)) {
     New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
   }
@@ -56,7 +58,7 @@ function Assert-TaskBranch {
 function Write-ReviewFlag {
   param([string]$Branch)
 
-  Ensure-StateDir
+  Initialize-StateDir
   $snapshot = [ordered]@{
     reviewedAt = [DateTime]::UtcNow.ToString("o")
     branch = $Branch
@@ -140,6 +142,96 @@ function Assert-SafePushTarget {
   }
 }
 
+function Get-RepositoryCoordinates {
+  $repo = gh repo view --json owner,name | ConvertFrom-Json
+  if ($LASTEXITCODE -ne 0 -or -not $repo) {
+    throw "Unable to determine the current GitHub repository."
+  }
+
+  return @{
+    owner = $repo.owner.login
+    name = $repo.name
+  }
+}
+
+function Assert-PreMergeReady {
+  param([int]$Number)
+
+  if ($Number -le 0) {
+    throw "PullRequestNumber must be a positive integer for pre-merge checks."
+  }
+
+  $pr = gh pr view $Number --json reviewDecision,statusCheckRollup | ConvertFrom-Json
+  if ($LASTEXITCODE -ne 0 -or -not $pr) {
+    throw "Unable to fetch PR metadata for #$Number."
+  }
+
+  if ($pr.reviewDecision -ne "APPROVED") {
+    throw "PR #$Number is not approved. Current reviewDecision: $($pr.reviewDecision)"
+  }
+
+  $failingChecks = @()
+  foreach ($check in @($pr.statusCheckRollup)) {
+    $name = if ($check.name) { $check.name } elseif ($check.context) { $check.context } else { "unknown-check" }
+    if ($check.__typename -eq "CheckRun") {
+      if ($check.status -ne "COMPLETED" -or $check.conclusion -ne "SUCCESS") {
+        $failingChecks += "$name [$($check.status)/$($check.conclusion)]"
+      }
+      continue
+    }
+
+    if ($check.__typename -eq "StatusContext" -and $check.state -ne "SUCCESS") {
+      $failingChecks += "$name [$($check.state)]"
+    }
+  }
+
+  if ($failingChecks.Count -gt 0) {
+    throw "PR #$Number has non-successful status checks: $($failingChecks -join ', ')"
+  }
+
+  $repo = Get-RepositoryCoordinates
+  $cursor = $null
+  $unresolvedCount = 0
+
+  do {
+    $afterClause = if ($cursor) { ", after: `"$cursor`"" } else { "" }
+    $query = @"
+query {
+  repository(owner: "$($repo.owner)", name: "$($repo.name)") {
+    pullRequest(number: $Number) {
+      reviewThreads(first: 100$afterClause) {
+        pageInfo { hasNextPage endCursor }
+        nodes { isResolved }
+      }
+    }
+  }
+}
+"@
+
+    $response = gh api graphql -f query="$query" | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0 -or -not $response) {
+      throw "Unable to fetch review thread state for PR #$Number."
+    }
+
+    $threadPage = $response.data.repository.pullRequest.reviewThreads
+    foreach ($node in @($threadPage.nodes)) {
+      if (-not $node.isResolved) {
+        $unresolvedCount++
+      }
+    }
+
+    if ($threadPage.pageInfo.hasNextPage) {
+      $cursor = $threadPage.pageInfo.endCursor
+    } else {
+      $cursor = $null
+    }
+  } while ($cursor)
+
+  if ($unresolvedCount -gt 0) {
+    throw "PR #$Number still has $unresolvedCount unresolved review thread(s)."
+  }
+}
+
 $branch = Get-CurrentBranch
 
 switch ($Action) {
@@ -174,6 +266,11 @@ switch ($Action) {
   "pre-push" {
     Assert-SafePushTarget -Branch $branch -CommandText $PushCommand
     Write-Output "pre_push=pass"
+    exit 0
+  }
+  "pre-merge" {
+    Assert-PreMergeReady -Number $PullRequestNumber
+    Write-Output "pre_merge=pass"
     exit 0
   }
 }

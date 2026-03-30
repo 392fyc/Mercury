@@ -89,7 +89,11 @@ async function initTaskListeners() {
     try {
       // Reload tasks whenever sidecar becomes ready (handles F5 page refresh where
       // sidecar may not be available yet when onMounted fires).
-      pending.push(await onSidecarReady(() => loadTasks()));
+      pending.push(await onSidecarReady(() => {
+        void loadTasks().catch((error) => {
+          console.error("Failed to load tasks after sidecar ready:", error);
+        });
+      }));
 
       // If the ready event was emitted before we registered the listener above,
       // wait on the shared sidecar-ready state that agents.ts keeps in sync.
@@ -101,9 +105,13 @@ async function initTaskListeners() {
           const taskId =
             (event.payload as Record<string, unknown>).taskId as string | undefined;
           if (taskId) {
-            refreshTask(taskId);
+            void refreshTask(taskId).catch((error) => {
+              console.error(`Failed to refresh task ${taskId}:`, error);
+            });
           } else {
-            loadTasks();
+            void loadTasks().catch((error) => {
+              console.error("Failed to reload tasks from event:", error);
+            });
           }
         }
       }));

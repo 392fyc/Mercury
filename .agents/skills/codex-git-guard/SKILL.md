@@ -20,26 +20,26 @@ description: |
 git rev-parse --abbrev-ref HEAD
 ```
 
-2. If the branch is `develop`, `master`, or `main`, stop. Do not commit or push there.
-3. If the branch does not match `feature/TASK-*`, stop and move the work to a task branch before mutating git state.
-4. When recovering from an accidental protected-branch local commit:
+1. If the branch is `develop`, `master`, or `main`, stop. Do not commit or push there.
+1. If the branch does not match `feature/TASK-*`, stop and move the work to a task branch before mutating git state.
+1. When recovering from an accidental protected-branch local commit:
    - create a fresh worktree or branch from `origin/develop`
    - cherry-pick or re-commit the work there
    - if the repository still uses Claude-specific hooks or a `.claude/` directory, prefer leaving them untouched unless the user explicitly asks to modify them
-5. Stage files through the safe wrapper:
+1. Stage files through the safe wrapper:
    - run `powershell -ExecutionPolicy Bypass -File scripts/codex/git-safe.ps1 add <path> [more paths...]`
    - never use raw `git add .`, `git add -A`, or `git add --all`
-6. Before `git commit`:
+1. Before `git commit`:
    - complete a code review
    - run `powershell -ExecutionPolicy Bypass -File scripts/codex/guard.ps1 mark-review`
    - invoke the `auto-verify` skill
    - if `mark-review` or `auto-verify` fails with a non-zero exit code or throws, stop immediately and do not commit
    - run `powershell -ExecutionPolicy Bypass -File scripts/codex/git-safe.ps1 commit -Message "<message>"`
-7. After a successful commit, the wrapper clears the review flag automatically.
-8. Before `git push`:
+1. After a successful commit, the wrapper clears the review flag automatically.
+1. Before `git push`:
    - run `powershell -ExecutionPolicy Bypass -File scripts/codex/git-safe.ps1 push origin <branch>`
    - never target `develop`, `master`, or `main`
-9. If the task touches external SDK/API/CLI behavior, invoke `web-research` before editing.
+1. If the task touches external SDK/API/CLI behavior, invoke `web-research` before editing.
 
 ## Output
 

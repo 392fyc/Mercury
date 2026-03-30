@@ -48,7 +48,7 @@ function Assert-ExplicitPaths {
   param([string[]]$Paths)
 
   if (-not $Paths -or $Paths.Count -eq 0) {
-    throw "Provide at least one explicit path. Example: powershell -File scripts/codex/git-safe.ps1 add path/to/file"
+    throw "Provide at least one explicit path. Example: powershell -ExecutionPolicy Bypass -File scripts/codex/git-safe.ps1 add path/to/file"
   }
 
   foreach ($path in $Paths) {
@@ -58,6 +58,10 @@ function Assert-ExplicitPaths {
 
     if ($path -in @(".", "-A", "--all")) {
       throw "Broad staging arguments are forbidden: $path"
+    }
+
+    if ($path.StartsWith(":")) {
+      throw "Pathspec magic is forbidden: $path"
     }
 
     if ($path.StartsWith("-")) {
@@ -113,7 +117,7 @@ switch ($Action) {
   }
   "push" {
     if (-not $Arguments -or $Arguments.Count -eq 0) {
-      throw "Provide explicit push arguments. Example: powershell -File scripts/codex/git-safe.ps1 push origin feature/TASK-123"
+      throw "Provide explicit push arguments. Example: powershell -ExecutionPolicy Bypass -File scripts/codex/git-safe.ps1 push origin feature/TASK-123"
     }
 
     $pushCommand = Build-PushCommandText -PushArgs $Arguments

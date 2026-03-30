@@ -63,6 +63,7 @@ const gitBranches = shallowRef<Map<string, string | null>>(new Map()); // panelK
 const defaultWorkDir = ref("");
 const sidecarReady = ref(false);
 const sidecarError = ref<string | null>(null);
+const sidecarTransientError = ref<string | null>(null);
 const SIDECAR_READY_TIMEOUT_MS = 30_000;
 
 // ─── Bookmark Rail State ───
@@ -420,6 +421,7 @@ async function loadAgents() {
     agents.value = fetchedAgents.filter((agent) => configuredAgentIds.has(agent.id));
     sidecarReady.value = true;
     sidecarError.value = null;
+    sidecarTransientError.value = null;
     // Initialize status for each role panel
     for (const agent of agents.value) {
       for (const role of agent.roles) {
@@ -434,8 +436,7 @@ async function loadAgents() {
     return;
   } catch (e) {
     console.error("Failed to fetch agents:", e);
-    sidecarReady.value = false;
-    sidecarError.value = e instanceof Error ? e.message : String(e);
+    sidecarTransientError.value = e instanceof Error ? e.message : String(e);
     throw e;
   }
 }
@@ -471,6 +472,7 @@ async function initAgents() {
   await onSidecarError((data) => {
     sidecarReady.value = false;
     sidecarError.value = data.error;
+    sidecarTransientError.value = null;
   });
 
   await onMercuryEvent((event: MercuryEvent) => {
@@ -669,6 +671,7 @@ export function useAgentStore() {
     defaultWorkDir,
     initAgents,
     waitForSidecarReady,
+    sidecarTransientError,
     // Bookmark Rail
     bookmarks,
     bookmarkList,

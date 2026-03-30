@@ -52,19 +52,21 @@ npx eslint --max-warnings 0 <changed-files>
 ```
 
 5. Check docstring coverage on changed files (whole-file scan, not diff-only):
-   - Threshold: 50% of public API surface in changed `.ts` files must have JSDoc
-   - Count exported classes, functions, and methods, then count those with `/** ... */`
+   - Threshold: 50% of exported runtime declarations in changed `.ts` files must have JSDoc
+   - Count exported classes, functions, async functions, and const declarations, then count those with `/** ... */`
    - If coverage is below 50%, report which files are under the threshold
    - This scans the entire file, not just diff hunks
    - This aligns with CodeRabbit's pre-merge check (`.coderabbit.yaml` threshold: 50%)
 
 ```powershell
-git diff --cached --name-only -- '*.ts' | ForEach-Object {
+git diff --cached --name-only --diff-filter=ACMRT -- '*.ts' | ForEach-Object {
   $f = $_
+  if (-not (Test-Path -LiteralPath $f)) { return }
   $content = Get-Content -Path $f -Raw
-  $total = ([regex]::Matches($content, '(?m)^\s*(export (class|function|async function|const)\b|(async )?(get |set )?[a-z]\w*\()')).Count
+  $exportDecl = 'export\s+(class|function|async function|const)\b'
+  $total = ([regex]::Matches($content, "(?m)^\s*$exportDecl")).Count
   if (-not $total) { $total = 0 }
-  $documented = ([regex]::Matches($content, '/\*\*[\s\S]*?\*/\s*(export (class|function|async function|const)\b|(async )?(get |set )?[a-z]\w*\()')).Count
+  $documented = ([regex]::Matches($content, "(?ms)/\*\*.*?\*/\s*$exportDecl")).Count
   if (-not $documented) { $documented = 0 }
   $pct = if ($total -gt 0) { [math]::Floor(($documented * 100) / $total) } else { 100 }
   if ($pct -lt 50) {

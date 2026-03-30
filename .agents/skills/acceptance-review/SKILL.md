@@ -1,7 +1,7 @@
 ---
 name: acceptance-review
 description: |
-  Guide the Main Agent through Mercury's acceptance review workflow: perform Main Review on an implementation receipt, then create an AcceptanceBundle and dispatch a blind review to the acceptance agent, then process the verdict (pass/fail/rework). Use this skill when a dev agent has completed work and submitted a receipt, when the user says "验收", "acceptance", "blind review", "盲审", "review task", "审核任务", "检查完成情况", or asks to verify, review, or accept completed work. Also use after receiving an implementation receipt from a worker agent.
+  Guide the Main Agent through Mercury's acceptance review workflow: perform Main Review on an implementation receipt, then create an AcceptanceBundle and dispatch a blind review to the acceptance agent, then process the verdict (`pass|partial|fail|blocked`). Use this skill when a dev agent has completed work and submitted a receipt, when the user says "验收", "acceptance", "blind review", "盲审", "review task", "审核任务", "检查完成情况", or asks to verify, review, or accept completed work. Also use after receiving an implementation receipt from a worker agent.
 ---
 
 # Acceptance Review Workflow

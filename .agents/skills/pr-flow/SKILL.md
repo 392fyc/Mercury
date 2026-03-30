@@ -191,25 +191,13 @@ Pre-merge checks:
 2. `reviewDecision == APPROVED`
 3. unresolved review thread count is zero
 
-Run explicit checks first; abort merge if any check fails:
+Run the reusable guard first; it aborts on any failed check, calls
+`gh pr view --json reviewDecision,statusCheckRollup`, and paginates
+`reviewThreads(first: 100, after: "<cursor>")` until `hasNextPage == false`
+before allowing the merge:
 
 ```powershell
-$pr = gh pr view <PR_NUMBER> --json reviewDecision,statusCheckRollup
-# parse: reviewDecision must be APPROVED and all status checks successful
-
-$query = @"
-query {
-  repository(owner: "<OWNER>", name: "<NAME>") {
-    pullRequest(number: <N>) {
-      reviewThreads(first: 100) {
-        nodes { isResolved }
-      }
-    }
-  }
-}
-"@
-$threads = gh api graphql -f query="$query"
-# parse: unresolved review thread count must be 0
+powershell -ExecutionPolicy Bypass -File scripts/codex/guard.ps1 pre-merge -PullRequestNumber <PR_NUMBER>
 ```
 
 Then merge:
