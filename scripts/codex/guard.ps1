@@ -148,10 +148,26 @@ function Get-RepositoryCoordinates {
     throw "Unable to determine the current GitHub repository."
   }
 
-  return @{
+  return [pscustomobject]@{
     owner = $repo.owner.login
     name = $repo.name
   }
+}
+
+function Get-CheckLabel {
+  param([object]$Check)
+
+  $nameProp = $Check.PSObject.Properties["name"]
+  if ($nameProp -and -not [string]::IsNullOrWhiteSpace([string]$nameProp.Value)) {
+    return [string]$nameProp.Value
+  }
+
+  $contextProp = $Check.PSObject.Properties["context"]
+  if ($contextProp -and -not [string]::IsNullOrWhiteSpace([string]$contextProp.Value)) {
+    return [string]$contextProp.Value
+  }
+
+  return "unknown-check"
 }
 
 function Assert-PreMergeReady {
@@ -172,7 +188,7 @@ function Assert-PreMergeReady {
 
   $failingChecks = @()
   foreach ($check in @($pr.statusCheckRollup)) {
-    $name = if ($check.name) { $check.name } elseif ($check.context) { $check.context } else { "unknown-check" }
+    $name = Get-CheckLabel -Check $check
     if ($check.__typename -eq "CheckRun") {
       if (
         $check.status -ne "COMPLETED" -or
@@ -195,23 +211,32 @@ function Assert-PreMergeReady {
   $repo = Get-RepositoryCoordinates
   $cursor = $null
   $unresolvedCount = 0
-
-  do {
-    $afterClause = if ($cursor) { ", after: `"$cursor`"" } else { "" }
-    $query = @"
-query {
-  repository(owner: "$($repo.owner)", name: "$($repo.name)") {
-    pullRequest(number: $Number) {
-      reviewThreads(first: 100$afterClause) {
+  $threadQuery = @'
+query($owner: String!, $name: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $after) {
         pageInfo { hasNextPage endCursor }
         nodes { isResolved }
       }
     }
   }
 }
-"@
+'@
 
-    $response = gh api graphql -f query="$query" | ConvertFrom-Json
+  do {
+    $ghArgs = @(
+      "graphql",
+      "-f", "query=$threadQuery",
+      "-F", "owner=$($repo.owner)",
+      "-F", "name=$($repo.name)",
+      "-F", "number=$Number"
+    )
+    if ($cursor) {
+      $ghArgs += @("-F", "after=$cursor")
+    }
+
+    $response = gh api @ghArgs | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0 -or -not $response) {
       throw "Unable to fetch review thread state for PR #$Number."
     }
