@@ -64,6 +64,10 @@ function Assert-ExplicitPaths {
       throw "Pathspec magic is forbidden: $path"
     }
 
+    if ($path -match '[*?\[\]{}]') {
+      throw "Wildcard/pathspec patterns are forbidden: $path"
+    }
+
     if ($path.StartsWith("-")) {
       throw "Options are not allowed in git-safe add. Pass explicit repo paths only: $path"
     }

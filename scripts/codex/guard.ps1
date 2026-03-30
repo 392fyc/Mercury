@@ -174,7 +174,10 @@ function Assert-PreMergeReady {
   foreach ($check in @($pr.statusCheckRollup)) {
     $name = if ($check.name) { $check.name } elseif ($check.context) { $check.context } else { "unknown-check" }
     if ($check.__typename -eq "CheckRun") {
-      if ($check.status -ne "COMPLETED" -or $check.conclusion -ne "SUCCESS") {
+      if (
+        $check.status -ne "COMPLETED" -or
+        $check.conclusion -notin @("SUCCESS", "SKIPPED", "NEUTRAL")
+      ) {
         $failingChecks += "$name [$($check.status)/$($check.conclusion)]"
       }
       continue

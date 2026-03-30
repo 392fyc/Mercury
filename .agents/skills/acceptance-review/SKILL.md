@@ -109,7 +109,7 @@ Then act based on the verdict:
 
 | Verdict | Action |
 |---------|--------|
-| **pass** | Transition task to `verified` -> merge PR -> close task. Report: `任务 TASK-xxx 验收通过，已合并。` |
+| **pass** | Transition task to `verified` -> hand off to `pr-flow` -> run `powershell -ExecutionPolicy Bypass -File scripts/codex/guard.ps1 pre-merge -PullRequestNumber <PR_NUMBER>` once approvals, checks, and review threads are ready -> merge PR -> close task. Report: `任务 TASK-xxx 验收通过，已进入 PR 合并流程。` |
 | **partial** | Review findings, decide whether to accept or request rework |
 | **fail** | Create a rework prompt and re-dispatch to the dev agent |
 | **blocked** | Investigate the blocker, resolve environment or access issues, retry |

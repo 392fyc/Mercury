@@ -51,7 +51,7 @@ if (Get-Command pnpm -ErrorAction SilentlyContinue) {
 npx eslint --max-warnings 0 <changed-files>
 ```
 
-5. Check docstring coverage on changed files (whole-file scan, not diff-only):
+1. Check docstring coverage on changed files (whole-file scan, not diff-only):
    - Threshold: 50% of exported runtime declarations in changed `.ts` files must have JSDoc
    - Count exported classes, functions, async functions, and const declarations, then count those with `/** ... */`
    - If coverage is below 50%, report which files are under the threshold
@@ -63,7 +63,7 @@ git diff --cached --name-only --diff-filter=ACMRT -- '*.ts' | ForEach-Object {
   $f = $_
   if (-not (Test-Path -LiteralPath $f)) { return }
   $content = Get-Content -Path $f -Raw
-  $exportDecl = 'export\s+(class|function|async function|const)\b'
+  $exportDecl = 'export\s+(default\s+)?(class|function|async function|const)\b'
   $total = ([regex]::Matches($content, "(?m)^\s*$exportDecl")).Count
   if (-not $total) { $total = 0 }
   $documented = ([regex]::Matches($content, "(?ms)/\*\*.*?\*/\s*$exportDecl")).Count
@@ -75,11 +75,11 @@ git diff --cached --name-only --diff-filter=ACMRT -- '*.ts' | ForEach-Object {
 }
 ```
 
-6. Run git hygiene checks:
+1. Run git hygiene checks:
    - no stray debug artifacts that obviously should not ship
    - no `.only` in tests
    - branch naming matches the task expectation when a task branch is known
-7. If a check fails:
+1. If a check fails:
    - fix obvious in-scope issues
    - rerun the failed check
    - escalate instead of committing if the failure requires out-of-scope changes

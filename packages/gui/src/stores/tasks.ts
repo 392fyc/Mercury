@@ -122,9 +122,10 @@ async function initTaskListeners() {
     } catch (e) {
       // Rollback: unregister any listeners that were successfully created
       for (const unlisten of pending) unlisten();
-      taskListenersInitPromise = null;
       console.error("Failed to init task listeners:", e);
       throw e;
+    } finally {
+      taskListenersInitPromise = null;
     }
   })();
 

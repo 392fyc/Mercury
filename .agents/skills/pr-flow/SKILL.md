@@ -151,11 +151,15 @@ Resolve threads only after the fixes are pushed.
 Use GraphQL to resolve review threads:
 
 ```powershell
-$query = @"
+$threads = @()
+$cursor = $null
+do {
+  $afterClause = if ($cursor) { ", after: `"$cursor`"" } else { "" }
+  $query = @"
 query {
   repository(owner: "<OWNER>", name: "<NAME>") {
     pullRequest(number: <N>) {
-      reviewThreads(first: 100) {
+      reviewThreads(first: 100$afterClause) {
         pageInfo { hasNextPage endCursor }
         nodes { id isResolved path }
       }
@@ -163,7 +167,11 @@ query {
   }
 }
 "@
-gh api graphql -f query="$query"
+  $resp = gh api graphql -f query="$query" | ConvertFrom-Json
+  $page = $resp.data.repository.pullRequest.reviewThreads
+  $threads += $page.nodes
+  $cursor = if ($page.pageInfo.hasNextPage) { $page.pageInfo.endCursor } else { $null }
+} while ($cursor)
 ```
 
 Then call:

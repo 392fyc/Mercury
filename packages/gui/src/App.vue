@@ -25,11 +25,11 @@ import { useEventStore } from "./stores/events";
 import { useTaskStore } from "./stores/tasks";
 
 const {
-  agents, mainAgent, sidecarReady, sidecarError, initAgents,
+  agents, mainAgent, sidecarReady, sidecarError, sidecarTransientError, initAgents,
   openFloatingTab,
 } = useAgentStore();
 const { initMessageListeners } = useMessageStore();
-const { initApprovalStore } = useApprovalStore();
+const { initApprovalStore, disposeApprovalStoreListeners } = useApprovalStore();
 const { initEventListeners } = useEventStore();
 const { initTaskListeners, disposeTaskListeners } = useTaskStore();
 
@@ -151,6 +151,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   stopExplorerResize();
   disposeTaskListeners();
+  disposeApprovalStoreListeners();
 });
 </script>
 
@@ -169,6 +170,9 @@ onBeforeUnmount(() => {
 
     <div v-if="sidecarError" class="error-banner">
       Orchestrator error: {{ sidecarError }}
+    </div>
+    <div v-else-if="sidecarTransientError" class="error-banner transient">
+      Orchestrator is still starting: {{ sidecarTransientError }}. Retrying automatically.
     </div>
 
     <div class="workspace" :class="{ 'event-log-visible': showEventLog }">
