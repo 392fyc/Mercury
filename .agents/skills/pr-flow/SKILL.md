@@ -1,210 +1,228 @@
 ---
 name: pr-flow
 description: |
-  Automate the full PR lifecycle: create PR, wait for CI checks, read CodeRabbit and reviewer comments, dispatch fixes if needed, and merge. Use this skill when the user says "PR", "pull request", "create PR", "merge PR", "提PR", "合并", "PR流程", "开PR", "check PR status", "review comments". Use this skill after dev work reaches `implementation_done`, the branch is pushed, and the task has passed `main_review`.
+  Automate the full PR lifecycle: create PR, poll for CodeRabbit review, respond to ALL threads (inline + outside-diff), fix issues, resolve threads, re-review, and merge after approval. Use this skill when the user says "PR", "pull request", "create PR", "merge PR", "提PR", "合并", "PR流程", "开PR", "check PR status", "review comments", "标准PR流程". Use this skill after dev work reaches `implementation_done`, the branch is pushed, and the task has passed `main_review`. It replaces the manual C4-C7 steps in the Mercury workflow.
 ---
 
 # PR Flow
+
+## Overview
+
+This skill automates the complete PR lifecycle with non-blocking polling and comprehensive review thread handling. It supports both single-PR and multi-PR workflows.
+
+Codex adaptation:
+- use `scripts/codex/git-safe.ps1` for `add`, `commit`, and `push`
+- use `gh api graphql` for thread resolution
+- if the current Codex tool surface does not expose `CronCreate` or `CronDelete`, keep the same 10-minute cadence via an external scheduler, host automation, or explicit follow-up invocations with persisted state files
+- do not use `git stash`, `git switch`, or `git checkout` inside guarded Codex task sessions; for multi-PR splits use separate worktrees
 
 ## Prerequisites
 
 - `gh` CLI v2.x+ (authenticated)
 - `git` with push access to the PR branch
 - `jq` for JSON parsing
-- PowerShell available for the Mercury RPC example
-- TaskBundle JSON must include `allowedWriteScope.codePaths`
-
-> **Platform note**: GitHub and CodeRabbit examples use bash syntax so the `.agents` and `.claude` variants stay aligned. The final RPC step also shows a PowerShell/Codex alternative for Windows.
+- current branch must not be `develop` or `main`
 
 ## Pipeline
 
-1. **Step 0: Verify prerequisites**
+### Phase 1: Create PR(s)
 
-```bash
-set -euo pipefail
-gh --version
-gh auth status
-git remote -v
-jq --version
-BRANCH=$(git branch --show-current)
-test "$BRANCH" != "develop" && test "$BRANCH" != "main"
-# Extract TASK_ID: try branch suffix first, then scan branch name for TASK-XXX pattern
-TASK_ID=${BRANCH##*/}
-if ! [[ "$TASK_ID" =~ ^TASK- ]]; then
-  TASK_ID=$(echo "$BRANCH" | grep -oE 'TASK-[A-Z][A-Z0-9-]+-[0-9]+' | head -1)
-fi
-# Resolve KB vault path from mercury.config.json (KB is outside project CWD)
-KB_VAULT_PATH=$(jq -r '.obsidian.vaultPath // empty' mercury.config.json 2>/dev/null \
-  || node -e "try{console.log(require('./mercury.config.json').obsidian.vaultPath)}catch(e){}" 2>/dev/null)
-TASK_FILE=""
-if [ -n "$TASK_ID" ] && [ -n "$KB_VAULT_PATH" ] && [ -f "$KB_VAULT_PATH/10-tasks/$TASK_ID.json" ]; then
-  TASK_FILE="$KB_VAULT_PATH/10-tasks/$TASK_ID.json"
-fi
-# When TASK_FILE is absent (non-task branches), ALLOWED_SCOPE stays empty → scope checks pass all files.
-declare -a ALLOWED_SCOPE=()
-if [ -n "$TASK_FILE" ]; then
-  while IFS= read -r path; do [ -n "$path" ] && ALLOWED_SCOPE+=("$path"); done < <(jq -r '.allowedWriteScope.codePaths[]? // empty' "$TASK_FILE")
-fi
-gh api rate_limit --jq '.resources.core.remaining'
-```
-
-1. **Create or reuse the PR**
-
-```bash
-SUMMARY=$(jq -r '.summary // "PR update"' "$KB_VAULT_PATH/10-tasks/$TASK_ID.receipt.json" 2>/dev/null || echo "PR update")
-DOD_COUNT=$(jq -r '(.definitionOfDone // []) | length' "$TASK_FILE" 2>/dev/null || echo "unknown")
-PR_BODY=$(cat <<EOF
-## Summary
-$SUMMARY
-
-## Task
-- TaskId: $TASK_ID
-- Branch: $BRANCH
-- DoD items completed: $DOD_COUNT
-EOF
-)
-EXISTING_PR=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number // empty')
-if [ -n "$EXISTING_PR" ]; then
-  PR_NUMBER=$EXISTING_PR
-else
-  git push -u origin "$BRANCH"
-  PR_URL=$(gh pr create --base develop --title "$TASK_ID: $SUMMARY" --body "$PR_BODY")
-  PR_NUMBER=$(gh pr view "$PR_URL" --json number --jq '.number')
-fi
-case "$TASK_ID" in TASK-BUG-*|TASK-FIX-*) LABEL=bugfix ;; TASK-DOC-*) LABEL=documentation ;; TASK-GUI-*) LABEL=enhancement ;; *) LABEL=refactor ;; esac
-gh pr edit "$PR_NUMBER" --add-assignee "@me" --add-label "$LABEL"
-if ! gh api repos/{owner}/{repo}/issues/"$PR_NUMBER"/comments --jq '.[].body' | grep -Fq "@coderabbitai review"; then gh pr comment "$PR_NUMBER" --body "@coderabbitai review"; fi
-```
-
-1. **Poll CI Checks**
-
-```bash
-extract_changed_paths() { jq -r '.[]?.path // empty'; }
-is_within_scope() { local p="$1"; shift; for root in "$@"; do case "$p" in "$root"/*|"$root") return 0;; esac; done; return 1; }
-if ! gh pr checks "$PR_NUMBER" --watch; then echo "CI failed — inspect output before continuing"; exit 1; fi
-```
-
-1. **Wait for CodeRabbit review**
-
-```bash
-MAX_POLLS=15
-for i in $(seq 1 "$MAX_POLLS"); do
-  REVIEW_DECISION=$(gh pr view "$PR_NUMBER" --json reviewDecision --jq '.reviewDecision // "REVIEW_REQUIRED"') || { sleep $((i * 10)); continue; }
-  [ "$REVIEW_DECISION" = "APPROVED" ] && break
-  [ "$REVIEW_DECISION" = "CHANGES_REQUESTED" ] && break
-  sleep 60
-done
-```
-
-1. **Parse and classify CodeRabbit feedback**
-
-```bash
-TYPE_REGEX='Potential issue|Nitpick|Verification successful'
-SEVERITY_REGEX='Critical|Major|Minor|Trivial'
-COMMENTS=$(gh api repos/{owner}/{repo}/pulls/"$PR_NUMBER"/comments)
-ACTIONABLE=$(echo "$COMMENTS" | jq -cr '
-  .[]
-  | .firstLine = (.body | split("\n")[0])
-  | .severity = (if (.firstLine | test("Critical")) then "Critical"
-                 elif (.firstLine | test("Major")) then "Major"
-                 elif (.firstLine | test("Minor")) then "Minor"
-                 elif (.firstLine | test("Trivial")) then "Trivial"
-                 else "Info" end)
-  | select(.severity == "Critical" or .severity == "Major")
-  | {id, path, severity, body}
-')
-```
-
-1. **Apply fixes, validate, and re-review**
-
-```bash
-normalize_patch() {
-  local path="$1" body="$2" diff suggestion
-  diff=$(printf '%s\n' "$body" | sed -n '/```diff/,/```/p' | sed '1d;$d')
-  [ -n "$diff" ] && { printf '%s\n' "$diff"; return 0; }
-  suggestion=$(printf '%s\n' "$body" | sed -n '/```suggestion/,/```/p' | sed '1d;$d')
-  [ -n "$suggestion" ] || return 1
-  printf 'skip: suggestion-only comment for %s (no patch builder implemented)\n' "$path" >&2; return 1
-}
-extract_patch_paths() { printf '%s\n' "$1" | sed -n 's/^+++ b\///p'; }
-validate_scope() { [ ${#ALLOWED_SCOPE[@]} -eq 0 ] && return 0; is_within_scope "$1" "${ALLOWED_SCOPE[@]}"; }
-refresh_actionable() { COMMENTS=$(gh api repos/{owner}/{repo}/pulls/"$PR_NUMBER"/comments); ACTIONABLE=$(echo "$COMMENTS" | jq -cr '.[] | .firstLine = (.body | split("\n")[0]) | .severity = (if (.firstLine | test("Critical")) then "Critical" elif (.firstLine | test("Major")) then "Major" else "Other" end) | select(.severity == "Critical" or .severity == "Major") | {id, path, severity, body}'); }
-# NOTE: || true is intentional — CI check here is observational (wait for new review), not a gate.
-# The hard CI gate is in Step 6 check_ready_to_merge() before merge.
-wait_for_refresh() { gh pr checks "$PR_NUMBER" --watch || true; for i in $(seq 1 10); do refresh_actionable; [ -n "$ACTIONABLE" ] || break; sleep 30; done; }
-MAX_ITERATIONS=3 # CodeRabbit usually converges in 1-2 rounds; keep 1 buffer.
-ITERATION=1
-while [ "$ITERATION" -le "$MAX_ITERATIONS" ] && [ -n "$ACTIONABLE" ]; do
-  echo "$ACTIONABLE" | while read -r item; do
-    COMMENT_ID=$(echo "$item" | jq -r '.id'); PATHNAME=$(echo "$item" | jq -r '.path')
-    COMMENT_BODY=$(gh api repos/{owner}/{repo}/pulls/comments/"$COMMENT_ID" --jq '.body')
-    PATCH_BODY=$(normalize_patch "$PATHNAME" "$COMMENT_BODY") || { echo "skip: no diff/suggestion for $COMMENT_ID"; continue; }
-    PATCH_PATHS=$(extract_patch_paths "$PATCH_BODY"); [ -n "$PATCH_PATHS" ] || PATCH_PATHS="$PATHNAME"
-    SCOPE_OK=1; while read -r TARGET_PATH; do [ -n "$TARGET_PATH" ] && ! validate_scope "$TARGET_PATH" && SCOPE_OK=0; done <<EOF
-$PATCH_PATHS
-EOF
-    [ "$SCOPE_OK" -eq 1 ] || { echo "skip: out of scope patch $COMMENT_ID"; continue; }
-    printf '%s\n' "$PATCH_BODY" | git apply --check || { while read -r p; do [ -n "$p" ] && git checkout -- "$p" 2>/dev/null; done <<< "$PATCH_PATHS"; continue; }
-    printf '%s\n' "$PATCH_BODY" | git apply
-    npx tsc --noEmit || { while read -r p; do [ -n "$p" ] && git checkout -- "$p" 2>/dev/null; done <<< "$PATCH_PATHS"; continue; }
-    while read -r TARGET_PATH; do [ -n "$TARGET_PATH" ] && git add "$TARGET_PATH"; done <<EOF
-$PATCH_PATHS
-EOF
-    git diff --cached --quiet && { echo "skip: no staged changes for $COMMENT_ID"; continue; }
-    git commit -m "fix(PR-feedback): address comment $COMMENT_ID"
-  done
-  git push
-  wait_for_refresh
-  ITERATION=$((ITERATION + 1))
-done
-```
-
-1. **Merge and update Mercury state**
-
-```bash
-check_ci_status() { gh pr checks "$PR_NUMBER" >/dev/null; }
-check_review_state() { [ "$(gh pr view "$PR_NUMBER" --json reviewDecision --jq '.reviewDecision // "REVIEW_REQUIRED"')" = "APPROVED" ]; }
-# NOTE: REST API pull request comments do not expose "resolved" state.
-# GraphQL reviewThreads.isResolved is the accurate source but requires more complexity.
-# Current approach: re-count severity from latest comment bodies as a practical approximation.
-check_unresolved_critical_comments() { LIVE_COMMENTS=$(gh api repos/{owner}/{repo}/pulls/"$PR_NUMBER"/comments); LIVE_ACTIONABLE=$(echo "$LIVE_COMMENTS" | jq -cr '.[] | .firstLine = (.body | split("\n")[0]) | .severity = (if (.firstLine | test("Critical")) then "Critical" elif (.firstLine | test("Major")) then "Major" else "Other" end) | select(.severity == "Critical" or .severity == "Major") | {id, path, severity, body}'); [ -z "$LIVE_ACTIONABLE" ] && return 0; COUNT=$(printf '%s\n' "$LIVE_ACTIONABLE" | jq -s 'length' 2>/dev/null || echo 0); [ "${COUNT:-0}" -eq 0 ]; }
-check_ready_to_merge() { check_ci_status && check_review_state && check_unresolved_critical_comments; }
-MERGE_STRATEGY=${MERGE_STRATEGY:-squash}
-DELETE_BRANCH=${DELETE_BRANCH:-true}
-[ "$DELETE_BRANCH" = "true" ] && DELETE_FLAG="--delete-branch" || DELETE_FLAG=""
-check_ready_to_merge || { echo "blocked: merge gates failed"; exit 1; }
-if [ "${CONFIRM_MERGE:-}" != "yes" ]; then
-  read -r -p "Merge PR #$PR_NUMBER and transition $TASK_ID? [y/N] " CONFIRM
-  [ "$CONFIRM" = "y" ] || [ "$CONFIRM" = "Y" ] || { echo "merge cancelled"; exit 1; }
-fi
-gh pr merge "$PR_NUMBER" "--$MERGE_STRATEGY" $DELETE_FLAG
-```
+#### Single-PR Mode (default)
 
 ```powershell
-$taskId = if ($env:TASK_ID) { $env:TASK_ID } else { throw "Set TASK_ID before calling Mercury RPC." }
-$port = if ($env:MERCURY_RPC_PORT) { $env:MERCURY_RPC_PORT } else { "7654" }
-$body = @{ method = "transition_task"; params = @{ taskId = $taskId; to = "done" } } | ConvertTo-Json -Depth 3 -Compress
-for ($attempt = 1; $attempt -le 3; $attempt++) {
-  try {
-    Invoke-RestMethod -Uri "http://localhost:$port/rpc" -Method POST -ContentType "application/json" -Body $body -TimeoutSec 5
-    break
-  } catch {
-    if ($attempt -eq 3) { Write-Warning "Mercury RPC unavailable: $($_.Exception.Message). Transition pending manual update." }
-    else { Start-Sleep -Seconds (2 * $attempt) }
+$branch = git branch --show-current
+powershell -ExecutionPolicy Bypass -File scripts/codex/git-safe.ps1 push -u origin $branch
+gh pr create --base develop --title "<type>(<scope>): description (#issue)" --body @"
+## Summary
+- bullet points
+
+## Test plan
+- [ ] test items
+
+Generated with Codex
+"@
+```
+
+#### Multi-PR Mode
+
+When changes should be split by category:
+
+1. Create separate worktrees from `origin/develop`
+2. Restore only the intended files into each worktree
+3. Commit and push from each worktree through `git-safe.ps1`
+4. Create one PR per worktree
+5. Track all PR numbers for parallel monitoring
+
+Do not rely on `git stash` in guarded Codex sessions.
+
+### Phase 2: Poll for CodeRabbit Review (Non-Blocking)
+
+Do not use long blocking `sleep` loops for 10-minute review polling.
+
+Preferred model:
+- if the host exposes recurring jobs, schedule a 10-minute recurring check
+- otherwise, persist state files and have the host, wrapper, or operator reinvoke the same review-check prompt every 10 minutes
+
+State files:
+
+```text
+.pr-flow-check-count-<PR_NUMBER>
+.pr-flow-iteration-<PR_NUMBER>
+.pr-flow-multi.txt
+```
+
+Each check should:
+1. fetch review status with `gh pr view <N> --json reviews,reviewDecision`
+2. fetch inline comments with `gh api repos/{owner}/{repo}/pulls/<N>/comments`
+3. detect new activity
+4. increment or clear the consecutive-no-activity counter
+5. after 3 consecutive quiet checks, trigger `@coderabbitai review` once if it has not already been requested
+
+### Phase 3: Respond to ALL Review Threads
+
+Iteration cap: default `MAX_ITERATIONS=5`.
+
+Critical rule: every CodeRabbit comment must receive a response, even if you disagree.
+
+This includes:
+- inline comments
+- outside-diff comments embedded in review bodies
+- review body suggestions
+
+#### For each inline comment
+
+1. Read the full comment body
+2. Assess whether the issue is valid
+3. If valid, fix the code and reply with commit SHA and what changed
+4. If you disagree, reply with the reasoning
+5. Reply via `gh api repos/{owner}/{repo}/pulls/comments/<ID>/replies -f body="..."`
+
+#### For outside-diff comments
+
+These appear in the review body, not as inline threads.
+
+Always address them in a PR comment and include `@coderabbitai`:
+
+```powershell
+gh pr comment <PR_NUMBER> --body "@coderabbitai
+## Addressed CodeRabbit review
+### Inline comments (N/N resolved):
+1. **Issue** - fixed in <sha>
+### Outside-diff comments (N/N resolved):
+1. **Issue** - fixed in <sha>"
+```
+
+### Phase 4: Fix Issues and Push
+
+1. Read the relevant code before editing
+2. Edit files to address valid feedback
+3. Build to verify
+4. Run milestone code review before committing
+5. Stage explicit files through:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/codex/git-safe.ps1 add <path> [more paths...]
+```
+
+6. Mark review complete:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/codex/guard.ps1 mark-review
+```
+
+7. Commit through the wrapper:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/codex/git-safe.ps1 commit -Message "fix(PR-feedback): address comment <ID>"
+```
+
+8. Push through the wrapper:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/codex/git-safe.ps1 push origin <branch>
+```
+
+### Phase 5: Resolve Threads
+
+Resolve threads only after the fixes are pushed.
+
+Use GraphQL to resolve review threads:
+
+```powershell
+$query = @"
+query {
+  repository(owner: "<OWNER>", name: "<NAME>") {
+    pullRequest(number: <N>) {
+      reviewThreads(first: 100) {
+        pageInfo { hasNextPage endCursor }
+        nodes { id isResolved path }
+      }
+    }
   }
 }
+"@
+gh api graphql -f query="$query"
 ```
+
+Then call:
+
+```powershell
+gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "<THREAD_ID>"}) { thread { id isResolved } } }'
+```
+
+Even threads you disagree with must be commented on and resolved. For out-of-scope suggestions, acknowledge that they are out of scope, reply, and resolve.
+
+### Phase 6: Wait for Re-Review
+
+Increment the iteration counter, then return to Phase 2.
+
+If `MAX_ITERATIONS` is reached:
+- post a PR comment requesting human intervention
+- stop automatic rework
+- wait for guidance
+
+### Phase 7: Merge
+
+Pre-merge checks:
+
+1. CI status passes
+2. `reviewDecision == APPROVED`
+3. unresolved review thread count is zero
+
+Then merge:
+
+```powershell
+gh pr merge <PR_NUMBER> --squash --delete-branch
+```
+
+### Phase 8: Update Issues and Tasks
+
+After merge:
+- close related issues if the PR closes them
+- update Mercury task state if the orchestrator is available
+- clean up `.pr-flow-iteration-*`, `.pr-flow-check-count-*`, and `.pr-flow-multi.txt`
+
+## Review Response Protocol
+
+| Situation | Action |
+|---|---|
+| Valid inline issue | Fix code, reply with SHA, resolve thread |
+| Valid outside-diff issue | Fix code, post PR comment |
+| Disagree with suggestion | Reply explaining reasoning, resolve thread |
+| Nitpick or style suggestion | Fix if trivial, otherwise explain and resolve |
+| Out-of-scope suggestion | Acknowledge, explain it is out of scope, resolve |
+
+Rules:
+- even threads you disagree with must be commented on and resolved
+- when posting non-direct PR comments, include `@coderabbitai`
+- outside-diff comments still count as required responses
 
 ## Output
 
-The agent assembles the following summary from variables collected during execution:
-
 ```text
 PR: #<number> (<url>)
-CI Checks: PASS | FAIL | FAIL (<job>: <error>)
-CodeRabbit: approved | pending | timeout | unavailable
-Feedback: <N> critical, <N> major, <N> addressed, iteration=<N>
-Merge: merged | waiting | blocked | failed - <reason>
-Mercury State: <taskId> -> done | pending manual transition
-Evidence: pr-flow: PR #<number> status=<merged|blocked> strategy=<mergeStrategy> ci=<pass|fail> coderabbit=<approved|timeout> iterations=<N> approvers=<login,...> mergeCommit=<sha|pending> task=<taskId>
+CodeRabbit: approved | changes_requested | pending
+Feedback: <N> inline, <N> outside-diff, <N> addressed, iteration=<N>
+Merge: merged | waiting | blocked
+Task: <taskId> -> done | pending
 ```

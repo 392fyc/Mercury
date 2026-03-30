@@ -2,43 +2,41 @@
 name: deep-research
 description: |
   Mercury's multi-round deep research protocol for comprehensive investigations requiring 3+ research questions, cross-source verification, or architectural decision analysis. Activates when TaskBundle.researchScope is "deep", when explicitly invoked, or when the research agent starts a session. Enforces iterative search loops with per-round quality gates and independent verification. Prevents premature completion via the "evidence over claims" iron rule. Triggers on: "深度调研", "深度研究", "deep research", "comprehensive research", "多轮调研", "research protocol", "调研协议".
-user-invocable: true
-allowed-tools: WebSearch, WebFetch, Read, Write, Grep, Glob, Agent, TodoWrite
 ---
 
 # Mercury Deep Research Protocol
 
 ## Purpose
 
-This skill governs **large-scale research tasks** that require multiple rounds of web search, cross-source verification, and structured synthesis. It prevents the most common agent failure mode: **declaring research complete based on confidence rather than evidence**.
+This skill governs large-scale research tasks that require multiple rounds of web search, cross-source verification, and structured synthesis. It prevents the most common agent failure mode: declaring research complete based on confidence rather than evidence.
 
 ## When This Protocol Applies
 
 - TaskBundle `researchScope` is `"deep"`
-- Research questions ≥ 3
-- Cross-verification across ≥ 3 independent sources required
-- Architectural decision analysis (comparing alternatives)
-- Any research task explicitly routed to the Research Agent
-- User invokes `/deep-research` or says "深度调研"
+- research questions >= 3
+- cross-verification across >= 3 independent sources required
+- architectural decision analysis
+- any research task explicitly routed to the Research Agent
+- user invokes `/deep-research` or says `深度调研`
 
-For lighter research (1-2 questions, single-source verification), use the `web-research` skill instead.
+For lighter research, use the `web-research` skill instead.
 
 ## Iron Rules
 
-1. **NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION EVIDENCE** — confidence is not evidence.
-2. **Every factual claim requires a source URL or an explicit UNVERIFIED tag** — no exceptions.
-3. **Agent self-reports are not evidence** — use independent verification (subagent or checklist).
-4. **"Should work" / "probably" / "I believe" are banned** — use "verified at [URL]" or "UNVERIFIED".
+1. No completion claims without fresh verification evidence.
+2. Every factual claim requires a source URL or an explicit `UNVERIFIED` tag.
+3. Agent self-reports are not evidence.
+4. `Should work`, `probably`, and `I believe` are banned.
 
 ## Rationalization Prevention
 
 | Excuse | Reality |
 |--------|---------|
-| "Should be done now" | Run the quality gate |
-| "I'm confident" | Confidence ≠ Evidence |
-| "Covered the main points" | Check question_answer_rate ≥ 0.8 |
-| "The search results confirmed it" | Show the URL and cited text |
-| "Further research = diminishing returns" | Only the gate decides that |
+| `Should be done now` | Run the quality gate |
+| `I'm confident in these findings` | Confidence does not equal evidence |
+| `The search results confirmed it` | Show the URL and cited text |
+| `I covered the main points` | Check `question_answer_rate >= 0.8` |
+| `Further research would be diminishing returns` | Only the quality gate decides that |
 
 ## Iterative Research Loop
 
@@ -46,35 +44,28 @@ For lighter research (1-2 questions, single-source verification), use the `web-r
 
 ```text
 Round N:
-  1. CONTEXT  — Read results.jsonl + existing KB report to restore state
-  2. PLAN     — Identify which sub-questions to tackle this round
-  3. SEARCH   — WebSearch/WebFetch (multiple calls per round)
-  4. SYNTHESIZE — Integrate findings into KB 04-research/ report
-  5. VERIFY   — Run quality gate checklist
-  6. LOG      — Append round summary to results.jsonl
-  7. DECIDE   — Gate passed? → trigger verification
-                 Gate failed? → continue to Round N+1
-                 Max iterations (10) → mark gaps + submit
+  1. CONTEXT    - Read results.jsonl + existing KB report to restore state
+  2. PLAN       - Identify which sub-questions to tackle this round
+  3. SEARCH     - WebSearch/WebFetch with multiple calls
+  4. SYNTHESIZE - Integrate findings into KB 04-research report
+  5. VERIFY     - Run quality gate checklist
+  6. LOG        - Append round summary to results.jsonl
+  7. DECIDE     - Gate passed? -> trigger verification
+                  Gate failed? -> continue to Round N+1
+                  Max iterations reached? -> mark gaps + trigger verification
 ```
 
-### Quality Gate (per round)
+### Round 1 Bootstrap
 
-| Metric | Threshold | How to Measure |
-|--------|-----------|----------------|
-| `question_answer_rate` | ≥ 0.8 | answered / total questions |
-| `citation_density` | ≥ 0.6 | claims with URL / total claims |
-| `unverified_rate` | ≤ 0.2 | UNVERIFIED / total claims |
-
-All metrics are mechanically countable — no LLM self-evaluation for mandatory gates.
-
-### State Files
+On the first round, create the state files:
 
 ```text
-Mercury_KB/04-research/RESEARCH-{TOPIC}-{ISSUE}.md     — report
-Mercury_KB/04-research/.research-state/results-{ISSUE}.jsonl — iteration log
+Mercury_KB/04-research/RESEARCH-{TOPIC}-{ISSUE_NUM}.md
+Mercury_KB/04-research/.research-state/results-{ISSUE_NUM}.jsonl
 ```
 
-Each `results.jsonl` line (schema matches `.claude/` version — see `.mercury/gates/research-quality.yaml`):
+Each line in `results.jsonl` is a JSON object:
+
 ```json
 {
   "round": 1,
@@ -90,16 +81,79 @@ Each `results.jsonl` line (schema matches `.claude/` version — see `.mercury/g
 }
 ```
 
+### Context Recovery Between Rounds
+
+If the session is new or resumed:
+1. Read the existing report from KB
+2. Read `results.jsonl`
+3. Identify the weakest dimensions from the last round
+4. Focus the current round on those gaps
+
+## Quality Gate
+
+### Mandatory Metrics
+
+| Metric | Threshold | Measurement |
+|--------|-----------|-------------|
+| `question_answer_rate` | >= 0.8 | answered questions / total questions |
+| `citation_density` | >= 0.6 | claims with source URL / total factual claims |
+| `unverified_rate` | <= 0.2 | `UNVERIFIED` tags / total factual claims |
+
+### Recommended Metrics
+
+| Metric | Target | Measurement |
+|--------|--------|-------------|
+| `iteration_depth` | >= 3 | completed rounds |
+| `source_diversity` | >= 3 | unique domains cited |
+
+### Gate Evaluation
+
+After each round:
+1. count research questions
+2. count which were substantively answered
+3. count factual claims, URLs, and `UNVERIFIED` markers
+4. compare against thresholds
+5. record the result in `results.jsonl`
+
 ## Verification
 
-After gate passes, spawn independent verification agent to review:
-- Question coverage, citation density, actionability, risk honesty
-- Returns VERDICT: PASS / PARTIAL / FAIL
-- FAIL → continue research; PASS → submit for human review
+When the quality gate passes, or max iterations are reached, run an independent verification pass.
 
-## Codex Compatibility
+Codex adaptation:
+- replace Claude `Agent()` examples with native Codex delegation when available
+- keep the verifier read-only
+- the verifier should not rewrite the research report
 
-- Logic is agent-agnostic: file I/O + web tools
-- Replace Claude subagent spawning with Codex native delegation
-- Same `results.jsonl` format regardless of agent CLI
-- See `openai.yaml` for Codex-specific policy
+Verifier checklist:
+- question coverage
+- citation density
+- actionability
+- risk honesty
+
+Return `PASS`, `PARTIAL`, or `FAIL` plus dimension scores and gaps.
+
+## Termination Conditions
+
+| Condition | Action |
+|-----------|--------|
+| Quality gate passed + verification PASS | Submit for human review |
+| Quality gate passed + verification PARTIAL | Address gaps, re-verify |
+| Quality gate passed + verification FAIL | Continue research rounds |
+| Max iterations reached | Mark incomplete items and submit |
+| Human interruption | Save state and submit current progress |
+
+## State Externalization
+
+All research state lives in files:
+- report: `Mercury_KB/04-research/RESEARCH-*.md`
+- iteration log: `Mercury_KB/04-research/.research-state/results-*.jsonl`
+- KB references: supporting docs read during research
+
+## Integration with Mercury SoT
+
+| SoT Transition | Gate | Implementation |
+|----------------|------|----------------|
+| `drafted -> dispatched` | Research scope classification | Orchestrator sets `researchScope` |
+| `dispatched -> in_progress` | Skill activation | Session start or dispatch prompt injects this skill |
+| `in_progress` | Per-round quality gate | This skill's iterative loop |
+| `in_progress -> implementation_done` | Evidence requirement | Receipt must include the verification verdict |

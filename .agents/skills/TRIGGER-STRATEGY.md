@@ -38,6 +38,8 @@ Choose `allow_implicit_invocation: true` when the skill:
 The policy table above mirrors each skill's `openai.yaml`. To prevent drift:
 - When adding/modifying a skill's `openai.yaml`, update this table in the same commit.
 - Future CI validation: parse `openai.yaml` files and assert they match this table (tracked in TASK-WF-001).
+- For Mercury-owned skills that exist in both `.claude/skills/` and `.agents/skills/`, treat the Claude skill body as the workflow upstream and adapt the Codex variant only where tool surface or platform constraints differ.
+- When the Claude variant gains a new workflow phase, guardrail, or lifecycle rule, update the Codex counterpart in the same checkpoint unless the difference is explicitly documented.
 
 ## Codex Notes
 
