@@ -613,24 +613,39 @@ function waitForSidecarReady(timeoutMs = SIDECAR_READY_TIMEOUT_MS): Promise<void
   return new Promise((resolve, reject) => {
     let settled = false;
     let stopEffect: (() => void) | null = null;
-    const timer = window.setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(timer);
-      queueMicrotask(() => stopEffect?.());
-      reject(new Error(`Timed out waiting for sidecar readiness after ${timeoutMs} ms.`));
-    }, timeoutMs);
+    let timer: number | null = null;
+
+    const clearTimer = () => {
+      if (timer !== null) {
+        window.clearTimeout(timer);
+        timer = null;
+      }
+    };
+
+    const scheduleTimeout = () => {
+      clearTimer();
+      timer = window.setTimeout(() => {
+        if (settled) return;
+        const message = `Timed out waiting for sidecar readiness after ${timeoutMs} ms. Retrying automatically.`;
+        sidecarTransientError.value = message;
+        console.warn(`[Mercury] ${message}`);
+        scheduleTimeout();
+      }, timeoutMs);
+    };
+
+    scheduleTimeout();
 
     stopEffect = watchEffect((onCleanup) => {
       onCleanup(() => {
-        window.clearTimeout(timer);
+        clearTimer();
       });
 
       if (settled) return;
 
       if (sidecarReady.value) {
         settled = true;
-        window.clearTimeout(timer);
+        clearTimer();
+        sidecarTransientError.value = null;
         queueMicrotask(() => stopEffect?.());
         resolve();
         return;
@@ -638,7 +653,7 @@ function waitForSidecarReady(timeoutMs = SIDECAR_READY_TIMEOUT_MS): Promise<void
 
       if (sidecarError.value) {
         settled = true;
-        window.clearTimeout(timer);
+        clearTimer();
         queueMicrotask(() => stopEffect?.());
         reject(new Error(sidecarError.value));
       }

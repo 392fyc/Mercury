@@ -150,10 +150,50 @@ function Assert-SafePushTarget {
   }
 }
 
+function Get-RemoteHost {
+  $remote = (git -C $repoRoot remote get-url origin 2>$null).Trim()
+  if ([string]::IsNullOrWhiteSpace($remote)) {
+    return "github.com"
+  }
+
+  if ($remote -match '^[^@]+@([^:]+):') {
+    return $Matches[1]
+  }
+
+  if ($remote -match '^[a-z]+://([^/]+)/') {
+    return $Matches[1]
+  }
+
+  return "github.com"
+}
+
+function Assert-GhCliAvailable {
+  $ghCommand = Get-Command gh -ErrorAction SilentlyContinue
+  if (-not $ghCommand) {
+    throw "GitHub CLI (gh) is not installed or not in PATH. Install it and run 'gh auth login' before using pre-merge checks."
+  }
+
+  $remoteHost = Get-RemoteHost
+  $authStatus = & gh auth status --active --hostname $remoteHost 2>&1
+  if ($LASTEXITCODE -ne 0) {
+    $detail = ($authStatus | Out-String).Trim()
+    if ([string]::IsNullOrWhiteSpace($detail)) {
+      $detail = "Run 'gh auth login' for the repository host and retry."
+    }
+    throw "GitHub CLI authentication check failed for '$remoteHost'. $detail"
+  }
+}
+
 function Get-RepositoryCoordinates {
-  $repo = gh repo view --json owner,name | ConvertFrom-Json
-  if ($LASTEXITCODE -ne 0 -or -not $repo) {
-    throw "Unable to determine the current GitHub repository."
+  $repoJson = & gh repo view --json owner,name 2>&1
+  if ($LASTEXITCODE -ne 0) {
+    $detail = ($repoJson | Out-String).Trim()
+    throw "Unable to determine the current GitHub repository via 'gh repo view --json owner,name'. $detail"
+  }
+
+  $repo = $repoJson | ConvertFrom-Json
+  if (-not $repo) {
+    throw "Unable to determine the current GitHub repository via 'gh repo view --json owner,name'."
   }
 
   return [pscustomobject]@{
@@ -305,6 +345,7 @@ switch ($Action) {
     exit 0
   }
   "pre-merge" {
+    Assert-GhCliAvailable
     Assert-PreMergeReady -Number $PullRequestNumber
     Write-Output "pre_merge=pass"
     exit 0

@@ -118,17 +118,32 @@ function cancelPendingApprovalsForSession(sessionId: string, reason: string): vo
 
 let approvalsInitialized = false;
 let approvalsInitPromise: Promise<void> | null = null;
+let approvalsInitGeneration = 0;
+let approvalsDisposed = false;
 const approvalUnlisteners: UnlistenFn[] = [];
+
+function cleanupApprovalListeners(listeners: UnlistenFn[]): void {
+  for (const unlisten of listeners) unlisten();
+  listeners.length = 0;
+}
+
+function isActiveApprovalInit(generation: number): boolean {
+  return !approvalsDisposed && approvalsInitGeneration === generation;
+}
 
 async function initApprovalStore(): Promise<void> {
   if (approvalsInitialized) return;
   if (approvalsInitPromise) return approvalsInitPromise;
 
-  approvalsInitPromise = (async () => {
+  approvalsDisposed = false;
+  const generation = ++approvalsInitGeneration;
+  let initPromise!: Promise<void>;
+  initPromise = (async () => {
     const { waitForSidecarReady } = useAgentStore();
     const pending: UnlistenFn[] = [];
     try {
       await waitForSidecarReady();
+      if (!isActiveApprovalInit(generation)) return;
 
       pending.push(await onMercuryEvent((event: MercuryEvent) => {
         if (event.type !== "agent.approval.requested" && event.type !== "agent.approval.resolved") {
@@ -140,6 +155,7 @@ async function initApprovalStore(): Promise<void> {
           upsertRequest(payload);
         }
       }));
+      if (!isActiveApprovalInit(generation)) return;
 
       // When a transport crash occurs, immediately cancel pending approvals for
       // that session so the GUI doesn't show stale, unresponsive approval buttons.
@@ -151,11 +167,13 @@ async function initApprovalStore(): Promise<void> {
           );
         }
       }));
+      if (!isActiveApprovalInit(generation)) return;
 
       const [modeResult, requests] = await Promise.all([
         bridgeGetApprovalMode(),
         bridgeListApprovalRequests(),
       ]);
+      if (!isActiveApprovalInit(generation)) return;
       applyApprovalSnapshot(modeResult.mode, requests);
 
       // Close the snapshot/subscribe window by reconciling once after listeners
@@ -164,25 +182,33 @@ async function initApprovalStore(): Promise<void> {
         bridgeGetApprovalMode(),
         bridgeListApprovalRequests(),
       ]);
+      if (!isActiveApprovalInit(generation)) return;
       applyApprovalSnapshot(reconciledMode.mode, reconciledRequests);
 
       approvalUnlisteners.push(...pending);
       approvalsInitialized = true;
     } catch (e) {
-      for (const unlisten of pending) unlisten();
+      cleanupApprovalListeners(pending);
       approvalsInitialized = false;
       throw e;
     } finally {
-      approvalsInitPromise = null;
+      if (!isActiveApprovalInit(generation)) {
+        cleanupApprovalListeners(pending);
+      }
+      if (approvalsInitPromise === initPromise) {
+        approvalsInitPromise = null;
+      }
     }
   })();
 
+  approvalsInitPromise = initPromise;
   return approvalsInitPromise;
 }
 
 function disposeApprovalStoreListeners(): void {
-  for (const unlisten of approvalUnlisteners) unlisten();
-  approvalUnlisteners.length = 0;
+  approvalsDisposed = true;
+  approvalsInitGeneration += 1;
+  cleanupApprovalListeners(approvalUnlisteners);
   approvalsInitialized = false;
   approvalsInitPromise = null;
 }
