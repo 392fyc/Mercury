@@ -117,7 +117,13 @@ async function initTaskListeners() {
       // If the ready event was emitted before we registered the listener above,
       // wait on the shared sidecar-ready state that agents.ts keeps in sync.
       snapshotInflight = true;
-      await waitForSidecarReady();
+      const SIDECAR_READY_TIMEOUT_MS = 30_000;
+      await Promise.race([
+        waitForSidecarReady(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("waitForSidecarReady timed out after 30s")), SIDECAR_READY_TIMEOUT_MS)
+        ),
+      ]);
       await loadTasks();
       snapshotInflight = false;
 
@@ -125,7 +131,7 @@ async function initTaskListeners() {
       if (pendingFullReload) {
         await loadTasks();
       } else {
-        for (const id of pendingRefreshIds) refreshTask(id);
+        await Promise.all(Array.from(pendingRefreshIds).map((id) => refreshTask(id)));
       }
       pendingRefreshIds.clear();
       pendingFullReload = false;
