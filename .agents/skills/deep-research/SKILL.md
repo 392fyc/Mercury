@@ -132,6 +132,12 @@ Verifier checklist:
 
 Return `PASS`, `PARTIAL`, or `FAIL` plus dimension scores and gaps.
 
+## Iteration Limit
+
+If the task prompt contains a `MAX_ITERATIONS: N` directive, treat it as a hard upper bound that overrides the default gate config. Stop the loop when that round count is reached, mark outstanding gaps, then proceed to KB write and submission.
+
+`MAX_ITERATIONS: 0` means no limit (default behaviour).
+
 ## Termination Conditions
 
 | Condition | Action |
@@ -139,7 +145,7 @@ Return `PASS`, `PARTIAL`, or `FAIL` plus dimension scores and gaps.
 | Quality gate passed + verification PASS | Submit for human review |
 | Quality gate passed + verification PARTIAL | Address gaps, re-verify |
 | Quality gate passed + verification FAIL | Continue research rounds |
-| Max iterations reached | Mark incomplete items and submit |
+| Max iterations reached (config or injected limit) | Mark incomplete items and submit |
 | Human interruption | Save state and submit current progress |
 
 ## State Externalization

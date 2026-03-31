@@ -118,6 +118,15 @@ export interface TransportsConfig {
   };
 }
 
+export interface ResearchConfig {
+  /**
+   * Maximum number of research rounds per task.
+   * 0 means unlimited (same as not setting this field).
+   * When the agent reaches this limit it must stop looping and submit its findings.
+   */
+  maxIterations?: number;
+}
+
 export interface MercuryConfig {
   agents: AgentConfig[];
   workDir?: string;
@@ -126,6 +135,7 @@ export interface MercuryConfig {
   transports?: TransportsConfig;
   obsidian?: ObsidianConfig;
   rtk?: RTKConfig;
+  research?: ResearchConfig;
 }
 
 // ─── Approval Control Plane ───

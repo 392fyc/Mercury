@@ -1053,6 +1053,7 @@ function deriveKbWriteInstructions(task: TaskBundle): string[] {
 export function buildResearchPrompt(
   task: TaskBundle,
   kbContext?: string,
+  maxIterations?: number,
 ): string {
   const lines = [
     `# Research Task: ${task.title} [${task.taskId}]`,
@@ -1075,6 +1076,11 @@ export function buildResearchPrompt(
     "- Use web search, codebase analysis, and KB resources as needed.",
     "- Produce structured findings with evidence and recommendations.",
     "- No code commits expected.",
+    ...(maxIterations && maxIterations > 0
+      ? [
+        `- **MAX_ITERATIONS: ${maxIterations}** — you MUST stop the research loop and submit your findings after at most ${maxIterations} round(s). Do not continue past this limit under any circumstances.`,
+        ]
+      : []),
     "",
     "## MANDATORY: Write Report to KB (Step 1)",
     "Before outputting your final JSON summary, you MUST write the full report to KB.",

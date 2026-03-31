@@ -2655,7 +2655,8 @@ export class Orchestrator {
     // Build role-appropriate prompt
     let prompt: string;
     if (role === "research") {
-      prompt = buildResearchPrompt(task, kbContext);
+      const maxIterations = this.projectConfig?.research?.maxIterations;
+      prompt = buildResearchPrompt(task, kbContext, maxIterations);
     } else if (role === "design") {
       prompt = buildDesignPrompt(task, kbContext);
     } else {
