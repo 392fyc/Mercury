@@ -2084,6 +2084,25 @@ export class Orchestrator {
         this.transport.sendNotification("log", {
           message: `[task] WARNING: Research task ${task.taskId} did not write expected KB file "${expectedKbFile}". Findings may be lost.`,
         });
+        // Orchestrator-side KB recovery: write finalMessage as fallback if non-trivial
+        if (finalMessage.length > 200) {
+          try {
+            const fallbackContent = `# Research Fallback: ${task.title} [${task.taskId}]
+
+> Auto-recovered by orchestrator — agent did not write KB directly.
+
+${finalMessage}`;
+            await this.kb.write(expectedKbFile, fallbackContent);
+            kbWriteVerified = true;
+            this.transport.sendNotification("log", {
+              message: `[task] Orchestrator KB recovery succeeded for ${task.taskId}: wrote ${fallbackContent.length} bytes to "${expectedKbFile}"`,
+            });
+          } catch (writeErr) {
+            this.transport.sendNotification("log", {
+              message: `[task] Orchestrator KB recovery also failed for ${task.taskId}: ${writeErr instanceof Error ? writeErr.message : writeErr}`,
+            });
+          }
+        }
       }
     }
 
@@ -2164,18 +2183,44 @@ export class Orchestrator {
       message: `[task] Design task ${task.taskId} completed by ${agentId}, fast-tracking to closed`,
     });
 
+    // Verify KB write when kbPaths are expected (same pattern as research)
+    const kbPaths = (task.allowedWriteScope?.kbPaths ?? []).filter((p) => p.trim().length > 0);
+    let designKbVerified = false;
+    let designKbFile: string | undefined;
+    if (kbPaths.length > 0 && this.kb?.isEnabled()) {
+      designKbFile = kbPaths[0].endsWith(".md")
+        ? kbPaths[0]
+        : `${kbPaths[0].replace(/\/+$/, "")}/${task.taskId}.md`;
+      try {
+        const kbContent = await this.kb.read(designKbFile);
+        designKbVerified = !!kbContent && kbContent.length > 100;
+      } catch { /* not found */ }
+      if (!designKbVerified && finalMessage.length > 200) {
+        try {
+          const fallback = `# Design Fallback: ${task.title} [${task.taskId}]
+
+> Auto-recovered by orchestrator.
+
+${finalMessage}`;
+          await this.kb.write(designKbFile, fallback);
+          designKbVerified = true;
+        } catch { /* best-effort */ }
+      }
+    }
+
     const parsed = this.tryParseJsonRecord(finalMessage);
     const artifactsArr = this.readStringArray(parsed?.artifacts);
     const designFindings = this.readStringArray(parsed?.findings);
     const designRecommendations = this.readStringArray(parsed?.recommendations);
+    const docsUpdated = designKbVerified && designKbFile ? [designKbFile] : [];
     const receipt: ImplementationReceipt = {
       implementer: agentId,
       branch: "",
       summary: this.readString(parsed?.summary) ?? finalMessage.slice(0, 500),
       changedFiles: [],
       evidence: artifactsArr,
-      docsUpdated: [],
-      residualRisks: [],
+      docsUpdated,
+      residualRisks: (kbPaths.length > 0 && !designKbVerified) ? ["KB write not verified — design artifact may only exist in task result"] : [],
       completedAt: Date.now(),
     };
 
