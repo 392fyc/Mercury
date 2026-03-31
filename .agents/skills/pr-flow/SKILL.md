@@ -52,11 +52,11 @@ When changes should be split by category:
    - `git worktree add ../Mercury-split-A -b feature/TASK-123-part-A origin/develop`
    - `git worktree add ../Mercury-split-B -b feature/TASK-123-part-B origin/develop`
 2. Restore only the intended files into each worktree via direct file copy or `git restore --source <branch> -- <path>`.
-3. Stage, commit, and push each worktree branch. While located inside the target worktree directory, invoke `git-safe.ps1` using a path that resolves to the main repo root (relative or absolute):
+3. Stage, commit, and push inside the target worktree directory. `git-safe.ps1` uses `$PSScriptRoot` to resolve `$repoRoot`, so always invoke the **worktree-local copy** of the script — never the main-repo copy (or extend `git-safe.ps1` with a `-RepoRoot` parameter first):
    - `Set-Location ../Mercury-split-A`
-   - `powershell -ExecutionPolicy Bypass -File ../Mercury/scripts/codex/git-safe.ps1 add <path>`
-   - `powershell -ExecutionPolicy Bypass -File ../Mercury/scripts/codex/git-safe.ps1 commit -Message "<message>"`
-   - `powershell -ExecutionPolicy Bypass -File ../Mercury/scripts/codex/git-safe.ps1 push origin <branch>`
+   - `powershell -ExecutionPolicy Bypass -File scripts/codex/git-safe.ps1 add <path>`
+   - `powershell -ExecutionPolicy Bypass -File scripts/codex/git-safe.ps1 commit -Message "<message>"`
+   - `powershell -ExecutionPolicy Bypass -File scripts/codex/git-safe.ps1 push origin <branch>`
 4. Create one PR per worktree branch (specify `--head` explicitly):
    - `gh pr create --base develop --head feature/TASK-123-part-A --title "feat(scope): part A"`
    - `gh pr create --base develop --head feature/TASK-123-part-B --title "feat(scope): part B"`

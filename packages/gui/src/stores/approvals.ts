@@ -126,7 +126,9 @@ const approvalUnlisteners: UnlistenFn[] = [];
 const approvalPendingListenerBatches = new Set<UnlistenFn[]>();
 
 function cleanupApprovalListeners(listeners: UnlistenFn[]): void {
-  for (const unlisten of listeners) unlisten();
+  for (const unlisten of listeners) {
+    try { unlisten(); } catch (e) { console.warn("[Mercury] Failed to unlisten approval listener:", e); }
+  }
   listeners.length = 0;
 }
 

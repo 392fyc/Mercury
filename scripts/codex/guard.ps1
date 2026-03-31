@@ -117,9 +117,12 @@ function Test-ProtectedPushSpec {
     return $false
   }
 
-  $destination = $Token
-  if ($Token.Contains(":")) {
-    $destination = $Token.Split(":", 2)[1]
+  # Strip leading + (force-push marker: +src:dst or +branch) before parsing
+  $cleanToken = if ($Token.StartsWith("+")) { $Token.Substring(1) } else { $Token }
+
+  $destination = $cleanToken
+  if ($cleanToken.Contains(":")) {
+    $destination = $cleanToken.Split(":", 2)[1]
   }
 
   if ([string]::IsNullOrWhiteSpace($destination)) {
