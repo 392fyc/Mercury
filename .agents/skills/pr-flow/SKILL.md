@@ -48,12 +48,19 @@ Generated with Codex
 
 When changes should be split by category:
 
-1. Create separate worktrees from `origin/develop`
-2. Restore only the intended files into each worktree
-3. In each worktree directory, run guarded staging/commit/push commands that target that worktree's HEAD
-   (or extend `git-safe.ps1` with a worktree path parameter before using it for multi-worktree mode)
-4. Create one PR per worktree
-5. Track all PR numbers for parallel monitoring
+1. Create separate worktrees branching off `origin/develop`:
+   - `git worktree add ../Mercury-split-A -b feature/TASK-123-part-A origin/develop`
+   - `git worktree add ../Mercury-split-B -b feature/TASK-123-part-B origin/develop`
+2. Restore only the intended files into each worktree via direct file copy or `git checkout <branch> -- <path>`.
+3. Stage, commit, and push each worktree branch. Invoke `git-safe.ps1` via its absolute path while located inside the worktree directory:
+   - `Set-Location ../Mercury-split-A`
+   - `powershell -ExecutionPolicy Bypass -File ../Mercury/scripts/codex/git-safe.ps1 add <path>`
+   - `powershell -ExecutionPolicy Bypass -File ../Mercury/scripts/codex/git-safe.ps1 commit -Message "<message>"`
+   - `powershell -ExecutionPolicy Bypass -File ../Mercury/scripts/codex/git-safe.ps1 push origin <branch>`
+4. Create one PR per worktree branch (specify `--head` explicitly):
+   - `gh pr create --base develop --head feature/TASK-123-part-A --title "feat(scope): part A"`
+   - `gh pr create --base develop --head feature/TASK-123-part-B --title "feat(scope): part B"`
+5. Track all PR numbers for parallel monitoring.
 
 Do not rely on `git stash` in guarded Codex sessions.
 

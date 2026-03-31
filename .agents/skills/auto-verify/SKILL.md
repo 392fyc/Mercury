@@ -36,8 +36,10 @@ if (Get-Command pnpm -ErrorAction SilentlyContinue) {
   npm run typecheck
 } elseif (Get-Command npx -ErrorAction SilentlyContinue) {
   npx tsc --noEmit
+} elseif (Get-Command tsc -ErrorAction SilentlyContinue) {
+  tsc --noEmit
 } else {
-  throw "No supported package runner found for type-check."
+  Write-Output "SKIP: No supported package runner or tsc found for type-check."
 }
 ```
 
