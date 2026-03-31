@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::Emitter;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -19,6 +20,10 @@ pub struct SidecarManager {
     _job: Option<Arc<ProcessJob>>,
     pending: Arc<Mutex<HashMap<u64, oneshot::Sender<serde_json::Value>>>>,
     next_id: Arc<Mutex<u64>>,
+    /// Set to `true` when the sidecar's stdout EOF is detected. Once set,
+    /// `is_alive()` returns `false` and new RPCs are rejected immediately
+    /// rather than queuing and waiting for a 30-second timeout.
+    transport_dead: Arc<AtomicBool>,
 }
 
 impl SidecarManager {
@@ -85,10 +90,12 @@ impl SidecarManager {
 
         let pending: Arc<Mutex<HashMap<u64, oneshot::Sender<serde_json::Value>>>> =
             Arc::new(Mutex::new(HashMap::new()));
+        let transport_dead: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
 
         // Read stdout (JSON-RPC messages from orchestrator)
         let pending_clone = pending.clone();
         let app_clone = app_handle.clone();
+        let transport_dead_clone = transport_dead.clone();
         tokio::spawn(async move {
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
@@ -128,6 +135,7 @@ impl SidecarManager {
             }
 
             eprintln!("[tauri] Orchestrator sidecar stdout closed");
+            transport_dead_clone.store(true, Ordering::Release);
             {
                 let mut pending = pending_clone.lock().await;
                 pending.clear();
@@ -158,6 +166,7 @@ impl SidecarManager {
             _job: job,
             pending,
             next_id: Arc::new(Mutex::new(1)),
+            transport_dead,
         })
     }
 
@@ -272,6 +281,9 @@ impl SidecarManager {
     }
 
     pub async fn is_alive(&self) -> bool {
+        if self.transport_dead.load(Ordering::Acquire) {
+            return false;
+        }
         let mut child = self.child.lock().await;
         matches!(child.try_wait(), Ok(None))
     }
@@ -313,7 +325,7 @@ impl SidecarManager {
             let _ = child.kill().await;
         }
 
-        match timeout(Duration::from_secs(5), child.wait()).await {
+        match timeout(Duration::from_secs(3), child.wait()).await {
             Ok(Ok(_status)) => {}
             Ok(Err(e)) => eprintln!("[tauri] sidecar wait failed during shutdown: {}", e),
             Err(_) => eprintln!("[tauri] sidecar wait timed out during shutdown"),

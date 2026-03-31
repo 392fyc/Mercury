@@ -86,6 +86,12 @@ async function initTaskListeners() {
   taskListenersInitPromise = (async () => {
     const { waitForSidecarReady } = useAgentStore();
     const pending: UnlistenFn[] = [];
+    // Accumulators for events that arrive while the initial snapshot is in-flight.
+    // Without these, refreshTask() writes could be clobbered by the subsequent
+    // tasks.value = await listTasks() assignment.
+    const pendingRefreshIds = new Set<string>();
+    let pendingFullReload = false;
+    let snapshotInflight = false;
     try {
       // Register all listeners before taking the initial snapshot so events
       // arriving during snapshotting are not lost.
@@ -98,10 +104,11 @@ async function initTaskListeners() {
         if (event.type.startsWith("orchestrator.task.") || event.type.startsWith("orchestrator.acceptance.")) {
           const taskId =
             (event.payload as Record<string, unknown>).taskId as string | undefined;
-          if (taskId) {
-            refreshTask(taskId);
+          if (snapshotInflight) {
+            // Queue for replay after the snapshot completes to avoid clobbering.
+            if (taskId) { pendingRefreshIds.add(taskId); } else { pendingFullReload = true; }
           } else {
-            loadTasks();
+            if (taskId) { refreshTask(taskId); } else { loadTasks(); }
           }
         }
       }));
@@ -109,8 +116,19 @@ async function initTaskListeners() {
       // Listeners are active — now take the initial snapshot.
       // If the ready event was emitted before we registered the listener above,
       // wait on the shared sidecar-ready state that agents.ts keeps in sync.
+      snapshotInflight = true;
       await waitForSidecarReady();
       await loadTasks();
+      snapshotInflight = false;
+
+      // Replay any events that arrived during the snapshot to avoid lost updates.
+      if (pendingFullReload) {
+        await loadTasks();
+      } else {
+        for (const id of pendingRefreshIds) refreshTask(id);
+      }
+      pendingRefreshIds.clear();
+      pendingFullReload = false;
 
       // All listeners registered and snapshot complete — commit
       taskListenersInitialized = true;

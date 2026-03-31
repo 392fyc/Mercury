@@ -469,8 +469,11 @@ impl RemoteControlManager {
             // Wait for the child process to fully exit (timeout 5s) to avoid zombies.
             // If the child does not exit within the timeout, treat stop as failed.
             match tokio::time::timeout(std::time::Duration::from_secs(5), c.wait()).await {
-                Ok(_) => {
+                Ok(Ok(_)) => {
                     *child = None;
+                }
+                Ok(Err(e)) => {
+                    return Err(format!("Stop failed: wait error: {}", e));
                 }
                 Err(_) => {
                     // Child still alive after timeout — do NOT clear state.
