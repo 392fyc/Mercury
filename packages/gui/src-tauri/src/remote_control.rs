@@ -5,6 +5,8 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
+#[cfg(target_os = "windows")]
+use crate::windows_job::ProcessJob;
 
 /// Manages a `claude remote-control` child process.
 /// Parses stdout for session URL, emits Tauri events for GUI updates.
@@ -21,6 +23,8 @@ use tokio::sync::Mutex;
 #[derive(Clone)]
 pub struct RemoteControlManager {
     child: Arc<Mutex<Option<Child>>>,
+    #[cfg(target_os = "windows")]
+    job: Arc<Mutex<Option<ProcessJob>>>,
     session_url: Arc<Mutex<Option<String>>>,
     status: Arc<Mutex<RemoteControlStatus>>,
     session_name: Arc<Mutex<Option<String>>>,
@@ -58,6 +62,8 @@ impl RemoteControlManager {
     pub fn new() -> Self {
         Self {
             child: Arc::new(Mutex::new(None)),
+            #[cfg(target_os = "windows")]
+            job: Arc::new(Mutex::new(None)),
             session_url: Arc::new(Mutex::new(None)),
             status: Arc::new(Mutex::new(RemoteControlStatus::Stopped)),
             session_name: Arc::new(Mutex::new(None)),
@@ -99,12 +105,15 @@ impl RemoteControlManager {
             let mut status = self.status.lock().await;
             *status = RemoteControlStatus::Starting;
         }
-        let _ = app_handle.emit("remote-control-status", RemoteControlState {
-            status: RemoteControlStatus::Starting,
-            session_url: None,
-            session_name: session_name.clone(),
-        error_message: None,
-        });
+        let _ = app_handle.emit(
+            "remote-control-status",
+            RemoteControlState {
+                status: RemoteControlStatus::Starting,
+                session_url: None,
+                session_name: session_name.clone(),
+                error_message: None,
+            },
+        );
 
         // Build command: `claude remote-control --verbose`
         // On Windows, claude is a .cmd script so we must run via cmd.exe.
@@ -117,8 +126,8 @@ impl RemoteControlManager {
             }
             c.arg("--verbose");
             c.creation_flags(0x08000000); // CREATE_NO_WINDOW
-            // Force UTF-8 encoding to prevent codepage 936/GBK garbling on CJK Windows.
-            // Mirrors sidecar.rs environment setup for consistency.
+                                          // Force UTF-8 encoding to prevent codepage 936/GBK garbling on CJK Windows.
+                                          // Mirrors sidecar.rs environment setup for consistency.
             c.env("LANG", "en_US.UTF-8");
             c.env("LC_ALL", "en_US.UTF-8");
             c.env("PYTHONIOENCODING", "utf-8");
@@ -154,15 +163,39 @@ impl RemoteControlManager {
                     *name = None;
                 }
                 let err_msg = format!("Failed to spawn claude remote-control: {}", e);
-                let _ = app_handle.emit("remote-control-status", RemoteControlState {
-                    status: RemoteControlStatus::Error,
-                    session_url: None,
-                    session_name: None,
-                    error_message: Some(err_msg.clone()),
-                });
+                let _ = app_handle.emit(
+                    "remote-control-status",
+                    RemoteControlState {
+                        status: RemoteControlStatus::Error,
+                        session_url: None,
+                        session_name: None,
+                        error_message: Some(err_msg.clone()),
+                    },
+                );
                 return Err(err_msg);
             }
         };
+        #[cfg(target_os = "windows")]
+        {
+            match ProcessJob::new_kill_on_close() {
+                Ok(job) => {
+                    if let Err(e) = job.assign(&child) {
+                        eprintln!(
+                            "[remote-control] WARNING: failed to assign process to job object: {}",
+                            e
+                        );
+                    }
+                    let mut job_guard = self.job.lock().await;
+                    *job_guard = Some(job);
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[remote-control] WARNING: failed to create job object: {}",
+                        e
+                    );
+                }
+            }
+        }
 
         let stdout = child.stdout.take().ok_or("Failed to get stdout")?;
         let stderr = child.stderr.take().ok_or("Failed to get stderr")?;
@@ -178,8 +211,11 @@ impl RemoteControlManager {
         let child_clone = self.child.clone();
         let cleanup_flag_stdout = self.cleanup_done.clone();
         let generation_stdout = self.generation.clone();
+        #[cfg(target_os = "windows")]
+        let job_stdout = self.job.clone();
         let app_stdout = app_handle.clone();
         let name_for_stdout = session_name.clone();
+        let session_name_stdout = self.session_name.clone();
         tokio::spawn(async move {
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
@@ -191,10 +227,13 @@ impl RemoteControlManager {
                 }
 
                 // Forward the raw line (preserving whitespace for QR/ASCII art) to the GUI.
-                let _ = app_stdout.emit("remote-control-log", serde_json::json!({
-                    "level": "stdout",
-                    "message": &line,
-                }));
+                let _ = app_stdout.emit(
+                    "remote-control-log",
+                    serde_json::json!({
+                        "level": "stdout",
+                        "message": &line,
+                    }),
+                );
 
                 let trimmed = line.trim().to_string();
                 if trimmed.is_empty() {
@@ -216,15 +255,21 @@ impl RemoteControlManager {
                             let mut status_guard = status_clone.lock().await;
                             *status_guard = RemoteControlStatus::WaitingForConnection;
                         }
-                        let _ = app_stdout.emit("remote-control-status", RemoteControlState {
-                            status: RemoteControlStatus::WaitingForConnection,
-                            session_url: Some(url.clone()),
-                            session_name: name_for_stdout.clone(),
-                        error_message: None,
-                        });
-                        let _ = app_stdout.emit("remote-control-url", serde_json::json!({
-                            "url": url,
-                        }));
+                        let _ = app_stdout.emit(
+                            "remote-control-status",
+                            RemoteControlState {
+                                status: RemoteControlStatus::WaitingForConnection,
+                                session_url: Some(url.clone()),
+                                session_name: name_for_stdout.clone(),
+                                error_message: None,
+                            },
+                        );
+                        let _ = app_stdout.emit(
+                            "remote-control-url",
+                            serde_json::json!({
+                                "url": url,
+                            }),
+                        );
                     }
                 }
 
@@ -240,12 +285,15 @@ impl RemoteControlManager {
                         *status_guard = RemoteControlStatus::Connected;
                     }
                     let url_val = url_clone.lock().await.clone();
-                    let _ = app_stdout.emit("remote-control-status", RemoteControlState {
-                        status: RemoteControlStatus::Connected,
-                        session_url: url_val,
-                        session_name: name_for_stdout.clone(),
-                    error_message: None,
-                    });
+                    let _ = app_stdout.emit(
+                        "remote-control-status",
+                        RemoteControlState {
+                            status: RemoteControlStatus::Connected,
+                            session_url: url_val,
+                            session_name: name_for_stdout.clone(),
+                            error_message: None,
+                        },
+                    );
                 }
             }
 
@@ -266,12 +314,24 @@ impl RemoteControlManager {
                     let mut child_guard = child_clone.lock().await;
                     *child_guard = None;
                 }
-                let _ = app_stdout.emit("remote-control-status", RemoteControlState {
-                    status: RemoteControlStatus::Stopped,
-                    session_url: None,
-                    session_name: name_for_stdout.clone(),
-                error_message: None,
-                });
+                {
+                    let mut name_guard = session_name_stdout.lock().await;
+                    *name_guard = None;
+                }
+                #[cfg(target_os = "windows")]
+                {
+                    let mut job_guard = job_stdout.lock().await;
+                    *job_guard = None;
+                }
+                let _ = app_stdout.emit(
+                    "remote-control-status",
+                    RemoteControlState {
+                        status: RemoteControlStatus::Stopped,
+                        session_url: None,
+                        session_name: None,
+                        error_message: None,
+                    },
+                );
             }
         });
 
@@ -281,8 +341,11 @@ impl RemoteControlManager {
         let child_stderr = self.child.clone();
         let cleanup_flag_stderr = self.cleanup_done.clone();
         let generation_stderr = self.generation.clone();
+        #[cfg(target_os = "windows")]
+        let job_stderr = self.job.clone();
         let app_stderr = app_handle.clone();
-        let name_for_stderr = session_name;
+        let session_name_stderr = self.session_name.clone();
+        drop(session_name);
         tokio::spawn(async move {
             let reader = BufReader::new(stderr);
             let mut lines = reader.lines();
@@ -309,10 +372,13 @@ impl RemoteControlManager {
                 } else {
                     "info"
                 };
-                let _ = app_stderr.emit("remote-control-log", serde_json::json!({
-                    "level": level,
-                    "message": trimmed,
-                }));
+                let _ = app_stderr.emit(
+                    "remote-control-log",
+                    serde_json::json!({
+                        "level": level,
+                        "message": trimmed,
+                    }),
+                );
             }
 
             // stderr closed — only the first task to reach here runs cleanup
@@ -331,12 +397,24 @@ impl RemoteControlManager {
                     let mut child_guard = child_stderr.lock().await;
                     *child_guard = None;
                 }
-                let _ = app_stderr.emit("remote-control-status", RemoteControlState {
-                    status: RemoteControlStatus::Stopped,
-                    session_url: None,
-                    session_name: name_for_stderr,
-                error_message: None,
-                });
+                {
+                    let mut name_guard = session_name_stderr.lock().await;
+                    *name_guard = None;
+                }
+                #[cfg(target_os = "windows")]
+                {
+                    let mut job_guard = job_stderr.lock().await;
+                    *job_guard = None;
+                }
+                let _ = app_stderr.emit(
+                    "remote-control-status",
+                    RemoteControlState {
+                        status: RemoteControlStatus::Stopped,
+                        session_url: None,
+                        session_name: None,
+                        error_message: None,
+                    },
+                );
             }
         });
 
@@ -390,21 +468,24 @@ impl RemoteControlManager {
             }
             // Wait for the child process to fully exit (timeout 5s) to avoid zombies.
             // If the child does not exit within the timeout, treat stop as failed.
-            match tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                c.wait(),
-            ).await {
-                Ok(_) => {
+            match tokio::time::timeout(std::time::Duration::from_secs(5), c.wait()).await {
+                Ok(Ok(_)) => {
                     *child = None;
+                }
+                Ok(Err(e)) => {
+                    return Err(format!("Stop failed: wait error: {}", e));
                 }
                 Err(_) => {
                     // Child still alive after timeout — do NOT clear state.
                     // Return error so the GUI knows the process may still be running.
-                    return Err(
-                        "Stop timed out: child process may still be running".to_string()
-                    );
+                    return Err("Stop timed out: child process may still be running".to_string());
                 }
             }
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let mut job = self.job.lock().await;
+            *job = None;
         }
         {
             let mut status = self.status.lock().await;
@@ -430,7 +511,7 @@ impl RemoteControlManager {
             status,
             session_url,
             session_name,
-        error_message: None,
+            error_message: None,
         }
     }
 
@@ -472,9 +553,7 @@ fn extract_url(line: &str) -> Option<String> {
 fn redact_url(line: &str) -> String {
     if let Some(start) = line.find("https://") {
         let rest = &line[start..];
-        let end = rest
-            .find(|c: char| c.is_whitespace())
-            .unwrap_or(rest.len());
+        let end = rest.find(|c: char| c.is_whitespace()).unwrap_or(rest.len());
         format!("{}[REDACTED_URL]{}", &line[..start], &line[start + end..])
     } else {
         line.to_string()

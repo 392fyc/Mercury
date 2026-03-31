@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::Emitter;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -8,18 +9,37 @@ use tokio::sync::{oneshot, Mutex};
 use tokio::time::{timeout, Duration};
 
 use crate::types::RpcRequest;
+#[cfg(target_os = "windows")]
+use crate::windows_job::ProcessJob;
 
 #[derive(Clone)]
 pub struct SidecarManager {
     stdin: Arc<Mutex<tokio::process::ChildStdin>>,
     child: Arc<Mutex<Child>>,
+    #[cfg(target_os = "windows")]
+    _job: Option<Arc<ProcessJob>>,
     pending: Arc<Mutex<HashMap<u64, oneshot::Sender<serde_json::Value>>>>,
     next_id: Arc<Mutex<u64>>,
+    /// Set to `true` when the sidecar's stdout EOF is detected. Once set,
+    /// `is_alive()` returns `false` and new RPCs are rejected immediately
+    /// rather than queuing and waiting for a 30-second timeout.
+    transport_dead: Arc<AtomicBool>,
 }
 
 impl SidecarManager {
     pub async fn spawn(app_handle: tauri::AppHandle, project_dir: String) -> Result<Self, String> {
         let orchestrator_entry = resolve_orchestrator_entry(&project_dir)?;
+        #[cfg(target_os = "windows")]
+        let job = match ProcessJob::new_kill_on_close() {
+            Ok(job) => Some(Arc::new(job)),
+            Err(e) => {
+                eprintln!(
+                    "[tauri] WARNING: failed to create sidecar job object: {}",
+                    e
+                );
+                None
+            }
+        };
 
         // In dev mode, use pnpm exec tsx to run the orchestrator.
         // Using pnpm instead of npx avoids npm warn noise from inherited env vars.
@@ -29,9 +49,9 @@ impl SidecarManager {
             let mut c = Command::new("cmd");
             c.args(["/c", "pnpm", "exec", "tsx"]);
             c.arg(&orchestrator_entry);
-            c.creation_flags(0x08000000); // CREATE_NO_WINDOW
             // Force UTF-8 encoding to prevent codepage 936/GBK garbling on CJK Windows.
             // PYTHONIOENCODING: protects any Python subprocess spawned downstream.
+            c.creation_flags(0x08000000); // CREATE_NO_WINDOW
             c.env("LANG", "en_US.UTF-8");
             c.env("LC_ALL", "en_US.UTF-8");
             c.env("PYTHONIOENCODING", "utf-8");
@@ -54,6 +74,15 @@ impl SidecarManager {
         let mut child = cmd
             .spawn()
             .map_err(|e| format!("Failed to spawn orchestrator: {}", e))?;
+        #[cfg(target_os = "windows")]
+        if let Some(job) = job.as_ref() {
+            if let Err(e) = job.assign(&child) {
+                eprintln!(
+                    "[tauri] WARNING: failed to assign sidecar to job object: {}",
+                    e
+                );
+            }
+        }
 
         let stdin = child.stdin.take().ok_or("Failed to get stdin")?;
         let stdout = child.stdout.take().ok_or("Failed to get stdout")?;
@@ -61,10 +90,12 @@ impl SidecarManager {
 
         let pending: Arc<Mutex<HashMap<u64, oneshot::Sender<serde_json::Value>>>> =
             Arc::new(Mutex::new(HashMap::new()));
+        let transport_dead: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
 
         // Read stdout (JSON-RPC messages from orchestrator)
         let pending_clone = pending.clone();
         let app_clone = app_handle.clone();
+        let transport_dead_clone = transport_dead.clone();
         tokio::spawn(async move {
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
@@ -102,6 +133,19 @@ impl SidecarManager {
                 }
                 tokio::task::yield_now().await;
             }
+
+            eprintln!("[tauri] Orchestrator sidecar stdout closed");
+            transport_dead_clone.store(true, Ordering::Release);
+            {
+                let mut pending = pending_clone.lock().await;
+                pending.clear();
+            }
+            let _ = app_clone.emit(
+                "sidecar-error",
+                serde_json::json!({
+                    "error": "Orchestrator sidecar disconnected before replying. Check sidecar stderr for the root cause."
+                }),
+            );
         });
 
         // Read stderr (log messages)
@@ -118,8 +162,11 @@ impl SidecarManager {
         Ok(Self {
             stdin: Arc::new(Mutex::new(stdin)),
             child: Arc::new(Mutex::new(child)),
+            #[cfg(target_os = "windows")]
+            _job: job,
             pending,
             next_id: Arc::new(Mutex::new(1)),
+            transport_dead,
         })
     }
 
@@ -128,6 +175,10 @@ impl SidecarManager {
         method: &str,
         params: serde_json::Value,
     ) -> Result<serde_json::Value, String> {
+        if !self.is_alive().await {
+            return Err("Orchestrator sidecar is not running".to_string());
+        }
+
         let id = {
             let mut next = self.next_id.lock().await;
             let id = *next;
@@ -142,20 +193,31 @@ impl SidecarManager {
             id: Some(serde_json::Value::Number(id.into())),
         };
 
+        // Serialize before inserting into pending so a serialization error
+        // never leaves a stale entry in the map.
+        let msg = serde_json::to_string(&request).map_err(|e| e.to_string())?;
+
         let (tx, rx) = oneshot::channel();
         {
             let mut pending = self.pending.lock().await;
             pending.insert(id, tx);
         }
 
-        let msg = serde_json::to_string(&request).map_err(|e| e.to_string())?;
-        {
+        // Write to sidecar; on failure remove the pending entry to avoid leaks.
+        let write_result: Result<(), String> = async {
             let mut stdin = self.stdin.lock().await;
             stdin
                 .write_all(format!("{}\n", msg).as_bytes())
                 .await
                 .map_err(|e| format!("Failed to write to sidecar: {}", e))?;
             stdin.flush().await.map_err(|e| e.to_string())?;
+            Ok(())
+        }
+        .await;
+        if let Err(e) = write_result {
+            let mut pending = self.pending.lock().await;
+            pending.remove(&id);
+            return Err(e);
         }
 
         let response = match timeout(Duration::from_secs(30), rx).await {
@@ -197,6 +259,10 @@ impl SidecarManager {
         method: &str,
         params: serde_json::Value,
     ) -> Result<(), String> {
+        if !self.is_alive().await {
+            return Err("Orchestrator sidecar is not running".to_string());
+        }
+
         let request = RpcRequest {
             jsonrpc: "2.0".to_string(),
             method: method.to_string(),
@@ -215,13 +281,55 @@ impl SidecarManager {
     }
 
     pub async fn is_alive(&self) -> bool {
+        if self.transport_dead.load(Ordering::Acquire) {
+            return false;
+        }
         let mut child = self.child.lock().await;
         matches!(child.try_wait(), Ok(None))
     }
 
     pub async fn shutdown(&self) {
         let mut child = self.child.lock().await;
-        let _ = child.kill().await;
+        #[cfg(target_os = "windows")]
+        {
+            // The sidecar is launched via `cmd /c pnpm exec tsx ...`, so killing the
+            // direct child is not enough. Use taskkill to terminate the whole tree,
+            // otherwise the Node.js orchestrator can survive and keep 127.0.0.1:7654 bound.
+            if let Some(pid) = child.id() {
+                let mut kill_cmd = Command::new("taskkill");
+                kill_cmd
+                    .args(["/T", "/F", "/PID", &pid.to_string()])
+                    .creation_flags(0x08000000); // CREATE_NO_WINDOW
+
+                match kill_cmd.output().await {
+                    Ok(output) if output.status.success() => {}
+                    Ok(output) => {
+                        eprintln!(
+                            "[tauri] sidecar taskkill failed: {}",
+                            String::from_utf8_lossy(&output.stderr)
+                        );
+                        let _ = child.kill().await;
+                    }
+                    Err(e) => {
+                        eprintln!("[tauri] sidecar taskkill spawn error: {}", e);
+                        let _ = child.kill().await;
+                    }
+                }
+            } else {
+                let _ = child.kill().await;
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = child.kill().await;
+        }
+
+        match timeout(Duration::from_secs(3), child.wait()).await {
+            Ok(Ok(_status)) => {}
+            Ok(Err(e)) => eprintln!("[tauri] sidecar wait failed during shutdown: {}", e),
+            Err(_) => eprintln!("[tauri] sidecar wait timed out during shutdown"),
+        }
     }
 }
 

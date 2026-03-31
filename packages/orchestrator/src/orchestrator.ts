@@ -2018,6 +2018,9 @@ export class Orchestrator {
       completedAt: Date.now(),
     };
 
+    // Verdict: partial if expected KB file was not written, pass otherwise
+    const verdict = (expectedKbFile && !kbWriteVerified) ? "partial" : "pass";
+
     // Fast-track through full state machine: in_progress → implementation_done → main_review → acceptance → verified → closed
     try {
       this.taskManager.transitionTask(task.taskId, "implementation_done", agentId);
@@ -2025,11 +2028,19 @@ export class Orchestrator {
       this.taskManager.transitionTask(task.taskId, "main_review", agentId);
       this.taskManager.transitionTask(task.taskId, "acceptance", agentId);
 
+      if (verdict === "partial") {
+        this.transport.sendNotification("log", {
+          message: `[task] Research task ${task.taskId} verdict downgraded to partial — KB file not written: "${expectedKbFile}"`,
+        });
+      }
+
       // Persist synthetic acceptance so getTaskResult() returns verdict
       this.taskManager.persistSyntheticAcceptance(task.taskId, agentId, {
-        verdict: "pass",
+        verdict,
         findings: findingsArr,
-        recommendations: recommendationsArr,
+        recommendations: verdict === "partial"
+          ? [`KB file not written: ${expectedKbFile}`, ...recommendationsArr]
+          : recommendationsArr,
       });
 
       this.taskManager.transitionTask(task.taskId, "verified", agentId);
@@ -2046,7 +2057,7 @@ export class Orchestrator {
     this.bus.emit("orchestrator.task.callback", agentId, "orchestrator", {
       taskId: task.taskId,
       originatorSessionId: task.originatorSessionId,
-      verdict: "pass",
+      verdict,
       findings: findingsArr,
       recommendations: recommendationsArr,
       reworkCount: task.reworkCount,
@@ -2633,7 +2644,7 @@ export class Orchestrator {
     const role: AgentRole = task.role ?? "dev";
 
     let kbContext: string | undefined;
-    if (this.kb?.isEnabled() && task.readScope.requiredDocs.length > 0) {
+    if (this.kb?.isEnabled() && (task.readScope.requiredDocs?.length ?? 0) > 0) {
       try {
         kbContext = await this.kb.buildContext(task.readScope.requiredDocs);
       } catch {

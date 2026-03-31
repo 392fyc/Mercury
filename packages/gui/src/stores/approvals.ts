@@ -9,6 +9,7 @@ import {
   onAgentError,
   setApprovalMode as bridgeSetApprovalMode,
 } from "../lib/tauri-bridge";
+import { useAgentStore } from "./agents";
 
 const approvalMode = ref<ApprovalMode>("main_agent_review");
 const approvalRequests = ref<Map<string, ApprovalRequest>>(new Map());
@@ -112,37 +113,44 @@ let approvalsInitialized = false;
 async function initApprovalStore(): Promise<void> {
   if (approvalsInitialized) return;
   approvalsInitialized = true;
+  try {
+    const { waitForSidecarReady } = useAgentStore();
+    await waitForSidecarReady();
 
-  const [modeResult, requests] = await Promise.all([
-    bridgeGetApprovalMode(),
-    bridgeListApprovalRequests(),
-  ]);
-  approvalMode.value = modeResult.mode;
-  const next = new Map<string, ApprovalRequest>();
-  for (const request of requests) next.set(request.id, request);
-  approvalRequests.value = next;
+    const [modeResult, requests] = await Promise.all([
+      bridgeGetApprovalMode(),
+      bridgeListApprovalRequests(),
+    ]);
+    approvalMode.value = modeResult.mode;
+    const next = new Map<string, ApprovalRequest>();
+    for (const request of requests) next.set(request.id, request);
+    approvalRequests.value = next;
 
-  await onMercuryEvent((event: MercuryEvent) => {
-    if (event.type !== "agent.approval.requested" && event.type !== "agent.approval.resolved") {
-      return;
-    }
+    await onMercuryEvent((event: MercuryEvent) => {
+      if (event.type !== "agent.approval.requested" && event.type !== "agent.approval.resolved") {
+        return;
+      }
 
-    const payload = event.payload as unknown as ApprovalRequest;
-    if (payload?.id) {
-      upsertRequest(payload);
-    }
-  });
+      const payload = event.payload as unknown as ApprovalRequest;
+      if (payload?.id) {
+        upsertRequest(payload);
+      }
+    });
 
-  // When a transport crash occurs, immediately cancel pending approvals for
-  // that session so the GUI doesn't show stale, unresponsive approval buttons.
-  await onAgentError((data) => {
-    if (data.isTransportCrash) {
-      cancelPendingApprovalsForSession(
-        data.sessionId,
-        "Transport disconnected — approval cancelled",
-      );
-    }
-  });
+    // When a transport crash occurs, immediately cancel pending approvals for
+    // that session so the GUI doesn't show stale, unresponsive approval buttons.
+    await onAgentError((data) => {
+      if (data.isTransportCrash) {
+        cancelPendingApprovalsForSession(
+          data.sessionId,
+          "Transport disconnected — approval cancelled",
+        );
+      }
+    });
+  } catch (e) {
+    approvalsInitialized = false;
+    throw e;
+  }
 }
 
 export function useApprovalStore() {

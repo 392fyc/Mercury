@@ -324,7 +324,10 @@ export class TaskManager {
       role: requiredRole,
       branch: params.branch,
       codeScope: params.codeScope,
-      readScope: params.readScope,
+      readScope: {
+        requiredDocs: (params.readScope as Record<string, unknown>)?.requiredDocs as string[] ?? [],
+        optionalDocs: (params.readScope as Record<string, unknown>)?.optionalDocs as string[] ?? [],
+      },
       allowedWriteScope: { codePaths: normCodePaths, kbPaths: normKbPaths },
       docsMustUpdate: params.docsMustUpdate ?? [],
       docsMustNotTouch: params.docsMustNotTouch ?? [],

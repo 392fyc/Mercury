@@ -10,6 +10,7 @@ import type {
 } from "../lib/tauri-bridge";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { listTasks, getTask, onMercuryEvent, onSidecarReady } from "../lib/tauri-bridge";
+import { useAgentStore } from "./agents";
 
 const tasks = ref<TaskBundle[]>([]);
 const selectedTaskId = ref<string | null>(null);
@@ -76,6 +77,7 @@ async function refreshTask(taskId: string) {
 
 let taskListenersInitialized = false;
 const taskUnlisteners: UnlistenFn[] = [];
+const taskPendingListenerBatches = new Set<UnlistenFn[]>();
 let taskListenersInitPromise: Promise<void> | null = null;
 
 async function initTaskListeners() {
@@ -83,37 +85,79 @@ async function initTaskListeners() {
   if (taskListenersInitPromise) return taskListenersInitPromise;
 
   taskListenersInitPromise = (async () => {
-  const pending: UnlistenFn[] = [];
-  try {
-    // Reload tasks whenever sidecar becomes ready (handles F5 page refresh where
-    // sidecar may not be available yet when onMounted fires).
-    pending.push(await onSidecarReady(() => loadTasks()));
+    const { waitForSidecarReady } = useAgentStore();
+    const pending: UnlistenFn[] = [];
+    taskPendingListenerBatches.add(pending);
+    // Accumulators for events that arrive while the initial snapshot is in-flight.
+    // Without these, refreshTask() writes could be clobbered by the subsequent
+    // tasks.value = await listTasks() assignment.
+    const pendingRefreshIds = new Set<string>();
+    let pendingFullReload = false;
+    let snapshotInflight = false;
+    try {
+      // Register all listeners before taking the initial snapshot so events
+      // arriving during snapshotting are not lost.
 
-    // Attempt immediate load in case sidecar is already ready — the ready
-    // event may have been emitted before we registered the listener above.
-    void loadTasks();
+      // Reload tasks whenever sidecar becomes ready (handles F5 page refresh where
+      // sidecar may not be available yet when onMounted fires).
+      pending.push(await onSidecarReady(() => loadTasks()));
 
-    pending.push(await onMercuryEvent((event: MercuryEvent) => {
-      if (event.type.startsWith("orchestrator.task.") || event.type.startsWith("orchestrator.acceptance.")) {
-        const taskId =
-          (event.payload as Record<string, unknown>).taskId as string | undefined;
-        if (taskId) {
-          refreshTask(taskId);
-        } else {
-          loadTasks();
+      pending.push(await onMercuryEvent((event: MercuryEvent) => {
+        if (event.type.startsWith("orchestrator.task.") || event.type.startsWith("orchestrator.acceptance.")) {
+          const taskId =
+            (event.payload as Record<string, unknown>).taskId as string | undefined;
+          if (snapshotInflight) {
+            // Queue for replay after the snapshot completes to avoid clobbering.
+            if (taskId) { pendingRefreshIds.add(taskId); } else { pendingFullReload = true; }
+          } else {
+            if (taskId) { refreshTask(taskId); } else { loadTasks(); }
+          }
         }
-      }
-    }));
+      }));
 
-    // All listeners registered — commit
-    taskListenersInitialized = true;
-    taskUnlisteners.push(...pending);
-  } catch (e) {
-    // Rollback: unregister any listeners that were successfully created
-    for (const unlisten of pending) unlisten();
-    taskListenersInitPromise = null;
-    console.error("Failed to init task listeners:", e);
-  }
+      // Listeners are active — now take the initial snapshot.
+      // If the ready event was emitted before we registered the listener above,
+      // wait on the shared sidecar-ready state that agents.ts keeps in sync.
+      snapshotInflight = true;
+      const SIDECAR_READY_TIMEOUT_MS = 30_000;
+      let readyTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
+      try {
+        await Promise.race([
+          waitForSidecarReady(),
+          new Promise<never>((_, reject) => {
+            readyTimeoutHandle = setTimeout(
+              () => reject(new Error("waitForSidecarReady timed out after 30s")),
+              SIDECAR_READY_TIMEOUT_MS
+            );
+          }),
+        ]);
+      } finally {
+        if (readyTimeoutHandle !== null) clearTimeout(readyTimeoutHandle);
+      }
+      await loadTasks();
+      snapshotInflight = false;
+
+      // Replay any events that arrived during the snapshot to avoid lost updates.
+      if (pendingFullReload) {
+        await loadTasks();
+      } else {
+        await Promise.all(Array.from(pendingRefreshIds).map((id) => refreshTask(id)));
+      }
+      pendingRefreshIds.clear();
+      pendingFullReload = false;
+
+      // All listeners registered and snapshot complete — commit
+      taskListenersInitialized = true;
+      taskUnlisteners.push(...pending);
+    } catch (e) {
+      // Rollback: unregister any listeners that were successfully created
+      for (const unlisten of pending) unlisten();
+      taskListenersInitPromise = null;
+      console.error("Failed to init task listeners:", e);
+      throw e;
+    } finally {
+      taskPendingListenerBatches.delete(pending);
+    }
   })();
 
   return taskListenersInitPromise;
@@ -123,6 +167,10 @@ async function initTaskListeners() {
 function disposeTaskListeners() {
   for (const unlisten of taskUnlisteners) unlisten();
   taskUnlisteners.length = 0;
+  for (const batch of taskPendingListenerBatches) {
+    for (const unlisten of batch) unlisten();
+  }
+  taskPendingListenerBatches.clear();
   taskListenersInitialized = false;
   taskListenersInitPromise = null;
 }

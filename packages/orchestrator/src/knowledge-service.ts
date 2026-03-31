@@ -78,7 +78,17 @@ export class KnowledgeService {
       return null;
     }
 
-    const pathSegments = relativePath.split(/[\\/]+/).filter(Boolean);
+    // Strip leading vault-name prefix (e.g. "Mercury_KB/04-research/foo.md" → "04-research/foo.md")
+    // to prevent double-path like D:\Mercury\Mercury_KB\Mercury_KB\...
+    const vaultBaseName = path.basename(vaultPath);
+    const prefixSlash = `${vaultBaseName}/`;
+    const prefixBackslash = `${vaultBaseName}\\`;
+    let normalizedRelative = relativePath;
+    if (normalizedRelative.startsWith(prefixSlash) || normalizedRelative.startsWith(prefixBackslash)) {
+      normalizedRelative = normalizedRelative.slice(prefixSlash.length);
+    }
+
+    const pathSegments = normalizedRelative.split(/[\\/]+/).filter(Boolean);
     const resolved = path.join(vaultPath, ...pathSegments);
     const normalizedVault = path.resolve(vaultPath);
     const normalizedResolved = path.resolve(resolved);

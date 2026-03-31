@@ -10,6 +10,17 @@ process.stdin.setEncoding("utf-8");
 process.stdout.setDefaultEncoding("utf-8");
 process.stderr.setDefaultEncoding("utf-8");
 
+// ─── Resilience: suppress EPIPE when parent pipe closes ───
+process.stdout.on("error", (err: NodeJS.ErrnoException) => {
+  if (err.code !== "EPIPE") throw err;
+});
+process.stderr.on("error", (err: NodeJS.ErrnoException) => {
+  if (err.code !== "EPIPE") throw err;
+});
+
+// ─── Increase max listeners to accommodate per-session signal handlers ───
+process.setMaxListeners(50);
+
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
