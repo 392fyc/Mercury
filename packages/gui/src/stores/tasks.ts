@@ -77,6 +77,7 @@ async function refreshTask(taskId: string) {
 
 let taskListenersInitialized = false;
 const taskUnlisteners: UnlistenFn[] = [];
+const taskPendingListenerBatches = new Set<UnlistenFn[]>();
 let taskListenersInitPromise: Promise<void> | null = null;
 
 async function initTaskListeners() {
@@ -86,6 +87,7 @@ async function initTaskListeners() {
   taskListenersInitPromise = (async () => {
     const { waitForSidecarReady } = useAgentStore();
     const pending: UnlistenFn[] = [];
+    taskPendingListenerBatches.add(pending);
     // Accumulators for events that arrive while the initial snapshot is in-flight.
     // Without these, refreshTask() writes could be clobbered by the subsequent
     // tasks.value = await listTasks() assignment.
@@ -118,12 +120,20 @@ async function initTaskListeners() {
       // wait on the shared sidecar-ready state that agents.ts keeps in sync.
       snapshotInflight = true;
       const SIDECAR_READY_TIMEOUT_MS = 30_000;
-      await Promise.race([
-        waitForSidecarReady(),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("waitForSidecarReady timed out after 30s")), SIDECAR_READY_TIMEOUT_MS)
-        ),
-      ]);
+      let readyTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
+      try {
+        await Promise.race([
+          waitForSidecarReady(),
+          new Promise<never>((_, reject) => {
+            readyTimeoutHandle = setTimeout(
+              () => reject(new Error("waitForSidecarReady timed out after 30s")),
+              SIDECAR_READY_TIMEOUT_MS
+            );
+          }),
+        ]);
+      } finally {
+        if (readyTimeoutHandle !== null) clearTimeout(readyTimeoutHandle);
+      }
       await loadTasks();
       snapshotInflight = false;
 
@@ -145,6 +155,8 @@ async function initTaskListeners() {
       taskListenersInitPromise = null;
       console.error("Failed to init task listeners:", e);
       throw e;
+    } finally {
+      taskPendingListenerBatches.delete(pending);
     }
   })();
 
@@ -155,6 +167,10 @@ async function initTaskListeners() {
 function disposeTaskListeners() {
   for (const unlisten of taskUnlisteners) unlisten();
   taskUnlisteners.length = 0;
+  for (const batch of taskPendingListenerBatches) {
+    for (const unlisten of batch) unlisten();
+  }
+  taskPendingListenerBatches.clear();
   taskListenersInitialized = false;
   taskListenersInitPromise = null;
 }
