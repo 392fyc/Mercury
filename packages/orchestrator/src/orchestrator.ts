@@ -2084,6 +2084,10 @@ export class Orchestrator {
         this.transport.sendNotification("log", {
           message: `[task] WARNING: Research task ${task.taskId} did not write expected KB file "${expectedKbFile}". Findings may be lost.`,
         });
+        // Orchestrator-side KB recovery: write finalMessage as fallback if non-trivial
+        if (await this.attemptKbRecovery(task.taskId, task.title, "Research", finalMessage, expectedKbFile)) {
+          kbWriteVerified = true;
+        }
       }
     }
 
@@ -2106,6 +2110,9 @@ export class Orchestrator {
 
     // Verdict: partial if expected KB file was not written, pass otherwise
     const verdict = (expectedKbFile && !kbWriteVerified) ? "partial" : "pass";
+    const finalRecommendations = verdict === "partial"
+      ? [`KB file not written: ${expectedKbFile}`, ...recommendationsArr]
+      : recommendationsArr;
 
     // Fast-track through full state machine: in_progress → implementation_done → main_review → acceptance → verified → closed
     try {
@@ -2124,9 +2131,7 @@ export class Orchestrator {
       this.taskManager.persistSyntheticAcceptance(task.taskId, agentId, {
         verdict,
         findings: findingsArr,
-        recommendations: verdict === "partial"
-          ? [`KB file not written: ${expectedKbFile}`, ...recommendationsArr]
-          : recommendationsArr,
+        recommendations: finalRecommendations,
       });
 
       this.taskManager.transitionTask(task.taskId, "verified", agentId);
@@ -2139,14 +2144,15 @@ export class Orchestrator {
       return;
     }
 
-    // Emit callback so originator is notified
+    // Emit callback so originator is notified; reworkTriggered: false distinguishes closed fast-track from rework
     this.bus.emit("orchestrator.task.callback", agentId, "orchestrator", {
       taskId: task.taskId,
       originatorSessionId: task.originatorSessionId,
       verdict,
       findings: findingsArr,
-      recommendations: recommendationsArr,
+      recommendations: finalRecommendations,
       reworkCount: task.reworkCount,
+      reworkTriggered: false,
     });
   }
 
@@ -2164,20 +2170,47 @@ export class Orchestrator {
       message: `[task] Design task ${task.taskId} completed by ${agentId}, fast-tracking to closed`,
     });
 
+    // Verify KB write when kbPaths are expected (same pattern as research)
+    const kbPaths = (task.allowedWriteScope?.kbPaths ?? []).filter((p) => p.trim().length > 0);
+    let designKbVerified = false;
+    // Derive designKbFile before the isEnabled() check so it is always defined when kbPaths.length > 0
+    const designKbFile = kbPaths.length > 0
+      ? (kbPaths[0].endsWith(".md") ? kbPaths[0] : `${kbPaths[0].replace(/\/+$/, "")}/${task.taskId}.md`)
+      : undefined;
+    if (designKbFile && this.kb?.isEnabled()) {
+      try {
+        const kbContent = await this.kb.read(designKbFile);
+        designKbVerified = !!kbContent && kbContent.length > 100;
+      } catch {
+        // KB file not found or not readable — will attempt recovery
+      }
+      if (!designKbVerified) {
+        if (await this.attemptKbRecovery(task.taskId, task.title, "Design", finalMessage, designKbFile)) {
+          designKbVerified = true;
+        }
+      }
+    }
+
     const parsed = this.tryParseJsonRecord(finalMessage);
     const artifactsArr = this.readStringArray(parsed?.artifacts);
     const designFindings = this.readStringArray(parsed?.findings);
     const designRecommendations = this.readStringArray(parsed?.recommendations);
+    const docsUpdated = designKbVerified && designKbFile ? [designKbFile] : [];
     const receipt: ImplementationReceipt = {
       implementer: agentId,
       branch: "",
       summary: this.readString(parsed?.summary) ?? finalMessage.slice(0, 500),
       changedFiles: [],
       evidence: artifactsArr,
-      docsUpdated: [],
-      residualRisks: [],
+      docsUpdated,
+      residualRisks: (kbPaths.length > 0 && !designKbVerified) ? ["KB write not verified — design artifact may only exist in task result"] : [],
       completedAt: Date.now(),
     };
+
+    const designVerdict = (kbPaths.length > 0 && !designKbVerified) ? "partial" : "pass";
+    const finalDesignRecommendations = designVerdict === "partial"
+      ? [`KB file not written: ${designKbFile}`, ...designRecommendations]
+      : designRecommendations;
 
     // Fast-track through full state machine: in_progress → ... → closed
     try {
@@ -2186,11 +2219,17 @@ export class Orchestrator {
       this.taskManager.transitionTask(task.taskId, "main_review", agentId);
       this.taskManager.transitionTask(task.taskId, "acceptance", agentId);
 
+      if (designVerdict === "partial") {
+        this.transport.sendNotification("log", {
+          message: `[task] Design task ${task.taskId} verdict downgraded to partial — KB file not written: "${designKbFile}"`,
+        });
+      }
+
       // Persist synthetic acceptance so getTaskResult() returns verdict
       this.taskManager.persistSyntheticAcceptance(task.taskId, agentId, {
-        verdict: "pass",
+        verdict: designVerdict,
         findings: designFindings,
-        recommendations: designRecommendations,
+        recommendations: finalDesignRecommendations,
       });
 
       this.taskManager.transitionTask(task.taskId, "verified", agentId);
@@ -2203,14 +2242,15 @@ export class Orchestrator {
       return;
     }
 
-    // Emit callback so originator is notified
+    // Emit callback so originator is notified; reworkTriggered: false distinguishes closed fast-track from rework
     this.bus.emit("orchestrator.task.callback", agentId, "orchestrator", {
       taskId: task.taskId,
       originatorSessionId: task.originatorSessionId,
-      verdict: "pass",
+      verdict: designVerdict,
       findings: designFindings,
-      recommendations: designRecommendations,
+      recommendations: finalDesignRecommendations,
       reworkCount: task.reworkCount,
+      reworkTriggered: false,
     });
   }
 
@@ -2300,6 +2340,36 @@ export class Orchestrator {
       findings: this.readStringArray(parsed?.findings),
       recommendations: this.readStringArray(parsed?.recommendations),
     };
+  }
+
+  /**
+   * Attempt orchestrator-side KB recovery when an agent fails to write its KB file.
+   * Returns true if the fallback write succeeded, false otherwise.
+   */
+  private async attemptKbRecovery(
+    taskId: string,
+    taskTitle: string,
+    fallbackLabel: "Research" | "Design",
+    finalMessage: string,
+    expectedKbFile: string,
+  ): Promise<boolean> {
+    const MIN_FALLBACK_LENGTH = 200;
+    if (finalMessage.length <= MIN_FALLBACK_LENGTH) return false;
+    if (!this.kb?.isEnabled()) return false;
+
+    try {
+      const fallbackContent = `# ${fallbackLabel} Fallback: ${taskTitle} [${taskId}]\n\n> Auto-recovered by orchestrator — agent did not write KB directly.\n\n${finalMessage}`;
+      await this.kb.write(expectedKbFile, fallbackContent);
+      this.transport.sendNotification("log", {
+        message: `[task] Orchestrator KB recovery succeeded for ${taskId}: wrote ${fallbackContent.length} bytes to "${expectedKbFile}"`,
+      });
+      return true;
+    } catch (writeErr) {
+      this.transport.sendNotification("log", {
+        message: `[task] Orchestrator KB recovery also failed for ${taskId}: ${writeErr instanceof Error ? writeErr.message : writeErr}`,
+      });
+      return false;
+    }
   }
 
   private tryParseJsonRecord(content: string): Record<string, unknown> | null {
@@ -2750,7 +2820,7 @@ export class Orchestrator {
       const maxIterations = this.projectConfig?.research?.maxIterations;
       prompt = buildResearchPrompt(task, kbContext, maxIterations, tokenBudgetHint);
     } else if (role === "design") {
-      prompt = buildDesignPrompt(task, kbContext);
+      prompt = buildDesignPrompt(task, kbContext, tokenBudgetHint);
     } else {
       prompt = buildDevPrompt(task, kbContext, this.getProjectRoot());
     }
@@ -3190,7 +3260,9 @@ export class Orchestrator {
         ? "Task has been verified and closed."
         : payload.verdict === "blocked"
           ? "Task is blocked. Manual intervention required."
-          : "Rework has been triggered. Dev agent will receive updated instructions.",
+          : payload.reworkTriggered === true
+            ? "Rework has been triggered. Dev agent will receive updated instructions."
+            : "Task closed (partial). KB write was not verified; findings are available in the task result.",
     );
 
     return lines.filter(Boolean).join("\n");
@@ -3299,6 +3371,7 @@ export class Orchestrator {
           originatorSessionId: task.originatorSessionId,
           verdict: "pass",
           reworkCount: task.reworkCount,
+          reworkTriggered: false,
         },
       );
 
@@ -3340,6 +3413,7 @@ export class Orchestrator {
           findings: results.findings,
           recommendations: results.recommendations,
           reworkCount: task.reworkCount,
+          reworkTriggered: true,
         },
       );
 
@@ -3362,6 +3436,7 @@ export class Orchestrator {
           findings: results.findings,
           recommendations: results.recommendations,
           reworkCount: task.reworkCount,
+          reworkTriggered: false,
         },
       );
 

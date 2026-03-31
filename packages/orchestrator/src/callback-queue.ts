@@ -20,6 +20,12 @@ export interface TaskCallbackPayload {
   recommendations?: string[];
   /** Stable rework count used for idempotency key generation. */
   reworkCount?: number;
+  /**
+   * Explicit rework signal. true = rework was dispatched to dev agent;
+   * false = task closed (pass/blocked/fast-track). Use this instead of
+   * inferring from verdict to avoid misclassifying closed-partial as rework.
+   */
+  reworkTriggered?: boolean;
 }
 
 export interface CallbackQueueEntry {

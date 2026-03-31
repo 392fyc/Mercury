@@ -1077,6 +1077,9 @@ function deriveKbWriteInstructions(task: TaskBundle): string[] {
   ];
 }
 
+/** Minimum context window tokens before skipping research and going straight to JSON output. */
+const RESEARCH_CONTEXT_BUDGET_THRESHOLD = 20_000;
+
 /**
  * Build a research-role dispatch prompt.
  * Research tasks produce findings/reports, not code commits.
@@ -1117,13 +1120,13 @@ export function buildResearchPrompt(
       ? [`- **TOKEN_BUDGET: ~${tokenBudgetHint.toLocaleString()} tokens remaining** — wrap up and submit findings before reaching this limit.`]
       : []),
     "",
-    "## MANDATORY: Write Report to KB (Step 1)",
-    "Before outputting your final JSON summary, you MUST write the full report to KB.",
-    ...deriveKbWriteInstructions(task),
-    "If kb_write fails, retry once. If it still fails, do NOT proceed to Step 2 — report the error as your final message.",
+    "## CRITICAL: Context Budget Check",
+    `Before starting research, check your remaining context window. If it is below ${RESEARCH_CONTEXT_BUDGET_THRESHOLD.toLocaleString()} tokens,`,
+    "SKIP all research and go directly to Step 1 to output the JSON summary with what you know.",
     "",
-    "## Output Format (Step 2)",
-    "After writing the KB file, return a JSON summary as your final message.",
+    "## Step 1 (ALWAYS FIRST): Output JSON Summary",
+    "Your FINAL MESSAGE must be the JSON summary below. Output it BEFORE writing to KB.",
+    "This guarantees the receipt has content even if KB write fails or context exhausts.",
     "Keep each finding/recommendation as a cohesive paragraph (not split by line):",
     "```json",
     JSON.stringify({
@@ -1135,6 +1138,13 @@ export function buildResearchPrompt(
       completedAt: "",
     }, null, 2),
     "```",
+    "",
+    "## Step 2 (After JSON output): Write Report to KB",
+    "After outputting the JSON summary above, write the full report to KB.",
+    ...deriveKbWriteInstructions(task),
+    "If kb_write fails, retry once. If it still fails, stop silently —",
+    "the orchestrator will recover the KB from your Step 1 JSON output automatically.",
+    "Do NOT send any additional messages after Step 1 JSON — the orchestrator reads only your last message.",
   ];
 
   if (kbContext) {
@@ -1151,6 +1161,7 @@ export function buildResearchPrompt(
 export function buildDesignPrompt(
   task: TaskBundle,
   kbContext?: string,
+  tokenBudgetHint?: number,
 ): string {
   const lines = [
     `# Design Task: ${task.title} [${task.taskId}]`,
@@ -1172,14 +1183,17 @@ export function buildDesignPrompt(
     "- Produce design artifacts (specs, diagrams, architecture docs) for the topic above.",
     "- Reference existing code patterns and KB docs as needed.",
     "- No code implementation expected.",
+    ...(tokenBudgetHint !== undefined && tokenBudgetHint > 0
+      ? [`- **TOKEN_BUDGET: ~${tokenBudgetHint.toLocaleString()} tokens remaining** — wrap up and submit design before reaching this limit.`]
+      : []),
     "",
-    "## MANDATORY: Write Report to KB (Step 1)",
-    "Before outputting your final JSON summary, you MUST write the full report to KB.",
-    ...deriveKbWriteInstructions(task),
-    "If kb_write fails, retry once. If it still fails, do NOT proceed to Step 2 — report the error as your final message.",
+    "## CRITICAL: Context Budget Check",
+    `Before starting design work, check your remaining context window. If it is below ${RESEARCH_CONTEXT_BUDGET_THRESHOLD.toLocaleString()} tokens,`,
+    "SKIP all design work and go directly to Step 1 to output the JSON summary with what you know.",
     "",
-    "## Output Format (Step 2)",
-    "After writing the KB file, return a JSON design report as your final message:",
+    "## Step 1 (ALWAYS FIRST): Output JSON Summary",
+    "Your FINAL MESSAGE must be the JSON design report below. Output it BEFORE writing to KB.",
+    "This guarantees the receipt has content even if KB write fails or context exhausts.",
     "```json",
     JSON.stringify({
       designer: "",
@@ -1189,6 +1203,13 @@ export function buildDesignPrompt(
       completedAt: "",
     }, null, 2),
     "```",
+    "",
+    "## Step 2 (After JSON output): Write Report to KB",
+    "After outputting the JSON summary above, write the full design report to KB.",
+    ...deriveKbWriteInstructions(task),
+    "If kb_write fails, retry once. If it still fails, stop silently —",
+    "the orchestrator will recover the KB from your Step 1 JSON output automatically.",
+    "Do NOT send any additional messages after Step 1 JSON — the orchestrator reads only your last message.",
   ];
 
   if (kbContext) {
