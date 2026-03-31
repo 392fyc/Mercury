@@ -26,6 +26,7 @@ Before constructing the TaskBundle, confirm these with the user. Do not guess if
 | **codeScope.include** | Files or directories the worker should read | Yes |
 | **codeScope.exclude** | Files or directories to skip | No |
 | **allowedWriteScope.codePaths** | Paths the worker may modify | Yes |
+| **allowedWriteScope.kbPaths** | KB paths the worker may write (`research` / `design` required) | Conditionally Yes |
 | **docsMustNotTouch** | Paths the worker must never modify | No |
 | **readScope.requiredDocs** | Documents the worker must read before starting | Yes |
 | **definitionOfDone** | Objectively verifiable completion criteria | Yes |
@@ -51,7 +52,8 @@ Build the JSON payload for `create_task`. The orchestrator generates `taskId`, `
     "requiredDocs": ["<doc paths injected into dispatch prompt>"]
   },
   "allowedWriteScope": {
-    "codePaths": ["<paths the worker may modify>"]
+    "codePaths": ["<paths the worker may modify>"],
+    "kbPaths": ["<KB paths; required for research/design tasks>"]
   },
   "docsMustNotTouch": ["CLAUDE.md", "AGENTS.md", "99-templates/"],
   "definitionOfDone": ["<criterion 1>", "<criterion 2>"],
@@ -60,6 +62,8 @@ Build the JSON payload for `create_task`. The orchestrator generates `taskId`, `
 ```
 
 Optional fields include `phaseId`, `branch`, `docsMustUpdate`, `reviewConfig`, `handoffToAcceptance`, and `maxReworks`.
+
+When `role` is `research` or `design`, `allowedWriteScope.kbPaths` must be a non-empty array so the dispatch payload passes validation.
 
 The full template with all fields is at `99-templates/task-bundle.template.json` in the KB vault.
 

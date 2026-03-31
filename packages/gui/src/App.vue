@@ -283,6 +283,12 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid var(--accent-error);
 }
 
+.error-banner.transient {
+  background: rgba(255, 193, 7, 0.16);
+  color: var(--accent-warning, #ffc107);
+  border-bottom-color: var(--accent-warning, #ffc107);
+}
+
 .workspace {
   flex: 1;
   display: grid;

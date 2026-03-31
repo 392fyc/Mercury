@@ -126,14 +126,22 @@ function Assert-SafePushTarget {
     return
   }
 
-  if ($CommandText -match "(^|\\s)--all(\\s|$)" -or $CommandText -match "(^|\\s)--mirror(\\s|$)") {
-    throw "Broad push flags (--all/--mirror) are forbidden in Codex guard mode."
+  if ($CommandText -match '(^|\s)--all(\s|$)' -or $CommandText -match '(^|\s)--mirror(\s|$)') {
+    throw "Broad or destructive push flags are forbidden in Codex guard mode."
   }
 
-  $tokens = $CommandText -split "\\s+"
+  if ($CommandText -match '(^|\s)(--force(\S*)?|--delete|-d|-f)(\s|$)') {
+    throw "Destructive push flags (--force/--force-with-lease/--delete) are forbidden in Codex guard mode."
+  }
+
+  $tokens = $CommandText -split '\s+'
   foreach ($token in $tokens) {
     if ($token -in @("git", "push", "origin", "upstream")) {
       continue
+    }
+
+    if ($token.StartsWith(":")) {
+      throw "Branch deletion refspecs are forbidden in Codex guard mode: $CommandText"
     }
 
     if (Test-ProtectedPushSpec -Token $token) {

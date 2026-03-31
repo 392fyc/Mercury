@@ -68,6 +68,18 @@ function Assert-ExplicitPaths {
       throw "Wildcard/pathspec patterns are forbidden: $path"
     }
 
+    if ($path.EndsWith("\\") -or $path.EndsWith("/")) {
+      throw "Directories are not allowed in git-safe add. Pass explicit files only: $path"
+    }
+
+    $candidate = Join-Path $repoRoot $path
+    if (Test-Path -LiteralPath $candidate) {
+      $item = Get-Item -LiteralPath $candidate
+      if ($item.PSIsContainer) {
+        throw "Directories are not allowed in git-safe add. Pass explicit files only: $path"
+      }
+    }
+
     if ($path.StartsWith("-")) {
       throw "Options are not allowed in git-safe add. Pass explicit repo paths only: $path"
     }

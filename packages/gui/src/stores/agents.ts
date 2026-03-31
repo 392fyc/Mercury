@@ -5,7 +5,7 @@
  * panelKey (roleSlotKey = "{role}:{agentId}"), NOT by raw agentId.
  */
 
-import { ref, computed, shallowRef, triggerRef, watch } from "vue";
+import { ref, computed, shallowRef, triggerRef, watchEffect } from "vue";
 import type { AgentConfig, MercuryEvent } from "../lib/tauri-bridge";
 import {
   getAgents as fetchAgents,
@@ -612,35 +612,37 @@ function waitForSidecarReady(timeoutMs = SIDECAR_READY_TIMEOUT_MS): Promise<void
 
   return new Promise((resolve, reject) => {
     let settled = false;
-    let stop: (() => void) | null = null;
+    let stopEffect: (() => void) | null = null;
     const timer = window.setTimeout(() => {
       if (settled) return;
       settled = true;
-      stop?.();
+      window.clearTimeout(timer);
+      queueMicrotask(() => stopEffect?.());
       reject(new Error(`Timed out waiting for sidecar readiness after ${timeoutMs} ms.`));
     }, timeoutMs);
 
-    stop = watch(
-      [sidecarReady, sidecarError],
-      ([ready, error]) => {
-        if (ready) {
-          if (settled) return;
-          settled = true;
-          stop?.();
-          window.clearTimeout(timer);
-          resolve();
-          return;
-        }
-        if (error) {
-          if (settled) return;
-          settled = true;
-          stop?.();
-          window.clearTimeout(timer);
-          reject(new Error(error));
-        }
-      },
-      { immediate: true },
-    );
+    stopEffect = watchEffect((onCleanup) => {
+      onCleanup(() => {
+        window.clearTimeout(timer);
+      });
+
+      if (settled) return;
+
+      if (sidecarReady.value) {
+        settled = true;
+        window.clearTimeout(timer);
+        queueMicrotask(() => stopEffect?.());
+        resolve();
+        return;
+      }
+
+      if (sidecarError.value) {
+        settled = true;
+        window.clearTimeout(timer);
+        queueMicrotask(() => stopEffect?.());
+        reject(new Error(sidecarError.value));
+      }
+    });
   });
 }
 

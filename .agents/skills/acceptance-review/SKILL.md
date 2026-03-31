@@ -111,7 +111,7 @@ Then act based on the verdict:
 |---------|--------|
 | **pass** | Transition task to `verified` -> hand off to `pr-flow` -> run `powershell -ExecutionPolicy Bypass -File scripts/codex/guard.ps1 pre-merge -PullRequestNumber <PR_NUMBER>` once approvals, checks, and review threads are ready -> merge PR -> close task. Report: `任务 TASK-xxx 验收通过，已进入 PR 合并流程。` |
 | **partial** | Review findings, decide whether to accept or request rework |
-| **fail** | Create a rework prompt and re-dispatch to the dev agent |
+| **fail** | Record the result, then let the orchestrator run the rework flow on the same dev branch; escalate only when `reworkCount >= maxReworks` |
 | **blocked** | Investigate the blocker, resolve environment or access issues, retry |
 
 ## Blind Review Principle
@@ -124,6 +124,8 @@ The acceptance agent operates under strict information isolation. It must never 
 This ensures the review is based solely on code quality and test results, not the developer's self-assessment.
 
 ## Rework Flow
+
+Do not handcraft a rework prompt or manually re-dispatch after `record_acceptance_result`. The orchestrator owns the rework loop so `reworkCount`, same-branch re-dispatch, and escalation stay consistent.
 
 If acceptance fails and `reworkCount < maxReworks`:
 
