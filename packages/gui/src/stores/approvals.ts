@@ -186,6 +186,7 @@ async function initApprovalStore(): Promise<void> {
       applyApprovalSnapshot(reconciledMode.mode, reconciledRequests);
 
       approvalUnlisteners.push(...pending);
+      pending.length = 0;
       approvalsInitialized = true;
     } catch (e) {
       cleanupApprovalListeners(pending);

@@ -114,6 +114,15 @@ function Test-ProtectedPushSpec {
   return $destination -match "^(refs/heads/)?(develop|main|master)$"
 }
 
+function Get-ConfiguredRemotes {
+  $remotes = @(git -C $repoRoot remote 2>$null)
+  if ($LASTEXITCODE -ne 0 -or $remotes.Count -eq 0) {
+    return @("origin", "upstream")
+  }
+
+  return $remotes | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+}
+
 function Assert-SafePushTarget {
   param(
     [string]$Branch,
@@ -135,8 +144,9 @@ function Assert-SafePushTarget {
   }
 
   $tokens = $CommandText -split '\s+'
+  $knownTokens = @("git", "push") + (Get-ConfiguredRemotes)
   foreach ($token in $tokens) {
-    if ($token -in @("git", "push", "origin", "upstream")) {
+    if ($token -in $knownTokens) {
       continue
     }
 
