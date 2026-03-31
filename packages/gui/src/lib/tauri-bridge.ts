@@ -232,10 +232,19 @@ export interface ObsidianConfig {
   };
 }
 
+export interface ResearchConfig {
+  /**
+   * Maximum research rounds per task. 0 = unlimited (same as omitting).
+   * The research agent must stop looping and submit findings when this limit is reached.
+   */
+  maxIterations?: number;
+}
+
 export interface MercuryProjectConfig {
   agents: AgentConfig[];
   workDir?: string;
   obsidian?: ObsidianConfig;
+  research?: ResearchConfig;
 }
 
 /** Retrieve the current Mercury project configuration. */

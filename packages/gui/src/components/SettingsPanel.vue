@@ -3,13 +3,13 @@ import { ref, onMounted, watch } from "vue";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useConfigStore } from "../stores/config";
 import { refreshContext, getContextStatus, kbList, getRoleInstructions } from "../lib/tauri-bridge";
-import type { AgentConfig, ContextStatus, ObsidianConfig } from "../lib/tauri-bridge";
+import type { AgentConfig, ContextStatus, ObsidianConfig, ResearchConfig } from "../lib/tauri-bridge";
 
 const emit = defineEmits<{ close: [] }>();
 
 const { config, loading, error, loadConfig, saveConfig } = useConfigStore();
 
-const activeTab = ref<"agents" | "project" | "display">("agents");
+const activeTab = ref<"agents" | "project" | "research" | "display">("agents");
 const saving = ref(false);
 const saveMsg = ref("");
 const roleContextExpanded = ref(true);
@@ -145,6 +145,7 @@ function normalizeObsidianConfig(source?: ObsidianConfig | null): ObsidianConfig
 const editAgents = ref<AgentConfig[]>([]);
 const editObsidian = ref<ObsidianConfig>(createEmptyObsidianConfig());
 const editWorkDir = ref(".");
+const editResearch = ref<ResearchConfig>({});
 
 onMounted(async () => {
   await loadConfig();
@@ -160,6 +161,7 @@ function syncFromConfig() {
   editAgents.value = JSON.parse(JSON.stringify(config.value.agents));
   editObsidian.value = normalizeObsidianConfig(config.value.obsidian);
   editWorkDir.value = config.value.workDir ?? ".";
+  editResearch.value = { ...config.value.research };
 }
 
 watch(config, syncFromConfig);
@@ -444,10 +446,16 @@ async function handleSave() {
   saveMsg.value = "";
 
   try {
+    const researchToSave: ResearchConfig = {};
+    const maxIter = editResearch.value.maxIterations;
+    if (maxIter !== undefined && maxIter !== null) {
+      researchToSave.maxIterations = Number(maxIter);
+    }
     await saveConfig({
       agents: editAgents.value,
       workDir: editWorkDir.value,
       obsidian: normalizeObsidianConfig(editObsidian.value),
+      research: researchToSave,
     });
     saveMsg.value = "Saved";
     setTimeout(() => {
@@ -481,6 +489,7 @@ function handleKeydown(event: KeyboardEvent) {
       <div class="settings-tabs">
         <button :class="{ active: activeTab === 'agents' }" @click="activeTab = 'agents'">Agents</button>
         <button :class="{ active: activeTab === 'project' }" @click="activeTab = 'project'">Project</button>
+        <button :class="{ active: activeTab === 'research' }" @click="activeTab = 'research'">Research</button>
         <button :class="{ active: activeTab === 'display' }" @click="activeTab = 'display'">Display</button>
       </div>
 
@@ -768,6 +777,33 @@ function handleKeydown(event: KeyboardEvent) {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+
+        <div v-if="activeTab === 'research'" class="tab-content">
+          <div class="section">
+            <h3>Research Loop</h3>
+            <p class="hint compact">
+              Limit how many rounds a research agent may iterate before it must submit findings.
+              Set to <strong>0</strong> for no limit (default behaviour).
+            </p>
+            <label>
+              <span>Max iterations per task</span>
+              <input
+                id="research-max-iterations"
+                name="research-max-iterations"
+                type="number"
+                min="0"
+                step="1"
+                v-model.number="editResearch.maxIterations"
+                class="field-input"
+                placeholder="0 (unlimited)"
+              />
+            </label>
+            <p class="hint compact">
+              When the limit is reached the agent stops looping and submits whatever findings it has.
+              This value is injected into the research agent's prompt as a hard cap.
+            </p>
           </div>
         </div>
 
