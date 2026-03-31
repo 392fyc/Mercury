@@ -2205,6 +2205,8 @@ export class Orchestrator {
       completedAt: Date.now(),
     };
 
+    const designVerdict = (kbPaths.length > 0 && !designKbVerified) ? "partial" : "pass";
+
     // Fast-track through full state machine: in_progress → ... → closed
     try {
       this.taskManager.transitionTask(task.taskId, "implementation_done", agentId);
@@ -2212,11 +2214,19 @@ export class Orchestrator {
       this.taskManager.transitionTask(task.taskId, "main_review", agentId);
       this.taskManager.transitionTask(task.taskId, "acceptance", agentId);
 
+      if (designVerdict === "partial") {
+        this.transport.sendNotification("log", {
+          message: `[task] Design task ${task.taskId} verdict downgraded to partial — KB file not written: "${designKbFile}"`,
+        });
+      }
+
       // Persist synthetic acceptance so getTaskResult() returns verdict
       this.taskManager.persistSyntheticAcceptance(task.taskId, agentId, {
-        verdict: "pass",
+        verdict: designVerdict,
         findings: designFindings,
-        recommendations: designRecommendations,
+        recommendations: designVerdict === "partial"
+          ? [`KB file not written: ${designKbFile}`, ...designRecommendations]
+          : designRecommendations,
       });
 
       this.taskManager.transitionTask(task.taskId, "verified", agentId);
@@ -2233,7 +2243,7 @@ export class Orchestrator {
     this.bus.emit("orchestrator.task.callback", agentId, "orchestrator", {
       taskId: task.taskId,
       originatorSessionId: task.originatorSessionId,
-      verdict: "pass",
+      verdict: designVerdict,
       findings: designFindings,
       recommendations: designRecommendations,
       reworkCount: task.reworkCount,

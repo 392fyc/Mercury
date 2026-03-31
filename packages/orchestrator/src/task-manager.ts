@@ -1142,8 +1142,9 @@ export function buildResearchPrompt(
     "## Step 2 (After JSON output): Write Report to KB",
     "After outputting the JSON summary above, write the full report to KB.",
     ...deriveKbWriteInstructions(task),
-    "If kb_write fails, retry once. If it still fails, add the error to your evidence list —",
-    "the JSON summary (Step 1) already ensures the receipt has your findings.",
+    "If kb_write fails, retry once. If it still fails, stop silently —",
+    "the orchestrator will recover the KB from your Step 1 JSON output automatically.",
+    "Do NOT send any additional messages after Step 1 JSON — the orchestrator reads only your last message.",
   ];
 
   if (kbContext) {
@@ -1202,8 +1203,9 @@ export function buildDesignPrompt(
     "## Step 2 (After JSON output): Write Report to KB",
     "After outputting the JSON summary above, write the full design report to KB.",
     ...deriveKbWriteInstructions(task),
-    "If kb_write fails, retry once. If it still fails, add the error to your artifacts list —",
-    "the JSON summary (Step 1) already ensures the receipt has your design.",
+    "If kb_write fails, retry once. If it still fails, stop silently —",
+    "the orchestrator will recover the KB from your Step 1 JSON output automatically.",
+    "Do NOT send any additional messages after Step 1 JSON — the orchestrator reads only your last message.",
   ];
 
   if (kbContext) {
