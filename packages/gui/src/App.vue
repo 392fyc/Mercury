@@ -25,7 +25,7 @@ import { useEventStore } from "./stores/events";
 import { useTaskStore } from "./stores/tasks";
 
 const {
-  agents, mainAgent, sidecarReady, sidecarError, sidecarTransientError, initAgents,
+  agents, mainAgent, sidecarReady, sidecarError, initAgents,
   openFloatingTab,
 } = useAgentStore();
 const { initMessageListeners } = useMessageStore();
@@ -171,9 +171,7 @@ onBeforeUnmount(() => {
     <div v-if="sidecarError" class="error-banner">
       Orchestrator error: {{ sidecarError }}
     </div>
-    <div v-else-if="sidecarTransientError" class="error-banner transient">
-      Orchestrator is still starting: {{ sidecarTransientError }}. Retrying automatically.
-    </div>
+
 
     <div class="workspace" :class="{ 'event-log-visible': showEventLog }">
       <div class="workspace-main">
