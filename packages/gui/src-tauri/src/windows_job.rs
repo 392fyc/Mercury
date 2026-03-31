@@ -21,10 +21,14 @@ use windows_sys::Win32::System::JobObjects::{
 /// job handle is closed. This protects against orphaned sidecar/CLI children when
 /// the GUI or dev terminal is closed abruptly.
 ///
-/// The assignment still happens after `spawn()`, so there is a small Windows-only
-/// race before `AssignProcessToJobObject` succeeds. Callers keep `taskkill /T`
-/// shutdown fallbacks in place to clean up that narrow failure window until the
-/// spawn path is migrated to an API that supports atomic job assignment.
+/// # Known race window
+/// The current spawn flow calls [`ProcessJob::assign`] *after* `Command::spawn()`,
+/// leaving a brief window where the child process is not yet tracked by the job.
+/// An abrupt GUI termination or panic in that window may produce an orphan.
+/// The `taskkill /T /F` fallback in `SidecarManager::shutdown` provides
+/// best-effort cleanup but does not make the assignment atomic. A proper fix
+/// (`CREATE_SUSPENDED` + `ResumeThread`) is tracked in Issue #107; this
+/// behaviour is intentionally left as-is for now.
 #[cfg(target_os = "windows")]
 pub struct ProcessJob {
     handle: OwnedHandle,

@@ -5,7 +5,7 @@
  * panelKey (roleSlotKey = "{role}:{agentId}"), NOT by raw agentId.
  */
 
-import { ref, computed, shallowRef, triggerRef, watchEffect } from "vue";
+import { ref, computed, shallowRef, triggerRef, watch } from "vue";
 import type { AgentConfig, MercuryEvent } from "../lib/tauri-bridge";
 import {
   getAgents as fetchAgents,
@@ -63,8 +63,6 @@ const gitBranches = shallowRef<Map<string, string | null>>(new Map()); // panelK
 const defaultWorkDir = ref("");
 const sidecarReady = ref(false);
 const sidecarError = ref<string | null>(null);
-const sidecarTransientError = ref<string | null>(null);
-const SIDECAR_READY_TIMEOUT_MS = 30_000;
 
 // ─── Bookmark Rail State ───
 /** Manually created sub-agent bookmarks (panelKey → true). Auto-created when session starts. */
@@ -421,7 +419,6 @@ async function loadAgents() {
     agents.value = fetchedAgents.filter((agent) => configuredAgentIds.has(agent.id));
     sidecarReady.value = true;
     sidecarError.value = null;
-    sidecarTransientError.value = null;
     // Initialize status for each role panel
     for (const agent of agents.value) {
       for (const role of agent.roles) {
@@ -433,11 +430,8 @@ async function loadAgents() {
     }
     triggerRef(statuses);
     await hydrateSessionMeta();
-    return;
   } catch (e) {
     console.error("Failed to fetch agents:", e);
-    sidecarTransientError.value = e instanceof Error ? e.message : String(e);
-    throw e;
   }
 }
 
@@ -465,14 +459,11 @@ async function initAgents() {
   }
 
   // Listen for sidecar ready event
-  await onSidecarReady(() => {
-    void loadAgents().catch(() => {});
-  });
+  await onSidecarReady(() => loadAgents());
 
   await onSidecarError((data) => {
     sidecarReady.value = false;
     sidecarError.value = data.error;
-    sidecarTransientError.value = null;
   });
 
   await onMercuryEvent((event: MercuryEvent) => {
@@ -606,58 +597,26 @@ async function initAgents() {
   setTimeout(pollFn, pollDelay);
 }
 
-function waitForSidecarReady(timeoutMs = SIDECAR_READY_TIMEOUT_MS): Promise<void> {
+function waitForSidecarReady(): Promise<void> {
   if (sidecarReady.value) return Promise.resolve();
   if (sidecarError.value) return Promise.reject(new Error(sidecarError.value));
 
   return new Promise((resolve, reject) => {
-    let settled = false;
-    let stopEffect: (() => void) | null = null;
-    let timer: number | null = null;
-
-    const clearTimer = () => {
-      if (timer !== null) {
-        window.clearTimeout(timer);
-        timer = null;
-      }
-    };
-
-    const scheduleTimeout = () => {
-      clearTimer();
-      timer = window.setTimeout(() => {
-        if (settled) return;
-        const message = `Timed out waiting for sidecar readiness after ${timeoutMs} ms. Retrying automatically.`;
-        sidecarTransientError.value = message;
-        console.warn(`[Mercury] ${message}`);
-        scheduleTimeout();
-      }, timeoutMs);
-    };
-
-    scheduleTimeout();
-
-    stopEffect = watchEffect((onCleanup) => {
-      onCleanup(() => {
-        clearTimer();
-      });
-
-      if (settled) return;
-
-      if (sidecarReady.value) {
-        settled = true;
-        clearTimer();
-        sidecarTransientError.value = null;
-        queueMicrotask(() => stopEffect?.());
-        resolve();
-        return;
-      }
-
-      if (sidecarError.value) {
-        settled = true;
-        clearTimer();
-        queueMicrotask(() => stopEffect?.());
-        reject(new Error(sidecarError.value));
-      }
-    });
+    const stop = watch(
+      [sidecarReady, sidecarError],
+      ([ready, error]) => {
+        if (ready) {
+          stop();
+          resolve();
+          return;
+        }
+        if (error) {
+          stop();
+          reject(new Error(error));
+        }
+      },
+      { immediate: true },
+    );
   });
 }
 
@@ -688,7 +647,6 @@ export function useAgentStore() {
     defaultWorkDir,
     initAgents,
     waitForSidecarReady,
-    sidecarTransientError,
     // Bookmark Rail
     bookmarks,
     bookmarkList,

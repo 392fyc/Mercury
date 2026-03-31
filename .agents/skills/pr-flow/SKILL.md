@@ -139,6 +139,8 @@ powershell -ExecutionPolicy Bypass -File scripts/codex/git-safe.ps1 add <path> [
 powershell -ExecutionPolicy Bypass -File scripts/codex/guard.ps1 mark-review
 ```
 
+1. Run auto-verify (lint, type-check, scope check). If auto-verify modifies any staged files, re-stage the affected files and re-run `guard.ps1 mark-review` before committing — `mark-review` snapshots the staged tree and the commit guard will reject a mismatch.
+
 1. Commit through the wrapper:
 
 ```powershell
