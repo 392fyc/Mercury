@@ -26,6 +26,7 @@ import type {
   RoleSlotKey,
   SessionInfo,
   SlashCommand,
+  DoDVerification,
   TaskBundle,
   TaskStatus,
 } from "@mercury/core";
@@ -302,7 +303,7 @@ export class Orchestrator {
     return process.cwd();
   }
 
-  private buildSystemRolePrompt(role: AgentRole, task?: TaskBundle): string {
+  private buildSystemRolePrompt(role: AgentRole, task?: TaskBundle, tokenBudgetHint?: number): string {
     const overrides = this.projectConfig?.obsidian?.roleInstructionOverrides;
     const overrideKey = role as keyof NonNullable<typeof overrides>;
     const roleInstructions = overrides && overrideKey in overrides
@@ -315,6 +316,7 @@ export class Orchestrator {
       this.getRoleSpecificContext(role),
       roleInstructions,
       this.getProjectRoot(),
+      tokenBudgetHint,
     );
   }
 
@@ -1908,7 +1910,69 @@ export class Orchestrator {
       return;
     }
     const receipt = this.parseImplementationReceipt(task, agentId, finalMessage, completedAt);
+    // Phase 2.2: fire-and-forget DoD pre-verification (non-blocking)
+    void this.verifyDoDAtCompletion(task, agentId).catch(() => {});
     await this.recordReceiptAndTriggerReview(task.taskId, receipt);
+  }
+
+  /**
+   * Phase 2.2: Pre-completion DoD verification.
+   * Runs a lightweight LLM check against the task's Definition of Done using the Critic prompt.
+   * Results are stored in task.mainReview.dodVerification (non-blocking, 10s timeout).
+   */
+  private async verifyDoDAtCompletion(task: TaskBundle, agentId: string): Promise<void> {
+    if (!task.definitionOfDone?.length) return;
+    const adapter = this.registry.getAdapter(agentId);
+    if (!adapter.executeOneShot) return;
+
+    const prompt = buildCriticPrompt(task, this.getProjectRoot());
+    const systemPrompt = this.buildSystemRolePrompt("critic", task);
+    const cwd = this.agentCwds.get(agentId) ?? process.cwd();
+
+    let rawResult: string;
+    try {
+      const timeoutMs = 10_000;
+      const raceResult = await Promise.race([
+        adapter.executeOneShot(this.wrapPromptWithRoleContext(prompt, systemPrompt), cwd),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("DoD pre-check timeout")), timeoutMs),
+        ),
+      ]);
+      rawResult = raceResult.finalMessage ?? "";
+    } catch {
+      // Timeout or error — store PARTIAL verdict
+      const partial: DoDVerification = {
+        verdict: "PARTIAL",
+        summary: "DoD pre-check timed out or failed.",
+        checkedAt: Date.now(),
+        verifiedItems: [],
+      };
+      this.taskManager.updateTaskField(task.taskId, "mainReview", {
+        ...(task.mainReview ?? { preChecks: [], gitDiff: "" }),
+        dodVerification: partial,
+      });
+      return;
+    }
+
+    // Parse verdict from LLM response: look for PASS/FAIL/PARTIAL keyword
+    const upper = rawResult.toUpperCase();
+    const verdict: DoDVerification["verdict"] =
+      upper.includes("PASS") ? "PASS" : upper.includes("FAIL") ? "FAIL" : "PARTIAL";
+
+    const dodVerification: DoDVerification = {
+      verdict,
+      summary: rawResult.slice(0, 500),
+      checkedAt: Date.now(),
+      verifiedItems: task.definitionOfDone.map((item) => ({
+        item,
+        passed: verdict === "PASS",
+      })),
+    };
+
+    this.taskManager.updateTaskField(task.taskId, "mainReview", {
+      ...(task.mainReview ?? { preChecks: [], gitDiff: "" }),
+      dodVerification,
+    });
   }
 
   private async handleMainReviewStreamComplete(
@@ -2652,11 +2716,17 @@ export class Orchestrator {
       }
     }
 
+    // Derive token budget hint from task.resourceBudget (apply 90% safety margin)
+    const rawBudget = task.resourceBudget?.tokenBudget;
+    const tokenBudgetHint = rawBudget !== undefined
+      ? Math.floor(rawBudget * 0.9)
+      : undefined;
+
     // Build role-appropriate prompt
     let prompt: string;
     if (role === "research") {
       const maxIterations = this.projectConfig?.research?.maxIterations;
-      prompt = buildResearchPrompt(task, kbContext, maxIterations);
+      prompt = buildResearchPrompt(task, kbContext, maxIterations, tokenBudgetHint);
     } else if (role === "design") {
       prompt = buildDesignPrompt(task, kbContext);
     } else {
@@ -2666,7 +2736,7 @@ export class Orchestrator {
     return {
       task,
       prompt,
-      rolePrompt: this.buildSystemRolePrompt(role, task),
+      rolePrompt: this.buildSystemRolePrompt(role, task, tokenBudgetHint),
       baseRolePrompt: this.buildSystemRolePrompt(role),
     };
   }

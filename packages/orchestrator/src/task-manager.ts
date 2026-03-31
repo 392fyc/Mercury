@@ -6,6 +6,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { EventBus } from "@mercury/core";
@@ -916,6 +917,29 @@ function formatWriteScope(scope: TaskBundle["allowedWriteScope"]): string {
  * NOTE: Template is loaded synchronously per call. Future optimization:
  * preload + cache at TaskManager.init() with mtime-based refresh (tracked in TASK-WF-001).
  */
+/**
+ * Build a git log section for dev dispatch prompts.
+ * Returns a markdown block with the last 20 commits on the task branch (best-effort).
+ */
+function buildGitLogSection(branch: string | undefined, basePath: string): string {
+  if (!branch) return "";
+  try {
+    const log = execSync(`git -C "${basePath}" log ${branch} -20 --oneline`, {
+      timeout: 5000,
+      encoding: "utf-8",
+    }).trim();
+    if (!log) return "";
+    return `
+
+## Recent Commits on Branch (${branch})
+\`\`\`
+${log}
+\`\`\``;
+  } catch {
+    return "";
+  }
+}
+
 export function buildDevPrompt(
   task: TaskBundle,
   kbContext?: string,
@@ -991,8 +1015,13 @@ export function buildDevPrompt(
   );
   let result = template.replace(placeholderPattern, (match) => placeholders[match] ?? match);
 
+  result += buildGitLogSection(task.branch, basePath);
+
   if (kbContext) {
-    result += `\n\n## Project Knowledge Base Context\n${kbContext}`;
+    result += `
+
+## Project Knowledge Base Context
+${kbContext}`;
   }
 
   return result;
@@ -1054,6 +1083,7 @@ export function buildResearchPrompt(
   task: TaskBundle,
   kbContext?: string,
   maxIterations?: number,
+  tokenBudgetHint?: number,
 ): string {
   const lines = [
     `# Research Task: ${task.title} [${task.taskId}]`,
@@ -1080,6 +1110,9 @@ export function buildResearchPrompt(
       ? [
         `- **MAX_ITERATIONS: ${maxIterations}** — you MUST stop the research loop and submit your findings after at most ${maxIterations} round(s). Do not continue past this limit under any circumstances.`,
         ]
+      : []),
+    ...(tokenBudgetHint !== undefined && tokenBudgetHint > 0
+      ? [`- **TOKEN_BUDGET: ~${tokenBudgetHint.toLocaleString()} tokens remaining** — wrap up and submit findings before reaching this limit.`]
       : []),
     "",
     "## MANDATORY: Write Report to KB (Step 1)",
