@@ -52,6 +52,9 @@ When changes should be split by category:
    - `git worktree add ../Mercury-split-A -b feature/TASK-123-part-A origin/develop`
    - `git worktree add ../Mercury-split-B -b feature/TASK-123-part-B origin/develop`
 2. Restore only the intended files into each worktree via direct file copy or `git restore --source <branch> -- <path>`.
+2a. Copy the guard scripts into each worktree so the worktree-local copy can be invoked (required because `git-safe.ps1` uses `$PSScriptRoot` to resolve `$repoRoot`):
+   - `Copy-Item -Recurse scripts/codex ../Mercury-split-A/scripts/`
+   - `Copy-Item -Recurse scripts/codex ../Mercury-split-B/scripts/`
 3. Stage, commit, and push inside the target worktree directory. `git-safe.ps1` uses `$PSScriptRoot` to resolve `$repoRoot`, so always invoke the **worktree-local copy** of the script — never the main-repo copy (or extend `git-safe.ps1` with a `-RepoRoot` parameter first):
    - `Set-Location ../Mercury-split-A`
    - `powershell -ExecutionPolicy Bypass -File scripts/codex/git-safe.ps1 add <path>`
@@ -72,7 +75,7 @@ Preferred model:
 - if the host exposes recurring jobs, schedule a 10-minute recurring check
 - otherwise, persist state files and have the host, wrapper, or operator reinvoke the same review-check prompt every 10 minutes
 
-State files:
+State files (stored in the repo root of the working worktree; the `<PR_NUMBER>` suffix prevents collision when multiple worktrees run in parallel):
 
 ```text
 .pr-flow-check-count-<PR_NUMBER>
@@ -157,7 +160,7 @@ powershell -ExecutionPolicy Bypass -File scripts/codex/git-safe.ps1 push origin 
 
 Resolve threads only after the fixes are pushed.
 
-Use GraphQL to resolve review threads:
+Use GraphQL to resolve review threads. Replace `<OWNER>`, `<NAME>`, `<N>` with the actual repository owner, name, and PR number before running:
 
 ```powershell
 $threads = @()
@@ -228,7 +231,11 @@ gh pr merge <PR_NUMBER> --squash --delete-branch
 After merge:
 - close related issues if the PR closes them
 - update Mercury task state if the orchestrator is available
-- clean up `.pr-flow-iteration-*`, `.pr-flow-check-count-*`, and `.pr-flow-multi.txt`
+- clean up state files:
+
+```powershell
+Remove-Item .pr-flow-iteration-*, .pr-flow-check-count-*, .pr-flow-multi.txt -ErrorAction SilentlyContinue
+```
 
 ## Review Response Protocol
 
