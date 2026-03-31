@@ -215,6 +215,7 @@ impl RemoteControlManager {
         let job_stdout = self.job.clone();
         let app_stdout = app_handle.clone();
         let name_for_stdout = session_name.clone();
+        let session_name_stdout = self.session_name.clone();
         tokio::spawn(async move {
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
@@ -313,6 +314,10 @@ impl RemoteControlManager {
                     let mut child_guard = child_clone.lock().await;
                     *child_guard = None;
                 }
+                {
+                    let mut name_guard = session_name_stdout.lock().await;
+                    *name_guard = None;
+                }
                 #[cfg(target_os = "windows")]
                 {
                     let mut job_guard = job_stdout.lock().await;
@@ -323,7 +328,7 @@ impl RemoteControlManager {
                     RemoteControlState {
                         status: RemoteControlStatus::Stopped,
                         session_url: None,
-                        session_name: name_for_stdout.clone(),
+                        session_name: None,
                         error_message: None,
                     },
                 );
@@ -339,7 +344,8 @@ impl RemoteControlManager {
         #[cfg(target_os = "windows")]
         let job_stderr = self.job.clone();
         let app_stderr = app_handle.clone();
-        let name_for_stderr = session_name;
+        let session_name_stderr = self.session_name.clone();
+        drop(session_name);
         tokio::spawn(async move {
             let reader = BufReader::new(stderr);
             let mut lines = reader.lines();
@@ -391,6 +397,10 @@ impl RemoteControlManager {
                     let mut child_guard = child_stderr.lock().await;
                     *child_guard = None;
                 }
+                {
+                    let mut name_guard = session_name_stderr.lock().await;
+                    *name_guard = None;
+                }
                 #[cfg(target_os = "windows")]
                 {
                     let mut job_guard = job_stderr.lock().await;
@@ -401,7 +411,7 @@ impl RemoteControlManager {
                     RemoteControlState {
                         status: RemoteControlStatus::Stopped,
                         session_url: None,
-                        session_name: name_for_stderr,
+                        session_name: None,
                         error_message: None,
                     },
                 );

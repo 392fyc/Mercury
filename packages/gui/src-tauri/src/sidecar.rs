@@ -184,20 +184,31 @@ impl SidecarManager {
             id: Some(serde_json::Value::Number(id.into())),
         };
 
+        // Serialize before inserting into pending so a serialization error
+        // never leaves a stale entry in the map.
+        let msg = serde_json::to_string(&request).map_err(|e| e.to_string())?;
+
         let (tx, rx) = oneshot::channel();
         {
             let mut pending = self.pending.lock().await;
             pending.insert(id, tx);
         }
 
-        let msg = serde_json::to_string(&request).map_err(|e| e.to_string())?;
-        {
+        // Write to sidecar; on failure remove the pending entry to avoid leaks.
+        let write_result: Result<(), String> = async {
             let mut stdin = self.stdin.lock().await;
             stdin
                 .write_all(format!("{}\n", msg).as_bytes())
                 .await
                 .map_err(|e| format!("Failed to write to sidecar: {}", e))?;
             stdin.flush().await.map_err(|e| e.to_string())?;
+            Ok(())
+        }
+        .await;
+        if let Err(e) = write_result {
+            let mut pending = self.pending.lock().await;
+            pending.remove(&id);
+            return Err(e);
         }
 
         let response = match timeout(Duration::from_secs(30), rx).await {

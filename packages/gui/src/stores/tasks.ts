@@ -87,14 +87,12 @@ async function initTaskListeners() {
     const { waitForSidecarReady } = useAgentStore();
     const pending: UnlistenFn[] = [];
     try {
+      // Register all listeners before taking the initial snapshot so events
+      // arriving during snapshotting are not lost.
+
       // Reload tasks whenever sidecar becomes ready (handles F5 page refresh where
       // sidecar may not be available yet when onMounted fires).
       pending.push(await onSidecarReady(() => loadTasks()));
-
-      // If the ready event was emitted before we registered the listener above,
-      // wait on the shared sidecar-ready state that agents.ts keeps in sync.
-      await waitForSidecarReady();
-      await loadTasks();
 
       pending.push(await onMercuryEvent((event: MercuryEvent) => {
         if (event.type.startsWith("orchestrator.task.") || event.type.startsWith("orchestrator.acceptance.")) {
@@ -108,7 +106,13 @@ async function initTaskListeners() {
         }
       }));
 
-      // All listeners registered — commit
+      // Listeners are active — now take the initial snapshot.
+      // If the ready event was emitted before we registered the listener above,
+      // wait on the shared sidecar-ready state that agents.ts keeps in sync.
+      await waitForSidecarReady();
+      await loadTasks();
+
+      // All listeners registered and snapshot complete — commit
       taskListenersInitialized = true;
       taskUnlisteners.push(...pending);
     } catch (e) {
@@ -116,6 +120,7 @@ async function initTaskListeners() {
       for (const unlisten of pending) unlisten();
       taskListenersInitPromise = null;
       console.error("Failed to init task listeners:", e);
+      throw e;
     }
   })();
 
