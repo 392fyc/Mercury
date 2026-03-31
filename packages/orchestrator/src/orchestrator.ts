@@ -2110,6 +2110,9 @@ export class Orchestrator {
 
     // Verdict: partial if expected KB file was not written, pass otherwise
     const verdict = (expectedKbFile && !kbWriteVerified) ? "partial" : "pass";
+    const finalRecommendations = verdict === "partial"
+      ? [`KB file not written: ${expectedKbFile}`, ...recommendationsArr]
+      : recommendationsArr;
 
     // Fast-track through full state machine: in_progress → implementation_done → main_review → acceptance → verified → closed
     try {
@@ -2128,9 +2131,7 @@ export class Orchestrator {
       this.taskManager.persistSyntheticAcceptance(task.taskId, agentId, {
         verdict,
         findings: findingsArr,
-        recommendations: verdict === "partial"
-          ? [`KB file not written: ${expectedKbFile}`, ...recommendationsArr]
-          : recommendationsArr,
+        recommendations: finalRecommendations,
       });
 
       this.taskManager.transitionTask(task.taskId, "verified", agentId);
@@ -2143,14 +2144,15 @@ export class Orchestrator {
       return;
     }
 
-    // Emit callback so originator is notified
+    // Emit callback so originator is notified; reworkTriggered: false distinguishes closed fast-track from rework
     this.bus.emit("orchestrator.task.callback", agentId, "orchestrator", {
       taskId: task.taskId,
       originatorSessionId: task.originatorSessionId,
       verdict,
       findings: findingsArr,
-      recommendations: recommendationsArr,
+      recommendations: finalRecommendations,
       reworkCount: task.reworkCount,
+      reworkTriggered: false,
     });
   }
 
@@ -2171,11 +2173,11 @@ export class Orchestrator {
     // Verify KB write when kbPaths are expected (same pattern as research)
     const kbPaths = (task.allowedWriteScope?.kbPaths ?? []).filter((p) => p.trim().length > 0);
     let designKbVerified = false;
-    let designKbFile: string | undefined;
-    if (kbPaths.length > 0 && this.kb?.isEnabled()) {
-      designKbFile = kbPaths[0].endsWith(".md")
-        ? kbPaths[0]
-        : `${kbPaths[0].replace(/\/+$/, "")}/${task.taskId}.md`;
+    // Derive designKbFile before the isEnabled() check so it is always defined when kbPaths.length > 0
+    const designKbFile = kbPaths.length > 0
+      ? (kbPaths[0].endsWith(".md") ? kbPaths[0] : `${kbPaths[0].replace(/\/+$/, "")}/${task.taskId}.md`)
+      : undefined;
+    if (designKbFile && this.kb?.isEnabled()) {
       try {
         const kbContent = await this.kb.read(designKbFile);
         designKbVerified = !!kbContent && kbContent.length > 100;
@@ -2206,6 +2208,9 @@ export class Orchestrator {
     };
 
     const designVerdict = (kbPaths.length > 0 && !designKbVerified) ? "partial" : "pass";
+    const finalDesignRecommendations = designVerdict === "partial"
+      ? [`KB file not written: ${designKbFile}`, ...designRecommendations]
+      : designRecommendations;
 
     // Fast-track through full state machine: in_progress → ... → closed
     try {
@@ -2224,9 +2229,7 @@ export class Orchestrator {
       this.taskManager.persistSyntheticAcceptance(task.taskId, agentId, {
         verdict: designVerdict,
         findings: designFindings,
-        recommendations: designVerdict === "partial"
-          ? [`KB file not written: ${designKbFile}`, ...designRecommendations]
-          : designRecommendations,
+        recommendations: finalDesignRecommendations,
       });
 
       this.taskManager.transitionTask(task.taskId, "verified", agentId);
@@ -2239,14 +2242,15 @@ export class Orchestrator {
       return;
     }
 
-    // Emit callback so originator is notified
+    // Emit callback so originator is notified; reworkTriggered: false distinguishes closed fast-track from rework
     this.bus.emit("orchestrator.task.callback", agentId, "orchestrator", {
       taskId: task.taskId,
       originatorSessionId: task.originatorSessionId,
       verdict: designVerdict,
       findings: designFindings,
-      recommendations: designRecommendations,
+      recommendations: finalDesignRecommendations,
       reworkCount: task.reworkCount,
+      reworkTriggered: false,
     });
   }
 
@@ -2816,7 +2820,7 @@ export class Orchestrator {
       const maxIterations = this.projectConfig?.research?.maxIterations;
       prompt = buildResearchPrompt(task, kbContext, maxIterations, tokenBudgetHint);
     } else if (role === "design") {
-      prompt = buildDesignPrompt(task, kbContext);
+      prompt = buildDesignPrompt(task, kbContext, tokenBudgetHint);
     } else {
       prompt = buildDevPrompt(task, kbContext, this.getProjectRoot());
     }

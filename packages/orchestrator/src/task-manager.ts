@@ -1161,6 +1161,7 @@ export function buildResearchPrompt(
 export function buildDesignPrompt(
   task: TaskBundle,
   kbContext?: string,
+  tokenBudgetHint?: number,
 ): string {
   const lines = [
     `# Design Task: ${task.title} [${task.taskId}]`,
@@ -1182,6 +1183,9 @@ export function buildDesignPrompt(
     "- Produce design artifacts (specs, diagrams, architecture docs) for the topic above.",
     "- Reference existing code patterns and KB docs as needed.",
     "- No code implementation expected.",
+    ...(tokenBudgetHint !== undefined && tokenBudgetHint > 0
+      ? [`- **TOKEN_BUDGET: ~${tokenBudgetHint.toLocaleString()} tokens remaining** — wrap up and submit design before reaching this limit.`]
+      : []),
     "",
     "## CRITICAL: Context Budget Check",
     `Before starting design work, check your remaining context window. If it is below ${RESEARCH_CONTEXT_BUDGET_THRESHOLD.toLocaleString()} tokens,`,
