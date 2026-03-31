@@ -123,6 +123,7 @@ let approvalsInitPromise: Promise<void> | null = null;
 let approvalsInitGeneration = 0;
 let approvalsDisposed = false;
 const approvalUnlisteners: UnlistenFn[] = [];
+const approvalPendingListenerBatches = new Set<UnlistenFn[]>();
 
 function cleanupApprovalListeners(listeners: UnlistenFn[]): void {
   for (const unlisten of listeners) unlisten();
@@ -142,6 +143,7 @@ async function initApprovalStore(): Promise<void> {
   let initPromise!: Promise<void>;
   initPromise = (async () => {
     const pending: UnlistenFn[] = [];
+    approvalPendingListenerBatches.add(pending);
     try {
       await waitForSidecarReady();
       if (!isActiveApprovalInit(generation)) return;
@@ -194,6 +196,7 @@ async function initApprovalStore(): Promise<void> {
       approvalsInitialized = false;
       throw e;
     } finally {
+      approvalPendingListenerBatches.delete(pending);
       if (!isActiveApprovalInit(generation)) {
         cleanupApprovalListeners(pending);
       }
@@ -211,6 +214,8 @@ function disposeApprovalStoreListeners(): void {
   approvalsDisposed = true;
   approvalsInitGeneration += 1;
   cleanupApprovalListeners(approvalUnlisteners);
+  for (const batch of approvalPendingListenerBatches) cleanupApprovalListeners(batch);
+  approvalPendingListenerBatches.clear();
   approvalsInitialized = false;
   approvalsInitPromise = null;
 }

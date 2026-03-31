@@ -51,8 +51,8 @@ When changes should be split by category:
 1. Create separate worktrees branching off `origin/develop`:
    - `git worktree add ../Mercury-split-A -b feature/TASK-123-part-A origin/develop`
    - `git worktree add ../Mercury-split-B -b feature/TASK-123-part-B origin/develop`
-2. Restore only the intended files into each worktree via direct file copy or `git checkout <branch> -- <path>`.
-3. Stage, commit, and push each worktree branch. Invoke `git-safe.ps1` via its absolute path while located inside the worktree directory:
+2. Restore only the intended files into each worktree via direct file copy or `git restore --source <branch> -- <path>`.
+3. Stage, commit, and push each worktree branch. While located inside the target worktree directory, invoke `git-safe.ps1` using a path that resolves to the main repo root (relative or absolute):
    - `Set-Location ../Mercury-split-A`
    - `powershell -ExecutionPolicy Bypass -File ../Mercury/scripts/codex/git-safe.ps1 add <path>`
    - `powershell -ExecutionPolicy Bypass -File ../Mercury/scripts/codex/git-safe.ps1 commit -Message "<message>"`

@@ -129,7 +129,7 @@ function Test-ProtectedPushSpec {
   return $destination -match "^(refs/heads/)?(develop|main|master)$"
 }
 
-function Get-ConfiguredRemotes {
+function Get-ConfiguredRemote {
   $remotes = @(git -C $repoRoot remote 2>$null)
   if ($LASTEXITCODE -ne 0 -or $remotes.Count -eq 0) {
     return @("origin", "upstream")
@@ -166,7 +166,7 @@ function Assert-SafePushTarget {
   Assert-TaskBranch -Branch $Branch
 
   if ([string]::IsNullOrWhiteSpace($CommandText)) {
-    return
+    throw "PushCommand is required for pre-push validation. Invoke push via scripts/codex/git-safe.ps1 or pass the full git push command text."
   }
 
   if ($CommandText -match '(^|\s)--all(\s|$)' -or $CommandText -match '(^|\s)--mirror(\s|$)') {
@@ -178,7 +178,7 @@ function Assert-SafePushTarget {
   }
 
   $tokens = $CommandText -split '\s+'
-  $knownTokens = @("git", "push") + (Get-ConfiguredRemotes)
+  $knownTokens = @("git", "push") + (Get-ConfiguredRemote)
   foreach ($token in $tokens) {
     if ($token -match '^-[^-][A-Za-z]+$') {
       $shortFlags = $token.Substring(1).ToCharArray()
@@ -201,10 +201,10 @@ function Assert-SafePushTarget {
   }
 }
 
-function Get-RemoteHosts {
+function Get-RemoteHost {
   $hosts = New-Object System.Collections.Generic.List[string]
 
-  foreach ($remoteName in Get-ConfiguredRemotes) {
+  foreach ($remoteName in Get-ConfiguredRemote) {
     $remoteOutput = git -C $repoRoot remote get-url $remoteName 2>$null
     $remote = if ($LASTEXITCODE -eq 0 -and $remoteOutput) { $remoteOutput.Trim() } else { "" }
     if ([string]::IsNullOrWhiteSpace($remote)) {
@@ -243,7 +243,7 @@ function Assert-GhCliAvailable {
     throw "GitHub CLI (gh) is not installed or not in PATH. Install it and run 'gh auth login' before using pre-merge checks."
   }
 
-  $candidateHosts = Get-RemoteHosts
+  $candidateHosts = Get-RemoteHost
   $errors = @()
   foreach ($remoteHost in $candidateHosts) {
     $authStatus = & gh auth status --active --hostname $remoteHost 2>&1
@@ -261,7 +261,7 @@ function Assert-GhCliAvailable {
   throw "GitHub CLI authentication check failed for hosts [$($candidateHosts -join ', ')]. $($errors -join ' | ')"
 }
 
-function Get-RepositoryCoordinates {
+function Get-RepositoryCoordinate {
   $repoJson = & gh repo view --json owner,name 2>&1
   if ($LASTEXITCODE -ne 0) {
     $detail = ($repoJson | Out-String).Trim()
@@ -345,7 +345,7 @@ function Assert-PreMergeReady {
     throw "PR #$Number has non-successful status checks: $($failingChecks -join ', ')"
   }
 
-  $repo = Get-RepositoryCoordinates
+  $repo = Get-RepositoryCoordinate
   $cursor = $null
   $unresolvedCount = 0
   $threadQuery = @'
@@ -436,7 +436,12 @@ switch ($Action) {
   "pre-merge" {
     Assert-GhCliAvailable
     $head = Get-CurrentHead
-    Assert-PreMergeReady -Number $PullRequestNumber -ExpectedBranch $branch -ExpectedHead $head
+    Push-Location $repoRoot
+    try {
+      Assert-PreMergeReady -Number $PullRequestNumber -ExpectedBranch $branch -ExpectedHead $head
+    } finally {
+      Pop-Location
+    }
     Write-Output "pre_merge=pass"
     exit 0
   }
