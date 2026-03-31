@@ -26,6 +26,7 @@ import type {
   RoleSlotKey,
   SessionInfo,
   SlashCommand,
+  CriticResult,
   DoDVerification,
   TaskBundle,
   TaskStatus,
@@ -1910,9 +1911,10 @@ export class Orchestrator {
       return;
     }
     const receipt = this.parseImplementationReceipt(task, agentId, finalMessage, completedAt);
-    // Phase 2.2: fire-and-forget DoD pre-verification (non-blocking)
-    void this.verifyDoDAtCompletion(task, agentId).catch(() => {});
     await this.recordReceiptAndTriggerReview(task.taskId, receipt);
+    // Phase 2.2: fire-and-forget DoD pre-verification after receipt is persisted (non-blocking)
+    const freshTask = await this.taskManager.getTaskAsync(task.taskId);
+    if (freshTask) void this.verifyDoDAtCompletion(freshTask, agentId).catch(() => {});
   }
 
   /**
@@ -1940,37 +1942,57 @@ export class Orchestrator {
       ]);
       rawResult = raceResult.finalMessage ?? "";
     } catch {
-      // Timeout or error — store PARTIAL verdict
+      // Timeout or error — store PARTIAL verdict (merge-safe)
       const partial: DoDVerification = {
         verdict: "PARTIAL",
         summary: "DoD pre-check timed out or failed.",
         checkedAt: Date.now(),
         verifiedItems: [],
       };
+      const currentMR1 = this.taskManager.getTask(task.taskId)?.mainReview;
       this.taskManager.updateTaskField(task.taskId, "mainReview", {
-        ...(task.mainReview ?? { preChecks: [], gitDiff: "" }),
+        ...(currentMR1 ?? { preChecks: [], gitDiff: "" }),
         dodVerification: partial,
       });
       return;
     }
 
-    // Parse verdict from LLM response: look for PASS/FAIL/PARTIAL keyword
-    const upper = rawResult.toUpperCase();
-    const verdict: DoDVerification["verdict"] =
-      upper.includes("PASS") ? "PASS" : upper.includes("FAIL") ? "FAIL" : "PARTIAL";
+    // Parse verdict from Critic JSON output; fall back to keyword heuristic
+    let verdict: DoDVerification["verdict"] = "PARTIAL";
+    let verifiedItems: DoDVerification["verifiedItems"] = [];
+    let parsedSummary = rawResult.slice(0, 500);
+    try {
+      const jsonMatch = rawResult.match(/```json\s*([\s\S]*?)```|({[\s\S]*})/);
+      const parsed = JSON.parse(jsonMatch ? (jsonMatch[1] ?? jsonMatch[2]) : rawResult) as Partial<CriticResult>;
+      const ov = parsed.overallVerdict?.toLowerCase();
+      verdict = ov === "pass" ? "PASS" : ov === "fail" ? "FAIL" : "PARTIAL";
+      if (Array.isArray(parsed.items)) {
+        verifiedItems = parsed.items.map((it) => ({
+          item: it.dodItem ?? "",
+          passed: it.verdict === "pass",
+          reason: it.detail ?? it.evidence,
+        }));
+      }
+    } catch {
+      // Not valid JSON — fall back to keyword scan
+      const upper = rawResult.toUpperCase();
+      verdict = upper.includes("PASS") && !upper.includes("FAIL") ? "PASS"
+        : upper.includes("FAIL") ? "FAIL"
+        : "PARTIAL";
+      verifiedItems = task.definitionOfDone.map((item) => ({ item, passed: verdict === "PASS" }));
+    }
 
     const dodVerification: DoDVerification = {
       verdict,
-      summary: rawResult.slice(0, 500),
+      summary: parsedSummary,
       checkedAt: Date.now(),
-      verifiedItems: task.definitionOfDone.map((item) => ({
-        item,
-        passed: verdict === "PASS",
-      })),
+      verifiedItems,
     };
 
+    // Merge-safe: read fresh mainReview snapshot before writing
+    const currentMR2 = this.taskManager.getTask(task.taskId)?.mainReview;
     this.taskManager.updateTaskField(task.taskId, "mainReview", {
-      ...(task.mainReview ?? { preChecks: [], gitDiff: "" }),
+      ...(currentMR2 ?? { preChecks: [], gitDiff: "" }),
       dodVerification,
     });
   }

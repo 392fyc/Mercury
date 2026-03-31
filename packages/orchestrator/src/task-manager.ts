@@ -6,7 +6,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { EventBus } from "@mercury/core";
@@ -68,6 +68,7 @@ export interface CreateTaskParams {
   modelRecommendation?: TaskBundle["modelRecommendation"];
   maxReworks?: number;
   maxDispatchAttempts?: number;
+  resourceBudget?: TaskBundle["resourceBudget"];
 }
 
 export interface CreateIssueParams {
@@ -344,6 +345,7 @@ export class TaskManager {
       maxReworks: params.maxReworks ?? 3,
       linkedIssueIds: [],
       reworkHistory: [],
+      resourceBudget: params.resourceBudget,
     };
 
     // Agents First: populate structured assignee from agent config
@@ -924,10 +926,10 @@ function formatWriteScope(scope: TaskBundle["allowedWriteScope"]): string {
 function buildGitLogSection(branch: string | undefined, basePath: string): string {
   if (!branch) return "";
   try {
-    const log = execSync(`git -C "${basePath}" log ${branch} -20 --oneline`, {
+    const log = execFileSync("git", ["-C", basePath, "log", "--max-count=20", "--oneline", branch], {
       timeout: 5000,
       encoding: "utf-8",
-    }).trim();
+    }).replace(/```/g, "` ` `").trim();
     if (!log) return "";
     return `
 
