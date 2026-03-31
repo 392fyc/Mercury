@@ -1,79 +1,119 @@
 ---
 name: web-research
 description: |
-  Use this skill before writing code that depends on an external SDK, API, package, CLI, config key, environment variable, or version claim. Trigger proactively on English and Chinese requests such as "research", "verify", "validate", "check docs", "SDK", "API", "CLI", "npm version", "PyPI", "研究", "验证", "查文档", "查官方文档", "核对版本", "审查集成". This skill enforces Mercury's rule to check official vendor docs first, cross-check npm or PyPI for publish status, include source URLs, and mark unresolved claims as `UNVERIFIED`.
+  Mercury's mandatory web research protocol for verifying external SDK/API/CLI behavior before writing code. Use this skill whenever the task involves importing external packages, referencing API signatures, claiming package versions, using CLI flags, or integrating with third-party tools. Also use when the user says "研究", "验证", "审查", "查阅", "核实", "调查", "research", "verify", "validate", "check docs", "look up". This skill should be consulted proactively, even if the user does not explicitly ask for research. Any code touching external dependencies needs verification first.
 ---
 
-# Web Research
+# Web Research Protocol
 
-## When
+Mercury enforces a strict rule: never guess SDK, API, or CLI behavior from training data. This skill provides the structured research workflow to follow before writing code that depends on external tools or libraries.
 
-- Use before coding against any third-party SDK, API, CLI, package, or hosted service.
-- Use when you need a current method signature, published package name, install command, version, flag, or config key.
-- Use even if the user did not explicitly ask for research; Mercury treats external API guesses as unsafe.
-- Do not use this skill for purely internal project APIs unless external behavior is involved.
+This protocol exists because stale signatures, deprecated methods, and incorrect version numbers cause avoidable debugging churn. A short official-doc search is cheaper than recovering from wrong assumptions.
 
-## Pipeline
+## When This Protocol Applies
 
-1. List every external claim you are about to rely on:
-   - package name
-   - import path
-   - version
-   - method or constructor signature
-   - CLI flags
-   - config keys or environment variables
-2. Verify each claim in this order:
-   - official docs site
-   - npm or PyPI package page
-   - official changelog or release notes
-   - official README only as a supplement
-3. Treat these as insufficient on their own:
-   - repo source code without docs
-   - third-party blogs
-   - Stack Overflow
-   - stale snippets from memory
-4. Record the authoritative details you confirmed:
-   - exact URL
-   - page date or version when available
-   - exact behavior you are relying on
-5. If a claim is not documented or browsing is unavailable:
-   - mark it as `UNVERIFIED`
-   - say what you searched for
-   - stop and escalate if the missing fact is critical
-6. Only implement code that relies on verified claims.
+Research is required before writing code that:
+- imports an external SDK
+- references an API method signature or constructor
+- claims a specific package version or compatibility
+- uses CLI flags or command syntax
+- references environment variables or configuration keys from external tools
 
-## Output
+## Research Workflow
 
-Use a compact research note before or alongside implementation:
+### 1. Identify Claims to Verify
 
-```text
-Claim:
-Source:
-Verified value:
-Status: VERIFIED | UNVERIFIED
+Before writing, list every external dependency claim in your planned code:
+- package name and version
+- import path
+- method signatures
+- configuration keys or values
+- CLI command syntax
+
+### 2. Search Official Sources
+
+For each claim, verify against the vendor's official documentation in this priority order:
+
+1. official docs site
+2. npm or PyPI registry
+3. official blog posts or changelogs
+4. official GitHub README as a supplement
+
+Not sufficient on their own:
+- source code without docs
+- Stack Overflow
+- third-party blogs
+- memory snippets
+
+### 3. Record Evidence
+
+When you find the authoritative answer, record:
+- the exact URL
+- the version or date when available
+- the exact API signature or behavior confirmed
+
+### 4. Mark Unverified Claims
+
+If web search is unavailable or the official docs do not cover the question:
+- mark the claim as `UNVERIFIED`
+- note what you searched for
+- escalate if the missing fact is critical
+
+## Example
+
+Before writing:
+
+```typescript
+import { query } from "@anthropic-ai/claude-agent-sdk";
 ```
 
-- Include source URLs directly in the response or handoff.
-- If multiple claims were checked, group them by dependency.
-- If the result is ambiguous, say so instead of collapsing competing interpretations.
+Search for:
+- package existence on npm
+- current published version
+- `query()` function signature
+- import path correctness
 
-## Evidence
+Then proceed only with verified signatures.
 
-- Preserve the official doc URL and the npm or PyPI URL for each external dependency.
-- Keep the verified package name, version, import path, and signature you actually used.
-- If anything stayed `UNVERIFIED`, state the gap explicitly in the final answer or code comment.
+## Integration with Enforcement
+
+Claude uses hooks as a safety net. Codex on Windows cannot rely on that path, so enforcement lives in:
+- `.codex/config.toml`
+- `.codex/rules/`
+- repo skills such as `web-research` and `codex-git-guard`
+- repo scripts under `scripts/codex/`
+
+These mechanisms are the backup. This skill remains the proactive workflow.
 
 ## Research Scope Routing
 
-This skill handles **light research** (1-2 questions, SDK/API verification). For larger investigations (≥ 3 questions, cross-source verification, architectural decisions), escalate to the `deep-research` skill.
+This skill handles light research (1-2 questions, single-source verification, SDK/API checks). For larger investigations, route to `deep-research`.
 
-### Light Gate Thresholds (`.mercury/gates/research-quality.yaml`)
+### When to Escalate to Deep Research
+
+- research questions >= 3
+- cross-verification across >= 3 independent sources
+- architectural decision analysis
+- TaskBundle `researchScope == "deep"`
+
+### Light Gate Thresholds
+
+Applied automatically within this skill's workflow:
 
 | Rule | Threshold |
 |------|-----------|
 | Web search executed | Must be true |
 | Source URL present | All claims must have URLs |
-| UNVERIFIED marked | Unverifiable claims tagged |
+| `UNVERIFIED` marked | Unverifiable claims tagged |
 | Max searches per question | 5 |
-| Total search budget | 15 |
-| SDK/API verification budget | 20 (extended) |
+| Total search budget per task | 15 |
+| SDK/API verification budget | 20 |
+
+### Quality Checklist
+
+Before declaring research done, verify:
+- every SDK import path confirmed against official docs
+- package version verified on npm or PyPI
+- API method signatures match vendor documentation
+- source URLs recorded for each verified claim
+- unverifiable claims explicitly marked `UNVERIFIED`

@@ -29,7 +29,7 @@ const {
   openFloatingTab,
 } = useAgentStore();
 const { initMessageListeners } = useMessageStore();
-const { initApprovalStore } = useApprovalStore();
+const { initApprovalStore, disposeApprovalStoreListeners } = useApprovalStore();
 const { initEventListeners } = useEventStore();
 const { initTaskListeners, disposeTaskListeners } = useTaskStore();
 
@@ -151,6 +151,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   stopExplorerResize();
   disposeTaskListeners();
+  disposeApprovalStoreListeners();
 });
 </script>
 
@@ -170,6 +171,7 @@ onBeforeUnmount(() => {
     <div v-if="sidecarError" class="error-banner">
       Orchestrator error: {{ sidecarError }}
     </div>
+
 
     <div class="workspace" :class="{ 'event-log-visible': showEventLog }">
       <div class="workspace-main">

@@ -1,4 +1,5 @@
 import { computed, ref } from "vue";
+import type { UnlistenFn } from "@tauri-apps/api/event";
 import type { ApprovalMode, ApprovalRequest, MercuryEvent } from "../lib/tauri-bridge";
 import {
   approveRequest as bridgeApproveRequest,
@@ -10,6 +11,8 @@ import {
   setApprovalMode as bridgeSetApprovalMode,
 } from "../lib/tauri-bridge";
 import { useAgentStore } from "./agents";
+
+const { waitForSidecarReady } = useAgentStore();
 
 const approvalMode = ref<ApprovalMode>("main_agent_review");
 const approvalRequests = ref<Map<string, ApprovalRequest>>(new Map());
@@ -24,6 +27,13 @@ const pendingRequests = computed(() =>
 );
 
 const pendingCount = computed(() => pendingRequests.value.length);
+
+function applyApprovalSnapshot(mode: ApprovalMode, requests: ApprovalRequest[]): void {
+  approvalMode.value = mode;
+  const next = new Map<string, ApprovalRequest>();
+  for (const request of requests) next.set(request.id, request);
+  approvalRequests.value = next;
+}
 
 function upsertRequest(request: ApprovalRequest): void {
   approvalRequests.value = new Map(approvalRequests.value).set(request.id, request);
@@ -109,48 +119,107 @@ function cancelPendingApprovalsForSession(sessionId: string, reason: string): vo
 }
 
 let approvalsInitialized = false;
+let approvalsInitPromise: Promise<void> | null = null;
+let approvalsInitGeneration = 0;
+let approvalsDisposed = false;
+const approvalUnlisteners: UnlistenFn[] = [];
+const approvalPendingListenerBatches = new Set<UnlistenFn[]>();
+
+function cleanupApprovalListeners(listeners: UnlistenFn[]): void {
+  for (const unlisten of listeners) {
+    try { unlisten(); } catch (e) { console.warn("[Mercury] Failed to unlisten approval listener:", e); }
+  }
+  listeners.length = 0;
+}
+
+function isActiveApprovalInit(generation: number): boolean {
+  return !approvalsDisposed && approvalsInitGeneration === generation;
+}
 
 async function initApprovalStore(): Promise<void> {
   if (approvalsInitialized) return;
-  approvalsInitialized = true;
-  try {
-    const { waitForSidecarReady } = useAgentStore();
-    await waitForSidecarReady();
+  if (approvalsInitPromise) return approvalsInitPromise;
 
-    const [modeResult, requests] = await Promise.all([
-      bridgeGetApprovalMode(),
-      bridgeListApprovalRequests(),
-    ]);
-    approvalMode.value = modeResult.mode;
-    const next = new Map<string, ApprovalRequest>();
-    for (const request of requests) next.set(request.id, request);
-    approvalRequests.value = next;
+  approvalsDisposed = false;
+  const generation = ++approvalsInitGeneration;
+  let initPromise!: Promise<void>;
+  initPromise = (async () => {
+    const pending: UnlistenFn[] = [];
+    approvalPendingListenerBatches.add(pending);
+    try {
+      await waitForSidecarReady();
+      if (!isActiveApprovalInit(generation)) return;
 
-    await onMercuryEvent((event: MercuryEvent) => {
-      if (event.type !== "agent.approval.requested" && event.type !== "agent.approval.resolved") {
-        return;
+      pending.push(await onMercuryEvent((event: MercuryEvent) => {
+        if (event.type !== "agent.approval.requested" && event.type !== "agent.approval.resolved") {
+          return;
+        }
+
+        const payload = event.payload as unknown as ApprovalRequest;
+        if (payload?.id) {
+          upsertRequest(payload);
+        }
+      }));
+      if (!isActiveApprovalInit(generation)) return;
+
+      // When a transport crash occurs, immediately cancel pending approvals for
+      // that session so the GUI doesn't show stale, unresponsive approval buttons.
+      pending.push(await onAgentError((data) => {
+        if (data.isTransportCrash) {
+          cancelPendingApprovalsForSession(
+            data.sessionId,
+            "Transport disconnected — approval cancelled",
+          );
+        }
+      }));
+      if (!isActiveApprovalInit(generation)) return;
+
+      const [modeResult, requests] = await Promise.all([
+        bridgeGetApprovalMode(),
+        bridgeListApprovalRequests(),
+      ]);
+      if (!isActiveApprovalInit(generation)) return;
+      applyApprovalSnapshot(modeResult.mode, requests);
+
+      // Close the snapshot/subscribe window by reconciling once after listeners
+      // are active so events that raced with the initial fetch are not lost.
+      const [reconciledMode, reconciledRequests] = await Promise.all([
+        bridgeGetApprovalMode(),
+        bridgeListApprovalRequests(),
+      ]);
+      if (!isActiveApprovalInit(generation)) return;
+      applyApprovalSnapshot(reconciledMode.mode, reconciledRequests);
+
+      approvalUnlisteners.push(...pending);
+      pending.length = 0;
+      approvalsInitialized = true;
+    } catch (e) {
+      cleanupApprovalListeners(pending);
+      approvalsInitialized = false;
+      throw e;
+    } finally {
+      approvalPendingListenerBatches.delete(pending);
+      if (!isActiveApprovalInit(generation)) {
+        cleanupApprovalListeners(pending);
       }
-
-      const payload = event.payload as unknown as ApprovalRequest;
-      if (payload?.id) {
-        upsertRequest(payload);
+      if (approvalsInitPromise === initPromise) {
+        approvalsInitPromise = null;
       }
-    });
+    }
+  })();
 
-    // When a transport crash occurs, immediately cancel pending approvals for
-    // that session so the GUI doesn't show stale, unresponsive approval buttons.
-    await onAgentError((data) => {
-      if (data.isTransportCrash) {
-        cancelPendingApprovalsForSession(
-          data.sessionId,
-          "Transport disconnected — approval cancelled",
-        );
-      }
-    });
-  } catch (e) {
-    approvalsInitialized = false;
-    throw e;
-  }
+  approvalsInitPromise = initPromise;
+  return approvalsInitPromise;
+}
+
+function disposeApprovalStoreListeners(): void {
+  approvalsDisposed = true;
+  approvalsInitGeneration += 1;
+  cleanupApprovalListeners(approvalUnlisteners);
+  for (const batch of approvalPendingListenerBatches) cleanupApprovalListeners(batch);
+  approvalPendingListenerBatches.clear();
+  approvalsInitialized = false;
+  approvalsInitPromise = null;
 }
 
 export function useApprovalStore() {
@@ -168,5 +237,6 @@ export function useApprovalStore() {
     approve,
     deny,
     initApprovalStore,
+    disposeApprovalStoreListeners,
   };
 }

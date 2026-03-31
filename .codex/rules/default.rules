@@ -1,0 +1,89 @@
+# Require the Codex wrappers for staging, committing, and pushing so repo guard scripts always run.
+prefix_rule(
+    pattern = ["git", "add"],
+    decision = "forbidden",
+    justification = "Use `powershell -File scripts/codex/git-safe.ps1 add <path> [more paths...]` with explicit paths.",
+    match = [
+        "git add packages/gui/src/main.ts",
+        "git add --all",
+        "git add -A",
+        "git add .",
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "commit"],
+    decision = "forbidden",
+    justification = "Use `powershell -File scripts/codex/git-safe.ps1 commit -Message \"...\"` so review and branch guards run first.",
+    match = [
+        "git commit -m test",
+        "git commit --amend --no-edit",
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "push"],
+    decision = "forbidden",
+    justification = "Use `powershell -File scripts/codex/git-safe.ps1 push ...` so protected-branch checks run first.",
+    match = [
+        "git push origin feature/TASK-123",
+        "git push origin HEAD:develop",
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "switch"],
+    decision = "forbidden",
+    justification = "Dev-side Codex sessions must stay on the assigned task branch. Create worktrees outside the guarded Codex flow if needed.",
+    match = [
+        "git switch develop",
+        "git switch -c feature/TASK-999",
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "checkout"],
+    decision = "forbidden",
+    justification = "Dev-side Codex sessions must stay on the assigned task branch. Create worktrees outside the guarded Codex flow if needed.",
+    match = [
+        "git checkout develop",
+        "git checkout -b feature/TASK-999",
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "merge"],
+    decision = "forbidden",
+    justification = "Do not merge inside a guarded Codex task branch; use the Mercury PR flow instead.",
+    match = [
+        "git merge develop",
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "rebase"],
+    decision = "forbidden",
+    justification = "Do not rebase inside a guarded Codex task branch; use the Mercury PR flow instead.",
+    match = [
+        "git rebase develop",
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "reset"],
+    decision = "forbidden",
+    justification = "Reset rewrites local history and bypasses review state. Resolve issues with explicit edits instead.",
+    match = [
+        "git reset --hard HEAD~1",
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "stash"],
+    decision = "forbidden",
+    justification = "Stash hides mutable state and bypasses the guarded task-branch workflow.",
+    match = [
+        "git stash",
+        "git stash push -u",
+    ],
+)

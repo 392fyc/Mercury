@@ -6,7 +6,7 @@ description: |
 
 # Auto Verify
 
-> **Platform note**: Examples use PowerShell syntax (Windows). For bash/zsh, replace `2>$null` with `2>/dev/null` and adjust accordingly.
+> Platform note: examples use PowerShell syntax for Codex on Windows. For bash or zsh, replace `2>$null` with `2>/dev/null` and adjust loops accordingly.
 
 ## When
 
@@ -25,13 +25,22 @@ git diff --cached --name-only
 
 2. Run type-check or compile checks. Choose the right command for the project:
    - If `package.json` has a `typecheck` or `check` script: run that
-   - TypeScript project (tsconfig.json exists): `npx tsc --noEmit` or `npx tsc --build` for monorepos
+   - TypeScript project (`tsconfig.json` exists): `npx tsc --noEmit` or `npx tsc --build` for monorepos
    - JavaScript with JSDoc types: `npx tsc --checkJs --noEmit`
    - Other languages or no type system: record `SKIP` with a note
 
 ```powershell
-# Preferred: use repo script if available
-npm run typecheck 2>$null; if ($LASTEXITCODE -ne 0) { npx tsc --noEmit }
+if (Get-Command pnpm -ErrorAction SilentlyContinue) {
+  pnpm typecheck
+} elseif (Get-Command npm -ErrorAction SilentlyContinue) {
+  npm run typecheck
+} elseif (Get-Command npx -ErrorAction SilentlyContinue) {
+  npx tsc --noEmit
+} elseif (Get-Command tsc -ErrorAction SilentlyContinue) {
+  tsc --noEmit
+} else {
+  Write-Output "SKIP: No supported package runner or tsc found for type-check."
+}
 ```
 
 3. Validate scope against the active TaskBundle when available:
@@ -44,11 +53,35 @@ npm run typecheck 2>$null; if ($LASTEXITCODE -ne 0) { npx tsc --noEmit }
 npx eslint --max-warnings 0 <changed-files>
 ```
 
-5. Run git hygiene checks:
+1. Check docstring coverage on changed files (whole-file scan, not diff-only):
+   - Threshold: 50% of exported runtime declarations in changed `.ts` files must have JSDoc
+   - Count exported classes, functions, async functions, and const declarations, then count those with `/** ... */`
+   - If coverage is below 50%, report which files are under the threshold
+   - This scans the entire file, not just diff hunks
+   - This aligns with CodeRabbit's pre-merge check (`.coderabbit.yaml` threshold: 50%)
+
+```powershell
+git diff --cached --name-only --diff-filter=ACMRT -- '*.ts' | ForEach-Object {
+  $f = $_
+  if (-not (Test-Path -LiteralPath $f)) { return }
+  $content = Get-Content -Path $f -Raw
+  $exportDecl = 'export\s+(default\s+)?(class|function|async function|const)\b'
+  $total = ([regex]::Matches($content, "(?m)^\s*$exportDecl")).Count
+  if (-not $total) { $total = 0 }
+  $documented = ([regex]::Matches($content, "(?ms)/\*\*.*?\*/\s*$exportDecl")).Count
+  if (-not $documented) { $documented = 0 }
+  $pct = if ($total -gt 0) { [math]::Floor(($documented * 100) / $total) } else { 100 }
+  if ($pct -lt 50) {
+    Write-Output "WARN: $f docstring coverage $pct% ($documented/$total)"
+  }
+}
+```
+
+1. Run git hygiene checks:
    - no stray debug artifacts that obviously should not ship
    - no `.only` in tests
    - branch naming matches the task expectation when a task branch is known
-6. If a check fails:
+1. If a check fails:
    - fix obvious in-scope issues
    - rerun the failed check
    - escalate instead of committing if the failure requires out-of-scope changes
@@ -62,6 +95,7 @@ Produce a compact result block:
 TypeCheck: PASS | FAIL | SKIP
 Scope: PASS | FAIL | SKIP
 Lint: PASS | FAIL | SKIP
+DocString: PASS | WARN (<files>) | SKIP
 GitHygiene: PASS | FAIL
 Overall: PASS | FAIL
 ```
@@ -74,7 +108,7 @@ Overall: PASS | FAIL
 Record a one-line entry suitable for `implementationReceipt.evidence`, for example:
 
 ```text
-auto-verify: PASS (tsc: clean, scope: 8 files checked, lint: clean, git: clean)
+auto-verify: PASS (tsc: clean, scope: 8 files checked, lint: clean, docstring: 75%, git: clean)
 ```
 
 If anything failed, keep the failure summary and the rerun result.
