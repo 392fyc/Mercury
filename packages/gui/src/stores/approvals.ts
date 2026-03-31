@@ -12,6 +12,8 @@ import {
 } from "../lib/tauri-bridge";
 import { useAgentStore } from "./agents";
 
+const { waitForSidecarReady } = useAgentStore();
+
 const approvalMode = ref<ApprovalMode>("main_agent_review");
 const approvalRequests = ref<Map<string, ApprovalRequest>>(new Map());
 const queueOpen = ref(false);
@@ -139,7 +141,6 @@ async function initApprovalStore(): Promise<void> {
   const generation = ++approvalsInitGeneration;
   let initPromise!: Promise<void>;
   initPromise = (async () => {
-    const { waitForSidecarReady } = useAgentStore();
     const pending: UnlistenFn[] = [];
     try {
       await waitForSidecarReady();

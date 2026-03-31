@@ -26,16 +26,31 @@ function Initialize-StateDir {
 }
 
 function Get-CurrentBranch {
-  return (git -C $repoRoot rev-parse --abbrev-ref HEAD).Trim()
+  $branchOutput = git -C $repoRoot rev-parse --abbrev-ref HEAD
+  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($branchOutput)) {
+    throw "Unable to determine the current git branch."
+  }
+
+  return $branchOutput.Trim()
 }
 
 function Get-StagedTreeHash {
-  $tree = (git -C $repoRoot write-tree).Trim()
+  $treeOutput = git -C $repoRoot write-tree
+  $tree = if ($LASTEXITCODE -eq 0 -and $treeOutput) { $treeOutput.Trim() } else { "" }
   if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($tree)) {
     throw "Unable to capture the staged tree snapshot for review verification."
   }
 
   return $tree
+}
+
+function Get-CurrentHead {
+  $headOutput = git -C $repoRoot rev-parse HEAD
+  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($headOutput)) {
+    throw "Unable to determine the current git HEAD."
+  }
+
+  return $headOutput.Trim()
 }
 
 function Test-ProtectedBranch {
@@ -120,7 +135,26 @@ function Get-ConfiguredRemotes {
     return @("origin", "upstream")
   }
 
-  return $remotes | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+  $normalized = @(
+    $remotes |
+      ForEach-Object { $_.Trim() } |
+      Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+  )
+
+  $preferred = @()
+  foreach ($name in @("upstream", "origin")) {
+    if ($normalized -contains $name) {
+      $preferred += $name
+    }
+  }
+
+  foreach ($name in $normalized) {
+    if ($preferred -notcontains $name) {
+      $preferred += $name
+    }
+  }
+
+  return $preferred
 }
 
 function Assert-SafePushTarget {
@@ -146,6 +180,13 @@ function Assert-SafePushTarget {
   $tokens = $CommandText -split '\s+'
   $knownTokens = @("git", "push") + (Get-ConfiguredRemotes)
   foreach ($token in $tokens) {
+    if ($token -match '^-[^-][A-Za-z]+$') {
+      $shortFlags = $token.Substring(1).ToCharArray()
+      if ($shortFlags -contains 'f' -or $shortFlags -contains 'd') {
+        throw "Destructive push flags (--force/--force-with-lease/--delete) are forbidden in Codex guard mode."
+      }
+    }
+
     if ($token -in $knownTokens) {
       continue
     }
@@ -160,21 +201,40 @@ function Assert-SafePushTarget {
   }
 }
 
-function Get-RemoteHost {
-  $remote = (git -C $repoRoot remote get-url origin 2>$null).Trim()
-  if ([string]::IsNullOrWhiteSpace($remote)) {
-    return "github.com"
+function Get-RemoteHosts {
+  $hosts = New-Object System.Collections.Generic.List[string]
+
+  foreach ($remoteName in Get-ConfiguredRemotes) {
+    $remoteOutput = git -C $repoRoot remote get-url $remoteName 2>$null
+    $remote = if ($LASTEXITCODE -eq 0 -and $remoteOutput) { $remoteOutput.Trim() } else { "" }
+    if ([string]::IsNullOrWhiteSpace($remote)) {
+      continue
+    }
+
+    $remoteHost = $null
+    try {
+      $uri = [Uri]$remote
+      if ($uri.IsAbsoluteUri -and -not [string]::IsNullOrWhiteSpace($uri.DnsSafeHost)) {
+        $remoteHost = $uri.DnsSafeHost
+      }
+    } catch {
+      $remoteHost = $null
+    }
+
+    if (-not $remoteHost -and $remote -match '^[^@]+@(?<host>[^:]+):.+$') {
+      $remoteHost = $Matches["host"]
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($remoteHost) -and -not $hosts.Contains($remoteHost)) {
+      $hosts.Add($remoteHost)
+    }
   }
 
-  if ($remote -match '^[^@]+@([^:]+):') {
-    return $Matches[1]
+  if ($hosts.Count -eq 0) {
+    $hosts.Add("github.com")
   }
 
-  if ($remote -match '^[a-z]+://([^/]+)/') {
-    return $Matches[1]
-  }
-
-  return "github.com"
+  return @($hosts)
 }
 
 function Assert-GhCliAvailable {
@@ -183,15 +243,22 @@ function Assert-GhCliAvailable {
     throw "GitHub CLI (gh) is not installed or not in PATH. Install it and run 'gh auth login' before using pre-merge checks."
   }
 
-  $remoteHost = Get-RemoteHost
-  $authStatus = & gh auth status --active --hostname $remoteHost 2>&1
-  if ($LASTEXITCODE -ne 0) {
+  $candidateHosts = Get-RemoteHosts
+  $errors = @()
+  foreach ($remoteHost in $candidateHosts) {
+    $authStatus = & gh auth status --active --hostname $remoteHost 2>&1
+    if ($LASTEXITCODE -eq 0) {
+      return
+    }
+
     $detail = ($authStatus | Out-String).Trim()
     if ([string]::IsNullOrWhiteSpace($detail)) {
-      $detail = "Run 'gh auth login' for the repository host and retry."
+      $detail = "Run 'gh auth login' for this host and retry."
     }
-    throw "GitHub CLI authentication check failed for '$remoteHost'. $detail"
+    $errors += "${remoteHost}: $detail"
   }
+
+  throw "GitHub CLI authentication check failed for hosts [$($candidateHosts -join ', ')]. $($errors -join ' | ')"
 }
 
 function Get-RepositoryCoordinates {
@@ -229,15 +296,27 @@ function Get-CheckLabel {
 }
 
 function Assert-PreMergeReady {
-  param([int]$Number)
+  param(
+    [int]$Number,
+    [string]$ExpectedBranch,
+    [string]$ExpectedHead
+  )
 
   if ($Number -le 0) {
     throw "PullRequestNumber must be a positive integer for pre-merge checks."
   }
 
-  $pr = gh pr view $Number --json reviewDecision,statusCheckRollup | ConvertFrom-Json
+  $pr = gh pr view $Number --json reviewDecision,statusCheckRollup,headRefName,headRefOid | ConvertFrom-Json
   if ($LASTEXITCODE -ne 0 -or -not $pr) {
     throw "Unable to fetch PR metadata for #$Number."
+  }
+
+  if ($pr.headRefName -ne $ExpectedBranch) {
+    throw "PR #$Number belongs to branch '$($pr.headRefName)', but current branch is '$ExpectedBranch'."
+  }
+
+  if ($pr.headRefOid -ne $ExpectedHead) {
+    throw "PR #$Number is at '$($pr.headRefOid)', but current HEAD is '$ExpectedHead'. Push/fetch and retry."
   }
 
   if ($pr.reviewDecision -ne "APPROVED") {
@@ -356,7 +435,8 @@ switch ($Action) {
   }
   "pre-merge" {
     Assert-GhCliAvailable
-    Assert-PreMergeReady -Number $PullRequestNumber
+    $head = Get-CurrentHead
+    Assert-PreMergeReady -Number $PullRequestNumber -ExpectedBranch $branch -ExpectedHead $head
     Write-Output "pre_merge=pass"
     exit 0
   }
