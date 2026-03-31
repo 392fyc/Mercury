@@ -3260,7 +3260,9 @@ export class Orchestrator {
         ? "Task has been verified and closed."
         : payload.verdict === "blocked"
           ? "Task is blocked. Manual intervention required."
-          : "Rework has been triggered. Dev agent will receive updated instructions.",
+          : payload.reworkTriggered === true
+            ? "Rework has been triggered. Dev agent will receive updated instructions."
+            : "Task closed (partial). KB write was not verified; findings are available in the task result.",
     );
 
     return lines.filter(Boolean).join("\n");
@@ -3369,6 +3371,7 @@ export class Orchestrator {
           originatorSessionId: task.originatorSessionId,
           verdict: "pass",
           reworkCount: task.reworkCount,
+          reworkTriggered: false,
         },
       );
 
@@ -3410,6 +3413,7 @@ export class Orchestrator {
           findings: results.findings,
           recommendations: results.recommendations,
           reworkCount: task.reworkCount,
+          reworkTriggered: true,
         },
       );
 
@@ -3432,6 +3436,7 @@ export class Orchestrator {
           findings: results.findings,
           recommendations: results.recommendations,
           reworkCount: task.reworkCount,
+          reworkTriggered: false,
         },
       );
 
