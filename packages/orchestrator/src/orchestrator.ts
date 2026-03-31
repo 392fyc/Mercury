@@ -2085,23 +2085,8 @@ export class Orchestrator {
           message: `[task] WARNING: Research task ${task.taskId} did not write expected KB file "${expectedKbFile}". Findings may be lost.`,
         });
         // Orchestrator-side KB recovery: write finalMessage as fallback if non-trivial
-        if (finalMessage.length > 200) {
-          try {
-            const fallbackContent = `# Research Fallback: ${task.title} [${task.taskId}]
-
-> Auto-recovered by orchestrator — agent did not write KB directly.
-
-${finalMessage}`;
-            await this.kb.write(expectedKbFile, fallbackContent);
-            kbWriteVerified = true;
-            this.transport.sendNotification("log", {
-              message: `[task] Orchestrator KB recovery succeeded for ${task.taskId}: wrote ${fallbackContent.length} bytes to "${expectedKbFile}"`,
-            });
-          } catch (writeErr) {
-            this.transport.sendNotification("log", {
-              message: `[task] Orchestrator KB recovery also failed for ${task.taskId}: ${writeErr instanceof Error ? writeErr.message : writeErr}`,
-            });
-          }
+        if (await this.attemptKbRecovery(task.taskId, task.title, "Research", finalMessage, expectedKbFile)) {
+          kbWriteVerified = true;
         }
       }
     }
@@ -2194,17 +2179,13 @@ ${finalMessage}`;
       try {
         const kbContent = await this.kb.read(designKbFile);
         designKbVerified = !!kbContent && kbContent.length > 100;
-      } catch { /* not found */ }
-      if (!designKbVerified && finalMessage.length > 200) {
-        try {
-          const fallback = `# Design Fallback: ${task.title} [${task.taskId}]
-
-> Auto-recovered by orchestrator.
-
-${finalMessage}`;
-          await this.kb.write(designKbFile, fallback);
+      } catch {
+        // KB file not found or not readable — will attempt recovery
+      }
+      if (!designKbVerified) {
+        if (await this.attemptKbRecovery(task.taskId, task.title, "Design", finalMessage, designKbFile)) {
           designKbVerified = true;
-        } catch { /* best-effort */ }
+        }
       }
     }
 
@@ -2345,6 +2326,36 @@ ${finalMessage}`;
       findings: this.readStringArray(parsed?.findings),
       recommendations: this.readStringArray(parsed?.recommendations),
     };
+  }
+
+  /**
+   * Attempt orchestrator-side KB recovery when an agent fails to write its KB file.
+   * Returns true if the fallback write succeeded, false otherwise.
+   */
+  private async attemptKbRecovery(
+    taskId: string,
+    taskTitle: string,
+    fallbackLabel: "Research" | "Design",
+    finalMessage: string,
+    expectedKbFile: string,
+  ): Promise<boolean> {
+    const MIN_FALLBACK_LENGTH = 200;
+    if (finalMessage.length <= MIN_FALLBACK_LENGTH) return false;
+    if (!this.kb?.isEnabled()) return false;
+
+    try {
+      const fallbackContent = `# ${fallbackLabel} Fallback: ${taskTitle} [${taskId}]\n\n> Auto-recovered by orchestrator — agent did not write KB directly.\n\n${finalMessage}`;
+      await this.kb.write(expectedKbFile, fallbackContent);
+      this.transport.sendNotification("log", {
+        message: `[task] Orchestrator KB recovery succeeded for ${taskId}: wrote ${fallbackContent.length} bytes to "${expectedKbFile}"`,
+      });
+      return true;
+    } catch (writeErr) {
+      this.transport.sendNotification("log", {
+        message: `[task] Orchestrator KB recovery also failed for ${taskId}: ${writeErr instanceof Error ? writeErr.message : writeErr}`,
+      });
+      return false;
+    }
   }
 
   private tryParseJsonRecord(content: string): Record<string, unknown> | null {

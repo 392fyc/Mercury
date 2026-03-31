@@ -1077,6 +1077,9 @@ function deriveKbWriteInstructions(task: TaskBundle): string[] {
   ];
 }
 
+/** Minimum context window tokens before skipping research and going straight to JSON output. */
+const RESEARCH_CONTEXT_BUDGET_THRESHOLD = 20_000;
+
 /**
  * Build a research-role dispatch prompt.
  * Research tasks produce findings/reports, not code commits.
@@ -1118,7 +1121,7 @@ export function buildResearchPrompt(
       : []),
     "",
     "## CRITICAL: Context Budget Check",
-    "Before starting research, check your remaining context window. If it is below 20,000 tokens,",
+    `Before starting research, check your remaining context window. If it is below ${RESEARCH_CONTEXT_BUDGET_THRESHOLD.toLocaleString()} tokens,`,
     "SKIP all research and go directly to Step 1 to output the JSON summary with what you know.",
     "",
     "## Step 1 (ALWAYS FIRST): Output JSON Summary",
@@ -1179,13 +1182,13 @@ export function buildDesignPrompt(
     "- Reference existing code patterns and KB docs as needed.",
     "- No code implementation expected.",
     "",
-    "## MANDATORY: Write Report to KB (Step 1)",
-    "Before outputting your final JSON summary, you MUST write the full report to KB.",
-    ...deriveKbWriteInstructions(task),
-    "If kb_write fails, retry once. If it still fails, do NOT proceed to Step 2 — report the error as your final message.",
+    "## CRITICAL: Context Budget Check",
+    `Before starting design work, check your remaining context window. If it is below ${RESEARCH_CONTEXT_BUDGET_THRESHOLD.toLocaleString()} tokens,`,
+    "SKIP all design work and go directly to Step 1 to output the JSON summary with what you know.",
     "",
-    "## Output Format (Step 2)",
-    "After writing the KB file, return a JSON design report as your final message:",
+    "## Step 1 (ALWAYS FIRST): Output JSON Summary",
+    "Your FINAL MESSAGE must be the JSON design report below. Output it BEFORE writing to KB.",
+    "This guarantees the receipt has content even if KB write fails or context exhausts.",
     "```json",
     JSON.stringify({
       designer: "",
@@ -1195,6 +1198,12 @@ export function buildDesignPrompt(
       completedAt: "",
     }, null, 2),
     "```",
+    "",
+    "## Step 2 (After JSON output): Write Report to KB",
+    "After outputting the JSON summary above, write the full design report to KB.",
+    ...deriveKbWriteInstructions(task),
+    "If kb_write fails, retry once. If it still fails, add the error to your artifacts list —",
+    "the JSON summary (Step 1) already ensures the receipt has your design.",
   ];
 
   if (kbContext) {
