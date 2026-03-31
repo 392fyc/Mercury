@@ -125,6 +125,12 @@ export interface ResearchConfig {
    * When the agent reaches this limit it must stop looping and submit its findings.
    */
   maxIterations?: number;
+  /**
+   * Cumulative token budget for a single research task (informational hint injected into prompt).
+   * The agent is instructed to wrap up before exceeding this budget.
+   * 0 or undefined means no budget hint is injected.
+   */
+  cumulativeTokenBudget?: number;
 }
 
 export interface MercuryConfig {
@@ -340,6 +346,14 @@ export interface ReviewConfig {
   diffMaxChars?: number;
 }
 
+/** Pre-completion DoD verification result (set before receipt is recorded). */
+export interface DoDVerification {
+  verdict: "PASS" | "FAIL" | "PARTIAL";
+  summary: string;
+  checkedAt: number;
+  verifiedItems: { item: string; passed: boolean; reason?: string }[];
+}
+
 /** SoT task bundle: tracks a unit of work through its full lifecycle. */
 export interface TaskBundle {
   taskId: string;
@@ -382,6 +396,7 @@ export interface TaskBundle {
     gitDiff: string;
     result?: StructuredReviewResult;
     reviewedAt?: number;
+    dodVerification?: DoDVerification;
   };
 
   // Critic review (spec-driven verification, parallel to main_review)
@@ -410,6 +425,12 @@ export interface TaskBundle {
 
   // Rework history: accumulated across attempts for iterative context
   reworkHistory: ReworkHistoryEntry[];
+
+  /** Optional per-task token budget hint (informational, injected into role prompt). */
+  resourceBudget?: {
+    tokenBudget?: number;
+    warningThresholdPercent?: number;
+  };
 }
 
 export interface ReworkHistoryEntry {

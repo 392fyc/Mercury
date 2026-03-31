@@ -30,6 +30,7 @@ export function buildRoleSystemPrompt(
   roleProjectContext?: string,
   roleInstructions?: string,
   basePath?: string,
+  tokenBudgetHint?: number,
 ): string {
   const card = loadRoleCard(role, basePath);
   const lines: string[] = [];
@@ -106,6 +107,16 @@ export function buildRoleSystemPrompt(
   if (roleProjectContext) {
     lines.push("## Role-Specific Project Context");
     lines.push(roleProjectContext);
+    lines.push("");
+  }
+
+  if (tokenBudgetHint !== undefined && tokenBudgetHint > 0) {
+    lines.push("## Token Budget");
+    lines.push(
+      `Your estimated remaining token budget for this task is approximately **${tokenBudgetHint.toLocaleString()} tokens**.`,
+    );
+    lines.push("- Prioritize completing the core implementation within this budget.");
+    lines.push("- If approaching the limit, wrap up current work and summarize remaining steps in the receipt.");
     lines.push("");
   }
 

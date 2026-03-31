@@ -26,6 +26,8 @@ import type {
   RoleSlotKey,
   SessionInfo,
   SlashCommand,
+  CriticResult,
+  DoDVerification,
   TaskBundle,
   TaskStatus,
 } from "@mercury/core";
@@ -302,7 +304,7 @@ export class Orchestrator {
     return process.cwd();
   }
 
-  private buildSystemRolePrompt(role: AgentRole, task?: TaskBundle): string {
+  private buildSystemRolePrompt(role: AgentRole, task?: TaskBundle, tokenBudgetHint?: number): string {
     const overrides = this.projectConfig?.obsidian?.roleInstructionOverrides;
     const overrideKey = role as keyof NonNullable<typeof overrides>;
     const roleInstructions = overrides && overrideKey in overrides
@@ -315,6 +317,7 @@ export class Orchestrator {
       this.getRoleSpecificContext(role),
       roleInstructions,
       this.getProjectRoot(),
+      tokenBudgetHint,
     );
   }
 
@@ -1909,6 +1912,89 @@ export class Orchestrator {
     }
     const receipt = this.parseImplementationReceipt(task, agentId, finalMessage, completedAt);
     await this.recordReceiptAndTriggerReview(task.taskId, receipt);
+    // Phase 2.2: fire-and-forget DoD pre-verification after receipt is persisted (non-blocking)
+    const freshTask = await this.taskManager.getTaskAsync(task.taskId);
+    if (freshTask) void this.verifyDoDAtCompletion(freshTask, agentId).catch(() => {});
+  }
+
+  /**
+   * Phase 2.2: Pre-completion DoD verification.
+   * Runs a lightweight LLM check against the task's Definition of Done using the Critic prompt.
+   * Results are stored in task.mainReview.dodVerification (non-blocking, 10s timeout).
+   */
+  private async verifyDoDAtCompletion(task: TaskBundle, agentId: string): Promise<void> {
+    if (!task.definitionOfDone?.length) return;
+    const adapter = this.registry.getAdapter(agentId);
+    if (!adapter.executeOneShot) return;
+
+    const prompt = buildCriticPrompt(task, this.getProjectRoot());
+    const systemPrompt = this.buildSystemRolePrompt("critic", task);
+    const cwd = this.agentCwds.get(agentId) ?? process.cwd();
+
+    let rawResult: string;
+    try {
+      const timeoutMs = 10_000;
+      const raceResult = await Promise.race([
+        adapter.executeOneShot(this.wrapPromptWithRoleContext(prompt, systemPrompt), cwd),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("DoD pre-check timeout")), timeoutMs),
+        ),
+      ]);
+      rawResult = raceResult.finalMessage ?? "";
+    } catch {
+      // Timeout or error — store PARTIAL verdict (merge-safe)
+      const partial: DoDVerification = {
+        verdict: "PARTIAL",
+        summary: "DoD pre-check timed out or failed.",
+        checkedAt: Date.now(),
+        verifiedItems: [],
+      };
+      const currentMR1 = this.taskManager.getTask(task.taskId)?.mainReview;
+      this.taskManager.updateTaskField(task.taskId, "mainReview", {
+        ...(currentMR1 ?? { preChecks: [], gitDiff: "" }),
+        dodVerification: partial,
+      });
+      return;
+    }
+
+    // Parse verdict from Critic JSON output; fall back to keyword heuristic
+    let verdict: DoDVerification["verdict"] = "PARTIAL";
+    let verifiedItems: DoDVerification["verifiedItems"] = [];
+    let parsedSummary = rawResult.slice(0, 500);
+    try {
+      const jsonMatch = rawResult.match(/```json\s*([\s\S]*?)```|({[\s\S]*})/);
+      const parsed = JSON.parse(jsonMatch ? (jsonMatch[1] ?? jsonMatch[2]) : rawResult) as Partial<CriticResult>;
+      const ov = parsed.overallVerdict?.toLowerCase();
+      verdict = ov === "pass" ? "PASS" : ov === "fail" ? "FAIL" : "PARTIAL";
+      if (Array.isArray(parsed.items)) {
+        verifiedItems = parsed.items.map((it) => ({
+          item: it.dodItem ?? "",
+          passed: it.verdict === "pass",
+          reason: it.detail ?? it.evidence,
+        }));
+      }
+    } catch {
+      // Not valid JSON — fall back to keyword scan
+      const upper = rawResult.toUpperCase();
+      verdict = upper.includes("PASS") && !upper.includes("FAIL") ? "PASS"
+        : upper.includes("FAIL") ? "FAIL"
+        : "PARTIAL";
+      verifiedItems = task.definitionOfDone.map((item) => ({ item, passed: verdict === "PASS" }));
+    }
+
+    const dodVerification: DoDVerification = {
+      verdict,
+      summary: parsedSummary,
+      checkedAt: Date.now(),
+      verifiedItems,
+    };
+
+    // Merge-safe: read fresh mainReview snapshot before writing
+    const currentMR2 = this.taskManager.getTask(task.taskId)?.mainReview;
+    this.taskManager.updateTaskField(task.taskId, "mainReview", {
+      ...(currentMR2 ?? { preChecks: [], gitDiff: "" }),
+      dodVerification,
+    });
   }
 
   private async handleMainReviewStreamComplete(
@@ -2652,11 +2738,17 @@ export class Orchestrator {
       }
     }
 
+    // Derive token budget hint from task.resourceBudget (apply 90% safety margin)
+    const rawBudget = task.resourceBudget?.tokenBudget;
+    const tokenBudgetHint = rawBudget !== undefined
+      ? Math.floor(rawBudget * 0.9)
+      : undefined;
+
     // Build role-appropriate prompt
     let prompt: string;
     if (role === "research") {
       const maxIterations = this.projectConfig?.research?.maxIterations;
-      prompt = buildResearchPrompt(task, kbContext, maxIterations);
+      prompt = buildResearchPrompt(task, kbContext, maxIterations, tokenBudgetHint);
     } else if (role === "design") {
       prompt = buildDesignPrompt(task, kbContext);
     } else {
@@ -2666,7 +2758,7 @@ export class Orchestrator {
     return {
       task,
       prompt,
-      rolePrompt: this.buildSystemRolePrompt(role, task),
+      rolePrompt: this.buildSystemRolePrompt(role, task, tokenBudgetHint),
       baseRolePrompt: this.buildSystemRolePrompt(role),
     };
   }
