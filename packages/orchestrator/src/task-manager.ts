@@ -1101,10 +1101,11 @@ if (CODEX_DELEGATION_THRESHOLD <= RESEARCH_CONTEXT_BUDGET_THRESHOLD) {
 
 /**
  * Claude Code sub-agent type for Codex delegation.
- * Defined in .claude/agents/codex-rescue.md (project-level sub-agent).
+ * Provided by the official codex@openai-codex plugin (openai/codex-plugin-cc).
+ * Install: /plugin marketplace add openai/codex-plugin-cc then /plugin install codex@openai-codex
  * Distinct from Mercury's own codex-cli adapter.
  */
-const CODEX_SUBAGENT_ID = "codex-rescue";
+const CODEX_SUBAGENT_ID = "codex:codex-rescue";
 
 /**
  * Build a research-role dispatch prompt.
@@ -1147,8 +1148,8 @@ export function buildResearchPrompt(
       : []),
     "",
     "## Codex Sub-Agent Delegation",
-    `You may delegate token-intensive file scanning to the \`${CODEX_SUBAGENT_ID}\` sub-agent via the Agent tool.`,
-    "**Delegate when:**",
+    `If the \`codex@openai-codex\` plugin is installed and enabled, use \`${CODEX_SUBAGENT_ID}\` via the Agent tool for token-intensive file scanning.`,
+    "**Delegate when (plugin enabled):**",
     `- Your token budget drops below ${CODEX_DELEGATION_THRESHOLD.toLocaleString()} tokens AND you still need file scanning`,
     "- A task requires scanning 5+ files sequentially with Grep/Read",
     "- You need broad codebase pattern analysis across many directories",
@@ -1163,7 +1164,7 @@ export function buildResearchPrompt(
     "```",
     "The sub-agent's tokens are independent — its context does NOT count against yours.",
     "Use its output as raw evidence in your Step 1 JSON; you write the final synthesis.",
-    "If the sub-agent is unavailable or the Agent tool call fails, continue with local Grep/Read and narrow scope early to protect remaining budget.",
+    "If the plugin is not installed or the Agent tool call fails, continue with local Grep/Read and narrow scope early to protect remaining budget.",
     "",
     "## CRITICAL: Context Budget Check",
     `Before starting research, check your remaining context window. If it is below ${RESEARCH_CONTEXT_BUDGET_THRESHOLD.toLocaleString()} tokens,`,
