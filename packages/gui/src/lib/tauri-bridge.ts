@@ -518,6 +518,10 @@ export interface SessionListItem {
   promptHash?: string;
   currentPromptHash?: string;
   legacyRoleConfig?: boolean;
+  /** Cumulative token usage for this session (updated live during streaming). */
+  tokenUsage?: number;
+  /** Maximum token limit for this session's context window. */
+  tokenLimit?: number;
 }
 
 /** List sessions, optionally filtered by agent, role, or terminal status. */
@@ -812,6 +816,10 @@ export interface AgentStreamingEvent {
     toolName?: string;
     toolInput?: string;
     timestamp: number;
+    /** Cumulative token count for the session at this point in the stream. */
+    tokenCount?: number;
+    /** Context-window token limit for this session (if known). */
+    tokenLimit?: number;
   };
 }
 

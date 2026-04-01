@@ -1088,6 +1088,25 @@ function deriveKbWriteInstructions(task: TaskBundle): string[] {
 const RESEARCH_CONTEXT_BUDGET_THRESHOLD = 20_000;
 
 /**
+ * Token budget level at which the research agent should delegate heavy file scanning to Codex.
+ * Must be above RESEARCH_CONTEXT_BUDGET_THRESHOLD to leave room for synthesis.
+ */
+const CODEX_DELEGATION_THRESHOLD = 40_000;
+
+if (CODEX_DELEGATION_THRESHOLD <= RESEARCH_CONTEXT_BUDGET_THRESHOLD) {
+  throw new Error(
+    `CODEX_DELEGATION_THRESHOLD (${CODEX_DELEGATION_THRESHOLD}) must be greater than RESEARCH_CONTEXT_BUDGET_THRESHOLD (${RESEARCH_CONTEXT_BUDGET_THRESHOLD})`,
+  );
+}
+
+/**
+ * Claude Code plugin sub-agent type for Codex delegation.
+ * Requires the codex@openai-codex plugin installed and enabled in .claude/settings.json.
+ * This is a Claude Code Agent tool sub-agent identifier, distinct from Mercury's own codex-cli adapter.
+ */
+const CODEX_SUBAGENT_ID = "codex:codex-rescue";
+
+/**
  * Build a research-role dispatch prompt.
  * Research tasks produce findings/reports, not code commits.
  */
@@ -1126,6 +1145,26 @@ export function buildResearchPrompt(
     ...(tokenBudgetHint !== undefined && tokenBudgetHint > 0
       ? [`- **TOKEN_BUDGET: ~${tokenBudgetHint.toLocaleString()} tokens remaining** — wrap up and submit findings before reaching this limit.`]
       : []),
+    "",
+    "## Codex Sub-Agent Delegation",
+    `If the \`codex@openai-codex\` plugin is installed and enabled, you may use \`${CODEX_SUBAGENT_ID}\` via the Agent tool for token-intensive file scanning.`,
+    "**Delegate to Codex when (plugin enabled):**",
+    `- Your token budget drops below ${CODEX_DELEGATION_THRESHOLD.toLocaleString()} tokens AND you still need file scanning`,
+    "- A task requires scanning 5+ files sequentially with Grep/Read",
+    "- You need broad codebase pattern analysis across many directories",
+    "",
+    "**How to delegate (Agent tool call):**",
+    "```",
+    `Agent tool: subagent_type="${CODEX_SUBAGENT_ID}"`,
+    "prompt: \"[RESEARCH PROTOCOL] Evidence-over-claims: report only what you find, not assumptions.",
+    "Search iteratively with multiple patterns before concluding 'not found'.",
+    "Return file:line references for all findings.",
+    "Task: <focused scanning task description>\"",
+    "```",
+    "The sub-agent's tokens are independent — its context does NOT count against yours.",
+    "Use its output as raw evidence in your Step 1 JSON; you write the final synthesis.",
+    "If the plugin/sub-agent is unavailable, continue with local Grep/Read and narrow scope early to protect remaining budget.",
+    "If the Agent tool call fails or returns an error, treat it as unavailable and continue with the local fallback strategy.",
     "",
     "## CRITICAL: Context Budget Check",
     `Before starting research, check your remaining context window. If it is below ${RESEARCH_CONTEXT_BUDGET_THRESHOLD.toLocaleString()} tokens,`,
