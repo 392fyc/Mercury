@@ -1093,6 +1093,12 @@ const RESEARCH_CONTEXT_BUDGET_THRESHOLD = 20_000;
  */
 const CODEX_DELEGATION_THRESHOLD = 40_000;
 
+if (CODEX_DELEGATION_THRESHOLD <= RESEARCH_CONTEXT_BUDGET_THRESHOLD) {
+  throw new Error(
+    `CODEX_DELEGATION_THRESHOLD (${CODEX_DELEGATION_THRESHOLD}) must be greater than RESEARCH_CONTEXT_BUDGET_THRESHOLD (${RESEARCH_CONTEXT_BUDGET_THRESHOLD})`,
+  );
+}
+
 /**
  * Claude Code plugin sub-agent type for Codex delegation.
  * Requires the codex@openai-codex plugin installed and enabled in .claude/settings.json.
