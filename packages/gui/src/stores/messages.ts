@@ -318,7 +318,7 @@ async function initMessageListeners() {
     );
     // Update live token usage whenever the streaming event carries a count
     if (data.event.tokenCount !== undefined) {
-      setTokenUsage(panelKey, data.event.tokenCount);
+      setTokenUsage(panelKey, data.event.tokenCount, data.event.tokenLimit);
     }
   });
 

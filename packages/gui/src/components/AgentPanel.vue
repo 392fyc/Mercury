@@ -54,14 +54,15 @@ const gitBranch = computed(() => getGitBranch(props.panelKey));
 // ─── Token Budget Bar ───
 const tokenUsage = computed(() => sessionInfo.value?.tokenUsage ?? 0);
 const tokenLimit = computed(() => sessionInfo.value?.tokenLimit ?? 0);
-const tokenPct = computed(() => {
+const tokenRatio = computed(() => {
   if (!tokenLimit.value) return 0;
-  return Math.min(100, Math.round((tokenUsage.value / tokenLimit.value) * 100));
+  return Math.min(1, tokenUsage.value / tokenLimit.value);
 });
+const tokenPct = computed(() => Math.round(tokenRatio.value * 100));
 const tokenBarClass = computed(() => {
-  const p = tokenPct.value;
-  if (p >= 80) return "token-bar-critical";
-  if (p >= 60) return "token-bar-warn";
+  const r = tokenRatio.value;
+  if (r >= 0.8) return "token-bar-critical";
+  if (r >= 0.6) return "token-bar-warn";
   return "token-bar-ok";
 });
 const tokenLabel = computed(() => {

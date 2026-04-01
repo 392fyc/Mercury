@@ -1088,6 +1088,19 @@ function deriveKbWriteInstructions(task: TaskBundle): string[] {
 const RESEARCH_CONTEXT_BUDGET_THRESHOLD = 20_000;
 
 /**
+ * Token budget level at which the research agent should delegate heavy file scanning to Codex.
+ * Must be above RESEARCH_CONTEXT_BUDGET_THRESHOLD to leave room for synthesis.
+ */
+const CODEX_DELEGATION_THRESHOLD = 40_000;
+
+/**
+ * Claude Code plugin sub-agent type for Codex delegation.
+ * Requires the codex@openai-codex plugin installed and enabled in .claude/settings.json.
+ * This is a Claude Code Agent tool sub-agent identifier, distinct from Mercury's own codex-cli adapter.
+ */
+const CODEX_SUBAGENT_ID = "codex:codex-rescue";
+
+/**
  * Build a research-role dispatch prompt.
  * Research tasks produce findings/reports, not code commits.
  */
@@ -1128,15 +1141,15 @@ export function buildResearchPrompt(
       : []),
     "",
     "## Codex Sub-Agent Delegation",
-    "A `codex:codex-rescue` sub-agent is available via the Agent tool for token-intensive file scanning.",
+    `A \`${CODEX_SUBAGENT_ID}\` sub-agent is available via the Agent tool for token-intensive file scanning.`,
     "**Delegate to Codex when:**",
-    "- Your token budget drops below 40,000 tokens AND you still need file scanning",
+    `- Your token budget drops below ${CODEX_DELEGATION_THRESHOLD.toLocaleString()} tokens AND you still need file scanning`,
     "- A task requires scanning 5+ files sequentially with Grep/Read",
     "- You need broad codebase pattern analysis across many directories",
     "",
     "**How to delegate (Agent tool call):**",
     "```",
-    "Agent tool: subagent_type=\"codex:codex-rescue\"",
+    `Agent tool: subagent_type="${CODEX_SUBAGENT_ID}"`,
     "prompt: \"[RESEARCH PROTOCOL] Evidence-over-claims: report only what you find, not assumptions.",
     "Search iteratively with multiple patterns before concluding 'not found'.",
     "Return file:line references for all findings.",

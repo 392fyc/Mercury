@@ -818,6 +818,8 @@ export interface AgentStreamingEvent {
     timestamp: number;
     /** Cumulative token count for the session at this point in the stream. */
     tokenCount?: number;
+    /** Context-window token limit for this session (if known). */
+    tokenLimit?: number;
   };
 }
 

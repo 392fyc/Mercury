@@ -1,10 +1,6 @@
 {
-  "statusLine": {
-    "type": "command",
-    "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"C:\\Users\\392fy\\.claude\\statusline-command.sh\""
-  },
   "enabledPlugins": {
-    "codex@openai-codex": true
+    "codex@openai-codex": false
   },
   "hooks": {
     "PreToolUse": [
