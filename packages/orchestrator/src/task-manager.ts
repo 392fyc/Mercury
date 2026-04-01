@@ -1100,11 +1100,11 @@ if (CODEX_DELEGATION_THRESHOLD <= RESEARCH_CONTEXT_BUDGET_THRESHOLD) {
 }
 
 /**
- * Claude Code plugin sub-agent type for Codex delegation.
- * Requires the codex@openai-codex plugin installed and enabled in .claude/settings.json.
- * This is a Claude Code Agent tool sub-agent identifier, distinct from Mercury's own codex-cli adapter.
+ * Claude Code sub-agent type for Codex delegation.
+ * Defined in .claude/agents/codex-rescue.md (project-level sub-agent).
+ * Distinct from Mercury's own codex-cli adapter.
  */
-const CODEX_SUBAGENT_ID = "codex:codex-rescue";
+const CODEX_SUBAGENT_ID = "codex-rescue";
 
 /**
  * Build a research-role dispatch prompt.
@@ -1147,8 +1147,8 @@ export function buildResearchPrompt(
       : []),
     "",
     "## Codex Sub-Agent Delegation",
-    `If the \`codex@openai-codex\` plugin is installed and enabled, you may use \`${CODEX_SUBAGENT_ID}\` via the Agent tool for token-intensive file scanning.`,
-    "**Delegate to Codex when (plugin enabled):**",
+    `You may delegate token-intensive file scanning to the \`${CODEX_SUBAGENT_ID}\` sub-agent via the Agent tool.`,
+    "**Delegate when:**",
     `- Your token budget drops below ${CODEX_DELEGATION_THRESHOLD.toLocaleString()} tokens AND you still need file scanning`,
     "- A task requires scanning 5+ files sequentially with Grep/Read",
     "- You need broad codebase pattern analysis across many directories",
@@ -1163,8 +1163,7 @@ export function buildResearchPrompt(
     "```",
     "The sub-agent's tokens are independent — its context does NOT count against yours.",
     "Use its output as raw evidence in your Step 1 JSON; you write the final synthesis.",
-    "If the plugin/sub-agent is unavailable, continue with local Grep/Read and narrow scope early to protect remaining budget.",
-    "If the Agent tool call fails or returns an error, treat it as unavailable and continue with the local fallback strategy.",
+    "If the sub-agent is unavailable or the Agent tool call fails, continue with local Grep/Read and narrow scope early to protect remaining budget.",
     "",
     "## CRITICAL: Context Budget Check",
     `Before starting research, check your remaining context window. If it is below ${RESEARCH_CONTEXT_BUDGET_THRESHOLD.toLocaleString()} tokens,`,

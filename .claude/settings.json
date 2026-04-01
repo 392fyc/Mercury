@@ -1,7 +1,4 @@
 {
-  "enabledPlugins": {
-    "codex@openai-codex": false
-  },
   "hooks": {
     "PreToolUse": [
       {
