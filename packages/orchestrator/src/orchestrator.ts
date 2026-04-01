@@ -173,8 +173,15 @@ export class Orchestrator {
 
   /** Track recent tool calls per session for loop detection. */
   private recentToolCalls = new Map<string, string[]>();
-  private static readonly LOOP_DETECTION_WINDOW = 6;
-  private static readonly LOOP_DETECTION_THRESHOLD = 3;
+  /**
+   * Loop detection window and threshold.
+   * Research/design agents regularly call the same search tool (Grep/WebSearch)
+   * many times in sequence — a threshold of 3 fires too aggressively and injects
+   * disruptive warnings into their context. 8 consecutive same-tool calls is a
+   * more reliable signal of a genuine loop across all roles.
+   */
+  private static readonly LOOP_DETECTION_WINDOW = 12;
+  private static readonly LOOP_DETECTION_THRESHOLD = 8;
 
   /** Inject optional knowledge service + wire up task persistence (with optional SQLite dual-write). */
   setKnowledgeService(kb: KnowledgeService) {

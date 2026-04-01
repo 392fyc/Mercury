@@ -227,7 +227,10 @@ export class TaskManager {
     try {
       const { tasks, acceptances, issues } = await this.persistence.loadAll();
       for (const t of tasks) {
-        // Backfill dispatch retry fields for legacy tasks (pre-RESILIENCE-001)
+        // Backfill dispatch retry fields for legacy tasks (pre-RESILIENCE-001).
+        // Note: legacy tasks always get maxDispatchAttempts = 5 regardless of role
+        // for backward compatibility. New tasks created after this change receive
+        // role-aware defaults via createTask() (research/design → 1, dev → 5).
         if (t.dispatchAttempts === undefined) t.dispatchAttempts = 0;
         if (t.maxDispatchAttempts === undefined) t.maxDispatchAttempts = 5;
         this.tasks.set(t.taskId, t);
@@ -340,7 +343,11 @@ export class TaskManager {
       handoffToAcceptance: params.handoffToAcceptance,
       modelRecommendation: params.modelRecommendation,
       dispatchAttempts: 0,
-      maxDispatchAttempts: params.maxDispatchAttempts ?? 5,
+      // Research and design roles run long single-pass sessions; context exhaustion
+      // is not a retriable error — re-dispatching from scratch wastes resources and
+      // produces no output. Default to 1 for these roles. Dev tasks keep 5 so that
+      // transient failures (session crash, network blip) are automatically retried.
+      maxDispatchAttempts: params.maxDispatchAttempts ?? (requiredRole === "research" || requiredRole === "design" ? 1 : 5),
       reworkCount: 0,
       maxReworks: params.maxReworks ?? 3,
       linkedIssueIds: [],
