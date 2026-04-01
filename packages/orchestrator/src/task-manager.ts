@@ -340,7 +340,11 @@ export class TaskManager {
       handoffToAcceptance: params.handoffToAcceptance,
       modelRecommendation: params.modelRecommendation,
       dispatchAttempts: 0,
-      maxDispatchAttempts: params.maxDispatchAttempts ?? 5,
+      // Research and design roles run long single-pass sessions; context exhaustion
+      // is not a retriable error — re-dispatching from scratch wastes resources and
+      // produces no output. Default to 1 for these roles. Dev tasks keep 5 so that
+      // transient failures (session crash, network blip) are automatically retried.
+      maxDispatchAttempts: params.maxDispatchAttempts ?? (requiredRole === "research" || requiredRole === "design" ? 1 : 5),
       reworkCount: 0,
       maxReworks: params.maxReworks ?? 3,
       linkedIssueIds: [],
