@@ -50,6 +50,26 @@ const sessionShortId = computed(() => {
 // Explicitly reference defaultWorkDir.value so Vue tracks it as a dependency
 const workDir = computed(() => getWorkDir(props.panelKey) || defaultWorkDir.value);
 const gitBranch = computed(() => getGitBranch(props.panelKey));
+
+// ─── Token Budget Bar ───
+const tokenUsage = computed(() => sessionInfo.value?.tokenUsage ?? 0);
+const tokenLimit = computed(() => sessionInfo.value?.tokenLimit ?? 0);
+const tokenPct = computed(() => {
+  if (!tokenLimit.value) return 0;
+  return Math.min(100, Math.round((tokenUsage.value / tokenLimit.value) * 100));
+});
+const tokenBarClass = computed(() => {
+  const p = tokenPct.value;
+  if (p >= 80) return "token-bar-critical";
+  if (p >= 60) return "token-bar-warn";
+  return "token-bar-ok";
+});
+const tokenLabel = computed(() => {
+  if (!tokenLimit.value) return null;
+  const used = tokenUsage.value >= 1000 ? `${Math.round(tokenUsage.value / 1000)}k` : `${tokenUsage.value}`;
+  const limit = tokenLimit.value >= 1000 ? `${Math.round(tokenLimit.value / 1000)}k` : `${tokenLimit.value}`;
+  return `${used}/${limit} (${tokenPct.value}%)`;
+});
 const shortWorkDir = computed(() => {
   const dir = workDir.value;
   if (!dir) return "";
@@ -754,6 +774,13 @@ watch(
           <div v-else class="branch-picker-item disabled">No branches found</div>
         </div>
       </div>
+      <!-- Token budget bar: visible when tokenLimit is known -->
+      <div v-if="tokenLimit > 0" class="token-budget-bar" :title="tokenLabel ?? ''">
+        <div class="token-bar-track">
+          <div class="token-bar-fill" :class="tokenBarClass" :style="{ width: tokenPct + '%' }"></div>
+        </div>
+        <span class="token-bar-label">{{ tokenLabel }}</span>
+      </div>
     </div>
 
     <div class="panel-input" style="position: relative;">
@@ -1445,6 +1472,34 @@ watch(
   padding: 4px 8px;
   border-top: 1px solid rgba(0, 212, 255, 0.08);
   font-size: 10px;
+}
+
+/* Token budget bar */
+.token-budget-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+.token-bar-track {
+  width: 60px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.token-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+.token-bar-ok   { background: #4caf50; }
+.token-bar-warn { background: #ff9800; }
+.token-bar-critical { background: #f44336; }
+.token-bar-label {
+  color: var(--text-secondary);
+  font-size: 9px;
+  white-space: nowrap;
 }
 
 .workspace-dir {

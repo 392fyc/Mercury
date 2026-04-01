@@ -34,6 +34,10 @@ export interface SessionMeta {
   promptHash?: string;
   currentPromptHash?: string;
   legacyRoleConfig?: boolean;
+  /** Live cumulative token usage — updated on each streaming event. */
+  tokenUsage?: number;
+  /** Context window token limit for this session. */
+  tokenLimit?: number;
 }
 
 type SessionPromptState = Pick<SessionMeta, "promptHash" | "currentPromptHash" | "legacyRoleConfig">;
@@ -203,6 +207,16 @@ function clearSession(panelKey: string, skipPersist = false) {
   sessionMeta.value.delete(panelKey);
   triggerRef(sessionMeta);
   if (!skipPersist) saveSessions();
+}
+
+/** Update live token usage for a panel without triggering a full session merge. */
+function setTokenUsage(panelKey: string, tokenUsage: number, tokenLimit?: number) {
+  const existing = sessionMeta.value.get(panelKey);
+  if (!existing) return;
+  const updated: SessionMeta = { ...existing, tokenUsage };
+  if (tokenLimit !== undefined) updated.tokenLimit = tokenLimit;
+  sessionMeta.value.set(panelKey, updated);
+  triggerRef(sessionMeta);
 }
 
 function setWorkDir(panelKey: string, cwd: string) {
@@ -398,6 +412,8 @@ async function hydrateSessionMeta(): Promise<void> {
           promptHash: match.promptHash,
           currentPromptHash: match.currentPromptHash,
           legacyRoleConfig: match.legacyRoleConfig,
+          tokenUsage: match.tokenUsage,
+          tokenLimit: match.tokenLimit,
         });
       }
       if (pruned) {
@@ -635,6 +651,7 @@ export function useAgentStore() {
     getStatus,
     setSession,
     setSessionInfo,
+    setTokenUsage,
     getSession,
     getSessionInfo,
     clearSession,

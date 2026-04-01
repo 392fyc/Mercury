@@ -304,7 +304,7 @@ async function initMessageListeners() {
 
   loadFromStorage();
 
-  const { setStatus } = useAgentStore();
+  const { setStatus, setTokenUsage } = useAgentStore();
 
   await onAgentStreaming((data) => {
     const panelKey = resolvePanelKey(data.agentId, data.sessionId);
@@ -316,6 +316,10 @@ async function initMessageListeners() {
       data.event.toolName,
       data.event.toolInput,
     );
+    // Update live token usage whenever the streaming event carries a count
+    if (data.event.tokenCount !== undefined) {
+      setTokenUsage(panelKey, data.event.tokenCount);
+    }
   });
 
   await onAgentMessage((data) => {
