@@ -1158,6 +1158,7 @@ export function buildResearchPrompt(
     "The sub-agent's tokens are independent — its context does NOT count against yours.",
     "Use its output as raw evidence in your Step 1 JSON; you write the final synthesis.",
     "If the plugin/sub-agent is unavailable, continue with local Grep/Read and narrow scope early to protect remaining budget.",
+    "If the Agent tool call fails or returns an error, treat it as unavailable and continue with the local fallback strategy.",
     "",
     "## CRITICAL: Context Budget Check",
     `Before starting research, check your remaining context window. If it is below ${RESEARCH_CONTEXT_BUDGET_THRESHOLD.toLocaleString()} tokens,`,
