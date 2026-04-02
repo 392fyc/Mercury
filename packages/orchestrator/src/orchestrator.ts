@@ -42,6 +42,7 @@ import {
   buildReferencePrompt,
   buildAcceptancePrompt,
   buildReworkPrompt,
+  buildSendBackPrompt,
   buildMainReviewPrompt,
   buildCriticPrompt,
 } from "./task-manager.js";
@@ -3387,26 +3388,39 @@ export class Orchestrator {
 
     if (results.verdict === "fail" || results.verdict === "partial") {
       // Trigger rework with full context
-      const { newSession } = this.taskManager.triggerRework(
+      const { reworked, newSession } = this.taskManager.triggerRework(
         task.taskId,
         results.findings.join("\n"),
         acceptanceId,
         results.findings,
       );
 
-      if (!newSession) {
-        // Send rework prompt to existing dev session
-        const reworkPrompt = buildReworkPrompt(task, acceptance);
-        await this.sendPrompt(
-          task.assignedTo,
-          reworkPrompt,
-          undefined,
-          "dev",
-          task.title,
-          this.buildSystemRolePrompt("dev", task),
-          task.taskId,
-        );
+      if (!reworked) {
+        // maxReworks exceeded — task transitioned to failed
+        return { verdict: results.verdict, reworkTriggered: false, newSession: false };
       }
+
+      const reworkRole: AgentRole = task.role ?? "dev";
+      const reworkPrompt = buildReworkPrompt(task, acceptance);
+      if (newSession) {
+        const reworkRolePrompt = this.buildSystemRolePrompt(reworkRole, task);
+        const session = await this.startRoleSession(
+          task.assignedTo,
+          reworkRole,
+          task.title,
+          reworkRolePrompt,
+        );
+        this.taskManager.bindSession(task.taskId, session.sessionId);
+      }
+      await this.sendPrompt(
+        task.assignedTo,
+        reworkPrompt,
+        undefined,
+        reworkRole,
+        task.title,
+        this.buildSystemRolePrompt(reworkRole, task),
+        task.taskId,
+      );
 
       // Callback to Main Agent for fail/partial (after rework dispatch to avoid premature notification)
       this.bus.emit(
@@ -3534,14 +3548,19 @@ export class Orchestrator {
     }
 
     if (effectiveDecision === "SEND_BACK") {
-      const { newSession } = this.taskManager.triggerRework(
+      const { reworked, newSession } = this.taskManager.triggerRework(
         taskId,
         effectiveReason ?? "Main Agent review: sent back for rework",
       );
 
+      if (!reworked) {
+        // maxReworks exceeded — task transitioned to failed
+        return { decision: effectiveDecision, nextAction: "failed_max_reworks" };
+      }
+
       // Send rework directive to the agent in its original role
       const reworkRole: AgentRole = task.role ?? "dev";
-      const reworkPrompt = `# Rework Required [${task.taskId}]\n\nMain Agent review returned this task for rework.\n\n**Reason:** ${effectiveReason ?? "Unspecified"}\n\nPlease address and resubmit.`;
+      const reworkPrompt = buildSendBackPrompt(task, effectiveReason ?? "Main Agent review: sent back for rework");
       if (newSession) {
         const reworkRolePrompt = this.buildSystemRolePrompt(reworkRole, task);
         const session = await this.startRoleSession(
