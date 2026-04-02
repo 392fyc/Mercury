@@ -3233,7 +3233,8 @@ export class Orchestrator {
     const lastNewline = kbContext.lastIndexOf("\n", budget - 1);
     // If no newline exists before the budget, return empty string rather than a partial line.
     const trimmed = lastNewline >= 0 ? kbContext.slice(0, lastNewline) : "";
-    return `${trimmed}\n\n[KB context trimmed: ${kbContext.length} chars to fit Main Agent token budget]`;
+    const trimmedLen = trimmed.length;
+    return `${trimmed}\n\n[KB context trimmed: ${kbContext.length} chars -> ${trimmedLen} chars to fit Main Agent token budget]`;
   }
 
   /**
