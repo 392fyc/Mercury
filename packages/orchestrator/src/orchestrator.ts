@@ -2885,9 +2885,13 @@ export class Orchestrator {
         // KB context is best-effort
       }
 
-      // Trim KB context when Main Agent has limited remaining context window space.
+      // Trim KB context only when Main Agent context is under pressure (ratio > 0.8).
+      // Skipping trim when Main has ample headroom preserves full prompt quality.
       // Standard approximation: 4 chars per token. Cap KB to 20% of Main's remaining chars.
-      if (kbContext && mainBudget.remaining !== undefined) {
+      const mainContextConstrained = mainBudget.ratio !== undefined
+        ? mainBudget.ratio > 0.8
+        : false;
+      if (kbContext && mainContextConstrained && mainBudget.remaining !== undefined) {
         const kbCharBudget = Math.floor(mainBudget.remaining * 4 * 0.2);
         kbContext = this.trimKbContext(kbContext, kbCharBudget);
       }
@@ -3203,8 +3207,13 @@ export class Orchestrator {
       return { agentId: mainAgentId, sessionId: undefined, tokenUsage: undefined, tokenLimit: undefined, remaining: undefined, ratio: undefined };
     }
     const session = this.sessions.get(sessionId);
-    const tokenUsage = session?.tokenUsage;
-    const tokenLimit = session?.tokenLimit;
+    // Only report budget from an active session; stale/completed sessions have
+    // outdated token counts that would cause incorrect KB trimming decisions.
+    if (!session || session.status !== "active") {
+      return { agentId: undefined, sessionId: undefined, tokenUsage: undefined, tokenLimit: undefined, remaining: undefined, ratio: undefined };
+    }
+    const tokenUsage = session.tokenUsage;
+    const tokenLimit = session.tokenLimit;
     const remaining = tokenUsage !== undefined && tokenLimit !== undefined ? tokenLimit - tokenUsage : undefined;
     const ratio = tokenUsage !== undefined && tokenLimit !== undefined ? tokenUsage / tokenLimit : undefined;
     return { agentId: mainAgentId, sessionId, tokenUsage, tokenLimit, remaining, ratio };
@@ -3219,11 +3228,12 @@ export class Orchestrator {
     const budget = Math.max(maxChars, MIN_KB_CHARS);
     if (kbContext.length <= budget) return kbContext;
 
-    // Trim at the last newline before the budget boundary
-    const slice = kbContext.slice(0, budget);
-    const lastNewline = slice.lastIndexOf("\n");
-    const trimmed = lastNewline > 0 ? slice.slice(0, lastNewline) : slice;
-    return `${trimmed}\n\n[KB context trimmed: ${kbContext.length} chars → ${trimmed.length} chars to fit Main Agent token budget]`;
+    // Trim at the last newline before the budget boundary.
+    // lastIndexOf with a position argument searches backwards from that position.
+    const lastNewline = kbContext.lastIndexOf("\n", budget - 1);
+    // If no newline exists before the budget, return empty string rather than a partial line.
+    const trimmed = lastNewline >= 0 ? kbContext.slice(0, lastNewline) : "";
+    return `${trimmed}\n\n[KB context trimmed: ${kbContext.length} chars to fit Main Agent token budget]`;
   }
 
   /**
