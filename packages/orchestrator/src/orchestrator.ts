@@ -1582,11 +1582,47 @@ export class Orchestrator {
       hasImages: 0,
       role: session?.role,
     });
-    void this.streamMessages(adapter, agentId, sessionId, prompt)
-      .then((result) =>
-        this.handleStreamCompletion(agentId, sessionId, session?.role ?? "dev", undefined, result),
-      )
-      .catch(() => { /* best-effort warning injection */ });
+    void this.streamInternalPrompt(adapter, agentId, sessionId, prompt);
+  }
+
+  private async streamInternalPrompt(
+    adapter: ReturnType<AgentRegistry["getAdapter"]>,
+    agentId: string,
+    sessionId: string,
+    prompt: string,
+  ): Promise<void> {
+    try {
+      for await (const yielded of adapter.sendPrompt(sessionId, prompt)) {
+        if (isStreamingEvent(yielded)) {
+          this.transport.sendNotification("agent_streaming", {
+            agentId,
+            sessionId,
+            event: {
+              eventKind: yielded.eventKind,
+              content: yielded.content,
+              toolName: yielded.toolName,
+              toolInput: yielded.toolInput,
+              tokenCount: yielded.tokenCount,
+              timestamp: yielded.timestamp,
+            },
+          });
+          continue;
+        }
+        const message = yielded as AgentMessage;
+        this.bus.emit("agent.message.receive", agentId, sessionId, {
+          contentPreview: message.content.slice(0, 200),
+        });
+        this.appendTranscriptMessage(sessionId, {
+          role: message.role,
+          content: message.content,
+          timestamp: message.timestamp,
+          images: message.images,
+          metadata: message.metadata,
+        });
+      }
+    } catch {
+      // Best-effort: never propagate errors from internal prompt injection
+    }
   }
 
   private async streamMessages(
