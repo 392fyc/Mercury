@@ -7,9 +7,13 @@
 
 Enable parallel multi-task development by isolating each dev task in its own
 git worktree. This removes branch-collision risk when multiple agents work
-simultaneously and formalises the existing `feedback_git_safety.md` constraint
+simultaneously and formalises the constraint in
+[`feedback_git_safety.md`](../../memory/feedback_git_safety.md)
 (dev agents must never switch branches) by giving each agent a dedicated,
 branch-locked working directory.
+
+See also: [`.mercury/docs/guides/git-flow.md`](git-flow.md) for branch naming
+rules and merge procedures.
 
 ---
 
@@ -25,7 +29,7 @@ branch-locked working directory.
 
 ## Worktree Lifecycle
 
-```
+```text
 Main: git worktree add <path> -b <branch>
   --> TaskBundle.worktreePath = <path>
   --> TaskBundle.branch = <branch>
@@ -57,7 +61,12 @@ transient and must not be committed.
 
 ---
 
-## TaskBundle Schema Extension
+## TaskBundle Schema Extension (Proposal)
+
+> **Note:** `worktreePath` and `dependsOn` are proposed fields not yet present
+> on the `TaskBundle` interface in `packages/core/src/types.ts`. They require a
+> future implementation step that adds the fields to the interface and enforces
+> the `worktreePath`+`branch` co-set invariant via Zod schema or a runtime guard.
 
 Add two optional fields to `TaskBundle`:
 
@@ -67,7 +76,8 @@ interface TaskBundle {
 
   /** Absolute path to the git worktree for this task.
    *  Set by Main Agent before dispatch; Dev Agent works exclusively here.
-   *  Undefined for tasks that pre-date worktree workflow or single-task sessions. */
+   *  Undefined for tasks that pre-date worktree workflow or single-task sessions.
+   *  Design constraint: worktreePath and branch must always be set together. */
   worktreePath?: string;
 
   /** Task IDs this task depends on. The scheduler must complete dependsOn tasks
@@ -75,9 +85,6 @@ interface TaskBundle {
   dependsOn?: string[];
 }
 ```
-
-`worktreePath` and `branch` are always set together — a worktree without a
-branch binding is invalid.
 
 ---
 
@@ -87,22 +94,25 @@ Before dispatching a task that will run in parallel with other active tasks,
 Main Agent MUST:
 
 1. **Create the branch and worktree:**
+
    ```bash
    git worktree add .worktrees/{taskId} -b feature/TASK-{taskId}-{slug}
    ```
 
 2. **Inject into TaskBundle** (via `update_task` RPC or at task creation):
+
    ```json
    { "worktreePath": "/absolute/path/.worktrees/{taskId}",
      "branch": "feature/TASK-{taskId}-{slug}" }
    ```
 
-3. **Emphasise in dispatch prompt** (handled by `buildDevPrompt` when
-   `worktreePath` is set — see Prompt Integration section below):
+3. **Emphasise in dispatch prompt** (to be handled by `buildDevPrompt` when
+   `task.worktreePath` is set — see Prompt Integration section below):
    > You are working inside the isolated worktree at `<worktreePath>`.
    > Do not navigate outside this directory. Do not switch branches.
 
 4. **After PR merge**, clean up:
+
    ```bash
    git worktree remove .worktrees/{taskId}
    git branch -d feature/TASK-{taskId}-{slug}
@@ -112,10 +122,16 @@ Main Agent MUST:
 
 ## Prompt Integration
 
-`buildDevPrompt` should prepend a worktree constraint block when
-`task.worktreePath` is set:
+`buildDevPrompt` (in `packages/orchestrator/src/task-manager.ts`) will, when
+implemented, prepend a worktree constraint block when `task.worktreePath` is
+set. When implemented, this block will replace the existing Dev Agent Git
+Permissions table for worktree-enabled tasks, making the isolation constraint
+explicit rather than implicit. This is a planned integration and is not yet
+implemented.
 
-```
+Proposed block:
+
+```markdown
 ## Worktree Isolation
 You are working in an isolated git worktree.
 Working directory: {worktreePath}
@@ -128,14 +144,11 @@ CONSTRAINTS:
 - Commits and pushes go to branch {branch} only
 ```
 
-This block replaces the current Dev Agent Git Permissions table for worktree-
-enabled tasks, making the constraint explicit rather than implicit.
-
 ---
 
 ## Dependency Management
 
-```
+```text
 dependsOn: []          -> fully independent -> dispatch immediately, own worktree
 dependsOn: [taskId]    -> wait for taskId to reach status=completed before dispatch
 ```
@@ -155,7 +168,7 @@ Each worktree produces an independent PR (`feature/TASK-X` into `develop`).
 PRs are merged in dependency order when dependencies exist. Conflicts are
 resolved by Main Agent via rebase before merge — never by force-push.
 
-```
+```text
 develop --> feature/TASK-A (independent) -> PR -> merge
         --> feature/TASK-B (independent) -> PR -> merge
         --> feature/TASK-C (dependsOn TASK-A) -> wait -> PR -> merge
@@ -202,9 +215,9 @@ active for the task.
 
 | Existing Rule | How Worktree Workflow Satisfies It |
 |---------------|-------------------------------------|
-| Dev agents must never switch branches (`feedback_git_safety.md`) | Worktree is branch-locked at creation; switching is physically impossible within the worktree |
-| All code enters develop through PRs (`git-flow.md`) | Each worktree branch becomes an independent PR |
-| Main creates branches, Dev does not (`git-flow.md`) | Main creates worktree+branch pre-dispatch; Dev only commits |
+| Dev agents must never switch branches ([`feedback_git_safety.md`](../../memory/feedback_git_safety.md)) | Worktree is branch-locked at creation; switching is physically impossible within the worktree |
+| All code enters develop through PRs ([`git-flow.md`](git-flow.md)) | Each worktree branch becomes an independent PR |
+| Main creates branches, Dev does not ([`git-flow.md`](git-flow.md)) | Main creates worktree+branch pre-dispatch; Dev only commits |
 
 ---
 
