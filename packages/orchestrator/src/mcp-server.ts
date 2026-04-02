@@ -183,6 +183,9 @@ function registerMcpTools(server: McpServer, orchestrator: Orchestrator): void {
       }).optional().describe("G9: model recommendation for auto-routing"),
     });
 
+  rpcTool(server, orchestrator, "get_main_agent_token_usage",
+    "Get current token usage for the Main Agent session (usage, limit, remaining, ratio). Returns undefined fields when no active Main session exists.", {});
+
   rpcTool(server, orchestrator, "get_task",
     "Get a task by ID", { taskId });
 

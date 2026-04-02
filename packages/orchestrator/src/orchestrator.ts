@@ -2868,6 +2868,9 @@ export class Orchestrator {
 
     const role: AgentRole = task.role ?? "dev";
 
+    // Read Main Agent context budget before building KB context (monitoring Main session only)
+    const mainBudget = this.getMainAgentTokenBudget();
+
     let kbContext: string | undefined;
     if (this.kb?.isEnabled() && (task.readScope.requiredDocs?.length ?? 0) > 0) {
       try {
@@ -2875,13 +2878,24 @@ export class Orchestrator {
       } catch {
         // KB context is best-effort
       }
+
+      // Trim KB context when Main Agent has limited remaining context window space.
+      // Standard approximation: 4 chars per token. Cap KB to 20% of Main's remaining chars.
+      if (kbContext && mainBudget.remaining !== undefined) {
+        const kbCharBudget = Math.floor(mainBudget.remaining * 4 * 0.2);
+        kbContext = this.trimKbContext(kbContext, kbCharBudget);
+      }
     }
 
-    // Derive token budget hint from task.resourceBudget (apply 90% safety margin)
+    // Derive token budget hint for the sub-agent prompt.
+    // Priority: manual TaskBundle value > auto-derived from Main Agent remaining budget.
     const rawBudget = task.resourceBudget?.tokenBudget;
     const tokenBudgetHint = rawBudget !== undefined
       ? Math.floor(rawBudget * 0.9)
-      : undefined;
+      // Sub-agent gets at most half of Main's remaining budget (preserves Main headroom)
+      : mainBudget.remaining !== undefined
+        ? Math.floor(mainBudget.remaining * 0.5)
+        : undefined;
 
     // Determine if the assigned agent is a Claude Code instance (codex plugin is CC-only)
     const codexEnabled = this.getAgentCli(task.assignedTo) === "claude";
@@ -3157,6 +3171,54 @@ export class Orchestrator {
     } catch {
       return undefined;
     }
+  }
+
+  /**
+   * Return token budget information for the active Main Agent session.
+   * Only the Main Agent session is monitored; sub-agent budgets are not tracked.
+   * Returns undefined for all fields when no active Main session exists or
+   * when the adapter has not yet reported token counts.
+   */
+  getMainAgentTokenBudget(): {
+    agentId: string | undefined;
+    sessionId: string | undefined;
+    tokenUsage: number | undefined;
+    tokenLimit: number | undefined;
+    remaining: number | undefined;
+    ratio: number | undefined;
+  } {
+    const mainAgentId = this.findMainAgentId();
+    if (!mainAgentId) {
+      return { agentId: undefined, sessionId: undefined, tokenUsage: undefined, tokenLimit: undefined, remaining: undefined, ratio: undefined };
+    }
+    const slotKey = makeRoleSlotKey("main", mainAgentId);
+    const sessionId = this.roleSessions.get(slotKey);
+    if (!sessionId) {
+      return { agentId: mainAgentId, sessionId: undefined, tokenUsage: undefined, tokenLimit: undefined, remaining: undefined, ratio: undefined };
+    }
+    const session = this.sessions.get(sessionId);
+    const tokenUsage = session?.tokenUsage;
+    const tokenLimit = session?.tokenLimit;
+    const remaining = tokenUsage !== undefined && tokenLimit !== undefined ? tokenLimit - tokenUsage : undefined;
+    const ratio = tokenUsage !== undefined && tokenLimit !== undefined ? tokenUsage / tokenLimit : undefined;
+    return { agentId: mainAgentId, sessionId, tokenUsage, tokenLimit, remaining, ratio };
+  }
+
+  /**
+   * Trim KB context to fit within a character budget, preserving whole lines.
+   * Appends a truncation marker so the receiving agent knows context was reduced.
+   * Never trims below MIN_KB_CHARS to ensure some context always reaches the agent.
+   */
+  private trimKbContext(kbContext: string, maxChars: number): string {
+    const MIN_KB_CHARS = 4_000; // ≈ 1 000 tokens — always preserve this minimum
+    const budget = Math.max(maxChars, MIN_KB_CHARS);
+    if (kbContext.length <= budget) return kbContext;
+
+    // Trim at the last newline before the budget boundary
+    const slice = kbContext.slice(0, budget);
+    const lastNewline = slice.lastIndexOf("\n");
+    const trimmed = lastNewline > 0 ? slice.slice(0, lastNewline) : slice;
+    return `${trimmed}\n\n[KB context trimmed: ${kbContext.length} chars → ${trimmed.length} chars to fit Main Agent token budget]`;
   }
 
   /**
