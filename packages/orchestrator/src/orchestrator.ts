@@ -92,6 +92,10 @@ type ParsedMainReviewDecision = {
 const ROLE_CONTEXT_ROLES = ["main", "dev", "acceptance", "critic", "research", "design"] as const;
 type RoleContextKey = (typeof ROLE_CONTEXT_ROLES)[number];
 
+/** Minimum KB context size in chars preserved by trimKbContext regardless of budget pressure.
+ *  Ensures sub-agents always receive some context even when Main Agent is near capacity. */
+const MIN_KB_CHARS = 4_000;
+
 export class Orchestrator {
   private static readonly APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;
   private static readonly SESSION_HISTORY_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
@@ -820,6 +824,8 @@ export class Orchestrator {
         }
         return created;
       }
+      case "get_main_agent_token_usage":
+        return this.getMainAgentTokenBudget();
       case "get_task":
         return (await this.taskManager.getTaskAsync(params.taskId as string)) ?? null;
       case "get_task_result":
@@ -3210,7 +3216,6 @@ export class Orchestrator {
    * Never trims below MIN_KB_CHARS to ensure some context always reaches the agent.
    */
   private trimKbContext(kbContext: string, maxChars: number): string {
-    const MIN_KB_CHARS = 4_000; // ≈ 1 000 tokens — always preserve this minimum
     const budget = Math.max(maxChars, MIN_KB_CHARS);
     if (kbContext.length <= budget) return kbContext;
 
