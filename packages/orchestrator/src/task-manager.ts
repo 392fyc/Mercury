@@ -572,7 +572,7 @@ export class TaskManager {
 
   triggerRework(
     taskId: string,
-    _feedback: string,
+    feedback: string,
     acceptanceId?: string,
     findings?: string[],
   ): { reworked: boolean; newSession: boolean } {
@@ -595,7 +595,7 @@ export class TaskManager {
         attempt: task.reworkCount + 1,
         receipt: { ...task.implementationReceipt },
         acceptanceId: acceptanceId ?? "",
-        findings: findings ?? [],
+        findings: findings?.length ? findings : (feedback.trim() ? [feedback.trim()] : []),
         timestamp: Date.now(),
       });
     }
@@ -1464,7 +1464,7 @@ export function buildSendBackPrompt(task: TaskBundle, reason: string): string {
     reason,
   };
   lines.push("```json");
-  lines.push(JSON.stringify(meta, null, 2));
+  lines.push(sanitizeFenceContent(JSON.stringify(meta, null, 2)));
   lines.push("```");
   lines.push("");
 
@@ -1478,7 +1478,7 @@ export function buildSendBackPrompt(task: TaskBundle, reason: string): string {
     readScope: task.readScope,
   };
   lines.push("```json");
-  lines.push(JSON.stringify(spec, null, 2));
+  lines.push(sanitizeFenceContent(JSON.stringify(spec, null, 2)));
   lines.push("```");
   lines.push("");
 

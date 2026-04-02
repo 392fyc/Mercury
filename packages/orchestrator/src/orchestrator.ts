@@ -3400,19 +3400,27 @@ export class Orchestrator {
         return { verdict: results.verdict, reworkTriggered: false, newSession: false };
       }
 
-      if (!newSession) {
-        // Send rework prompt to existing dev session
-        const reworkPrompt = buildReworkPrompt(task, acceptance);
-        await this.sendPrompt(
+      const reworkRole: AgentRole = task.role ?? "dev";
+      const reworkPrompt = buildReworkPrompt(task, acceptance);
+      if (newSession) {
+        const reworkRolePrompt = this.buildSystemRolePrompt(reworkRole, task);
+        const session = await this.startRoleSession(
           task.assignedTo,
-          reworkPrompt,
-          undefined,
-          "dev",
+          reworkRole,
           task.title,
-          this.buildSystemRolePrompt("dev", task),
-          task.taskId,
+          reworkRolePrompt,
         );
+        this.taskManager.bindSession(task.taskId, session.sessionId);
       }
+      await this.sendPrompt(
+        task.assignedTo,
+        reworkPrompt,
+        undefined,
+        reworkRole,
+        task.title,
+        this.buildSystemRolePrompt(reworkRole, task),
+        task.taskId,
+      );
 
       // Callback to Main Agent for fail/partial (after rework dispatch to avoid premature notification)
       this.bus.emit(
