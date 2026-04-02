@@ -1565,6 +1565,69 @@ export class Orchestrator {
     };
   }
 
+  /**
+   * Send a prompt directly to a known sessionId, bypassing role-slot lookup.
+   * Used for best-effort injections (e.g. loop-detection warnings) where the
+   * exact session is already known and must not be misrouted to a rebound slot.
+   */
+  private sendPromptToSession(agentId: string, sessionId: string, prompt: string): void {
+    const adapter = this.registry.getAdapter(agentId);
+    const session = this.sessions.get(sessionId);
+    this.appendTranscriptMessage(sessionId, {
+      role: "user",
+      content: prompt,
+      timestamp: Date.now(),
+    });
+    this.bus.emit("agent.message.send", agentId, sessionId, {
+      prompt: prompt.slice(0, 200),
+      hasImages: 0,
+      role: session?.role,
+    });
+    void this.streamInternalPrompt(adapter, agentId, sessionId, prompt);
+  }
+
+  private async streamInternalPrompt(
+    adapter: ReturnType<AgentRegistry["getAdapter"]>,
+    agentId: string,
+    sessionId: string,
+    prompt: string,
+  ): Promise<void> {
+    try {
+      for await (const yielded of adapter.sendPrompt(sessionId, prompt)) {
+        if (isStreamingEvent(yielded)) {
+          this.transport.sendNotification("agent_streaming", {
+            agentId,
+            sessionId,
+            event: {
+              eventKind: yielded.eventKind,
+              content: yielded.content,
+              toolName: yielded.toolName,
+              toolInput: yielded.toolInput,
+              tokenCount: yielded.tokenCount,
+              timestamp: yielded.timestamp,
+            },
+          });
+          continue;
+        }
+        const message = yielded as AgentMessage;
+        this.bus.emit("agent.message.receive", agentId, sessionId, {
+          contentPreview: message.content.slice(0, 200),
+        });
+        this.appendTranscriptMessage(sessionId, {
+          role: message.role,
+          content: message.content,
+          timestamp: message.timestamp,
+          images: message.images,
+          metadata: message.metadata,
+        });
+      }
+    } catch {
+      // Best-effort: never propagate errors from internal prompt injection
+    } finally {
+      this.transport.sendNotification("agent_stream_end", { agentId, sessionId });
+    }
+  }
+
   private async streamMessages(
     adapter: ReturnType<AgentRegistry["getAdapter"]>,
     agentId: string,
@@ -1605,13 +1668,11 @@ export class Orchestrator {
           if (yielded.toolName && yielded.eventKind === "tool_start") {
             if (this.detectToolLoop(sessionId, yielded.toolName)) {
               // Inject warning into the current session's role slot
-              const loopSession = this.sessions.get(sessionId);
-              void this.sendPrompt(
+              this.sendPromptToSession(
                 agentId,
+                sessionId,
                 `[LOOP DETECTED] You have called "${yielded.toolName}" ${Orchestrator.LOOP_DETECTION_THRESHOLD}+ times consecutively. This suggests a loop. Stop repeating the same action and try a different approach.`,
-                undefined,
-                loopSession?.role,
-              ).catch(() => { /* best-effort warning injection */ });
+              );
             }
           }
           continue;
