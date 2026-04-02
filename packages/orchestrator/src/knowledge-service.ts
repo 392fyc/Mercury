@@ -312,12 +312,13 @@ export class KnowledgeService {
   async write(name: string, content: string): Promise<void> {
     // For large content, bypass CLI entirely — passing multi-KB content as a single
     // argv entry exceeds Windows CreateProcess limits and will always fail.
-    if (content.length > KnowledgeService.CLI_WRITE_SIZE_THRESHOLD) {
+    const byteCount = Buffer.byteLength(content, "utf8");
+    if (byteCount > KnowledgeService.CLI_WRITE_SIZE_THRESHOLD) {
       const filePath = this.resolveVaultFilePath(name);
       if (filePath) {
         await fs.mkdir(path.dirname(filePath), { recursive: true });
         await fs.writeFile(filePath, content, "utf-8");
-        console.warn(`[knowledge] Large content (${content.length} chars) — wrote directly to fs: ${filePath}`);
+        console.warn(`[knowledge] Large content (${byteCount} bytes) — wrote directly to fs: ${filePath}`);
         return;
       }
       // No vaultPath — fall through to CLI attempt which will surface a clear error

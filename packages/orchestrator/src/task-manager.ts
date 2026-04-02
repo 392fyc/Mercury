@@ -1098,7 +1098,10 @@ function deriveKbWriteInstructions(task: TaskBundle, vaultPath?: string): string
     "**Tier 2 — direct file write (if MCP unavailable)**: write the report directly to:",
     `  \`${fallbackPath}\``,
     "  Create parent directories as needed.",
-    "**Tier 3 — embed in receipt**: if both fail, include the full report text in your Step 1 JSON `findings` field.",
+    "**Tier 3 — embed in Step 1 JSON**: if both Tier 1 and Tier 2 fail, include the full report text",
+    "  inside the `findings` array of your Step 1 JSON output — as part of that same output, NOT as a",
+    "  subsequent assistant message. Do NOT send additional messages after Step 1 to patch or augment",
+    "  the findings; the complete report must be present within the single Step 1 JSON response.",
     "Do NOT stop silently — always persist the report by one of these three methods.",
   ];
 }
