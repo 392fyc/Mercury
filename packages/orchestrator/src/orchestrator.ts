@@ -1622,6 +1622,8 @@ export class Orchestrator {
       }
     } catch {
       // Best-effort: never propagate errors from internal prompt injection
+    } finally {
+      this.transport.sendNotification("agent_stream_end", { agentId, sessionId });
     }
   }
 
