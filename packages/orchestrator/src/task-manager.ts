@@ -34,8 +34,8 @@ const VALID_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
   dispatched: ["in_progress"],
   in_progress: ["implementation_done", "failed", "blocked", "dispatched"], // dispatched: G2 crash recovery re-dispatch
   implementation_done: ["main_review"],
-  main_review: ["acceptance", "in_progress"],
-  acceptance: ["verified", "in_progress"],
+  main_review: ["acceptance", "in_progress", "failed"],
+  acceptance: ["verified", "in_progress", "failed"],
   verified: ["closed"],
   blocked: ["in_progress", "failed"],
   failed: [],
@@ -601,7 +601,13 @@ export class TaskManager {
     }
 
     task.reworkCount += 1;
-    const needsNewSession = task.reworkCount > task.maxReworks;
+
+    if (task.reworkCount > task.maxReworks) {
+      this.transitionTask(taskId, "failed", task.assignedTo ?? "orchestrator");
+      return { reworked: false, newSession: false };
+    }
+
+    const needsNewSession = task.reworkCount >= task.maxReworks;
 
     // Transition back to in_progress via state machine
     if (task.status === "acceptance" || task.status === "main_review") {
@@ -1437,6 +1443,67 @@ export function buildReworkPrompt(
   lines.push("## Instructions");
   lines.push("Address the findings above within your current scope. Do not start from scratch.");
   lines.push("Learn from previous attempts listed in the rework history — do not repeat the same mistakes.");
+  lines.push("When complete, output an updated JSON receipt.");
+
+  return lines.join("\n");
+}
+
+/** Build the rework prompt sent to the Dev Agent after Main Agent SEND_BACK decision. */
+export function buildSendBackPrompt(task: TaskBundle, reason: string): string {
+  const lines: string[] = [];
+
+  lines.push(`# Rework Required [${task.taskId}]`);
+  lines.push(`This is attempt **${task.reworkCount}/${task.maxReworks}** — returned by Main Agent review.`);
+  lines.push("");
+
+  lines.push("## Send-Back Context");
+  const meta = {
+    taskId: task.taskId,
+    reworkCount: task.reworkCount,
+    maxReworks: task.maxReworks,
+    reason,
+  };
+  lines.push("```json");
+  lines.push(JSON.stringify(meta, null, 2));
+  lines.push("```");
+  lines.push("");
+
+  lines.push("## Task Specification");
+  const spec = {
+    taskId: task.taskId,
+    title: task.title,
+    context: task.context,
+    definitionOfDone: task.definitionOfDone,
+    allowedWriteScope: task.allowedWriteScope,
+    readScope: task.readScope,
+  };
+  lines.push("```json");
+  lines.push(JSON.stringify(spec, null, 2));
+  lines.push("```");
+  lines.push("");
+
+  if (task.implementationReceipt) {
+    lines.push("## Previous Implementation Receipt");
+    lines.push("```json");
+    lines.push(truncate(sanitizeFenceContent(JSON.stringify(task.implementationReceipt, null, 2)), MAX_PRECHECKS_CHARS));
+    lines.push("```");
+    lines.push("");
+  }
+
+  if (task.reworkHistory.length > 0) {
+    lines.push("## Rework History");
+    const historyEntries = task.reworkHistory.slice(-5);
+    for (const entry of historyEntries) {
+      lines.push(`### Attempt ${entry.attempt}`);
+      lines.push(`- Findings: ${entry.findings.join("; ") || "none"}`);
+      lines.push(`- Timestamp: ${new Date(entry.timestamp).toISOString()}`);
+    }
+    lines.push("");
+  }
+
+  lines.push("## Instructions");
+  lines.push("Address the reason stated above. Do not start from scratch.");
+  lines.push("Review the task specification and previous receipt to understand what needs to change.");
   lines.push("When complete, output an updated JSON receipt.");
 
   return lines.join("\n");
