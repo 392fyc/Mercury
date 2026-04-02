@@ -225,7 +225,10 @@ active for the task.
 
 1. Should `.worktrees/` be nested inside the repo root or alongside it (sibling
    directory)? Sibling avoids any risk of accidentally committing worktree state.
+   Current spec uses repo-root nesting (`.worktrees/{taskId}`).
 2. For tasks that share a dependency, should the dependent task inherit the
-   parent's worktree or get a fresh one from develop? Fresh worktree is safer.
+   parent's worktree or get a fresh one from develop? Fresh worktree is safer
+   and keeps each task's change set isolated for review.
 3. How does the acceptance agent reference files — via worktree path or repo
-   root? Acceptance likely needs the repo root for blind review.
+   root? Acceptance likely needs the repo root for blind review, since the
+   worktree is task-specific and may diverge from the base.
