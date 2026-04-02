@@ -2825,9 +2825,9 @@ export class Orchestrator {
     let prompt: string;
     if (role === "research") {
       const maxIterations = this.projectConfig?.research?.maxIterations;
-      prompt = buildResearchPrompt(task, kbContext, maxIterations, tokenBudgetHint);
+      prompt = buildResearchPrompt(task, kbContext, maxIterations, tokenBudgetHint, this.projectConfig?.obsidian?.vaultPath ?? undefined);
     } else if (role === "design") {
-      prompt = buildDesignPrompt(task, kbContext, tokenBudgetHint);
+      prompt = buildDesignPrompt(task, kbContext, tokenBudgetHint, this.projectConfig?.obsidian?.vaultPath ?? undefined);
     } else {
       prompt = buildDevPrompt(task, kbContext, this.getProjectRoot());
     }

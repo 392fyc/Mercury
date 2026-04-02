@@ -47,6 +47,14 @@ export class KnowledgeService {
   private resolveObsidianBin(configuredBin?: string): string {
     const explicitBin = configuredBin?.trim();
     if (explicitBin) {
+      // If the configured path is a directory (e.g. "D:\Programs\Obsidian"),
+      // try appending the executable name before returning as-is.
+      if (process.platform === "win32" && !explicitBin.toLowerCase().endsWith(".exe")) {
+        const withExe = path.join(explicitBin, "Obsidian.exe");
+        if (existsSync(withExe)) {
+          return withExe;
+        }
+      }
       return explicitBin;
     }
 
@@ -297,8 +305,23 @@ export class KnowledgeService {
     }
   }
 
+  /** Content size above which we skip the CLI and write directly to the vault filesystem. */
+  private static readonly CLI_WRITE_SIZE_THRESHOLD = 8192;
+
   /** Write a file to the vault via CLI, falling back to direct fs write if CLI fails. */
   async write(name: string, content: string): Promise<void> {
+    // For large content, bypass CLI entirely — passing multi-KB content as a single
+    // argv entry exceeds Windows CreateProcess limits and will always fail.
+    if (content.length > KnowledgeService.CLI_WRITE_SIZE_THRESHOLD) {
+      const filePath = this.resolveVaultFilePath(name);
+      if (filePath) {
+        await fs.mkdir(path.dirname(filePath), { recursive: true });
+        await fs.writeFile(filePath, content, "utf-8");
+        console.warn(`[knowledge] Large content (${content.length} chars) — wrote directly to fs: ${filePath}`);
+        return;
+      }
+      // No vaultPath — fall through to CLI attempt which will surface a clear error
+    }
     try {
       await this.exec(["create", `name=${name}`, `content=${content}`]);
     } catch (error) {

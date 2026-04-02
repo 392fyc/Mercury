@@ -860,6 +860,13 @@ export class TaskManager {
       return `Task ${taskId} exceeded max dispatch attempts (${task.dispatchAttempts}/${task.maxDispatchAttempts})`;
     }
     // Research/design tasks must have at least one non-empty kbPath for report output
+    const VALID_ROLES = ["dev", "research", "design"] as const;
+    if (task.role !== undefined && task.role !== null && !(VALID_ROLES as readonly string[]).includes(task.role)) {
+      return `Task ${taskId} has invalid role "${task.role}"; expected one of: ${VALID_ROLES.join(", ")}`;
+    }
+    if (task.role === undefined || task.role === null) {
+      console.warn(`[TaskManager] Task ${taskId} has no role set; defaulting to "dev" for dispatch`);
+    }
     const role = task.role ?? "dev";
     if (role === "research" || role === "design") {
       const validKbPaths = (task.allowedWriteScope?.kbPaths ?? []).filter((p) => p.trim().length > 0);
@@ -1068,7 +1075,7 @@ function fallbackDevTemplate(): string {
  * Note: validateDispatch() ensures research/design tasks always have at least
  * one kbPath, so the empty-array branch is only reachable for dev tasks.
  */
-function deriveKbWriteInstructions(task: TaskBundle): string[] {
+function deriveKbWriteInstructions(task: TaskBundle, vaultPath?: string): string[] {
   const kbPaths = task.allowedWriteScope?.kbPaths ?? [];
   if (kbPaths.length === 0) {
     return ["No KB output path configured for this task."];
@@ -1076,11 +1083,23 @@ function deriveKbWriteInstructions(task: TaskBundle): string[] {
   const target = kbPaths[0].endsWith(".md")
     ? kbPaths[0]
     : `${kbPaths[0].replace(/\/+$/, "")}/${task.taskId}.md`;
+
+  const absolutePath = vaultPath ? resolve(vaultPath, ...target.split("/")) : null;
+  const fallbackPath = absolutePath
+    ? absolutePath.replace(/\\/g, "/")
+    : `.mercury/docs/research/${task.taskId}.md`;
+
   return [
-    "Write your full report to the knowledge base using `mcp__mercury-orchestrator__kb_write`:",
+    "## KB Write Instructions (3-tier priority)",
+    "**Tier 1 — MCP (preferred)**: call `mcp__mercury-orchestrator__kb_write`:",
     `  - \`name\`: \`${target}\``,
     "  - `content`: your complete Markdown report",
-    "This persists the report for future reference.",
+    ...(absolutePath ? [`  - Absolute path: \`${absolutePath.replace(/\\/g, "/")}\``] : []),
+    "**Tier 2 — direct file write (if MCP unavailable)**: write the report directly to:",
+    `  \`${fallbackPath}\``,
+    "  Create parent directories as needed.",
+    "**Tier 3 — embed in receipt**: if both fail, include the full report text in your Step 1 JSON `findings` field.",
+    "Do NOT stop silently — always persist the report by one of these three methods.",
   ];
 }
 
@@ -1115,6 +1134,7 @@ export function buildResearchPrompt(
   kbContext?: string,
   maxIterations?: number,
   tokenBudgetHint?: number,
+  vaultPath?: string,
 ): string {
   const lines = [
     `# Research Task: ${task.title} [${task.taskId}]`,
@@ -1187,9 +1207,7 @@ export function buildResearchPrompt(
     "",
     "## Step 2 (After JSON output): Write Report to KB",
     "After outputting the JSON summary above, write the full report to KB.",
-    ...deriveKbWriteInstructions(task),
-    "If kb_write fails, retry once. If it still fails, stop silently —",
-    "the orchestrator will recover the KB from your Step 1 JSON output automatically.",
+    ...deriveKbWriteInstructions(task, vaultPath),
     "Do NOT send any additional messages after Step 1 JSON — the orchestrator reads only your last message.",
   ];
 
@@ -1208,6 +1226,7 @@ export function buildDesignPrompt(
   task: TaskBundle,
   kbContext?: string,
   tokenBudgetHint?: number,
+  vaultPath?: string,
 ): string {
   const lines = [
     `# Design Task: ${task.title} [${task.taskId}]`,
@@ -1252,9 +1271,7 @@ export function buildDesignPrompt(
     "",
     "## Step 2 (After JSON output): Write Report to KB",
     "After outputting the JSON summary above, write the full design report to KB.",
-    ...deriveKbWriteInstructions(task),
-    "If kb_write fails, retry once. If it still fails, stop silently —",
-    "the orchestrator will recover the KB from your Step 1 JSON output automatically.",
+    ...deriveKbWriteInstructions(task, vaultPath),
     "Do NOT send any additional messages after Step 1 JSON — the orchestrator reads only your last message.",
   ];
 
