@@ -1102,7 +1102,9 @@ function deriveKbWriteInstructions(task: TaskBundle, vaultPath?: string): string
     const resolved = resolve(vaultPath, ...segments);
     const normalizedVault = resolve(vaultPath);
     if (resolved.startsWith(normalizedVault + sep) || resolved === normalizedVault) {
-      safePath = resolved.replace(/\\/g, "/");
+      safePath = resolved; // preserve platform-native separators
+    } else {
+      console.warn(`[task-manager] KB path traversal blocked for task ${task.taskId}: ${normalizedTarget}`);
     }
   }
 
