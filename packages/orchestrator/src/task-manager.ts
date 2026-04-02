@@ -8,7 +8,7 @@
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { basename, resolve, sep } from "node:path";
 import type { EventBus } from "@mercury/core";
 import { normalizePriority } from "@mercury/core";
 import type {
@@ -866,6 +866,13 @@ export class TaskManager {
       return `Task ${taskId} exceeded max dispatch attempts (${task.dispatchAttempts}/${task.maxDispatchAttempts})`;
     }
     // Research/design tasks must have at least one non-empty kbPath for report output
+    const VALID_ROLES = ["dev", "research", "design"] as const;
+    if (task.role !== undefined && task.role !== null && !(VALID_ROLES as readonly string[]).includes(task.role)) {
+      return `Task ${taskId} has invalid role "${task.role}"; expected one of: ${VALID_ROLES.join(", ")}`;
+    }
+    if (task.role === undefined || task.role === null) {
+      console.warn(`[TaskManager] Task ${taskId} has no role set; defaulting to "dev" for dispatch`);
+    }
     const role = task.role ?? "dev";
     if (role === "research" || role === "design") {
       const validKbPaths = (task.allowedWriteScope?.kbPaths ?? []).filter((p) => p.trim().length > 0);
@@ -1074,19 +1081,57 @@ function fallbackDevTemplate(): string {
  * Note: validateDispatch() ensures research/design tasks always have at least
  * one kbPath, so the empty-array branch is only reachable for dev tasks.
  */
-function deriveKbWriteInstructions(task: TaskBundle): string[] {
+function deriveKbWriteInstructions(task: TaskBundle, vaultPath?: string): string[] {
   const kbPaths = task.allowedWriteScope?.kbPaths ?? [];
   if (kbPaths.length === 0) {
     return ["No KB output path configured for this task."];
   }
-  const target = kbPaths[0].endsWith(".md")
+  const rawTarget = kbPaths[0].endsWith(".md")
     ? kbPaths[0]
     : `${kbPaths[0].replace(/\/+$/, "")}/${task.taskId}.md`;
+
+  // Strip leading vault-name prefix to prevent double-path segments
+  // (e.g. "Mercury_KB/04-research/foo.md" → "04-research/foo.md")
+  let normalizedTarget = rawTarget.replace(/\\/g, "/");
+  if (vaultPath) {
+    const vaultBaseName = basename(vaultPath);
+    const prefix = `${vaultBaseName}/`;
+    if (normalizedTarget.startsWith(prefix)) {
+      normalizedTarget = normalizedTarget.slice(prefix.length);
+    }
+  }
+
+  // Derive safe absolute path with traversal guard (mirrors KnowledgeService.resolveVaultFilePath)
+  let safePath: string | null = null;
+  if (vaultPath) {
+    const segments = normalizedTarget.split(/[\\/]+/).filter(Boolean);
+    const resolved = resolve(vaultPath, ...segments);
+    const normalizedVault = resolve(vaultPath);
+    if (resolved.startsWith(normalizedVault + sep) || resolved === normalizedVault) {
+      safePath = resolved; // preserve platform-native separators
+    } else {
+      console.warn(`[task-manager] KB path traversal blocked for task ${task.taskId}: ${normalizedTarget}`);
+    }
+  }
+
   return [
-    "Write your full report to the knowledge base using `mcp__mercury-orchestrator__kb_write`:",
-    `  - \`name\`: \`${target}\``,
+    "## KB Write Instructions (3-tier priority)",
+    "**Tier 1 — MCP (preferred)**: call `mcp__mercury-orchestrator__kb_write`:",
+    `  - \`name\`: \`${normalizedTarget}\``,
     "  - `content`: your complete Markdown report",
-    "This persists the report for future reference.",
+    ...(safePath ? [`  - Absolute path: \`${safePath}\``] : []),
+    ...(safePath
+      ? [
+          "**Tier 2 — direct file write (if MCP unavailable)**: write the report directly to:",
+          `  \`${safePath}\``,
+          "  Create parent directories as needed.",
+        ]
+      : ["**Tier 2 — unavailable**: no safe vault path configured; use Tier 3 if Tier 1 fails."]),
+    "**Tier 3 — embed in Step 1 JSON**: if both Tier 1 and Tier 2 fail, include the full report text",
+    "  inside the `findings` array of your Step 1 JSON output — as part of that same output, NOT as a",
+    "  subsequent assistant message. Do NOT send additional messages after Step 1 to patch or augment",
+    "  the findings; the complete report must be present within the single Step 1 JSON response.",
+    "Do NOT stop silently — always persist the report by one of these three methods.",
   ];
 }
 
@@ -1122,6 +1167,7 @@ export function buildResearchPrompt(
   kbContext?: string,
   maxIterations?: number,
   tokenBudgetHint?: number,
+  vaultPath?: string,
 ): string {
   const lines = [
     `# Research Task: ${task.title} [${task.taskId}]`,
@@ -1193,9 +1239,7 @@ export function buildResearchPrompt(
     "",
     "## Step 2 (After JSON output): Write Report to KB",
     "After outputting the JSON summary above, write the full report to KB.",
-    ...deriveKbWriteInstructions(task),
-    "If kb_write fails, retry once. If it still fails, stop silently —",
-    "the orchestrator will recover the KB from your Step 1 JSON output automatically.",
+    ...deriveKbWriteInstructions(task, vaultPath),
     "Do NOT send any additional messages after Step 1 JSON — the orchestrator reads only your last message.",
   ];
 
@@ -1214,6 +1258,7 @@ export function buildDesignPrompt(
   task: TaskBundle,
   kbContext?: string,
   tokenBudgetHint?: number,
+  vaultPath?: string,
 ): string {
   const lines = [
     `# Design Task: ${task.title} [${task.taskId}]`,
@@ -1250,6 +1295,7 @@ export function buildDesignPrompt(
     JSON.stringify({
       designer: "",
       summary: "",
+      findings: [""],
       designDoc: "",
       artifacts: [""],
       completedAt: "",
@@ -1258,9 +1304,7 @@ export function buildDesignPrompt(
     "",
     "## Step 2 (After JSON output): Write Report to KB",
     "After outputting the JSON summary above, write the full design report to KB.",
-    ...deriveKbWriteInstructions(task),
-    "If kb_write fails, retry once. If it still fails, stop silently —",
-    "the orchestrator will recover the KB from your Step 1 JSON output automatically.",
+    ...deriveKbWriteInstructions(task, vaultPath),
     "Do NOT send any additional messages after Step 1 JSON — the orchestrator reads only your last message.",
   ];
 
