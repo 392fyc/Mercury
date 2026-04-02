@@ -1162,7 +1162,7 @@ export function buildResearchPrompt(
     "Return file:line references for all findings.",
     "Task: <focused scanning task description>\"",
     "```",
-    "The sub-agent's tokens are independent — its context does NOT count against yours.",
+    "The sub-agent's usage counts toward your shared Codex budget. Plan delegation conservatively and monitor actual token consumption via runtime feedback.",
     "Use its output as raw evidence in your Step 1 JSON; you write the final synthesis.",
     "If the plugin is not installed or the Agent tool call fails, continue with local Grep/Read and narrow scope early to protect remaining budget.",
     "",
