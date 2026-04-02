@@ -3,6 +3,12 @@
     "mercury-orchestrator": {
       "type": "http",
       "url": "http://127.0.0.1:7654/mcp"
+    },
+    "codex": {
+      "type": "stdio",
+      "command": "codex",
+      "args": ["mcp-server"],
+      "env": {}
     }
   }
 }
