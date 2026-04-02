@@ -1159,6 +1159,19 @@ if (CODEX_DELEGATION_THRESHOLD <= RESEARCH_CONTEXT_BUDGET_THRESHOLD) {
 const CODEX_SUBAGENT_ID = "codex:codex-rescue";
 
 /**
+ * Compact Codex sub-agent hint for non-research prompts (design, rework, send-back).
+ * Omits the full research protocol to minimise context consumption at session start.
+ * Only injected when the target agent is a Claude Code instance (cli === "claude").
+ */
+function buildCodexHint(): string[] {
+  return [
+    "## Codex Sub-Agent Delegation",
+    `If \`codex@openai-codex\` is installed: delegate to \`${CODEX_SUBAGENT_ID}\` via the Agent tool when your token budget drops below ${CODEX_DELEGATION_THRESHOLD.toLocaleString()} tokens or a task requires scanning 5+ files sequentially.`,
+    "",
+  ];
+}
+
+/**
  * Build a research-role dispatch prompt.
  * Research tasks produce findings/reports, not code commits.
  */
@@ -1168,6 +1181,7 @@ export function buildResearchPrompt(
   maxIterations?: number,
   tokenBudgetHint?: number,
   vaultPath?: string,
+  codexEnabled?: boolean,
 ): string {
   const lines = [
     `# Research Task: ${task.title} [${task.taskId}]`,
@@ -1198,25 +1212,27 @@ export function buildResearchPrompt(
     ...(tokenBudgetHint !== undefined && tokenBudgetHint > 0
       ? [`- **TOKEN_BUDGET: ~${tokenBudgetHint.toLocaleString()} tokens remaining** — wrap up and submit findings before reaching this limit.`]
       : []),
-    "",
-    "## Codex Sub-Agent Delegation",
-    `If the \`codex@openai-codex\` plugin is installed and enabled, use \`${CODEX_SUBAGENT_ID}\` via the Agent tool for token-intensive file scanning.`,
-    "**Delegate when (plugin enabled):**",
-    `- Your token budget drops below ${CODEX_DELEGATION_THRESHOLD.toLocaleString()} tokens AND you still need file scanning`,
-    "- A task requires scanning 5+ files sequentially with Grep/Read",
-    "- You need broad codebase pattern analysis across many directories",
-    "",
-    "**How to delegate (Agent tool call):**",
-    "```",
-    `Agent tool: subagent_type="${CODEX_SUBAGENT_ID}"`,
-    "prompt: \"[RESEARCH PROTOCOL] Evidence-over-claims: report only what you find, not assumptions.",
-    "Search iteratively with multiple patterns before concluding 'not found'.",
-    "Return file:line references for all findings.",
-    "Task: <focused scanning task description>\"",
-    "```",
-    "The sub-agent's usage counts toward your shared Codex budget. Plan delegation conservatively and monitor actual token consumption via runtime feedback.",
-    "Use its output as raw evidence in your Step 1 JSON; you write the final synthesis.",
-    "If the plugin is not installed or the Agent tool call fails, continue with local Grep/Read and narrow scope early to protect remaining budget.",
+    ...(codexEnabled ? [
+      "",
+      "## Codex Sub-Agent Delegation",
+      `If the \`codex@openai-codex\` plugin is installed and enabled, use \`${CODEX_SUBAGENT_ID}\` via the Agent tool for token-intensive file scanning.`,
+      "**Delegate when (plugin enabled):**",
+      `- Your token budget drops below ${CODEX_DELEGATION_THRESHOLD.toLocaleString()} tokens AND you still need file scanning`,
+      "- A task requires scanning 5+ files sequentially with Grep/Read",
+      "- You need broad codebase pattern analysis across many directories",
+      "",
+      "**How to delegate (Agent tool call):**",
+      "```",
+      `Agent tool: subagent_type="${CODEX_SUBAGENT_ID}"`,
+      "prompt: \"[RESEARCH PROTOCOL] Evidence-over-claims: report only what you find, not assumptions.",
+      "Search iteratively with multiple patterns before concluding 'not found'.",
+      "Return file:line references for all findings.",
+      "Task: <focused scanning task description>\"",
+      "```",
+      "The sub-agent's usage counts toward your shared Codex budget. Plan delegation conservatively and monitor actual token consumption via runtime feedback.",
+      "Use its output as raw evidence in your Step 1 JSON; you write the final synthesis.",
+      "If the plugin is not installed or the Agent tool call fails, continue with local Grep/Read and narrow scope early to protect remaining budget.",
+    ] : []),
     "",
     "## CRITICAL: Context Budget Check",
     `Before starting research, check your remaining context window. If it is below ${RESEARCH_CONTEXT_BUDGET_THRESHOLD.toLocaleString()} tokens,`,
@@ -1259,6 +1275,7 @@ export function buildDesignPrompt(
   kbContext?: string,
   tokenBudgetHint?: number,
   vaultPath?: string,
+  codexEnabled?: boolean,
 ): string {
   const lines = [
     `# Design Task: ${task.title} [${task.taskId}]`,
@@ -1283,7 +1300,7 @@ export function buildDesignPrompt(
     ...(tokenBudgetHint !== undefined && tokenBudgetHint > 0
       ? [`- **TOKEN_BUDGET: ~${tokenBudgetHint.toLocaleString()} tokens remaining** — wrap up and submit design before reaching this limit.`]
       : []),
-    "",
+    ...(codexEnabled ? buildCodexHint() : []),
     "## CRITICAL: Context Budget Check",
     `Before starting design work, check your remaining context window. If it is below ${RESEARCH_CONTEXT_BUDGET_THRESHOLD.toLocaleString()} tokens,`,
     "SKIP all design work and go directly to Step 1 to output the JSON summary with what you know.",
@@ -1439,6 +1456,7 @@ function fallbackAcceptanceTemplate(): string {
 export function buildReworkPrompt(
   task: TaskBundle,
   acceptance: AcceptanceBundle,
+  codexEnabled?: boolean,
 ): string {
   const lines: string[] = [];
 
@@ -1484,6 +1502,9 @@ export function buildReworkPrompt(
     lines.push("");
   }
 
+  if (codexEnabled) {
+    lines.push(...buildCodexHint());
+  }
   lines.push("## Instructions");
   lines.push("Address the findings above within your current scope. Do not start from scratch.");
   lines.push("Learn from previous attempts listed in the rework history — do not repeat the same mistakes.");
@@ -1493,7 +1514,7 @@ export function buildReworkPrompt(
 }
 
 /** Build the rework prompt sent to the Dev Agent after Main Agent SEND_BACK decision. */
-export function buildSendBackPrompt(task: TaskBundle, reason: string): string {
+export function buildSendBackPrompt(task: TaskBundle, reason: string, codexEnabled?: boolean): string {
   const lines: string[] = [];
 
   lines.push(`# Rework Required [${task.taskId}]`);
@@ -1545,6 +1566,9 @@ export function buildSendBackPrompt(task: TaskBundle, reason: string): string {
     lines.push("");
   }
 
+  if (codexEnabled) {
+    lines.push(...buildCodexHint());
+  }
   lines.push("## Instructions");
   lines.push("Address the reason stated above. Do not start from scratch.");
   lines.push("Review the task specification and previous receipt to understand what needs to change.");

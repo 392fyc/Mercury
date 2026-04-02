@@ -2883,13 +2883,16 @@ export class Orchestrator {
       ? Math.floor(rawBudget * 0.9)
       : undefined;
 
+    // Determine if the assigned agent is a Claude Code instance (codex plugin is CC-only)
+    const codexEnabled = this.getAgentCli(task.assignedTo) === "claude";
+
     // Build role-appropriate prompt
     let prompt: string;
     if (role === "research") {
       const maxIterations = this.projectConfig?.research?.maxIterations;
-      prompt = buildResearchPrompt(task, kbContext, maxIterations, tokenBudgetHint, this.projectConfig?.obsidian?.vaultPath ?? undefined);
+      prompt = buildResearchPrompt(task, kbContext, maxIterations, tokenBudgetHint, this.projectConfig?.obsidian?.vaultPath ?? undefined, codexEnabled);
     } else if (role === "design") {
-      prompt = buildDesignPrompt(task, kbContext, tokenBudgetHint, this.projectConfig?.obsidian?.vaultPath ?? undefined);
+      prompt = buildDesignPrompt(task, kbContext, tokenBudgetHint, this.projectConfig?.obsidian?.vaultPath ?? undefined, codexEnabled);
     } else {
       prompt = buildDevPrompt(task, kbContext, this.getProjectRoot());
     }
@@ -3145,6 +3148,15 @@ export class Orchestrator {
     }
     // Fallback: find first agent with main role in config
     return this.registry.listAgents().find((a) => a.roles.includes("main"))?.id;
+  }
+
+  /** Return the CLI type for an agent, or undefined if the agent is not registered. */
+  private getAgentCli(agentId: string): string | undefined {
+    try {
+      return this.registry.getConfig(agentId).cli;
+    } catch {
+      return undefined;
+    }
   }
 
   /**
@@ -3462,7 +3474,7 @@ export class Orchestrator {
       }
 
       const reworkRole: AgentRole = task.role ?? "dev";
-      const reworkPrompt = buildReworkPrompt(task, acceptance);
+      const reworkPrompt = buildReworkPrompt(task, acceptance, this.getAgentCli(task.assignedTo) === "claude");
       if (newSession) {
         const reworkRolePrompt = this.buildSystemRolePrompt(reworkRole, task);
         const session = await this.startRoleSession(
@@ -3621,7 +3633,7 @@ export class Orchestrator {
 
       // Send rework directive to the agent in its original role
       const reworkRole: AgentRole = task.role ?? "dev";
-      const reworkPrompt = buildSendBackPrompt(task, effectiveReason ?? "Main Agent review: sent back for rework");
+      const reworkPrompt = buildSendBackPrompt(task, effectiveReason ?? "Main Agent review: sent back for rework", this.getAgentCli(task.assignedTo) === "claude");
       if (newSession) {
         const reworkRolePrompt = this.buildSystemRolePrompt(reworkRole, task);
         const session = await this.startRoleSession(
