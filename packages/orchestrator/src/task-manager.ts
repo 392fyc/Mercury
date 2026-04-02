@@ -1266,6 +1266,7 @@ export function buildDesignPrompt(
     JSON.stringify({
       designer: "",
       summary: "",
+      findings: [""],
       designDoc: "",
       artifacts: [""],
       completedAt: "",
