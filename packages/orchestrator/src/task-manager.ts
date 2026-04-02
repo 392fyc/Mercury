@@ -8,7 +8,7 @@
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { basename, resolve, sep } from "node:path";
 import type { EventBus } from "@mercury/core";
 import { normalizePriority } from "@mercury/core";
 import type {
@@ -1080,24 +1080,45 @@ function deriveKbWriteInstructions(task: TaskBundle, vaultPath?: string): string
   if (kbPaths.length === 0) {
     return ["No KB output path configured for this task."];
   }
-  const target = kbPaths[0].endsWith(".md")
+  const rawTarget = kbPaths[0].endsWith(".md")
     ? kbPaths[0]
     : `${kbPaths[0].replace(/\/+$/, "")}/${task.taskId}.md`;
 
-  const absolutePath = vaultPath ? resolve(vaultPath, ...target.split("/")) : null;
-  const fallbackPath = absolutePath
-    ? absolutePath.replace(/\\/g, "/")
-    : `.mercury/docs/research/${task.taskId}.md`;
+  // Strip leading vault-name prefix to prevent double-path segments
+  // (e.g. "Mercury_KB/04-research/foo.md" → "04-research/foo.md")
+  let normalizedTarget = rawTarget.replace(/\\/g, "/");
+  if (vaultPath) {
+    const vaultBaseName = basename(vaultPath);
+    const prefix = `${vaultBaseName}/`;
+    if (normalizedTarget.startsWith(prefix)) {
+      normalizedTarget = normalizedTarget.slice(prefix.length);
+    }
+  }
+
+  // Derive safe absolute path with traversal guard (mirrors KnowledgeService.resolveVaultFilePath)
+  let safePath: string | null = null;
+  if (vaultPath) {
+    const segments = normalizedTarget.split(/[\\/]+/).filter(Boolean);
+    const resolved = resolve(vaultPath, ...segments);
+    const normalizedVault = resolve(vaultPath);
+    if (resolved.startsWith(normalizedVault + sep) || resolved === normalizedVault) {
+      safePath = resolved.replace(/\\/g, "/");
+    }
+  }
 
   return [
     "## KB Write Instructions (3-tier priority)",
     "**Tier 1 — MCP (preferred)**: call `mcp__mercury-orchestrator__kb_write`:",
-    `  - \`name\`: \`${target}\``,
+    `  - \`name\`: \`${normalizedTarget}\``,
     "  - `content`: your complete Markdown report",
-    ...(absolutePath ? [`  - Absolute path: \`${absolutePath.replace(/\\/g, "/")}\``] : []),
-    "**Tier 2 — direct file write (if MCP unavailable)**: write the report directly to:",
-    `  \`${fallbackPath}\``,
-    "  Create parent directories as needed.",
+    ...(safePath ? [`  - Absolute path: \`${safePath}\``] : []),
+    ...(safePath
+      ? [
+          "**Tier 2 — direct file write (if MCP unavailable)**: write the report directly to:",
+          `  \`${safePath}\``,
+          "  Create parent directories as needed.",
+        ]
+      : ["**Tier 2 — unavailable**: no safe vault path configured; use Tier 3 if Tier 1 fails."]),
     "**Tier 3 — embed in Step 1 JSON**: if both Tier 1 and Tier 2 fail, include the full report text",
     "  inside the `findings` array of your Step 1 JSON output — as part of that same output, NOT as a",
     "  subsequent assistant message. Do NOT send additional messages after Step 1 to patch or augment",
