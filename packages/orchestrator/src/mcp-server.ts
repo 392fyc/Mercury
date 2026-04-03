@@ -438,7 +438,7 @@ export class McpHttpSessionManager {
   private log: (msg: string) => void;
   private maxSessions: number;
   private closing = false;
-  /** Sessions idle longer than this are eligible for eviction (30 minutes). */
+  /** Sessions older than this (by creation time) are eligible for eviction (30 minutes). */
   private static readonly STALE_SESSION_MS = 30 * 60 * 1000;
 
   constructor(
@@ -462,9 +462,13 @@ export class McpHttpSessionManager {
   }
 
   /**
-   * Evict stale MCP HTTP sessions that have been idle longer than STALE_SESSION_MS.
+   * Evict MCP HTTP sessions older than STALE_SESSION_MS (by creation time).
    * Called before rejecting new connections with 503 to reclaim ghost sessions
    * whose HTTP connections were broken without a clean close event.
+   *
+   * Note: uses creation time, not last-activity time, because MCP HTTP
+   * transports don't track per-request timestamps. This is safe given
+   * maxSessions=10 and typical GUI usage of 1-2 concurrent sessions.
    */
   private evictStaleSessions(): void {
     const now = Date.now();
