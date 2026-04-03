@@ -188,9 +188,23 @@ Detection rule:
 ```bash
 git worktree list | grep ".worktrees/" | while read wt_path _rest; do
   taskId=$(basename "$wt_path")
-  # query task status for taskId via orchestrator RPC
-  # terminal states: completed, closed, failed, cancelled
-  # if terminal AND not referenced by any active task: emit warning, request manual removal
+
+  # 1. Get task status via get_task RPC
+  status=$(orchestrator-rpc '{"method":"get_task","params":{"taskId":"'"$taskId"'"}}' \
+    | jq -r '.status // "unknown"')
+
+  # 2. Check if terminal
+  if [[ "$status" =~ ^(completed|closed|failed|cancelled)$ ]]; then
+
+    # 3. Verify no active task still references this worktree path
+    active_refs=$(orchestrator-rpc '{"method":"list_tasks","params":{}}' \
+      | jq -r '.tasks[] | select(.status == "active" and .worktreePath == "'"$wt_path"'") | .taskId')
+
+    if [[ -z "$active_refs" ]]; then
+      echo "ORPHAN: $wt_path (task $taskId is $status, no active references)"
+      # request manual confirmation before removal — may contain uncommitted work
+    fi
+  fi
 done
 ```
 
