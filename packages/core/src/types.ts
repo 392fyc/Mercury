@@ -370,7 +370,7 @@ export interface TaskBundle {
   branch?: string;
 
   // Scope controls
-  codeScope: { include: string[]; exclude: string[] };
+  codeScope?: { include: string[]; exclude: string[] };
   readScope: { requiredDocs: string[]; optionalDocs: string[] };
   allowedWriteScope: { codePaths: string[]; kbPaths: string[] };
   docsMustUpdate: string[];
