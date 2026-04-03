@@ -2887,7 +2887,9 @@ export class Orchestrator {
 
       // Trim KB context only when Main Agent context is under pressure (ratio > 0.8).
       // Skipping trim when Main has ample headroom preserves full prompt quality.
-      // Standard approximation: 4 chars per token. Cap KB to 20% of Main's remaining chars.
+      // Approximation: 4 chars/token (English-centric). CJK languages map ~2-3 chars/token,
+      // so this heuristic over-estimates budget for CJK-heavy KB content.
+      // TODO: consider configurable chars/token coefficient for locale-aware trimming.
       const mainContextConstrained = mainBudget.ratio !== undefined
         ? mainBudget.ratio > 0.8
         : false;
@@ -3209,8 +3211,10 @@ export class Orchestrator {
     const session = this.sessions.get(sessionId);
     // Only report budget from an active session; stale/completed sessions have
     // outdated token counts that would cause incorrect KB trimming decisions.
+    // Consistent contract: agentId is always returned when Main agent is known,
+    // token fields are undefined when session is missing or not streaming.
     if (!session || session.status !== "active") {
-      return { agentId: undefined, sessionId: undefined, tokenUsage: undefined, tokenLimit: undefined, remaining: undefined, ratio: undefined };
+      return { agentId: mainAgentId, sessionId: undefined, tokenUsage: undefined, tokenLimit: undefined, remaining: undefined, ratio: undefined };
     }
     const tokenUsage = session.tokenUsage;
     const tokenLimit = session.tokenLimit;
@@ -3231,7 +3235,13 @@ export class Orchestrator {
     // Trim at the last newline before the budget boundary.
     // lastIndexOf with a position argument searches backwards from that position.
     const lastNewline = kbContext.lastIndexOf("\n", budget - 1);
-    // If no newline exists before the budget, return empty string rather than a partial line.
+    // If no newline exists before the budget, discard entirely to avoid partial lines.
+    // Emit a warning so operators can detect single-line KB content that is frequently discarded.
+    if (lastNewline < 0) {
+      this.transport.sendNotification("log", {
+        message: `[orchestrator] trimKbContext: no newline found within budget (kbContext ${kbContext.length} chars, budget ${budget}); discarding entire context`,
+      });
+    }
     const trimmed = lastNewline >= 0 ? kbContext.slice(0, lastNewline) : "";
     const trimmedLen = trimmed.length;
     return `${trimmed}\n\n[KB context trimmed: ${kbContext.length} chars -> ${trimmedLen} chars to fit Main Agent token budget]`;
