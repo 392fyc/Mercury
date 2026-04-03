@@ -168,6 +168,7 @@ function registerMcpTools(server: McpServer, orchestrator: Orchestrator): void {
       priority: z.enum(["P0", "P1", "P2", "P3"]).optional().describe("Task priority level"),
       assignedTo: agentId.optional().describe("Agent to assign (auto-selected if omitted)"),
       role: z.enum(["dev", "research", "design"]).optional().describe("Task dispatch role (default: dev)"),
+      researchScope: z.enum(["deep", "quick"]).optional().describe("Research depth mode: 'deep' activates the deep-research skill protocol"),
       description: z.string().optional().describe("Detailed task description"),
       context: z.string().describe("Task context for dev agent"),
       codeScope: z.record(z.string(), z.unknown()).optional().describe("Code scope boundaries"),

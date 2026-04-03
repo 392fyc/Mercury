@@ -54,6 +54,7 @@ export interface CreateTaskParams {
   priority: TaskBundle["priority"];
   assignedTo?: string; // Optional: auto-assigned via G9 modelRecommendation if omitted
   role?: string; // Task dispatch role: dev, research, design (default: dev)
+  researchScope?: "deep" | "quick"; // Research depth mode: 'deep' activates the deep-research skill protocol
   branch?: string;
   codeScope: TaskBundle["codeScope"];
   readScope: TaskBundle["readScope"];
@@ -327,6 +328,7 @@ export class TaskManager {
       failedAt: null,
       assignedTo,
       role: requiredRole,
+      researchScope: params.researchScope,
       branch: params.branch,
       codeScope: params.codeScope,
       readScope: {
@@ -1204,6 +1206,11 @@ export function buildResearchPrompt(
     "- Use web search, codebase analysis, and KB resources as needed.",
     "- Produce structured findings with evidence and recommendations.",
     "- No code commits expected.",
+    ...(task.researchScope === "deep" ? [
+      "",
+      "## Deep Research Protocol",
+      "This task requires the `/deep-research` protocol. Type `/deep-research` at the start of your response to activate the Mercury Deep Research Protocol with full multi-round verification.",
+    ] : []),
     ...(maxIterations && maxIterations > 0
       ? [
         `- **MAX_ITERATIONS: ${maxIterations}** — you MUST stop the research loop and submit your findings after at most ${maxIterations} round(s). Do not continue past this limit under any circumstances.`,

@@ -832,11 +832,16 @@ export class Orchestrator {
         return this.getTaskResult(params.taskId as string);
       case "list_tasks":
         return this.taskManager.listTasksAsync(params as { status?: TaskStatus; assignedTo?: string });
-      case "record_receipt":
+      case "record_receipt": {
+        let receipt = params.receipt as ImplementationReceipt;
+        if (typeof receipt === "string") {
+          try { receipt = JSON.parse(receipt) as ImplementationReceipt; } catch { /* keep as-is, will fail downstream */ }
+        }
         return this.recordReceiptAndTriggerReview(
           params.taskId as string,
-          params.receipt as ImplementationReceipt,
+          receipt,
         );
+      }
       case "main_review_result":
         return this.handleMainReviewResult(
           params.taskId as string,
@@ -2619,7 +2624,8 @@ export class Orchestrator {
 
   private async getGitDiff(task: TaskBundle): Promise<string> {
     const reviewConfig = this.getReviewConfig(task);
-    const diffBaseRef = reviewConfig.diffBaseRef ?? "develop...HEAD";
+    const defaultRef = task.branch ? `develop...${task.branch}` : "develop...HEAD";
+    const diffBaseRef = reviewConfig.diffBaseRef ?? defaultRef;
     const maxChars = reviewConfig.diffMaxChars ?? Orchestrator.DEFAULT_REVIEW_DIFF_MAX_CHARS;
     const result = await this.runCommand("git", ["diff", "--no-ext-diff", diffBaseRef], {
       cwd: this.getProjectRoot(),
@@ -3254,13 +3260,10 @@ export class Orchestrator {
    * Called when acceptance result (pass/fail/partial/blocked) is recorded.
    */
   private async deliverTaskCallback(payload: TaskCallbackPayload): Promise<void> {
-    // If originator is an external MCP client, broadcaster already delivered the event.
-    if (payload.originatorSessionId?.startsWith("mcp-http:")) {
-      this.transport.sendNotification("log", {
-        message: `[orchestrator] Task callback for ${payload.taskId} — MCP originator (${payload.originatorSessionId}), relying on broadcaster`,
-      });
-      return;
-    }
+    // Don't early-return for mcp-http originators — the broadcaster delivers
+    // to currently-connected sessions, but if that session is gone, the callback
+    // would be silently dropped. Always enqueue to the crash-safe queue too.
+    // The queue deduplicates, so double-delivery is safe.
 
     // Step 1: Persist to callback queue (crash-safe)
     if (this.shuttingDown) return;
