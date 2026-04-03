@@ -96,9 +96,15 @@ importers:
       better-sqlite3:
         specifier: 12.8.0
         version: 12.8.0
+      fast-bm25:
+        specifier: ^0.0.5
+        version: 0.0.5(typescript@5.9.3)
       js-yaml:
         specifier: ^4.1.1
         version: 4.1.1
+      write-file-atomic:
+        specifier: ^7.0.1
+        version: 7.0.1
       zod:
         specifier: ^4.0.0
         version: 4.3.6
@@ -1185,6 +1191,12 @@ packages:
     resolution: {integrity: sha512-hIS4idWWai69NezIdRt2xFVofaF4j+6INOpJlVOLDO8zXGpUVEVzIYk12UUi2JzjEzWL3IOAxcTubgz9Po0yXw==}
     engines: {node: '>= 18'}
 
+  fast-bm25@0.0.5:
+    resolution: {integrity: sha512-6HTiLmPkgeqcPJHccN0pXdqnA7OzhaEQZTFzWnfjIyPoX5sGVKUUpfRc2K2o6zMwK+g009miRhADYn/f2Ax0Mg==}
+    engines: {node: '>=14.0.0'}
+    peerDependencies:
+      typescript: ^5.6.3
+
   fast-deep-equal@3.1.3:
     resolution: {integrity: sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q==}
 
@@ -1441,6 +1453,9 @@ packages:
     resolution: {integrity: sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==}
     engines: {node: '>=16.20.0'}
 
+  porter2@1.1.0:
+    resolution: {integrity: sha512-Io2cLEdZn0O1dH60pRsjmr/cH/qJJ/j6Cjubz8wQWi0b6vPdQIUxSBQKyx9d+8CN7fSnY+5uOU3rErMFjNqcLw==}
+
   postcss@8.5.8:
     resolution: {integrity: sha512-OW/rX8O/jXnm82Ey1k44pObPtdblfiuWnrd8X7GJ7emImCOstunGbXUpp7HdBrFQX6rJzn3sPT397Wp5aCwCHg==}
     engines: {node: ^10 || ^12 || >=14}
@@ -1560,6 +1575,10 @@ packages:
   side-channel@1.1.0:
     resolution: {integrity: sha512-ZX99e6tRweoUXqR+VBrslhda51Nh5MTQwou5tnUDgbtyM0dBgmhEDtWGP/xbKn6hqfPRHujUNwz5fy/wbbhnpw==}
     engines: {node: '>= 0.4'}
+
+  signal-exit@4.1.0:
+    resolution: {integrity: sha512-bzyZ1e88w9O1iNJbKnOlvYTrWPDl46O1bG0D3XInv+9tkPrxrN8jUUTiFlDkkmKWgn1M6CfIA13SuGqOa9Korw==}
+    engines: {node: '>=14'}
 
   simple-concat@1.0.1:
     resolution: {integrity: sha512-cSFtAPtRhljv69IK0hTVZQ+OfE9nePi/rtJmw5UjHeVyVroEqJXP1sFztKUy1qU+xvz3u/sfYJLa947b7nAN2Q==}
@@ -1740,6 +1759,10 @@ packages:
 
   wrappy@1.0.2:
     resolution: {integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==}
+
+  write-file-atomic@7.0.1:
+    resolution: {integrity: sha512-OTIk8iR8/aCRWBqvxrzxR0hgxWpnYBblY1S5hDWBQfk/VFmJwzmJgQFN3WsoUKHISv2eAwe+PpbUzyL1CKTLXg==}
+    engines: {node: ^20.17.0 || >=22.9.0}
 
   zod-to-json-schema@3.25.1:
     resolution: {integrity: sha512-pM/SU9d3YAggzi6MtR4h7ruuQlqKtad8e9S0fmxcMi+ueAK5Korys/aWcV9LIIHTVbj01NdzxcnXSN+O74ZIVA==}
@@ -2627,6 +2650,11 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  fast-bm25@0.0.5(typescript@5.9.3):
+    dependencies:
+      porter2: 1.1.0
+      typescript: 5.9.3
+
   fast-deep-equal@3.1.3: {}
 
   fast-uri@3.1.0: {}
@@ -2856,6 +2884,8 @@ snapshots:
 
   pkce-challenge@5.0.1: {}
 
+  porter2@1.1.0: {}
+
   postcss@8.5.8:
     dependencies:
       nanoid: 3.3.11
@@ -3051,6 +3081,8 @@ snapshots:
       side-channel-map: 1.0.1
       side-channel-weakmap: 1.0.2
 
+  signal-exit@4.1.0: {}
+
   simple-concat@1.0.1: {}
 
   simple-get@4.0.1:
@@ -3209,6 +3241,10 @@ snapshots:
       isexe: 2.0.0
 
   wrappy@1.0.2: {}
+
+  write-file-atomic@7.0.1:
+    dependencies:
+      signal-exit: 4.1.0
 
   zod-to-json-schema@3.25.1(zod@4.3.6):
     dependencies:

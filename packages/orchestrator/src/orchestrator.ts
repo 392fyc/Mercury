@@ -34,6 +34,9 @@ import type {
 import { AgentRegistry } from "./agent-registry.js";
 import type { KnowledgeService } from "./knowledge-service.js";
 import type { RpcTransport } from "./rpc-transport.js";
+import { SkillRegistry } from "./skill-registry.js";
+import type { SkillMeta } from "./skill-registry.js";
+import { SkillCapturer } from "./skill-capturer.js";
 import {
   TaskManager,
   buildDevPrompt,
@@ -135,6 +138,12 @@ export class Orchestrator {
   private sharedContext: string = "";
   /** Cached role-only context built from obsidian.roleContextFiles[role]. */
   private roleContexts: Partial<Record<RoleContextKey, string>> = {};
+  /** Skill registry — BM25 index of accumulated agent skills in .mercury/skills/. */
+  private skillRegistry: SkillRegistry = new SkillRegistry();
+  /** Skill capturer — writes draft skills to .mercury/skills/pending/ after acceptance PASS. */
+  private skillCapturer: SkillCapturer | null = null;
+  /** Skills injected per task (taskId → skill names), for post-task metric recording. */
+  private injectedSkillsByTask = new Map<string, string[]>();
 
   constructor(
     registry: AgentRegistry,
@@ -266,9 +275,43 @@ export class Orchestrator {
     await this.recoverOrphanedTasks();
     // Build and inject shared context from KB if autoInjectContext is enabled
     await this.buildAndInjectContext();
+    // Initialize skill registry — scan .mercury/skills/ and build BM25 index
+    await this.initSkillRegistry();
   }
 
   private shuttingDown = false;
+
+  /**
+   * Initialize skill registry: scan .mercury/skills/, build BM25 index, log stale skills.
+   * Also initializes the skill capturer for post-acceptance-pass capture.
+   */
+  private async initSkillRegistry(): Promise<void> {
+    const skillDir = join(this.getProjectRoot(), ".mercury", "skills");
+    try {
+      await this.skillRegistry.init(skillDir);
+
+      this.skillCapturer = new SkillCapturer(skillDir);
+
+      const staleSkills = this.skillRegistry.listSkills().filter((s) => s.staleness);
+      if (staleSkills.length > 0) {
+        this.transport.sendNotification("log", {
+          message: `[skill-registry] ${staleSkills.length} skill(s) flagged: ${
+            staleSkills.map((s) => `${s.name}(${s.staleness})`).join(", ")
+          }`,
+        });
+      }
+
+      const total = this.skillRegistry.listSkills().length;
+      this.transport.sendNotification("log", {
+        message: `[skill-registry] Loaded ${total} skill(s) from ${skillDir}`,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.transport.sendNotification("log", {
+        message: `[skill-registry] Init failed (non-fatal): ${msg}`,
+      });
+    }
+  }
 
   /** Graceful shutdown — quiesce drain, clean up queue, close SQLite. */
   async shutdown(): Promise<void> {
@@ -2956,15 +2999,32 @@ export class Orchestrator {
     // Determine if the assigned agent is a Claude Code instance (codex plugin is CC-only)
     const codexEnabled = this.getAgentCli(task.assignedTo) === "claude";
 
+    // Retrieve relevant skills (max 3) for dev/research roles, inject body into _body field
+    let relevantSkills: SkillMeta[] | undefined;
+    if (this.skillRegistry.isReady() && (role === "dev" || role === "research")) {
+      const query = `${task.title} ${task.context.slice(0, 300)}`;
+      const rawSkills = this.skillRegistry.searchSkills(query, [role], 3);
+      if (rawSkills.length > 0) {
+        relevantSkills = await Promise.all(
+          rawSkills.map(async (s) => {
+            const body = await this.skillRegistry.loadSkillBody(s).catch(() => "");
+            this.skillRegistry.recordSelection(s.name);
+            return { ...s, _body: body } as SkillMeta & { _body: string };
+          }),
+        );
+        this.injectedSkillsByTask.set(task.taskId, rawSkills.map((s) => s.name));
+      }
+    }
+
     // Build role-appropriate prompt
     let prompt: string;
     if (role === "research") {
       const maxIterations = this.projectConfig?.research?.maxIterations;
-      prompt = buildResearchPrompt(task, kbContext, maxIterations, tokenBudgetHint, this.projectConfig?.obsidian?.vaultPath ?? undefined, codexEnabled);
+      prompt = buildResearchPrompt(task, kbContext, maxIterations, tokenBudgetHint, this.projectConfig?.obsidian?.vaultPath ?? undefined, codexEnabled, relevantSkills);
     } else if (role === "design") {
       prompt = buildDesignPrompt(task, kbContext, tokenBudgetHint, this.projectConfig?.obsidian?.vaultPath ?? undefined, codexEnabled);
     } else {
-      prompt = buildDevPrompt(task, kbContext, this.getProjectRoot());
+      prompt = buildDevPrompt(task, kbContext, this.getProjectRoot(), relevantSkills);
     }
 
     return {
@@ -3572,6 +3632,23 @@ export class Orchestrator {
       // Acceptance passed → verified → closed
       this.taskManager.transitionTask(task.taskId, "verified", acceptance.acceptor);
       this.taskManager.transitionTask(task.taskId, "closed", "orchestrator");
+
+      // Update skill completion metrics for skills injected into this task's dispatch
+      const injectedSkills = this.injectedSkillsByTask.get(task.taskId);
+      if (injectedSkills && injectedSkills.length > 0) {
+        for (const skillName of injectedSkills) {
+          this.skillRegistry.recordCompletion(skillName);
+        }
+        this.injectedSkillsByTask.delete(task.taskId);
+      }
+
+      // Post-acceptance capture: extract reusable skill patterns (fire-and-forget, non-blocking)
+      const receipt = task.implementationReceipt;
+      if (receipt && this.skillCapturer) {
+        const capturer = this.skillCapturer;
+        const gitDiff = task.mainReview?.gitDiff;
+        void capturer.captureFromAcceptancePass({ task, receipt, gitDiff }).catch(() => {});
+      }
 
       // Callback to Main Agent
       this.bus.emit(

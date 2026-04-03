@@ -11,6 +11,7 @@ import { readFileSync } from "node:fs";
 import { basename, resolve, sep } from "node:path";
 import type { EventBus } from "@mercury/core";
 import { normalizePriority } from "@mercury/core";
+import type { SkillMeta } from "./skill-registry.js";
 import type {
   TaskBundle,
   TaskStatus,
@@ -948,6 +949,24 @@ function formatWriteScope(scope: TaskBundle["allowedWriteScope"]): string {
  * preload + cache at TaskManager.init() with mtime-based refresh (tracked in TASK-WF-001).
  */
 /**
+ * Build the "## Accumulated Skills" block injected into dev/research prompts.
+ * Skills carry a pre-loaded `_body` property set by the orchestrator before passing here.
+ * Token budget: max 3 skills × ~1500 tokens each = ~4500 tokens (~5% context).
+ */
+function buildSkillsBlock(skills: SkillMeta[]): string {
+  if (skills.length === 0) return "";
+  const sections = ["\n\n## Accumulated Skills (Mercury Skill Library)"];
+  sections.push("These reusable patterns were accumulated through prior tasks. Apply when relevant:");
+  for (const skill of skills) {
+    sections.push(`\n### ${skill.name} [${skill.category}]`);
+    sections.push(`_${skill.description}_`);
+    const body = (skill as SkillMeta & { _body?: string })._body;
+    if (body) sections.push(body);
+  }
+  return sections.join("\n");
+}
+
+/**
  * Build a git log section for dev dispatch prompts.
  * Returns a markdown block with the last 20 commits on the task branch (best-effort).
  */
@@ -974,6 +993,7 @@ export function buildDevPrompt(
   task: TaskBundle,
   kbContext?: string,
   basePath = process.cwd(),
+  relevantSkills?: SkillMeta[],
 ): string {
   const templatePath = resolve(basePath, ".mercury", "templates", "dispatch-prompt.template.md");
   let template: string;
@@ -1046,6 +1066,10 @@ export function buildDevPrompt(
   let result = template.replace(placeholderPattern, (match) => placeholders[match] ?? match);
 
   result += buildGitLogSection(task.branch, basePath);
+
+  if (relevantSkills && relevantSkills.length > 0) {
+    result += buildSkillsBlock(relevantSkills);
+  }
 
   if (kbContext) {
     result += `
@@ -1190,6 +1214,7 @@ export function buildResearchPrompt(
   tokenBudgetHint?: number,
   vaultPath?: string,
   codexEnabled?: boolean,
+  relevantSkills?: SkillMeta[],
 ): string {
   const lines = [
     `# Research Task: ${task.title} [${task.taskId}]`,
@@ -1271,6 +1296,10 @@ export function buildResearchPrompt(
     ...deriveKbWriteInstructions(task, vaultPath),
     "Do NOT send any additional messages after Step 1 JSON — the orchestrator reads only your last message.",
   ];
+
+  if (relevantSkills && relevantSkills.length > 0) {
+    lines.push(...buildSkillsBlock(relevantSkills).split("\n"));
+  }
 
   if (kbContext) {
     lines.push("", "## Project Knowledge Base Context", kbContext);
