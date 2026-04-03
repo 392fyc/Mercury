@@ -615,7 +615,8 @@ export class Orchestrator {
       if (this.roleSessions.has(slotKey)) continue; // already restored — don't overwrite
       const existingId = fallbackBindings.get(slotKey);
       const existingTs = existingId ? (this.sessions.get(existingId)?.lastActiveAt ?? 0) : 0;
-      if (!existingId || info.lastActiveAt > existingTs) {
+      const candidateTs = info.lastActiveAt ?? 0;
+      if (!existingId || candidateTs > existingTs) {
         fallbackBindings.set(slotKey, sessionId);
       }
     }
