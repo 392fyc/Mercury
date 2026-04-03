@@ -8,7 +8,7 @@
 Enable parallel multi-task development by isolating each dev task in its own
 git worktree. This removes branch-collision risk when multiple agents work
 simultaneously and formalises the constraint in
-[`feedback_git_safety.md`](../../memory/feedback_git_safety.md)
+[`git-flow.md`](git-flow.md)
 (dev agents must never switch branches) by giving each agent a dedicated,
 branch-locked working directory.
 
@@ -54,7 +54,7 @@ Main: git worktree remove <path> + git branch -d <branch>
 | Artifact | Pattern | Example |
 |----------|---------|---------|
 | Worktree path | `.worktrees/{taskId}` | `.worktrees/TASK-a1b2c3d4` |
-| Branch | `feature/{taskId}-{slug}` (existing rule) | `feature/TASK-a1b2c3d4-add-auth` |
+| Branch | `feature/TASK-{taskId}-{slug}` (existing rule) | `feature/TASK-a1b2c3d4-add-auth` |
 
 The worktree root (`.worktrees/`) belongs in `.gitignore` — worktrees are
 transient and must not be committed.
@@ -220,7 +220,7 @@ active for the task.
 
 | Existing Rule | How Worktree Workflow Satisfies It |
 |---------------|-------------------------------------|
-| Dev agents must never switch branches ([`feedback_git_safety.md`](../../memory/feedback_git_safety.md)) | Worktree is branch-locked at creation; switching is physically impossible within the worktree |
+| Dev agents must never switch branches ([`git-flow.md`](git-flow.md)) | Worktree is branch-locked at creation; the same branch cannot be checked out in multiple worktrees simultaneously, ensuring work isolation |
 | All code enters develop through PRs ([`git-flow.md`](git-flow.md)) | Each worktree branch becomes an independent PR |
 | Main creates branches, Dev does not ([`git-flow.md`](git-flow.md)) | Main creates worktree+branch pre-dispatch; Dev only commits |
 
