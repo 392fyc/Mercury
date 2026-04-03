@@ -16,33 +16,31 @@ Run Claude Code deep review and Codex code audit in parallel, then consolidate f
 - As a replacement for single-agent /code-review.
 - Whenever CLAUDE.md requires code review before commit.
 
-## Codex execution path
+## Division of responsibility
 
-> **Important:** Codex must be invoked via `! codex "..."` in the terminal — **not** via rescue subagent or MCP.
-> Both `codex-rescue` and `mcp__codex__codex` run in headless sandbox (`workspace-write`) which blocks
-> `tsc`, `node`, `pnpm`, `npx`. The `! codex` terminal path uses interactive mode where compilers can run.
+| Responsibility | Owner |
+|----------------|-------|
+| TypeScript `tsc --noEmit` | Claude Code |
+| Architecture / logic / integration correctness | Claude Code |
+| Code style / edge cases / error handling | Codex rescue subagent |
+| Metrics completeness (all 4 paths wired) | Codex rescue subagent |
+| Memory leak (Map cleanup on all terminal paths) | Codex rescue subagent |
+| Windows/PowerShell compat | Codex rescue subagent |
+
+Codex is invoked via `Agent` tool (rescue subagent) — no manual terminal step required.
 
 ## Step 1 — Launch parallel reviewers
 
 **Claude Code deep review** (this session):
-
-Perform a full diff review of the current branch against develop:
 
 ```bash
 git diff develop...HEAD --stat
 git diff develop...HEAD
 ```
 
-Check: TypeScript correctness, logic correctness, integration correctness, OpenSpace schema compliance (for skill engine changes), missing metric paths, memory leaks, security issues.
+Check: TypeScript correctness (run `npx tsc --noEmit`), logic correctness, integration points, OpenSpace schema compliance, missing metric paths, memory leaks.
 
-**Codex audit** (separate session — launch via Agent tool or manually):
-
-```bash
-# Prompt for Codex:
-# "Audit all changes on feat/<branch> vs develop.
-#  Check: code style, edge cases, missing error handling,
-#  metrics completeness, package version accuracy, Windows/PowerShell compat."
-```
+**Codex audit** (rescue subagent — launch via Agent tool with `subagent_type: codex:codex-rescue`):
 
 ## Step 2 — Collect results
 

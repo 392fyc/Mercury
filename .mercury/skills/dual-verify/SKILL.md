@@ -38,28 +38,36 @@ Run Claude Code deep review and Codex code audit in parallel, then consolidate f
 
 ## Workflow
 
-> **Codex execution path:** Invoke Codex via `! codex "..."` in terminal (interactive mode), **not** via
-> rescue subagent or MCP. Headless modes (`codex-rescue`, `mcp__codex__codex`) run in `workspace-write`
-> sandbox which blocks `tsc`/`node`/`pnpm`/`npx`. Terminal interactive mode allows compilers to run.
+### Division of responsibility
+
+| Responsibility | Owner |
+|----------------|-------|
+| TypeScript `tsc --noEmit` | Claude Code |
+| Architecture / logic / integration | Claude Code |
+| Code style / edge cases / error handling | Codex (rescue subagent) |
+| Metrics completeness (all 4 paths wired) | Codex (rescue subagent) |
+| Memory leak (Map cleanup on all paths) | Codex (rescue subagent) |
+| Windows/PowerShell compat | Codex (rescue subagent) |
+
+Codex is invoked as rescue subagent — fully automated, no manual terminal step required.
 
 ### Step 1 — Launch both reviewers in parallel
 
-**Claude Code** (deep review — architecture, correctness, type safety, OpenSpace schema compliance):
+**Claude Code** (deep review — TypeScript correctness, architecture, integration, OpenSpace schema):
 
 ```bash
-# In Claude Code conversation:
-# Ask Claude to perform a deep review of the diff vs develop:
-# "Review all changes on this branch against develop. Check: TypeScript correctness,
-#  logic correctness, integration points, OpenSpace schema compliance, security."
+git diff develop...HEAD --stat
+git diff develop...HEAD
+npx tsc --noEmit  # Claude Code's responsibility
 ```
 
-**Codex** (code audit — style, edge cases, metrics completeness, dependency versions):
+**Codex** (logic audit — style, edge cases, metrics, memory leaks, Windows compat):
 
 ```bash
-# In Codex session (separate terminal/tab):
-codex "Audit all changes on branch feat/<name> vs develop.
-Check: code style, edge cases, missing error handling,
-metrics completeness, package version accuracy."
+# Launch via Agent tool with subagent_type: codex:codex-rescue
+# Prompt: "Audit feat/<branch> vs develop. Check: code style, edge cases,
+# metrics completeness (all 4 paths), memory leak cleanup on terminal paths,
+# Windows compat. TypeScript typecheck is not required."
 ```
 
 ### Step 2 — Collect results
