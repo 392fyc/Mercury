@@ -3218,8 +3218,10 @@ export class Orchestrator {
     }
     const tokenUsage = session.tokenUsage;
     const tokenLimit = session.tokenLimit;
-    const remaining = tokenUsage !== undefined && tokenLimit !== undefined ? tokenLimit - tokenUsage : undefined;
-    const ratio = tokenUsage !== undefined && tokenLimit !== undefined ? tokenUsage / tokenLimit : undefined;
+    // Guard tokenLimit > 0 to avoid Infinity when computing ratio (tokenLimit=0 edge case).
+    const safeLimit = tokenUsage !== undefined && tokenLimit !== undefined && tokenLimit > 0;
+    const remaining = safeLimit ? tokenLimit! - tokenUsage! : undefined;
+    const ratio = safeLimit ? tokenUsage! / tokenLimit! : undefined;
     return { agentId: mainAgentId, sessionId, tokenUsage, tokenLimit, remaining, ratio };
   }
 
