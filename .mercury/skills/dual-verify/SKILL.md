@@ -124,3 +124,14 @@ dual-verify: PASS (Claude: PASS, Codex: PASS, N critical fixed, M high fixed)
 - If one reviewer returns NEEDS-CHANGES, fix before proceeding — do not merge on split verdict.
 - Codex may surface Windows/PowerShell-specific concerns not visible to Claude; always include Codex in the loop.
 - Cross-referencing catches false positives: an issue flagged by only one reviewer should be investigated, not auto-dismissed.
+
+## Fallback
+
+If one reviewer is unavailable, fall back to that reviewer's individual skill:
+
+| Unavailable | Fallback |
+|-------------|----------|
+| Codex | Claude Code `/code-review` skill (deep diff review) |
+| Claude Code | Codex `auto-verify` skill (type-check, scope, lint, docstring) |
+
+Document in the PR description that dual-verify was attempted but one side was unavailable. High-risk PRs (orchestrator core, auth, schema changes) should wait for both reviewers.

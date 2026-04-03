@@ -86,3 +86,11 @@ dual-verify: PASS (Codex: PASS, N critical fixed, M high fixed)
 - Report findings even on PASS so Claude's consolidation has full data.
 - Do not mark the PR ready unilaterally — dual-verify requires both sides to agree.
 - Codex-only findings should be flagged clearly so Claude can cross-reference.
+
+## Fallback
+
+If Claude Code is unavailable or the dual-verify session cannot be coordinated:
+- Run the `auto-verify` skill (Codex built-in quality gate) as the sole reviewer.
+- Document in the PR description that dual-verify was attempted but Claude Code was unavailable.
+- `auto-verify` covers type-check, scope, lint, and docstring coverage — use it for low-risk changes.
+- High-risk PRs (orchestrator core, auth, schema changes) should wait for Claude Code availability.

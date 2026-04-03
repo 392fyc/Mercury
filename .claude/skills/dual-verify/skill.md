@@ -89,3 +89,10 @@ dual-verify: PASS (Claude: PASS, Codex: PASS, N issues fixed)
 - Both reviewers must return PASS before proceeding to merge.
 - Fix before merge — do not proceed on a split verdict.
 - Codex surfaces Windows-specific and platform concerns that may not be visible in Claude's review.
+
+## Fallback
+
+If Codex is unavailable or the session cannot be started:
+- Use `/code-review` (Claude Code built-in) as the sole reviewer.
+- Document in the PR description that dual-verify was attempted but Codex was unavailable.
+- This fallback is acceptable for low-risk changes; high-risk PRs (orchestrator core, auth, schema changes) should wait for Codex availability.
