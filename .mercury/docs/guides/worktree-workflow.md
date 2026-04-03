@@ -164,16 +164,16 @@ Main Agent reviews `dependsOn` fields before dispatching.
 
 ## Merge Strategy
 
-Each worktree produces an independent PR (`feature/TASK-X` into `develop`).
-PRs are merged in dependency order when dependencies exist. Conflicts are
-resolved by Main Agent via rebase before merge; after rebasing a pushed branch,
-`--force-with-lease` is used to update the PR branch (direct force-push without
-lease is prohibited).
+Each worktree produces an independent PR (`feature/TASK-{taskId}-{slug}` into
+`develop`). PRs are merged in dependency order when dependencies exist.
+Conflicts are resolved by Main Agent via rebase before merge; after rebasing a
+pushed branch, `--force-with-lease` is used to update the PR branch (direct
+force-push without lease is prohibited).
 
 ```text
-develop --> feature/TASK-A (independent) -> PR -> merge
-        --> feature/TASK-B (independent) -> PR -> merge
-        --> feature/TASK-C (dependsOn TASK-A) -> wait -> PR -> merge
+develop --> feature/TASK-a1b2c3d4-add-auth     (independent)         -> PR -> merge
+        --> feature/TASK-e5f6g7h8-add-logging  (independent)         -> PR -> merge
+        --> feature/TASK-i9j0k1l2-refactor-auth (dependsOn a1b2c3d4) -> wait -> PR -> merge
 ```
 
 ---
