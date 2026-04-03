@@ -604,24 +604,28 @@ export class Orchestrator {
       }
     }
 
-    // Fallback: if roleSessions is still empty (old state file or all bindings failed to restore),
-    // auto-bind the most recently active surviving session per role slot so the next send_prompt
-    // reuses prior context instead of starting a fresh session.
-    if (this.roleSessions.size === 0) {
-      for (const [sessionId, info] of this.sessions) {
-        if (!info.frozenRole || (info.status !== "active" && info.status !== "paused")) continue;
-        const slotKey = makeRoleSlotKey(info.frozenRole, info.agentId);
-        const existingId = this.roleSessions.get(slotKey);
-        const existingTs = existingId ? (this.sessions.get(existingId)?.lastActiveAt ?? 0) : 0;
-        if (!existingId || info.lastActiveAt > existingTs) {
-          this.roleSessions.set(slotKey, sessionId);
-        }
+    // Fallback: for any role slot not already restored above (e.g. old state file missing
+    // roleSessions, or the persisted binding pointed to a session that failed to resume),
+    // auto-bind the most recently active surviving session for that slot so the next
+    // send_prompt reuses prior context instead of starting a fresh session.
+    const fallbackBindings = new Map<RoleSlotKey, string>();
+    for (const [sessionId, info] of this.sessions) {
+      if (!info.frozenRole || (info.status !== "active" && info.status !== "paused")) continue;
+      const slotKey = makeRoleSlotKey(info.frozenRole, info.agentId);
+      if (this.roleSessions.has(slotKey)) continue; // already restored — don't overwrite
+      const existingId = fallbackBindings.get(slotKey);
+      const existingTs = existingId ? (this.sessions.get(existingId)?.lastActiveAt ?? 0) : 0;
+      if (!existingId || info.lastActiveAt > existingTs) {
+        fallbackBindings.set(slotKey, sessionId);
       }
-      if (this.roleSessions.size > 0) {
-        this.transport.sendNotification("log", {
-          message: `[persist] roleSessions absent — auto-bound ${this.roleSessions.size} slot(s) from restored sessions`,
-        });
-      }
+    }
+    for (const [slotKey, sessionId] of fallbackBindings) {
+      this.roleSessions.set(slotKey, sessionId);
+    }
+    if (fallbackBindings.size > 0) {
+      this.transport.sendNotification("log", {
+        message: `[persist] Auto-bound ${fallbackBindings.size} missing role slot(s) from restored sessions`,
+      });
     }
 
     const restored = this.sessions.size;
