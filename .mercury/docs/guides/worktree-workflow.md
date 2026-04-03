@@ -166,7 +166,9 @@ Main Agent reviews `dependsOn` fields before dispatching.
 
 Each worktree produces an independent PR (`feature/TASK-X` into `develop`).
 PRs are merged in dependency order when dependencies exist. Conflicts are
-resolved by Main Agent via rebase before merge — never by force-push.
+resolved by Main Agent via rebase before merge; after rebasing a pushed branch,
+`--force-with-lease` is used to update the PR branch (direct force-push without
+lease is prohibited).
 
 ```text
 develop --> feature/TASK-A (independent) -> PR -> merge
@@ -178,14 +180,17 @@ develop --> feature/TASK-A (independent) -> PR -> merge
 
 ## Orphan Detection
 
-A worktree is orphaned when its associated task reaches `failed` or `cancelled`
-status but the worktree directory still exists. Detection rule:
+A worktree is orphaned when its associated task has reached a terminal state
+(`completed`, `closed`, `failed`, or `cancelled`) but the worktree directory
+still exists, and no active task currently references that worktree path.
+Detection rule:
 
 ```bash
 git worktree list | grep ".worktrees/" | while read wt_path _rest; do
   taskId=$(basename "$wt_path")
   # query task status for taskId via orchestrator RPC
-  # if status is failed or cancelled: emit warning, request manual removal
+  # terminal states: completed, closed, failed, cancelled
+  # if terminal AND not referenced by any active task: emit warning, request manual removal
 done
 ```
 
