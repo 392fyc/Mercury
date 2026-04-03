@@ -667,7 +667,10 @@ export class ClaudeAdapter implements AgentAdapter {
       this.sessionCwd.set(sessionId, session.cwd ?? process.cwd());
     }
     session.status = "active";
-    session.lastActiveAt = Date.now();
+    // Preserve the persisted lastActiveAt — don't overwrite with Date.now().
+    // Only real streaming activity (line 492) should update lastActiveAt.
+    // Overwriting here causes all restored sessions to share the same timestamp,
+    // defeating TTL-based cleanup of stale sessions.
     return session;
   }
 

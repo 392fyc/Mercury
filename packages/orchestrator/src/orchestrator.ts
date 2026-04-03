@@ -1498,7 +1498,14 @@ export class Orchestrator {
     const effectiveRole = role ?? config.roles[0];
     const slotKey = makeRoleSlotKey(effectiveRole, agentId);
 
-    // Auto-start session if none exists for this role slot
+    // Auto-start session if none exists for this role slot.
+    // Session reuse: the GUI calls send_prompt (not start_session) for every message.
+    // roleSessions maps role+agent → sessionId, so the same session is reused across
+    // MCP HTTP reconnections. A new session is only created when:
+    //   (a) no session exists for this role slot (first message or after /clear)
+    //   (b) the existing session is completed/overflow (validated below)
+    //   (c) adapter.resumeSession() throws (session state lost)
+    // See: TASK-4d99b745 Bug 3 investigation — no orchestrator-side fix needed.
     let sessionId = this.roleSessions.get(slotKey);
     if (!sessionId) {
       const session = await this.startRoleSession(agentId, effectiveRole, taskName, systemPrompt);

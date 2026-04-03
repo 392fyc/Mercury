@@ -171,9 +171,18 @@ function registerMcpTools(server: McpServer, orchestrator: Orchestrator): void {
       researchScope: z.enum(["deep", "quick"]).optional().describe("Research depth mode: 'deep' activates the deep-research skill protocol"),
       description: z.string().optional().describe("Detailed task description"),
       context: z.string().describe("Task context for dev agent"),
-      codeScope: z.record(z.string(), z.unknown()).optional().describe("Code scope boundaries"),
-      readScope: z.record(z.string(), z.unknown()).describe("Required/optional docs to read"),
-      allowedWriteScope: z.record(z.string(), z.unknown()).describe("Allowed write paths"),
+      codeScope: z.object({
+        include: z.array(z.string()).describe("Glob patterns to include"),
+        exclude: z.array(z.string()).optional().default([]).describe("Glob patterns to exclude"),
+      }).describe("Code scope boundaries (include/exclude globs)"),
+      readScope: z.object({
+        requiredDocs: z.array(z.string()).optional().default([]).describe("Docs the agent must read"),
+        optionalDocs: z.array(z.string()).optional().default([]).describe("Docs the agent may read"),
+      }).describe("Required/optional docs to read"),
+      allowedWriteScope: z.object({
+        codePaths: z.array(z.string()).optional().default([]).describe("Allowed code file paths"),
+        kbPaths: z.array(z.string()).optional().default([]).describe("Allowed KB file paths"),
+      }).describe("Allowed write paths for code and KB"),
       definitionOfDone: z.array(z.string()).optional().describe("DoD checklist items"),
       branch: z.string().optional().describe("Git branch name"),
       modelRecommendation: z.object({
@@ -435,9 +444,12 @@ export interface McpHttpSession {
  */
 export class McpHttpSessionManager {
   private sessions = new Map<string, McpHttpSession>();
+  private sessionCreatedAt = new Map<string, number>();
   private log: (msg: string) => void;
   private maxSessions: number;
   private closing = false;
+  /** Sessions older than this (by creation time) are eligible for eviction (30 minutes). */
+  private static readonly STALE_SESSION_MS = 30 * 60 * 1000;
 
   constructor(
     private orchestrator: Orchestrator,
@@ -452,10 +464,42 @@ export class McpHttpSessionManager {
   private cleanupSession(sid: string): void {
     if (this.closing) return;
     this.sessions.delete(sid);
+    this.sessionCreatedAt.delete(sid);
     if (this.broadcaster) {
       this.broadcaster.removeChannel(`mcp-http:${sid}`);
     }
     this.log(`MCP HTTP session closed: ${sid}`);
+  }
+
+  /**
+   * Evict MCP HTTP sessions older than STALE_SESSION_MS (by creation time).
+   * Called before rejecting new connections with 503 to reclaim ghost sessions
+   * whose HTTP connections were broken without a clean close event.
+   *
+   * Note: uses creation time, not last-activity time, because MCP HTTP
+   * transports don't track per-request timestamps. This is safe given
+   * maxSessions=10 and typical GUI usage of 1-2 concurrent sessions.
+   */
+  private evictStaleSessions(): void {
+    const now = Date.now();
+    // Collect stale IDs first to avoid mutating the Map during iteration
+    const toEvict: string[] = [];
+    for (const [sid] of this.sessions) {
+      if (this.sessions.size - toEvict.length < this.maxSessions) break;
+      const createdAt = this.sessionCreatedAt.get(sid) ?? 0;
+      if (now - createdAt > McpHttpSessionManager.STALE_SESSION_MS) {
+        toEvict.push(sid);
+      }
+    }
+    for (const sid of toEvict) {
+      const session = this.sessions.get(sid);
+      const createdAt = this.sessionCreatedAt.get(sid) ?? 0;
+      if (session) {
+        session.transport.close().catch(() => {});
+      }
+      this.cleanupSession(sid);
+      this.log(`Evicted stale MCP HTTP session: ${sid} (age: ${Math.round((now - createdAt) / 60000)}min)`);
+    }
   }
 
   get sessionCount(): number {
@@ -480,9 +524,15 @@ export class McpHttpSessionManager {
     // New session: only via POST without session header (MCP initialize)
     if (req.method === "POST" && !sessionId) {
       if (this.sessions.size >= this.maxSessions) {
-        res.statusCode = 503;
-        res.end(JSON.stringify({ error: "Too many MCP sessions" }));
-        return;
+        // Lazy eviction: only on demand, not via background timer. Acceptable
+        // because GUI typically uses 1-2 concurrent sessions and rarely hits
+        // maxSessions=10; avoids background overhead for the common case.
+        this.evictStaleSessions();
+        if (this.sessions.size >= this.maxSessions) {
+          res.statusCode = 503;
+          res.end(JSON.stringify({ error: "Too many MCP sessions" }));
+          return;
+        }
       }
       await this.createSession(req, res);
       return;
@@ -522,6 +572,7 @@ export class McpHttpSessionManager {
         }
         this.log(`MCP HTTP session initialized: ${sid}`);
         this.sessions.set(sid, { server, transport });
+        this.sessionCreatedAt.set(sid, Date.now());
 
         // Register as broadcaster channel for event fan-out
         if (this.broadcaster) {
@@ -567,6 +618,7 @@ export class McpHttpSessionManager {
       }
     }
     this.sessions.clear();
+    this.sessionCreatedAt.clear();
     this.closing = false;
   }
 }
