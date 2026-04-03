@@ -181,11 +181,15 @@ develop --> feature/TASK-a1b2c3d4-add-auth     (independent)         -> PR -> me
 ## Orphan Detection
 
 A worktree is orphaned when its associated task has reached a terminal state
-(`completed`, `closed`, `failed`, or `cancelled`) but the worktree directory
-still exists, and no active task currently references that worktree path.
+(`verified`, `closed`, or `failed`) but the worktree directory still exists,
+and no non-terminal task currently references that worktree path.
 Detection rule:
 
 ```bash
+# Terminal TaskStatus values: verified, closed, failed
+# Non-terminal TaskStatus values: drafted, dispatched, in_progress,
+#   implementation_done, main_review, acceptance, blocked
+
 git worktree list | grep ".worktrees/" | while read wt_path _rest; do
   taskId=$(basename "$wt_path")
 
@@ -194,11 +198,17 @@ git worktree list | grep ".worktrees/" | while read wt_path _rest; do
     | jq -r '.status // "unknown"')
 
   # 2. Check if terminal
-  if [[ "$status" =~ ^(completed|closed|failed|cancelled)$ ]]; then
+  if [[ "$status" =~ ^(verified|closed|failed)$ ]]; then
 
-    # 3. Verify no active task still references this worktree path
+    # 3. Verify no non-terminal task still references this worktree path
     active_refs=$(orchestrator-rpc '{"method":"list_tasks","params":{}}' \
-      | jq -r '.tasks[] | select(.status == "active" and .worktreePath == "'"$wt_path"'") | .taskId')
+      | jq -r '.tasks[]
+          | select(
+              (.status | IN("drafted","dispatched","in_progress",
+                            "implementation_done","main_review","acceptance","blocked"))
+              and .worktreePath == "'"$wt_path"'"
+            )
+          | .taskId')
 
     if [[ -z "$active_refs" ]]; then
       echo "ORPHAN: $wt_path (task $taskId is $status, no active references)"
