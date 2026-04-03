@@ -46,6 +46,9 @@ $RECYCLE.BIN/
 .claude/settings.local.json
 CLAUDE.md
 
+# Git worktrees (transient, managed by Main Agent)
+.worktrees/
+
 # Mercury runtime state
 .mercury/sessions.json
 .mercury/transcripts/
