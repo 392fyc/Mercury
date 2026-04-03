@@ -173,7 +173,7 @@ force-push without lease is prohibited).
 ```text
 develop --> feature/TASK-a1b2c3d4-add-auth     (independent)         -> PR -> merge
         --> feature/TASK-e5f6g7h8-add-logging  (independent)         -> PR -> merge
-        --> feature/TASK-i9j0k1l2-refactor-auth (dependsOn a1b2c3d4) -> wait -> PR -> merge
+        --> feature/TASK-i9j0k1l2-refactor-auth (dependsOn TASK-a1b2c3d4) -> wait -> PR -> merge
 ```
 
 ---
