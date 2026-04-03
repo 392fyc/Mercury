@@ -54,7 +54,7 @@ Main: git worktree remove <path> + git branch -d <branch>
 | Artifact | Pattern | Example |
 |----------|---------|---------|
 | Worktree path | `.worktrees/{taskId}` | `.worktrees/TASK-a1b2c3d4` |
-| Branch | `feature/TASK-{taskId}-{slug}` (existing rule) | `feature/TASK-a1b2c3d4-add-auth` |
+| Branch | `feature/{taskId}-{slug}` (existing rule; `taskId` includes `TASK-` prefix) | `feature/TASK-a1b2c3d4-add-auth` |
 
 The worktree root (`.worktrees/`) belongs in `.gitignore` — worktrees are
 transient and must not be committed.
@@ -96,14 +96,14 @@ Main Agent MUST:
 1. **Create the branch and worktree:**
 
    ```bash
-   git worktree add .worktrees/{taskId} -b feature/TASK-{taskId}-{slug}
+   git worktree add .worktrees/{taskId} -b feature/{taskId}-{slug}
    ```
 
 2. **Inject into TaskBundle** (via `update_task` RPC or at task creation):
 
    ```json
    { "worktreePath": "/absolute/path/.worktrees/{taskId}",
-     "branch": "feature/TASK-{taskId}-{slug}" }
+     "branch": "feature/{taskId}-{slug}" }
    ```
 
 3. **Emphasise in dispatch prompt** (to be handled by `buildDevPrompt` when
@@ -115,7 +115,7 @@ Main Agent MUST:
 
    ```bash
    git worktree remove .worktrees/{taskId}
-   git branch -d feature/TASK-{taskId}-{slug}
+   git branch -d feature/{taskId}-{slug}
    ```
 
 ---
@@ -164,7 +164,7 @@ Main Agent reviews `dependsOn` fields before dispatching.
 
 ## Merge Strategy
 
-Each worktree produces an independent PR (`feature/TASK-{taskId}-{slug}` into
+Each worktree produces an independent PR (`feature/{taskId}-{slug}` into
 `develop`). PRs are merged in dependency order when dependencies exist.
 Conflicts are resolved by Main Agent via rebase before merge; after rebasing a
 pushed branch, `--force-with-lease` is used to update the PR branch (direct
