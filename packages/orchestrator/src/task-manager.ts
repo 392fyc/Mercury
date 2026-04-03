@@ -54,6 +54,7 @@ export interface CreateTaskParams {
   priority: TaskBundle["priority"];
   assignedTo?: string; // Optional: auto-assigned via G9 modelRecommendation if omitted
   role?: string; // Task dispatch role: dev, research, design (default: dev)
+  researchScope?: "deep" | "quick"; // Research depth mode: 'deep' activates the deep-research skill protocol
   branch?: string;
   codeScope?: TaskBundle["codeScope"];
   readScope: TaskBundle["readScope"];
@@ -264,6 +265,13 @@ export class TaskManager {
     if (!params.context?.trim()) errors.push("context is required");
     if (!params.definitionOfDone?.length) errors.push("definitionOfDone must have at least 1 item");
     if (!params.readScope) errors.push("readScope is required");
+    if (params.researchScope !== undefined) {
+      if (params.researchScope !== "deep" && params.researchScope !== "quick") {
+        errors.push(`researchScope must be "deep" or "quick", got "${params.researchScope}"`);
+      } else if ((params.role ?? "dev") !== "research") {
+        errors.push(`researchScope is only valid for research tasks (role: "${params.role ?? "dev"}")`);
+      }
+    }
     const validPriorities = ["P0", "P1", "P2", "P3", "sev-0", "sev-1", "sev-2", "sev-3"];
     if (!validPriorities.includes(params.priority)) {
       errors.push(`priority must be one of P0, P1, P2, P3, got "${params.priority}"`);
@@ -326,6 +334,7 @@ export class TaskManager {
       failedAt: null,
       assignedTo,
       role: requiredRole,
+      researchScope: params.researchScope,
       branch: params.branch,
       codeScope: params.codeScope ?? { include: [], exclude: [] },
       readScope: {
@@ -1203,6 +1212,11 @@ export function buildResearchPrompt(
     "- Use web search, codebase analysis, and KB resources as needed.",
     "- Produce structured findings with evidence and recommendations.",
     "- No code commits expected.",
+    ...(task.researchScope === "deep" ? [
+      "",
+      "## Deep Research Protocol",
+      "This task requires the `/deep-research` protocol. Type `/deep-research` at the start of your response to activate the Mercury Deep Research Protocol with full multi-round verification.",
+    ] : []),
     ...(maxIterations && maxIterations > 0
       ? [
         `- **MAX_ITERATIONS: ${maxIterations}** — you MUST stop the research loop and submit your findings after at most ${maxIterations} round(s). Do not continue past this limit under any circumstances.`,
@@ -1593,7 +1607,7 @@ function truncate(content: string, maxLen: number): string {
 }
 
 /** Build the Main Agent review prompt with sanitized pre-checks and diff. */
-export function buildMainReviewPrompt(task: TaskBundle): string {
+export function buildMainReviewPrompt(task: TaskBundle, diffBaseRef = "develop...HEAD"): string {
   const lines: string[] = [];
 
   lines.push(`# Main Agent Review: ${task.title} [${task.taskId}]`);
@@ -1621,7 +1635,7 @@ export function buildMainReviewPrompt(task: TaskBundle): string {
 
   const diffRaw = task.mainReview?.gitDiff?.trim() || "# No diff captured";
   const diffSafe = truncate(sanitizeFenceContent(diffRaw), MAX_DIFF_CHARS);
-  lines.push("## Git Diff (`develop...HEAD`)");
+  lines.push(`## Git Diff (\`${diffBaseRef}\`)`);
   lines.push("```diff");
   lines.push(diffSafe);
   lines.push("```");
