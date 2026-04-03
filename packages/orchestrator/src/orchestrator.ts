@@ -92,6 +92,10 @@ type ParsedMainReviewDecision = {
 const ROLE_CONTEXT_ROLES = ["main", "dev", "acceptance", "critic", "research", "design"] as const;
 type RoleContextKey = (typeof ROLE_CONTEXT_ROLES)[number];
 
+/** Minimum KB context size in chars preserved by trimKbContext regardless of budget pressure.
+ *  Ensures sub-agents always receive some context even when Main Agent is near capacity. */
+const MIN_KB_CHARS = 4_000;
+
 export class Orchestrator {
   private static readonly APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;
   private static readonly SESSION_HISTORY_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
@@ -820,6 +824,8 @@ export class Orchestrator {
         }
         return created;
       }
+      case "get_main_agent_token_usage":
+        return this.getMainAgentTokenBudget();
       case "get_task":
         return (await this.taskManager.getTaskAsync(params.taskId as string)) ?? null;
       case "get_task_result":
@@ -2868,6 +2874,9 @@ export class Orchestrator {
 
     const role: AgentRole = task.role ?? "dev";
 
+    // Read Main Agent context budget before building KB context (monitoring Main session only)
+    const mainBudget = this.getMainAgentTokenBudget();
+
     let kbContext: string | undefined;
     if (this.kb?.isEnabled() && (task.readScope.requiredDocs?.length ?? 0) > 0) {
       try {
@@ -2875,13 +2884,30 @@ export class Orchestrator {
       } catch {
         // KB context is best-effort
       }
+
+      // Trim KB context only when Main Agent context is under pressure (ratio > 0.8).
+      // Skipping trim when Main has ample headroom preserves full prompt quality.
+      // Approximation: 4 chars/token (English-centric). CJK languages map ~2-3 chars/token,
+      // so this heuristic over-estimates budget for CJK-heavy KB content.
+      // TODO: consider configurable chars/token coefficient for locale-aware trimming.
+      const mainContextConstrained = mainBudget.ratio !== undefined
+        ? mainBudget.ratio > 0.8
+        : false;
+      if (kbContext && mainContextConstrained && mainBudget.remaining !== undefined) {
+        const kbCharBudget = Math.floor(mainBudget.remaining * 4 * 0.2);
+        kbContext = this.trimKbContext(kbContext, kbCharBudget);
+      }
     }
 
-    // Derive token budget hint from task.resourceBudget (apply 90% safety margin)
+    // Derive token budget hint for the sub-agent prompt.
+    // Priority: manual TaskBundle value > auto-derived from Main Agent remaining budget.
     const rawBudget = task.resourceBudget?.tokenBudget;
     const tokenBudgetHint = rawBudget !== undefined
       ? Math.floor(rawBudget * 0.9)
-      : undefined;
+      // Sub-agent gets at most half of Main's remaining budget (preserves Main headroom)
+      : mainBudget.remaining !== undefined
+        ? Math.floor(mainBudget.remaining * 0.5)
+        : undefined;
 
     // Determine if the assigned agent is a Claude Code instance (codex plugin is CC-only)
     const codexEnabled = this.getAgentCli(task.assignedTo) === "claude";
@@ -3157,6 +3183,70 @@ export class Orchestrator {
     } catch {
       return undefined;
     }
+  }
+
+  /**
+   * Return token budget information for the active Main Agent session.
+   * Only the Main Agent session is monitored; sub-agent budgets are not tracked.
+   * Returns undefined for all fields when no active Main session exists or
+   * when the adapter has not yet reported token counts.
+   */
+  getMainAgentTokenBudget(): {
+    agentId: string | undefined;
+    sessionId: string | undefined;
+    tokenUsage: number | undefined;
+    tokenLimit: number | undefined;
+    remaining: number | undefined;
+    ratio: number | undefined;
+  } {
+    const mainAgentId = this.findMainAgentId();
+    if (!mainAgentId) {
+      return { agentId: undefined, sessionId: undefined, tokenUsage: undefined, tokenLimit: undefined, remaining: undefined, ratio: undefined };
+    }
+    const slotKey = makeRoleSlotKey("main", mainAgentId);
+    const sessionId = this.roleSessions.get(slotKey);
+    if (!sessionId) {
+      return { agentId: mainAgentId, sessionId: undefined, tokenUsage: undefined, tokenLimit: undefined, remaining: undefined, ratio: undefined };
+    }
+    const session = this.sessions.get(sessionId);
+    // Only report budget from an active session; stale/completed sessions have
+    // outdated token counts that would cause incorrect KB trimming decisions.
+    // Consistent contract: agentId is always returned when Main agent is known,
+    // token fields are undefined when session is missing or not streaming.
+    if (!session || session.status !== "active") {
+      return { agentId: mainAgentId, sessionId: undefined, tokenUsage: undefined, tokenLimit: undefined, remaining: undefined, ratio: undefined };
+    }
+    const tokenUsage = session.tokenUsage;
+    const tokenLimit = session.tokenLimit;
+    // Guard tokenLimit > 0 to avoid Infinity when computing ratio (tokenLimit=0 edge case).
+    const safeLimit = tokenUsage !== undefined && tokenLimit !== undefined && tokenLimit > 0;
+    const remaining = safeLimit ? tokenLimit! - tokenUsage! : undefined;
+    const ratio = safeLimit ? tokenUsage! / tokenLimit! : undefined;
+    return { agentId: mainAgentId, sessionId, tokenUsage, tokenLimit, remaining, ratio };
+  }
+
+  /**
+   * Trim KB context to fit within a character budget, preserving whole lines.
+   * Appends a truncation marker so the receiving agent knows context was reduced.
+   * Never trims below MIN_KB_CHARS to ensure some context always reaches the agent.
+   */
+  private trimKbContext(kbContext: string, maxChars: number): string {
+    const budget = Math.max(maxChars, MIN_KB_CHARS);
+    if (kbContext.length <= budget) return kbContext;
+
+    // Trim at the last newline before the budget boundary.
+    // lastIndexOf with a position argument searches backwards from that position.
+    const lastNewline = kbContext.lastIndexOf("\n", budget - 1);
+    // If no newline exists before the budget, discard entirely to avoid partial lines.
+    // Emit a warning so operators can detect single-line KB content that is frequently discarded.
+    if (lastNewline < 0) {
+      this.transport.sendNotification("log", {
+        message: `[orchestrator] trimKbContext: no newline found within budget (kbContext ${kbContext.length} chars, budget ${budget}); discarding entire context`,
+      });
+    }
+    const trimmed = lastNewline >= 0 ? kbContext.slice(0, lastNewline) : "";
+    const trimmedLen = trimmed.length;
+    return `${trimmed}\n\n[KB context trimmed: ${kbContext.length} chars -> ${trimmedLen} chars to fit Main Agent token budget]`;
   }
 
   /**
