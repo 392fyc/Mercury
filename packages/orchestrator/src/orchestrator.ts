@@ -588,23 +588,47 @@ export class Orchestrator {
           continue;
         }
         this.sessions.set(sessionId, resumed);
-      } catch {
-        // Session no longer valid — skip silently
+      } catch (err) {
+        // Session no longer resumable — log for diagnostics, skip
+        this.transport.sendNotification("log", {
+          message: `[persist] Skipped session ${sessionId} (${info.frozenRole}): ${err instanceof Error ? err.message : String(err)}`,
+        });
         continue;
       }
     }
 
-    // Restore roleSessions (only for sessions that survived resume)
-    for (const [key, sessionId] of Object.entries(state.roleSessions)) {
+    // Restore roleSessions from persisted map (null-safe: old state files may omit this field)
+    for (const [key, sessionId] of Object.entries(state.roleSessions ?? {})) {
       if (this.sessions.has(sessionId)) {
         this.roleSessions.set(key as RoleSlotKey, sessionId);
       }
     }
 
+    // Fallback: if roleSessions is still empty (old state file or all bindings failed to restore),
+    // auto-bind the most recently active surviving session per role slot so the next send_prompt
+    // reuses prior context instead of starting a fresh session.
+    if (this.roleSessions.size === 0) {
+      for (const [sessionId, info] of this.sessions) {
+        if (!info.frozenRole || (info.status !== "active" && info.status !== "paused")) continue;
+        const slotKey = makeRoleSlotKey(info.frozenRole, info.agentId);
+        const existingId = this.roleSessions.get(slotKey);
+        const existingTs = existingId ? (this.sessions.get(existingId)?.lastActiveAt ?? 0) : 0;
+        if (!existingId || info.lastActiveAt > existingTs) {
+          this.roleSessions.set(slotKey, sessionId);
+        }
+      }
+      if (this.roleSessions.size > 0) {
+        this.transport.sendNotification("log", {
+          message: `[persist] roleSessions absent — auto-bound ${this.roleSessions.size} slot(s) from restored sessions`,
+        });
+      }
+    }
+
     const restored = this.sessions.size;
+    const roleSlotsBound = this.roleSessions.size;
     if (restored > 0) {
       this.transport.sendNotification("log", {
-        message: `[persist] Restored ${restored} session(s) from disk`,
+        message: `[persist] Restored ${restored} session(s), ${roleSlotsBound} role slot(s) from disk`,
       });
     }
     if (approvalsChanged) {

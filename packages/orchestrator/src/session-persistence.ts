@@ -8,7 +8,8 @@ import { join } from "node:path";
 import type { ApprovalMode, ApprovalRequest, SessionInfo } from "@mercury/core";
 
 export interface PersistedSessionState {
-  roleSessions: Record<string, string>;
+  /** Map of roleSlotKey → sessionId. Optional for backward compatibility with older state files. */
+  roleSessions?: Record<string, string>;
   sessions: Record<string, SessionInfo>;
   agentCwds: Record<string, string>;
   approvalMode?: ApprovalMode;
