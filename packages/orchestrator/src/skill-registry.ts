@@ -37,6 +37,8 @@ export type SkillRole = "dev" | "research" | "main" | "design" | "acceptance" | 
  * Loaded from YAML frontmatter of each SKILL.md.
  */
 export interface SkillMeta {
+  /** Internal skill_id loaded from .skill_id sidecar (OpenSpace-compatible) */
+  skillId?: string;
   /** Hyphenated slug, e.g. "git-commit-heredoc-pattern" */
   name: string;
   /** One-sentence description used for BM25 retrieval */
@@ -65,6 +67,15 @@ export interface SkillMeta {
   staleness?: "STALE" | "UNDERPERFORMING";
 }
 
+/**
+ * SkillInjection — SkillMeta enriched with the loaded body text for prompt injection.
+ * Created by orchestrator at dispatch time; not persisted to disk.
+ */
+export interface SkillInjection extends SkillMeta {
+  /** Full SKILL.md body text (everything after the frontmatter block) */
+  body: string;
+}
+
 // ─── Frontmatter helpers ───
 
 function parseFrontmatter(content: string): Record<string, unknown> {
@@ -84,9 +95,12 @@ function parseFrontmatter(content: string): Record<string, unknown> {
   };
 
   for (const line of lines) {
+    // Skip blank lines and YAML comments
+    if (!line.trim() || line.trimStart().startsWith("#")) continue;
+
     const listMatch = line.match(/^  ?- (.+)$/);
     if (listMatch && currentKey) {
-      listItems.push(listMatch[1].trim());
+      listItems.push(listMatch[1].trim().replace(/^['"]|['"]$/g, ""));
       continue;
     }
     if (listItems.length > 0) flushList();
@@ -94,19 +108,22 @@ function parseFrontmatter(content: string): Record<string, unknown> {
     const kvMatch = line.match(/^([a-zA-Z_][a-zA-Z0-9_-]*):\s*(.*)$/);
     if (!kvMatch) continue;
     currentKey = kvMatch[1];
-    const rawVal = kvMatch[2].trim();
+    const rawVal = kvMatch[2].trim().replace(/#.*$/, "").trimEnd(); // strip inline comments
 
-    if (rawVal === "" || rawVal === "[]") {
-      if (rawVal === "[]") out[currentKey] = [];
+    if (rawVal === "" || rawVal === "~" || rawVal === "null") {
+      out[currentKey] = null;
       continue;
     }
+    if (rawVal === "[]") { out[currentKey] = []; continue; }
+    if (rawVal === "true") { out[currentKey] = true; continue; }
+    if (rawVal === "false") { out[currentKey] = false; continue; }
     const inlineList = rawVal.match(/^\[(.+)\]$/);
     if (inlineList) {
       out[currentKey] = inlineList[1].split(",").map((s) => s.trim().replace(/^['"]|['"]$/g, ""));
       continue;
     }
     const num = Number(rawVal);
-    if (!Number.isNaN(num)) { out[currentKey] = num; continue; }
+    if (!Number.isNaN(num) && rawVal !== "") { out[currentKey] = num; continue; }
     out[currentKey] = rawVal.replace(/^['"]|['"]$/g, "");
   }
   if (listItems.length > 0) flushList();
@@ -290,6 +307,21 @@ export class SkillRegistry {
     void this.persistStats(meta);
   }
 
+  /**
+   * Increment total_applied for a skill.
+   * Called when the task that received this skill reaches acceptance (receipt recorded).
+   * This is Mercury's proxy for OpenSpace's "agent applied the skill" signal —
+   * since Mercury cannot directly observe in-session tool usage, receipt submission
+   * is the closest observable confirmation that the agent completed the task with
+   * the skill in context.
+   */
+  recordApplied(skillName: string): void {
+    const meta = this.skills.get(skillName);
+    if (!meta) return;
+    meta.totalApplied++;
+    void this.persistStats(meta);
+  }
+
   /** Increment total_fallbacks for a skill. */
   recordFallback(skillName: string): void {
     const meta = this.skills.get(skillName);
@@ -317,13 +349,19 @@ export class SkillRegistry {
       } catch {
         continue;
       }
-      const meta = await this.loadSkillMeta(skillMdPath);
-      if (meta) metas.push(meta);
+      const meta = await this.loadSkillMeta(skillMdPath, join(dir, entry));
+      if (!meta) continue;
+      // Slug collision detection: warn and skip duplicate (first wins)
+      if (metas.some((m) => m.name === meta.name)) {
+        console.warn(`[skill-registry] Duplicate skill slug "${meta.name}" at ${skillMdPath} — skipped`);
+        continue;
+      }
+      metas.push(meta);
     }
     return metas;
   }
 
-  private async loadSkillMeta(filePath: string): Promise<SkillMeta | null> {
+  private async loadSkillMeta(filePath: string, skillDir?: string): Promise<SkillMeta | null> {
     let content: string;
     try {
       content = await readFile(filePath, "utf-8");
@@ -334,6 +372,14 @@ export class SkillRegistry {
     const fm = parseFrontmatter(content);
     const name = String(fm["name"] ?? basename(filePath));
     if (!name) return null;
+
+    // Load .skill_id sidecar (OpenSpace-compatible)
+    let skillId: string | undefined;
+    if (skillDir) {
+      try {
+        skillId = (await readFile(join(skillDir, ".skill_id"), "utf-8")).trim();
+      } catch { /* sidecar is optional */ }
+    }
 
     const safeArr = (v: unknown): string[] => {
       if (Array.isArray(v)) return v.map(String);
@@ -353,6 +399,7 @@ export class SkillRegistry {
       tags: safeArr(fm["tags"]),
       generation: safeNum(fm["generation"]),
       filePath,
+      skillId,
       lastValidatedAt: safeStr(fm["last_validated_at"]),
       totalSelections: safeNum(fm["total_selections"]),
       totalApplied: safeNum(fm["total_applied"]),

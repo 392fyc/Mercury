@@ -1,0 +1,126 @@
+---
+name: dual-verify
+description: Parallel Claude Code deep-review + Codex code-audit before PR readiness; replaces single-agent code-review
+category: WORKFLOW
+roles:
+  - main
+  - dev
+  - acceptance
+origin: IMPORTED
+source_task_id: TASK-141
+source_role: main
+captured_at: 2026-04-04T00:00:00Z
+captured_by: main-agent
+tags:
+  - code-review
+  - verification
+  - parallel
+  - pr
+generation: 0
+parent_skill_ids: []
+total_selections: 0
+total_applied: 0
+total_completions: 0
+total_fallbacks: 0
+last_validated_at: 2026-04-04T00:00:00Z
+---
+
+# Dual-Verify: Parallel Claude + Codex Code Review
+
+Run Claude Code deep review and Codex code audit in parallel, then consolidate findings before marking review complete.
+
+## When
+
+- Before marking any PR as ready for merge.
+- When the task is implementation-complete and you are preparing the final commit batch.
+- As a replacement for single-agent code-review — whenever review is required by CLAUDE.md.
+- On the same branch; no worktree isolation required.
+
+## Workflow
+
+### Step 1 — Launch both reviewers in parallel
+
+**Claude Code** (deep review — architecture, correctness, type safety, OpenSpace schema compliance):
+
+```bash
+# In Claude Code conversation:
+# Ask Claude to perform a deep review of the diff vs develop:
+# "Review all changes on this branch against develop. Check: TypeScript correctness,
+#  logic correctness, integration points, OpenSpace schema compliance, security."
+```
+
+**Codex** (code audit — style, edge cases, metrics completeness, dependency versions):
+
+```bash
+# In Codex session (separate terminal/tab):
+codex "Audit all changes on branch feat/<name> vs develop.
+Check: code style, edge cases, missing error handling,
+metrics completeness, package version accuracy."
+```
+
+### Step 2 — Collect results
+
+Both reviewers produce a structured result block:
+
+```text
+## <Reviewer> Review Results
+Critical: <count>  High: <count>  Medium: <count>  Low: <count>
+<finding-1>
+<finding-2>
+Overall: PASS | FAIL | NEEDS-CHANGES
+```
+
+### Step 3 — Cross-reference findings
+
+Consolidate into a unified report:
+
+```text
+## Dual-Verify Consolidated Report
+Branch: <branch-name>
+Claude: PASS | FAIL | NEEDS-CHANGES
+Codex:  PASS | FAIL | NEEDS-CHANGES
+
+### Agreed Issues (both flagged):
+- <issue>
+
+### Claude-only:
+- <issue>
+
+### Codex-only:
+- <issue>
+
+### Resolution Plan:
+- <action-1>
+- <action-2>
+
+### Final Verdict: PASS | NEEDS-CHANGES
+```
+
+### Step 4 — Fix and mark review
+
+1. Fix all Critical and High issues.
+2. Address or document Medium issues.
+3. Run `auto-verify` to confirm TypeScript and scope pass.
+4. Mark review flag:
+
+```bash
+touch .claude/hooks/state/review-passed
+# or: powershell -File scripts/codex/guard.ps1 mark-review
+```
+
+5. Commit and push.
+
+## Output Evidence
+
+Record in `implementationReceipt.evidence`:
+
+```text
+dual-verify: PASS (Claude: PASS, Codex: PASS, N critical fixed, M high fixed)
+```
+
+## Notes
+
+- Both reviewers must agree on PASS before the PR is marked ready.
+- If one reviewer returns NEEDS-CHANGES, fix before proceeding — do not merge on split verdict.
+- Codex may surface Windows/PowerShell-specific concerns not visible to Claude; always include Codex in the loop.
+- Cross-referencing catches false positives: an issue flagged by only one reviewer should be investigated, not auto-dismissed.

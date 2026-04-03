@@ -51,7 +51,7 @@ fi
 
 cat >&2 <<'MSG'
 BLOCKED: Code review required before commit (CLAUDE.md MUST rule).
-Run /code-review or perform a diff-based review first.
+Run /dual-verify (preferred) or /code-review before committing.
 To bypass: touch .claude/hooks/state/review-passed
 MSG
 exit 2

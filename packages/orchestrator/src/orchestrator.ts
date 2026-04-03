@@ -35,7 +35,7 @@ import { AgentRegistry } from "./agent-registry.js";
 import type { KnowledgeService } from "./knowledge-service.js";
 import type { RpcTransport } from "./rpc-transport.js";
 import { SkillRegistry } from "./skill-registry.js";
-import type { SkillMeta } from "./skill-registry.js";
+import type { SkillInjection } from "./skill-registry.js";
 import { SkillCapturer } from "./skill-capturer.js";
 import {
   TaskManager,
@@ -291,6 +291,18 @@ export class Orchestrator {
       await this.skillRegistry.init(skillDir);
 
       this.skillCapturer = new SkillCapturer(skillDir);
+
+      // Wire LLMCaller lazily: resolves main agent at call time (after sessions established)
+      // Uses executeOneShot — same pattern as DoD pre-verification (orchestrator.ts:verifyDoDAtCompletion)
+      this.skillCapturer.setLLMCaller(async (prompt: string): Promise<string> => {
+        const mainAgentId = this.findMainAgentId();
+        if (!mainAgentId) return "[]";
+        const adapter = this.registry.getAdapter(mainAgentId);
+        if (!adapter.executeOneShot) return "[]";
+        const cwd = this.agentCwds.get(mainAgentId) ?? process.cwd();
+        const result = await adapter.executeOneShot(prompt, cwd);
+        return result.finalMessage ?? "[]";
+      });
 
       const staleSkills = this.skillRegistry.listSkills().filter((s) => s.staleness);
       if (staleSkills.length > 0) {
@@ -2999,8 +3011,8 @@ export class Orchestrator {
     // Determine if the assigned agent is a Claude Code instance (codex plugin is CC-only)
     const codexEnabled = this.getAgentCli(task.assignedTo) === "claude";
 
-    // Retrieve relevant skills (max 3) for dev/research roles, inject body into _body field
-    let relevantSkills: SkillMeta[] | undefined;
+    // Retrieve relevant skills (max 3) for dev/research roles and build SkillInjection objects
+    let relevantSkills: SkillInjection[] | undefined;
     if (this.skillRegistry.isReady() && (role === "dev" || role === "research")) {
       const query = `${task.title} ${task.context.slice(0, 300)}`;
       const rawSkills = this.skillRegistry.searchSkills(query, [role], 3);
@@ -3009,7 +3021,7 @@ export class Orchestrator {
           rawSkills.map(async (s) => {
             const body = await this.skillRegistry.loadSkillBody(s).catch(() => "");
             this.skillRegistry.recordSelection(s.name);
-            return { ...s, _body: body } as SkillMeta & { _body: string };
+            return { ...s, body } satisfies SkillInjection;
           }),
         );
         this.injectedSkillsByTask.set(task.taskId, rawSkills.map((s) => s.name));
@@ -3647,7 +3659,11 @@ export class Orchestrator {
       if (receipt && this.skillCapturer) {
         const capturer = this.skillCapturer;
         const gitDiff = task.mainReview?.gitDiff;
-        void capturer.captureFromAcceptancePass({ task, receipt, gitDiff }).catch(() => {});
+        void capturer.captureFromAcceptancePass({ task, receipt, gitDiff }).catch((err: unknown) => {
+          void this.transport.sendNotification("log", {
+            message: `[skill-capturer] capture failed: ${err instanceof Error ? err.message : String(err)}`,
+          });
+        });
       }
 
       // Callback to Main Agent
@@ -3677,7 +3693,14 @@ export class Orchestrator {
       );
 
       if (!reworked) {
-        // maxReworks exceeded — task transitioned to failed
+        // maxReworks exceeded — task transitioned to failed; record fallback and clean up map
+        const failedSkills = this.injectedSkillsByTask.get(task.taskId);
+        if (failedSkills) {
+          for (const skillName of failedSkills) {
+            this.skillRegistry.recordFallback(skillName);
+          }
+          this.injectedSkillsByTask.delete(task.taskId);
+        }
         return { verdict: results.verdict, reworkTriggered: false, newSession: false };
       }
 
@@ -3726,6 +3749,15 @@ export class Orchestrator {
     if (results.verdict === "blocked") {
       this.taskManager.transitionTask(task.taskId, "blocked", acceptance.acceptor);
 
+      // Record fallback and clean up injected skills map
+      const blockedSkills = this.injectedSkillsByTask.get(task.taskId);
+      if (blockedSkills) {
+        for (const skillName of blockedSkills) {
+          this.skillRegistry.recordFallback(skillName);
+        }
+        this.injectedSkillsByTask.delete(task.taskId);
+      }
+
       // Callback to Main Agent for blocked
       this.bus.emit(
         "orchestrator.task.callback",
@@ -3758,6 +3790,15 @@ export class Orchestrator {
     receipt: ImplementationReceipt,
   ): Promise<TaskBundle> {
     const task = this.taskManager.recordReceipt(taskId, receipt);
+
+    // Record applied metric: receipt submission = agent completed task with skills in context
+    const injectedSkillsAtReceipt = this.injectedSkillsByTask.get(taskId);
+    if (injectedSkillsAtReceipt && injectedSkillsAtReceipt.length > 0) {
+      for (const skillName of injectedSkillsAtReceipt) {
+        this.skillRegistry.recordApplied(skillName);
+      }
+    }
+
     const preChecks = await this.runPreChecks(task);
     const gitDiff = await this.getGitDiff(task);
 

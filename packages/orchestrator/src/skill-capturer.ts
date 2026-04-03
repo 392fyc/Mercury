@@ -101,7 +101,8 @@ export class SkillCapturer {
     await mkdir(skillDir, { recursive: true });
 
     const filePath = join(skillDir, "SKILL.md");
-    const skillId = `${name}__cap_${randomUUID().slice(0, 8)}`;
+    // OpenSpace convention: evolved/captured skills use __v{gen}_{uuid8} format
+    const skillId = `${name}__v0_${randomUUID().slice(0, 8)}`;
     const now = new Date().toISOString();
 
     const content = [

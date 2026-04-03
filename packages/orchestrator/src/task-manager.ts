@@ -11,7 +11,7 @@ import { readFileSync } from "node:fs";
 import { basename, resolve, sep } from "node:path";
 import type { EventBus } from "@mercury/core";
 import { normalizePriority } from "@mercury/core";
-import type { SkillMeta } from "./skill-registry.js";
+import type { SkillInjection } from "./skill-registry.js";
 import type {
   TaskBundle,
   TaskStatus,
@@ -950,18 +950,17 @@ function formatWriteScope(scope: TaskBundle["allowedWriteScope"]): string {
  */
 /**
  * Build the "## Accumulated Skills" block injected into dev/research prompts.
- * Skills carry a pre-loaded `_body` property set by the orchestrator before passing here.
- * Token budget: max 3 skills × ~1500 tokens each = ~4500 tokens (~5% context).
+ * Each SkillInjection carries a `body` field (SKILL.md text after frontmatter).
+ * Token budget: max 3 skills × ~300 tokens each = ~900 tokens (~1% context).
  */
-function buildSkillsBlock(skills: SkillMeta[]): string {
+function buildSkillsBlock(skills: SkillInjection[]): string {
   if (skills.length === 0) return "";
   const sections = ["\n\n## Accumulated Skills (Mercury Skill Library)"];
   sections.push("These reusable patterns were accumulated through prior tasks. Apply when relevant:");
   for (const skill of skills) {
     sections.push(`\n### ${skill.name} [${skill.category}]`);
     sections.push(`_${skill.description}_`);
-    const body = (skill as SkillMeta & { _body?: string })._body;
-    if (body) sections.push(body);
+    if (skill.body) sections.push(skill.body);
   }
   return sections.join("\n");
 }
@@ -993,7 +992,7 @@ export function buildDevPrompt(
   task: TaskBundle,
   kbContext?: string,
   basePath = process.cwd(),
-  relevantSkills?: SkillMeta[],
+  relevantSkills?: SkillInjection[],
 ): string {
   const templatePath = resolve(basePath, ".mercury", "templates", "dispatch-prompt.template.md");
   let template: string;
@@ -1214,7 +1213,7 @@ export function buildResearchPrompt(
   tokenBudgetHint?: number,
   vaultPath?: string,
   codexEnabled?: boolean,
-  relevantSkills?: SkillMeta[],
+  relevantSkills?: SkillInjection[],
 ): string {
   const lines = [
     `# Research Task: ${task.title} [${task.taskId}]`,
