@@ -55,7 +55,7 @@ export interface CreateTaskParams {
   assignedTo?: string; // Optional: auto-assigned via G9 modelRecommendation if omitted
   role?: string; // Task dispatch role: dev, research, design (default: dev)
   branch?: string;
-  codeScope: TaskBundle["codeScope"];
+  codeScope?: TaskBundle["codeScope"];
   readScope: TaskBundle["readScope"];
   allowedWriteScope: TaskBundle["allowedWriteScope"];
   docsMustUpdate?: string[];
@@ -263,7 +263,6 @@ export class TaskManager {
     if (!params.title?.trim()) errors.push("title is required");
     if (!params.context?.trim()) errors.push("context is required");
     if (!params.definitionOfDone?.length) errors.push("definitionOfDone must have at least 1 item");
-    if (!params.codeScope) errors.push("codeScope is required");
     if (!params.readScope) errors.push("readScope is required");
     const validPriorities = ["P0", "P1", "P2", "P3", "sev-0", "sev-1", "sev-2", "sev-3"];
     if (!validPriorities.includes(params.priority)) {
@@ -328,7 +327,7 @@ export class TaskManager {
       assignedTo,
       role: requiredRole,
       branch: params.branch,
-      codeScope: params.codeScope,
+      codeScope: params.codeScope ?? { include: [], exclude: [] },
       readScope: {
         requiredDocs: (params.readScope as Record<string, unknown>)?.requiredDocs as string[] ?? [],
         optionalDocs: (params.readScope as Record<string, unknown>)?.optionalDocs as string[] ?? [],
@@ -1691,7 +1690,7 @@ export function buildCriticPrompt(task: TaskBundle, _projectRoot?: string): stri
   // Code scope
   lines.push("## Code Scope");
   lines.push("```json");
-  lines.push(JSON.stringify(task.codeScope, null, 2));
+  lines.push(JSON.stringify(task.codeScope ?? { include: [], exclude: [] }, null, 2));
   lines.push("```");
   lines.push("");
 
