@@ -434,9 +434,12 @@ export interface McpHttpSession {
  */
 export class McpHttpSessionManager {
   private sessions = new Map<string, McpHttpSession>();
+  private sessionCreatedAt = new Map<string, number>();
   private log: (msg: string) => void;
   private maxSessions: number;
   private closing = false;
+  /** Sessions idle longer than this are eligible for eviction (30 minutes). */
+  private static readonly STALE_SESSION_MS = 30 * 60 * 1000;
 
   constructor(
     private orchestrator: Orchestrator,
@@ -451,10 +454,32 @@ export class McpHttpSessionManager {
   private cleanupSession(sid: string): void {
     if (this.closing) return;
     this.sessions.delete(sid);
+    this.sessionCreatedAt.delete(sid);
     if (this.broadcaster) {
       this.broadcaster.removeChannel(`mcp-http:${sid}`);
     }
     this.log(`MCP HTTP session closed: ${sid}`);
+  }
+
+  /**
+   * Evict stale MCP HTTP sessions that have been idle longer than STALE_SESSION_MS.
+   * Called before rejecting new connections with 503 to reclaim ghost sessions
+   * whose HTTP connections were broken without a clean close event.
+   */
+  private evictStaleSessions(): void {
+    const now = Date.now();
+    for (const [sid] of this.sessions) {
+      if (this.sessions.size < this.maxSessions) break;
+      const createdAt = this.sessionCreatedAt.get(sid) ?? 0;
+      if (now - createdAt > McpHttpSessionManager.STALE_SESSION_MS) {
+        const session = this.sessions.get(sid);
+        if (session) {
+          session.transport.close().catch(() => {});
+        }
+        this.cleanupSession(sid);
+        this.log(`Evicted stale MCP HTTP session: ${sid} (age: ${Math.round((now - createdAt) / 60000)}min)`);
+      }
+    }
   }
 
   get sessionCount(): number {
@@ -479,9 +504,13 @@ export class McpHttpSessionManager {
     // New session: only via POST without session header (MCP initialize)
     if (req.method === "POST" && !sessionId) {
       if (this.sessions.size >= this.maxSessions) {
-        res.statusCode = 503;
-        res.end(JSON.stringify({ error: "Too many MCP sessions" }));
-        return;
+        // Try to reclaim stale/ghost sessions before rejecting
+        this.evictStaleSessions();
+        if (this.sessions.size >= this.maxSessions) {
+          res.statusCode = 503;
+          res.end(JSON.stringify({ error: "Too many MCP sessions" }));
+          return;
+        }
       }
       await this.createSession(req, res);
       return;
@@ -521,6 +550,7 @@ export class McpHttpSessionManager {
         }
         this.log(`MCP HTTP session initialized: ${sid}`);
         this.sessions.set(sid, { server, transport });
+        this.sessionCreatedAt.set(sid, Date.now());
 
         // Register as broadcaster channel for event fan-out
         if (this.broadcaster) {
@@ -566,6 +596,7 @@ export class McpHttpSessionManager {
       }
     }
     this.sessions.clear();
+    this.sessionCreatedAt.clear();
     this.closing = false;
   }
 }
