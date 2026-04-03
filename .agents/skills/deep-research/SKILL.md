@@ -35,7 +35,7 @@ For lighter research, use the `web-research` skill instead.
 | `Should be done now` | Run the quality gate |
 | `I'm confident in these findings` | Confidence does not equal evidence |
 | `The search results confirmed it` | Show the URL and cited text |
-| `I covered the main points` | Check `question_answer_rate >= 0.8` |
+| `I covered the main points` | Check `question_answer_rate >= 0.9` |
 | `Further research would be diminishing returns` | Only the quality gate decides that |
 
 ## Iterative Research Loop
@@ -95,16 +95,16 @@ If the session is new or resumed:
 
 | Metric | Threshold | Measurement |
 |--------|-----------|-------------|
-| `question_answer_rate` | >= 0.8 | answered questions / total questions |
-| `citation_density` | >= 0.6 | claims with source URL / total factual claims |
-| `unverified_rate` | <= 0.2 | `UNVERIFIED` tags / total factual claims |
+| `question_answer_rate` | >= 0.9 | answered questions / total questions |
+| `citation_density` | >= 0.75 | claims with source URL / total factual claims |
+| `unverified_rate` | <= 0.1 | `UNVERIFIED` tags / total factual claims |
 
 ### Recommended Metrics
 
 | Metric | Target | Measurement |
 |--------|--------|-------------|
-| `iteration_depth` | >= 3 | completed rounds |
-| `source_diversity` | >= 3 | unique domains cited |
+| `iteration_depth` | >= 4 | completed rounds |
+| `source_diversity` | >= 4 | unique domains cited |
 
 ### Gate Evaluation
 

@@ -37,7 +37,7 @@ For lighter research (1-2 questions, single-source verification), use the `web-r
 | "Should be done now" | Run the quality gate |
 | "I'm confident in these findings" | Confidence ≠ Evidence |
 | "The search results confirmed it" | Show the URL and cited text |
-| "I covered the main points" | Check question_answer_rate ≥ 0.8 |
+| "I covered the main points" | Check question_answer_rate ≥ 0.9 |
 | "Further research would be diminishing returns" | Only the quality gate decides that |
 
 ## Iterative Research Loop
@@ -98,16 +98,16 @@ This eliminates dependency on conversation context window for continuity.
 
 | Metric | Threshold | Measurement |
 |--------|-----------|-------------|
-| `question_answer_rate` | ≥ 0.8 | Count of answered questions / total questions |
-| `citation_density` | ≥ 0.6 | Claims with source URL / total factual claims |
-| `unverified_rate` | ≤ 0.2 | UNVERIFIED tags / total factual claims |
+| `question_answer_rate` | ≥ 0.9 | Count of answered questions / total questions |
+| `citation_density` | ≥ 0.75 | Claims with source URL / total factual claims |
+| `unverified_rate` | ≤ 0.1 | UNVERIFIED tags / total factual claims |
 
 ### Recommended Metrics (informational)
 
 | Metric | Target | Measurement |
 |--------|--------|-------------|
-| `iteration_depth` | ≥ 3 | Number of completed rounds |
-| `source_diversity` | ≥ 3 | Unique domains cited |
+| `iteration_depth` | ≥ 4 | Number of completed rounds |
+| `source_diversity` | ≥ 4 | Unique domains cited |
 
 ### Gate Evaluation
 

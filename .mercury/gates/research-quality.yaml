@@ -39,12 +39,12 @@ gates:
   # Deep path: applied per-round in deep-research skill
   deep:
     mandatory:
-      question_answer_rate: ">= 0.8"    # Answered / total questions
-      citation_density: ">= 0.6"        # Claims with URL / total claims
-      unverified_rate: "<= 0.2"         # UNVERIFIED / total claims
-      iteration_depth: ">= 3"           # Enforced minimum research rounds
+      question_answer_rate: ">= 0.9"    # Answered / total questions
+      citation_density: ">= 0.75"       # Claims with URL / total claims
+      unverified_rate: "<= 0.1"         # UNVERIFIED / total claims
+      iteration_depth: ">= 4"           # Enforced minimum research rounds
     recommended:
-      source_diversity: ">= 3"          # Unique domains cited
+      source_diversity: ">= 4"          # Unique domains cited
     limits:
       max_iterations: 10                 # Hard cap on research rounds
       max_web_searches_per_round: 20     # API max_uses per round
@@ -61,7 +61,7 @@ verification:
       weight: 0.25
     - name: risk_honesty
       weight: 0.2
-  pass_threshold: 3.5                    # Weighted average ≥ 3.5/5
+  pass_threshold: 4.0                    # Weighted average ≥ 4.0/5
   verdicts:
     on_gate_passed:
       PASS: "Submit for human review"
