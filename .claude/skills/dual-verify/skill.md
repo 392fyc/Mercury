@@ -16,6 +16,12 @@ Run Claude Code deep review and Codex code audit in parallel, then consolidate f
 - As a replacement for single-agent /code-review.
 - Whenever CLAUDE.md requires code review before commit.
 
+## Codex execution path
+
+> **Important:** Codex must be invoked via `! codex "..."` in the terminal — **not** via rescue subagent or MCP.
+> Both `codex-rescue` and `mcp__codex__codex` run in headless sandbox (`workspace-write`) which blocks
+> `tsc`, `node`, `pnpm`, `npx`. The `! codex` terminal path uses interactive mode where compilers can run.
+
 ## Step 1 — Launch parallel reviewers
 
 **Claude Code deep review** (this session):

@@ -38,6 +38,10 @@ Run Claude Code deep review and Codex code audit in parallel, then consolidate f
 
 ## Workflow
 
+> **Codex execution path:** Invoke Codex via `! codex "..."` in terminal (interactive mode), **not** via
+> rescue subagent or MCP. Headless modes (`codex-rescue`, `mcp__codex__codex`) run in `workspace-write`
+> sandbox which blocks `tsc`/`node`/`pnpm`/`npx`. Terminal interactive mode allows compilers to run.
+
 ### Step 1 — Launch both reviewers in parallel
 
 **Claude Code** (deep review — architecture, correctness, type safety, OpenSpace schema compliance):

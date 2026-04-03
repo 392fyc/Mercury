@@ -10,6 +10,8 @@ Run a full code audit of the current branch vs develop, produce structured findi
 
 > Platform note: examples use PowerShell syntax. For bash, replace `2>$null` with `2>/dev/null`.
 
+> **Execution path note:** This skill must be invoked via `! codex "..."` in the terminal (interactive mode), **not** via the rescue subagent or MCP tool. Both `codex-rescue` subagent and `mcp__codex__codex` run through `codex-companion.mjs` in headless/unattended mode with `sandbox: "workspace-write"`, which blocks `tsc`, `node`, `pnpm`, and `npx`. The terminal `! codex` path uses Codex CLI interactive mode where each command gets user approval and compilers/interpreters can run.
+
 ## When
 
 - Before marking any PR as ready for merge.
