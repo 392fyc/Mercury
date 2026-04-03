@@ -266,6 +266,13 @@ export class TaskManager {
     if (!params.definitionOfDone?.length) errors.push("definitionOfDone must have at least 1 item");
     if (!params.codeScope) errors.push("codeScope is required");
     if (!params.readScope) errors.push("readScope is required");
+    if (params.researchScope !== undefined) {
+      if (params.researchScope !== "deep" && params.researchScope !== "quick") {
+        errors.push(`researchScope must be "deep" or "quick", got "${params.researchScope}"`);
+      } else if ((params.role ?? "dev") !== "research") {
+        errors.push(`researchScope is only valid for research tasks (role: "${params.role ?? "dev"}")`);
+      }
+    }
     const validPriorities = ["P0", "P1", "P2", "P3", "sev-0", "sev-1", "sev-2", "sev-3"];
     if (!validPriorities.includes(params.priority)) {
       errors.push(`priority must be one of P0, P1, P2, P3, got "${params.priority}"`);
@@ -1601,7 +1608,7 @@ function truncate(content: string, maxLen: number): string {
 }
 
 /** Build the Main Agent review prompt with sanitized pre-checks and diff. */
-export function buildMainReviewPrompt(task: TaskBundle): string {
+export function buildMainReviewPrompt(task: TaskBundle, diffBaseRef = "develop...HEAD"): string {
   const lines: string[] = [];
 
   lines.push(`# Main Agent Review: ${task.title} [${task.taskId}]`);
@@ -1629,7 +1636,7 @@ export function buildMainReviewPrompt(task: TaskBundle): string {
 
   const diffRaw = task.mainReview?.gitDiff?.trim() || "# No diff captured";
   const diffSafe = truncate(sanitizeFenceContent(diffRaw), MAX_DIFF_CHARS);
-  lines.push("## Git Diff (`develop...HEAD`)");
+  lines.push(`## Git Diff (\`${diffBaseRef}\`)`);
   lines.push("```diff");
   lines.push(diffSafe);
   lines.push("```");

@@ -833,13 +833,15 @@ export class Orchestrator {
       case "list_tasks":
         return this.taskManager.listTasksAsync(params as { status?: TaskStatus; assignedTo?: string });
       case "record_receipt": {
-        let receipt = params.receipt as ImplementationReceipt;
-        if (typeof receipt === "string") {
-          try { receipt = JSON.parse(receipt) as ImplementationReceipt; } catch { /* keep as-is, will fail downstream */ }
+        const rawReceipt = typeof params.receipt === "string"
+          ? (() => { try { return JSON.parse(params.receipt as string) as unknown; } catch { throw new Error("record_receipt: receipt is not valid JSON"); } })()
+          : params.receipt;
+        if (!rawReceipt || typeof rawReceipt !== "object" || Array.isArray(rawReceipt)) {
+          throw new Error("record_receipt: receipt must be a JSON object");
         }
         return this.recordReceiptAndTriggerReview(
           params.taskId as string,
-          receipt,
+          rawReceipt as ImplementationReceipt,
         );
       }
       case "main_review_result":
@@ -3679,7 +3681,10 @@ export class Orchestrator {
     const mainAgentId = this.findMainAgentId();
     if (!mainAgentId) return;
 
-    const reviewPrompt = buildMainReviewPrompt(task);
+    const reviewConfig = this.getReviewConfig(task);
+    const defaultRef = task.branch ? `develop...${task.branch}` : "develop...HEAD";
+    const diffBaseRef = reviewConfig.diffBaseRef ?? defaultRef;
+    const reviewPrompt = buildMainReviewPrompt(task, diffBaseRef);
     await this.sendPrompt(mainAgentId, reviewPrompt, undefined, "main", task.title, undefined, taskId);
   }
 
