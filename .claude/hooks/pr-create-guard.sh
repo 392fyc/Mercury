@@ -21,6 +21,10 @@ echo "$INPUT" | grep -qE '(--assignee|--add-assignee)' || MISSING="${MISSING}  -
 # Check --label or --add-label
 echo "$INPUT" | grep -qE '(--label|--add-label)' || MISSING="${MISSING}  - --label (required: bug/enhancement/etc.)\n"
 
+# Check Issue reference (Closes #N, Fixes #N, Refs #N, Resolves #N)
+# Require keyword+#N form to avoid false positives from bare #N in branch names/titles
+echo "$INPUT" | grep -qiE '(closes|fixes|resolves|refs)[[:space:]]+#[0-9]+' || MISSING="${MISSING}  - Issue reference in body (required: Closes #N or Refs #N)\n"
+
 # Extract --base value (supports --base develop, --base=develop, --base "develop")
 BASE_VAL=$(echo "$INPUT" | grep -oE '\-\-base[[:space:]=]+[^[:space:]"]+' | sed 's/.*[[:space:]=]//' | head -1)
 # Also check --base="value" form

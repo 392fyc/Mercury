@@ -18,11 +18,13 @@ Read these docs on demand when you need the corresponding information:
 | Git branching rules | `.mercury/docs/guides/git-flow.md` |
 | KB directory structure | `.mercury/docs/guides/kb-structure.md` |
 | Project architecture | `.mercury/docs/guides/architecture.md` |
+| GitHub Issues workflow | `.mercury/docs/guides/issue-workflow.md` |
 | Dispatch prompt templates | `.mercury/templates/` |
 | Bundle templates | `Mercury_KB/99-templates/` |
 
 ## MUST
 
+- **Issue-first workflow**: every task must have a GitHub Issue before work begins. PRs must reference the Issue (`Closes #N` or `Refs #N`). Agent progress updates go on the Issue as comments.
 - **Commit at every checkpoint**: every milestone must be committed and pushed.
 - **Dual-verify before commit**: every milestone must pass `/dual-verify` (parallel Claude Code deep-review + Codex code-audit) before committing. Do not use `/auto-verify` alone as the pre-commit gate.
 - **Web search before SDK/API code**: before writing ANY code that imports an external SDK, references an API signature, or claims a package version, you MUST use WebSearch/WebFetch to verify against the vendor's official documentation. GitHub source code alone is NOT sufficient. If verification is not possible, mark claims as UNVERIFIED.
@@ -41,3 +43,4 @@ Read these docs on demand when you need the corresponding information:
 - Do not install software to C drive.
 - Do not bypass the SoT task flow.
 - Do not execute work outside your assigned role.
+- Do not create PRs without an associated GitHub Issue.
