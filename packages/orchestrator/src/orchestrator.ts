@@ -144,6 +144,8 @@ export class Orchestrator {
   private skillCapturer: SkillCapturer | null = null;
   /** Skills injected per task (taskId → skill names), for post-task metric recording. */
   private injectedSkillsByTask = new Map<string, string[]>();
+  /** Frozen set of task IDs stuck in main_review at cold-start, consumed by chained recovery. */
+  private orphanedMainReviewQueue = new Set<string>();
 
   constructor(
     registry: AgentRegistry,
@@ -738,32 +740,72 @@ export class Orchestrator {
       }
     }
 
-    if (orphanedTasks.length === 0) return;
+    // Re-dispatch orphaned dispatched/in_progress tasks
+    if (orphanedTasks.length > 0) {
+      this.transport.sendNotification("log", {
+        message: `[recovery] Found ${orphanedTasks.length} orphaned task(s) — scheduling re-dispatch`,
+      });
 
-    this.transport.sendNotification("log", {
-      message: `[recovery] Found ${orphanedTasks.length} orphaned task(s) — scheduling re-dispatch`,
-    });
+      for (const task of orphanedTasks) {
+        try {
+          // Transition back to "dispatched" so validateDispatch() accepts it
+          if (task.status === "in_progress") {
+            this.taskManager.transitionTask(task.taskId, "dispatched", "orchestrator");
+          }
 
-    for (const task of orphanedTasks) {
-      try {
-        // Transition back to "dispatched" so validateDispatch() accepts it
-        if (task.status === "in_progress") {
-          this.taskManager.transitionTask(task.taskId, "dispatched", "orchestrator");
-        }
-
-        this.transport.sendNotification("log", {
-          message: `[recovery] Re-dispatching orphaned task ${task.taskId} (${task.title}) — attempt ${task.dispatchAttempts + 1}/${task.maxDispatchAttempts}`,
-        });
-
-        // Fire-and-forget: re-dispatch uses existing retry infrastructure
-        void this.dispatchBundleTask(task.taskId).catch((err) => {
           this.transport.sendNotification("log", {
-            message: `[recovery] Re-dispatch of ${task.taskId} failed: ${err instanceof Error ? err.message : err}`,
+            message: `[recovery] Re-dispatching orphaned task ${task.taskId} (${task.title}) — attempt ${task.dispatchAttempts + 1}/${task.maxDispatchAttempts}`,
           });
+
+          // Fire-and-forget: re-dispatch uses existing retry infrastructure
+          void this.dispatchBundleTask(task.taskId).catch((err) => {
+            this.transport.sendNotification("log", {
+              message: `[recovery] Re-dispatch of ${task.taskId} failed: ${err instanceof Error ? err.message : err}`,
+            });
+          });
+        } catch (err) {
+          this.transport.sendNotification("log", {
+            message: `[recovery] Failed to prepare re-dispatch for ${task.taskId}: ${err instanceof Error ? err.message : err}`,
+          });
+        }
+      }
+    }
+
+    // Recover tasks stuck in main_review with no live Main Agent session.
+    // This happens when the Main Agent streaming session dies while reviewing a task —
+    // handleStreamCompletion returns early (result.completed === false) and the task
+    // stays in main_review indefinitely with no re-trigger mechanism.
+    // NOTE: runs unconditionally so a restart with ONLY main_review tasks is also recovered.
+    // Recover tasks stuck in main_review regardless of Main Agent session state.
+    // A restored session may appear live after restoreSessions() but the lost review
+    // stream is NOT automatically resumed — session liveness is not a reliable signal.
+    // Recovery decision is based on task state: no mainReview.result → needs retrigger.
+    //
+    // Only the FIRST unresolved task is retriggered here. sendPrompt() returns before
+    // streaming completes, so sending multiple tasks would interleave their review
+    // responses in the same Main session. The remaining tasks chain via
+    // recoverNextOrphanedMainReview() which is called at the end of handleMainReviewResult.
+    const mainReviewTasks = this.taskManager.listTasks({ status: "main_review" });
+    const pendingReview = mainReviewTasks.filter((t) => !t.mainReview?.result);
+    // Freeze the orphan set: only these task IDs participate in chained recovery.
+    // New tasks entering main_review after cold-start go through the normal flow.
+    this.orphanedMainReviewQueue = new Set(pendingReview.map((t) => t.taskId));
+    if (pendingReview.length > 0) {
+      const firstTask = pendingReview[0]!;
+      if (pendingReview.length > 1) {
+        this.transport.sendNotification("log", {
+          message: `[recovery] ${pendingReview.length} task(s) in main_review without result — retriggering ${firstTask.taskId} first; remainder will chain after review completes`,
         });
+      } else {
+        this.transport.sendNotification("log", {
+          message: `[recovery] Task ${firstTask.taskId} stuck in main_review — re-triggering review prompt`,
+        });
+      }
+      try {
+        await this.retriggerMainReview(firstTask.taskId);
       } catch (err) {
         this.transport.sendNotification("log", {
-          message: `[recovery] Failed to prepare re-dispatch for ${task.taskId}: ${err instanceof Error ? err.message : err}`,
+          message: `[recovery] Re-trigger main review for ${firstTask.taskId} failed: ${err instanceof Error ? err.message : err}`,
         });
       }
     }
@@ -3435,16 +3477,33 @@ export class Orchestrator {
   /**
    * Best-effort direct delivery when no SQLite callback queue is available.
    * Does not persist — if delivery fails, the callback is lost.
+   * Uses originator-first routing (same as drainCallbackQueue).
    */
   private async attemptDirectCallbackDelivery(payload: TaskCallbackPayload): Promise<void> {
     const mainAgentId = this.findMainAgentId();
     if (!mainAgentId) return;
 
     const mainSlot = makeRoleSlotKey("main", mainAgentId);
-    const activeSessionId = this.roleSessions.get(mainSlot);
-    if (!activeSessionId) return;
 
-    const session = this.sessions.get(activeSessionId);
+    // Originator-first: route to the session that dispatched the task.
+    // Validate the originator session belongs to the same Main Agent (role + agentId)
+    // to prevent binding a non-Main or different-agent session to the Main slot.
+    if (payload.originatorSessionId) {
+      const origSess = this.sessions.get(payload.originatorSessionId);
+      if (
+        origSess &&
+        origSess.status !== "completed" &&
+        origSess.status !== "overflow" &&
+        (origSess.frozenRole ?? origSess.role) === "main" &&
+        origSess.agentId === mainAgentId
+      ) {
+        this.roleSessions.set(mainSlot, payload.originatorSessionId);
+      }
+    }
+
+    const targetSessionId = this.roleSessions.get(mainSlot);
+    if (!targetSessionId) return;
+    const session = this.sessions.get(targetSessionId);
     if (!session || session.status === "completed" || session.status === "overflow") return;
 
     const prompt = this.formatCallbackPrompt(payload);
@@ -3482,7 +3541,15 @@ export class Orchestrator {
     }
   }
 
-  /** Internal drain logic — must only be called under callbackDrainLock. */
+  /**
+   * Internal drain logic — must only be called under callbackDrainLock.
+   *
+   * Originator-first routing: each callback carries originatorSessionId (the Main Agent
+   * session that dispatched the task). If that session is still alive, the callback is
+   * delivered there — the originator has the task context. If the originator is dead,
+   * delivery falls back to the current active Main session (formatCallbackPrompt includes
+   * full context so the fallback session can still act on the callback).
+   */
   private async drainCallbackQueue(): Promise<void> {
     if (!this.callbackQueue) return;
 
@@ -3490,20 +3557,11 @@ export class Orchestrator {
     if (!mainAgentId) return;
 
     const mainSlot = makeRoleSlotKey("main", mainAgentId);
-    const activeSessionId = this.roleSessions.get(mainSlot);
-    if (!activeSessionId) return;
-
-    const session = this.sessions.get(activeSessionId);
-    if (!session || session.status === "completed" || session.status === "overflow") {
-      this.roleSessions.delete(mainSlot);
-      return;
-    }
-
     const pending = this.callbackQueue.getPending();
     if (pending.length === 0) return;
 
     this.transport.sendNotification("log", {
-      message: `[orchestrator] Delivering ${pending.length} pending callback(s) to Main Agent session ${activeSessionId}`,
+      message: `[orchestrator] Draining ${pending.length} pending callback(s) for Main Agent`,
     });
 
     for (const entry of pending) {
@@ -3515,13 +3573,40 @@ export class Orchestrator {
           message: `[orchestrator] Corrupt callback payload (id=${entry.id}), marking failed and skipping`,
         });
         this.callbackQueue.markAttemptFailed(entry.id, "corrupt payload JSON", 1);
-        continue; // Skip this entry, continue with next
+        continue;
       }
-      const prompt = this.formatCallbackPrompt(entryPayload);
 
+      // Originator-first: route to the session that dispatched the task.
+      // Validate role + agentId to prevent binding non-Main sessions to the Main slot.
+      if (entryPayload.originatorSessionId) {
+        const origSess = this.sessions.get(entryPayload.originatorSessionId);
+        if (
+          origSess &&
+          origSess.status !== "completed" &&
+          origSess.status !== "overflow" &&
+          (origSess.frozenRole ?? origSess.role) === "main" &&
+          origSess.agentId === mainAgentId
+        ) {
+          this.roleSessions.set(mainSlot, entryPayload.originatorSessionId);
+        }
+      }
+
+      // Validate target session — sendPrompt uses roleSessions to find the session
+      const targetSessionId = this.roleSessions.get(mainSlot);
+      if (!targetSessionId) break; // No session available — leave remaining in queue
+      const targetSession = this.sessions.get(targetSessionId);
+      if (!targetSession || targetSession.status === "completed" || targetSession.status === "overflow") {
+        this.roleSessions.delete(mainSlot);
+        break;
+      }
+
+      const prompt = this.formatCallbackPrompt(entryPayload);
       try {
         await this.sendPrompt(mainAgentId, prompt, undefined, "main");
         this.callbackQueue.markDelivered(entry.id);
+        this.transport.sendNotification("log", {
+          message: `[orchestrator] Callback for ${entry.task_id} delivered to session ${targetSessionId}${entryPayload.originatorSessionId === targetSessionId ? " (originator)" : " (fallback)"}`,
+        });
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);
         this.callbackQueue.markAttemptFailed(entry.id, errorMsg);
@@ -3874,17 +3959,76 @@ export class Orchestrator {
     const mainAgentId = this.findMainAgentId();
     if (!mainAgentId) return;
 
+    const reviewPrompt = this.buildMainReviewPromptForTask(task);
+    await this.sendPrompt(mainAgentId, reviewPrompt, undefined, "main", task.title, undefined, taskId);
+  }
+
+  /** Build the Main Review prompt for a task. Shared by mainReviewStep and retriggerMainReview. */
+  private buildMainReviewPromptForTask(task: TaskBundle): string {
     const reviewConfig = this.getReviewConfig(task);
     const defaultRef = task.branch ? `develop...${task.branch}` : "develop...HEAD";
     const diffBaseRef = reviewConfig.diffBaseRef ?? defaultRef;
-    const reviewPrompt = buildMainReviewPrompt(task, diffBaseRef);
+    return buildMainReviewPrompt(task, diffBaseRef);
+  }
+
+  /**
+   * Re-sends the review prompt for a task already in main_review state.
+   * Used by crash recovery when the Main Agent session dies during review.
+   * Unlike mainReviewStep(), does NOT check or change task status.
+   *
+   * Guard: skips the retrigger if task.mainReview.result is already populated —
+   * meaning the review completed in the window between the orphan scan and this call.
+   */
+  private async retriggerMainReview(taskId: string): Promise<void> {
+    const task = this.taskManager.getTask(taskId);
+    if (!task || task.status !== "main_review") return;
+    // If a review result was already recorded (race with normal completion path), skip
+    if (task.mainReview?.result) {
+      this.transport.sendNotification("log", {
+        message: `[recovery] Skipping retrigger for ${taskId}: review result already recorded`,
+      });
+      return;
+    }
+
+    const mainAgentId = this.findMainAgentId();
+    if (!mainAgentId) return;
+
+    this.bus.emit(
+      "orchestrator.task.main_review_retrigger",
+      "orchestrator",
+      task.originatorSessionId ?? "orchestrator",
+      { taskId, title: task.title, reason: "cold_start_recovery" },
+    );
+
+    const reviewPrompt = this.buildMainReviewPromptForTask(task);
     await this.sendPrompt(mainAgentId, reviewPrompt, undefined, "main", task.title, undefined, taskId);
   }
 
   /**
-   * Handle Main Agent's review decision.
-   * APPROVE_FOR_ACCEPTANCE → create acceptance flow.
-   * SEND_BACK → trigger rework.
+   * After a main_review task completes, retrigger the next orphaned task from the frozen
+   * cold-start queue. Only tasks captured at startup are eligible; new tasks entering
+   * main_review after init go through the normal flow and are never pulled into recovery.
+   */
+  private async recoverNextOrphanedMainReview(completedTaskId: string): Promise<void> {
+    this.orphanedMainReviewQueue.delete(completedTaskId);
+    for (const taskId of this.orphanedMainReviewQueue) {
+      const task = this.taskManager.getTask(taskId);
+      if (!task || task.status !== "main_review" || task.mainReview?.result) {
+        this.orphanedMainReviewQueue.delete(taskId);
+        continue;
+      }
+      this.transport.sendNotification("log", {
+        message: `[recovery] Chaining to next cold-start orphan ${taskId} after ${completedTaskId} completed`,
+      });
+      await this.retriggerMainReview(taskId);
+      return;
+    }
+  }
+
+  /**
+   * Handle Main Agent review decision.
+   * APPROVE_FOR_ACCEPTANCE creates acceptance flow.
+   * SEND_BACK triggers rework.
    */
   private async handleMainReviewResult(
     taskId: string,
@@ -3901,61 +4045,80 @@ export class Orchestrator {
       ? reason ?? this.formatCriticalFindingReason(structured?.findings ?? [])
       : reason;
 
-    if (effectiveDecision === "APPROVE_FOR_ACCEPTANCE") {
-      // Find or use provided acceptor
-      const effectiveAcceptorId = acceptorId ?? this.findAcceptorAgentId();
-      if (!effectiveAcceptorId) {
-        throw new Error("No acceptance agent available. Configure an agent with acceptance role.");
-      }
-      await this.createAcceptanceFlow(taskId, effectiveAcceptorId);
-      return { decision: effectiveDecision, nextAction: "acceptance_created" };
-    }
-
-    if (effectiveDecision === "SEND_BACK") {
-      const { reworked, newSession } = this.taskManager.triggerRework(
-        taskId,
-        effectiveReason ?? "Main Agent review: sent back for rework",
-      );
-
-      if (!reworked) {
-        // maxReworks exceeded — task transitioned to failed; record fallback and clean up
-        const sendBackFailedSkills = this.injectedSkillsByTask.get(taskId);
-        if (sendBackFailedSkills) {
-          for (const skillName of sendBackFailedSkills) {
-            this.skillRegistry.recordFallback(skillName);
-          }
-          this.injectedSkillsByTask.delete(taskId);
+    // Use try/finally: chain recovery must fire regardless of downstream success,
+    // since mainReview.result is already written before this method is called.
+    try {
+      if (effectiveDecision === "APPROVE_FOR_ACCEPTANCE") {
+        // Find or use provided acceptor
+        const effectiveAcceptorId = acceptorId ?? this.findAcceptorAgentId();
+        if (!effectiveAcceptorId) {
+          throw new Error("No acceptance agent available. Configure an agent with acceptance role.");
         }
-        return { decision: effectiveDecision, nextAction: "failed_max_reworks" };
+        await this.createAcceptanceFlow(taskId, effectiveAcceptorId);
+        return { decision: effectiveDecision, nextAction: "acceptance_created" };
       }
 
-      // Send rework directive to the agent in its original role
-      const reworkRole: AgentRole = task.role ?? "dev";
-      const reworkPrompt = buildSendBackPrompt(task, effectiveReason ?? "Main Agent review: sent back for rework", this.getAgentCli(task.assignedTo) === "claude");
-      if (newSession) {
-        const reworkRolePrompt = this.buildSystemRolePrompt(reworkRole, task);
-        const session = await this.startRoleSession(
+      if (effectiveDecision === "SEND_BACK") {
+        const { reworked, newSession } = this.taskManager.triggerRework(
+          taskId,
+          effectiveReason ?? "Main Agent review: sent back for rework",
+        );
+
+        if (!reworked) {
+          // maxReworks exceeded — task transitioned to failed; record fallback and clean up
+          const sendBackFailedSkills = this.injectedSkillsByTask.get(taskId);
+          if (sendBackFailedSkills) {
+            for (const skillName of sendBackFailedSkills) {
+              this.skillRegistry.recordFallback(skillName);
+            }
+            this.injectedSkillsByTask.delete(taskId);
+          }
+          return { decision: effectiveDecision, nextAction: "failed_max_reworks" };
+        }
+
+        // Send rework directive to the agent in its original role
+        const reworkRole: AgentRole = task.role ?? "dev";
+        const reworkPrompt = buildSendBackPrompt(task, effectiveReason ?? "Main Agent review: sent back for rework", this.getAgentCli(task.assignedTo) === "claude");
+        if (newSession) {
+          const reworkRolePrompt = this.buildSystemRolePrompt(reworkRole, task);
+          const session = await this.startRoleSession(
+            task.assignedTo,
+            reworkRole,
+            task.title,
+            reworkRolePrompt,
+          );
+          this.taskManager.bindSession(taskId, session.sessionId);
+        }
+        await this.sendPrompt(
           task.assignedTo,
+          reworkPrompt,
+          undefined,
           reworkRole,
           task.title,
-          reworkRolePrompt,
+          this.buildSystemRolePrompt(reworkRole, task),
+          task.taskId,
         );
-        this.taskManager.bindSession(taskId, session.sessionId);
+
+        return { decision: effectiveDecision, nextAction: "rework_triggered" };
       }
-      await this.sendPrompt(
-        task.assignedTo,
-        reworkPrompt,
-        undefined,
-        reworkRole,
-        task.title,
-        this.buildSystemRolePrompt(reworkRole, task),
-        task.taskId,
-      );
 
-      return { decision: effectiveDecision, nextAction: "rework_triggered" };
+      throw new Error(`Invalid review decision: "${decision}". Expected APPROVE_FOR_ACCEPTANCE or SEND_BACK.`);
+    } finally {
+      // Only chain if this task was a cold-start orphan AND has actually been consumed
+      // (left main_review or has a result). If downstream threw and the task is still
+      // stuck in main_review without a result, leave it in the queue for next recovery.
+      if (this.orphanedMainReviewQueue.has(taskId)) {
+        const currentTask = this.taskManager.getTask(taskId);
+        const consumed = !currentTask || currentTask.status !== "main_review" || !!currentTask.mainReview?.result;
+        if (consumed) {
+          void this.recoverNextOrphanedMainReview(taskId).catch((err) => {
+            this.transport.sendNotification("log", {
+              message: `[recovery] Chain recovery failed after ${taskId}: ${err instanceof Error ? err.message : err}`,
+            });
+          });
+        }
+      }
     }
-
-    throw new Error(`Invalid review decision: "${decision}". Expected APPROVE_FOR_ACCEPTANCE or SEND_BACK.`);
   }
 
   // ─── Critic Agent Integration ───
