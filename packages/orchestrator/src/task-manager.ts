@@ -1214,7 +1214,12 @@ export function buildResearchPrompt(
   vaultPath?: string,
   codexEnabled?: boolean,
   relevantSkills?: SkillInjection[],
+  researchConfig?: { citationDensityThreshold?: number; qualityGateEnabled?: boolean; loopDetectionWindow?: number },
 ): string {
+  const citationThreshold = researchConfig?.citationDensityThreshold ?? 0.75;
+  const qualityGateEnabled = researchConfig?.qualityGateEnabled ?? true;
+  const loopDetectionWindow = researchConfig?.loopDetectionWindow ?? 2;
+
   const lines = [
     `# Research Task: ${task.title} [${task.taskId}]`,
     "",
@@ -1236,10 +1241,17 @@ export function buildResearchPrompt(
     "- Use web search, codebase analysis, and KB resources as needed.",
     "- Produce structured findings with evidence and recommendations.",
     "- No code commits expected.",
-    ...(task.researchScope === "deep" ? [
-      "",
-      "## Deep Research Protocol",
-      "This task requires the `/deep-research` protocol. Type `/deep-research` at the start of your response to activate the Mercury Deep Research Protocol with full multi-round verification.",
+    "",
+    "## Deep Research Protocol",
+    "All research tasks use the multi-round deep-research protocol:",
+    "1. **Iterative rounds**: search → verify → refine. Each round should expand or correct prior findings.",
+    `2. **Citation density check**: after each round, ensure at least ${(citationThreshold * 100).toFixed(0)}% of claims have a cited source (URL, file ref, or doc link).`,
+    `3. **Loop detection**: if ${loopDetectionWindow} consecutive round(s) yield no new findings or improvement, stop iterating early.`,
+    ...(qualityGateEnabled ? [
+      "4. **Quality gate**: before finalizing, verify citation density meets threshold and all key questions are answered. Include a `qualityMetrics` field in your JSON output:",
+      "   ```json",
+      '   "qualityMetrics": { "citationDensity": 0.85, "questionsAnswered": 4, "questionsTotal": 4, "roundsCompleted": 3 }',
+      "   ```",
     ] : []),
     ...(maxIterations && maxIterations > 0
       ? [
@@ -1286,6 +1298,7 @@ export function buildResearchPrompt(
       findings: ["<finding 1 as one complete paragraph>", "<finding 2 ...>"],
       recommendations: ["<recommendation 1 as one complete paragraph>"],
       evidence: ["<source URL or file reference>"],
+      ...(qualityGateEnabled ? { qualityMetrics: { citationDensity: 0.0, questionsAnswered: 0, questionsTotal: 0, roundsCompleted: 0 } } : {}),
       completedAt: "",
     }, null, 2),
     "```",
