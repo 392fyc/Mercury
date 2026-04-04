@@ -3477,16 +3477,25 @@ export class Orchestrator {
   /**
    * Best-effort direct delivery when no SQLite callback queue is available.
    * Does not persist — if delivery fails, the callback is lost.
+   * Uses originator-first routing (same as drainCallbackQueue).
    */
   private async attemptDirectCallbackDelivery(payload: TaskCallbackPayload): Promise<void> {
     const mainAgentId = this.findMainAgentId();
     if (!mainAgentId) return;
 
     const mainSlot = makeRoleSlotKey("main", mainAgentId);
-    const activeSessionId = this.roleSessions.get(mainSlot);
-    if (!activeSessionId) return;
 
-    const session = this.sessions.get(activeSessionId);
+    // Originator-first: route to the session that dispatched the task
+    if (payload.originatorSessionId) {
+      const origSess = this.sessions.get(payload.originatorSessionId);
+      if (origSess && origSess.status !== "completed" && origSess.status !== "overflow") {
+        this.roleSessions.set(mainSlot, payload.originatorSessionId);
+      }
+    }
+
+    const targetSessionId = this.roleSessions.get(mainSlot);
+    if (!targetSessionId) return;
+    const session = this.sessions.get(targetSessionId);
     if (!session || session.status === "completed" || session.status === "overflow") return;
 
     const prompt = this.formatCallbackPrompt(payload);
@@ -3524,7 +3533,15 @@ export class Orchestrator {
     }
   }
 
-  /** Internal drain logic — must only be called under callbackDrainLock. */
+  /**
+   * Internal drain logic — must only be called under callbackDrainLock.
+   *
+   * Originator-first routing: each callback carries originatorSessionId (the Main Agent
+   * session that dispatched the task). If that session is still alive, the callback is
+   * delivered there — the originator has the task context. If the originator is dead,
+   * delivery falls back to the current active Main session (formatCallbackPrompt includes
+   * full context so the fallback session can still act on the callback).
+   */
   private async drainCallbackQueue(): Promise<void> {
     if (!this.callbackQueue) return;
 
@@ -3532,20 +3549,11 @@ export class Orchestrator {
     if (!mainAgentId) return;
 
     const mainSlot = makeRoleSlotKey("main", mainAgentId);
-    const activeSessionId = this.roleSessions.get(mainSlot);
-    if (!activeSessionId) return;
-
-    const session = this.sessions.get(activeSessionId);
-    if (!session || session.status === "completed" || session.status === "overflow") {
-      this.roleSessions.delete(mainSlot);
-      return;
-    }
-
     const pending = this.callbackQueue.getPending();
     if (pending.length === 0) return;
 
     this.transport.sendNotification("log", {
-      message: `[orchestrator] Delivering ${pending.length} pending callback(s) to Main Agent session ${activeSessionId}`,
+      message: `[orchestrator] Draining ${pending.length} pending callback(s) for Main Agent`,
     });
 
     for (const entry of pending) {
@@ -3557,13 +3565,33 @@ export class Orchestrator {
           message: `[orchestrator] Corrupt callback payload (id=${entry.id}), marking failed and skipping`,
         });
         this.callbackQueue.markAttemptFailed(entry.id, "corrupt payload JSON", 1);
-        continue; // Skip this entry, continue with next
+        continue;
       }
-      const prompt = this.formatCallbackPrompt(entryPayload);
 
+      // Originator-first: route to the session that dispatched the task
+      if (entryPayload.originatorSessionId) {
+        const origSess = this.sessions.get(entryPayload.originatorSessionId);
+        if (origSess && origSess.status !== "completed" && origSess.status !== "overflow") {
+          this.roleSessions.set(mainSlot, entryPayload.originatorSessionId);
+        }
+      }
+
+      // Validate target session — sendPrompt uses roleSessions to find the session
+      const targetSessionId = this.roleSessions.get(mainSlot);
+      if (!targetSessionId) break; // No session available — leave remaining in queue
+      const targetSession = this.sessions.get(targetSessionId);
+      if (!targetSession || targetSession.status === "completed" || targetSession.status === "overflow") {
+        this.roleSessions.delete(mainSlot);
+        break;
+      }
+
+      const prompt = this.formatCallbackPrompt(entryPayload);
       try {
         await this.sendPrompt(mainAgentId, prompt, undefined, "main");
         this.callbackQueue.markDelivered(entry.id);
+        this.transport.sendNotification("log", {
+          message: `[orchestrator] Callback for ${entry.task_id} delivered to session ${targetSessionId}${entryPayload.originatorSessionId === targetSessionId ? " (originator)" : " (fallback)"}`,
+        });
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);
         this.callbackQueue.markAttemptFailed(entry.id, errorMsg);
