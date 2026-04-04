@@ -4097,15 +4097,19 @@ export class Orchestrator {
 
       throw new Error(`Invalid review decision: "${decision}". Expected APPROVE_FOR_ACCEPTANCE or SEND_BACK.`);
     } finally {
-      // Only chain recovery if the completed task was in the frozen cold-start orphan queue.
-      // Normal main_review completions (not from cold-start recovery) must NOT trigger
-      // the chain — they could retrigger in-flight orphan reviews prematurely.
+      // Only chain if this task was a cold-start orphan AND has actually been consumed
+      // (left main_review or has a result). If downstream threw and the task is still
+      // stuck in main_review without a result, leave it in the queue for next recovery.
       if (this.orphanedMainReviewQueue.has(taskId)) {
-        void this.recoverNextOrphanedMainReview(taskId).catch((err) => {
-          this.transport.sendNotification("log", {
-            message: `[recovery] Chain recovery failed after ${taskId}: ${err instanceof Error ? err.message : err}`,
+        const currentTask = this.taskManager.getTask(taskId);
+        const consumed = !currentTask || currentTask.status !== "main_review" || !!currentTask.mainReview?.result;
+        if (consumed) {
+          void this.recoverNextOrphanedMainReview(taskId).catch((err) => {
+            this.transport.sendNotification("log", {
+              message: `[recovery] Chain recovery failed after ${taskId}: ${err instanceof Error ? err.message : err}`,
+            });
           });
-        });
+        }
       }
     }
   }
