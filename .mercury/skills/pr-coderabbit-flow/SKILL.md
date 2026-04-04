@@ -49,7 +49,7 @@ last_validated_at: 2026-04-04T00:00:00.000Z
 
 4. **Request re-review** — after all threads are addressed
    ```bash
-   gh pr review --request-changes --body "Addressed all threads."
+   gh pr comment <PR_NUMBER> --body "@coderabbitai All threads addressed. Please re-review."
    ```
 
 5. **Merge** — only after CodeRabbit approves (no pending changes)

@@ -13,7 +13,7 @@
 import { createRequire } from "node:module";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { existsSync, mkdirSync } from "node:fs";
-import { join, basename } from "node:path";
+import { join, basename, dirname } from "node:path";
 import { BM25 } from "fast-bm25";
 
 // write-file-atomic is CommonJS — ESM interop via createRequire
@@ -370,7 +370,7 @@ export class SkillRegistry {
     }
 
     const fm = parseFrontmatter(content);
-    const name = String(fm["name"] ?? basename(filePath));
+    const name = String(fm["name"] ?? basename(dirname(filePath)));
     if (!name) return null;
 
     // Load .skill_id sidecar (OpenSpace-compatible)

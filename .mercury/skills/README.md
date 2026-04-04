@@ -6,7 +6,7 @@ Skills are automatically injected into agent dispatch prompts at task execution 
 
 ## Directory Structure
 
-```
+```text
 .mercury/skills/
   README.md               — this file
   {skill-name}/

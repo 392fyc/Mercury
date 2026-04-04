@@ -26,14 +26,14 @@ last_validated_at: 2026-04-04T00:00:00.000Z
 Before calling `mcp__mercury-orchestrator__dispatch_task`, verify the TaskBundle has:
 
 1. **readScope.requiredDocs** — list of KB paths the agent must read (non-empty for research/design)
-2. **allowedWriteScope.repoPaths** — list of repo paths the agent may modify
+2. **allowedWriteScope.codePaths** — list of repo paths the agent may modify
 3. **allowedWriteScope.kbPaths** — list of KB paths the agent may write (required for research/design)
 4. **branch** — target git branch (required for dev tasks)
 5. **definitionOfDone** — non-empty checklist
 
 ## Validation Checklist
 
-```
+```text
 [ ] taskId is non-empty and unique
 [ ] role is one of: dev, research, design
 [ ] branch is set (dev tasks)

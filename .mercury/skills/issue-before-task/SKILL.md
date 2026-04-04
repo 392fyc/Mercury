@@ -29,7 +29,7 @@ Never create a Task without a corresponding Issue.
 
 ## Flow
 
-```
+```text
 Bug/Feature Identified
   → mcp__mercury-orchestrator__create_issue (type: bug|feature|improvement)
   → Issue triage (assign priority, label)

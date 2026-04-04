@@ -5,8 +5,6 @@ category: TOOL_GUIDE
 roles:
   - dev
   - main
-  - research
-  - design
 origin: IMPORTED
 tags:
   - git

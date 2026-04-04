@@ -28,16 +28,19 @@ Type `/deep-research` at the start of your response when the task has `researchS
 ## Protocol Steps
 
 ### Step 1 — Context Budget Check
+
 Before starting, check your remaining context window.
 - If below 20,000 tokens: skip research, output JSON summary with what you know
 - If above 20,000 tokens: proceed with full protocol
 
 ### Step 2 — Question Decomposition
+
 Break the research goal into 3-7 specific questions. For each question:
 - State what claim you are verifying
 - State the authoritative source you will check
 
 ### Step 3 — Multi-Round Research
+
 For each question:
 1. `WebSearch` with current year in query
 2. `WebFetch` on the primary source URL
@@ -45,11 +48,13 @@ For each question:
 4. Record: claim, source URL, confidence (high/medium/low/unverified)
 
 ### Step 4 — Synthesis
+
 - Group findings by theme
 - Flag contradictions between sources
 - Mark claims that could not be verified as `UNVERIFIED`
 
 ### Step 5 — Output JSON Summary (ALWAYS LAST)
+
 Output the structured summary as your FINAL message before writing to KB.
 
 ```json

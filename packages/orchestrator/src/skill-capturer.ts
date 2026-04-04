@@ -105,13 +105,13 @@ export class SkillCapturer {
     const content = [
       "---",
       `name: ${name}`,
-      `description: ${pattern.description}`,
-      `category: ${pattern.category}`,
+      `description: ${yamlEscape(pattern.description)}`,
+      `category: ${yamlEscape(pattern.category)}`,
       `roles:`,
-      ...pattern.roles.map((r) => `  - ${r}`),
+      ...pattern.roles.map((r) => `  - ${yamlEscape(r)}`),
       `origin: CAPTURED`,
       `source_task_id: ${task.taskId}`,
-      `source_role: ${task.role ?? "dev"}`,
+      `source_role: ${yamlEscape(task.role ?? "dev")}`,
       `captured_at: ${now}`,
       `captured_by: acceptance-agent`,
       `tags: []`,
@@ -221,6 +221,15 @@ function parsePatterns(response: string): ExtractedPattern[] {
   } catch {
     return [];
   }
+}
+
+/** Escape a string for safe YAML scalar value (inline, unquoted style). */
+function yamlEscape(str: string): string {
+  // Wrap in double quotes if the value contains characters that break YAML scalars
+  if (/[:\n\r"'#\[\]{}|>&*!?,]/.test(str) || str.startsWith(" ") || str.startsWith("-")) {
+    return `"${str.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "\\r")}"`;
+  }
+  return str;
 }
 
 function sanitizeSlug(name: string): string {
