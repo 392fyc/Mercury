@@ -2971,6 +2971,7 @@ export class Orchestrator {
     prompt: string;
     rolePrompt: string;
     baseRolePrompt: string;
+    injectedSkillNames: string[];
   }> {
     const task = await this.taskManager.getTaskAsync(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
@@ -3035,18 +3036,23 @@ export class Orchestrator {
 
     // Retrieve relevant skills (max 3) for dev/research roles and build SkillInjection objects
     let relevantSkills: SkillInjection[] | undefined;
+    let injectedSkillNames: string[] = [];
     if (this.skillRegistry.isReady() && (role === "dev" || role === "research")) {
       const query = `${task.title} ${task.context.slice(0, 300)}`;
       const rawSkills = this.skillRegistry.searchSkills(query, [role], 3);
       if (rawSkills.length > 0) {
-        relevantSkills = await Promise.all(
+        // Filter out skills whose body fails to load — don't record or inject them
+        const loaded = await Promise.all(
           rawSkills.map(async (s) => {
             const body = await this.skillRegistry.loadSkillBody(s).catch(() => "");
-            this.skillRegistry.recordSelection(s.name);
-            return { ...s, body } satisfies SkillInjection;
+            return body ? ({ ...s, body } satisfies SkillInjection) : null;
           }),
         );
-        this.injectedSkillsByTask.set(task.taskId, rawSkills.map((s) => s.name));
+        relevantSkills = loaded.filter((s): s is SkillInjection => s !== null);
+        for (const skill of relevantSkills) {
+          this.skillRegistry.recordSelection(skill.name);
+        }
+        injectedSkillNames = relevantSkills.map((s) => s.name);
       }
     }
 
@@ -3066,6 +3072,7 @@ export class Orchestrator {
       prompt,
       rolePrompt: this.buildSystemRolePrompt(role, task, tokenBudgetHint),
       baseRolePrompt: this.buildSystemRolePrompt(role),
+      injectedSkillNames,
     };
   }
 
@@ -3089,8 +3096,11 @@ export class Orchestrator {
       };
     }
 
-    const { task, prompt, rolePrompt, baseRolePrompt } =
+    const { task, prompt, rolePrompt, baseRolePrompt, injectedSkillNames } =
       await this.prepareBundleTaskExecution(taskId);
+    if (injectedSkillNames.length > 0) {
+      this.injectedSkillsByTask.set(task.taskId, injectedSkillNames);
+    }
     const agentId = task.assignedTo;
     const role: AgentRole = task.role ?? "dev";
     const adapter = this.registry.getAdapter(agentId);
@@ -3256,7 +3266,7 @@ export class Orchestrator {
         // This try/catch only catches synchronous failures (session creation,
         // state transitions). Streaming failures trigger G2 crash recovery
         // in streamMessages() catch handler — automatic re-dispatch.
-        const { task: freshTask, prompt, rolePrompt } = await this.prepareBundleTaskExecution(taskId);
+        const { task: freshTask, prompt, rolePrompt, injectedSkillNames } = await this.prepareBundleTaskExecution(taskId);
         const role: AgentRole = freshTask.role ?? "dev";
 
         // Transition: drafted → dispatched → in_progress
@@ -3266,6 +3276,10 @@ export class Orchestrator {
 
         // Start role-scoped session for assigned agent
         const session = await this.startRoleSession(freshTask.assignedTo, role, freshTask.title, rolePrompt);
+        // Record injected skills only after session is confirmed started
+        if (injectedSkillNames.length > 0) {
+          this.injectedSkillsByTask.set(freshTask.taskId, injectedSkillNames);
+        }
         this.taskManager.bindSession(taskId, session.sessionId);
 
         // Transition to in_progress (only if not already there)

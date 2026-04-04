@@ -960,7 +960,7 @@ function buildSkillsBlock(skills: SkillInjection[]): string {
   for (const skill of skills) {
     sections.push(`\n### ${skill.name} [${skill.category}]`);
     sections.push(`_${skill.description}_`);
-    if (skill.body) sections.push(skill.body);
+    if (skill.body) sections.push(skill.body.replace(/```/g, "` ` `"));
   }
   return sections.join("\n");
 }

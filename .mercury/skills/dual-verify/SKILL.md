@@ -63,12 +63,13 @@ npx tsc --noEmit  # Claude Code's responsibility
 
 **Codex** (logic audit — style, edge cases, metrics, memory leaks, Windows compat):
 
-```bash
-# Launch via Agent tool with subagent_type: codex:codex-rescue
-# Prompt: "Audit feat/<branch> vs develop. Check: code style, edge cases,
-# metrics completeness (all 4 paths), memory leak cleanup on terminal paths,
-# Windows compat. TypeScript typecheck is not required."
-```
+Invoke the Codex audit agent with this prompt:
+
+> Audit `feat/<branch>` vs `develop`. Check: code style, edge cases,
+> metrics completeness (all 4 paths), memory leak cleanup on terminal paths,
+> Windows compat. TypeScript typecheck is not required.
+
+*(Agent-specific invocation syntax is defined per-agent in `.claude/skills/dual-verify` or `.agents/skills/dual-verify`.)*
 
 ### Step 2 — Collect results
 

@@ -11,7 +11,6 @@
 
 import { createRequire } from "node:module";
 import { mkdir } from "node:fs/promises";
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { TaskBundle, ImplementationReceipt } from "@mercury/core";
@@ -76,9 +75,7 @@ export class SkillCapturer {
   // ─── Private ───
 
   private async ensurePendingDir(): Promise<void> {
-    if (!existsSync(this.pendingDir)) {
-      await mkdir(this.pendingDir, { recursive: true });
-    }
+    await mkdir(this.pendingDir, { recursive: true });
   }
 
   private async extractPatterns(input: CaptureInput): Promise<ExtractedPattern[]> {
@@ -94,7 +91,9 @@ export class SkillCapturer {
     const name = sanitizeSlug(pattern.name);
     if (!name) return null;
 
-    const skillDir = join(this.pendingDir, name);
+    // Append UUID suffix to avoid silent overwrite when the same slug is captured again
+    const uuid8 = randomUUID().slice(0, 8);
+    const skillDir = join(this.pendingDir, `${name}_${uuid8}`);
     await mkdir(skillDir, { recursive: true });
 
     const filePath = join(skillDir, "SKILL.md");
@@ -212,6 +211,7 @@ function parsePatterns(response: string): ExtractedPattern[] {
       const p = item as Record<string, unknown>;
       return (
         typeof p["name"] === "string" &&
+        typeof p["title"] === "string" &&
         typeof p["description"] === "string" &&
         typeof p["category"] === "string" &&
         Array.isArray(p["roles"]) &&
