@@ -69,9 +69,10 @@ CronCreate:
 ```
 
 The check prompt should:
-1. Fetch review status for all tracked PRs via `gh pr view <N> --json reviews`
-2. Check for new inline comments via `gh api repos/{owner}/{repo}/pulls/<N>/comments`
-3. Track consecutive checks via file-based counter (cron jobs are stateless across invocations):
+1. Fetch review status for all tracked PRs via `gh pr view <N> --json reviews,reviewDecision`
+2. Check for new **inline** comments via `gh api repos/{owner}/{repo}/pulls/<N>/comments`
+3. Check for new **outside-diff** comments (review body / PR-level) via `gh api repos/{owner}/{repo}/issues/<N>/comments --jq '[.[] | select(.user.login == "coderabbitai[bot]")]'`
+4. Track consecutive checks via file-based counter (cron jobs are stateless across invocations):
 
    ```bash
    COUNT_FILE=".pr-flow-check-count-${PR_NUMBER}"
@@ -83,7 +84,7 @@ The check prompt should:
    fi
    ```
 
-4. After **3 consecutive checks with no CodeRabbit activity**, proactively trigger (with dedup):
+5. After **3 consecutive checks with no CodeRabbit activity**, proactively trigger (with dedup):
 
    ```bash
    if [ "$COUNT" -ge 3 ]; then
@@ -95,7 +96,7 @@ The check prompt should:
    fi
    ```
 
-5. When reviews arrive:
+6. When reviews arrive:
    - **Single-PR mode**: cancel the cron job, clean up counter files, proceed to Phase 3
    - **Multi-PR mode**: only cancel the global cron when ALL tracked PRs have reviews or are merged/closed; process each PR's reviews independently via Phase 3
 
