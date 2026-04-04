@@ -312,19 +312,22 @@ After merge, update related GitHub issues and Mercury task state:
 
 - Clean up iteration/counter files: `rm -f .pr-flow-iteration-* .pr-flow-check-count-*`
 
-- **Clean up local branches and worktrees** after merge:
+- **Clean up worktrees and local branches** after merge (worktree first, then branch — per Mercury worktree-workflow protocol):
 
   ```bash
   BRANCH=$(gh pr view "$PR_NUMBER" --json headRefName --jq '.headRefName')
 
-  # Delete local branch (remote already deleted by --delete-branch)
-  git branch -d "$BRANCH" 2>/dev/null || true
-
-  # Remove worktree if one exists for this branch
-  WORKTREE=$(git worktree list --porcelain | grep -B2 "branch refs/heads/$BRANCH" | grep "^worktree " | sed 's/^worktree //')
+  # Remove worktree first (branch can't be deleted while checked out in a worktree)
+  WORKTREE=$(git worktree list --porcelain | awk -v b="refs/heads/$BRANCH" '
+    $1=="worktree"{wt=$2}
+    $1=="branch" && $2==b {print wt; exit}
+  ')
   if [ -n "$WORKTREE" ]; then
     git worktree remove --force "$WORKTREE" 2>/dev/null || true
   fi
+
+  # Delete local branch after worktree removal (remote already deleted by --delete-branch)
+  git branch -d "$BRANCH" 2>/dev/null || true
   ```
 
 ## Multi-PR Coordination
