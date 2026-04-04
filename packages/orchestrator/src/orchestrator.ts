@@ -907,6 +907,9 @@ export class Orchestrator {
           (params.images as ImageAttachment[] | null) ?? undefined,
           (params.role as AgentRole | null) ?? undefined,
           (params.taskName as string | null) ?? undefined,
+          undefined, // systemPrompt
+          undefined, // taskId
+          (params.sessionId as string | null) ?? undefined, // hintSessionId
         );
       case "stop_session":
         return this.stopSession(
@@ -1618,6 +1621,7 @@ export class Orchestrator {
     taskName?: string,
     systemPrompt?: string,
     taskId?: string,
+    hintSessionId?: string,
   ): Promise<{ sessionId: string; role?: AgentRole; sessionName?: string; status?: SessionInfo["status"] }> {
     const adapter = this.registry.getAdapter(agentId);
     const config = this.registry.getConfig(agentId);
@@ -1632,7 +1636,8 @@ export class Orchestrator {
     //   (b) the existing session is completed/overflow (validated below)
     //   (c) adapter.resumeSession() throws (session state lost)
     // See: TASK-4d99b745 Bug 3 investigation — no orchestrator-side fix needed.
-    let sessionId = this.roleSessions.get(slotKey);
+    // Use hintSessionId if provided (from GUI — knows which specific session the user is in)
+    let sessionId = hintSessionId ?? this.roleSessions.get(slotKey);
     if (!sessionId) {
       const session = await this.startRoleSession(agentId, effectiveRole, taskName, systemPrompt);
       sessionId = session.sessionId;
@@ -1662,6 +1667,11 @@ export class Orchestrator {
       this.roleSessions.delete(slotKey);
       const session = await this.startRoleSession(agentId, effectiveRole, taskName, systemPrompt);
       sessionId = session.sessionId;
+    }
+    // If GUI provided a session hint that survived validation, bind it to the role slot
+    // so subsequent messages (without hint) also use this session.
+    if (hintSessionId && sessionId === hintSessionId) {
+      this.roleSessions.set(slotKey, sessionId);
     }
     if (taskId && effectiveRole !== "main") {
       this.taskManager.bindSession(taskId, sessionId);
