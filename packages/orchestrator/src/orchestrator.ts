@@ -144,6 +144,8 @@ export class Orchestrator {
   private skillCapturer: SkillCapturer | null = null;
   /** Skills injected per task (taskId → skill names), for post-task metric recording. */
   private injectedSkillsByTask = new Map<string, string[]>();
+  /** Frozen set of task IDs stuck in main_review at cold-start, consumed by chained recovery. */
+  private orphanedMainReviewQueue = new Set<string>();
 
   constructor(
     registry: AgentRegistry,
@@ -785,6 +787,9 @@ export class Orchestrator {
     // recoverNextOrphanedMainReview() which is called at the end of handleMainReviewResult.
     const mainReviewTasks = this.taskManager.listTasks({ status: "main_review" });
     const pendingReview = mainReviewTasks.filter((t) => !t.mainReview?.result);
+    // Freeze the orphan set: only these task IDs participate in chained recovery.
+    // New tasks entering main_review after cold-start go through the normal flow.
+    this.orphanedMainReviewQueue = new Set(pendingReview.map((t) => t.taskId));
     if (pendingReview.length > 0) {
       const firstTask = pendingReview[0]!;
       if (pendingReview.length > 1) {
@@ -3957,20 +3962,24 @@ export class Orchestrator {
   }
 
   /**
-   * After a main_review task completes (APPROVE or SEND_BACK), retrigger the next orphaned
-   * main_review task if any remain. Called fire-and-forget from handleMainReviewResult.
-   * This chains recovery for multiple simultaneously stuck tasks without interleaving their
-   * review prompts in the Main Agent session.
+   * After a main_review task completes, retrigger the next orphaned task from the frozen
+   * cold-start queue. Only tasks captured at startup are eligible; new tasks entering
+   * main_review after init go through the normal flow and are never pulled into recovery.
    */
   private async recoverNextOrphanedMainReview(completedTaskId: string): Promise<void> {
-    const mainReviewTasks = this.taskManager.listTasks({ status: "main_review" });
-    const nextTask = mainReviewTasks.find((t) => t.taskId !== completedTaskId && !t.mainReview?.result);
-    if (!nextTask) return;
-
-    this.transport.sendNotification("log", {
-      message: `[recovery] Chaining to next orphaned main_review task ${nextTask.taskId} after ${completedTaskId} completed`,
-    });
-    await this.retriggerMainReview(nextTask.taskId);
+    this.orphanedMainReviewQueue.delete(completedTaskId);
+    for (const taskId of this.orphanedMainReviewQueue) {
+      const task = this.taskManager.getTask(taskId);
+      if (!task || task.status !== "main_review" || task.mainReview?.result) {
+        this.orphanedMainReviewQueue.delete(taskId);
+        continue;
+      }
+      this.transport.sendNotification("log", {
+        message: `[recovery] Chaining to next cold-start orphan ${taskId} after ${completedTaskId} completed`,
+      });
+      await this.retriggerMainReview(taskId);
+      return;
+    }
   }
 
   /**
@@ -3993,65 +4002,73 @@ export class Orchestrator {
       ? reason ?? this.formatCriticalFindingReason(structured?.findings ?? [])
       : reason;
 
-    if (effectiveDecision === "APPROVE_FOR_ACCEPTANCE") {
-      // Find or use provided acceptor
-      const effectiveAcceptorId = acceptorId ?? this.findAcceptorAgentId();
-      if (!effectiveAcceptorId) {
-        throw new Error("No acceptance agent available. Configure an agent with acceptance role.");
-      }
-      await this.createAcceptanceFlow(taskId, effectiveAcceptorId);
-      // Chain recovery for any other main_review tasks that were stuck during cold-start recovery
-      void this.recoverNextOrphanedMainReview(taskId).catch(() => {});
-      return { decision: effectiveDecision, nextAction: "acceptance_created" };
-    }
-
-    if (effectiveDecision === "SEND_BACK") {
-      const { reworked, newSession } = this.taskManager.triggerRework(
-        taskId,
-        effectiveReason ?? "Main Agent review: sent back for rework",
-      );
-
-      if (!reworked) {
-        // maxReworks exceeded — task transitioned to failed; record fallback and clean up
-        const sendBackFailedSkills = this.injectedSkillsByTask.get(taskId);
-        if (sendBackFailedSkills) {
-          for (const skillName of sendBackFailedSkills) {
-            this.skillRegistry.recordFallback(skillName);
-          }
-          this.injectedSkillsByTask.delete(taskId);
+    // Use try/finally: chain recovery must fire regardless of downstream success,
+    // since mainReview.result is already written before this method is called.
+    try {
+      if (effectiveDecision === "APPROVE_FOR_ACCEPTANCE") {
+        // Find or use provided acceptor
+        const effectiveAcceptorId = acceptorId ?? this.findAcceptorAgentId();
+        if (!effectiveAcceptorId) {
+          throw new Error("No acceptance agent available. Configure an agent with acceptance role.");
         }
-        void this.recoverNextOrphanedMainReview(taskId).catch(() => {});
-        return { decision: effectiveDecision, nextAction: "failed_max_reworks" };
+        await this.createAcceptanceFlow(taskId, effectiveAcceptorId);
+        return { decision: effectiveDecision, nextAction: "acceptance_created" };
       }
 
-      // Send rework directive to the agent in its original role
-      const reworkRole: AgentRole = task.role ?? "dev";
-      const reworkPrompt = buildSendBackPrompt(task, effectiveReason ?? "Main Agent review: sent back for rework", this.getAgentCli(task.assignedTo) === "claude");
-      if (newSession) {
-        const reworkRolePrompt = this.buildSystemRolePrompt(reworkRole, task);
-        const session = await this.startRoleSession(
+      if (effectiveDecision === "SEND_BACK") {
+        const { reworked, newSession } = this.taskManager.triggerRework(
+          taskId,
+          effectiveReason ?? "Main Agent review: sent back for rework",
+        );
+
+        if (!reworked) {
+          // maxReworks exceeded — task transitioned to failed; record fallback and clean up
+          const sendBackFailedSkills = this.injectedSkillsByTask.get(taskId);
+          if (sendBackFailedSkills) {
+            for (const skillName of sendBackFailedSkills) {
+              this.skillRegistry.recordFallback(skillName);
+            }
+            this.injectedSkillsByTask.delete(taskId);
+          }
+          return { decision: effectiveDecision, nextAction: "failed_max_reworks" };
+        }
+
+        // Send rework directive to the agent in its original role
+        const reworkRole: AgentRole = task.role ?? "dev";
+        const reworkPrompt = buildSendBackPrompt(task, effectiveReason ?? "Main Agent review: sent back for rework", this.getAgentCli(task.assignedTo) === "claude");
+        if (newSession) {
+          const reworkRolePrompt = this.buildSystemRolePrompt(reworkRole, task);
+          const session = await this.startRoleSession(
+            task.assignedTo,
+            reworkRole,
+            task.title,
+            reworkRolePrompt,
+          );
+          this.taskManager.bindSession(taskId, session.sessionId);
+        }
+        await this.sendPrompt(
           task.assignedTo,
+          reworkPrompt,
+          undefined,
           reworkRole,
           task.title,
-          reworkRolePrompt,
+          this.buildSystemRolePrompt(reworkRole, task),
+          task.taskId,
         );
-        this.taskManager.bindSession(taskId, session.sessionId);
+
+        return { decision: effectiveDecision, nextAction: "rework_triggered" };
       }
-      await this.sendPrompt(
-        task.assignedTo,
-        reworkPrompt,
-        undefined,
-        reworkRole,
-        task.title,
-        this.buildSystemRolePrompt(reworkRole, task),
-        task.taskId,
-      );
 
-      void this.recoverNextOrphanedMainReview(taskId).catch(() => {});
-      return { decision: effectiveDecision, nextAction: "rework_triggered" };
+      throw new Error(`Invalid review decision: "${decision}". Expected APPROVE_FOR_ACCEPTANCE or SEND_BACK.`);
+    } finally {
+      // Always chain to next cold-start orphan — even if downstream (acceptance/rework) fails,
+      // the current task's review result is already consumed, so the queue must advance.
+      void this.recoverNextOrphanedMainReview(taskId).catch((err) => {
+        this.transport.sendNotification("log", {
+          message: `[recovery] Chain recovery failed after ${taskId}: ${err instanceof Error ? err.message : err}`,
+        });
+      });
     }
-
-    throw new Error(`Invalid review decision: "${decision}". Expected APPROVE_FOR_ACCEPTANCE or SEND_BACK.`);
   }
 
   // ─── Critic Agent Integration ───
