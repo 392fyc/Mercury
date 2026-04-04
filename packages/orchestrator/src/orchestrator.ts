@@ -2295,7 +2295,7 @@ export class Orchestrator {
       if (citationDensity < citationThreshold || !allQuestionsAnswered) {
         qualityGateDowngrade = true;
         this.transport.sendNotification("log", {
-          message: `[task] WARNING: Research task ${task.taskId} quality below threshold — citationDensity=${citationDensity.toFixed(2)}, answerRate=${answerRate.toFixed(2)}, threshold=${citationThreshold}`,
+          message: `[task] WARNING: Research task ${task.taskId} quality below threshold — citationDensity=${citationDensity.toFixed(2)}, allQuestionsAnswered=${String(allQuestionsAnswered)}, threshold=${citationThreshold}`,
         });
       }
     }
