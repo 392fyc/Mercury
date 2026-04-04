@@ -142,7 +142,7 @@ function buildCapturePrompt(input: CaptureInput): string {
   const { task, receipt, gitDiff } = input;
 
   const diffSection = gitDiff
-    ? `\n## Git Diff (first 3000 chars)\n\`\`\`\n${gitDiff.slice(0, 3000)}\n\`\`\``
+    ? `\n## Git Diff (first 3000 chars)\n\`\`\`\n${gitDiff.slice(0, 3000).replace(/```/g, "` ` `")}\n\`\`\``
     : "";
 
   return `You are a skill extraction agent for the Mercury multi-agent system.

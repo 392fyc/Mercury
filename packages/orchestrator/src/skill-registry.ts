@@ -263,10 +263,11 @@ export class SkillRegistry {
     return this.skills.get(name);
   }
 
-  /** Read the full SKILL.md body (text after the frontmatter block). */
-  async loadSkillBody(skill: SkillMeta): Promise<string> {
+  /** Read the SKILL.md body (text after the frontmatter block), capped at 4500 chars for prompt budget. */
+  async loadSkillBody(skill: SkillMeta, maxChars = 4500): Promise<string> {
     const content = await readFile(skill.filePath, "utf-8");
-    return content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trimStart();
+    const body = content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trimStart();
+    return body.length > maxChars ? body.slice(0, maxChars) + "\n\n[…truncated]" : body;
   }
 
   /** Return all loaded skills. */
