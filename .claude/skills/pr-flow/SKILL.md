@@ -319,8 +319,8 @@ After merge, update related GitHub issues and Mercury task state:
 
   # Remove worktree first (branch can't be deleted while checked out in a worktree)
   WORKTREE=$(git worktree list --porcelain | awk -v b="refs/heads/$BRANCH" '
-    $1=="worktree"{wt=$2}
-    $1=="branch" && $2==b {print wt; exit}
+    /^worktree /{wt=substr($0,10)}
+    /^branch / && substr($0,8)==b {print wt; exit}
   ')
   if [ -n "$WORKTREE" ]; then
     git worktree remove --force "$WORKTREE" 2>/dev/null || true
