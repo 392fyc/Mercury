@@ -2285,13 +2285,14 @@ export class Orchestrator {
     const qualityGateEnabled = this.projectConfig?.research?.qualityGateEnabled ?? true;
     const citationThreshold = this.projectConfig?.research?.citationDensityThreshold ?? 0.75;
     let qualityGateDowngrade = false;
-    if (qualityGateEnabled && parsed?.qualityMetrics) {
-      const metrics = parsed.qualityMetrics as { citationDensity?: number; questionsAnswered?: number; questionsTotal?: number };
-      const citationDensity = typeof metrics.citationDensity === "number" ? metrics.citationDensity : 1;
-      const answerRate = (typeof metrics.questionsAnswered === "number" && typeof metrics.questionsTotal === "number" && metrics.questionsTotal > 0)
-        ? metrics.questionsAnswered / metrics.questionsTotal
-        : 1;
-      if (citationDensity < citationThreshold || answerRate < citationThreshold) {
+    if (qualityGateEnabled) {
+      const metrics = (parsed?.qualityMetrics ?? null) as { citationDensity?: number; questionsAnswered?: number; questionsTotal?: number } | null;
+      // Fail-closed: missing or malformed qualityMetrics → downgrade to partial
+      const citationDensity = typeof metrics?.citationDensity === "number" ? metrics.citationDensity : 0;
+      const allQuestionsAnswered = (typeof metrics?.questionsAnswered === "number" && typeof metrics?.questionsTotal === "number" && metrics.questionsTotal > 0)
+        ? metrics.questionsAnswered >= metrics.questionsTotal
+        : false;
+      if (citationDensity < citationThreshold || !allQuestionsAnswered) {
         qualityGateDowngrade = true;
         this.transport.sendNotification("log", {
           message: `[task] WARNING: Research task ${task.taskId} quality below threshold — citationDensity=${citationDensity.toFixed(2)}, answerRate=${answerRate.toFixed(2)}, threshold=${citationThreshold}`,

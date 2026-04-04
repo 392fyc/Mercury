@@ -1298,6 +1298,7 @@ export function buildResearchPrompt(
       findings: ["<finding 1 as one complete paragraph>", "<finding 2 ...>"],
       recommendations: ["<recommendation 1 as one complete paragraph>"],
       evidence: ["<source URL or file reference>"],
+      ...(qualityGateEnabled ? { qualityMetrics: { citationDensity: 0.0, questionsAnswered: 0, questionsTotal: 0, roundsCompleted: 0 } } : {}),
       completedAt: "",
     }, null, 2),
     "```",
