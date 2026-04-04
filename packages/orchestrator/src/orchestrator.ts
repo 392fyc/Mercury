@@ -2316,8 +2316,9 @@ export class Orchestrator {
       this.taskManager.transitionTask(task.taskId, "acceptance", agentId);
 
       if (verdict === "partial") {
+        const partialReasons = finalRecommendations.filter((r) => r.startsWith("KB file") || r.startsWith("Research quality"));
         this.transport.sendNotification("log", {
-          message: `[task] Research task ${task.taskId} verdict downgraded to partial — KB file not written: "${expectedKbFile}"`,
+          message: `[task] Research task ${task.taskId} verdict downgraded to partial — ${partialReasons.join("; ") || "unknown reason"}`,
         });
       }
 
@@ -3081,11 +3082,14 @@ export class Orchestrator {
     let prompt: string;
     if (role === "research") {
       const maxIterations = this.projectConfig?.research?.maxIterations;
-      const researchConfig = this.projectConfig?.research ? {
-        citationDensityThreshold: this.projectConfig.research.citationDensityThreshold,
-        qualityGateEnabled: this.projectConfig.research.qualityGateEnabled,
-        loopDetectionWindow: this.projectConfig.research.loopDetectionWindow,
-      } : undefined;
+      // Normalize research config: clamp thresholds to valid ranges
+      const rawCitation = this.projectConfig?.research?.citationDensityThreshold;
+      const rawLoop = this.projectConfig?.research?.loopDetectionWindow;
+      const researchConfig = {
+        citationDensityThreshold: Math.max(0, Math.min(1, typeof rawCitation === "number" && !Number.isNaN(rawCitation) ? rawCitation : 0.75)),
+        qualityGateEnabled: this.projectConfig?.research?.qualityGateEnabled ?? true,
+        loopDetectionWindow: Math.max(1, Math.round(typeof rawLoop === "number" && !Number.isNaN(rawLoop) ? rawLoop : 2)),
+      };
       prompt = buildResearchPrompt(task, kbContext, maxIterations, tokenBudgetHint, this.projectConfig?.obsidian?.vaultPath ?? undefined, codexEnabled, relevantSkills, researchConfig);
     } else if (role === "design") {
       prompt = buildDesignPrompt(task, kbContext, tokenBudgetHint, this.projectConfig?.obsidian?.vaultPath ?? undefined, codexEnabled);

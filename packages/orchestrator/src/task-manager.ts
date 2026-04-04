@@ -1250,7 +1250,7 @@ export function buildResearchPrompt(
     ...(qualityGateEnabled ? [
       "4. **Quality gate**: before finalizing, verify citation density meets threshold and all key questions are answered. Include a `qualityMetrics` field in your JSON output:",
       "   ```json",
-      '   "qualityMetrics": { "citationDensity": 0.85, "questionsAnswered": 3, "questionsTotal": 4, "roundsCompleted": 3 }',
+      '   "qualityMetrics": { "citationDensity": 0.85, "questionsAnswered": 4, "questionsTotal": 4, "roundsCompleted": 3 }',
       "   ```",
     ] : []),
     ...(maxIterations && maxIterations > 0
