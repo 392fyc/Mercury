@@ -316,18 +316,24 @@ After merge, update related GitHub issues and Mercury task state:
 
   ```bash
   BRANCH=$(gh pr view "$PR_NUMBER" --json headRefName --jq '.headRefName')
+  MAIN_WT=$(git worktree list --porcelain | awk '/^worktree /{print substr($0,10); exit}')
 
-  # Remove worktree first (branch can't be deleted while checked out in a worktree)
+  # Remove linked worktree for this branch (skip main worktree)
   WORKTREE=$(git worktree list --porcelain | awk -v b="refs/heads/$BRANCH" '
     /^worktree /{wt=substr($0,10)}
     /^branch / && substr($0,8)==b {print wt; exit}
   ')
-  if [ -n "$WORKTREE" ]; then
-    git worktree remove --force "$WORKTREE" 2>/dev/null || true
+  if [ -n "$WORKTREE" ] && [ "$WORKTREE" != "$MAIN_WT" ]; then
+    git worktree remove --force "$WORKTREE" || echo "warn: failed to remove worktree $WORKTREE"
   fi
 
-  # Delete local branch after worktree removal (remote already deleted by --delete-branch)
-  git branch -d "$BRANCH" 2>/dev/null || true
+  # Switch away from merged branch before deleting
+  if [ "$(git rev-parse --abbrev-ref HEAD)" = "$BRANCH" ]; then
+    git switch develop 2>/dev/null || git checkout develop
+  fi
+
+  # Delete local branch (remote already deleted by --delete-branch)
+  git branch -d "$BRANCH" || echo "warn: failed to delete branch $BRANCH"
   ```
 
 ## Multi-PR Coordination
