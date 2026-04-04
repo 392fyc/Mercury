@@ -69,9 +69,10 @@ CronCreate:
 ```
 
 The check prompt should:
-1. Fetch review status for all tracked PRs via `gh pr view <N> --json reviews`
-2. Check for new inline comments via `gh api repos/{owner}/{repo}/pulls/<N>/comments`
-3. Track consecutive checks via file-based counter (cron jobs are stateless across invocations):
+1. Fetch review status for all tracked PRs via `gh pr view <N> --json reviews,reviewDecision`
+2. Check for new **inline** comments via `gh api repos/<OWNER>/<REPO>/pulls/<N>/comments --jq '[.[] | select(.user.login == "coderabbitai[bot]")]'`
+3. Check for new **outside-diff** comments (review body / PR-level) via `gh api repos/<OWNER>/<REPO>/issues/<N>/comments --jq '[.[] | select(.user.login == "coderabbitai[bot]")]'`
+4. Track consecutive checks via file-based counter (cron jobs are stateless across invocations):
 
    ```bash
    COUNT_FILE=".pr-flow-check-count-${PR_NUMBER}"
@@ -83,7 +84,7 @@ The check prompt should:
    fi
    ```
 
-4. After **3 consecutive checks with no CodeRabbit activity**, proactively trigger (with dedup):
+5. After **3 consecutive checks with no CodeRabbit activity**, proactively trigger (with dedup):
 
    ```bash
    if [ "$COUNT" -ge 3 ]; then
@@ -95,7 +96,7 @@ The check prompt should:
    fi
    ```
 
-5. When reviews arrive:
+6. When reviews arrive:
    - **Single-PR mode**: cancel the cron job, clean up counter files, proceed to Phase 3
    - **Multi-PR mode**: only cancel the global cron when ALL tracked PRs have reviews or are merged/closed; process each PR's reviews independently via Phase 3
 
@@ -311,6 +312,30 @@ After merge, update related GitHub issues and Mercury task state:
   ```
 
 - Clean up iteration/counter files: `rm -f .pr-flow-iteration-* .pr-flow-check-count-*`
+
+- **Clean up worktrees and local branches** after merge (worktree first, then branch — per Mercury worktree-workflow protocol):
+
+  ```bash
+  BRANCH=$(gh pr view "$PR_NUMBER" --json headRefName --jq '.headRefName')
+  MAIN_WT=$(git worktree list --porcelain | awk '/^worktree /{print substr($0,10); exit}')
+
+  # Remove linked worktree for this branch (skip main worktree)
+  WORKTREE=$(git worktree list --porcelain | awk -v b="refs/heads/$BRANCH" '
+    /^worktree /{wt=substr($0,10)}
+    /^branch / && substr($0,8)==b {print wt; exit}
+  ')
+  if [ -n "$WORKTREE" ] && [ "$WORKTREE" != "$MAIN_WT" ]; then
+    git worktree remove --force "$WORKTREE" || echo "warn: failed to remove worktree $WORKTREE"
+  fi
+
+  # Switch away from merged branch before deleting
+  if [ "$(git rev-parse --abbrev-ref HEAD)" = "$BRANCH" ]; then
+    git switch develop 2>/dev/null || git checkout develop
+  fi
+
+  # Delete local branch (remote already deleted by --delete-branch)
+  git branch -d "$BRANCH" || echo "warn: failed to delete branch $BRANCH"
+  ```
 
 ## Multi-PR Coordination
 
