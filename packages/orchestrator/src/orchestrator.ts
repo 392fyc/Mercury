@@ -774,36 +774,34 @@ export class Orchestrator {
     // handleStreamCompletion returns early (result.completed === false) and the task
     // stays in main_review indefinitely with no re-trigger mechanism.
     // NOTE: runs unconditionally so a restart with ONLY main_review tasks is also recovered.
+    // Recover tasks stuck in main_review regardless of Main Agent session state.
+    // A restored session may appear live after restoreSessions() but the lost review
+    // stream is NOT automatically resumed — session liveness is not a reliable signal.
+    // Recovery decision is based on task state: no mainReview.result → needs retrigger.
+    //
+    // Only the FIRST unresolved task is retriggered here. sendPrompt() returns before
+    // streaming completes, so sending multiple tasks would interleave their review
+    // responses in the same Main session. The remaining tasks chain via
+    // recoverNextOrphanedMainReview() which is called at the end of handleMainReviewResult.
     const mainReviewTasks = this.taskManager.listTasks({ status: "main_review" });
-    if (mainReviewTasks.length > 0) {
-      const mainAgentId = this.findMainAgentId();
-      if (mainAgentId) {
-        const mainSlot = makeRoleSlotKey("main", mainAgentId);
-        const activeSessionId = this.roleSessions.get(mainSlot);
-        // SessionInfo.status: "active" | "paused" | "completed" | "overflow".
-        // "paused" is treated as live — it can still receive prompts and resume streaming.
-        const hasLiveMainSession =
-          !!activeSessionId &&
-          (() => {
-            const sess = this.sessions.get(activeSessionId);
-            return !!sess && sess.status !== "completed" && sess.status !== "overflow";
-          })();
-
-        if (!hasLiveMainSession) {
-          this.transport.sendNotification("log", {
-            message: `[recovery] Found ${mainReviewTasks.length} task(s) stuck in main_review — re-triggering review prompt`,
-          });
-          // Sequential retrigger: avoid concurrent sendPrompt calls into the same Main Agent session
-          for (const task of mainReviewTasks) {
-            try {
-              await this.retriggerMainReview(task.taskId);
-            } catch (err) {
-              this.transport.sendNotification("log", {
-                message: `[recovery] Re-trigger main review for ${task.taskId} failed: ${err instanceof Error ? err.message : err}`,
-              });
-            }
-          }
-        }
+    const pendingReview = mainReviewTasks.filter((t) => !t.mainReview?.result);
+    if (pendingReview.length > 0) {
+      const firstTask = pendingReview[0]!;
+      if (pendingReview.length > 1) {
+        this.transport.sendNotification("log", {
+          message: `[recovery] ${pendingReview.length} task(s) in main_review without result — retriggering ${firstTask.taskId} first; remainder will chain after review completes`,
+        });
+      } else {
+        this.transport.sendNotification("log", {
+          message: `[recovery] Task ${firstTask.taskId} stuck in main_review — re-triggering review prompt`,
+        });
+      }
+      try {
+        await this.retriggerMainReview(firstTask.taskId);
+      } catch (err) {
+        this.transport.sendNotification("log", {
+          message: `[recovery] Re-trigger main review for ${firstTask.taskId} failed: ${err instanceof Error ? err.message : err}`,
+        });
       }
     }
   }
@@ -3959,9 +3957,26 @@ export class Orchestrator {
   }
 
   /**
-   * Handle Main Agent's review decision.
-   * APPROVE_FOR_ACCEPTANCE → create acceptance flow.
-   * SEND_BACK → trigger rework.
+   * After a main_review task completes (APPROVE or SEND_BACK), retrigger the next orphaned
+   * main_review task if any remain. Called fire-and-forget from handleMainReviewResult.
+   * This chains recovery for multiple simultaneously stuck tasks without interleaving their
+   * review prompts in the Main Agent session.
+   */
+  private async recoverNextOrphanedMainReview(completedTaskId: string): Promise<void> {
+    const mainReviewTasks = this.taskManager.listTasks({ status: "main_review" });
+    const nextTask = mainReviewTasks.find((t) => t.taskId !== completedTaskId && !t.mainReview?.result);
+    if (!nextTask) return;
+
+    this.transport.sendNotification("log", {
+      message: `[recovery] Chaining to next orphaned main_review task ${nextTask.taskId} after ${completedTaskId} completed`,
+    });
+    await this.retriggerMainReview(nextTask.taskId);
+  }
+
+  /**
+   * Handle Main Agent review decision.
+   * APPROVE_FOR_ACCEPTANCE creates acceptance flow.
+   * SEND_BACK triggers rework.
    */
   private async handleMainReviewResult(
     taskId: string,
@@ -3985,6 +4000,8 @@ export class Orchestrator {
         throw new Error("No acceptance agent available. Configure an agent with acceptance role.");
       }
       await this.createAcceptanceFlow(taskId, effectiveAcceptorId);
+      // Chain recovery for any other main_review tasks that were stuck during cold-start recovery
+      void this.recoverNextOrphanedMainReview(taskId).catch(() => {});
       return { decision: effectiveDecision, nextAction: "acceptance_created" };
     }
 
@@ -4003,6 +4020,7 @@ export class Orchestrator {
           }
           this.injectedSkillsByTask.delete(taskId);
         }
+        void this.recoverNextOrphanedMainReview(taskId).catch(() => {});
         return { decision: effectiveDecision, nextAction: "failed_max_reworks" };
       }
 
@@ -4029,6 +4047,7 @@ export class Orchestrator {
         task.taskId,
       );
 
+      void this.recoverNextOrphanedMainReview(taskId).catch(() => {});
       return { decision: effectiveDecision, nextAction: "rework_triggered" };
     }
 
