@@ -70,8 +70,8 @@ CronCreate:
 
 The check prompt should:
 1. Fetch review status for all tracked PRs via `gh pr view <N> --json reviews,reviewDecision`
-2. Check for new **inline** comments via `gh api repos/{owner}/{repo}/pulls/<N>/comments`
-3. Check for new **outside-diff** comments (review body / PR-level) via `gh api repos/{owner}/{repo}/issues/<N>/comments --jq '[.[] | select(.user.login == "coderabbitai[bot]")]'`
+2. Check for new **inline** comments via `gh api repos/<OWNER>/<REPO>/pulls/<N>/comments`
+3. Check for new **outside-diff** comments (review body / PR-level) via `gh api repos/<OWNER>/<REPO>/issues/<N>/comments --jq '[.[] | select(.user.login == "coderabbitai[bot]")]'`
 4. Track consecutive checks via file-based counter (cron jobs are stateless across invocations):
 
    ```bash
