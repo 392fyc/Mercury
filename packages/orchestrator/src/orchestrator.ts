@@ -275,28 +275,28 @@ export class Orchestrator {
     await this.initSkillRegistry();
     // Build and inject shared context from KB if autoInjectContext is enabled
     await this.buildAndInjectContext();
-    // G2: Detect orphaned in-progress tasks and queue re-dispatch
-    await this.recoverOrphanedTasks();
-
-    // Defer session-restore event emission + callback drain until after init() returns,
-    // so the MCP event loop is free to process incoming calls from the GUI (#144).
-    if (restoredSessions.length > 0) {
-      setImmediate(() => {
-        for (const { agentId, sessionId, role } of restoredSessions) {
-          this.bus.emit("agent.session.start", agentId, sessionId, { role, restored: true });
-        }
-        // Cold-start drain for restored Main sessions: deliver any pending callbacks
-        // that accumulated while Mercury was offline.
-        const hasMain = restoredSessions.some((s) => s.role === "main");
-        if (hasMain) {
-          void this.attemptCallbackDelivery().catch((err) => {
-            this.transport.sendNotification("log", {
-              message: `[orchestrator] Restored-session callback drain failed: ${err instanceof Error ? err.message : err}`,
-            });
+    // Defer ALL post-init work that can emit agent.session.start events (#144):
+    // - Session-restore events, orphan re-dispatch, callback drain
+    // This ensures init() returns before any events trigger GUI MCP calls.
+    setImmediate(() => {
+      for (const { agentId, sessionId, role } of restoredSessions) {
+        this.bus.emit("agent.session.start", agentId, sessionId, { role, restored: true });
+      }
+      const hasMain = restoredSessions.some((s) => s.role === "main");
+      if (hasMain) {
+        void this.attemptCallbackDelivery().catch((err) => {
+          this.transport.sendNotification("log", {
+            message: `[orchestrator] Restored-session callback drain failed: ${err instanceof Error ? err.message : err}`,
           });
-        }
+        });
+      }
+      // G2: orphan recovery also deferred — dispatchBundleTask emits session events
+      void this.recoverOrphanedTasks().catch((err) => {
+        this.transport.sendNotification("log", {
+          message: `[orchestrator] Orphan recovery failed: ${err instanceof Error ? err.message : err}`,
+        });
       });
-    }
+    });
   }
 
   private shuttingDown = false;
