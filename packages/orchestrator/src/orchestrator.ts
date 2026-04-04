@@ -270,13 +270,33 @@ export class Orchestrator {
     }
 
     await this.taskManager.init();
-    await this.restoreSessions();
+    const restoredSessions = await this.restoreSessions();
     // Initialize skill registry before orphan recovery so re-dispatched tasks get skill injection
     await this.initSkillRegistry();
     // Build and inject shared context from KB if autoInjectContext is enabled
     await this.buildAndInjectContext();
     // G2: Detect orphaned in-progress tasks and queue re-dispatch
     await this.recoverOrphanedTasks();
+
+    // Defer session-restore event emission + callback drain until after init() returns,
+    // so the MCP event loop is free to process incoming calls from the GUI (#144).
+    if (restoredSessions.length > 0) {
+      setImmediate(() => {
+        for (const { agentId, sessionId, role } of restoredSessions) {
+          this.bus.emit("agent.session.start", agentId, sessionId, { role, restored: true });
+        }
+        // Cold-start drain for restored Main sessions: deliver any pending callbacks
+        // that accumulated while Mercury was offline.
+        const hasMain = restoredSessions.some((s) => s.role === "main");
+        if (hasMain) {
+          void this.attemptCallbackDelivery().catch((err) => {
+            this.transport.sendNotification("log", {
+              message: `[orchestrator] Restored-session callback drain failed: ${err instanceof Error ? err.message : err}`,
+            });
+          });
+        }
+      });
+    }
   }
 
   private shuttingDown = false;
@@ -587,11 +607,11 @@ export class Orchestrator {
     }, 500);
   }
 
-  /** Restore sessions from disk on startup. */
-  private async restoreSessions(): Promise<void> {
-    if (!this.persistence) return;
+  /** Restore sessions from disk on startup. Returns info for deferred event emission. */
+  private async restoreSessions(): Promise<Array<{ agentId: string; sessionId: string; role: string }>> {
+    if (!this.persistence) return [];
     const state = this.persistence.load();
-    if (!state) return;
+    if (!state) return [];
 
     this.approvalMode = state.approvalMode ?? "main_agent_review";
 
@@ -695,19 +715,16 @@ export class Orchestrator {
       this.persistState(true);
     }
 
-    // Cold-start drain for restored Main sessions: deliver any pending callbacks
-    // that accumulated while Mercury was offline. startRoleSession only handles
-    // newly created sessions; restored sessions need this explicit drain.
-    for (const [key] of this.roleSessions) {
-      if (key.startsWith("main:")) {
-        void this.attemptCallbackDelivery().catch((err) => {
-          this.transport.sendNotification("log", {
-            message: `[orchestrator] Restored-session callback drain failed: ${err instanceof Error ? err.message : err}`,
-          });
-        });
-        break; // Only need one drain for all pending callbacks
+    // Collect restored active/paused sessions for deferred event emission.
+    // Events are NOT emitted here — the caller (init()) defers them via setImmediate
+    // so the MCP event loop is free to process incoming calls (#144).
+    const restoredSessions: Array<{ agentId: string; sessionId: string; role: string }> = [];
+    for (const [sessionId, info] of this.sessions) {
+      if ((info.status === "active" || info.status === "paused") && info.frozenRole) {
+        restoredSessions.push({ agentId: info.agentId, sessionId, role: info.frozenRole });
       }
     }
+    return restoredSessions;
   }
 
   /**
@@ -1555,11 +1572,15 @@ export class Orchestrator {
       legacyRoleConfig: promptState.legacyRoleConfig,
     });
 
-    // Cold-start drain: deliver pending callbacks when a Main Agent session starts
+    // Cold-start drain: deliver pending callbacks when a Main Agent session starts.
+    // Deferred via setImmediate so the session creation response reaches the caller
+    // before callback delivery starts, preventing MCP deadlock (#144).
     if (effectiveRole === "main") {
-      void this.attemptCallbackDelivery().catch((err) => {
-        this.transport.sendNotification("log", {
-          message: `[orchestrator] Cold-start callback drain failed: ${err instanceof Error ? err.message : err}`,
+      setImmediate(() => {
+        void this.attemptCallbackDelivery().catch((err) => {
+          this.transport.sendNotification("log", {
+            message: `[orchestrator] Cold-start callback drain failed: ${err instanceof Error ? err.message : err}`,
+          });
         });
       });
     }
