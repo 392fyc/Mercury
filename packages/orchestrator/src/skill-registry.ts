@@ -108,7 +108,8 @@ function parseFrontmatter(content: string): Record<string, unknown> {
     const kvMatch = line.match(/^([a-zA-Z_][a-zA-Z0-9_-]*):\s*(.*)$/);
     if (!kvMatch) continue;
     currentKey = kvMatch[1];
-    const rawVal = kvMatch[2].trim().replace(/#.*$/, "").trimEnd(); // strip inline comments
+    // Strip unquoted inline comments only (avoid truncating quoted values containing '#')
+    const rawVal = kvMatch[2].trim().replace(/(?<!['"#])\s+#.*$/, "").trimEnd();
 
     if (rawVal === "" || rawVal === "~" || rawVal === "null") {
       out[currentKey] = null;
@@ -219,7 +220,7 @@ export class SkillRegistry {
         }
       }
       if (
-        meta.totalSelections > MIN_SELECTIONS_FOR_RATE &&
+        meta.totalSelections >= MIN_SELECTIONS_FOR_RATE &&
         meta.totalApplied > 0 &&
         meta.totalCompletions / meta.totalApplied < LOW_COMPLETION_RATE
       ) {
