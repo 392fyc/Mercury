@@ -738,33 +738,70 @@ export class Orchestrator {
       }
     }
 
-    if (orphanedTasks.length === 0) return;
+    // Re-dispatch orphaned dispatched/in_progress tasks
+    if (orphanedTasks.length > 0) {
+      this.transport.sendNotification("log", {
+        message: `[recovery] Found ${orphanedTasks.length} orphaned task(s) — scheduling re-dispatch`,
+      });
 
-    this.transport.sendNotification("log", {
-      message: `[recovery] Found ${orphanedTasks.length} orphaned task(s) — scheduling re-dispatch`,
-    });
+      for (const task of orphanedTasks) {
+        try {
+          // Transition back to "dispatched" so validateDispatch() accepts it
+          if (task.status === "in_progress") {
+            this.taskManager.transitionTask(task.taskId, "dispatched", "orchestrator");
+          }
 
-    for (const task of orphanedTasks) {
-      try {
-        // Transition back to "dispatched" so validateDispatch() accepts it
-        if (task.status === "in_progress") {
-          this.taskManager.transitionTask(task.taskId, "dispatched", "orchestrator");
-        }
-
-        this.transport.sendNotification("log", {
-          message: `[recovery] Re-dispatching orphaned task ${task.taskId} (${task.title}) — attempt ${task.dispatchAttempts + 1}/${task.maxDispatchAttempts}`,
-        });
-
-        // Fire-and-forget: re-dispatch uses existing retry infrastructure
-        void this.dispatchBundleTask(task.taskId).catch((err) => {
           this.transport.sendNotification("log", {
-            message: `[recovery] Re-dispatch of ${task.taskId} failed: ${err instanceof Error ? err.message : err}`,
+            message: `[recovery] Re-dispatching orphaned task ${task.taskId} (${task.title}) — attempt ${task.dispatchAttempts + 1}/${task.maxDispatchAttempts}`,
           });
-        });
-      } catch (err) {
-        this.transport.sendNotification("log", {
-          message: `[recovery] Failed to prepare re-dispatch for ${task.taskId}: ${err instanceof Error ? err.message : err}`,
-        });
+
+          // Fire-and-forget: re-dispatch uses existing retry infrastructure
+          void this.dispatchBundleTask(task.taskId).catch((err) => {
+            this.transport.sendNotification("log", {
+              message: `[recovery] Re-dispatch of ${task.taskId} failed: ${err instanceof Error ? err.message : err}`,
+            });
+          });
+        } catch (err) {
+          this.transport.sendNotification("log", {
+            message: `[recovery] Failed to prepare re-dispatch for ${task.taskId}: ${err instanceof Error ? err.message : err}`,
+          });
+        }
+      }
+    }
+
+    // Recover tasks stuck in main_review with no live Main Agent session.
+    // This happens when the Main Agent streaming session dies while reviewing a task —
+    // handleStreamCompletion returns early (result.completed === false) and the task
+    // stays in main_review indefinitely with no re-trigger mechanism.
+    // NOTE: runs unconditionally so a restart with ONLY main_review tasks is also recovered.
+    const mainReviewTasks = this.taskManager.listTasks({ status: "main_review" });
+    if (mainReviewTasks.length > 0) {
+      const mainAgentId = this.findMainAgentId();
+      if (mainAgentId) {
+        const mainSlot = makeRoleSlotKey("main", mainAgentId);
+        const activeSessionId = this.roleSessions.get(mainSlot);
+        const hasLiveMainSession =
+          !!activeSessionId &&
+          (() => {
+            const sess = this.sessions.get(activeSessionId);
+            return !!sess && sess.status !== "completed" && sess.status !== "overflow";
+          })();
+
+        if (!hasLiveMainSession) {
+          this.transport.sendNotification("log", {
+            message: `[recovery] Found ${mainReviewTasks.length} task(s) stuck in main_review — re-triggering review prompt`,
+          });
+          // Sequential retrigger: avoid concurrent sendPrompt calls into the same Main Agent session
+          for (const task of mainReviewTasks) {
+            try {
+              await this.retriggerMainReview(task.taskId);
+            } catch (err) {
+              this.transport.sendNotification("log", {
+                message: `[recovery] Re-trigger main review for ${task.taskId} failed: ${err instanceof Error ? err.message : err}`,
+              });
+            }
+          }
+        }
       }
     }
   }
@@ -3871,6 +3908,25 @@ export class Orchestrator {
     );
 
     // Send review prompt to Main Agent
+    const mainAgentId = this.findMainAgentId();
+    if (!mainAgentId) return;
+
+    const reviewConfig = this.getReviewConfig(task);
+    const defaultRef = task.branch ? `develop...${task.branch}` : "develop...HEAD";
+    const diffBaseRef = reviewConfig.diffBaseRef ?? defaultRef;
+    const reviewPrompt = buildMainReviewPrompt(task, diffBaseRef);
+    await this.sendPrompt(mainAgentId, reviewPrompt, undefined, "main", task.title, undefined, taskId);
+  }
+
+  /**
+   * Re-sends the review prompt for a task already in main_review state.
+   * Used by crash recovery when the Main Agent session dies during review.
+   * Unlike mainReviewStep(), does NOT check or change task status.
+   */
+  private async retriggerMainReview(taskId: string): Promise<void> {
+    const task = this.taskManager.getTask(taskId);
+    if (!task || task.status !== "main_review") return;
+
     const mainAgentId = this.findMainAgentId();
     if (!mainAgentId) return;
 
