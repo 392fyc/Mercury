@@ -245,6 +245,7 @@ export type EventType =
   | "orchestrator.context.compact"
   | "orchestrator.session.handoff"
   | "orchestrator.task.main_review"
+  | "orchestrator.task.main_review_retrigger"
   | "orchestrator.task.callback"
   | "orchestrator.critic.result"
   | "orchestrator.scope.violation"

@@ -780,6 +780,8 @@ export class Orchestrator {
       if (mainAgentId) {
         const mainSlot = makeRoleSlotKey("main", mainAgentId);
         const activeSessionId = this.roleSessions.get(mainSlot);
+        // SessionInfo.status: "active" | "paused" | "completed" | "overflow".
+        // "paused" is treated as live — it can still receive prompts and resume streaming.
         const hasLiveMainSession =
           !!activeSessionId &&
           (() => {
@@ -3911,29 +3913,48 @@ export class Orchestrator {
     const mainAgentId = this.findMainAgentId();
     if (!mainAgentId) return;
 
+    const reviewPrompt = this.buildMainReviewPromptForTask(task);
+    await this.sendPrompt(mainAgentId, reviewPrompt, undefined, "main", task.title, undefined, taskId);
+  }
+
+  /** Build the Main Review prompt for a task. Shared by mainReviewStep and retriggerMainReview. */
+  private buildMainReviewPromptForTask(task: TaskBundle): string {
     const reviewConfig = this.getReviewConfig(task);
     const defaultRef = task.branch ? `develop...${task.branch}` : "develop...HEAD";
     const diffBaseRef = reviewConfig.diffBaseRef ?? defaultRef;
-    const reviewPrompt = buildMainReviewPrompt(task, diffBaseRef);
-    await this.sendPrompt(mainAgentId, reviewPrompt, undefined, "main", task.title, undefined, taskId);
+    return buildMainReviewPrompt(task, diffBaseRef);
   }
 
   /**
    * Re-sends the review prompt for a task already in main_review state.
    * Used by crash recovery when the Main Agent session dies during review.
    * Unlike mainReviewStep(), does NOT check or change task status.
+   *
+   * Guard: skips the retrigger if task.mainReview.result is already populated —
+   * meaning the review completed in the window between the orphan scan and this call.
    */
   private async retriggerMainReview(taskId: string): Promise<void> {
     const task = this.taskManager.getTask(taskId);
     if (!task || task.status !== "main_review") return;
+    // If a review result was already recorded (race with normal completion path), skip
+    if (task.mainReview?.result) {
+      this.transport.sendNotification("log", {
+        message: `[recovery] Skipping retrigger for ${taskId}: review result already recorded`,
+      });
+      return;
+    }
 
     const mainAgentId = this.findMainAgentId();
     if (!mainAgentId) return;
 
-    const reviewConfig = this.getReviewConfig(task);
-    const defaultRef = task.branch ? `develop...${task.branch}` : "develop...HEAD";
-    const diffBaseRef = reviewConfig.diffBaseRef ?? defaultRef;
-    const reviewPrompt = buildMainReviewPrompt(task, diffBaseRef);
+    this.bus.emit(
+      "orchestrator.task.main_review_retrigger",
+      "orchestrator",
+      task.originatorSessionId ?? "orchestrator",
+      { taskId, title: task.title, reason: "cold_start_recovery" },
+    );
+
+    const reviewPrompt = this.buildMainReviewPromptForTask(task);
     await this.sendPrompt(mainAgentId, reviewPrompt, undefined, "main", task.title, undefined, taskId);
   }
 
