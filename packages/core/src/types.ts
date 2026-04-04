@@ -131,6 +131,21 @@ export interface ResearchConfig {
    * 0 or undefined means no budget hint is injected.
    */
   cumulativeTokenBudget?: number;
+  /**
+   * Minimum ratio of cited claims required for research to pass the quality gate.
+   * Range 0.0–1.0. Default: 0.75
+   */
+  citationDensityThreshold?: number;
+  /**
+   * Whether the quality gate check is enabled before fast-tracking research tasks to closed.
+   * Default: true
+   */
+  qualityGateEnabled?: boolean;
+  /**
+   * Number of consecutive research rounds with no measurable improvement before
+   * the agent should stop iterating (loop detection). Default: 2
+   */
+  loopDetectionWindow?: number;
 }
 
 export interface MercuryConfig {

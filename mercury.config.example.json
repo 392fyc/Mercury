@@ -54,5 +54,11 @@
     "vaultName": "Mercury_KB",
     "vaultPath": "../Mercury_KB"
   },
+  "research": {
+    "maxIterations": 6,
+    "citationDensityThreshold": 0.75,
+    "qualityGateEnabled": true,
+    "loopDetectionWindow": 2
+  },
   "workDir": "."
 }

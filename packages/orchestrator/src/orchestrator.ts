@@ -2281,11 +2281,31 @@ export class Orchestrator {
       completedAt: Date.now(),
     };
 
-    // Verdict: partial if expected KB file was not written, pass otherwise
-    const verdict = (expectedKbFile && !kbWriteVerified) ? "partial" : "pass";
-    const finalRecommendations = verdict === "partial"
-      ? [`KB file not written: ${expectedKbFile}`, ...recommendationsArr]
-      : recommendationsArr;
+    // Quality gate check: verify research quality metrics before fast-tracking
+    const qualityGateEnabled = this.projectConfig?.research?.qualityGateEnabled ?? true;
+    const citationThreshold = this.projectConfig?.research?.citationDensityThreshold ?? 0.75;
+    let qualityGateDowngrade = false;
+    if (qualityGateEnabled && parsed?.qualityMetrics) {
+      const metrics = parsed.qualityMetrics as { citationDensity?: number; questionsAnswered?: number; questionsTotal?: number };
+      const citationDensity = typeof metrics.citationDensity === "number" ? metrics.citationDensity : 1;
+      const answerRate = (typeof metrics.questionsAnswered === "number" && typeof metrics.questionsTotal === "number" && metrics.questionsTotal > 0)
+        ? metrics.questionsAnswered / metrics.questionsTotal
+        : 1;
+      if (citationDensity < citationThreshold || answerRate < citationThreshold) {
+        qualityGateDowngrade = true;
+        this.transport.sendNotification("log", {
+          message: `[task] WARNING: Research task ${task.taskId} quality below threshold — citationDensity=${citationDensity.toFixed(2)}, answerRate=${answerRate.toFixed(2)}, threshold=${citationThreshold}`,
+        });
+      }
+    }
+
+    // Verdict: partial if expected KB file was not written or quality gate failed, pass otherwise
+    const verdict = (expectedKbFile && !kbWriteVerified) || qualityGateDowngrade ? "partial" : "pass";
+    const finalRecommendations = [
+      ...((expectedKbFile && !kbWriteVerified) ? [`KB file not written: ${expectedKbFile}`] : []),
+      ...(qualityGateDowngrade ? ["Research quality below threshold — review findings for completeness"] : []),
+      ...recommendationsArr,
+    ];
 
     // Fast-track through full state machine: in_progress → implementation_done → main_review → acceptance → verified → closed
     try {
@@ -3060,7 +3080,12 @@ export class Orchestrator {
     let prompt: string;
     if (role === "research") {
       const maxIterations = this.projectConfig?.research?.maxIterations;
-      prompt = buildResearchPrompt(task, kbContext, maxIterations, tokenBudgetHint, this.projectConfig?.obsidian?.vaultPath ?? undefined, codexEnabled, relevantSkills);
+      const researchConfig = this.projectConfig?.research ? {
+        citationDensityThreshold: this.projectConfig.research.citationDensityThreshold,
+        qualityGateEnabled: this.projectConfig.research.qualityGateEnabled,
+        loopDetectionWindow: this.projectConfig.research.loopDetectionWindow,
+      } : undefined;
+      prompt = buildResearchPrompt(task, kbContext, maxIterations, tokenBudgetHint, this.projectConfig?.obsidian?.vaultPath ?? undefined, codexEnabled, relevantSkills, researchConfig);
     } else if (role === "design") {
       prompt = buildDesignPrompt(task, kbContext, tokenBudgetHint, this.projectConfig?.obsidian?.vaultPath ?? undefined, codexEnabled);
     } else {
