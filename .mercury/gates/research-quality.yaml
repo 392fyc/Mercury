@@ -79,7 +79,8 @@ verification:
 #   - .claude/skills/autoresearch/SKILL.md (Results JSONL section)
 #   - .agents/skills/autoresearch/SKILL.md (Results JSONL section)
 jsonl_schema:
-  file_pattern: "results-{ISSUE_NUM}.jsonl"
+  file_pattern: "results-{ISSUE_NUM}.jsonl"   # Mercury mode
+  standalone_file_pattern: "results.jsonl"    # Standalone mode (no ISSUE_NUM)
   path: "Mercury_KB/04-research/.research-state/"
   standalone_path: ".research/state/"                # Used when Mercury_KB is absent
   required_fields:

@@ -43,7 +43,7 @@ For lighter research (1-2 questions, single-source verification), use the `web-r
 
 ### Argument Parsing
 
-```
+```text
 /autoresearch <topic>
 ```
 
@@ -58,9 +58,11 @@ Optional directives (append to topic or set in dispatch prompt):
      - Report: `Mercury_KB/04-research/RESEARCH-{TOPIC}-{ID}.md`
      - State: `Mercury_KB/04-research/.research-state/`
      - If a TaskBundle is in the dispatch prompt, read task metadata from it
+     - RESULTS_FILE: `results-{ISSUE_NUM}.jsonl` (issue number from TaskBundle)
    - **NO -> Standalone mode**
      - Report: `.research/reports/RESEARCH-{TOPIC}-{DATE}.md`
      - State: `.research/state/`
+     - RESULTS_FILE: `results.jsonl` (no issue number in standalone mode)
      - Create directories using Bash tool: `mkdir -p .research/reports .research/state`
        (Claude Code runs in bash shell on all platforms including Windows)
 
@@ -90,7 +92,7 @@ Create the initial report file with the topic as H1 and questions as an H2 check
 
 ```text
 Round N:
-  1. RESTORE  -- Read research-manifest.json + results.jsonl + report
+  1. RESTORE  -- Read research-manifest.json + {RESULTS_FILE} + report
                 (for reports > 200 lines, read only the section for the current question)
   2. PLAN     -- Pick 1-3 unanswered or weakest questions for this round
   3. SEARCH   -- WebSearch + WebFetch, minimum 3 searches per question,
@@ -98,7 +100,7 @@ Round N:
   4. WRITE    -- Update report with findings, cite every claim with [URL]
                 or mark UNVERIFIED. Document contradictions between sources.
   5. GATE     -- Run mechanical quality gate (see below)
-  6. LOG      -- Append round JSON to results.jsonl
+  6. LOG      -- Append round JSON to {RESULTS_FILE}
   7. BRANCH   -- ALL gate metrics PASSED -> go to VERIFICATION
                 ANY metric FAILED -> go to Round N+1
                 Round N = max_rounds -> go to VERIFICATION with gaps flagged
@@ -138,7 +140,7 @@ After updating the report, evaluate by **counting** (not self-assessment):
 
 ## Results JSONL
 
-Each round, append one JSON line to `results.jsonl`:
+Each round, append one JSON line to `{RESULTS_FILE}` (determined during environment detection):
 
 ```json
 {
@@ -162,7 +164,7 @@ On the final round, add: `termination_reason`, `verification_verdict`, `verifica
 
 If the session is new or resumed mid-research:
 1. Read `research-manifest.json` for topic and questions
-2. Read `results.jsonl` -- find the last round metrics
+2. Read `{RESULTS_FILE}` -- find the last round metrics
 3. Identify the lowest-scoring dimensions
 4. Focus the current round on those gaps
 
@@ -232,7 +234,7 @@ Mechanical verification from Step A is sufficient for standalone operation.
 
 When research terminates, print a summary to the conversation:
 
-```
+```text
 ## Autoresearch Complete
 
 - **Topic**: ...
@@ -250,7 +252,7 @@ All research state lives in files, not in conversation memory:
 | File | Purpose |
 |------|---------|
 | `research-manifest.json` | Topic, questions, config |
-| `results.jsonl` | Per-round metrics log |
+| `{RESULTS_FILE}` | Per-round metrics log (`results.jsonl` standalone, `results-{ISSUE_NUM}.jsonl` Mercury) |
 | `RESEARCH-{TOPIC}-*.md` | The research report |
 | `verification-{TOPIC}.md` | Verification checklist results |
 

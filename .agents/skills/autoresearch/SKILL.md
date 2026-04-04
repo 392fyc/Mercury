@@ -47,8 +47,8 @@ Optional directives:
 
 ### Environment Detection (do this FIRST)
 
-1. If Mercury_KB/04-research/ exists -> Mercury mode (use KB paths)
-2. Otherwise -> Standalone mode (use .research/reports/ and .research/state/)
+1. If Mercury_KB/04-research/ exists -> Mercury mode (use KB paths, RESULTS_FILE: results-{ISSUE_NUM}.jsonl)
+2. Otherwise -> Standalone mode (use .research/reports/ and .research/state/, RESULTS_FILE: results.jsonl)
 
 ### Research Manifest
 
@@ -60,12 +60,12 @@ You are in a loop. DO NOT declare completion. DO NOT summarize prematurely.
 Only the mechanical quality gate can end this loop.
 
 Round N:
-  1. RESTORE  -- Read manifest + results.jsonl + report
+  1. RESTORE  -- Read manifest + {RESULTS_FILE} + report
   2. PLAN     -- Pick 1-3 unanswered or weakest questions
   3. SEARCH   -- WebSearch + WebFetch, min 3 searches per question
   4. WRITE    -- Update report with findings, cite every claim with [URL]
   5. GATE     -- Run mechanical quality gate
-  6. LOG      -- Append round JSON to results.jsonl
+  6. LOG      -- Append round JSON to {RESULTS_FILE}
   7. BRANCH   -- ALL PASSED -> VERIFICATION; ANY FAILED -> Round N+1
 
 ## Quality Gate -- Mechanical Counting
@@ -88,14 +88,14 @@ ALL FOUR must pass. If any fails, continue to next round.
 
 ## Results JSONL
 
-Each round append: round, timestamp, questions_targeted, sources_found, sources_verified, question_answer_rate, citation_density, unverified_rate, iteration_depth, gate_passed, notes.
+Each round append to {RESULTS_FILE}: round, timestamp, questions_targeted, sources_found, sources_verified, question_answer_rate, citation_density, unverified_rate, iteration_depth, gate_passed, notes.
 
 Final round adds: termination_reason, verification_verdict, verification_score.
 
 ## Context Recovery
 
 1. Read research-manifest.json
-2. Read results.jsonl -- find last round metrics
+2. Read {RESULTS_FILE} -- find last round metrics
 3. Identify weakest dimensions
 4. Focus current round on those gaps
 
@@ -131,7 +131,7 @@ Use native Codex delegation if available to run read-only verification:
 
 ## State Externalization
 
-Files: research-manifest.json, results.jsonl, RESEARCH-{TOPIC}-*.md, verification-{TOPIC}.md
+Files: research-manifest.json, {RESULTS_FILE}, RESEARCH-{TOPIC}-*.md, verification-{TOPIC}.md
 
 ## Mercury Integration
 
