@@ -1,13 +1,13 @@
 ---
-name: research-deep-protocol
-description: Multi-round deep research protocol — activate with /deep-research, verify all claims via web, output structured JSON summary.
+name: autoresearch-protocol
+description: Multi-round deep research protocol — activate with /autoresearch, verify all claims via web, output structured JSON summary.
 category: WORKFLOW
 roles:
   - research
 origin: IMPORTED
 tags:
   - research
-  - deep-research
+  - autoresearch
   - protocol
   - web-verify
 generation: 0
@@ -19,11 +19,11 @@ total_fallbacks: 0
 last_validated_at: 2026-04-04T00:00:00.000Z
 ---
 
-# Mercury Deep Research Protocol
+# Autoresearch Protocol
 
 ## Activation
 
-Type `/deep-research` at the start of your response when the task has `researchScope: "deep"` or when the task requires 3+ research questions, cross-source verification, or architectural decision analysis.
+Type `/autoresearch` at the start of your response when the task has `researchScope: "deep"` or when the task requires 3+ research questions, cross-source verification, or architectural decision analysis.
 
 ## Protocol Steps
 

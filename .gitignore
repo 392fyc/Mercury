@@ -59,3 +59,6 @@ CLAUDE.md
 mercury.config.json
 .claude/current-session.md
 .codex/state/
+
+# Autoresearch state (standalone mode, transient)
+.research/

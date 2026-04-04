@@ -9,7 +9,7 @@ This note defines how `.agents/skills/` should use `openai.yaml` in the Codex en
 - `pr-flow`: `allow_implicit_invocation: false`
 - `dual-verify`: `allow_implicit_invocation: false`
 - `web-research`: `allow_implicit_invocation: true`
-- `deep-research`: `allow_implicit_invocation: true`
+- `autoresearch`: `allow_implicit_invocation: true`
 - `sot-workflow`: `allow_implicit_invocation: true`
 - `auto-verify`: `allow_implicit_invocation: true`
 - `codex-git-guard`: `allow_implicit_invocation: true`

@@ -88,7 +88,7 @@ These hooks are a safety net — this skill provides the proactive workflow to f
 
 ## Research Scope Routing
 
-This skill handles **light research** (1-2 questions, single-source verification, SDK/API checks). For larger investigations, route to the `deep-research` skill.
+This skill handles **light research** (1-2 questions, single-source verification, SDK/API checks). For larger investigations, route to the `autoresearch` skill.
 
 ### When to Escalate to Deep Research
 

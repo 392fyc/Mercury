@@ -55,7 +55,7 @@ export interface CreateTaskParams {
   priority: TaskBundle["priority"];
   assignedTo?: string; // Optional: auto-assigned via G9 modelRecommendation if omitted
   role?: string; // Task dispatch role: dev, research, design (default: dev)
-  researchScope?: "deep" | "quick"; // Research depth mode: 'deep' activates the deep-research skill protocol
+  researchScope?: "deep" | "quick"; // Research depth mode: 'deep' activates the autoresearch skill protocol
   branch?: string;
   codeScope?: TaskBundle["codeScope"];
   readScope: TaskBundle["readScope"];
@@ -1242,8 +1242,9 @@ export function buildResearchPrompt(
     "- Produce structured findings with evidence and recommendations.",
     "- No code commits expected.",
     "",
-    "## Deep Research Protocol",
-    "All research tasks use the multi-round deep-research protocol:",
+    "## Autoresearch Protocol",
+    "This task uses the `/autoresearch` protocol. Invoke `/autoresearch` to activate the full multi-round research loop.",
+    "All research tasks use the multi-round autoresearch protocol:",
     "1. **Iterative rounds**: search → verify → refine. Each round should expand or correct prior findings.",
     `2. **Citation density check**: after each round, ensure at least ${(citationThreshold * 100).toFixed(0)}% of claims have a cited source (URL, file ref, or doc link).`,
     `3. **Loop detection**: if ${loopDetectionWindow} consecutive round(s) yield no new findings or improvement, stop iterating early.`,
