@@ -3485,10 +3485,18 @@ export class Orchestrator {
 
     const mainSlot = makeRoleSlotKey("main", mainAgentId);
 
-    // Originator-first: route to the session that dispatched the task
+    // Originator-first: route to the session that dispatched the task.
+    // Validate the originator session belongs to the same Main Agent (role + agentId)
+    // to prevent binding a non-Main or different-agent session to the Main slot.
     if (payload.originatorSessionId) {
       const origSess = this.sessions.get(payload.originatorSessionId);
-      if (origSess && origSess.status !== "completed" && origSess.status !== "overflow") {
+      if (
+        origSess &&
+        origSess.status !== "completed" &&
+        origSess.status !== "overflow" &&
+        (origSess.frozenRole ?? origSess.role) === "main" &&
+        origSess.agentId === mainAgentId
+      ) {
         this.roleSessions.set(mainSlot, payload.originatorSessionId);
       }
     }
@@ -4089,13 +4097,16 @@ export class Orchestrator {
 
       throw new Error(`Invalid review decision: "${decision}". Expected APPROVE_FOR_ACCEPTANCE or SEND_BACK.`);
     } finally {
-      // Always chain to next cold-start orphan — even if downstream (acceptance/rework) fails,
-      // the current task's review result is already consumed, so the queue must advance.
-      void this.recoverNextOrphanedMainReview(taskId).catch((err) => {
-        this.transport.sendNotification("log", {
-          message: `[recovery] Chain recovery failed after ${taskId}: ${err instanceof Error ? err.message : err}`,
+      // Only chain recovery if the completed task was in the frozen cold-start orphan queue.
+      // Normal main_review completions (not from cold-start recovery) must NOT trigger
+      // the chain — they could retrigger in-flight orphan reviews prematurely.
+      if (this.orphanedMainReviewQueue.has(taskId)) {
+        void this.recoverNextOrphanedMainReview(taskId).catch((err) => {
+          this.transport.sendNotification("log", {
+            message: `[recovery] Chain recovery failed after ${taskId}: ${err instanceof Error ? err.message : err}`,
+          });
         });
-      });
+      }
     }
   }
 
