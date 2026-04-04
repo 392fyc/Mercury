@@ -4,7 +4,8 @@
 # Idempotent: writes only once per session (uses PID-based flag for session scope).
 # Token cost: ZERO (output goes to file, not stdout).
 
-STATE_DIR="$(dirname "$0")/state"
+_PROJECT="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
+STATE_DIR="$_PROJECT/.mercury/state"
 mkdir -p "$STATE_DIR" 2>/dev/null
 
 # Session-scoped guard: use parent PID as session identifier.

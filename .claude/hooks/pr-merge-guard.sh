@@ -49,7 +49,8 @@ if [ -z "$PR_NUMBER" ]; then
 fi
 
 # Allow manual bypass via state flag (e.g., human-approved merge)
-STATE_DIR="$(dirname "$0")/state"
+_PROJECT="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
+STATE_DIR="$_PROJECT/.mercury/state"
 if ! mkdir -p "$STATE_DIR"; then
   echo "BLOCKED: cannot create state dir: $STATE_DIR" >&2
   exit 2

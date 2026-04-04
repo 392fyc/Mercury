@@ -117,7 +117,7 @@ Codex:  PASS | FAIL | NEEDS-CHANGES
 4. Mark review flag:
 
 ```bash
-touch .claude/hooks/state/review-passed
+touch .mercury/state/review-passed
 # or: powershell -File scripts/codex/guard.ps1 mark-review
 ```
 

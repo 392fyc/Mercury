@@ -64,7 +64,8 @@ fi
 [ -z "$TRIGGERED" ] && exit 0
 
 # Check if web research was done within last 60 seconds
-STATE_DIR="$(dirname "$0")/state"
+_PROJECT="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
+STATE_DIR="$_PROJECT/.mercury/state"
 FLAG="$STATE_DIR/web-researched"
 
 if [ -f "$FLAG" ]; then

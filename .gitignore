@@ -43,6 +43,7 @@ $RECYCLE.BIN/
 # Claude Code
 .claude/plans/
 .claude/hooks/state/
+.mercury/state/
 .claude/settings.local.json
 CLAUDE.md
 

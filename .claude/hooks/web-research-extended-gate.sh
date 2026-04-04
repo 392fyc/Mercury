@@ -36,7 +36,8 @@ esac
 [ -z "$CONTENT" ] && exit 0
 
 # Check web-researched flag (shared 60s TTL)
-STATE_DIR="$(dirname "$0")/state"
+_PROJECT="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
+STATE_DIR="$_PROJECT/.mercury/state"
 FLAG="$STATE_DIR/web-researched"
 if [ -f "$FLAG" ]; then
   FLAG_MTIME=$(stat -c %Y "$FLAG" 2>/dev/null || stat -f %m "$FLAG" 2>/dev/null)
