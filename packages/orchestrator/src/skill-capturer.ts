@@ -59,21 +59,18 @@ export class SkillCapturer {
   async captureFromAcceptancePass(input: CaptureInput): Promise<DraftSkill[]> {
     if (!this.llmCaller) return [];
 
-    try {
-      await this.ensurePendingDir();
-      const patterns = await this.extractPatterns(input);
-      const drafts: DraftSkill[] = [];
+    // No internal catch — errors propagate to the caller's .catch() for transport logging.
+    // Best-effort is enforced at the call site (fire-and-forget void + .catch()).
+    await this.ensurePendingDir();
+    const patterns = await this.extractPatterns(input);
+    const drafts: DraftSkill[] = [];
 
-      for (const pattern of patterns.slice(0, 2)) {
-        const draft = await this.writeDraftSkill(pattern, input.task);
-        if (draft) drafts.push(draft);
-      }
-
-      return drafts;
-    } catch {
-      // Capture is always best-effort — never throw to caller
-      return [];
+    for (const pattern of patterns.slice(0, 2)) {
+      const draft = await this.writeDraftSkill(pattern, input.task);
+      if (draft) drafts.push(draft);
     }
+
+    return drafts;
   }
 
   // ─── Private ───

@@ -2314,10 +2314,21 @@ export class Orchestrator {
         message: `[task] Research fast-track failed for ${task.taskId} at status ${this.taskManager.getTask(task.taskId)?.status ?? "unknown"}: ${err instanceof Error ? err.message : err}`,
       });
       try { this.taskManager.transitionTask(task.taskId, "failed", agentId); } catch { /* already terminal */ }
+      this.injectedSkillsByTask.delete(task.taskId); // clean up on fast-track failure
       return;
     }
 
-    // Emit callback so originator is notified; reworkTriggered: false distinguishes closed fast-track from rework
+    // Record skill metrics (research bypasses review/acceptance cycle, so update here)
+    const researchSkills = this.injectedSkillsByTask.get(task.taskId);
+    if (researchSkills && researchSkills.length > 0) {
+      for (const skillName of researchSkills) {
+        this.skillRegistry.recordApplied(skillName);
+        this.skillRegistry.recordCompletion(skillName);
+      }
+      this.injectedSkillsByTask.delete(task.taskId);
+    }
+
+    // Emit callback so originator is notified
     this.bus.emit("orchestrator.task.callback", agentId, "orchestrator", {
       taskId: task.taskId,
       originatorSessionId: task.originatorSessionId,
@@ -2412,10 +2423,21 @@ export class Orchestrator {
         message: `[task] Design fast-track failed for ${task.taskId} at status ${this.taskManager.getTask(task.taskId)?.status ?? "unknown"}: ${err instanceof Error ? err.message : err}`,
       });
       try { this.taskManager.transitionTask(task.taskId, "failed", agentId); } catch { /* already terminal */ }
+      this.injectedSkillsByTask.delete(task.taskId); // clean up on fast-track failure
       return;
     }
 
-    // Emit callback so originator is notified; reworkTriggered: false distinguishes closed fast-track from rework
+    // Record skill metrics (design bypasses review/acceptance cycle, so update here)
+    const designSkills = this.injectedSkillsByTask.get(task.taskId);
+    if (designSkills && designSkills.length > 0) {
+      for (const skillName of designSkills) {
+        this.skillRegistry.recordApplied(skillName);
+        this.skillRegistry.recordCompletion(skillName);
+      }
+      this.injectedSkillsByTask.delete(task.taskId);
+    }
+
+    // Emit callback so originator is notified
     this.bus.emit("orchestrator.task.callback", agentId, "orchestrator", {
       taskId: task.taskId,
       originatorSessionId: task.originatorSessionId,
@@ -3791,11 +3813,14 @@ export class Orchestrator {
   ): Promise<TaskBundle> {
     const task = this.taskManager.recordReceipt(taskId, receipt);
 
-    // Record applied metric: receipt submission = agent completed task with skills in context
-    const injectedSkillsAtReceipt = this.injectedSkillsByTask.get(taskId);
-    if (injectedSkillsAtReceipt && injectedSkillsAtReceipt.length > 0) {
-      for (const skillName of injectedSkillsAtReceipt) {
-        this.skillRegistry.recordApplied(skillName);
+    // Record applied metric on first receipt only — rework receipts (reworkCount > 0) skip this
+    // because skills are not re-injected into rework prompts (especially true for newSession reworks).
+    if ((task.reworkCount ?? 0) === 0) {
+      const injectedSkillsAtReceipt = this.injectedSkillsByTask.get(taskId);
+      if (injectedSkillsAtReceipt && injectedSkillsAtReceipt.length > 0) {
+        for (const skillName of injectedSkillsAtReceipt) {
+          this.skillRegistry.recordApplied(skillName);
+        }
       }
     }
 
@@ -3879,7 +3904,14 @@ export class Orchestrator {
       );
 
       if (!reworked) {
-        // maxReworks exceeded — task transitioned to failed
+        // maxReworks exceeded — task transitioned to failed; record fallback and clean up
+        const sendBackFailedSkills = this.injectedSkillsByTask.get(taskId);
+        if (sendBackFailedSkills) {
+          for (const skillName of sendBackFailedSkills) {
+            this.skillRegistry.recordFallback(skillName);
+          }
+          this.injectedSkillsByTask.delete(taskId);
+        }
         return { decision: effectiveDecision, nextAction: "failed_max_reworks" };
       }
 
