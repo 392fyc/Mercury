@@ -382,7 +382,7 @@ export interface TaskBundle {
   failedAt: string | null; // ISO 8601, set by TaskManager when status → failed
   assignedTo: string;
   role?: AgentRole; // Task dispatch role: dev, research, design (default: dev)
-  researchScope?: "deep" | "quick"; // Research depth mode: 'deep' activates the deep-research skill protocol
+  researchScope?: "deep" | "quick"; // Research depth mode: 'deep' activates the autoresearch skill protocol
   assignee?: TaskAssignee; // Agents First: structured agent+model+session metadata
   branch?: string;
 

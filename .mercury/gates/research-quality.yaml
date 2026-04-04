@@ -1,10 +1,12 @@
 # Mercury Research Quality Gate Configuration
 # Location: .mercury/gates/research-quality.yaml
 # Referenced by:
-#   - .claude/skills/deep-research/SKILL.md (deep path protocol)
-#   - .agents/skills/deep-research/SKILL.md (Codex deep path)
+#   - .claude/skills/autoresearch/SKILL.md (autoresearch protocol)
+#   - .agents/skills/autoresearch/SKILL.md (Codex autoresearch)
 #   - .claude/skills/web-research/SKILL.md (light gate thresholds)
 #   - .agents/skills/web-research/SKILL.md (Codex light gate)
+# NOTE: Key thresholds are embedded in the autoresearch skill for standalone
+# zero-dependency operation. When updating thresholds, update both locations.
 
 # Tiered research routing
 routing:
@@ -14,7 +16,7 @@ routing:
     - cross_source_verification: ">= 3"
     - task_type: "architectural_decision"
     - explicit_scope: "deep"            # TaskBundle.researchScope === "deep"
-    - explicit_invocation: true          # /deep-research or "深度调研"
+    - explicit_invocation: true          # /autoresearch or "深度调研"
 
   # Default fallback: light research (in-agent, web-search gate)
   # Any task not matching deep conditions falls here — this is the else branch
@@ -36,7 +38,7 @@ gates:
       total_search_budget: 15            # Total searches per task
       sdk_api_verification_budget: 20    # Extended budget for SDK/API verification
 
-  # Deep path: applied per-round in deep-research skill
+  # Deep path: applied per-round in autoresearch skill
   deep:
     mandatory:
       question_answer_rate: ">= 0.9"    # Answered / total questions
@@ -74,11 +76,13 @@ verification:
 
 # Canonical JSONL schema for results-{ISSUE_NUM}.jsonl
 # Single source of truth — referenced by:
-#   - .claude/skills/deep-research/SKILL.md (Round 1 Bootstrap section)
-#   - .agents/skills/deep-research/SKILL.md (State Files section)
+#   - .claude/skills/autoresearch/SKILL.md (Results JSONL section)
+#   - .agents/skills/autoresearch/SKILL.md (Results JSONL section)
 jsonl_schema:
-  file_pattern: "results-{ISSUE_NUM}.jsonl"
+  file_pattern: "results-{ISSUE_NUM}.jsonl"   # Mercury mode
+  standalone_file_pattern: "results.jsonl"    # Standalone mode (no ISSUE_NUM)
   path: "Mercury_KB/04-research/.research-state/"
+  standalone_path: ".research/state/"                # Used when Mercury_KB is absent
   required_fields:
     - name: round
       type: integer

@@ -87,7 +87,7 @@ These mechanisms are the backup. This skill remains the proactive workflow.
 
 ## Research Scope Routing
 
-This skill handles light research (1-2 questions, single-source verification, SDK/API checks). For larger investigations, route to `deep-research`.
+This skill handles light research (1-2 questions, single-source verification, SDK/API checks). For larger investigations, route to `autoresearch`.
 
 ### When to Escalate to Deep Research
 
