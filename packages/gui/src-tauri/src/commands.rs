@@ -394,13 +394,14 @@ pub async fn send_prompt(
     prompt: String,
     images: Option<serde_json::Value>,
     role: Option<String>,
+    session_id: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let mgr = get_sidecar(&sidecar).await?;
-    mgr.send_request(
-        "send_prompt",
-        serde_json::json!({ "agentId": agent_id, "prompt": prompt, "images": images, "role": role }),
-    )
-    .await
+    let mut params = serde_json::json!({ "agentId": agent_id, "prompt": prompt, "images": images, "role": role });
+    if let Some(sid) = session_id {
+        params["sessionId"] = serde_json::Value::String(sid);
+    }
+    mgr.send_request("send_prompt", params).await
 }
 
 #[tauri::command]

@@ -154,8 +154,9 @@ export async function sendPrompt(
   prompt: string,
   images?: ImageAttachment[],
   role?: string,
+  sessionId?: string,
 ): Promise<{ sessionId: string; role?: string; sessionName?: string; status?: string }> {
-  return invoke("send_prompt", { agentId, prompt, images: images ?? null, role: role ?? null });
+  return invoke("send_prompt", { agentId, prompt, images: images ?? null, role: role ?? null, sessionId: sessionId ?? null });
 }
 
 /**

@@ -174,7 +174,7 @@ function setMessages(panelKey: string, msgs: DisplayMessage[]) {
  * @param panelKey - roleSlotKey "{role}:{agentId}"
  */
 async function sendPrompt(panelKey: string, prompt: string, images?: ImageAttachment[]) {
-  const { setStatus, setSessionInfo, parsePanelKey } = useAgentStore();
+  const { setStatus, setSessionInfo, parsePanelKey, getSession } = useAgentStore();
 
   // Parse panelKey to get role and agentId (supports both "{role}:{agentId}" and "{role}:{agentId}:{sid}")
   const { role, agentId } = parsePanelKey(panelKey);
@@ -260,7 +260,8 @@ async function sendPrompt(panelKey: string, prompt: string, images?: ImageAttach
   setStatus(panelKey, "active");
 
   try {
-    const result = await bridgeSendPrompt(agentId, prompt, images, role);
+    const currentSessionId = getSession(panelKey);
+    const result = await bridgeSendPrompt(agentId, prompt, images, role, currentSessionId);
     if (result?.sessionId) {
       setSessionInfo(panelKey, {
         sessionId: result.sessionId,
