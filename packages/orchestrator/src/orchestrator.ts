@@ -271,12 +271,12 @@ export class Orchestrator {
 
     await this.taskManager.init();
     await this.restoreSessions();
-    // G2: Detect orphaned in-progress tasks and queue re-dispatch
-    await this.recoverOrphanedTasks();
+    // Initialize skill registry before orphan recovery so re-dispatched tasks get skill injection
+    await this.initSkillRegistry();
     // Build and inject shared context from KB if autoInjectContext is enabled
     await this.buildAndInjectContext();
-    // Initialize skill registry — scan .mercury/skills/ and build BM25 index
-    await this.initSkillRegistry();
+    // G2: Detect orphaned in-progress tasks and queue re-dispatch
+    await this.recoverOrphanedTasks();
   }
 
   private shuttingDown = false;

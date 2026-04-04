@@ -215,6 +215,8 @@ function parsePatterns(response: string): ExtractedPattern[] {
         typeof p["description"] === "string" &&
         typeof p["category"] === "string" &&
         Array.isArray(p["roles"]) &&
+        (p["roles"] as unknown[]).length > 0 &&
+        (p["roles"] as unknown[]).every((r) => typeof r === "string") &&
         typeof p["body"] === "string"
       );
     });
