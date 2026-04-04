@@ -3576,10 +3576,17 @@ export class Orchestrator {
         continue;
       }
 
-      // Originator-first: route to the session that dispatched the task
+      // Originator-first: route to the session that dispatched the task.
+      // Validate role + agentId to prevent binding non-Main sessions to the Main slot.
       if (entryPayload.originatorSessionId) {
         const origSess = this.sessions.get(entryPayload.originatorSessionId);
-        if (origSess && origSess.status !== "completed" && origSess.status !== "overflow") {
+        if (
+          origSess &&
+          origSess.status !== "completed" &&
+          origSess.status !== "overflow" &&
+          (origSess.frozenRole ?? origSess.role) === "main" &&
+          origSess.agentId === mainAgentId
+        ) {
           this.roleSessions.set(mainSlot, entryPayload.originatorSessionId);
         }
       }
