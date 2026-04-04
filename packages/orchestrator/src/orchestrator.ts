@@ -34,6 +34,9 @@ import type {
 import { AgentRegistry } from "./agent-registry.js";
 import type { KnowledgeService } from "./knowledge-service.js";
 import type { RpcTransport } from "./rpc-transport.js";
+import { SkillRegistry } from "./skill-registry.js";
+import type { SkillInjection } from "./skill-registry.js";
+import { SkillCapturer } from "./skill-capturer.js";
 import {
   TaskManager,
   buildDevPrompt,
@@ -135,6 +138,12 @@ export class Orchestrator {
   private sharedContext: string = "";
   /** Cached role-only context built from obsidian.roleContextFiles[role]. */
   private roleContexts: Partial<Record<RoleContextKey, string>> = {};
+  /** Skill registry — BM25 index of accumulated agent skills in .mercury/skills/. */
+  private skillRegistry: SkillRegistry = new SkillRegistry();
+  /** Skill capturer — writes draft skills to .mercury/skills/pending/ after acceptance PASS. */
+  private skillCapturer: SkillCapturer | null = null;
+  /** Skills injected per task (taskId → skill names), for post-task metric recording. */
+  private injectedSkillsByTask = new Map<string, string[]>();
 
   constructor(
     registry: AgentRegistry,
@@ -262,13 +271,59 @@ export class Orchestrator {
 
     await this.taskManager.init();
     await this.restoreSessions();
-    // G2: Detect orphaned in-progress tasks and queue re-dispatch
-    await this.recoverOrphanedTasks();
+    // Initialize skill registry before orphan recovery so re-dispatched tasks get skill injection
+    await this.initSkillRegistry();
     // Build and inject shared context from KB if autoInjectContext is enabled
     await this.buildAndInjectContext();
+    // G2: Detect orphaned in-progress tasks and queue re-dispatch
+    await this.recoverOrphanedTasks();
   }
 
   private shuttingDown = false;
+
+  /**
+   * Initialize skill registry: scan .mercury/skills/, build BM25 index, log stale skills.
+   * Also initializes the skill capturer for post-acceptance-pass capture.
+   */
+  private async initSkillRegistry(): Promise<void> {
+    const skillDir = join(this.getProjectRoot(), ".mercury", "skills");
+    try {
+      await this.skillRegistry.init(skillDir);
+
+      this.skillCapturer = new SkillCapturer(skillDir);
+
+      // Wire LLMCaller lazily: resolves main agent at call time (after sessions established)
+      // Uses executeOneShot — same pattern as DoD pre-verification (orchestrator.ts:verifyDoDAtCompletion)
+      this.skillCapturer.setLLMCaller(async (prompt: string): Promise<string> => {
+        const mainAgentId = this.findMainAgentId();
+        if (!mainAgentId) return "[]";
+        const adapter = this.registry.getAdapter(mainAgentId);
+        if (!adapter.executeOneShot) return "[]";
+        const cwd = this.agentCwds.get(mainAgentId) ?? process.cwd();
+        const result = await adapter.executeOneShot(prompt, cwd);
+        return result.finalMessage ?? "[]";
+      });
+
+      const staleSkills = this.skillRegistry.listSkills().filter((s) => s.staleness);
+      if (staleSkills.length > 0) {
+        this.transport.sendNotification("log", {
+          message: `[skill-registry] ${staleSkills.length} skill(s) flagged: ${
+            staleSkills.map((s) => `${s.name}(${s.staleness})`).join(", ")
+          }`,
+        });
+      }
+
+      const total = this.skillRegistry.listSkills().length;
+      this.transport.sendNotification("log", {
+        message: `[skill-registry] Loaded ${total} skill(s) from ${skillDir}`,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.transport.sendNotification("log", {
+        message: `[skill-registry] Init failed (non-fatal): ${msg}`,
+      });
+    }
+  }
 
   /** Graceful shutdown — quiesce drain, clean up queue, close SQLite. */
   async shutdown(): Promise<void> {
@@ -2259,10 +2314,21 @@ export class Orchestrator {
         message: `[task] Research fast-track failed for ${task.taskId} at status ${this.taskManager.getTask(task.taskId)?.status ?? "unknown"}: ${err instanceof Error ? err.message : err}`,
       });
       try { this.taskManager.transitionTask(task.taskId, "failed", agentId); } catch { /* already terminal */ }
+      this.injectedSkillsByTask.delete(task.taskId); // clean up on fast-track failure
       return;
     }
 
-    // Emit callback so originator is notified; reworkTriggered: false distinguishes closed fast-track from rework
+    // Record skill metrics (research bypasses review/acceptance cycle, so update here)
+    const researchSkills = this.injectedSkillsByTask.get(task.taskId);
+    if (researchSkills && researchSkills.length > 0) {
+      for (const skillName of researchSkills) {
+        this.skillRegistry.recordApplied(skillName);
+        this.skillRegistry.recordCompletion(skillName);
+      }
+      this.injectedSkillsByTask.delete(task.taskId);
+    }
+
+    // Emit callback so originator is notified
     this.bus.emit("orchestrator.task.callback", agentId, "orchestrator", {
       taskId: task.taskId,
       originatorSessionId: task.originatorSessionId,
@@ -2357,10 +2423,21 @@ export class Orchestrator {
         message: `[task] Design fast-track failed for ${task.taskId} at status ${this.taskManager.getTask(task.taskId)?.status ?? "unknown"}: ${err instanceof Error ? err.message : err}`,
       });
       try { this.taskManager.transitionTask(task.taskId, "failed", agentId); } catch { /* already terminal */ }
+      this.injectedSkillsByTask.delete(task.taskId); // clean up on fast-track failure
       return;
     }
 
-    // Emit callback so originator is notified; reworkTriggered: false distinguishes closed fast-track from rework
+    // Record skill metrics (design bypasses review/acceptance cycle, so update here)
+    const designSkills = this.injectedSkillsByTask.get(task.taskId);
+    if (designSkills && designSkills.length > 0) {
+      for (const skillName of designSkills) {
+        this.skillRegistry.recordApplied(skillName);
+        this.skillRegistry.recordCompletion(skillName);
+      }
+      this.injectedSkillsByTask.delete(task.taskId);
+    }
+
+    // Emit callback so originator is notified
     this.bus.emit("orchestrator.task.callback", agentId, "orchestrator", {
       taskId: task.taskId,
       originatorSessionId: task.originatorSessionId,
@@ -2894,6 +2971,7 @@ export class Orchestrator {
     prompt: string;
     rolePrompt: string;
     baseRolePrompt: string;
+    injectedSkillNames: string[];
   }> {
     const task = await this.taskManager.getTaskAsync(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
@@ -2956,15 +3034,37 @@ export class Orchestrator {
     // Determine if the assigned agent is a Claude Code instance (codex plugin is CC-only)
     const codexEnabled = this.getAgentCli(task.assignedTo) === "claude";
 
+    // Retrieve relevant skills (max 3) for dev/research roles and build SkillInjection objects
+    let relevantSkills: SkillInjection[] | undefined;
+    let injectedSkillNames: string[] = [];
+    if (this.skillRegistry.isReady() && (role === "dev" || role === "research")) {
+      const query = `${task.title} ${task.context.slice(0, 300)}`;
+      const rawSkills = this.skillRegistry.searchSkills(query, [role], 3);
+      if (rawSkills.length > 0) {
+        // Filter out skills whose body fails to load — don't record or inject them
+        const loaded = await Promise.all(
+          rawSkills.map(async (s) => {
+            const body = await this.skillRegistry.loadSkillBody(s).catch(() => "");
+            return body ? ({ ...s, body } satisfies SkillInjection) : null;
+          }),
+        );
+        relevantSkills = loaded.filter((s): s is SkillInjection => s !== null);
+        for (const skill of relevantSkills) {
+          this.skillRegistry.recordSelection(skill.name);
+        }
+        injectedSkillNames = relevantSkills.map((s) => s.name);
+      }
+    }
+
     // Build role-appropriate prompt
     let prompt: string;
     if (role === "research") {
       const maxIterations = this.projectConfig?.research?.maxIterations;
-      prompt = buildResearchPrompt(task, kbContext, maxIterations, tokenBudgetHint, this.projectConfig?.obsidian?.vaultPath ?? undefined, codexEnabled);
+      prompt = buildResearchPrompt(task, kbContext, maxIterations, tokenBudgetHint, this.projectConfig?.obsidian?.vaultPath ?? undefined, codexEnabled, relevantSkills);
     } else if (role === "design") {
       prompt = buildDesignPrompt(task, kbContext, tokenBudgetHint, this.projectConfig?.obsidian?.vaultPath ?? undefined, codexEnabled);
     } else {
-      prompt = buildDevPrompt(task, kbContext, this.getProjectRoot());
+      prompt = buildDevPrompt(task, kbContext, this.getProjectRoot(), relevantSkills);
     }
 
     return {
@@ -2972,6 +3072,7 @@ export class Orchestrator {
       prompt,
       rolePrompt: this.buildSystemRolePrompt(role, task, tokenBudgetHint),
       baseRolePrompt: this.buildSystemRolePrompt(role),
+      injectedSkillNames,
     };
   }
 
@@ -2995,8 +3096,11 @@ export class Orchestrator {
       };
     }
 
-    const { task, prompt, rolePrompt, baseRolePrompt } =
+    const { task, prompt, rolePrompt, baseRolePrompt, injectedSkillNames } =
       await this.prepareBundleTaskExecution(taskId);
+    if (injectedSkillNames.length > 0) {
+      this.injectedSkillsByTask.set(task.taskId, injectedSkillNames);
+    }
     const agentId = task.assignedTo;
     const role: AgentRole = task.role ?? "dev";
     const adapter = this.registry.getAdapter(agentId);
@@ -3162,7 +3266,7 @@ export class Orchestrator {
         // This try/catch only catches synchronous failures (session creation,
         // state transitions). Streaming failures trigger G2 crash recovery
         // in streamMessages() catch handler — automatic re-dispatch.
-        const { task: freshTask, prompt, rolePrompt } = await this.prepareBundleTaskExecution(taskId);
+        const { task: freshTask, prompt, rolePrompt, injectedSkillNames } = await this.prepareBundleTaskExecution(taskId);
         const role: AgentRole = freshTask.role ?? "dev";
 
         // Transition: drafted → dispatched → in_progress
@@ -3172,6 +3276,10 @@ export class Orchestrator {
 
         // Start role-scoped session for assigned agent
         const session = await this.startRoleSession(freshTask.assignedTo, role, freshTask.title, rolePrompt);
+        // Record injected skills only after session is confirmed started
+        if (injectedSkillNames.length > 0) {
+          this.injectedSkillsByTask.set(freshTask.taskId, injectedSkillNames);
+        }
         this.taskManager.bindSession(taskId, session.sessionId);
 
         // Transition to in_progress (only if not already there)
@@ -3573,6 +3681,27 @@ export class Orchestrator {
       this.taskManager.transitionTask(task.taskId, "verified", acceptance.acceptor);
       this.taskManager.transitionTask(task.taskId, "closed", "orchestrator");
 
+      // Update skill completion metrics for skills injected into this task's dispatch
+      const injectedSkills = this.injectedSkillsByTask.get(task.taskId);
+      if (injectedSkills && injectedSkills.length > 0) {
+        for (const skillName of injectedSkills) {
+          this.skillRegistry.recordCompletion(skillName);
+        }
+        this.injectedSkillsByTask.delete(task.taskId);
+      }
+
+      // Post-acceptance capture: extract reusable skill patterns (fire-and-forget, non-blocking)
+      const receipt = task.implementationReceipt;
+      if (receipt && this.skillCapturer) {
+        const capturer = this.skillCapturer;
+        const gitDiff = task.mainReview?.gitDiff;
+        void capturer.captureFromAcceptancePass({ task, receipt, gitDiff }).catch((err: unknown) => {
+          void this.transport.sendNotification("log", {
+            message: `[skill-capturer] capture failed: ${err instanceof Error ? err.message : String(err)}`,
+          });
+        });
+      }
+
       // Callback to Main Agent
       this.bus.emit(
         "orchestrator.task.callback",
@@ -3600,7 +3729,14 @@ export class Orchestrator {
       );
 
       if (!reworked) {
-        // maxReworks exceeded — task transitioned to failed
+        // maxReworks exceeded — task transitioned to failed; record fallback and clean up map
+        const failedSkills = this.injectedSkillsByTask.get(task.taskId);
+        if (failedSkills) {
+          for (const skillName of failedSkills) {
+            this.skillRegistry.recordFallback(skillName);
+          }
+          this.injectedSkillsByTask.delete(task.taskId);
+        }
         return { verdict: results.verdict, reworkTriggered: false, newSession: false };
       }
 
@@ -3649,6 +3785,15 @@ export class Orchestrator {
     if (results.verdict === "blocked") {
       this.taskManager.transitionTask(task.taskId, "blocked", acceptance.acceptor);
 
+      // Record fallback and clean up injected skills map
+      const blockedSkills = this.injectedSkillsByTask.get(task.taskId);
+      if (blockedSkills) {
+        for (const skillName of blockedSkills) {
+          this.skillRegistry.recordFallback(skillName);
+        }
+        this.injectedSkillsByTask.delete(task.taskId);
+      }
+
       // Callback to Main Agent for blocked
       this.bus.emit(
         "orchestrator.task.callback",
@@ -3681,6 +3826,18 @@ export class Orchestrator {
     receipt: ImplementationReceipt,
   ): Promise<TaskBundle> {
     const task = this.taskManager.recordReceipt(taskId, receipt);
+
+    // Record applied metric on first receipt only — rework receipts (reworkCount > 0) skip this
+    // because skills are not re-injected into rework prompts (especially true for newSession reworks).
+    if ((task.reworkCount ?? 0) === 0) {
+      const injectedSkillsAtReceipt = this.injectedSkillsByTask.get(taskId);
+      if (injectedSkillsAtReceipt && injectedSkillsAtReceipt.length > 0) {
+        for (const skillName of injectedSkillsAtReceipt) {
+          this.skillRegistry.recordApplied(skillName);
+        }
+      }
+    }
+
     const preChecks = await this.runPreChecks(task);
     const gitDiff = await this.getGitDiff(task);
 
@@ -3761,7 +3918,14 @@ export class Orchestrator {
       );
 
       if (!reworked) {
-        // maxReworks exceeded — task transitioned to failed
+        // maxReworks exceeded — task transitioned to failed; record fallback and clean up
+        const sendBackFailedSkills = this.injectedSkillsByTask.get(taskId);
+        if (sendBackFailedSkills) {
+          for (const skillName of sendBackFailedSkills) {
+            this.skillRegistry.recordFallback(skillName);
+          }
+          this.injectedSkillsByTask.delete(taskId);
+        }
         return { decision: effectiveDecision, nextAction: "failed_max_reworks" };
       }
 

@@ -15,7 +15,7 @@ MANDATORY: Before writing ANY code that imports an external SDK/API package or r
 6. Never commit or push directly on develop, master, or main
 7. If the current branch is protected or does not match feature/TASK-*, stop and move the work to a task branch before committing
 8. Use `powershell -File scripts/codex/git-safe.ps1 add ...`, `commit -Message "..."`, and `push ...` instead of raw `git add`, `git commit`, or `git push`
-9. Before every commit, complete a code review, invoke the auto-verify skill or equivalent local checks, run `powershell -File scripts/codex/guard.ps1 mark-review`, and then use `powershell -File scripts/codex/git-safe.ps1 commit -Message "..."`
+9. Before every commit on a PR branch, run the dual-verify skill (parallel Claude Code deep-review + Codex code-audit); for minor commits auto-verify is acceptable; then run `powershell -File scripts/codex/guard.ps1 mark-review` and use `powershell -File scripts/codex/git-safe.ps1 commit -Message "..."`
 10. Before every push, use `powershell -File scripts/codex/git-safe.ps1 push ...`; do not target develop, master, or main
 11. On Windows, do not assume Codex hooks will run; use `.codex/rules`, `.codex/config.toml`, repo skills, and `scripts/codex/*.ps1` as the enforcement path
 """

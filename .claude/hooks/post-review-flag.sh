@@ -4,8 +4,8 @@
 
 INPUT=$(cat)
 
-# Detect review-related tool usage
-if echo "$INPUT" | grep -qi '"review"'; then
+# Detect review-related tool usage (single-agent review or dual-verify)
+if echo "$INPUT" | grep -qi '"review"\|"dual-verify"\|"dual_verify"'; then
   STATE_DIR="$(dirname "$0")/state"
   mkdir -p "$STATE_DIR"
   date -u +%Y-%m-%dT%H:%M:%SZ > "$STATE_DIR/review-passed" 2>/dev/null || echo "flagged" > "$STATE_DIR/review-passed"
