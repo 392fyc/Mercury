@@ -24,7 +24,7 @@ Read these docs on demand when you need the corresponding information:
 ## MUST
 
 - **Commit at every checkpoint**: every milestone must be committed and pushed.
-- **Code review before commit**: every milestone must be code-reviewed before committing.
+- **Dual-verify before commit**: every milestone must pass dual-verify (parallel Claude Code deep-review + Codex code-audit) before committing. Codex agents run the code-audit portion; Main Agent consolidates.
 - **Web search before SDK/API code**: before writing ANY code that imports an external SDK, references an API signature, or claims a package version, you MUST use `web_search` to verify against the vendor's official documentation. GitHub source code alone is NOT sufficient. If web_search is unavailable, mark claims as UNVERIFIED.
 - **Agents First**: inter-agent communication uses JSON/YAML. All interactions must include agentId, model, sessionId.
 - **Chinese for milestones**: return milestone completion messages in Chinese.
@@ -36,7 +36,7 @@ Read these docs on demand when you need the corresponding information:
 
 - Do not hardcode any specific agent as Main Agent.
 - Do not make adapters depend on Obsidian/KB — agents keep their own MCP/SDK architecture.
-- Do not commit without code review.
+- Do not commit without running dual-verify.
 - Do not guess SDK/CLI APIs from training data.
 - Do not install software to C drive. (Windows only; skip on non-Windows environments.)
 - Do not bypass the SoT task flow.
