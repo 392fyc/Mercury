@@ -5,6 +5,16 @@
 # Read stdin (hook JSON input)
 INPUT=$(cat)
 
+# In bypass/unattended mode, skip this gate — orchestrator manages review flow
+if command -v jq >/dev/null 2>&1; then
+  PERM_MODE=$(echo "$INPUT" | jq -r '.permission_mode // "default"' 2>/dev/null)
+else
+  PERM_MODE=$(echo "$INPUT" | sed -n 's/.*"permission_mode"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+fi
+if [ "$PERM_MODE" = "bypassPermissions" ] || [ "$PERM_MODE" = "dontAsk" ]; then
+  exit 0
+fi
+
 # Debug logging: opt-in via GUARD_DEBUG=1 to avoid persisting sensitive payloads.
 STATE_DIR="$(dirname "$0")/state"
 if ! mkdir -p "$STATE_DIR"; then

@@ -10,6 +10,16 @@
 
 INPUT=$(cat)
 
+# In bypass/unattended mode, skip this gate — avoids 60s TTL stalls
+if command -v jq >/dev/null 2>&1; then
+  PERM_MODE=$(echo "$INPUT" | jq -r '.permission_mode // "default"' 2>/dev/null)
+else
+  PERM_MODE=$(echo "$INPUT" | sed -n 's/.*"permission_mode"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+fi
+if [ "$PERM_MODE" = "bypassPermissions" ] || [ "$PERM_MODE" = "dontAsk" ]; then
+  exit 0
+fi
+
 if command -v jq >/dev/null 2>&1; then
   FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
   CONTENT=$(echo "$INPUT" | jq -r '.tool_input.new_string // .tool_input.content // empty' 2>/dev/null)
