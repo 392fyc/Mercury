@@ -9,6 +9,13 @@
 
 INPUT=$(cat)
 
+# In bypass/unattended mode, skip this gate — avoids 60s TTL stalls
+source "$(dirname "$0")/lib/permission-mode.sh"
+PERM_MODE=$(get_permission_mode "$INPUT")
+if is_bypass_mode "$PERM_MODE"; then
+  exit 0
+fi
+
 if command -v jq >/dev/null 2>&1; then
   CONTENT=$(echo "$INPUT" | jq -r '.tool_input.new_string // .tool_input.content // empty' 2>/dev/null)
   FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
@@ -54,7 +61,8 @@ fi
 [ -z "$TRIGGERED" ] && exit 0
 
 # Check if web research was done within last 60 seconds
-STATE_DIR="$(dirname "$0")/state"
+_PROJECT="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
+STATE_DIR="$_PROJECT/.mercury/state"
 FLAG="$STATE_DIR/web-researched"
 
 if [ -f "$FLAG" ]; then

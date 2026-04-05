@@ -10,6 +10,13 @@
 
 INPUT=$(cat)
 
+# In bypass/unattended mode, skip metadata enforcement — orchestrator provides metadata
+source "$(dirname "$0")/lib/permission-mode.sh"
+PERM_MODE=$(get_permission_mode "$INPUT")
+if is_bypass_mode "$PERM_MODE"; then
+  exit 0
+fi
+
 # Only intercept gh pr create commands
 echo "$INPUT" | grep -qE 'gh[[:space:]]+pr[[:space:]]+create' || exit 0
 

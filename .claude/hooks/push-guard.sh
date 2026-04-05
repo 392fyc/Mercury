@@ -5,10 +5,9 @@
 INPUT=$(cat)
 
 # Debug logging: opt-in via GUARD_DEBUG=1 to avoid persisting sensitive payloads.
-STATE_DIR="$(dirname "$0")/state"
-if ! mkdir -p "$STATE_DIR"; then
-  echo "WARNING: cannot create state dir: $STATE_DIR" >&2
-fi
+_PROJECT="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
+STATE_DIR="$_PROJECT/.mercury/state"
+mkdir -p "$STATE_DIR" 2>/dev/null
 LOG_FILE="$STATE_DIR/push-guard-debug.log"
 
 debug_log() {

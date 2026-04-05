@@ -2,8 +2,9 @@
 # FLAG: mark web research as done after WebSearch/WebFetch completes.
 # Records timestamp and query for audit trail.
 
-STATE_DIR="$(dirname "$0")/state"
-mkdir -p "$STATE_DIR"
+_PROJECT="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
+STATE_DIR="$_PROJECT/.mercury/state"
+mkdir -p "$STATE_DIR" 2>/dev/null
 
 INPUT=$(cat)
 TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "done")

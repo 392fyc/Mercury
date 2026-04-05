@@ -5,11 +5,17 @@
 # Read stdin (hook JSON input)
 INPUT=$(cat)
 
-# Debug logging: opt-in via GUARD_DEBUG=1 to avoid persisting sensitive payloads.
-STATE_DIR="$(dirname "$0")/state"
-if ! mkdir -p "$STATE_DIR"; then
-  echo "WARNING: cannot create state dir: $STATE_DIR" >&2
+# In bypass/unattended mode, skip this gate — orchestrator manages review flow
+source "$(dirname "$0")/lib/permission-mode.sh"
+PERM_MODE=$(get_permission_mode "$INPUT")
+if is_bypass_mode "$PERM_MODE"; then
+  exit 0
 fi
+
+# Debug logging: opt-in via GUARD_DEBUG=1 to avoid persisting sensitive payloads.
+_PROJECT="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
+STATE_DIR="$_PROJECT/.mercury/state"
+mkdir -p "$STATE_DIR" 2>/dev/null
 LOG_FILE="$STATE_DIR/pre-commit-guard-debug.log"
 if [ "${GUARD_DEBUG:-0}" = "1" ]; then
   # Truncate debug log if > 100KB to prevent unbounded growth
@@ -52,6 +58,6 @@ fi
 cat >&2 <<'MSG'
 BLOCKED: Code review required before commit (CLAUDE.md MUST rule).
 Run /dual-verify (preferred) or /code-review before committing.
-To bypass: touch .claude/hooks/state/review-passed
+To bypass: touch .mercury/state/review-passed
 MSG
 exit 2
