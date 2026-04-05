@@ -87,7 +87,19 @@ BOT_REVIEW_STATE=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
 # Also check legacy CodeRabbit CI check (transition period)
 CR_CI_STATUS=$(gh pr checks "$PR_NUMBER" --json name,state -q '.[] | select(.name | test("CodeRabbit";"i")) | .state' 2>/dev/null | head -n1 | tr '[:upper:]' '[:lower:]')
 
-# Allow if CodeRabbit CI passed
+# ── Block CHANGES_REQUESTED before any bot/CI allow gates ─────────
+# This prevents stale bot approvals or legacy CI success from bypassing
+# a newer CHANGES_REQUESTED review decision.
+if [ "$REVIEW_DECISION" = "CHANGES_REQUESTED" ]; then
+  cat >&2 <<MSG
+BLOCKED: Changes requested on PR #${PR_NUMBER}.
+Address review feedback before merging.
+To bypass (human-approved): touch ${STATE_DIR}/pr-merge-approved-${PR_NUMBER}
+MSG
+  exit 2
+fi
+
+# Allow if CodeRabbit CI passed (and not CHANGES_REQUESTED — checked above)
 if [ "$CR_CI_STATUS" = "success" ]; then
   exit 0
 fi
@@ -103,15 +115,6 @@ if [ -z "$BOT_REVIEW_STATE" ] && [ -z "$CR_CI_STATUS" ]; then
   cat >&2 <<MSG
 BLOCKED: No automated review found for PR #${PR_NUMBER}.
 Trigger a review with /review or wait for auto-trigger.
-To bypass (human-approved): touch ${STATE_DIR}/pr-merge-approved-${PR_NUMBER}
-MSG
-  exit 2
-fi
-
-if [ "$REVIEW_DECISION" = "CHANGES_REQUESTED" ]; then
-  cat >&2 <<MSG
-BLOCKED: Changes requested on PR #${PR_NUMBER}.
-Address review feedback before merging.
 To bypass (human-approved): touch ${STATE_DIR}/pr-merge-approved-${PR_NUMBER}
 MSG
   exit 2
