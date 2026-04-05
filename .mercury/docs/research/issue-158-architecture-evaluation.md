@@ -1,5 +1,10 @@
 # Mercury Architecture Direction Evaluation
 
+## Related Documentation
+
+- [Mercury Architecture Guide](../guides/architecture.md) — current architecture design
+- [SoT Workflow Guide](../guides/sot-workflow.md) — task state machine reference
+
 ## Research Questions
 
 - [x] Q1: Claude Code native agent capabilities (2025-2026)
@@ -150,6 +155,8 @@ Claude Code has a comprehensive lifecycle hook system with 20+ event types: [Sou
 ---
 
 ## Q2: Mercury Component -- Native Coverage Analysis
+
+> **Scoring methodology**: Coverage percentages are qualitative estimates based on feature parity — the proportion of Mercury's use cases that can be replicated using Claude Code native or ecosystem tools without custom code. They are not calculated from code metrics. "Native" means built into Claude Code; "ecosystem" includes community MCP servers, plugins, and third-party tools. When both are given, the higher figure represents the combined ceiling if ecosystem tools are adopted.
 
 ### 1. MCP Orchestrator Server (Session Management, Task Dispatch, Approval Flow)
 
@@ -367,6 +374,24 @@ For more typical workloads, real-world reports indicate:
 **Hybrid approach (recommended consideration)**:
 Start with Path B Phase 1 (replace Codex adapter + migrate hooks -- low-risk, high-value). Then evaluate Path A vs Path B Phase 2 based on Agent Teams stability at that point. This gives immediate value while preserving optionality.
 
+### Migration Safeguards
+
+**Preconditions** (before any migration begins):
+- Snapshot current develop branch as a tagged baseline (`v0.x-pre-migration`)
+- Assess impact on open issues (particularly #101 harness roadmap)
+- Agent Teams minimum stability: session resume working, task status reliable
+
+**Rollback plan**:
+- Path B Phase 1: revert `codex-plugin-cc` → restore `codex-mcp-adapter.ts` (code is git-tracked, zero data loss)
+- Path A: if Claude Code internal file formats break GUI, fall back to Mercury orchestrator as API layer
+- Trigger: any regression in SoT workflow correctness or >2x token cost increase
+
+**Acceptance criteria**:
+- SoT 10-state machine: all transitions functional with equivalent or better latency
+- Approval flow: approve/deny cycle completes without manual intervention
+- Token cost: within 1.5x of current baseline for equivalent workloads
+- Skills/hooks: all existing skills operational after migration
+
 ---
 
 ## Q4: Codex Adaptation Layer Assessment
@@ -422,6 +447,13 @@ No. Claude Code does not have built-in cross-model dispatch to non-Anthropic mod
 **Replace Mercury's Codex adapter with `codex-plugin-cc`** for review and ad-hoc delegation. The official plugin is better maintained, has more features (adversarial review, background jobs), and will track Codex API changes automatically.
 
 **However**, if SoT-integrated Codex dispatch is needed (tasks that go through the full state machine), a thin adapter layer would still be required to bridge the plugin's output into Mercury's receipt format. This could be implemented as a Claude Code hook (PostToolUse on `mcp__codex__*` tools) rather than a full adapter.
+
+### Codex Migration Plan
+
+1. **Migration sequence**: Install `codex-plugin-cc` alongside existing adapter. Run both in parallel for 1-2 sessions to verify feature parity. Remove `codex-mcp-adapter.ts` and `codex-mcp-transport.ts` after validation.
+2. **SoT bridge**: Implement a PostToolUse hook on `mcp__codex__*` that converts plugin output to Mercury receipt format. Hook handles format conversion only; state transitions remain in the orchestrator.
+3. **Rollback trigger**: If `/codex:rescue` lacks `blockedBy`/`blocks` semantics needed for SoT dispatch, revert to Mercury adapter until plugin support is added.
+4. **Removal criteria**: Mercury adapter files removed only after 3+ successful sessions using plugin exclusively.
 
 ---
 
