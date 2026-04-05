@@ -125,11 +125,10 @@ This includes:
 
 These appear in the review body, not as inline threads.
 
-Always address them in a PR comment and include `@<REVIEW_BOT>`:
+Always address them in a PR comment summarizing fixes, then trigger re-review separately:
 
 ```powershell
-gh pr comment <PR_NUMBER> --body "@<REVIEW_BOT>
-## Addressed review feedback
+gh pr comment <PR_NUMBER> --body "## Addressed review feedback
 ### Inline comments (N/N resolved):
 1. **Issue** - fixed in <sha>
 ### Outside-diff comments (N/N resolved):
@@ -261,7 +260,7 @@ Remove-Item .pr-flow-iteration-*, .pr-flow-check-count-*, .pr-flow-multi.txt -Er
 
 Rules:
 - even threads you disagree with must be commented on and resolved
-- when posting non-direct PR comments, include `@<REVIEW_BOT>`
+- trigger re-review via `/review` as a separate comment after all fixes are pushed
 - outside-diff comments still count as required responses
 
 ## Output
