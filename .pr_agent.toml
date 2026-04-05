@@ -1,0 +1,45 @@
+# Mercury — PR-Agent Configuration (repo-level overrides)
+# This file is read by the self-hosted PR-Agent instance.
+# Docs: https://qodo-merge-docs.qodo.ai/usage-guide/configuration_options/
+
+[pr_reviewer]
+extra_instructions = """\
+You are an ASSERTIVE code reviewer for the Mercury project.
+Mercury is a multi-agent orchestration framework built on Claude Code.
+Monorepo structure: packages/orchestrator, packages/sdk-adapters, packages/core, packages/gui.
+
+Review language: Chinese (zh-CN).
+
+Focus areas by path:
+- packages/orchestrator/: task state machine consistency, event bus naming, scope \
+  validation, async flow completeness, system design impact
+- packages/sdk-adapters/: adapter interface consistency, error handling, session \
+  lifecycle, MCP protocol compatibility
+- packages/core/: TypeScript type safety, interface backward compatibility, \
+  dependency management
+- packages/gui/: Tauri 2 API usage, Vue 3 reactivity, memory leaks
+- .mercury/: role definition consistency, template placeholder completeness, \
+  doc cross-reference correctness
+
+General rules:
+- Flag bugs, security vulnerabilities, and logic errors as high priority
+- Check async/await correctness and error handling completeness
+- Verify git branching rules (no direct push to develop/master)
+- Estimate code review effort
+"""
+
+[pr_description]
+extra_instructions = """\
+Generate PR description in Chinese (zh-CN).
+Include: high-level summary, walkthrough of changes, related issues.
+"""
+
+[config]
+# Ignore generated/non-essential files
+ignore_files = [
+    "**/*.lock",
+    "dist/**",
+    "Mercury_KB/**",
+    ".mercury/transcripts/**",
+    ".mercury/sessions.json",
+]

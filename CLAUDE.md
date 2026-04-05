@@ -19,6 +19,7 @@ Read these docs on demand when you need the corresponding information:
 | KB directory structure | `.mercury/docs/guides/kb-structure.md` |
 | Project architecture | `.mercury/docs/guides/architecture.md` |
 | GitHub Issues workflow | `.mercury/docs/guides/issue-workflow.md` |
+| Argus PR review agent | `.mercury/docs/guides/argus-review-guide.md` |
 | Dispatch prompt templates | `.mercury/templates/` |
 | Bundle templates | `Mercury_KB/99-templates/` |
 
