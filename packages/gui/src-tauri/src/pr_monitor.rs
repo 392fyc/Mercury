@@ -15,7 +15,7 @@ pub struct PrReview {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum CodeRabbitStatus {
+pub enum ReviewBotStatus {
     Pending,
     Commented,
     Approved,
@@ -32,7 +32,7 @@ pub struct PullRequest {
     pub updated_at: String,
     pub url: String,
     pub review_decision: Option<String>,
-    pub coderabbit_status: CodeRabbitStatus,
+    pub review_status: ReviewBotStatus,
     pub timeout_alert: bool,
     pub reviews: Vec<PrReview>,
 }
@@ -287,25 +287,25 @@ fn fetch_prs_blocking(project_root: &str) -> Result<Vec<PullRequest>, String> {
     let prs = gh_prs
         .into_iter()
         .map(|pr| {
-            let coderabbit_reviews: Vec<&GhReview> = pr
+            let bot_reviews: Vec<&GhReview> = pr
                 .reviews
                 .iter()
-                .filter(|r| r.author.login == "coderabbitai")
+                .filter(|r| r.author.login == "coderabbitai" || r.author.login == "argus-review[bot]")
                 .collect();
 
-            let coderabbit_status = if let Some(latest) = coderabbit_reviews.last() {
+            let review_status = if let Some(latest) = bot_reviews.last() {
                 match latest.state.as_str() {
-                    "APPROVED" => CodeRabbitStatus::Approved,
-                    "CHANGES_REQUESTED" => CodeRabbitStatus::ChangesRequested,
-                    "COMMENTED" => CodeRabbitStatus::Commented,
-                    _ => CodeRabbitStatus::Pending,
+                    "APPROVED" => ReviewBotStatus::Approved,
+                    "CHANGES_REQUESTED" => ReviewBotStatus::ChangesRequested,
+                    "COMMENTED" => ReviewBotStatus::Commented,
+                    _ => ReviewBotStatus::Pending,
                 }
             } else {
-                CodeRabbitStatus::Pending
+                ReviewBotStatus::Pending
             };
 
-            // Timeout alert: PR created > 10min ago and still no CodeRabbit review
-            let timeout_alert = if coderabbit_reviews.is_empty() {
+            // Timeout alert: PR created > 10min ago and still no bot review
+            let timeout_alert = if bot_reviews.is_empty() {
                 parse_iso_to_ms(&pr.created_at)
                     .map(|created_ms| now_ms.saturating_sub(created_ms) > 10 * 60 * 1000)
                     .unwrap_or(false)
@@ -331,7 +331,7 @@ fn fetch_prs_blocking(project_root: &str) -> Result<Vec<PullRequest>, String> {
                 updated_at: pr.updated_at,
                 url: pr.url,
                 review_decision: pr.review_decision,
-                coderabbit_status,
+                review_status,
                 timeout_alert,
                 reviews,
             }
@@ -341,8 +341,8 @@ fn fetch_prs_blocking(project_root: &str) -> Result<Vec<PullRequest>, String> {
     Ok(prs)
 }
 
-/// Post a comment on a PR to trigger CodeRabbit review.
-pub fn trigger_coderabbit_review_blocking(
+/// Post a comment on a PR to trigger review bot.
+pub fn trigger_bot_review_blocking(
     project_root: &str,
     pr_number: u32,
 ) -> Result<(), String> {
@@ -352,7 +352,7 @@ pub fn trigger_coderabbit_review_blocking(
             "comment",
             &pr_number.to_string(),
             "--body",
-            "@coderabbitai review",
+            "/review",
         ])
         .current_dir(project_root)
         .env("LANG", "en_US.UTF-8")

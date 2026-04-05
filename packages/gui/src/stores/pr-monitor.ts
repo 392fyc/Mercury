@@ -4,7 +4,7 @@ import {
   getPrMonitorState,
   startPrPolling,
   stopPrPolling,
-  triggerCoderabbitReview,
+  triggerBotReview,
   mergePr,
   onPrListUpdated,
   type PullRequest,
@@ -67,9 +67,9 @@ async function stopPollingAction() {
   }
 }
 
-async function requestCoderabbitReview(prNumber: number) {
+async function requestBotReview(prNumber: number) {
   try {
-    await triggerCoderabbitReview(prNumber);
+    await triggerBotReview(prNumber);
   } catch (e) {
     lastError.value = String(e);
     throw e;
@@ -137,7 +137,7 @@ export function usePrMonitorStore() {
     fetchPrs,
     startPolling,
     stopPolling: stopPollingAction,
-    requestCoderabbitReview,
+    requestBotReview,
     requestMerge,
     syncState,
     initPrMonitorListeners,

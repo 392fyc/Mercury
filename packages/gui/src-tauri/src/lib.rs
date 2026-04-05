@@ -186,7 +186,7 @@ pub fn run() {
             commands::get_pr_monitor_state,
             commands::start_pr_polling,
             commands::stop_pr_polling,
-            commands::trigger_coderabbit_review,
+            commands::trigger_bot_review,
             commands::merge_pr,
         ])
         .build(tauri::generate_context!())

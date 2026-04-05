@@ -1089,7 +1089,7 @@ pub async fn stop_pr_polling(
 }
 
 #[tauri::command]
-pub async fn trigger_coderabbit_review(
+pub async fn trigger_bot_review(
     root: State<'_, ProjectRoot>,
     pr_number: u32,
 ) -> Result<serde_json::Value, String> {
@@ -1098,7 +1098,7 @@ pub async fn trigger_coderabbit_review(
     }
     let project_root = root.0.clone();
     tokio::task::spawn_blocking(move || {
-        crate::pr_monitor::trigger_coderabbit_review_blocking(&project_root, pr_number)
+        crate::pr_monitor::trigger_bot_review_blocking(&project_root, pr_number)
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))??;

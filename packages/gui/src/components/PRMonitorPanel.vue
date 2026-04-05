@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, reactive } from "vue";
 import { usePrMonitorStore } from "../stores/pr-monitor";
-import type { PullRequest, CodeRabbitStatus } from "../lib/tauri-bridge";
+import type { PullRequest, ReviewBotStatus } from "../lib/tauri-bridge";
 
 const emit = defineEmits<{ close: [] }>();
 const {
@@ -13,7 +13,7 @@ const {
   fetchPrs,
   startPolling,
   stopPolling,
-  requestCoderabbitReview,
+  requestBotReview,
   requestMerge,
   syncState,
   initPrMonitorListeners,
@@ -51,8 +51,8 @@ onUnmounted(() => {
   stopPolling();
 });
 
-function codeRabbitLabel(status: CodeRabbitStatus): string {
-  const labels: Record<CodeRabbitStatus, string> = {
+function reviewBotLabel(status: ReviewBotStatus): string {
+  const labels: Record<ReviewBotStatus, string> = {
     pending: "Pending",
     commented: "Reviewing",
     approved: "Approved",
@@ -61,8 +61,8 @@ function codeRabbitLabel(status: CodeRabbitStatus): string {
   return labels[status] ?? "Unknown";
 }
 
-function codeRabbitColor(status: CodeRabbitStatus): string {
-  const colors: Record<CodeRabbitStatus, string> = {
+function reviewBotColor(status: ReviewBotStatus): string {
+  const colors: Record<ReviewBotStatus, string> = {
     pending: "var(--text-muted)",
     commented: "var(--accent-main)",
     approved: "var(--accent-success)",
@@ -96,7 +96,7 @@ async function handleTriggerReview(pr: PullRequest) {
   if (pending[pr.number]) return;
   pending[pr.number] = true;
   try {
-    await requestCoderabbitReview(pr.number);
+    await requestBotReview(pr.number);
     await fetchPrs();
   } catch {
     // Error already stored in lastError by the store
@@ -194,13 +194,13 @@ function onKeydown(e: KeyboardEvent) {
           </div>
           <div class="pr-card-status">
             <div class="status-row">
-              <span class="status-label">CodeRabbit:</span>
+              <span class="status-label">Review:</span>
               <span
                 class="status-value"
-                :style="{ color: codeRabbitColor(pr.coderabbit_status) }"
+                :style="{ color: reviewBotColor(pr.review_status) }"
               >
-                <span class="status-dot" :style="{ background: codeRabbitColor(pr.coderabbit_status) }"></span>
-                {{ codeRabbitLabel(pr.coderabbit_status) }}
+                <span class="status-dot" :style="{ background: reviewBotColor(pr.review_status) }"></span>
+                {{ reviewBotLabel(pr.review_status) }}
               </span>
               <span v-if="pr.timeout_alert" class="timeout-badge">TIMEOUT</span>
             </div>
@@ -213,9 +213,9 @@ function onKeydown(e: KeyboardEvent) {
             <button
               class="action-btn review-btn"
               :disabled="pending[pr.number]"
-              title="@coderabbitai review"
+              title="/review"
               @click="handleTriggerReview(pr)"
-            >🐰 Request Review</button>
+            >Request Review</button>
             <button
               v-if="confirmMerge !== pr.number"
               class="action-btn merge-btn"
