@@ -1,14 +1,26 @@
 ---
 name: pr-flow
 description: |
-  Automate the full PR lifecycle: create PR, poll for CodeRabbit review, respond to ALL threads (inline + outside-diff), fix issues, resolve threads, re-review, and merge after approval. Use this skill when the user says "PR", "pull request", "create PR", "merge PR", "提PR", "合并", "PR流程", "开PR", "check PR status", "review comments", "标准PR流程". Use this skill after dev work reaches `implementation_done`, the branch is pushed, and the task has passed `main_review`. It replaces the manual C4-C7 steps in the Mercury workflow.
+  Automate the full PR lifecycle with mandatory sequential gates: create PR, poll for review bot (MUST use recurring job), read and triage ALL threads before fixing, fix + reply to every thread, resolve all threads (verify 0 unresolved), re-review, merge after approval. Use this skill when the user says "PR", "pull request", "create PR", "merge PR", "提PR", "合并", "PR流程", "开PR", "check PR status", "review comments", "标准PR流程". Use this skill after dev work reaches `implementation_done`, the branch is pushed, and the task has passed `main_review`. It replaces the manual C4-C7 steps in the Mercury workflow.
 ---
 
-# PR Flow
+# PR Flow — Mandatory Sequential Protocol
 
 ## Overview
 
-This skill automates the complete PR lifecycle with non-blocking polling and comprehensive review thread handling. It supports both single-PR and multi-PR workflows.
+This skill automates the complete PR lifecycle with mandatory sequential gates. Every phase has a GATE that MUST pass before proceeding. Do NOT skip gates. Do NOT combine phases.
+
+## Gates Summary
+
+| Gate | After | Condition |
+|------|-------|-----------|
+| G1 | Phase 1 | PR created, PR_NUMBER stored |
+| G2 | Phase 2 | Recurring poll active, reviews arrived |
+| G3 | Phase 3 | All threads enumerated + triaged |
+| G4 | Phase 4 | Every bot thread has a reply |
+| G5 | Phase 5 | 0 unresolved threads (verified via re-query) |
+| G6 | Phase 6 | Re-review requested, new poll created |
+| G7 | Phase 7 | reviewDecision=APPROVED, CI passes, 0 unresolved |
 
 Codex adaptation:
 - use `scripts/codex/git-safe.ps1` for `add`, `commit`, and `push`
@@ -67,7 +79,7 @@ When changes should be split by category:
 
 Do not rely on `git stash` in guarded Codex sessions.
 
-### Phase 2: Poll for CodeRabbit Review (Non-Blocking)
+### Phase 2: Poll for Review Bot (Non-Blocking)
 
 Do not use long blocking `sleep` loops for 10-minute review polling.
 
@@ -88,13 +100,13 @@ Each check should:
 2. fetch inline comments with `gh api repos/{owner}/{repo}/pulls/<N>/comments`
 3. detect new activity
 4. increment or clear the consecutive-no-activity counter
-5. after 3 consecutive quiet checks, trigger `@coderabbitai review` once if it has not already been requested
+5. after 3 consecutive quiet checks, trigger `/review` once if it has not already been requested
 
 ### Phase 3: Respond to ALL Review Threads
 
 Iteration cap: default `MAX_ITERATIONS=5`.
 
-Critical rule: every CodeRabbit comment must receive a response, even if you disagree.
+Critical rule: every review bot comment must receive a response, even if you disagree.
 
 This includes:
 - inline comments
@@ -113,11 +125,10 @@ This includes:
 
 These appear in the review body, not as inline threads.
 
-Always address them in a PR comment and include `@coderabbitai`:
+Always address them in a PR comment summarizing fixes, then trigger re-review separately:
 
 ```powershell
-gh pr comment <PR_NUMBER> --body "@coderabbitai
-## Addressed CodeRabbit review
+gh pr comment <PR_NUMBER> --body "## Addressed review feedback
 ### Inline comments (N/N resolved):
 1. **Issue** - fixed in <sha>
 ### Outside-diff comments (N/N resolved):
@@ -249,14 +260,14 @@ Remove-Item .pr-flow-iteration-*, .pr-flow-check-count-*, .pr-flow-multi.txt -Er
 
 Rules:
 - even threads you disagree with must be commented on and resolved
-- when posting non-direct PR comments, include `@coderabbitai`
+- trigger re-review via `/review` as a separate comment after all fixes are pushed
 - outside-diff comments still count as required responses
 
 ## Output
 
 ```text
 PR: #<number> (<url>)
-CodeRabbit: approved | changes_requested | pending
+Review: approved | changes_requested | pending
 Feedback: <N> inline, <N> outside-diff, <N> addressed, iteration=<N>
 Merge: merged | waiting | blocked
 Task: <taskId> -> done | pending

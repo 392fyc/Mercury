@@ -51,7 +51,7 @@ npx eslint --max-warnings 0 <changed-files>
    - If coverage < 50%, report which exports are missing JSDoc
    - Note: this scans the entire file, not just the diff hunks — pre-existing undocumented
      exports in a touched file will also count
-   - This aligns with CodeRabbit's pre-merge check (`.coderabbit.yaml` threshold: 50%)
+   - This aligns with the review bot's pre-merge check (docstring threshold: 50%)
 
 ```bash
 # Quick heuristic: count exports vs documented exports in changed .ts files.

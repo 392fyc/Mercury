@@ -41,7 +41,7 @@ Dispatch -> Dev Agent works inside worktreePath
 Dev: commit + push (from within worktreePath, never switches branch)
         |
         v
-Main: review -> PR -> CodeRabbit -> merge
+Main: review -> PR -> review bot -> merge
         |
         v
 Main: git worktree remove <path> + git branch -d <branch>

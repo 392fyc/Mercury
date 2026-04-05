@@ -194,7 +194,7 @@ Mercury's hooks use `exit 2` to block operations. In unattended/bypass mode:
 | **web-research-extended-gate.sh** | Same as above (Layer 2) | **Add bypass-mode passthrough** | Same reasoning as Layer 1. |
 | **push-guard.sh** | Blocks push to protected branches | **KEEP BLOCKING always** | Safety-critical. Push to develop/master must never be automated without PR. |
 | **pr-create-guard.sh** | Blocks PR create without metadata | **Add bypass-mode passthrough** | Automated PR creation by orchestrator should not be blocked. |
-| **pr-merge-guard.sh** | Blocks merge without CodeRabbit review | **KEEP BLOCKING always** | Safety-critical. Merging without review violates project rules. |
+| **pr-merge-guard.sh** | Blocks merge without review bot approval | **KEEP BLOCKING always** | Safety-critical. Merging without review violates project rules. |
 | **scope-guard.sh** | Blocks C drive installs | **KEEP BLOCKING always** | Safety-critical. C drive protection must always be enforced. |
 | **stop-guard.sh** | Blocks stop with staged changes | **Add bypass-mode passthrough with warning** | In automated cleanup, staged changes may be intentional. Log warning instead. |
 
@@ -223,7 +223,7 @@ fi
 These operations MUST require enforcement even in unattended mode:
 
 1. **Direct push to develop/master/main** (push-guard.sh) — violates PR-only merge policy
-2. **PR merge without review** (pr-merge-guard.sh) — violates CodeRabbit review requirement
+2. **PR merge without review** (pr-merge-guard.sh) — violates review bot approval requirement
 3. **C drive installation** (scope-guard.sh) — violates environment policy
 
 ### Migration to JSON Responses (Future Improvement)

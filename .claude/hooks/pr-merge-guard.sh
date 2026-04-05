@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# GATE: block gh pr merge unless CodeRabbit review has completed.
-# Token cost: ~1 gh API call when intercepted.
+# GATE: block gh pr merge unless automated review (Argus or CodeRabbit) has completed.
+# Token cost: ~2 gh API calls when intercepted.
 #
 # Pattern: same as pre-commit-guard.sh
-#   PreToolUse(Bash) → detect "gh pr merge" → check CodeRabbit status → block/allow
+#   PreToolUse(Bash) → detect "gh pr merge" → check review status → block/allow
 
 INPUT=$(cat)
 # Extract command (jq preferred, sed fallback)
@@ -61,54 +61,69 @@ if [ -f "$FLAG" ]; then
   exit 0
 fi
 
-# Check review decision (APPROVED / CHANGES_REQUESTED / REVIEW_REQUIRED)
+# ── Primary gate: reviewDecision ──────────────────────────────────
+# This covers approvals from any source: Argus, CodeRabbit, or human.
 REVIEW_DECISION=$(gh pr view "$PR_NUMBER" --json reviewDecision --jq '.reviewDecision // "REVIEW_REQUIRED"' 2>/dev/null | tr '[:lower:]' '[:upper:]')
 
-# Check CodeRabbit CI check status
-CR_STATUS=$(gh pr checks "$PR_NUMBER" --json name,state -q '.[] | select(.name | test("CodeRabbit";"i")) | .state' 2>/dev/null | head -n1 | tr '[:upper:]' '[:lower:]')
-
-if [ "$CR_STATUS" = "success" ]; then
+if [ "$REVIEW_DECISION" = "APPROVED" ]; then
   exit 0
 fi
 
-# KEY FIX: If PR is already APPROVED by reviewers, a pending/in-progress CI
-# check should NOT block merge. The review approval is the authoritative gate.
-# This prevents the scenario where CodeRabbit re-runs after a push and the
-# pending check blocks an already-approved PR.
-if [ "$REVIEW_DECISION" = "APPROVED" ]; then
-  case "$CR_STATUS" in
-    pending|queued|in_progress)
-      echo "NOTE: CodeRabbit check is ${CR_STATUS} but PR #${PR_NUMBER} is APPROVED — allowing merge." >&2
-      exit 0
-      ;;
-  esac
+# ── Secondary gate: has any review bot posted a review? ──────────
+# Check for reviews from argus-review[bot] or coderabbitai[bot].
+# Argus posts GitHub Review objects (not CI checks).
+REPO=$(gh pr view "$PR_NUMBER" --json baseRepository --jq '.baseRepository.nameWithOwner' 2>/dev/null)
+if [ -z "$REPO" ]; then
+  REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null)
 fi
 
-case "$CR_STATUS" in
-  pending|queued|in_progress)
-    cat >&2 <<MSG
-BLOCKED: CodeRabbit review still in progress for PR #${PR_NUMBER} (reviewDecision: ${REVIEW_DECISION}).
-Wait for review to complete before merging.
-To check: gh pr checks ${PR_NUMBER}
-To bypass (human-approved): touch ${STATE_DIR}/pr-merge-approved-${PR_NUMBER}
-MSG
-    exit 2
-    ;;
-esac
+BOT_REVIEW_STATE=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
+  --jq '[.[] | select(
+    .user.login == "argus-review[bot]" or
+    .user.login == "coderabbitai[bot]" or
+    .user.login == "coderabbitai"
+  )] | last | .state // empty' 2>/dev/null)
 
-if [ -z "$CR_STATUS" ]; then
+# Also check legacy CodeRabbit CI check (transition period)
+CR_CI_STATUS=$(gh pr checks "$PR_NUMBER" --json name,state -q '.[] | select(.name | test("CodeRabbit";"i")) | .state' 2>/dev/null | head -n1 | tr '[:upper:]' '[:lower:]')
+
+# ── Block CHANGES_REQUESTED before any bot/CI allow gates ─────────
+# This prevents stale bot approvals or legacy CI success from bypassing
+# a newer CHANGES_REQUESTED review decision.
+if [ "$REVIEW_DECISION" = "CHANGES_REQUESTED" ]; then
   cat >&2 <<MSG
-BLOCKED: No CodeRabbit check found for PR #${PR_NUMBER}.
-Ensure CodeRabbit is configured and has started reviewing.
+BLOCKED: Changes requested on PR #${PR_NUMBER}.
+Address review feedback before merging.
 To bypass (human-approved): touch ${STATE_DIR}/pr-merge-approved-${PR_NUMBER}
 MSG
   exit 2
 fi
 
-# CR_STATUS is something unexpected (fail, etc.)
+# Allow if CodeRabbit CI passed (and not CHANGES_REQUESTED — checked above)
+if [ "$CR_CI_STATUS" = "success" ]; then
+  exit 0
+fi
+
+# Allow only if bot's latest review is APPROVED (COMMENTED alone is not sufficient)
+if [ "$BOT_REVIEW_STATE" = "APPROVED" ]; then
+  echo "NOTE: Review bot approved (reviewDecision: ${REVIEW_DECISION}) — allowing merge." >&2
+  exit 0
+fi
+
+# ── Block: no review activity or review in progress ──────────────
+if [ -z "$BOT_REVIEW_STATE" ] && [ -z "$CR_CI_STATUS" ]; then
+  cat >&2 <<MSG
+BLOCKED: No automated review found for PR #${PR_NUMBER}.
+Trigger a review with /review or wait for auto-trigger.
+To bypass (human-approved): touch ${STATE_DIR}/pr-merge-approved-${PR_NUMBER}
+MSG
+  exit 2
+fi
+
+# Fallback: review in progress or unexpected state
 cat >&2 <<MSG
-BLOCKED: CodeRabbit status is "${CR_STATUS}" for PR #${PR_NUMBER}.
-Review must pass before agent can merge.
+BLOCKED: Review not yet complete for PR #${PR_NUMBER} (reviewDecision: ${REVIEW_DECISION}, botReview: ${BOT_REVIEW_STATE:-none}, CI: ${CR_CI_STATUS:-none}).
+Wait for review to complete before merging.
 To bypass (human-approved): touch ${STATE_DIR}/pr-merge-approved-${PR_NUMBER}
 MSG
 exit 2
