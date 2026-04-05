@@ -72,13 +72,17 @@ fi
 # ── Secondary gate: has any review bot posted a review? ──────────
 # Check for reviews from argus-review[bot] or coderabbitai[bot].
 # Argus posts GitHub Review objects (not CI checks).
-REPO=$(gh pr view "$PR_NUMBER" --json headRepository --jq '.headRepository.owner.login + "/" + .headRepository.name' 2>/dev/null)
+REPO=$(gh pr view "$PR_NUMBER" --json baseRepository --jq '.baseRepository.nameWithOwner' 2>/dev/null)
 if [ -z "$REPO" ]; then
   REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null)
 fi
 
 BOT_REVIEW_STATE=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
-  --jq '[.[] | select(.user.login == "argus-review[bot]" or .user.login == "coderabbitai[bot]")] | last | .state // empty' 2>/dev/null)
+  --jq '[.[] | select(
+    .user.login == "argus-review[bot]" or
+    .user.login == "coderabbitai[bot]" or
+    .user.login == "coderabbitai"
+  )] | last | .state // empty' 2>/dev/null)
 
 # Also check legacy CodeRabbit CI check (transition period)
 CR_CI_STATUS=$(gh pr checks "$PR_NUMBER" --json name,state -q '.[] | select(.name | test("CodeRabbit";"i")) | .state' 2>/dev/null | head -n1 | tr '[:upper:]' '[:lower:]')

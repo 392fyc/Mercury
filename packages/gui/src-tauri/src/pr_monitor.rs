@@ -290,7 +290,11 @@ fn fetch_prs_blocking(project_root: &str) -> Result<Vec<PullRequest>, String> {
             let bot_reviews: Vec<&GhReview> = pr
                 .reviews
                 .iter()
-                .filter(|r| r.author.login == "coderabbitai" || r.author.login == "argus-review[bot]")
+                .filter(|r| {
+                    r.author.login == "argus-review[bot]"
+                        || r.author.login == "coderabbitai"
+                        || r.author.login == "coderabbitai[bot]"
+                })
                 .collect();
 
             let review_status = if let Some(latest) = bot_reviews.last() {
