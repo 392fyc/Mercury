@@ -1,13 +1,13 @@
 ---
-name: pr-coderabbit-flow
-description: Full PR lifecycle — create PR, wait for CodeRabbit review, address all threads, then merge.
+name: pr-review-flow
+description: Full PR lifecycle — create PR, wait for Argus review, address all threads, then merge.
 category: WORKFLOW
 roles:
   - dev
 origin: IMPORTED
 tags:
   - pr
-  - coderabbit
+  - argus
   - github
   - review
 generation: 0
@@ -19,7 +19,7 @@ total_fallbacks: 0
 last_validated_at: 2026-04-04T00:00:00.000Z
 ---
 
-# PR → CodeRabbit → Merge Flow
+# PR → Argus → Merge Flow
 
 ## Steps
 
@@ -37,7 +37,7 @@ last_validated_at: 2026-04-04T00:00:00.000Z
    )"
    ```
 
-2. **Wait for CodeRabbit** — poll every 30s
+2. **Wait for Argus** — poll every 30s
    ```bash
    gh pr checks <PR_NUMBER> --watch
    ```
@@ -49,17 +49,17 @@ last_validated_at: 2026-04-04T00:00:00.000Z
 
 4. **Request re-review** — after all threads are addressed
    ```bash
-   gh pr comment <PR_NUMBER> --body "@coderabbitai All threads addressed. Please re-review."
+   gh pr comment <PR_NUMBER> --body "@argusai All threads addressed. Please re-review."
    ```
 
-5. **Merge** — only after CodeRabbit approves (no pending changes)
+5. **Merge** — only after Argus approves (no pending changes)
    ```bash
    gh pr merge <PR_NUMBER> --squash --delete-branch
    ```
 
 ## Critical Rules
 
-- NEVER merge before CodeRabbit review completes
+- NEVER merge before Argus review completes
 - NEVER force-push to `develop` or `master`
 - NEVER resolve PR threads yourself — that is the reviewer's action
 - Always push after every commit: `git push`

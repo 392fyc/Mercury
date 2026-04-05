@@ -1,7 +1,7 @@
 ---
 name: pr-flow
 description: |
-  Automate the full PR lifecycle: create PR, poll for CodeRabbit review, respond to ALL threads (inline + outside-diff), fix issues, resolve threads, re-review, and merge after approval. Use this skill when the user says "PR", "pull request", "create PR", "merge PR", "提PR", "合并", "PR流程", "开PR", "check PR status", "review comments", "标准PR流程". Use this skill after dev work reaches `implementation_done`, the branch is pushed, and the task has passed `main_review`. It replaces the manual C4-C7 steps in the Mercury workflow.
+  Automate the full PR lifecycle: create PR, poll for Argus review, respond to ALL threads (inline + outside-diff), fix issues, resolve threads, re-review, and merge after approval. Use this skill when the user says "PR", "pull request", "create PR", "merge PR", "提PR", "合并", "PR流程", "开PR", "check PR status", "review comments", "标准PR流程". Use this skill after dev work reaches `implementation_done`, the branch is pushed, and the task has passed `main_review`. It replaces the manual C4-C7 steps in the Mercury workflow.
 ---
 
 # PR Flow
@@ -67,7 +67,7 @@ When changes should be split by category:
 
 Do not rely on `git stash` in guarded Codex sessions.
 
-### Phase 2: Poll for CodeRabbit Review (Non-Blocking)
+### Phase 2: Poll for Argus Review (Non-Blocking)
 
 Do not use long blocking `sleep` loops for 10-minute review polling.
 
@@ -88,13 +88,13 @@ Each check should:
 2. fetch inline comments with `gh api repos/{owner}/{repo}/pulls/<N>/comments`
 3. detect new activity
 4. increment or clear the consecutive-no-activity counter
-5. after 3 consecutive quiet checks, trigger `@coderabbitai review` once if it has not already been requested
+5. after 3 consecutive quiet checks, trigger `/review` once if it has not already been requested
 
 ### Phase 3: Respond to ALL Review Threads
 
 Iteration cap: default `MAX_ITERATIONS=5`.
 
-Critical rule: every CodeRabbit comment must receive a response, even if you disagree.
+Critical rule: every Argus comment must receive a response, even if you disagree.
 
 This includes:
 - inline comments
@@ -113,11 +113,11 @@ This includes:
 
 These appear in the review body, not as inline threads.
 
-Always address them in a PR comment and include `@coderabbitai`:
+Always address them in a PR comment and include `@argus-review`:
 
 ```powershell
-gh pr comment <PR_NUMBER> --body "@coderabbitai
-## Addressed CodeRabbit review
+gh pr comment <PR_NUMBER> --body "@argus-review
+## Addressed Argus review
 ### Inline comments (N/N resolved):
 1. **Issue** - fixed in <sha>
 ### Outside-diff comments (N/N resolved):
@@ -249,14 +249,14 @@ Remove-Item .pr-flow-iteration-*, .pr-flow-check-count-*, .pr-flow-multi.txt -Er
 
 Rules:
 - even threads you disagree with must be commented on and resolved
-- when posting non-direct PR comments, include `@coderabbitai`
+- when posting non-direct PR comments, include `@argus-review`
 - outside-diff comments still count as required responses
 
 ## Output
 
 ```text
 PR: #<number> (<url>)
-CodeRabbit: approved | changes_requested | pending
+Argus: approved | changes_requested | pending
 Feedback: <N> inline, <N> outside-diff, <N> addressed, iteration=<N>
 Merge: merged | waiting | blocked
 Task: <taskId> -> done | pending
