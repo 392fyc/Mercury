@@ -31,7 +31,7 @@
 |---|-----|------|------|
 | G11 | Agent 是 CLI session 非服务 | Codex adapter 迁移到 MCP (方案 B) | ✅ 完成 (PR#29, TASK-MCP-001) |
 | G12 | MCP 仅做数据层 | Mercury orchestrator 暴露为 MCP server (方案 C) | G11 ✅ 前置已满足 |
-| G7 | 单层 code review | 增加 critic agent（独立于 CodeRabbit） | G12 |
+| G7 | 单层 code review | 增加 critic agent（独立于 PR review bot） | G12 |
 | G13 | Skill 无漂移检测 | CI 脚本校验 SKILL.md 引用路径、RPC 方法名 | ✅ 完成 (PR#30 W7) |
 | G10 | Handoff 是独立流程 | TaskBundle + git 分支状态 = 天然 handoff，Handoff JSON 降级 | ✅ 完成 |
 
