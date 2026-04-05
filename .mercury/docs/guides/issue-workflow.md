@@ -39,7 +39,7 @@ GitHub Issues is the single source of truth for all task tracking in Mercury.
 ```
 1. Check for existing Issue (gh issue list)
 2. If none: create Issue (gh issue create --title "..." --label "..." --assignee ...)
-3. Create branch: feature/TASK-XXX (per git-flow guide), fix/issue-N-slug, or feat/issue-N-slug
+3. Create branch (feature/TASK-XXX for orchestrator-dispatched tasks; fix/issue-N-slug or feat/issue-N-slug for manual GitHub Issue work)
 4. Work, commit, push
 5. Post progress comment: gh issue comment N --body "Phase X complete: ..."
 6. Create PR with Closes/Fixes/Resolves #N or Refs #N in body
