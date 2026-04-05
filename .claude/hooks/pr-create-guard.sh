@@ -11,12 +11,9 @@
 INPUT=$(cat)
 
 # In bypass/unattended mode, skip metadata enforcement — orchestrator provides metadata
-if command -v jq >/dev/null 2>&1; then
-  PERM_MODE=$(echo "$INPUT" | jq -r '.permission_mode // "default"' 2>/dev/null)
-else
-  PERM_MODE=$(echo "$INPUT" | sed -n 's/.*"permission_mode"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
-fi
-if [ "$PERM_MODE" = "bypassPermissions" ] || [ "$PERM_MODE" = "dontAsk" ]; then
+source "$(dirname "$0")/lib/permission-mode.sh"
+PERM_MODE=$(get_permission_mode "$INPUT")
+if is_bypass_mode "$PERM_MODE"; then
   exit 0
 fi
 

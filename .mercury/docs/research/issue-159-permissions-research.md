@@ -29,6 +29,7 @@ Claude Code's `bypassPermissions` mode skips **human permission prompts** but do
 - Hook-based blocks — a hook returning `exit 2` or `{"decision":"block"}` blocks the tool call even in bypass mode
 
 ### Key Insight
+
 Permission evaluation order: **hooks** -> **deny rules** -> **ask rules** -> **allow rules** -> **permission mode**. `bypassPermissions` only affects the final step. Hooks and deny rules take precedence.
 
 **Source**: [Configure permissions - Claude Code Docs](https://code.claude.com/docs/en/permissions)
@@ -68,6 +69,7 @@ Issue #20946 (opened 2026-01-26) reports that in `--dangerously-skip-permissions
 **Yes.** The `permission_mode` field is available in the hook input JSON. Hooks can read this field and conditionally decide to allow or block.
 
 **Hook input JSON includes:**
+
 ```json
 {
   "session_id": "abc123",
@@ -83,6 +85,7 @@ Issue #20946 (opened 2026-01-26) reports that in `--dangerously-skip-permissions
 ```
 
 **Implementation pattern:**
+
 ```bash
 INPUT=$(cat)
 PERM_MODE=$(echo "$INPUT" | jq -r '.permission_mode // "default"')
@@ -112,6 +115,7 @@ exit 2
 **Yes.** There are two response mechanisms:
 
 ### Mechanism 1: Exit codes (simple)
+
 | Exit Code | Behavior |
 |-----------|----------|
 | `0` | Allow (or process JSON stdout) |
@@ -141,7 +145,9 @@ Exit with code 0 and print JSON to stdout for fine-grained control:
 - `"ask"` escalates to user confirmation (problematic in unattended mode)
 
 ### For Stop hooks
+
 Stop hooks use a different format with top-level `decision`:
+
 ```json
 {"decision": "block", "reason": "Staged uncommitted changes detected."}
 ```
@@ -227,6 +233,7 @@ Consider migrating from `exit 2` to JSON `permissionDecision` responses. Benefit
 - JSON `"allow"` with `permissionDecisionReason` gives audit trail
 
 Example migration for pre-commit-guard:
+
 ```bash
 # Instead of: exit 2
 # Use:
