@@ -10,6 +10,8 @@
 | `master` | Stable — PR from develop only | Human / Main Agent |
 | `develop` | Integration baseline — **PR from feature only** | Main Agent via `gh pr merge` |
 | `feature/TASK-XXX` | Per-task work branch | Dev works here; Main creates, opens PR, and merges |
+| `fix/issue-N-slug` | Issue-linked bugfix | Same workflow as feature branches |
+| `feat/issue-N-slug` | Issue-linked feature | Same workflow as feature branches |
 
 ## Workflow
 
