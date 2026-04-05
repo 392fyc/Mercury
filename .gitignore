@@ -6,6 +6,9 @@ node_modules/
 dist/
 dist-ssr/
 *.local
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
 
 # Rust/Tauri
 packages/gui/src-tauri/target/
@@ -43,6 +46,7 @@ $RECYCLE.BIN/
 # Claude Code
 .claude/plans/
 .claude/hooks/state/
+.claude/scheduled_tasks.lock
 .mercury/state/
 .claude/settings.local.json
 CLAUDE.md
