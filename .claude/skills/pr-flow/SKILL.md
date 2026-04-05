@@ -1,7 +1,7 @@
 ---
 name: pr-flow
 description: |
-  Automate the full PR lifecycle: create PR, poll for Argus review, respond to ALL threads (inline + outside-diff), fix issues, resolve threads, re-review, and merge after approval. Use this skill when the user says "PR", "pull request", "create PR", "merge PR", "提PR", "合并", "PR流程", "开PR", "check PR status", "review comments", "标准PR流程". Use this skill after dev work reaches `implementation_done`, the branch is pushed, and the task has passed `main_review`. It replaces the manual C4-C7 steps in the Mercury workflow.
+  Automate the full PR lifecycle: create PR, poll for review bot, respond to ALL threads (inline + outside-diff), fix issues, resolve threads, re-review, and merge after approval. Use this skill when the user says "PR", "pull request", "create PR", "merge PR", "提PR", "合并", "PR流程", "开PR", "check PR status", "review comments", "标准PR流程". Use this skill after dev work reaches `implementation_done`, the branch is pushed, and the task has passed `main_review`. It replaces the manual C4-C7 steps in the Mercury workflow.
 user-invocable: true
 allowed-tools: Bash, Read, Grep, Glob, Edit, Write, WebSearch, WebFetch, Agent, TodoWrite, CronCreate, CronDelete
 ---
@@ -57,7 +57,7 @@ When changes should be split by task category (e.g., feature + bugfix + UI):
 3. After all branches created: `git stash drop`
 4. Track all PR numbers for parallel review monitoring
 
-### Phase 2: Poll for Argus Review (Non-Blocking)
+### Phase 2: Poll for Review Bot (Non-Blocking)
 
 **DO NOT** use blocking `sleep` loops. Use `CronCreate` for periodic checks:
 
@@ -70,8 +70,8 @@ CronCreate:
 
 The check prompt should:
 1. Fetch review status for all tracked PRs via `gh pr view <N> --json reviews,reviewDecision`
-2. Check for new **inline** comments via `gh api repos/<OWNER>/<REPO>/pulls/<N>/comments --jq '[.[] | select(.user.login == "argus-review[bot]")]'`
-3. Check for new **outside-diff** comments (review body / PR-level) via `gh api repos/<OWNER>/<REPO>/issues/<N>/comments --jq '[.[] | select(.user.login == "argus-review[bot]")]'`
+2. Check for new **inline** comments via `gh api repos/<OWNER>/<REPO>/pulls/<N>/comments --jq '[.[] | select(.user.login == "<REVIEW_BOT>")]'`
+3. Check for new **outside-diff** comments (review body / PR-level) via `gh api repos/<OWNER>/<REPO>/issues/<N>/comments --jq '[.[] | select(.user.login == "<REVIEW_BOT>")]'`
 4. Track consecutive checks via file-based counter (cron jobs are stateless across invocations):
 
    ```bash
@@ -84,7 +84,7 @@ The check prompt should:
    fi
    ```
 
-5. After **3 consecutive checks with no Argus activity**, proactively trigger (with dedup):
+5. After **3 consecutive checks with no review bot activity**, proactively trigger (with dedup):
 
    ```bash
    if [ "$COUNT" -ge 3 ]; then
@@ -107,7 +107,7 @@ The check prompt should:
 - Post a PR comment notifying the user
 - Stop automatic rework and wait for human guidance
 
-**CRITICAL RULE**: Every Argus comment MUST receive a response, even if you disagree.
+**CRITICAL RULE**: Every review bot comment MUST receive a response, even if you disagree.
 This includes:
 - **Inline comments** (accessible via `gh api repos/{owner}/{repo}/pulls/<N>/comments`)
 - **Outside-diff comments** (embedded in review body, not inline — address in PR comment)
@@ -122,12 +122,12 @@ This includes:
 
 #### For outside-diff comments:
 1. These appear in the review body, not as inline threads
-2. **IMPORTANT**: When posting PR comments (non-direct thread replies), always include `@argus-review` mention so Argus can detect and track the response
+2. **IMPORTANT**: When posting PR comments (non-direct thread replies), always include `@<REVIEW_BOT>` mention so the review bot can detect and track the response
 3. Address them in a PR comment summarizing all fixes:
 
    ```bash
-   gh pr comment <PR_NUMBER> --body "@argus-review
-   ## Addressed Argus review
+   gh pr comment <PR_NUMBER> --body "@<REVIEW_BOT>
+   ## Addressed review feedback
    ### Inline comments (N/N resolved):
    1. **Issue** — fixed in <sha>
    ### Outside-diff comments (N/N resolved):
@@ -241,7 +241,7 @@ if [ "$ITER" -ge "$MAX_ITERATIONS" ]; then
 fi
 ```
 
-Return to **Phase 2** polling. Repeat the Phase 2-5 cycle until Argus approves.
+Return to **Phase 2** polling. Repeat the Phase 2-5 cycle until the review bot approves.
 
 Typical convergence: 1-2 iterations for most PRs. Clean up `$ITER_FILE` after merge.
 
@@ -371,14 +371,14 @@ When running multiple PRs in parallel:
 | Out-of-scope suggestion | Acknowledge, explain it is out of scope, resolve thread |
 
 **Rules**:
-- Even threads you disagree with MUST be commented on and resolved. Argus will not re-approve while unresolved threads remain.
-- When posting non-direct replies (PR comments instead of thread replies), always include `@argus-review` so Argus can detect the response.
+- Even threads you disagree with MUST be commented on and resolved. The review bot will not re-approve while unresolved threads remain.
+- When posting non-direct replies (PR comments instead of thread replies), always include `@<REVIEW_BOT>` so the review bot can detect the response.
 
 ## Output
 
 ```text
 PR: #<number> (<url>)
-Argus: approved | changes_requested | pending
+Review: approved | changes_requested | pending
 Feedback: <N> inline, <N> outside-diff, <N> addressed, iteration=<N>
 Merge: merged | waiting | blocked
 Task: <taskId> -> done | pending

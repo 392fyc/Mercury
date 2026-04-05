@@ -1,6 +1,6 @@
 ---
 name: pr-review-flow
-description: Full PR lifecycle — create PR, wait for Argus review, address all threads, then merge.
+description: Full PR lifecycle — create PR, wait for review bot, address all threads, then merge.
 category: WORKFLOW
 roles:
   - dev
@@ -19,7 +19,7 @@ total_fallbacks: 0
 last_validated_at: 2026-04-04T00:00:00.000Z
 ---
 
-# PR → Argus → Merge Flow
+# PR → Review → Merge Flow
 
 ## Steps
 
@@ -37,7 +37,7 @@ last_validated_at: 2026-04-04T00:00:00.000Z
    )"
    ```
 
-2. **Wait for Argus** — poll every 30s
+2. **Wait for the review bot** — poll every 30s
    ```bash
    gh pr checks <PR_NUMBER> --watch
    ```
@@ -52,14 +52,14 @@ last_validated_at: 2026-04-04T00:00:00.000Z
    gh pr comment <PR_NUMBER> --body "@argusai All threads addressed. Please re-review."
    ```
 
-5. **Merge** — only after Argus approves (no pending changes)
+5. **Merge** — only after the review bot approves (no pending changes)
    ```bash
    gh pr merge <PR_NUMBER> --squash --delete-branch
    ```
 
 ## Critical Rules
 
-- NEVER merge before Argus review completes
+- NEVER merge before review bot check completes
 - NEVER force-push to `develop` or `master`
 - NEVER resolve PR threads yourself — that is the reviewer's action
 - Always push after every commit: `git push`
