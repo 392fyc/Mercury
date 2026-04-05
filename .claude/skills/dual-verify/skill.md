@@ -77,7 +77,7 @@ Final Verdict: PASS | NEEDS-CHANGES
 3. Set the review-passed flag:
 
 ```bash
-touch .mercury/state/review-passed
+mkdir -p .mercury/state && touch .mercury/state/review-passed
 ```
 
 4. Commit and push.

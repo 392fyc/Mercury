@@ -123,6 +123,7 @@ exit 2
 | Other non-zero | Hook error (tool call proceeds) |
 
 ### Mechanism 2: JSON stdout with exit 0 (structured)
+
 Exit with code 0 and print JSON to stdout for fine-grained control:
 
 ```json
@@ -250,16 +251,19 @@ exit 0
 ## Phase 2 — .claude/ Protected Directory (added after user feedback)
 
 ### Root Cause
+
 Claude Code hard-protects `.claude/` directory writes even in `bypassPermissions` mode ([#38806](https://github.com/anthropics/claude-code/issues/38806), [#37253](https://github.com/anthropics/claude-code/issues/37253)). This means `Edit`/`Write`/`Bash` tool calls targeting `.claude/hooks/state/` still trigger permission prompts.
 
 ### Solution Implemented
+
 Migrated all hook state files from `.claude/hooks/state/` to `.mercury/state/`:
 - `.mercury/state/` is outside the protected directory → no permission prompts
-- All 10 hooks updated with fallback: `_PROJECT="${CLAUDE_PROJECT_DIR:-$(cd dirname/../.. && pwd)}"`
+- All 10 hooks updated with fallback: `_PROJECT="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"`
 - Legacy tracked state files removed from git index
 - Both dual-verify skill copies reference new path
 
 ### Protected Directory Scope (per official docs)
+
 | Path | Protected | Notes |
 |------|-----------|-------|
 | `.git/` | Yes | Repository integrity |

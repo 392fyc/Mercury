@@ -2,7 +2,9 @@
 # GATE: block stop if staged uncommitted changes exist.
 # Token cost: ZERO. No external deps.
 
-cd "$CLAUDE_PROJECT_DIR" 2>/dev/null || exit 0
+# Compute project root once — used for cd and STATE_DIR
+_PROJECT="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
+cd "$_PROJECT" 2>/dev/null || exit 0
 
 # Read stdin for permission mode (Stop hooks also receive JSON input)
 STOP_INPUT=$(cat 2>/dev/null || true)
@@ -22,7 +24,6 @@ if [ -n "$STAGED" ]; then
 fi
 
 # Clean up session-scoped state flags for this session
-_PROJECT="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
 STATE_DIR="$_PROJECT/.mercury/state"
 SESSION_ID="${PPID:-$$}"
 rm -f "$STATE_DIR/session-init-${SESSION_ID}" 2>/dev/null
