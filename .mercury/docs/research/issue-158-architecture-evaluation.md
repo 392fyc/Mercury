@@ -278,7 +278,7 @@ Claude Code has a comprehensive lifecycle hook system with 20+ event types: [Sou
 - Integration testing of the new composition (3-5 days)
 
 **Risks**:
-- Claude Code's internal file formats (`~/.claude/tasks/`, `~/.claude/teams/config.json`) are not documented as stable APIs -- the GUI would be fragile
+- Claude Code's internal file formats (`~/.claude/tasks/`, `~/.claude/teams/config.json`) are not documented as stable APIs -- the GUI would be fragile. **Mitigation**: use Agent SDK session management APIs (capture/resume/fork) instead of reading internal files directly; these are a supported public contract.
 - Agent Teams is still experimental with known limitations (no session resume, task status lag)
 - Loss of centralized control -- Mercury's orchestrator is a single point of coordination; in Path A, coordination is distributed across hooks/skills/teams
 
