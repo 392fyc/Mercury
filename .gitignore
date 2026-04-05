@@ -63,3 +63,7 @@ mercury.config.json
 
 # Autoresearch state (standalone mode, transient)
 .research/
+
+# PR review agent (deployment-specific, use .pr_agent.toml.example as template)
+.pr_agent.toml
+.mercury/docs/guides/argus-review-guide.md

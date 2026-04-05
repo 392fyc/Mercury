@@ -18,7 +18,7 @@
 1. Main Agent creates `feature/TASK-XXX` from develop, checks it out, dispatches to Dev
 2. Dev Agent works on that branch, commits + pushes. **Never switches branches.**
 3. Main Review PASS → Main Agent opens PR: `feature/TASK-XXX` → `develop`
-4. CodeRabbit auto-reviews the PR (async, non-blocking)
+4. Review bot auto-reviews the PR (async, non-blocking)
 5. Main Agent merges PR via `gh pr merge`
 6. Milestone release: PR `develop` → `master`
 
@@ -34,7 +34,7 @@ Both `develop` and `master` have branch protection rules enabled:
 | Required approving reviews | 1 | 1 |
 | Dismiss stale reviews | Yes | Yes |
 
-PRs must receive at least one approved review (from CodeRabbit or an authorized human reviewer) before merging.
+PRs must receive at least one approved review (from the configured review bot or an authorized human reviewer) before merging.
 
 ## Commit Format
 

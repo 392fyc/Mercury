@@ -14,7 +14,7 @@ This section stores the KB mirror of all active Mercury skills. The operational 
 | Skill | Category | Roles | Origin | Generation |
 |-------|----------|-------|--------|------------|
 | [git-commit-heredoc-pattern](git-commit-heredoc-pattern.md) | TOOL_GUIDE | dev, main, research, design | IMPORTED | 0 |
-| [pr-coderabbit-flow](pr-coderabbit-flow.md) | WORKFLOW | dev | IMPORTED | 0 |
+| [pr-review-flow](pr-review-flow.md) | WORKFLOW | dev | IMPORTED | 0 |
 | [kb-obsidian-access](kb-obsidian-access.md) | TOOL_GUIDE | main, research | IMPORTED | 0 |
 | [dispatch-scope-validation](dispatch-scope-validation.md) | TOOL_GUIDE | main | IMPORTED | 0 |
 | [research-web-verify](research-web-verify.md) | TOOL_GUIDE | research, dev, main | IMPORTED | 0 |

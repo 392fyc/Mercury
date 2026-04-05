@@ -720,7 +720,7 @@ export function onRemoteControlLog(
 
 // ─── PR Monitor Operations ───
 
-export type CodeRabbitStatus = "pending" | "commented" | "approved" | "changes_requested";
+export type ReviewBotStatus = "pending" | "commented" | "approved" | "changes_requested";
 
 export interface PrReview {
   author: string;
@@ -736,7 +736,7 @@ export interface PullRequest {
   updated_at: string;
   url: string;
   review_decision: string | null;
-  coderabbit_status: CodeRabbitStatus;
+  review_status: ReviewBotStatus;
   timeout_alert: boolean;
   reviews: PrReview[];
 }
@@ -769,9 +769,9 @@ export async function stopPrPolling(): Promise<{ ok: true }> {
   return invoke("stop_pr_polling");
 }
 
-/** Post "@coderabbitai review" comment on a PR. */
-export async function triggerCoderabbitReview(prNumber: number): Promise<{ ok: true }> {
-  return invoke("trigger_coderabbit_review", { prNumber });
+/** Post "/review" comment on a PR to trigger review bot. */
+export async function triggerBotReview(prNumber: number): Promise<{ ok: true }> {
+  return invoke("trigger_bot_review", { prNumber });
 }
 
 /** Squash-merge a PR (with delete-branch). */

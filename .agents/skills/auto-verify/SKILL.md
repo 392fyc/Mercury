@@ -58,7 +58,7 @@ npx eslint --max-warnings 0 <changed-files>
    - Count exported classes, functions, async functions, and const declarations, then count those with `/** ... */`
    - If coverage is below 50%, report which files are under the threshold
    - This scans the entire file, not just diff hunks
-   - This aligns with CodeRabbit's pre-merge check (`.coderabbit.yaml` threshold: 50%)
+   - This aligns with the review bot's pre-merge check (docstring threshold: 50%)
 
 ```powershell
 git diff --cached --name-only --diff-filter=ACMRT -- '*.ts' | ForEach-Object {

@@ -1,0 +1,22 @@
+# Mercury — PR-Agent Configuration (repo-level overrides)
+# Copy this file to .pr_agent.toml and customize for your PR review agent.
+# This file is read by self-hosted PR-Agent instances (e.g., Qodo Merge, Argus).
+# Docs: https://qodo-merge-docs.qodo.ai/usage-guide/configuration_options/
+
+[pr_reviewer]
+extra_instructions = """\
+Review instructions for your PR review bot go here.
+Customize focus areas, review language, and priority rules.
+"""
+
+[pr_description]
+extra_instructions = """\
+PR description generation instructions go here.
+"""
+
+[config]
+# Ignore generated/non-essential files
+ignore_files = [
+    "**/*.lock",
+    "dist/**",
+]
