@@ -88,8 +88,8 @@ The check prompt should:
 
    ```bash
    if [ "$COUNT" -ge 3 ]; then
-     # Only trigger if no existing /review comment
-     if ! gh api repos/{owner}/{repo}/issues/${PR_NUMBER}/comments --jq '.[].body' | grep -Fq "/review"; then
+     # Only trigger if no existing standalone /review comment (exact line match)
+     if ! gh api repos/{owner}/{repo}/issues/${PR_NUMBER}/comments --jq '.[].body' | grep -xq '/review'; then
        gh pr comment "$PR_NUMBER" --body "/review"
      fi
      rm -f "$COUNT_FILE"

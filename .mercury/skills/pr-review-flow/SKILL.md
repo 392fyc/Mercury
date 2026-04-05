@@ -7,7 +7,7 @@ roles:
 origin: IMPORTED
 tags:
   - pr
-  - argus
+  - review-bot
   - github
   - review
 generation: 0
@@ -49,7 +49,7 @@ last_validated_at: 2026-04-04T00:00:00.000Z
 
 4. **Request re-review** — after all threads are addressed
    ```bash
-   gh pr comment <PR_NUMBER> --body "@argusai All threads addressed. Please re-review."
+   gh pr comment <PR_NUMBER> --body "/review"
    ```
 
 5. **Merge** — only after the review bot approves (no pending changes)
