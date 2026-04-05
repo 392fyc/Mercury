@@ -12,6 +12,7 @@ GitHub Issues is the single source of truth for all task tracking in Mercury.
 ## Label Taxonomy
 
 ### Priority (mutually exclusive)
+
 | Label | Color | Use when |
 |-------|-------|----------|
 | `P0` | #B60205 | Production down, data loss, security vulnerability |
@@ -20,6 +21,7 @@ GitHub Issues is the single source of truth for all task tracking in Mercury.
 | `P3` | #0E8A16 | Nice to have, backlog |
 
 ### Type (one per issue)
+
 | Label | Color | Use when |
 |-------|-------|----------|
 | `bug` | #d73a4a | Something is broken |
@@ -30,13 +32,13 @@ GitHub Issues is the single source of truth for all task tracking in Mercury.
 
 ## Enforcement
 
-- `pr-create-guard.sh` blocks PRs without `--assignee`, `--label`, `--base develop`, and Issue reference (`Closes #N` / `Fixes #N` / `Resolves #N` / `Refs #N`)
-- CLAUDE.md MUST rule: "Issue-first workflow"
+- [`.claude/hooks/pr-create-guard.sh`](../../../.claude/hooks/pr-create-guard.sh) blocks PRs without `--assignee`, `--label`, `--base develop`, and Issue reference (`Closes #N` / `Fixes #N` / `Resolves #N` / `Refs #N`)
+- [CLAUDE.md](../../../CLAUDE.md) MUST rule: "Issue-first workflow"
 - Agents post milestone comments via `gh issue comment`
 
 ## Agent Workflow
 
-```
+```bash
 1. Check for existing Issue (gh issue list)
 2. If none: create Issue (gh issue create --title "..." --label "..." --assignee ...)
 3. Create branch (feature/TASK-XXX for orchestrator-dispatched tasks; fix/issue-N-slug or feat/issue-N-slug for manual GitHub Issue work)
