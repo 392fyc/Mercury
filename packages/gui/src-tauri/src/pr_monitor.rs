@@ -250,6 +250,8 @@ struct GhAuthor {
 struct GhReview {
     author: GhAuthor,
     state: String,
+    #[serde(rename = "submittedAt", default)]
+    submitted_at: Option<String>,
 }
 
 fn fetch_prs_blocking(project_root: &str) -> Result<Vec<PullRequest>, String> {
@@ -287,7 +289,7 @@ fn fetch_prs_blocking(project_root: &str) -> Result<Vec<PullRequest>, String> {
     let prs = gh_prs
         .into_iter()
         .map(|pr| {
-            let bot_reviews: Vec<&GhReview> = pr
+            let mut bot_reviews: Vec<&GhReview> = pr
                 .reviews
                 .iter()
                 .filter(|r| {
@@ -296,6 +298,9 @@ fn fetch_prs_blocking(project_root: &str) -> Result<Vec<PullRequest>, String> {
                         || r.author.login == "coderabbitai[bot]"
                 })
                 .collect();
+
+            // Sort by submittedAt to ensure .last() is chronologically newest
+            bot_reviews.sort_by(|a, b| a.submitted_at.cmp(&b.submitted_at));
 
             let review_status = if let Some(latest) = bot_reviews.last() {
                 match latest.state.as_str() {

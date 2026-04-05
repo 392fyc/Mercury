@@ -92,14 +92,10 @@ if [ "$CR_CI_STATUS" = "success" ]; then
   exit 0
 fi
 
-# Allow if a bot has reviewed and reviewDecision is at least not CHANGES_REQUESTED
-if [ -n "$BOT_REVIEW_STATE" ] && [ "$REVIEW_DECISION" != "CHANGES_REQUESTED" ]; then
-  case "$BOT_REVIEW_STATE" in
-    COMMENTED|APPROVED)
-      echo "NOTE: Review bot has reviewed (state: ${BOT_REVIEW_STATE}), reviewDecision: ${REVIEW_DECISION} — allowing merge." >&2
-      exit 0
-      ;;
-  esac
+# Allow only if bot's latest review is APPROVED (COMMENTED alone is not sufficient)
+if [ "$BOT_REVIEW_STATE" = "APPROVED" ]; then
+  echo "NOTE: Review bot approved (reviewDecision: ${REVIEW_DECISION}) — allowing merge." >&2
+  exit 0
 fi
 
 # ── Block: no review activity or review in progress ──────────────
