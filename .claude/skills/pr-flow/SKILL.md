@@ -195,7 +195,7 @@ git push
 
 **MANDATORY**: Do NOT resolve threads. Do NOT post re-review triggers. Just wait.
 
-Create a CronCreate job to poll for Argus response:
+Argus receives the push event and will automatically run incremental review. Create a CronCreate job to poll for the response:
 
 ```
 CronCreate:
@@ -206,7 +206,7 @@ CronCreate:
     2. Check for new reviews from argus-review[bot] after the fix commit
     3. If APPROVED → report to user, delete this cron
     4. If new COMMENT review with findings → report findings to user
-    5. After 3 quiet checks, post "@argus-review review -i" (incremental, max 3 triggers)
+    5. After 6 quiet checks (1 hour), report timeout to user for manual intervention
   recurring: true
 ```
 
@@ -240,17 +240,31 @@ gh pr checks "$PR_NUMBER"
 DECISION=$(gh pr view "$PR_NUMBER" --json reviewDecision --jq '.reviewDecision')
 [ "$DECISION" = "APPROVED" ] || echo "BLOCKED: decision=$DECISION"
 
-# 3. Zero unresolved threads
-MSYS_NO_PATHCONV=1 gh api graphql -f query="
-query {
-  repository(owner: \"${OWNER}\", name: \"${REPO_NAME}\") {
-    pullRequest(number: ${PR_NUMBER}) {
-      reviewThreads(first: 100) {
-        nodes { isResolved }
+# 3. Zero unresolved threads (paginated query)
+UNRESOLVED=0
+CURSOR=""
+while true; do
+  AFTER_ARG=""
+  [ -n "$CURSOR" ] && AFTER_ARG=", after: \"$CURSOR\""
+  RESULT=$(MSYS_NO_PATHCONV=1 gh api graphql -f query="
+  query {
+    repository(owner: \"${OWNER}\", name: \"${REPO_NAME}\") {
+      pullRequest(number: ${PR_NUMBER}) {
+        reviewThreads(first: 100${AFTER_ARG}) {
+          pageInfo { hasNextPage endCursor }
+          nodes { isResolved }
+        }
       }
     }
-  }
-}" --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved==false)] | length'
+  }")
+  COUNT=$(echo "$RESULT" | jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved==false)] | length')
+  UNRESOLVED=$((UNRESOLVED + COUNT))
+  HAS_NEXT=$(echo "$RESULT" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage')
+  [ "$HAS_NEXT" != "true" ] && break
+  CURSOR=$(echo "$RESULT" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor')
+done
+echo "Unresolved threads: $UNRESOLVED"
+[ "$UNRESOLVED" -eq 0 ] || echo "BLOCKED: $UNRESOLVED unresolved threads"
 ```
 
 **GATE 6**: All checks pass. Then merge:

@@ -4,7 +4,7 @@ Orchestrator: decomposes tasks, delegates to sub-agents, reviews results, commun
 
 ## Responsibility
 
-- Task decomposition and delegation to dev, acceptance, research, design agents
+- Task decomposition and delegation to dev, acceptance, critic, research, design agents
 - Receipt review (completeness check on dev output)
 - Acceptance flow coordination
 - User communication and session summarization
@@ -29,7 +29,7 @@ Orchestrator: decomposes tasks, delegates to sub-agents, reviews results, commun
 
 ## Delegation
 
-Can dispatch to: dev, acceptance, research, design
+Can dispatch to: dev, acceptance, critic, research, design
 
 ## Input
 
