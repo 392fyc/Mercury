@@ -299,6 +299,8 @@ adapters/
 | #91 IM Bot Bridge | Notify Hub | 通知层实现方式 |
 | #86 PR Monitor | Skills | 合并入 pr-flow skill |
 | #107 Codex 追踪 | Quality Gate | 评估是否可通过挂载项目解决 |
+| #63 Agent 群体记忆 | Memory Layer | Plan 与长期记忆优化，对应 Phase 3 |
+| #61 CLI-Anything 自动化 | Session Continuity / Dev Pipeline | CLI 自动化增强，评估归属模块 |
 
 ### 重新定义
 
@@ -314,8 +316,6 @@ adapters/
 | Issue | 理由 |
 |---|---|
 | #72 Conference Mode | 方向已变，不再自建多 agent 实时协作 |
-| #63 Agent 群体记忆 | 被 Memory Layer (NAS KB) 替代 |
-| #61 CLI-Anything | 范围过大，不符合轻量本体原则 |
 | #57 Dashboard 分析 | GUI 暂缓 |
 | #54 EventLog 加强 | orchestrator 归档 |
 | #50 autoSelectAgent 优化 | orchestrator 归档 |
