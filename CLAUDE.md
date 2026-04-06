@@ -3,9 +3,8 @@
 ## Identity
 
 Agent: Claude Code
-Role definitions: `.mercury/roles/{role}.yaml` (current, Phase 0 后归档)
-Target: `.claude/agents/{role}.md` (Phase 0 创建后成为唯一主路径)
-Migration rule: Phase 0 完成前读 `.mercury/roles/`; 完成后只读 `.claude/agents/`，旧 YAML 移入 `archive/`
+Role definitions: `.claude/agents/{role}.md` (Phase 0 已完成迁移)
+Archived: `.mercury/roles/*.yaml` → `archive/roles/`
 
 ## Navigation
 
@@ -16,7 +15,7 @@ Read these docs on demand when you need the corresponding information:
 | **Project direction (最高准则)** | `.mercury/docs/DIRECTION.md` |
 | **Execution plan** | `.mercury/docs/EXECUTION-PLAN.md` |
 | Role definitions (current) | `.mercury/roles/{role}.yaml` |
-| Agent definitions (Phase 0 创建，目录尚不存在) | `.claude/agents/*.md` |
+| Agent definitions | `.claude/agents/*.md` |
 | Git branching rules | `.mercury/docs/guides/git-flow.md` |
 | GitHub Issues workflow | `.mercury/docs/guides/issue-workflow.md` |
 | SoT task workflow (legacy, for reference) | `.mercury/docs/guides/sot-workflow.md` |
