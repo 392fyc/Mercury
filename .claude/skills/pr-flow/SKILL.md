@@ -279,9 +279,19 @@ gh pr merge "$PR_NUMBER" --squash --delete-branch
 rm -f .pr-flow-iteration-* .pr-flow-check-count-* .pr-flow-multi.txt
 
 BRANCH=$(gh pr view "$PR_NUMBER" --json headRefName --jq '.headRefName')
+
+# Clean up worktree if branch was worked on in one
+WORKTREE_PATH=$(git worktree list --porcelain | grep -B2 "branch refs/heads/$BRANCH" | grep "^worktree " | sed 's/^worktree //')
+if [ -n "$WORKTREE_PATH" ]; then
+  git worktree remove "$WORKTREE_PATH" 2>/dev/null || git worktree remove --force "$WORKTREE_PATH" 2>/dev/null
+fi
+
+# Switch off branch if currently on it
 if [ "$(git rev-parse --abbrev-ref HEAD)" = "$BRANCH" ]; then
   git switch develop 2>/dev/null || git checkout develop
 fi
+
+# Delete local branch (remote already deleted by --delete-branch in merge)
 git branch -d "$BRANCH" 2>/dev/null || true
 ```
 
