@@ -294,14 +294,20 @@ git worktree list --porcelain | awk -v ref="branch refs/heads/$BRANCH" '
 ' | while IFS= read -r wt_path; do
   [ -z "$wt_path" ] && continue
   if [ -n "$(git -C "$wt_path" status --porcelain 2>/dev/null)" ]; then
-    echo "WARNING: worktree $wt_path has uncommitted changes, skipping removal"
+    echo "WARNING: worktree $wt_path has uncommitted changes — skipping worktree and branch removal"
+    exit 1  # exit subshell (pipe), skip branch deletion below
   else
     git worktree remove "$wt_path"
   fi
 done
+WT_EXIT=$?
 
-# Delete local branch (remote already deleted by --delete-branch in merge)
-git branch -d "$BRANCH" 2>/dev/null || true
+# Delete local branch only if worktree cleanup succeeded or no worktree existed
+if [ "${WT_EXIT:-0}" -eq 0 ]; then
+  git branch -d "$BRANCH" 2>/dev/null || true
+else
+  echo "Skipping branch deletion — worktree still active"
+fi
 ```
 
 Update related issues and Mercury task state if applicable.
