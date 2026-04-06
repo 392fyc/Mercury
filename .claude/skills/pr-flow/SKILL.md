@@ -279,10 +279,60 @@ gh pr merge "$PR_NUMBER" --squash --delete-branch
 rm -f .pr-flow-iteration-* .pr-flow-check-count-* .pr-flow-multi.txt
 
 BRANCH=$(gh pr view "$PR_NUMBER" --json headRefName --jq '.headRefName')
-if [ "$(git rev-parse --abbrev-ref HEAD)" = "$BRANCH" ]; then
-  git switch develop 2>/dev/null || git checkout develop
+
+# Snapshot worktree paths BEFORE switching branch (switch changes main repo's association)
+# Identify main worktree to exclude it from cleanup
+WT_FAIL=0
+MAIN_WT=$(git rev-parse --show-toplevel)
+WT_LIST=$(git worktree list --porcelain 2>&1) || {
+  echo "WARNING: git worktree list failed — skipping worktree and branch cleanup"
+  WT_FAIL=1
+}
+WT_PATHS=""
+if [ "$WT_FAIL" -eq 0 ]; then
+  WT_PATHS=$(echo "$WT_LIST" | awk -v ref="branch refs/heads/$BRANCH" '
+    /^worktree / { path = substr($0, 10) }
+    $0 == ref { print path }
+  ')
 fi
-git branch -d "$BRANCH" 2>/dev/null || true
+
+# Switch off branch (must happen before branch deletion)
+if [ "$(git rev-parse --abbrev-ref HEAD)" = "$BRANCH" ]; then
+  if ! git switch develop 2>/dev/null && ! git checkout develop 2>/dev/null; then
+    echo "WARNING: failed to switch off branch $BRANCH — skipping cleanup"
+    WT_FAIL=1
+  fi
+fi
+
+# Clean up worktree(s) using pre-switch snapshot
+if [ "$WT_FAIL" -eq 0 ]; then
+  while IFS= read -r wt_path; do
+    [ -z "$wt_path" ] && continue
+    # Skip main worktree — only remove additional worktrees
+    [ "$wt_path" = "$MAIN_WT" ] && continue
+    if ! git -C "$wt_path" status --porcelain >/dev/null 2>&1; then
+      echo "WARNING: worktree $wt_path is inaccessible — pruning"
+      git worktree prune --expire=now || { WT_FAIL=1; continue; }
+      # Verify prune removed THIS specific path (not just any branch association)
+      if git worktree list --porcelain | grep -Fq "worktree $wt_path"; then
+        echo "WARNING: worktree $wt_path still registered after prune"
+        WT_FAIL=1
+      fi
+    elif [ -n "$(git -C "$wt_path" status --porcelain)" ]; then
+      echo "WARNING: worktree $wt_path has uncommitted changes — skipping"
+      WT_FAIL=1
+    else
+      git worktree remove "$wt_path" || WT_FAIL=1
+    fi
+  done <<< "$WT_PATHS"
+fi
+
+# Delete local branch only if all worktree cleanup succeeded
+if [ "$WT_FAIL" -eq 0 ]; then
+  git branch -d "$BRANCH" || echo "NOTE: local branch $BRANCH could not be deleted"
+else
+  echo "Skipping branch deletion — worktree cleanup incomplete"
+fi
 ```
 
 Update related issues and Mercury task state if applicable.
