@@ -292,7 +292,7 @@ while IFS= read -r wt_path; do
   [ -z "$wt_path" ] && continue
   if ! git -C "$wt_path" status --porcelain >/dev/null 2>&1; then
     echo "WARNING: worktree $wt_path is inaccessible — pruning stale record"
-    git worktree prune
+    git worktree prune || WT_FAIL=1
   elif [ -n "$(git -C "$wt_path" status --porcelain)" ]; then
     echo "WARNING: worktree $wt_path has uncommitted changes — skipping"
     WT_FAIL=1
@@ -306,7 +306,7 @@ done < <(git worktree list --porcelain | awk -v ref="branch refs/heads/$BRANCH" 
 
 # Delete local branch only if all worktree cleanup succeeded
 if [ "$WT_FAIL" -eq 0 ]; then
-  git branch -d "$BRANCH" 2>/dev/null || true
+  git branch -d "$BRANCH" || echo "NOTE: local branch $BRANCH could not be deleted"
 else
   echo "Skipping branch deletion — worktree cleanup incomplete"
 fi
