@@ -22,11 +22,13 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: TypeScript check (orchestrator + core)
-        run: npx tsc --noEmit -p packages/orchestrator/tsconfig.json
-
-      - name: Vue type check (GUI)
-        run: cd packages/gui && npx vue-tsc --noEmit
+      - name: TypeScript check (core)
+        run: |
+          if [ -f packages/core/tsconfig.json ]; then
+            npx tsc --noEmit -p packages/core/tsconfig.json
+          else
+            echo "No packages/core/tsconfig.json found — skipping"
+          fi
 
   lint:
     name: Lint
@@ -48,7 +50,7 @@ jobs:
       - name: ESLint (if configured)
         run: |
           if [ -f .eslintrc.json ] || [ -f .eslintrc.js ] || [ -f .eslintrc.cjs ] || [ -f .eslintrc.yml ] || [ -f eslint.config.js ] || [ -f eslint.config.mjs ] || [ -f eslint.config.cjs ] || [ -f eslint.config.ts ]; then
-            npx eslint --max-warnings 0 packages/
+            npx eslint --max-warnings 0 packages/ adapters/
           else
             echo "No ESLint config found — skipping"
           fi

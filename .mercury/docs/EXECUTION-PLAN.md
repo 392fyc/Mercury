@@ -104,7 +104,8 @@ Phase 6: GUI
 - 保留 packages/core/ 待评估
 
 ### 0-2. Issue 清理
-- 关闭不再适用的 Issues (#158, #72, #63, #61, #57, #54, #50, #49)，附注"方向重定义，详见 DIRECTION.md"
+- 关闭不再适用的 Issues (#158, #72, #57, #54, #50, #49)，附注"方向重定义，详见 DIRECTION.md"
+- 保留 #63 (Agent 群体记忆 → Memory Layer) 和 #61 (CLI 自动化 → Session Continuity)
 - 更新保留的 Issues 标签，标注归属模块
 - 重新定义 #101 的 description
 

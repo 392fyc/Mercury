@@ -24,22 +24,23 @@ reviews:
     - "!Mercury_KB/**"
     - "!.mercury/transcripts/**"
     - "!.mercury/sessions.json"
+    - "!archive/**"
   path_instructions:
-    - path: "packages/orchestrator/**"
-      instructions: "关注架构模式、task 状态机一致性、event bus 事件命名、scope 验证、异步流程完整性、系统设计影响"
-    - path: "packages/sdk-adapters/**"
-      instructions: "关注 adapter 接口一致性、错误处理、session 生命周期管理、MCP 协议兼容性"
     - path: "packages/core/**"
       instructions: "关注 TypeScript 类型安全、接口向后兼容、依赖管理"
-    - path: "packages/gui/**"
-      instructions: "关注 Tauri 2 API 使用、Vue 3 reactivity、内存泄漏"
+    - path: "adapters/**"
+      instructions: "关注 adapter 接口一致性、不超过200行、无业务逻辑"
+    - path: ".claude/agents/**"
+      instructions: "关注 agent 角色定义一致性、职责边界清晰、禁止事项完整"
+    - path: ".claude/skills/**"
+      instructions: "关注 skill 独立可用性、GATE 完整性、流程正确性"
     - path: ".mercury/**"
-      instructions: "关注角色定义一致性、模板占位符完整性、文档交叉引用正确性"
+      instructions: "关注文档交叉引用正确性、模板占位符完整性"
 
 knowledge_base:
   linked_repositories:
     - repository: "392fyc/Mercury"
-      instructions: "Mercury 主仓库：多Agent编排系统，包含 orchestrator、sdk-adapters、core types、GUI"
+      instructions: "Mercury: AI Agent harness framework — session continuity, memory, quality gates"
 
 chat:
   auto_reply: true

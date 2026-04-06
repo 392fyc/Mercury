@@ -1,18 +1,34 @@
 ---
 name: pr-flow
 description: |
-  Automate the full PR lifecycle: create PR, poll for review bot, read and triage ALL threads, fix issues, reply to every thread, resolve threads, re-review, and merge after approval. Use this skill when the user says "PR", "pull request", "create PR", "merge PR", "提PR", "合并", "PR流程", "开PR", "check PR status", "review comments", "标准PR流程". Use this skill after dev work reaches `implementation_done`, the branch is pushed, and the task has passed `main_review`. It replaces the manual C4-C7 steps in the Mercury workflow.
+  Automate the full PR lifecycle with Argus review bot: create PR, poll for review, read findings, fix issues, push and wait for Argus fix-detection resolve + incremental review, merge after approval. Use this skill when the user says "PR", "pull request", "create PR", "merge PR", "提PR", "合并", "PR流程", "开PR", "check PR status", "review comments", "标准PR流程". Use this skill after dev work reaches `implementation_done`, the branch is pushed, and the task has passed `main_review`. It replaces the manual C4-C7 steps in the Mercury workflow.
 user-invocable: true
 allowed-tools: Bash, Read, Grep, Glob, Edit, Write, WebSearch, WebFetch, Agent, TodoWrite, CronCreate, CronDelete
 ---
 
-# PR Flow — Mandatory Sequential Protocol
+# PR Flow — Argus-Compatible Sequential Protocol
 
-Every phase has a **GATE** that MUST pass before proceeding to the next phase. Do NOT skip gates. Do NOT combine phases. Execute them in strict order.
+Every phase has a **GATE** that MUST pass before proceeding. Do NOT skip gates.
+
+## Argus Behavior Model
+
+Understand these Argus capabilities before executing:
+
+- **Fix-detection resolve (B-1)**: Argus compares new commit diff against open threads by file+line. If code at the thread location changed, Argus auto-resolves the thread.
+- **New findings block APPROVE (A)**: If the current review iteration produces ANY new findings, Argus returns COMMENT, not APPROVE. APPROVE only happens when: zero new findings AND all threads resolved.
+- **Reply-aware resolution (C)**: When a thread has a human/agent reply, Argus uses LLM to classify: ACCEPT (resolve + ack), REJECT (keep open + follow-up), ESCALATE (mark for human). Max 3 reply rounds per thread.
+
+**Agent behavioral rules:**
+
+| Rule | Detail |
+|------|--------|
+| **禁止手动 resolve thread** | All resolve by Argus fix-detection or reply-aware resolution |
+| **禁止回复 fix comments** | Don't reply "Fixed in xxx" — diff is the explanation |
+| **Push 后必须等待** | Wait for Argus incremental review before next action |
+| **只在 disagree 时回复** | Reply only when NOT fixing — Argus LLM will classify the reply |
+| **以 Argus review 结果为准** | Don't guess whether something is resolved |
 
 ## Variables
-
-Set these at the start and reference throughout:
 
 ```
 PR_NUMBER=<number>
@@ -46,16 +62,11 @@ BODY
   --label "<bug|enhancement|refactor>"
 ```
 
-**GATE 1**: Confirm PR was created. Extract and store `PR_NUMBER` and `PR_URL`.
+**GATE 1**: PR created. Extract and store `PR_NUMBER` and `PR_URL`.
 
-```bash
-# Verify
-gh pr view "$PR_NUMBER" --json number,url --jq '{number, url}'
-```
+## Phase 2: Poll for Initial Review
 
-## Phase 2: Poll for Review Bot
-
-**MANDATORY**: You MUST create a CronCreate job. Do NOT use sleep loops. Do NOT manually poll.
+**MANDATORY**: Create a CronCreate job to poll. Do NOT use sleep loops.
 
 ```
 CronCreate:
@@ -64,45 +75,45 @@ CronCreate:
     Check PR #<PR_NUMBER> review status.
     1. Run: gh pr view <PR_NUMBER> --json reviews,reviewDecision
     2. If reviewDecision is APPROVED → report to user, delete this cron
-    3. If new inline comments from review bot exist → report to user for Phase 3
+    3. If new inline comments from argus-review[bot] exist → report to user for Phase 3
     4. Track no-activity count in .pr-flow-check-count-<PR_NUMBER>
-    5. After 3 quiet checks, post /review (max 3 total triggers per cron_safety rule)
+    5. After 3 quiet checks, post "@argus-review review" (max 3 total triggers per cron_safety rule)
   recurring: true
 ```
 
-**GATE 2**: Cron job ID is stored. Reviews have arrived (bot has posted comments or review body).
+**GATE 2**: Reviews have arrived (Argus has posted inline comments or review body).
 
-When the cron reports reviews arrived:
+When cron reports reviews arrived:
 1. `CronDelete` the polling job
 2. Clean up: `rm -f .pr-flow-check-count-*`
 3. Proceed to Phase 3
 
-## Phase 3: Read + Triage ALL Review Threads
+## Phase 3: Read + Triage ALL Findings
 
-**MANDATORY**: Enumerate every thread before fixing anything. Do NOT start fixing while still reading.
+**MANDATORY**: Read every finding before fixing anything.
 
 ### Step 3a: Fetch all inline comments
 
 ```bash
 MSYS_NO_PATHCONV=1 gh api "repos/${OWNER}/${REPO_NAME}/pulls/${PR_NUMBER}/comments" \
-  --jq '.[] | select(.user.login == "argus-review[bot]" or .user.login == "coderabbitai[bot]" or .user.login == "coderabbitai") | {id, path, line, body}'
+  --jq '.[] | select(.user.login == "argus-review[bot]") | {id, path, line, body}'
 ```
 
-### Step 3b: Fetch review body (outside-diff comments)
+### Step 3b: Fetch review body
 
 ```bash
 MSYS_NO_PATHCONV=1 gh api "repos/${OWNER}/${REPO_NAME}/pulls/${PR_NUMBER}/reviews" \
-  --jq '.[] | select(.user.login == "argus-review[bot]" or .user.login == "coderabbitai[bot]" or .user.login == "coderabbitai") | {id, state, body}'
+  --jq '.[] | select(.user.login == "argus-review[bot]") | {id, state, body}'
 ```
 
 ### Step 3c: Parse Argus comment format
 
-Each Argus inline comment has this structure:
+Each inline comment has this structure:
 
 ```
 _<SEVERITY_EMOJI> <Severity>_ | _<Category>_ [| importance: N/10]
 
-**<Description in Chinese>**
+**<Description>**
 
 <details><summary>📝 Suggestion</summary>
 ```code
@@ -120,76 +131,57 @@ _<SEVERITY_EMOJI> <Severity>_ | _<Category>_ [| importance: N/10]
 ```text
 In file `<path>` around lines <N>-<N>:
 <machine-readable description>
-Current code: ...
-Suggested replacement: ...
 ```
 </details>
 ```
 
-**Severity levels** (process in this order):
-- `🔴 Critical` / `importance: 9-10` → MUST fix, blocks merge
+**Severity levels**:
+- `🔴 Critical` / `importance: 9-10` → MUST fix
 - `🟡 Medium` / `importance: 7-8` → SHOULD fix unless strong reason to disagree
-- `🔵 Minor` / `importance: 1-6` → fix if trivial, explain if opinionated
+- `🔵 Minor` / `importance: 1-6` → Fix if trivial, explain if opinionated
 
 ### Step 3d: Build triage list
 
-Create a numbered list of ALL threads with: `[id, path, line, severity, category, action: fix|disagree|acknowledge]`
+For each finding, decide: `fix` or `disagree`
 
-**GATE 3**: All threads are enumerated. Total count matches what the review bot reported. No thread is missing from the triage list.
+**GATE 3**: All findings enumerated with action decisions.
 
-## Phase 4: Fix Code + Reply to EVERY Thread
+## Phase 4: Fix Code
 
-**MANDATORY**: Process every thread from the triage list. For each thread:
+For each finding marked `fix`:
 
-### Step 4a: Read the code
+### Step 4a: Locate and read the code
 
-Use the `🤖 Prompt for AI Agents` block or `path:line` to locate the exact code. Read the file at that location.
+Use `🤖 Prompt for AI Agents` block or `path:line` to find exact location.
 
-### Step 4b: Decide action
+### Step 4b: Apply fix
 
 | Severity | Committable suggestion? | Action |
 |----------|------------------------|--------|
 | 🔴 Critical | Yes | Apply the suggestion |
 | 🔴 Critical | No | Read context, write fix |
 | 🟡 Medium | Yes | Apply unless incorrect |
-| 🟡 Medium | No | Fix or explain with reasoning |
-| 🔵 Minor | Any | Fix if trivial (<5 lines), explain if opinionated |
+| 🟡 Medium | No | Fix based on description |
+| 🔵 Minor | Any | Fix if trivial (<5 lines) |
 
-### Step 4c: Apply fix (if action=fix)
+### Step 4c: Handle disagree findings
 
-1. `Read` the file at the specified path
-2. `Edit` to apply the fix
-3. Note the change for the commit message
-
-### Step 4d: Reply to the thread
-
-**MANDATORY**: Every thread MUST get a reply. Use the PR-number-scoped endpoint:
+For findings marked `disagree`: reply with reasoning. Do NOT resolve.
 
 ```bash
 MSYS_NO_PATHCONV=1 gh api -X POST \
   "repos/${OWNER}/${REPO_NAME}/pulls/${PR_NUMBER}/comments/<COMMENT_ID>/replies" \
-  -f body="<reply>"
+  -f body="<reasoning why this is by design or out of scope>"
 ```
 
-Reply format by action:
-- **Fixed**: `Fixed in <SHA> — <what changed>`
-- **Disagree**: `By design. <reasoning>`
-- **Acknowledged**: `Acknowledged. <brief explanation>`
+Argus will LLM-classify the reply:
+- **ACCEPT** → Argus resolves the thread automatically
+- **REJECT** → Argus posts follow-up, thread stays open → read follow-up, decide again
+- **ESCALATE** → Thread marked for human intervention → stop processing this thread
 
-### Step 4e: Verify all threads have replies
+**GATE 4**: All `fix` items have code changes. All `disagree` items have reply posted.
 
-```bash
-# Count threads without our reply
-MSYS_NO_PATHCONV=1 gh api "repos/${OWNER}/${REPO_NAME}/pulls/${PR_NUMBER}/comments" \
-  --jq '[.[] | select(.user.login == "argus-review[bot]") | .id] | length'
-# vs replies
-MSYS_NO_PATHCONV=1 gh api "repos/${OWNER}/${REPO_NAME}/pulls/${PR_NUMBER}/comments" \
-  --jq '[.[] | select(.in_reply_to_id != null and .user.login != "argus-review[bot]")] | length'
-```
-
-**GATE 4**: Every bot thread has at least one reply. No unreplied threads remain.
-
-## Phase 5: Commit + Push + Resolve ALL Threads
+## Phase 5: Push and Wait
 
 ### Step 5a: Commit and push
 
@@ -199,55 +191,31 @@ git commit -m "fix: address review feedback — <summary> (#issue)"
 git push
 ```
 
-### Step 5b: Resolve ALL threads via GraphQL
+### Step 5b: Wait for Argus incremental review
 
-**MANDATORY**: Resolve threads ONLY after push. Use paginated query:
+**MANDATORY**: Do NOT resolve threads. Do NOT post re-review triggers. Just wait.
 
-```bash
-CURSOR=""
-ALL_THREADS="[]"
-while true; do
-  AFTER_ARG=""
-  [ -n "$CURSOR" ] && AFTER_ARG=", after: \"$CURSOR\""
-  RESULT=$(MSYS_NO_PATHCONV=1 gh api graphql -f query="
-  query {
-    repository(owner: \"${OWNER}\", name: \"${REPO_NAME}\") {
-      pullRequest(number: ${PR_NUMBER}) {
-        reviewThreads(first: 100${AFTER_ARG}) {
-          pageInfo { hasNextPage endCursor }
-          nodes { id isResolved path }
-        }
-      }
-    }
-  }")
-  NODES=$(echo "$RESULT" | jq '.data.repository.pullRequest.reviewThreads.nodes')
-  ALL_THREADS=$(echo "$ALL_THREADS $NODES" | jq -s '.[0] + .[1]')
-  HAS_NEXT=$(echo "$RESULT" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage')
-  [ "$HAS_NEXT" != "true" ] && break
-  CURSOR=$(echo "$RESULT" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor')
-done
+Argus receives the push event and will automatically run incremental review. Create a CronCreate job to poll for the response:
 
-UNRESOLVED=$(echo "$ALL_THREADS" | jq '[.[] | select(.isResolved==false)]')
-for THREAD_ID in $(echo "$UNRESOLVED" | jq -r '.[].id'); do
-  MSYS_NO_PATHCONV=1 gh api graphql -f query="mutation { resolveReviewThread(input: {threadId: \"$THREAD_ID\"}) { thread { id isResolved } } }"
-done
+```
+CronCreate:
+  cron: "*/10 * * * *"
+  prompt: |
+    Check PR #<PR_NUMBER> for Argus incremental review after fix push.
+    1. Run: gh pr view <PR_NUMBER> --json reviews,reviewDecision
+    2. Check for new reviews from argus-review[bot] after the fix commit
+    3. If APPROVED → report to user, delete this cron
+    4. If new COMMENT review with findings → report findings to user
+    5. After 6 quiet checks (1 hour), report timeout to user for manual intervention
+  recurring: true
 ```
 
-### Step 5c: Verify 0 unresolved
+### Step 5c: Process incremental review result
 
-**MANDATORY**: Re-query after resolving (the previous `ALL_THREADS` is stale):
-
-```bash
-# Re-run the same paginated query, then:
-UNRESOLVED_COUNT=$(echo "$ALL_THREADS" | jq '[.[] | select(.isResolved==false)] | length')
-echo "Unresolved threads: $UNRESOLVED_COUNT"
-```
-
-**GATE 5**: `UNRESOLVED_COUNT == 0`. If not zero, go back to Step 5b. Do NOT proceed to Phase 6 with unresolved threads.
-
-## Phase 6: Request Re-Review
-
-### Step 6a: Increment iteration counter
+When Argus responds:
+- **APPROVED** (no new findings, all threads resolved) → Proceed to Phase 6
+- **COMMENT** (new findings) → Increment ITERATION, return to Phase 3
+- **REQUEST_CHANGES** (critical/major blocking) → Increment ITERATION, return to Phase 3
 
 ```bash
 ITERATION=$((ITERATION + 1))
@@ -258,19 +226,9 @@ if [ "$ITERATION" -ge "$MAX_ITERATIONS" ]; then
 fi
 ```
 
-### Step 6b: Request re-review
+**GATE 5**: Argus has posted incremental review result. Action determined.
 
-```bash
-MSYS_NO_PATHCONV=1 gh pr comment "$PR_NUMBER" --body "/review"
-```
-
-### Step 6c: Create polling cron (MANDATORY)
-
-Same as Phase 2 — you MUST create a new CronCreate job. Do NOT manually poll.
-
-**GATE 6**: Cron job created. When re-review arrives, return to Phase 3.
-
-## Phase 7: Merge
+## Phase 6: Merge
 
 **MANDATORY pre-merge checks** (all must pass):
 
@@ -282,55 +240,52 @@ gh pr checks "$PR_NUMBER"
 DECISION=$(gh pr view "$PR_NUMBER" --json reviewDecision --jq '.reviewDecision')
 [ "$DECISION" = "APPROVED" ] || echo "BLOCKED: decision=$DECISION"
 
-# 3. Zero unresolved threads (re-query fresh)
-# (use the same paginated query from Phase 5)
+# 3. Zero unresolved threads (paginated query)
+UNRESOLVED=0
+CURSOR=""
+while true; do
+  AFTER_ARG=""
+  [ -n "$CURSOR" ] && AFTER_ARG=", after: \"$CURSOR\""
+  RESULT=$(MSYS_NO_PATHCONV=1 gh api graphql -f query="
+  query {
+    repository(owner: \"${OWNER}\", name: \"${REPO_NAME}\") {
+      pullRequest(number: ${PR_NUMBER}) {
+        reviewThreads(first: 100${AFTER_ARG}) {
+          pageInfo { hasNextPage endCursor }
+          nodes { isResolved }
+        }
+      }
+    }
+  }")
+  COUNT=$(echo "$RESULT" | jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved==false)] | length')
+  UNRESOLVED=$((UNRESOLVED + COUNT))
+  HAS_NEXT=$(echo "$RESULT" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage')
+  [ "$HAS_NEXT" != "true" ] && break
+  CURSOR=$(echo "$RESULT" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor')
+done
+echo "Unresolved threads: $UNRESOLVED"
+[ "$UNRESOLVED" -eq 0 ] || echo "BLOCKED: $UNRESOLVED unresolved threads"
 ```
 
-**GATE 7**: All three checks pass. Then merge:
+**GATE 6**: All checks pass. Then merge:
 
 ```bash
 gh pr merge "$PR_NUMBER" --squash --delete-branch
 ```
 
-## Phase 8: Cleanup
-
-After merge:
+## Phase 7: Cleanup
 
 ```bash
-# Clean up state files
 rm -f .pr-flow-iteration-* .pr-flow-check-count-* .pr-flow-multi.txt
 
-# Clean up worktree + branch
 BRANCH=$(gh pr view "$PR_NUMBER" --json headRefName --jq '.headRefName')
 if [ "$(git rev-parse --abbrev-ref HEAD)" = "$BRANCH" ]; then
   git switch develop 2>/dev/null || git checkout develop
 fi
 git branch -d "$BRANCH" 2>/dev/null || true
-
-# Delete cron if still active
-# CronDelete <job_id>
 ```
 
 Update related issues and Mercury task state if applicable.
-
-## Review Response Protocol
-
-| Severity | Has suggestion? | Action |
-|----------|----------------|--------|
-| 🔴 Critical (9-10) | Yes | Apply suggestion, reply with SHA |
-| 🔴 Critical (9-10) | No | Write fix, reply with SHA |
-| 🟡 Medium (7-8) | Yes | Apply unless incorrect, reply |
-| 🟡 Medium (7-8) | No | Fix or explain with reasoning |
-| 🔵 Minor (1-6) | Any | Fix if trivial, explain if opinionated |
-| Disagree | — | Reply with reasoning, resolve thread |
-| Out of scope | — | Acknowledge, explain scope, resolve |
-
-**Rules**:
-- Every thread MUST get a reply AND be resolved. No exceptions.
-- Threads you disagree with still MUST be replied to and resolved.
-- The review bot will not approve while unresolved threads remain.
-- Use the `🤖 Prompt for AI Agents` block for precise code location.
-- Use `📝 Committable suggestion` when available — it's pre-validated by the bot.
 
 ## Output
 
@@ -339,7 +294,7 @@ After each phase, report status:
 ```text
 PR: #<number> (<url>)
 Review: approved | changes_requested | pending
-Threads: <total> total, <fixed> fixed, <disagreed> disagreed, <unresolved> unresolved
+Threads: <total> total, <resolved> resolved, <open> open
 Iteration: <N>/<MAX>
 Merge: merged | waiting | blocked (<reason>)
 ```
