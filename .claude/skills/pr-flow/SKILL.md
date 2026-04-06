@@ -280,16 +280,25 @@ rm -f .pr-flow-iteration-* .pr-flow-check-count-* .pr-flow-multi.txt
 
 BRANCH=$(gh pr view "$PR_NUMBER" --json headRefName --jq '.headRefName')
 
-# Clean up worktree if branch was worked on in one
-WORKTREE_PATH=$(git worktree list --porcelain | grep -B2 "branch refs/heads/$BRANCH" | grep "^worktree " | sed 's/^worktree //')
-if [ -n "$WORKTREE_PATH" ]; then
-  git worktree remove "$WORKTREE_PATH" 2>/dev/null || git worktree remove --force "$WORKTREE_PATH" 2>/dev/null
-fi
-
-# Switch off branch if currently on it
+# Switch off branch first (must happen before worktree/branch removal)
 if [ "$(git rev-parse --abbrev-ref HEAD)" = "$BRANCH" ]; then
   git switch develop 2>/dev/null || git checkout develop
 fi
+
+# Clean up worktree(s) if branch was worked on in one
+# Parse porcelain output: each worktree block is separated by blank lines
+# Match exact branch ref to avoid partial matches
+git worktree list --porcelain | awk -v ref="branch refs/heads/$BRANCH" '
+  /^worktree / { path = substr($0, 10) }
+  $0 == ref { print path }
+' | while IFS= read -r wt_path; do
+  [ -z "$wt_path" ] && continue
+  if [ -n "$(git -C "$wt_path" status --porcelain 2>/dev/null)" ]; then
+    echo "WARNING: worktree $wt_path has uncommitted changes, skipping removal"
+  else
+    git worktree remove "$wt_path"
+  fi
+done
 
 # Delete local branch (remote already deleted by --delete-branch in merge)
 git branch -d "$BRANCH" 2>/dev/null || true
