@@ -286,27 +286,29 @@ if [ "$(git rev-parse --abbrev-ref HEAD)" = "$BRANCH" ]; then
 fi
 
 # Clean up worktree(s) if branch was worked on in one
-# Parse porcelain output: each worktree block is separated by blank lines
-# Match exact branch ref to avoid partial matches
-git worktree list --porcelain | awk -v ref="branch refs/heads/$BRANCH" '
+# Collect worktree paths into array (avoids pipe subshell exit code issues)
+WT_FAIL=0
+while IFS= read -r wt_path; do
+  [ -z "$wt_path" ] && continue
+  if ! git -C "$wt_path" status --porcelain >/dev/null 2>&1; then
+    echo "WARNING: worktree $wt_path is inaccessible — skipping"
+    WT_FAIL=1
+  elif [ -n "$(git -C "$wt_path" status --porcelain)" ]; then
+    echo "WARNING: worktree $wt_path has uncommitted changes — skipping"
+    WT_FAIL=1
+  else
+    git worktree remove "$wt_path" || WT_FAIL=1
+  fi
+done < <(git worktree list --porcelain | awk -v ref="branch refs/heads/$BRANCH" '
   /^worktree / { path = substr($0, 10) }
   $0 == ref { print path }
-' | while IFS= read -r wt_path; do
-  [ -z "$wt_path" ] && continue
-  if [ -n "$(git -C "$wt_path" status --porcelain 2>/dev/null)" ]; then
-    echo "WARNING: worktree $wt_path has uncommitted changes — skipping worktree and branch removal"
-    exit 1  # exit subshell (pipe), skip branch deletion below
-  else
-    git worktree remove "$wt_path"
-  fi
-done
-WT_EXIT=$?
+')
 
-# Delete local branch only if worktree cleanup succeeded or no worktree existed
-if [ "${WT_EXIT:-0}" -eq 0 ]; then
+# Delete local branch only if all worktree cleanup succeeded
+if [ "$WT_FAIL" -eq 0 ]; then
   git branch -d "$BRANCH" 2>/dev/null || true
 else
-  echo "Skipping branch deletion — worktree still active"
+  echo "Skipping branch deletion — worktree cleanup incomplete"
 fi
 ```
 
