@@ -37,6 +37,8 @@ Mercury 是一套**让 AI Agent 能持续、自主、高质量地工作的 harne
 
 ### P1: 轻量本体 + 外部挂载
 
+> 路径选型依据: 详见 [架构方向评估](research/issue-158-architecture-evaluation.md)，其中包含路径 A (自研编排) vs 路径 B (轻量挂载) 的成本、收益、风险对照分析。
+
 Mercury 本体只做外部项目做不到的事。能挂载的绝不自研。
 
 ```
@@ -282,11 +284,16 @@ adapters/
 
 ## 六、Open Issues 处理
 
+### 已完成（Phase 0 关闭）
+
+| Issue | 说明 |
+|---|---|
+| #158 架构方向评估 | 本文档即为其产出，Phase 0 中关闭 |
+
 ### 保留（符合新方向）
 
 | Issue | 归属模块 | 说明 |
 |---|---|---|
-| #158 架构方向评估 | — | 本文档即为其产出，Phase 0 中关闭 |
 | #92 周期维护 Agent | Memory Layer | 作为 KB health check skill |
 | #157 外部信息追踪 | Skills | 作为独立 skill |
 | #91 IM Bot Bridge | Notify Hub | 通知层实现方式 |
