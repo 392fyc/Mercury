@@ -280,24 +280,32 @@ rm -f .pr-flow-iteration-* .pr-flow-check-count-* .pr-flow-multi.txt
 
 BRANCH=$(gh pr view "$PR_NUMBER" --json headRefName --jq '.headRefName')
 
-# Switch off branch first (must happen before worktree/branch removal)
-if [ "$(git rev-parse --abbrev-ref HEAD)" = "$BRANCH" ]; then
-  git switch develop 2>/dev/null || git checkout develop
-fi
-
-# Clean up worktree(s) if branch was worked on in one
+# Snapshot worktree paths BEFORE switching branch (switch changes main repo's association)
 WT_FAIL=0
 WT_LIST=$(git worktree list --porcelain 2>&1) || {
   echo "WARNING: git worktree list failed — skipping worktree and branch cleanup"
   WT_FAIL=1
 }
+WT_PATHS=""
+if [ "$WT_FAIL" -eq 0 ]; then
+  WT_PATHS=$(echo "$WT_LIST" | awk -v ref="branch refs/heads/$BRANCH" '
+    /^worktree / { path = substr($0, 10) }
+    $0 == ref { print path }
+  ')
+fi
 
+# Switch off branch (must happen before branch deletion)
+if [ "$(git rev-parse --abbrev-ref HEAD)" = "$BRANCH" ]; then
+  git switch develop 2>/dev/null || git checkout develop
+fi
+
+# Clean up worktree(s) using pre-switch snapshot
 if [ "$WT_FAIL" -eq 0 ]; then
   while IFS= read -r wt_path; do
     [ -z "$wt_path" ] && continue
     if ! git -C "$wt_path" status --porcelain >/dev/null 2>&1; then
       echo "WARNING: worktree $wt_path is inaccessible — pruning"
-      git worktree prune || { WT_FAIL=1; continue; }
+      git worktree prune --expire=now || { WT_FAIL=1; continue; }
       # Verify prune actually removed the association
       if git worktree list --porcelain | grep -Fq "branch refs/heads/$BRANCH"; then
         echo "WARNING: branch still associated after prune"
@@ -309,10 +317,7 @@ if [ "$WT_FAIL" -eq 0 ]; then
     else
       git worktree remove "$wt_path" || WT_FAIL=1
     fi
-  done < <(echo "$WT_LIST" | awk -v ref="branch refs/heads/$BRANCH" '
-    /^worktree / { path = substr($0, 10) }
-    $0 == ref { print path }
-  ')
+  done <<< "$WT_PATHS"
 fi
 
 # Delete local branch only if all worktree cleanup succeeded
