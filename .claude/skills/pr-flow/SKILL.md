@@ -299,7 +299,7 @@ if [ "$WT_FAIL" -eq 0 ]; then
       echo "WARNING: worktree $wt_path is inaccessible — pruning"
       git worktree prune || { WT_FAIL=1; continue; }
       # Verify prune actually removed the association
-      if echo "$(git worktree list --porcelain)" | grep -q "branch refs/heads/$BRANCH"; then
+      if git worktree list --porcelain | grep -Fq "branch refs/heads/$BRANCH"; then
         echo "WARNING: branch still associated after prune"
         WT_FAIL=1
       fi
