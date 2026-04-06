@@ -14,8 +14,8 @@ Read these docs on demand when you need the corresponding information:
 |-------|------|
 | **Project direction (最高准则)** | `.mercury/docs/DIRECTION.md` |
 | **Execution plan** | `.mercury/docs/EXECUTION-PLAN.md` |
-| Role definitions (current) | `.mercury/roles/{role}.yaml` |
 | Agent definitions | `.claude/agents/*.md` |
+| Role definitions (archived) | `archive/roles/*.yaml` |
 | Git branching rules | `.mercury/docs/guides/git-flow.md` |
 | GitHub Issues workflow | `.mercury/docs/guides/issue-workflow.md` |
 | SoT task workflow (legacy, for reference) | `.mercury/docs/guides/sot-workflow.md` |

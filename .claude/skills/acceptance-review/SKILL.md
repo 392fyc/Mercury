@@ -40,7 +40,7 @@ curl -s -X POST http://127.0.0.1:${MERCURY_RPC_PORT:-7654} \
 
 The orchestrator will:
 1. Create an AcceptanceBundle with `blindInputPolicy` (allowed/forbidden fields)
-2. Build a blind-review system prompt from `.mercury/roles/acceptance.yaml`
+2. Build a blind-review system prompt from `.claude/agents/acceptance.md`
 3. Build an acceptance dispatch prompt from `.mercury/templates/acceptance-prompt.template.md`
 4. Strip dev narrative (summary, evidence, residualRisks) from the receipt — the acceptance agent only sees `changedFiles`, `branch`, and `docsUpdated`
 5. Start an acceptance session and send the prompt

@@ -99,7 +99,7 @@ curl -s -X POST http://127.0.0.1:${MERCURY_RPC_PORT:-7654} \
 
 The orchestrator will:
 1. Load the TaskBundle and build KB context from `readScope.requiredDocs`
-2. Build a role-scoped system prompt from `.mercury/roles/<role>.yaml`
+2. Build a role-scoped system prompt from `.claude/agents/<role>.md`
 3. Build a dispatch prompt from `.mercury/templates/dispatch-prompt.template.md`
 4. Start a new agent session and send the prompt
 
