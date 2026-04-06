@@ -291,8 +291,8 @@ WT_FAIL=0
 while IFS= read -r wt_path; do
   [ -z "$wt_path" ] && continue
   if ! git -C "$wt_path" status --porcelain >/dev/null 2>&1; then
-    echo "WARNING: worktree $wt_path is inaccessible — skipping"
-    WT_FAIL=1
+    echo "WARNING: worktree $wt_path is inaccessible — pruning stale record"
+    git worktree prune
   elif [ -n "$(git -C "$wt_path" status --porcelain)" ]; then
     echo "WARNING: worktree $wt_path has uncommitted changes — skipping"
     WT_FAIL=1
