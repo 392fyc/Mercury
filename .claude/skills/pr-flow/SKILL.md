@@ -286,23 +286,34 @@ if [ "$(git rev-parse --abbrev-ref HEAD)" = "$BRANCH" ]; then
 fi
 
 # Clean up worktree(s) if branch was worked on in one
-# Collect worktree paths into array (avoids pipe subshell exit code issues)
 WT_FAIL=0
-while IFS= read -r wt_path; do
-  [ -z "$wt_path" ] && continue
-  if ! git -C "$wt_path" status --porcelain >/dev/null 2>&1; then
-    echo "WARNING: worktree $wt_path is inaccessible — pruning stale record"
-    git worktree prune || WT_FAIL=1
-  elif [ -n "$(git -C "$wt_path" status --porcelain)" ]; then
-    echo "WARNING: worktree $wt_path has uncommitted changes — skipping"
-    WT_FAIL=1
-  else
-    git worktree remove "$wt_path" || WT_FAIL=1
-  fi
-done < <(git worktree list --porcelain | awk -v ref="branch refs/heads/$BRANCH" '
-  /^worktree / { path = substr($0, 10) }
-  $0 == ref { print path }
-')
+WT_LIST=$(git worktree list --porcelain 2>&1) || {
+  echo "WARNING: git worktree list failed — skipping worktree and branch cleanup"
+  WT_FAIL=1
+}
+
+if [ "$WT_FAIL" -eq 0 ]; then
+  while IFS= read -r wt_path; do
+    [ -z "$wt_path" ] && continue
+    if ! git -C "$wt_path" status --porcelain >/dev/null 2>&1; then
+      echo "WARNING: worktree $wt_path is inaccessible — pruning"
+      git worktree prune || { WT_FAIL=1; continue; }
+      # Verify prune actually removed the association
+      if echo "$(git worktree list --porcelain)" | grep -q "branch refs/heads/$BRANCH"; then
+        echo "WARNING: branch still associated after prune"
+        WT_FAIL=1
+      fi
+    elif [ -n "$(git -C "$wt_path" status --porcelain)" ]; then
+      echo "WARNING: worktree $wt_path has uncommitted changes — skipping"
+      WT_FAIL=1
+    else
+      git worktree remove "$wt_path" || WT_FAIL=1
+    fi
+  done < <(echo "$WT_LIST" | awk -v ref="branch refs/heads/$BRANCH" '
+    /^worktree / { path = substr($0, 10) }
+    $0 == ref { print path }
+  ')
+fi
 
 # Delete local branch only if all worktree cleanup succeeded
 if [ "$WT_FAIL" -eq 0 ]; then
