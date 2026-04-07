@@ -6,7 +6,7 @@
 **Parent**: Phase 2 #181
 **Decision authority**: Mercury main agent + user confirmation
 **Research method**: 4-round `autoresearch` skill invocation (8 unique source domains, mechanical quality gate passed). All load-bearing findings are reproduced inline in Sections 1–7 with permalinked vendor sources — this ADR is the canonical, self-contained audit artifact.
-**Upstream pin**: All `obra/superpowers` source URLs in this ADR are permalinked to commit `917e5f53b16b115b70a3a355ed5f4993b9f8b73d` (2026-04-06, latest on `main` at the time of evaluation). The few external non-vendor URLs (claude.com marketplace listing, registry.npmjs.org name lookup) point to live pages and serve only as **secondary corroboration** — they confirm marketplace presence and the npm name-squatter, but every load-bearing claim is independently witnessed by the permalinked vendor sources in Sections 1–7. If post-merge audit needs to reproduce the live-page state as of 2026-04-07, use the Wayback Machine snapshot pattern `https://web.archive.org/web/20260407*/[URL]`.
+**Upstream pin**: All `obra/superpowers` source URLs in this ADR are permalinked to commit `917e5f53b16b115b70a3a355ed5f4993b9f8b73d` (2026-04-06, latest on `main` at the time of evaluation). Dynamic data points from the npm registry (`registry.npmjs.org/superpowers`) are **captured verbatim inline** in Section 3 with the 2026-04-07 capture timestamp, so audit reproduction does not depend on the live page. The single claude.com marketplace URL in the References list is a convenience pointer — the marketplace-presence claim itself is witnessed by the `/plugin install superpowers@claude-plugins-official` command documented in the permalinked README.md. If post-merge audit needs to re-verify the live-page state, use the Wayback Machine snapshot pattern `https://web.archive.org/web/20260407*/[URL]`.
 
 ---
 
@@ -111,14 +111,31 @@ Six documented installation methods, **none** of them git submodule:
 | OpenCode | fetch `.opencode/INSTALL.md` |
 | Gemini CLI | `gemini extensions install https://github.com/obra/superpowers` |
 
-**Not published to npm.** The npm name `superpowers` is squatted by an unrelated package
-(publisher `01studio`, version `0.0.2`). The repo's `package.json` declares
-`"name": "superpowers"`, `"version": "5.0.7"`, but is not published.
+**Not published to npm.** Two independent frozen data points captured 2026-04-07:
 
-Sources:
-- https://raw.githubusercontent.com/obra/superpowers/917e5f53b16b115b70a3a355ed5f4993b9f8b73d/README.md
-- https://registry.npmjs.org/superpowers
-- https://raw.githubusercontent.com/obra/superpowers/917e5f53b16b115b70a3a355ed5f4993b9f8b73d/package.json
+1. **Vendor `package.json`** (permalinked to commit `917e5f5`, verbatim excerpt):
+
+   ```json
+   {
+     "name": "superpowers",
+     "version": "5.0.7",
+     "type": "module",
+     "main": ".opencode/plugins/superpowers.js"
+   }
+   ```
+
+2. **npm registry lookup** of `https://registry.npmjs.org/superpowers` (captured 2026-04-07, verbatim field values):
+
+   - `maintainer`: `01studio` (`ian@01.studio`) — **not** `obra`
+   - `latest version`: `0.0.2`
+   - `description`: `"> TODO: description"` (placeholder)
+
+These two snapshots are mutually witnessing: the vendor repo declares name `superpowers` version `5.0.7`, but the npm registry under that same name returns an unrelated 01studio package. The conclusion — *obra/superpowers is not published under its declared name on the npm registry* — is fully audit-reproducible from the inline data above without needing to re-fetch the live URLs.
+
+Sources (for re-verification):
+- https://raw.githubusercontent.com/obra/superpowers/917e5f53b16b115b70a3a355ed5f4993b9f8b73d/README.md (install methods, permalinked)
+- https://raw.githubusercontent.com/obra/superpowers/917e5f53b16b115b70a3a355ed5f4993b9f8b73d/package.json (permalinked)
+- https://registry.npmjs.org/superpowers (live lookup — snapshot captured inline above 2026-04-07)
 
 ### 4. Architecture has churned recently
 
@@ -189,7 +206,7 @@ when the underlying mechanism does not exist.
 | npm publication | `get-shit-done-cc@1.34.2` | `oh-my-claude-sisyphus` | Not published |
 | Windows native | Bash + issues | Patched + tested | Polyglot wrapper, freeze fixed v3.6+ |
 | License | MIT | MIT | MIT |
-| Activeness | Active, 48k stars | Active | Very active (421 commits since Oct 2025, v5.0.7) |
+| Activeness | Active, 48k stars | Active | Very active (421 commits since Oct 2025, v5.0.7; recompute via `git -C modules/superpowers rev-list --count main`) |
 | Decision | **REJECT** | **DEFER** | **REJECT** |
 
 ---
