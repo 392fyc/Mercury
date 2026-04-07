@@ -36,25 +36,29 @@ Codex is invoked via `Agent` tool (rescue subagent) — no manual terminal step 
 ```bash
 # Detect the base branch the current branch was cut from.
 # Prefer develop if it exists (Mercury convention), else the repo default branch.
-# If gh repo view fails entirely (no auth, offline), try common names in order.
-BASE=$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null || true)
-if [ -z "$BASE" ]; then
-  for candidate in develop main master; do
-    if git rev-parse --verify "origin/$candidate" >/dev/null 2>&1; then
-      BASE="$candidate"; break
-    fi
-  done
+# Strategy: query the REMOTE (ls-remote + gh) instead of local refs, so shallow
+# clones and minimal checkouts still work without a prior fetch.
+BASE=""
+# Ask the remote directly — ls-remote does not require any local refs to exist.
+REMOTE_REFS=$(git ls-remote --heads origin 2>/dev/null || true)
+if [ -n "$REMOTE_REFS" ]; then
+  if echo "$REMOTE_REFS" | grep -q 'refs/heads/develop$'; then
+    BASE=develop
+  elif BASE=$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null) && [ -n "$BASE" ]; then
+    : # gh succeeded
+  else
+    for candidate in main master; do
+      if echo "$REMOTE_REFS" | grep -q "refs/heads/${candidate}\$"; then
+        BASE="$candidate"; break
+      fi
+    done
+  fi
 fi
 if [ -z "$BASE" ]; then
   echo "ERROR: dual-verify could not detect a base branch. Set BASE manually and retry." >&2
   exit 1
 fi
-# Override to develop if it exists on origin (Mercury convention).
-if git rev-parse --verify "origin/develop" >/dev/null 2>&1; then
-  BASE=develop
-fi
-# Ensure the base branch is fetched. Shallow clones and CI checkouts often lack origin/$BASE,
-# which would make `git diff origin/${BASE}...HEAD` fail silently with a confusing error.
+# Fetch the base branch so origin/$BASE is populated even on shallow clones / minimal checkouts.
 git fetch origin "$BASE" --quiet || {
   echo "ERROR: dual-verify failed to fetch origin/$BASE — check network or branch name" >&2
   exit 1
