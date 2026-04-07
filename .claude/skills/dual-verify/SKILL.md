@@ -53,19 +53,27 @@ fi
 # context may point at a different repo than $REMOTE, leading to a mismatched base
 # branch. ls-remote is bound to the exact git remote we'll diff against, so there is
 # no drift. The develop → main → master cascade covers effectively all real repos.
-BASE=""
-REMOTE_REFS=$(git ls-remote --heads "$REMOTE" 2>/dev/null || true)
-if [ -z "$REMOTE_REFS" ]; then
-  echo "ERROR: dual-verify failed to enumerate branches on remote '$REMOTE' — check network or credentials" >&2
-  exit 1
-fi
-for candidate in develop main master; do
-  if echo "$REMOTE_REFS" | grep -q "refs/heads/${candidate}\$"; then
-    BASE="$candidate"; break
-  fi
-done
+#
+# Escape hatch: if you are in one of the rare repos with a custom default branch name
+# (e.g. `trunk`, `stable`, `release`), set BASE_BRANCH_OVERRIDE in the env to skip the
+# cascade entirely. This is the supported way to handle custom default branches
+# without reintroducing the gh-vs-git-remote drift that iteration 4 removed.
+BASE="${BASE_BRANCH_OVERRIDE:-}"
 if [ -z "$BASE" ]; then
-  echo "ERROR: dual-verify could not detect a base branch (tried develop/main/master on $REMOTE). Set BASE manually and retry." >&2
+  REMOTE_REFS=$(git ls-remote --heads "$REMOTE" 2>/dev/null || true)
+  if [ -z "$REMOTE_REFS" ]; then
+    echo "ERROR: dual-verify failed to enumerate branches on remote '$REMOTE' — check network or credentials" >&2
+    exit 1
+  fi
+  for candidate in develop main master; do
+    if echo "$REMOTE_REFS" | grep -q "refs/heads/${candidate}\$"; then
+      BASE="$candidate"; break
+    fi
+  done
+fi
+if [ -z "$BASE" ]; then
+  echo "ERROR: dual-verify could not detect a base branch (tried develop/main/master on $REMOTE)." >&2
+  echo "Set BASE_BRANCH_OVERRIDE=<your-base-branch> and retry." >&2
   exit 1
 fi
 # Fetch the base branch so $REMOTE/$BASE is populated even on shallow clones / minimal checkouts.
