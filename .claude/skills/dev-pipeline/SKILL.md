@@ -202,20 +202,28 @@ Based on the acceptance verdict:
 
 | Verdict | Action |
 |---|---|
-| pass | Pipeline complete. Summarize result for user (Chinese for milestones). Hand off to /pr-flow if a PR is the next step. |
-| partial | Re-dispatch dev with the **original full TaskBundle** plus a `priorFindings` array containing acceptance's findings. Constraints (definitionOfDone, allowedWriteScope, mustNotTouch, readScope) MUST be carried over verbatim from iteration 1 — never widened, never dropped. Increment iteration. |
-| fail | Same as partial: dispatch with full original TaskBundle + priorFindings + priorRecommendations. Constraints carried verbatim. Increment iteration. |
-| blocked | Escalate to user. Acceptance hit an environmental block; user must resolve. |
+| pass | Pipeline complete. Summarize result for user (Chinese for milestones). Hand off to /pr-flow if a PR is the next step. **Run cleanup (see below).** |
+| partial | Re-dispatch dev with the **original full TaskBundle** plus a `priorFindings` array containing acceptance's findings. Constraints (definitionOfDone, allowedWriteScope, mustNotTouch, readScope) MUST be carried over verbatim from iteration 1 — never widened, never dropped. Increment iteration. **Do NOT clean up `$SHA_FILE` between iterations** — Phase 3 needs it on every retry. |
+| fail | Same as partial: dispatch with full original TaskBundle + priorFindings + priorRecommendations. Constraints carried verbatim. Increment iteration. **Do NOT clean up between iterations.** |
+| blocked | Escalate to user. Acceptance hit an environmental block; user must resolve. **Run cleanup.** |
 
 **Constraint preservation**: every retry dispatch must include the EXACT original `definitionOfDone`, `allowedWriteScope`, `mustNotTouch`, and `readScope` from iteration 1. Adding a new constraint is OK; widening or dropping an existing one is forbidden — that defeats the purpose of the bundle as a contract.
 
-**Iteration cap**: if iteration is at least 3 and verdict is still not pass, **escalate to user** with the full history. Do not silently keep looping.
+**Iteration cap**: if iteration is at least 3 and verdict is still not pass, **escalate to user** with the full history and **run cleanup**. Do not silently keep looping.
+
+### Cleanup (mandatory on every terminal exit path)
+
+```bash
+rm -f "$SHA_FILE"
+```
+
+This runs on `pass`, `blocked`, escalation after `partial`/`fail`, and on iteration-cap escalation. The ONLY paths that skip cleanup are intra-iteration dev re-dispatches (because Phase 3 still needs the SHA). If the loop terminates without reaching one of these branches (e.g. host crash), the file at `${TMPDIR:-/tmp}/dev-pipeline-task-start-sha-$$` will be cleaned up by OS tmp eviction; PID-suffix prevents collision.
 
 ## Phase 6: Hand-off
 
 On pass:
 1. Confirm commit is pushed (git status)
-2. **Clean up scratch state**: `rm -f "$SHA_FILE"` (the task-start SHA file from Phase 2). On any exit path (pass, escalate, blocked), this MUST run.
+2. **Clean up scratch state**: `rm -f "$SHA_FILE"` — see the Cleanup block in Phase 5 for the full mandatory list of exit paths.
 3. If user requested PR: invoke /pr-flow
 4. Mark related GitHub Project item Done (via /gh-project-flow if Mercury self-dev) or via Closes #N in PR (general case)
 5. Summarize in Chinese for the user
