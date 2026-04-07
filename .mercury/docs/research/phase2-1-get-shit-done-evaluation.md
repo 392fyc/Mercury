@@ -164,9 +164,9 @@ Final autoresearch gate metrics:
   complete; autoresearch protocol §"Termination" allows human interruption with state save.
   Approval recorded in session transcript (2026-04-07). Audit trail: this decision was
   made interactively during the Claude Code session — no standalone issue comment permalink
-  exists. The earliest durable artifact is commit d521cb4 (branch research/phase2-1-gsd-evaluation,
-  PR #193), which is the first commit of this ADR and implicitly records the research scope
-  and completion state at time of approval. Issue #191: https://github.com/392fyc/Mercury/issues/191
+  exists. Stable durable references: PR #193 (https://github.com/392fyc/Mercury/pull/193)
+  records the full change; Issue #191 (https://github.com/392fyc/Mercury/issues/191) tracks
+  the research scope. Both permalinks remain valid after branch cleanup or squash merge.
 
 ## References
 
