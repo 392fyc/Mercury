@@ -6,13 +6,13 @@
 **Parent**: Phase 2 #181
 **Decision authority**: Mercury main agent + user confirmation
 **Research method**: 4-round `autoresearch` skill invocation (8 unique source domains, mechanical quality gate passed). All load-bearing findings are reproduced inline in Sections 1–7 with permalinked vendor sources — this ADR is the canonical, self-contained audit artifact.
-**Upstream pin**: All `obra/superpowers` source URLs in this ADR are permalinked to commit `917e5f53b16b115b70a3a355ed5f4993b9f8b73d` (2026-04-06, latest on `main` at the time of evaluation). External non-vendor URLs (claude.com marketplace, npm registry, deepwiki) point to live pages and may evolve.
+**Upstream pin**: All `obra/superpowers` source URLs in this ADR are permalinked to commit `917e5f53b16b115b70a3a355ed5f4993b9f8b73d` (2026-04-06, latest on `main` at the time of evaluation). The few external non-vendor URLs (claude.com marketplace listing, registry.npmjs.org name lookup) point to live pages and serve only as **secondary corroboration** — they confirm marketplace presence and the npm name-squatter, but every load-bearing claim is independently witnessed by the permalinked vendor sources in Sections 1–7. If post-merge audit needs to reproduce the live-page state as of 2026-04-07, use the Wayback Machine snapshot pattern `https://web.archive.org/web/20260407*/[URL]`.
 
 ---
 
 ## Context
 
-Phase 2 of Mercury's execution plan (`.mercury/docs/EXECUTION-PLAN.md:197`) requires a Quality
+Phase 2 of Mercury's execution plan (`.mercury/docs/EXECUTION-PLAN.md §2-3 "Stop Hook 实现"`) requires a Quality
 Gate hook that **blocks dev sub-agents from stopping while tests are failing**:
 
 > Dev sub-agent 不能在 test 未通过时 stop
@@ -36,7 +36,7 @@ problem, mount it via submodule rather than reimplementing."*
 Superpowers is **strictly weaker** than OMC on the dimension Mercury cares about most: it
 ships **zero** `Stop` or `SubagentStop` hooks. Its TDD red-green-refactor enforcement is
 purely instructional (skill-prompt discipline), not harness-level. There is nothing for
-Mercury to mount that satisfies the EXECUTION-PLAN.md:197 acceptance criterion.
+Mercury to mount that satisfies the EXECUTION-PLAN.md §2-3 "Stop Hook 实现" acceptance criterion.
 
 This is REJECT rather than DEFER because, unlike OMC (which has a Stop hook that could in
 principle be patched with an exit-code interposer), Superpowers would require Mercury to
@@ -238,7 +238,7 @@ Verification: PASS — mechanical checklist completed during the operating sessi
 - GSD evaluation (REJECTED): `.mercury/docs/research/phase2-1-get-shit-done-evaluation.md`
 - OMC evaluation (DEFERRED): `.mercury/docs/research/phase2-1-omc-evaluation.md`
 - Mercury direction: `.mercury/docs/DIRECTION.md`
-- Phase 2 acceptance criterion: `.mercury/docs/EXECUTION-PLAN.md:197`
+- Phase 2 acceptance criterion: `.mercury/docs/EXECUTION-PLAN.md` §2-3 *Stop Hook 实现* (search the section heading for stable anchoring)
 - Mount-first principle: `CLAUDE.md` MUST section
 - Superpowers repo: https://github.com/obra/superpowers
 - Anthropic marketplace listing: https://claude.com/plugins/superpowers
