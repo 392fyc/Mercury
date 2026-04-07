@@ -130,8 +130,9 @@ The skills layout has split and re-merged within ~3 weeks:
 | v2.0 | 2025-10-09 to 2025-10-27 | split into separate `obra/superpowers-skills` repo |
 | current (v5.x) | 2025-10-27 → present | re-merged inline; `obra/superpowers-skills` **archived** |
 
-A `git submodule add obra/superpowers .external/superpowers` is now technically possible
-post-re-merge, but:
+A `git submodule add https://github.com/obra/superpowers modules/superpowers` (per Phase 2
+`modules/` directory convention, `.mercury/docs/EXECUTION-PLAN.md` §0-5) is now technically
+possible post-re-merge, but:
 - The `session-start` hook detects plugin host via env vars (`CLAUDE_PLUGIN_ROOT`,
   `CURSOR_PLUGIN_ROOT`, `COPILOT_CLI`) and assumes a plugin runtime context.
 - Skills are designed for Claude Code's plugin auto-discovery — Mercury would need to copy
@@ -201,8 +202,18 @@ when the underlying mechanism does not exist.
   failure (no Stop hook), but Superpowers has stronger marketplace presence, more polished
   Windows support, and a higher-quality skills library. The REJECT applies **only** to the
   Phase 2 Quality Gate purpose.
-- **OMC remains the fallback**: if OpenSpace also fails, return to OMC and accept the
-  LLM-level semantic gap, since OMC is the only candidate that ships an actual Stop hook.
+- **OMC is an escalation decision point, not an automatic fallback**: if OpenSpace also
+  fails, OMC is the only remaining candidate that ships an actual Stop hook scaffold.
+  However, OMC's Stop gate is LLM-level rather than mechanical exit-code, which **does not
+  by itself satisfy** EXECUTION-PLAN.md §2-3 "Stop Hook 实现" (*"dev sub-agent 不能在 test
+  未通过时 stop"* requires harness-level enforcement). At that point, the decision must
+  escalate back to the user with two explicit options: (a) relax the Phase 2 acceptance
+  criterion to accept the LLM-level gap, or (b) implement a thin Mercury adapter that
+  interposes a mechanical exit-code check between OMC's Stop hook and the dev sub-agent
+  (a ~50–150 LOC adapter satisfying the <200 LOC cap, which would still honor mount-first
+  because it mounts OMC and only wraps its output). **This ADR does not pre-commit to
+  either option** — it only records that REJECTing superpowers does not close off those
+  future paths.
 - **Mount-first principle preserved**: REJECT is justified by absence of mechanism, not
   preference for self-research.
 - **Post-Phase-2 follow-up**: superpowers' 14-skill library (`verification-before-completion`,
