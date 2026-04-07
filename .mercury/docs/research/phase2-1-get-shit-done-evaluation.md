@@ -162,9 +162,10 @@ Final autoresearch gate metrics:
   Exemption basis: all 7 questions answered (rate=1.00), unverified_rate dropped to 0.02 (≤0.1),
   and 2 of 3 prior UNVERIFIED items were resolved in Round 3. User confirmed content exhaustively
   complete; autoresearch protocol §"Termination" allows human interruption with state save.
-  Approval recorded in session transcript (2026-04-07). Audit reference: Issue #191 tracks
-  the full research scope; the user approval decision is anchored to the session that
-  produced this ADR (Issue #191 comment thread or transcript at the timestamp above).
+  Approval recorded in session transcript (2026-04-07). Audit permalink:
+  https://github.com/392fyc/Mercury/issues/191 — Issue #191 tracks the full research scope;
+  the early-termination decision was made by the repository owner during the research session
+  that produced this ADR.
 
 ## References
 
