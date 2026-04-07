@@ -134,28 +134,31 @@ Checklist:
 
 ## Phase 4: Dispatch Acceptance (BLIND)
 
-Build the **blindReceipt** by stripping dev's narrative fields:
+Build the **blindReceipt** by stripping dev's narrative fields. **Preserve original JSON types** — `changedFiles` and `verifyResults` are arrays in the dev receipt and MUST remain arrays here, not stringified placeholders:
 
 ```json
 {
-  "taskId": "[copied out of receipt]",
-  "changedFiles": "[copied out of receipt]",
-  "commitSha": "[copied out of receipt]",
-  "verifyResults": "[copied out of receipt]"
+  "taskId": "task-slug",
+  "changedFiles": ["path/to/file1.ts", "path/to/file2.ts"],
+  "commitSha": "abc123def",
+  "verifyResults": [
+    {"command": "pnpm test packages/foo", "exitCode": 0, "summary": "12 passed"},
+    {"command": "pnpm lint", "exitCode": 0, "summary": "0 issues"}
+  ]
 }
 ```
 
-Note what was REMOVED: evidence, risks, escalationReason. The acceptance agent must form its own conclusions out of code and tests, not out of dev's self-assessment.
+Note what was REMOVED relative to the dev receipt: `evidence`, `risks`, `escalationReason`. The acceptance agent must form its own conclusions out of code and tests, not out of dev's self-assessment.
 
-Build the **AcceptanceBundle**:
+Build the **AcceptanceBundle** (also preserve original types — `definitionOfDone`, `acceptanceCriteria`, `verifyCommands` are arrays, not strings):
 
 ```json
 {
-  "taskId": "[copied out of TaskBundle]",
-  "title": "[copied out of TaskBundle]",
-  "definitionOfDone": "[copied out of TaskBundle]",
-  "acceptanceCriteria": "[copied out of TaskBundle]",
-  "verifyCommands": "[copied out of TaskBundle]"
+  "taskId": "task-slug",
+  "title": "one-line summary",
+  "definitionOfDone": ["criterion 1", "criterion 2"],
+  "acceptanceCriteria": ["check 1", "check 2"],
+  "verifyCommands": ["pnpm test packages/foo", "pnpm lint"]
 }
 ```
 
