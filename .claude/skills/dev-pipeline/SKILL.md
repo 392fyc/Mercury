@@ -75,12 +75,16 @@ Before invoking this skill, the following must be true:
 
 ```bash
 TASK_START_SHA=$(git rev-parse HEAD)
-SHA_FILE="${TMPDIR:-/tmp}/dev-pipeline-task-start-sha-$$"
+# Use the branch name (sanitized) as a STABLE key so Phase 3 can re-read it
+# from a different shell process. $$ does NOT work here: Main/Phase 2 run in
+# one Bash shell, Phase 3 runs in a later Bash shell with a different PID.
+BRANCH_KEY=$(git rev-parse --abbrev-ref HEAD | tr '/' '_' | tr -cd '[:alnum:]_-')
+SHA_FILE="${TMPDIR:-/tmp}/dev-pipeline-task-start-sha-${BRANCH_KEY}"
 echo "$TASK_START_SHA" > "$SHA_FILE"
 # Phase 6 cleanup: rm -f "$SHA_FILE"
 ```
 
-The file is named with `$$` (current shell PID) so concurrent pipelines do not collide. Phase 6 hand-off must remove it.
+The file is keyed by the current branch name (slash-sanitized). This is stable across Bash invocations within the same pipeline run, and concurrent pipelines collide only if they are on the same branch — which would be a pre-existing git conflict anyway. Phase 6 hand-off must remove it.
 
 Use the Agent tool with subagent_type set to dev. The prompt template:
 
@@ -217,7 +221,7 @@ Based on the acceptance verdict:
 rm -f "$SHA_FILE"
 ```
 
-This runs on `pass`, `blocked`, escalation after `partial`/`fail`, and on iteration-cap escalation. The ONLY paths that skip cleanup are intra-iteration dev re-dispatches (because Phase 3 still needs the SHA). If the loop terminates without reaching one of these branches (e.g. host crash), the file at `${TMPDIR:-/tmp}/dev-pipeline-task-start-sha-$$` will be cleaned up by OS tmp eviction; PID-suffix prevents collision.
+This runs on `pass`, `blocked`, escalation after `partial`/`fail`, and on iteration-cap escalation. The ONLY paths that skip cleanup are intra-iteration dev re-dispatches (because Phase 3 still needs the SHA). If the loop terminates without reaching one of these branches (e.g. host crash), the file at `${TMPDIR:-/tmp}/dev-pipeline-task-start-sha-${BRANCH_KEY}` will be cleaned up on the next pipeline run against the same branch (the new invocation overwrites it) or by OS tmp eviction; the branch-key naming prevents cross-branch collision.
 
 ## Phase 6: Hand-off
 

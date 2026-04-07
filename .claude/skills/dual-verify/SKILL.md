@@ -34,11 +34,58 @@ Codex is invoked via `Agent` tool (rescue subagent) — no manual terminal step 
 **Claude Code deep review** (this session):
 
 ```bash
-git diff develop...HEAD --stat
-git diff develop...HEAD
+# Detect remote name. Most repos use `origin` but some use `upstream` or a custom name.
+# Strategy: prefer `origin` if present (convention), else use the first configured remote.
+REMOTE=""
+if git remote get-url origin >/dev/null 2>&1; then
+  REMOTE=origin
+else
+  REMOTE=$(git remote | head -n 1)
+fi
+if [ -z "$REMOTE" ]; then
+  echo "ERROR: dual-verify could not detect a git remote. Configure one with 'git remote add origin <url>' and retry." >&2
+  exit 1
+fi
+
+# Detect the base branch the current branch was cut from.
+# Strategy: query the REMOTE (ls-remote) directly — no local refs, no gh context.
+# Rationale for not using `gh repo view`: in fork / multi-remote setups, gh's current
+# context may point at a different repo than $REMOTE, leading to a mismatched base
+# branch. ls-remote is bound to the exact git remote we'll diff against, so there is
+# no drift. The develop → main → master cascade covers effectively all real repos.
+#
+# Escape hatch: if you are in one of the rare repos with a custom default branch name
+# (e.g. `trunk`, `stable`, `release`), set BASE_BRANCH_OVERRIDE in the env to skip the
+# cascade entirely. This is the supported way to handle custom default branches
+# without reintroducing the gh-vs-git-remote drift that iteration 4 removed.
+BASE="${BASE_BRANCH_OVERRIDE:-}"
+if [ -z "$BASE" ]; then
+  REMOTE_REFS=$(git ls-remote --heads "$REMOTE" 2>/dev/null || true)
+  if [ -z "$REMOTE_REFS" ]; then
+    echo "ERROR: dual-verify failed to enumerate branches on remote '$REMOTE' — check network or credentials" >&2
+    exit 1
+  fi
+  for candidate in develop main master; do
+    if echo "$REMOTE_REFS" | grep -q "refs/heads/${candidate}\$"; then
+      BASE="$candidate"; break
+    fi
+  done
+fi
+if [ -z "$BASE" ]; then
+  echo "ERROR: dual-verify could not detect a base branch (tried develop/main/master on $REMOTE)." >&2
+  echo "Set BASE_BRANCH_OVERRIDE=<your-base-branch> and retry." >&2
+  exit 1
+fi
+# Fetch the base branch so $REMOTE/$BASE is populated even on shallow clones / minimal checkouts.
+git fetch "$REMOTE" "$BASE" --quiet || {
+  echo "ERROR: dual-verify failed to fetch ${REMOTE}/${BASE} — check network or branch name" >&2
+  exit 1
+}
+git diff "${REMOTE}/${BASE}...HEAD" --stat
+git diff "${REMOTE}/${BASE}...HEAD"
 ```
 
-Check: TypeScript correctness (run `npx tsc --noEmit`), logic correctness, integration points, OpenSpace schema compliance, missing metric paths, memory leaks.
+Check: language-appropriate correctness gates (e.g. `tsc --noEmit` for TypeScript, `pnpm lint`, `pytest --collect-only` for Python), logic correctness, integration points, schema compliance, missing branches in switch/if chains, resource leaks.
 
 **Codex audit** (rescue subagent — launch via Agent tool with `subagent_type: codex:codex-rescue`):
 

@@ -30,11 +30,18 @@ Understand these Argus capabilities before executing:
 
 ## Variables
 
-```
+```bash
 PR_NUMBER=<number>
 PR_URL=<url>
-OWNER=392fyc
-REPO_NAME=Mercury
+# Auto-detect repo + base branch — works in any GitHub repo, not just Mercury.
+OWNER=$(gh repo view --json owner --jq '.owner.login')
+REPO_NAME=$(gh repo view --json name --jq '.name')
+BASE_BRANCH=$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name')
+# Mercury convention override: if a "develop" branch exists, prefer it over the default branch
+# so feature PRs land on develop first and the default branch stays deploy-clean.
+if gh api "repos/${OWNER}/${REPO_NAME}/branches/develop" --silent 2>/dev/null; then
+  BASE_BRANCH=develop
+fi
 ITERATION=0
 MAX_ITERATIONS=5
 ```
@@ -46,8 +53,35 @@ MAX_ITERATIONS=5
 ```bash
 BRANCH=$(git branch --show-current)
 git push -u origin "$BRANCH"
-gh pr create --base develop \
-  --title "<type>(<scope>): description (#issue)" \
+
+# Assignee: prefer the authenticated user so this works in any repo, not just 392fyc's.
+# Fall back to @me if the API call fails.
+ASSIGNEE=$(gh api user --jq '.login' 2>/dev/null || echo "@me")
+
+# Labels: only apply labels that actually exist in the target repo. Unknown labels fail the PR create.
+# To add labels, extend this array. Label names MUST match [A-Za-z0-9:_./-]+ — if you need labels
+# with spaces or other special characters, URL-encode them via jq before passing to gh api.
+LABEL_ARG=""
+for L in "enhancement"; do
+  # Validate label name shape before passing to the API path (defense-in-depth against injection
+  # and silent probe failures when the label contains characters that need URL encoding).
+  case "$L" in
+    *[!A-Za-z0-9:_./-]*)
+      echo "WARNING: label '$L' contains non-simple characters — skipping; use URL-encoded form or rename the label" >&2
+      continue
+      ;;
+  esac
+  if MSYS_NO_PATHCONV=1 gh api "repos/${OWNER}/${REPO_NAME}/labels/${L}" --silent 2>/dev/null; then
+    LABEL_ARG="${LABEL_ARG}${LABEL_ARG:+,}${L}"
+  fi
+done
+
+# Build gh pr create argv explicitly. The ${X:+word} conditional expansion does NOT work here
+# because the quotes inside "word" become literal characters after expansion, so gh would receive
+# '--label "enhancement"' as a single token. Use an array for safe argument splitting.
+PR_ARGS=(
+  --base "$BASE_BRANCH"
+  --title "<type>(<scope>): description (#issue)"
   --body "$(cat <<'BODY'
 ## Summary
 - bullet points
@@ -57,9 +91,14 @@ gh pr create --base develop \
 
 Generated with Claude Code
 BODY
-)" \
-  --assignee 392fyc \
-  --label "<bug|enhancement|refactor>"
+)"
+  --assignee "$ASSIGNEE"
+)
+if [ -n "$LABEL_ARG" ]; then
+  PR_ARGS+=(--label "$LABEL_ARG")
+fi
+
+gh pr create "${PR_ARGS[@]}"
 ```
 
 **GATE 1**: PR created. Extract and store `PR_NUMBER` and `PR_URL`.
@@ -296,10 +335,12 @@ if [ "$WT_FAIL" -eq 0 ]; then
   ')
 fi
 
-# Switch off branch (must happen before branch deletion)
+# Switch off branch (must happen before branch deletion).
+# Reuse BASE_BRANCH computed at the start of the skill — do NOT hardcode "develop",
+# because repos without a develop branch (master-only) would fail here.
 if [ "$(git rev-parse --abbrev-ref HEAD)" = "$BRANCH" ]; then
-  if ! git switch develop 2>/dev/null && ! git checkout develop 2>/dev/null; then
-    echo "WARNING: failed to switch off branch $BRANCH — skipping cleanup"
+  if ! git switch "$BASE_BRANCH" 2>/dev/null && ! git checkout "$BASE_BRANCH" 2>/dev/null; then
+    echo "WARNING: failed to switch off branch $BRANCH to $BASE_BRANCH — skipping cleanup"
     WT_FAIL=1
   fi
 fi

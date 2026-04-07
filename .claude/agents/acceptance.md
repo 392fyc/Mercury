@@ -34,10 +34,15 @@ Evaluate only from code, tests, and runtime output. Do not rely on the developer
 
 ## Output Format
 
+The verdict schema matches what `dev-pipeline` SKILL.md Phase 4 parses. Both `criteriaResults` (per-criterion breakdown) and `findings` / `recommendations` (free-form lists) are required fields. Do NOT omit `criteriaResults` — the pipeline keys off it for retry decisions.
+
 ```json
 {
   "verdict": "pass|partial|fail|blocked",
-  "findings": ["..."],
-  "recommendations": ["..."]
+  "criteriaResults": [
+    {"criterion": "text of the criterion", "verdict": "pass|fail|partial", "evidence": "file:line or test output"}
+  ],
+  "findings": ["problem 1", "problem 2"],
+  "recommendations": ["actionable fix 1"]
 }
 ```
