@@ -150,7 +150,7 @@ Mercury 的核心价值不在代码里，在方法论里。
 - Acceptance sub-agent 独立验证: 做和验分离
 
 **技术方向**: 主要通过外部项目挂载实现
-- GSD (gsd-build/gsd-2): deriveState 状态机 + sliding window 卡死检测
+- GSD (gsd-build/get-shit-done): Claude Code 安装式 skill/hook 框架（Phase 2-1 评估后 REJECT，详见 `.mercury/docs/research/phase2-1-get-shit-done-evaluation.md`；姊妹项目 gsd-build/gsd-2 是独立 CLI，与 Mercury sub-agent 模型不兼容）
 - Superpowers (obra/superpowers): inline checklist + TDD red-green-refactor（已进入 Anthropic marketplace）
 - OMC (Yeachan-Heo/oh-my-claudecode): Ralph mode stop hook 拦截
 - OpenSpace (HKUDS/OpenSpace): 技能自进化 + proof-gates
@@ -362,7 +362,7 @@ adapters/
 所有外部引用已于 2026-04-06 验证可用。
 
 - Karpathy LLM Knowledge Bases (2026-04-02) — Memory Layer 设计理念
-- GSD (gsd-build/gsd-2) — Quality Gate: 状态机 + 卡死检测，活跃维护
+- GSD (gsd-build/get-shit-done) — 评估结果 REJECT for Quality Gate（无 blocking Stop hook；姊妹项目 gsd-2 是独立 CLI 不可挂载）。详见 `.mercury/docs/research/phase2-1-get-shit-done-evaluation.md`
 - Superpowers (obra/superpowers) — Quality Gate: 自检清单 + TDD，已进入 Anthropic marketplace，活跃维护
 - Oh My Claude Code (Yeachan-Heo/oh-my-claudecode) — Quality Gate: Stop hook 拦截，活跃维护
 - OpenSpace (HKUDS/OpenSpace) — Quality Gate: 技能自进化，活跃维护
