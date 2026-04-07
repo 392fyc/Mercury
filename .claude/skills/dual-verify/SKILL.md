@@ -36,10 +36,29 @@ Codex is invoked via `Agent` tool (rescue subagent) — no manual terminal step 
 ```bash
 # Detect the base branch the current branch was cut from.
 # Prefer develop if it exists (Mercury convention), else the repo default branch.
-BASE=$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null || echo "master")
-if gh api "repos/$(gh repo view --json owner --jq '.owner.login')/$(gh repo view --json name --jq '.name')/branches/develop" --silent 2>/dev/null; then
+# If gh repo view fails entirely (no auth, offline), try common names in order.
+BASE=$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null || true)
+if [ -z "$BASE" ]; then
+  for candidate in develop main master; do
+    if git rev-parse --verify "origin/$candidate" >/dev/null 2>&1; then
+      BASE="$candidate"; break
+    fi
+  done
+fi
+if [ -z "$BASE" ]; then
+  echo "ERROR: dual-verify could not detect a base branch. Set BASE manually and retry." >&2
+  exit 1
+fi
+# Override to develop if it exists on origin (Mercury convention).
+if git rev-parse --verify "origin/develop" >/dev/null 2>&1; then
   BASE=develop
 fi
+# Ensure the base branch is fetched. Shallow clones and CI checkouts often lack origin/$BASE,
+# which would make `git diff origin/${BASE}...HEAD` fail silently with a confusing error.
+git fetch origin "$BASE" --quiet || {
+  echo "ERROR: dual-verify failed to fetch origin/$BASE — check network or branch name" >&2
+  exit 1
+}
 git diff "origin/${BASE}...HEAD" --stat
 git diff "origin/${BASE}...HEAD"
 ```

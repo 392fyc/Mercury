@@ -59,16 +59,29 @@ git push -u origin "$BRANCH"
 ASSIGNEE=$(gh api user --jq '.login' 2>/dev/null || echo "@me")
 
 # Labels: only apply labels that actually exist in the target repo. Unknown labels fail the PR create.
-# To add labels, extend this array and ensure each exists in the target repo first.
+# To add labels, extend this array. Label names MUST match [A-Za-z0-9:_./-]+ — if you need labels
+# with spaces or other special characters, URL-encode them via jq before passing to gh api.
 LABEL_ARG=""
 for L in "enhancement"; do
+  # Validate label name shape before passing to the API path (defense-in-depth against injection
+  # and silent probe failures when the label contains characters that need URL encoding).
+  case "$L" in
+    *[!A-Za-z0-9:_./-]*)
+      echo "WARNING: label '$L' contains non-simple characters — skipping; use URL-encoded form or rename the label" >&2
+      continue
+      ;;
+  esac
   if MSYS_NO_PATHCONV=1 gh api "repos/${OWNER}/${REPO_NAME}/labels/${L}" --silent 2>/dev/null; then
     LABEL_ARG="${LABEL_ARG}${LABEL_ARG:+,}${L}"
   fi
 done
 
-gh pr create --base "$BASE_BRANCH" \
-  --title "<type>(<scope>): description (#issue)" \
+# Build gh pr create argv explicitly. The ${X:+word} conditional expansion does NOT work here
+# because the quotes inside "word" become literal characters after expansion, so gh would receive
+# '--label "enhancement"' as a single token. Use an array for safe argument splitting.
+PR_ARGS=(
+  --base "$BASE_BRANCH"
+  --title "<type>(<scope>): description (#issue)"
   --body "$(cat <<'BODY'
 ## Summary
 - bullet points
@@ -78,9 +91,14 @@ gh pr create --base "$BASE_BRANCH" \
 
 Generated with Claude Code
 BODY
-)" \
-  --assignee "$ASSIGNEE" \
-  ${LABEL_ARG:+--label "$LABEL_ARG"}
+)"
+  --assignee "$ASSIGNEE"
+)
+if [ -n "$LABEL_ARG" ]; then
+  PR_ARGS+=(--label "$LABEL_ARG")
+fi
+
+gh pr create "${PR_ARGS[@]}"
 ```
 
 **GATE 1**: PR created. Extract and store `PR_NUMBER` and `PR_URL`.
