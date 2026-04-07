@@ -63,7 +63,7 @@ Sources:
 
 ## Mercury Project #3 Cached IDs
 
-These are stable as of 2026-04-07. Re-run `field-list` if `item-edit` returns "field not found".
+These are stable as of 2026-04-07. **The cache is fragile**: if Project #3 fields are recreated, deleted, or migrated, every ID below becomes garbage and `item-edit` will fail. Run the verify snippet at the bottom of this section before any high-stakes batch operation, and re-run `field-list` if `item-edit` ever returns "field not found".
 
 ```bash
 PROJECT_NUMBER=3
@@ -99,20 +99,34 @@ gh project field-list 3 --owner 392fyc --format json --limit 100 | jq '.fields[]
 gh project view 3 --owner 392fyc --format json --jq '.id'
 ```
 
+To **verify** the cache against current Project state (run this before any batch operation that depends on the IDs):
+
+```bash
+# Compare cached IDs against live values; nonzero exit means drift.
+# tr -d '\r' guards against CRLF when running under git bash on Windows.
+LIVE=$(gh project field-list 3 --owner 392fyc --format json --limit 100 \
+  | jq -r '.fields[] | select(.type=="ProjectV2SingleSelectField") | "\(.name)=\(.id)"' | tr -d '\r' | sort)
+EXPECTED=$(printf '%s\n' \
+  "Status=PVTSSF_lAHOBiaNmM4BT4NvzhBEE4c" \
+  "Phase=PVTSSF_lAHOBiaNmM4BT4NvzhBEE_o" \
+  "Priority=PVTSSF_lAHOBiaNmM4BT4NvzhBEFA4" | sort)
+diff <(echo "$LIVE") <(echo "$EXPECTED") && echo "cache OK" || { echo "DRIFT — regenerate cache"; exit 1; }
+```
+
 ## Operation 1 — `next-task`
 
-Pull the highest-priority Todo item for a given Phase. Caller passes the Phase explicitly; this skill does NOT auto-detect "active" phase (that's a workflow decision belonging to Main, not the skill).
+Pull the next P0 Todo item for a given Phase. Caller passes the Phase explicitly; this skill does NOT auto-detect "active" phase (that's a workflow decision belonging to Main, not the skill).
 
 ```bash
 PHASE="${1:-Phase 1}"
+PRIORITY="${2:-P0}"
 
 # NOTE: gh --jq does NOT accept --arg. Pipe to standalone jq to pass shell variables safely.
-# Sort_by on strings "P0"/"P1"/"P2" yields P0 first lexicographically, so .[0] is the highest priority.
+# Canonical: filter by phase + status + priority explicitly. Do NOT rely on sort_by for priority semantics.
 gh project item-list 3 --owner 392fyc --format json --limit 100 \
-  | jq --arg phase "$PHASE" '
+  | jq --arg phase "$PHASE" --arg pri "$PRIORITY" '
     .items
-    | map(select(.status=="Todo" and .phase==$phase))
-    | sort_by(.priority)
+    | map(select(.status=="Todo" and .phase==$phase and .priority==$pri))
     | .[0]
     | {
         id,
@@ -126,7 +140,7 @@ gh project item-list 3 --owner 392fyc --format json --limit 100 \
   '
 ```
 
-Returns one item or `null`. Issue items have a `number` and `url`; draft items have `null` for both. To restrict to P0 only, use the explicit P0 filter below.
+Returns one item or `null`. Issue items have a `number` and `url`; draft items have `null` for both. To fall back to lower priorities when no P0 remains, call again with `PRIORITY=P1`, then `P2`. The skill does NOT auto-fall-back — that is a workflow decision the caller owns.
 
 To list all P0 Todo for a Phase (not just one):
 

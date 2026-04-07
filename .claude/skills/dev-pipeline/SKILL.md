@@ -71,6 +71,13 @@ Before invoking this skill, the following must be true:
 
 ## Phase 2: Dispatch Dev
 
+**Before dispatching**, capture the task-start SHA so Phase 3 can compute the diff range correctly (do not rely on `HEAD~1`):
+
+```bash
+TASK_START_SHA=$(git rev-parse HEAD)
+echo "$TASK_START_SHA" > .pr-flow-task-start-sha
+```
+
 Use the Agent tool with subagent_type set to dev. The prompt template:
 
 ```
@@ -121,7 +128,7 @@ Checklist:
 - [ ] commitSha matches latest commit on the branch
 - [ ] All verifyCommands listed in the bundle have a verifyResults entry with exitCode 0
 - [ ] evidence cites at least one file:line per definitionOfDone item
-- [ ] No file outside allowedWriteScope was touched (run git diff --name-only HEAD~1)
+- [ ] No file outside allowedWriteScope was touched. Use the **task-start SHA** captured before Phase 2 dispatch as the comparison base (`TASK_START_SHA=$(git rev-parse HEAD)` before dispatch, then `git diff --name-only "$TASK_START_SHA..HEAD"` after). Do NOT use `HEAD~1` — it breaks on first commits, squashed commits, and multi-commit dev runs.
 
 **Gate**: if any check fails, send a correction prompt to dev (still iteration 1) with the specific deficiency. Do not advance to acceptance with an incomplete receipt.
 
