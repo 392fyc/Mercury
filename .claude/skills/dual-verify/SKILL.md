@@ -34,13 +34,26 @@ Codex is invoked via `Agent` tool (rescue subagent) — no manual terminal step 
 **Claude Code deep review** (this session):
 
 ```bash
+# Detect remote name. Most repos use `origin` but some use `upstream` or a custom name.
+# Strategy: prefer `origin` if present (convention), else use the first configured remote.
+REMOTE=""
+if git remote get-url origin >/dev/null 2>&1; then
+  REMOTE=origin
+else
+  REMOTE=$(git remote | head -n 1)
+fi
+if [ -z "$REMOTE" ]; then
+  echo "ERROR: dual-verify could not detect a git remote. Configure one with 'git remote add origin <url>' and retry." >&2
+  exit 1
+fi
+
 # Detect the base branch the current branch was cut from.
 # Prefer develop if it exists (Mercury convention), else the repo default branch.
 # Strategy: query the REMOTE (ls-remote + gh) instead of local refs, so shallow
 # clones and minimal checkouts still work without a prior fetch.
 BASE=""
 # Ask the remote directly — ls-remote does not require any local refs to exist.
-REMOTE_REFS=$(git ls-remote --heads origin 2>/dev/null || true)
+REMOTE_REFS=$(git ls-remote --heads "$REMOTE" 2>/dev/null || true)
 if [ -n "$REMOTE_REFS" ]; then
   if echo "$REMOTE_REFS" | grep -q 'refs/heads/develop$'; then
     BASE=develop
@@ -58,13 +71,13 @@ if [ -z "$BASE" ]; then
   echo "ERROR: dual-verify could not detect a base branch. Set BASE manually and retry." >&2
   exit 1
 fi
-# Fetch the base branch so origin/$BASE is populated even on shallow clones / minimal checkouts.
-git fetch origin "$BASE" --quiet || {
-  echo "ERROR: dual-verify failed to fetch origin/$BASE — check network or branch name" >&2
+# Fetch the base branch so $REMOTE/$BASE is populated even on shallow clones / minimal checkouts.
+git fetch "$REMOTE" "$BASE" --quiet || {
+  echo "ERROR: dual-verify failed to fetch ${REMOTE}/${BASE} — check network or branch name" >&2
   exit 1
 }
-git diff "origin/${BASE}...HEAD" --stat
-git diff "origin/${BASE}...HEAD"
+git diff "${REMOTE}/${BASE}...HEAD" --stat
+git diff "${REMOTE}/${BASE}...HEAD"
 ```
 
 Check: language-appropriate correctness gates (e.g. `tsc --noEmit` for TypeScript, `pnpm lint`, `pytest --collect-only` for Python), logic correctness, integration points, schema compliance, missing branches in switch/if chains, resource leaks.
