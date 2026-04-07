@@ -48,27 +48,24 @@ if [ -z "$REMOTE" ]; then
 fi
 
 # Detect the base branch the current branch was cut from.
-# Prefer develop if it exists (Mercury convention), else the repo default branch.
-# Strategy: query the REMOTE (ls-remote + gh) instead of local refs, so shallow
-# clones and minimal checkouts still work without a prior fetch.
+# Strategy: query the REMOTE (ls-remote) directly — no local refs, no gh context.
+# Rationale for not using `gh repo view`: in fork / multi-remote setups, gh's current
+# context may point at a different repo than $REMOTE, leading to a mismatched base
+# branch. ls-remote is bound to the exact git remote we'll diff against, so there is
+# no drift. The develop → main → master cascade covers effectively all real repos.
 BASE=""
-# Ask the remote directly — ls-remote does not require any local refs to exist.
 REMOTE_REFS=$(git ls-remote --heads "$REMOTE" 2>/dev/null || true)
-if [ -n "$REMOTE_REFS" ]; then
-  if echo "$REMOTE_REFS" | grep -q 'refs/heads/develop$'; then
-    BASE=develop
-  elif BASE=$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null) && [ -n "$BASE" ]; then
-    : # gh succeeded
-  else
-    for candidate in main master; do
-      if echo "$REMOTE_REFS" | grep -q "refs/heads/${candidate}\$"; then
-        BASE="$candidate"; break
-      fi
-    done
-  fi
+if [ -z "$REMOTE_REFS" ]; then
+  echo "ERROR: dual-verify failed to enumerate branches on remote '$REMOTE' — check network or credentials" >&2
+  exit 1
 fi
+for candidate in develop main master; do
+  if echo "$REMOTE_REFS" | grep -q "refs/heads/${candidate}\$"; then
+    BASE="$candidate"; break
+  fi
+done
 if [ -z "$BASE" ]; then
-  echo "ERROR: dual-verify could not detect a base branch. Set BASE manually and retry." >&2
+  echo "ERROR: dual-verify could not detect a base branch (tried develop/main/master on $REMOTE). Set BASE manually and retry." >&2
   exit 1
 fi
 # Fetch the base branch so $REMOTE/$BASE is populated even on shallow clones / minimal checkouts.
