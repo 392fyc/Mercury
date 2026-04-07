@@ -160,6 +160,6 @@ Verification: PASS (mechanical checklist in `.research/state/verification-omc-ev
 - Phase 2 acceptance criterion: `.mercury/docs/EXECUTION-PLAN.md:197`
 - Mount-first principle: `CLAUDE.md` MUST section
 - Full research transcript: `.research/reports/RESEARCH-omc-evaluation-2026-04-07.md`
-- OMC repo: https://github.com/Yeachan-Heo/oh-my-claudecode
-- npm package: https://www.npmjs.com/package/oh-my-claude-sisyphus
+- OMC repo (brand name `oh-my-claudecode`): https://github.com/Yeachan-Heo/oh-my-claudecode
+- npm package (published as `oh-my-claude-sisyphus`, the official package name for the OMC project — naming inconsistency is upstream's, verified across 4 sources in autoresearch Round 2): https://www.npmjs.com/package/oh-my-claude-sisyphus
 - Stop hook docs: https://code.claude.com/docs/en/hooks
