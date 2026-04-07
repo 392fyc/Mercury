@@ -5,7 +5,7 @@
 **Issue**: #196
 **Parent**: Phase 2 #181
 **Decision authority**: Mercury main agent + user confirmation
-**Research artifact**: `.research/reports/RESEARCH-superpowers-evaluation-2026-04-07.md` (4 rounds, 8 unique source domains; local scratch, not committed per Mercury convention — same as GSD/OMC ADRs)
+**Research method**: 4-round `autoresearch` skill invocation (8 unique source domains, mechanical quality gate passed). All load-bearing findings are reproduced inline in Sections 1–7 with permalinked vendor sources — this ADR is the canonical, self-contained audit artifact.
 **Upstream pin**: All `obra/superpowers` source URLs in this ADR are permalinked to commit `917e5f53b16b115b70a3a355ed5f4993b9f8b73d` (2026-04-06, latest on `main` at the time of evaluation). External non-vendor URLs (claude.com marketplace, npm registry, deepwiki) point to live pages and may evolve.
 
 ---
@@ -138,10 +138,9 @@ post-re-merge, but:
   them into `.claude/skills/`, defeating the submodule's update story.
 - Recent split→re-merge churn is a stability red flag for any vendor mounting strategy.
 
-Sources:
-- https://raw.githubusercontent.com/obra/superpowers/917e5f53b16b115b70a3a355ed5f4993b9f8b73d/RELEASE-NOTES.md
-- https://github.com/obra/superpowers-skills (archived 2025-10-27)
-- https://deepwiki.com/obra/superpowers/4.2-skills-repository-management
+Sources (all upstream/first-party):
+- https://raw.githubusercontent.com/obra/superpowers/917e5f53b16b115b70a3a355ed5f4993b9f8b73d/RELEASE-NOTES.md (canonical version history with v2.0 split + v5.x re-merge timeline)
+- https://github.com/obra/superpowers-skills (the archived split repo itself — banner shows "This repository has been archived by the owner on Oct 27, 2025")
 
 ### 5. Windows support: stronger than GSD, comparable to OMC
 
@@ -217,20 +216,7 @@ when the underlying mechanism does not exist.
 
 ## Verification
 
-**Evidence pattern**: This ADR is the canonical, audit-grade artifact for the evaluation.
-The full key findings (verbatim `hooks.json` body, verbatim TDD-skill analysis quote,
-6-method install table, 7-question dimension table, 3-way comparison table) are reproduced
-**inline** in Sections 1–7 above with vendor-source permalinks pinned to commit
-`917e5f5`. A reviewer can independently re-verify every load-bearing claim by clicking
-the source URLs in Sections 1–7 — no Mercury-local file is required.
-
-The supplementary `.research/` directory contains the autoresearch process transcript
-(`results.jsonl` per-round metrics, `RESEARCH-superpowers-evaluation-2026-04-07.md`
-free-form notes, `verification-superpowers-evaluation.md` mechanical checklist). Per
-Mercury convention (also applied to the merged GSD ADR PR #193 and OMC ADR PR #195),
-`.research/` is `.gitignore`d as local scratch — it is a process artifact for the
-operating session, not load-bearing audit evidence. The ADR Rationale sections are the
-load-bearing reproduction.
+**Evidence pattern**: This ADR is the canonical, self-contained audit artifact. All load-bearing findings (verbatim `hooks.json` body, verbatim TDD-skill analysis quote, 6-method install table, 7-question dimension table, 3-way comparison table) are reproduced **inline** in Sections 1–7 above with vendor-source permalinks pinned to commit `917e5f5`. A reviewer can independently re-verify every load-bearing claim by clicking the source URLs in Sections 1–7 — no Mercury-local file is required. The autoresearch process generated supplementary scratch files in the operating session; per Mercury convention (also applied to the merged GSD ADR PR #193 and OMC ADR PR #195), those are not committed because the ADR Rationale sections fully reproduce the load-bearing content.
 
 Final autoresearch gate metrics:
 
@@ -241,7 +227,7 @@ Final autoresearch gate metrics:
 | `unverified_rate` | 0.0 | ≤ 0.1 | PASS |
 | `iteration_depth` | 4 | ≥ 4 | PASS |
 
-Verification: PASS (mechanical checklist in `.research/state/verification-superpowers-evaluation.md`)
+Verification: PASS — mechanical checklist completed during the operating session. Per the *Evidence pattern* note above, the load-bearing reproduction lives **in this ADR's Sections 1–7** (with permalinked vendor sources), not in the local-scratch transcript files.
 
 ---
 
@@ -254,7 +240,6 @@ Verification: PASS (mechanical checklist in `.research/state/verification-superp
 - Mercury direction: `.mercury/docs/DIRECTION.md`
 - Phase 2 acceptance criterion: `.mercury/docs/EXECUTION-PLAN.md:197`
 - Mount-first principle: `CLAUDE.md` MUST section
-- Full research transcript: `.research/reports/RESEARCH-superpowers-evaluation-2026-04-07.md`
 - Superpowers repo: https://github.com/obra/superpowers
 - Anthropic marketplace listing: https://claude.com/plugins/superpowers
 - Stop hook docs: https://code.claude.com/docs/en/hooks
