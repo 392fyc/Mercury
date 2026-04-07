@@ -162,10 +162,11 @@ Final autoresearch gate metrics:
   Exemption basis: all 7 questions answered (rate=1.00), unverified_rate dropped to 0.02 (≤0.1),
   and 2 of 3 prior UNVERIFIED items were resolved in Round 3. User confirmed content exhaustively
   complete; autoresearch protocol §"Termination" allows human interruption with state save.
-  Approval recorded in session transcript (2026-04-07). Audit permalink:
-  https://github.com/392fyc/Mercury/issues/191 — Issue #191 tracks the full research scope;
-  the early-termination decision was made by the repository owner during the research session
-  that produced this ADR.
+  Approval recorded in session transcript (2026-04-07). Audit trail: this decision was
+  made interactively during the Claude Code session — no standalone issue comment permalink
+  exists. The earliest durable artifact is commit d521cb4 (branch research/phase2-1-gsd-evaluation,
+  PR #193), which is the first commit of this ADR and implicitly records the research scope
+  and completion state at time of approval. Issue #191: https://github.com/392fyc/Mercury/issues/191
 
 ## References
 

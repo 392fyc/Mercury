@@ -359,7 +359,7 @@ adapters/
 
 ## 八、参考资源
 
-所有外部引用已于 2026-04-07 验证可用（GSD 纠偏与 get-shit-done 评估均在 2026-04-07 完成）。
+外部引用经人工抽样验证（截至 2026-04-07，GSD 纠偏与 get-shit-done 评估完成时）；链接有效性以 ADR 发布时间为准，后续可能因上游变更失效。
 验证证据索引：ADR source list 见 `.mercury/docs/research/phase2-1-get-shit-done-evaluation.md#references`（27 个源 URL，跨 GitHub / npm / issue tracker 三方验证；计数与 ADR header 及 PR #193 描述一致）。
 
 - Karpathy LLM Knowledge Bases (2026-04-02) — Memory Layer 设计理念
