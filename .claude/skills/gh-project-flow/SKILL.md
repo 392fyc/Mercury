@@ -66,6 +66,9 @@ Sources:
 These are stable as of 2026-04-07. **The cache is fragile**: if Project #3 fields are recreated, deleted, or migrated, every ID below becomes garbage and `item-edit` will fail. Run the verify snippet at the bottom of this section before any high-stakes batch operation, and re-run `field-list` if `item-edit` ever returns "field not found".
 
 ```bash
+# IMPORTANT: run the cache-verify snippet (further below in this section) before
+# trusting these constants for any batch operation. They are static and will go
+# stale silently if the Project field schema changes.
 PROJECT_NUMBER=3
 PROJECT_OWNER=392fyc
 PROJECT_ID=PVT_kwHOBiaNmM4BT4Nv
@@ -123,10 +126,13 @@ PRIORITY="${2:-P0}"
 
 # NOTE: gh --jq does NOT accept --arg. Pipe to standalone jq to pass shell variables safely.
 # Canonical: filter by phase + status + priority explicitly. Do NOT rely on sort_by for priority semantics.
+# Stable order: sort by content.number (issue items) ascending, then by item id (drafts).
+# This makes "next-task" deterministic across runs even if GitHub returns items in different order.
 gh project item-list 3 --owner 392fyc --format json --limit 100 \
   | jq --arg phase "$PHASE" --arg pri "$PRIORITY" '
     .items
     | map(select(.status=="Todo" and .phase==$phase and .priority==$pri))
+    | sort_by([(.content.number // 999999), .id])
     | .[0]
     | {
         id,

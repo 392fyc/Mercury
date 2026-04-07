@@ -71,12 +71,16 @@ Before invoking this skill, the following must be true:
 
 ## Phase 2: Dispatch Dev
 
-**Before dispatching**, capture the task-start SHA so Phase 3 can compute the diff range correctly (do not rely on `HEAD~1`):
+**Before dispatching**, capture the task-start SHA so Phase 3 can compute the diff range correctly (do not rely on `HEAD~1`). Store it OUTSIDE the working tree to avoid repo pollution:
 
 ```bash
 TASK_START_SHA=$(git rev-parse HEAD)
-echo "$TASK_START_SHA" > .pr-flow-task-start-sha
+SHA_FILE="${TMPDIR:-/tmp}/dev-pipeline-task-start-sha-$$"
+echo "$TASK_START_SHA" > "$SHA_FILE"
+# Phase 6 cleanup: rm -f "$SHA_FILE"
 ```
+
+The file is named with `$$` (current shell PID) so concurrent pipelines do not collide. Phase 6 hand-off must remove it.
 
 Use the Agent tool with subagent_type set to dev. The prompt template:
 
@@ -211,9 +215,10 @@ Based on the acceptance verdict:
 
 On pass:
 1. Confirm commit is pushed (git status)
-2. If user requested PR: invoke /pr-flow
-3. Mark related GitHub Project item Done (via /gh-project-flow if Mercury self-dev) or via Closes #N in PR (general case)
-4. Summarize in Chinese for the user
+2. **Clean up scratch state**: `rm -f "$SHA_FILE"` (the task-start SHA file from Phase 2). On any exit path (pass, escalate, blocked), this MUST run.
+3. If user requested PR: invoke /pr-flow
+4. Mark related GitHub Project item Done (via /gh-project-flow if Mercury self-dev) or via Closes #N in PR (general case)
+5. Summarize in Chinese for the user
 
 ## Detachability
 
