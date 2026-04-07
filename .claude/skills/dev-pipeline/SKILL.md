@@ -221,12 +221,16 @@ This runs on `pass`, `blocked`, escalation after `partial`/`fail`, and on iterat
 
 ## Phase 6: Hand-off
 
+Phase 6 is reached **only on `pass`**. Cleanup for non-pass terminal exits is handled inside Phase 5 — do not duplicate it here.
+
 On pass:
-1. Confirm commit is pushed (git status)
-2. **Clean up scratch state**: `rm -f "$SHA_FILE"` — see the Cleanup block in Phase 5 for the full mandatory list of exit paths.
-3. If user requested PR: invoke /pr-flow
-4. Mark related GitHub Project item Done (via /gh-project-flow if Mercury self-dev) or via Closes #N in PR (general case)
-5. Summarize in Chinese for the user
+1. Confirm commit is pushed (`git status`)
+2. If user requested PR: invoke `/pr-flow`
+3. Mark related GitHub Project item Done (via `/gh-project-flow` if Mercury self-dev) or via `Closes #N` in PR (general case)
+4. Summarize in Chinese for the user
+5. Run the Phase 5 Cleanup block (`rm -f "$SHA_FILE"`) as the final action
+
+**Single source of truth**: the Phase 5 Cleanup block is the only authoritative description of when `$SHA_FILE` is removed. Phase 6 only reaches it via the `pass` branch above. If you find yourself debating "should I clean up here", re-read Phase 5.
 
 ## Detachability
 
