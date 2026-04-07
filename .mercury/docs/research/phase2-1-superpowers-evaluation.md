@@ -5,7 +5,8 @@
 **Issue**: #196
 **Parent**: Phase 2 #181
 **Decision authority**: Mercury main agent + user confirmation
-**Research artifact**: `.research/reports/RESEARCH-superpowers-evaluation-2026-04-07.md` (4 rounds, 8 unique source domains)
+**Research artifact**: `.research/reports/RESEARCH-superpowers-evaluation-2026-04-07.md` (4 rounds, 8 unique source domains; local scratch, not committed per Mercury convention — same as GSD/OMC ADRs)
+**Upstream pin**: All `obra/superpowers` source URLs in this ADR were verified against commit `917e5f5` (2026-04-06). The decisive `hooks.json` evidence is permalinked below; other links point to `main` as of 2026-04-07 — to verify post-drift, replace `/main/` with `/917e5f53b16b115b70a3a355ed5f4993b9f8b73d/` in the URL path.
 
 ---
 
@@ -72,7 +73,7 @@ acceptance criterion ("dev sub-agent 不能在 test 未通过时 stop") requires
 hook that returns blocking output when test status is failing. Superpowers does not provide
 this — at any layer.
 
-Source: https://raw.githubusercontent.com/obra/superpowers/main/hooks/hooks.json
+Source (permalinked at commit `917e5f5`, verified 2026-04-07): https://raw.githubusercontent.com/obra/superpowers/917e5f53b16b115b70a3a355ed5f4993b9f8b73d/hooks/hooks.json
 
 ### 2. TDD enforcement is prompt discipline, not mechanical
 
