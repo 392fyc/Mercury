@@ -359,7 +359,7 @@ adapters/
 
 ## 八、参考资源
 
-所有外部引用已于 2026-04-06 验证可用。
+所有外部引用已于 2026-04-07 验证可用（GSD 纠偏与 get-shit-done 评估均在 2026-04-07 完成）。
 
 - Karpathy LLM Knowledge Bases (2026-04-02) — Memory Layer 设计理念
 - GSD (gsd-build/get-shit-done) — 评估结果 REJECT for Quality Gate（无 blocking Stop hook；姊妹项目 gsd-2 是独立 CLI 不可挂载）。详见 `.mercury/docs/research/phase2-1-get-shit-done-evaluation.md`

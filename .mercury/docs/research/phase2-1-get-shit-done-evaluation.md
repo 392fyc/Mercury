@@ -158,8 +158,11 @@ Final autoresearch gate metrics:
 - `question_answer_rate` 1.00 (PASS, threshold ≥0.9)
 - `citation_density` ~0.90 (PASS, threshold ≥0.75)
 - `unverified_rate` ~0.02 (PASS, threshold ≤0.1)
-- `iteration_depth` 3 (FAIL, threshold ≥4) — terminated with user approval after Round 3 since
-  content was exhaustively complete and 2 of 3 prior UNVERIFIED items were resolved in Round 3.
+- `iteration_depth` 3 (FAIL, threshold ≥4) — terminated with explicit user approval after Round 3.
+  Exemption basis: all 7 questions answered (rate=1.00), unverified_rate dropped to 0.02 (≤0.1),
+  and 2 of 3 prior UNVERIFIED items were resolved in Round 3. User confirmed content exhaustively
+  complete; autoresearch protocol §"Termination" allows human interruption with state save.
+  Approval recorded in session transcript (2026-04-07).
 
 ## References
 
