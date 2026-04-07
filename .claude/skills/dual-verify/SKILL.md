@@ -34,11 +34,17 @@ Codex is invoked via `Agent` tool (rescue subagent) — no manual terminal step 
 **Claude Code deep review** (this session):
 
 ```bash
-git diff develop...HEAD --stat
-git diff develop...HEAD
+# Detect the base branch the current branch was cut from.
+# Prefer develop if it exists (Mercury convention), else the repo default branch.
+BASE=$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null || echo "master")
+if gh api "repos/$(gh repo view --json owner --jq '.owner.login')/$(gh repo view --json name --jq '.name')/branches/develop" --silent 2>/dev/null; then
+  BASE=develop
+fi
+git diff "origin/${BASE}...HEAD" --stat
+git diff "origin/${BASE}...HEAD"
 ```
 
-Check: TypeScript correctness (run `npx tsc --noEmit`), logic correctness, integration points, OpenSpace schema compliance, missing metric paths, memory leaks.
+Check: language-appropriate correctness gates (e.g. `tsc --noEmit` for TypeScript, `pnpm lint`, `pytest --collect-only` for Python), logic correctness, integration points, schema compliance, missing branches in switch/if chains, resource leaks.
 
 **Codex audit** (rescue subagent — launch via Agent tool with `subagent_type: codex:codex-rescue`):
 
