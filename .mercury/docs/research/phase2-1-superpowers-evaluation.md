@@ -6,7 +6,7 @@
 **Parent**: Phase 2 #181
 **Decision authority**: Mercury main agent + user confirmation
 **Research artifact**: `.research/reports/RESEARCH-superpowers-evaluation-2026-04-07.md` (4 rounds, 8 unique source domains; local scratch, not committed per Mercury convention — same as GSD/OMC ADRs)
-**Upstream pin**: All `obra/superpowers` source URLs in this ADR were verified against commit `917e5f5` (2026-04-06). The decisive `hooks.json` evidence is permalinked below; other links point to `main` as of 2026-04-07 — to verify post-drift, replace `/main/` with `/917e5f53b16b115b70a3a355ed5f4993b9f8b73d/` in the URL path.
+**Upstream pin**: All `obra/superpowers` source URLs in this ADR are permalinked to commit `917e5f53b16b115b70a3a355ed5f4993b9f8b73d` (2026-04-06, latest on `main` at the time of evaluation). External non-vendor URLs (claude.com marketplace, npm registry, deepwiki) point to live pages and may evolve.
 
 ---
 
@@ -94,9 +94,9 @@ least ships a Stop hook scaffold (`persistent-mode.cjs` Priority 7). Superpowers
 nothing at the hook layer to interpose on.
 
 Sources:
-- https://raw.githubusercontent.com/obra/superpowers/main/skills/test-driven-development/SKILL.md
-- https://raw.githubusercontent.com/obra/superpowers/main/skills/verification-before-completion/SKILL.md
-- https://raw.githubusercontent.com/obra/superpowers/main/skills/subagent-driven-development/SKILL.md
+- https://raw.githubusercontent.com/obra/superpowers/917e5f53b16b115b70a3a355ed5f4993b9f8b73d/skills/test-driven-development/SKILL.md
+- https://raw.githubusercontent.com/obra/superpowers/917e5f53b16b115b70a3a355ed5f4993b9f8b73d/skills/verification-before-completion/SKILL.md
+- https://raw.githubusercontent.com/obra/superpowers/917e5f53b16b115b70a3a355ed5f4993b9f8b73d/skills/subagent-driven-development/SKILL.md
 
 ### 3. Integration model: plugin/marketplace only
 
@@ -116,9 +116,9 @@ Six documented installation methods, **none** of them git submodule:
 `"name": "superpowers"`, `"version": "5.0.7"`, but is not published.
 
 Sources:
-- https://raw.githubusercontent.com/obra/superpowers/main/README.md
+- https://raw.githubusercontent.com/obra/superpowers/917e5f53b16b115b70a3a355ed5f4993b9f8b73d/README.md
 - https://registry.npmjs.org/superpowers
-- https://raw.githubusercontent.com/obra/superpowers/main/package.json
+- https://raw.githubusercontent.com/obra/superpowers/917e5f53b16b115b70a3a355ed5f4993b9f8b73d/package.json
 
 ### 4. Architecture has churned recently
 
@@ -139,7 +139,7 @@ post-re-merge, but:
 - Recent split→re-merge churn is a stability red flag for any vendor mounting strategy.
 
 Sources:
-- https://raw.githubusercontent.com/obra/superpowers/main/RELEASE-NOTES.md
+- https://raw.githubusercontent.com/obra/superpowers/917e5f53b16b115b70a3a355ed5f4993b9f8b73d/RELEASE-NOTES.md
 - https://github.com/obra/superpowers-skills (archived 2025-10-27)
 - https://deepwiki.com/obra/superpowers/4.2-skills-repository-management
 
@@ -160,8 +160,8 @@ Sources:
   there is no Quality Gate to support on any platform.
 
 Sources:
-- https://raw.githubusercontent.com/obra/superpowers/main/hooks/run-hook.cmd
-- https://github.com/obra/superpowers/blob/main/hooks/session-start
+- https://raw.githubusercontent.com/obra/superpowers/917e5f53b16b115b70a3a355ed5f4993b9f8b73d/hooks/run-hook.cmd
+- https://github.com/obra/superpowers/blob/917e5f53b16b115b70a3a355ed5f4993b9f8b73d/hooks/session-start
 - https://github.com/obra/superpowers/issues/31
 
 ### 6. Adapter LOC scenarios
@@ -217,8 +217,20 @@ when the underlying mechanism does not exist.
 
 ## Verification
 
-Research artifact `.research/reports/RESEARCH-superpowers-evaluation-2026-04-07.md` covers
-all 7 evaluation dimensions across 4 autoresearch rounds with 8 unique source domains.
+**Evidence pattern**: This ADR is the canonical, audit-grade artifact for the evaluation.
+The full key findings (verbatim `hooks.json` body, verbatim TDD-skill analysis quote,
+6-method install table, 7-question dimension table, 3-way comparison table) are reproduced
+**inline** in Sections 1–7 above with vendor-source permalinks pinned to commit
+`917e5f5`. A reviewer can independently re-verify every load-bearing claim by clicking
+the source URLs in Sections 1–7 — no Mercury-local file is required.
+
+The supplementary `.research/` directory contains the autoresearch process transcript
+(`results.jsonl` per-round metrics, `RESEARCH-superpowers-evaluation-2026-04-07.md`
+free-form notes, `verification-superpowers-evaluation.md` mechanical checklist). Per
+Mercury convention (also applied to the merged GSD ADR PR #193 and OMC ADR PR #195),
+`.research/` is `.gitignore`d as local scratch — it is a process artifact for the
+operating session, not load-bearing audit evidence. The ADR Rationale sections are the
+load-bearing reproduction.
 
 Final autoresearch gate metrics:
 
