@@ -76,3 +76,6 @@ mercury.config.json
 
 # KB managed separately in parallel directory (D:/Mercury/Mercury_KB), never inside repo
 Mercury_KB/
+
+# OMC plugin runtime state (per-user, populated after /plugin install oh-my-claudecode)
+.omc/
