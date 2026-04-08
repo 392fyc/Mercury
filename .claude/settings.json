@@ -105,6 +105,18 @@
           }
         ]
       }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "dev",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/adapters/mercury-test-gate/hook.cjs\"",
+            "timeout": 360
+          }
+        ]
+      }
     ]
   },
   "enabledPlugins": {

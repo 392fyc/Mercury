@@ -55,6 +55,8 @@ CLAUDE.md
 .worktrees/
 
 # Mercury runtime state
+.mercury/state/test-gate-attempts.json
+.mercury/state/test-gate-*
 .mercury/sessions.json
 .mercury/transcripts/
 .mercury/backups/
