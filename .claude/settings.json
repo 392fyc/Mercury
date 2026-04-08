@@ -108,6 +108,7 @@
     ]
   },
   "enabledPlugins": {
-    "codex@openai-codex": true
+    "codex@openai-codex": true,
+    "claude-hud@claude-hud": true
   }
 }

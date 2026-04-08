@@ -2,7 +2,7 @@
 name: design
 description: Architecture designer. Use when a specification, design document, or technical evaluation is needed — produces structured proposals + trade-off analyses. Hands implementation back to Main for dispatch (does NOT itself dispatch dev or modify code).
 tools: Read, Write, Glob, Grep, WebSearch, WebFetch
-model: inherit
+model: opus
 ---
 
 # Role: Design Agent

@@ -2,7 +2,7 @@
 name: acceptance
 description: Blind acceptance reviewer. Use after a dev agent has completed implementation and pushed code. Receives only the AcceptanceBundle (definition-of-done + acceptance criteria) and a blind receipt (changed files only — NO dev reasoning/narrative). Reads code + runs tests + inspects runtime output. Returns a structured JSON verdict (pass | partial | fail | blocked) with findings + recommendations. MUST NOT read dev agent self-assessment.
 tools: Read, Glob, Grep, Bash
-model: inherit
+model: sonnet
 ---
 
 # Role: Acceptance Agent
