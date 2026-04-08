@@ -1,0 +1,111 @@
+# DEC-3: Model Tiering for Sub-Agent Dispatch (#198)
+
+**Status**: Accepted
+**Date**: 2026-04-08
+**Issue**: #198
+**Branch**: feat/issue-198-tiering
+
+## Context
+
+Mercury currently runs every sub-agent (dev, acceptance, critic, research, design) with `model: inherit`, which resolves to the main session's model — Opus 4.6 on Max plans. Long autonomous runs drain the Opus weekly bucket far faster than necessary because routine sub-agent work (code edits, test running, web summarization) does not benefit from Opus-level reasoning.
+
+Two rounds of research established the facts:
+
+- **Round 1-4 (`Mercury_KB/04-research/RESEARCH-TOKEN-TIERING-198.md`)** — API surface: frontmatter `model:` field is officially supported, accepts `sonnet`/`opus`/`haiku`/`inherit`/full IDs. Per [code.claude.com/docs/en/sub-agents](https://code.claude.com/docs/en/sub-agents), the resolution priority is: (1) `CLAUDE_CODE_SUBAGENT_MODEL` env var, (2) per-invocation `model` parameter, (3) subagent frontmatter `model:`, (4) main conversation model. No `minModel:` field exists. Frontmatter is not a hard lock — orchestrator may override at call time.
+
+- **Round 5 (`Mercury_KB/04-research/RESEARCH-TOKEN-TIERING-198-RUNTIME.md`)** — Runtime behavior: per-model rate-limit buckets are independent ([Anthropic API rate-limits doc](https://platform.claude.com/docs/en/api/rate-limits): *"Rate limits are applied separately for each model; therefore you can use different models up to their respective limits simultaneously."*). Sub-agents dispatched with `model: sonnet` consume the Sonnet bucket, NOT the parent Opus bucket. Net Opus quota savings ≈ 95% on routed traffic, since Task tool only returns the sub-agent's final summary message ([anthropics/claude-code#10164](https://github.com/anthropics/claude-code/issues/10164)).
+
+## Decision
+
+Adopt a three-tier model assignment for Mercury sub-agents:
+
+| Tier | Model | Mechanism | Used by |
+|---|---|---|---|
+| T1 | Opus 4.6 | Main session (`inherit`) + explicit `model: opus` | main, design, critic |
+| T2 | Sonnet 4.6 | Explicit `model: sonnet` frontmatter | dev, acceptance, research |
+| T3 | Codex gpt-5.4 | `mcp__codex__codex` tool call from any tier | mechanical edits, audit, rescue |
+
+### Per-agent assignment
+
+| Agent | `model:` | Rationale |
+|---|---|---|
+| `main.md` | `inherit` | Documentation only — `main.md` is not dispatched as a sub-agent. The main role IS the session, which runs at user-tier default (Opus on Max). |
+| `dev.md` | `sonnet` | SWE-bench Verified gap is only 1.2 pp (Opus 80.8% vs Sonnet 79.6%) — within noise for code-edit workloads. |
+| `acceptance.md` | `sonnet` | Acceptance is test-runner + diff inspection, not deep reasoning. Same code-task class as dev. |
+| `critic.md` | `opus` | Existing critic spec mandates *"SHOULD run on a different model than the dev agent to avoid self-congratulation bias"*. With dev now on Sonnet, critic moves to Opus to preserve the bias separation. Critic also benefits from Opus's stronger adversarial reasoning. |
+| `research.md` | `sonnet` | Single-shot web search + summarize is well within Sonnet's capability. |
+| `design.md` | `opus` | Architectural proposals + trade-off analyses are GPQA-Diamond-class work — Sonnet shows a 17.2 pp gap on that benchmark ([NxCode comparison](https://www.nxcode.io/resources/news/claude-sonnet-4-6-vs-opus-4-6-complete-comparison-2026)). |
+
+### Skill model exception: autoresearch / deep-research
+
+Skills are prompt expansions executed in the **invoking** session's context — they inherit whatever model the caller is on. autoresearch's synthesis phase is GPQA-Diamond-class deep reasoning and must run on Opus.
+
+**Rule**: autoresearch (and any future deep-research class skill) MUST be invoked directly from Mercury Main (`/autoresearch ...`), NOT delegated through the `research` sub-agent. This keeps the skill execution in Main's Opus context.
+
+The `research` sub-agent (Sonnet) remains the right tool for one-shot web lookups + summarization. The two roles are deliberately split.
+
+### Why NO `CLAUDE_CODE_SUBAGENT_MODEL` env var
+
+Initial draft planned to set `CLAUDE_CODE_SUBAGENT_MODEL=sonnet` in `.claude/settings.json` as a belt-and-suspenders default. **This was wrong and has been removed.**
+
+Per the [official sub-agents doc](https://code.claude.com/docs/en/sub-agents) (verified 2026-04-08), the resolution priority is:
+
+1. `CLAUDE_CODE_SUBAGENT_MODEL` environment variable, if set
+2. Per-invocation `model` parameter
+3. Subagent definition's `model` frontmatter
+4. Main conversation's model
+
+The env var is **priority 1 — a HARD override of frontmatter (priority 3)**. Setting it globally to `sonnet` would clobber `critic.md` and `design.md`'s explicit `model: opus`, forcing them to Sonnet and breaking both the critic bias-separation and the design deep-reasoning intent.
+
+**Mercury uses explicit frontmatter only.** No env-var default. This is safer because:
+- Adding a new agent requires explicit `model:` in the frontmatter — no silent defaulting.
+- Changing tier assignment requires a visible code change in the agent file.
+- Reviewers can audit tier assignments by grepping `^model:` across `.claude/agents/`.
+
+## Implementation Guardrails
+
+1. **Explicit, not inherited** — every sub-agent file that is actually dispatched (`dev`, `acceptance`, `critic`, `research`, `design`) gets `model: sonnet|opus` written out. Do NOT rely on `inherit` (anthropics/claude-code#5456 historical bug; #19174 documentation ambiguity through 2026-02). **Exception**: `main.md` keeps `model: inherit` because it documents the top-level orchestrator role and is never dispatched as a sub-agent — it runs as the user's session model.
+2. **No `CLAUDE_CODE_SUBAGENT_MODEL` env var** — it would hard-override explicit frontmatter for critic/design. Explicit frontmatter is the single source of truth.
+3. **autoresearch/deep-research stays on Main** — never dispatched through research sub-agent.
+4. **Opus-required tasks** — main session, design proposals, critic adversarial review, dual-verify orchestration, ADR drafting.
+5. **Watch all-models weekly cap** — tiering preserves Opus weekly but does NOT relieve the all-models weekly aggregate. Quantify after first week of operation. Empirically measured caps documented in [anthropics/claude-code#12487](https://github.com/anthropics/claude-code/issues/12487).
+
+## Consequences
+
+### Positive
+
+- Opus weekly bucket consumption reduced by routing dev/acceptance/research traffic to Sonnet — preserves headroom for the binding constraint on Mercury autonomous runs.
+- Sonnet sub-agents continue functioning when Main Opus is rate-limited (per-model bucket independence) — improves dev-pipeline robustness on long runs.
+- Critic moves to Opus, satisfying the existing "different model than dev" bias-separation requirement that was previously implicit.
+
+### Negative / Caveats
+
+- 5h rolling session limit is unchanged — all sub-agent traffic still drains it. For burst protection, see deferred [#199](https://github.com/392fyc/Mercury/issues/199).
+- All-models weekly aggregate is unchanged — tiering shifts cost between buckets, doesn't reduce total token volume.
+- Sonnet weekly sub-cap is now reachable. If Mercury workload skews dev-heavy, Sonnet weekly may bind before Opus weekly. Monitor `/usage`.
+- Critic on Opus costs more per critic invocation than on Sonnet — accepted because critic runs at end-of-cycle, not in inner loops.
+
+### Unverified items (kept for future empirical observation)
+
+- Exact byte cost of Task tool result return path (Anthropic does not publish).
+- Whether Pro/Max plan weekly buckets follow the same per-model partitioning as the API doc rate-limits — only inferred via empirical reports, no Anthropic-confirmed statement.
+- Sonnet weekly sub-cap vs all-models cap relative consumption rate under typical Mercury workload — requires post-implementation measurement.
+
+## References
+
+- Issue #198 — Token management & model tiering
+- `Mercury_KB/04-research/RESEARCH-TOKEN-TIERING-198.md` — API surface (Rounds 1-4, gate PASS)
+- `Mercury_KB/04-research/RESEARCH-TOKEN-TIERING-198-RUNTIME.md` — Runtime behavior (Round 5+, gate PASS)
+- [Anthropic API rate limits](https://platform.claude.com/docs/en/api/rate-limits) — per-model independence (canonical)
+- [code.claude.com/docs/en/sub-agents](https://code.claude.com/docs/en/sub-agents) — frontmatter spec
+- [code.claude.com/docs/en/model-config](https://code.claude.com/docs/en/model-config) — `CLAUDE_CODE_SUBAGENT_MODEL` env var
+- [NxCode Sonnet 4.6 vs Opus 4.6 benchmark](https://www.nxcode.io/resources/news/claude-sonnet-4-6-vs-opus-4-6-complete-comparison-2026) — quality gap data
+- anthropics/claude-code#12487 — empirical bucket sharing observations
+- anthropics/claude-code#10164 — Task tool return path
+- anthropics/claude-code#27665 — sub-agent model resolver code
+- anthropics/claude-code#5456 — historical inherit bug
+- anthropics/claude-code#19174 — documentation ambiguity (resolved 2026-02)
+- anthropics/claude-code#4182 — sub-agent nesting prohibition
+- DEC-2 — TaskBundle Lightweight Dispatch (related: dispatch-layer optimization)
+- Issue #199 — burst-mode dual-process fallback (deferred)
+- Issue #200 — hybrid autoresearch Codex-early/Opus-late (deferred)
