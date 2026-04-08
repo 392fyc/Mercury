@@ -1,0 +1,14 @@
+{
+  "name": "mercury-test-gate",
+  "version": "1.0.0",
+  "description": "Mechanical SubagentStop hook: blocks dev agents when tests are failing",
+  "type": "commonjs",
+  "main": "hook.cjs",
+  "scripts": {
+    "test": "node --test test/"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "MIT"
+}
