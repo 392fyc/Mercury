@@ -187,10 +187,17 @@ adapters/         # 适配层
 - 编写适配层 (adapters/{project}/)
 - 验证适配层不超过 200 行
 
-### 2-3. Stop Hook 实现
-- 基于挂载项目的机制，实现 agent stop 拦截
-- 定义 completion checklist 格式（机械化标准）
-- 在 Dev Pipeline 中集成
+### 2-3. Stop Hook 实现 ✅ 已实现 (Issue #206, 2026-04-08)
+
+**实现路径**: Path β — 独立 Mercury adapter，与 OMC 层叠运行（Layer model）。
+**适配层**: `adapters/mercury-test-gate/` (152 LOC, Node.js CJS)
+**机制**: `SubagentStop` 事件触发 → 解析 test command（convention file 优先，fallback 自动检测）→ 执行 → exit code 非零则 emit `{"decision":"block"}` → dev agent 无法退出。
+**验收标准**: Dev sub-agent 不能在 test 未通过时 stop（机械化，harness-level，bypass-proof up to 3 re-entries）。
+**集成测试**: 由用户在 merge 后执行真实 dev pipeline run，结果记录于 Phase 2 completion ADR（DEC-4）。
+
+- ~~基于挂载项目的机制，实现 agent stop 拦截~~ — 已完成，见 `adapters/mercury-test-gate/hook.cjs`
+- ~~定义 completion checklist 格式（机械化标准）~~ — test exit code = 0 即为通过标准
+- ~~在 Dev Pipeline 中集成~~ — 已通过 `.claude/settings.json` SubagentStop 注册
 
 **产出**: 可拦截 agent 早退的质量门禁
 **人类干预点**: 外部项目选择决策；首次 stop hook 误拦截时调整阈值
