@@ -91,6 +91,53 @@ The env var is **priority 1 — a HARD override of frontmatter (priority 3)**. S
 - Whether Pro/Max plan weekly buckets follow the same per-model partitioning as the API doc rate-limits — only inferred via empirical reports, no Anthropic-confirmed statement.
 - Sonnet weekly sub-cap vs all-models cap relative consumption rate under typical Mercury workload — requires post-implementation measurement.
 
+## Measurement Protocol (post-merge validation)
+
+The ADR's quantitative claims (≈95% net Opus savings on routed traffic; Opus weekly headroom restoration) are theoretical derivations from the research reports. A one-week empirical measurement is required to validate them against real Mercury workload.
+
+### Baseline (pre-merge snapshot)
+
+Capture once immediately BEFORE merging this PR:
+
+```text
+T-0: /usage output (main session)
+  - Opus weekly: X% of limit
+  - Sonnet weekly: Y% of limit
+  - All-models weekly: Z% of limit
+  - Current 5h rolling: W% of limit
+Record in: Mercury_KB/04-research/MEASURE-198-baseline.md
+```
+
+### Measurement window
+
+7 days of normal Mercury operation after merge. No special workload; measure whatever the owner naturally runs through dev-pipeline, pr-flow, autoresearch, etc.
+
+### Metrics to capture (daily samples)
+
+1. **Opus weekly consumption rate** — samples at day-end for 7 days. Expected: lower than equivalent pre-tiering baseline.
+2. **Sonnet weekly consumption rate** — samples at day-end. Expected: non-zero (was near-zero pre-tiering).
+3. **All-models weekly** — samples at day-end. Expected: similar total to pre-tiering (volume didn't change, only routing).
+4. **Rate-limit incidents** — count of `/usage` 100% hits on any bucket during the week. Expected: fewer than pre-tiering on Opus; watch for new Sonnet-bucket hits.
+5. **Critic-on-Opus quality check** — spot-check 2-3 critic reviews manually to confirm adversarial reasoning quality did not degrade vs pre-tiering.
+
+### Recording location
+
+```text
+Mercury_KB/04-research/MEASURE-198-week1.md
+  - T-0 baseline copy
+  - 7 daily samples with timestamps
+  - Final comparison: routing effectiveness %, bucket pressure change
+  - Go / no-go decision: keep current tiering | rebalance (push more to Codex T3) | revert
+```
+
+### Decision criteria
+
+- **Keep** — Opus weekly headroom improved ≥20% vs baseline AND no new Sonnet weekly hit
+- **Rebalance** — Sonnet weekly sub-cap hit before all-models cap → route more to Codex T3 via tool call
+- **Revert** — Measurable quality degradation on critic or dev output (should not happen if guardrails held)
+
+This protocol is lightweight by design — no automation, just `/usage` snapshots + manual logging. Mercury owner runs it.
+
 ## References
 
 - Issue #198 — Token management & model tiering
