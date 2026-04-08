@@ -23,7 +23,7 @@ Superpowers (Issue #196, PR #197) was **REJECTED** — strictly weaker than OMC,
 `HKUDS/OpenSpace` is the **fourth and final** candidate from `DIRECTION.md`. DIRECTION.md described it as:
 > *"self-evolving skill engine for AI agents (3,900+ Stars), supports Claude Code as a target runtime"*
 
-There is also an existing parallel research issue (#141) tracking OpenSpace's self-evolving skill engine for Mercury's *agent experience accumulation* workstream. **This ADR addresses only the Phase 2 Quality Gate question, not the broader #141 scope.** The Phase 2 verdict does NOT close #141 — the recycled findings have been posted to #141 as a comment for future harness self-check work.
+There is also an existing parallel research issue [#141](https://github.com/392fyc/Mercury/issues/141) tracking OpenSpace's self-evolving skill engine for Mercury's *agent experience accumulation* workstream. **This ADR addresses only the Phase 2 Quality Gate question, not the broader #141 scope.** The Phase 2 verdict does NOT close #141 — the recycled findings have been posted as comment [#141#issuecomment-4205801987](https://github.com/392fyc/Mercury/issues/141#issuecomment-4205801987) for future harness self-check work, with explicit deferred-research tracker conditions (v1.0+ release, 30+ days since most recent security/transport churn, PyPI publication under non-collided name).
 
 Per Mercury's mount-first principle (`CLAUDE.md`): *"If an external project can solve the problem, mount it via submodule rather than reimplementing."*
 
@@ -48,7 +48,7 @@ This is REJECT rather than DEFER because, unlike OMC (which has a Stop hook scaf
 
 ### 1. NO Claude Code hook infrastructure exists in OpenSpace
 
-Full recursive file listing for `HKUDS/OpenSpace` at the pinned commit (via `gh api repos/HKUDS/OpenSpace/git/trees/main?recursive=1`) contains:
+Full recursive file listing for `HKUDS/OpenSpace` at the pinned commit. **Important methodology note**: this listing was re-fetched 2026-04-08 against the *commit-pinned* tree object (tree SHA `8d1981b12961f2dde32cdbc5887155cdd8bb59b4`, resolved from commit `4791133`'s `.tree.sha` field via `gh api repos/HKUDS/OpenSpace/git/commits/4791133...`), then queried via `gh api repos/HKUDS/OpenSpace/git/trees/4791133e11a45872b063c75968965c447e835455?recursive=1`. This is **commit-bound, not branch-bound** — a future audit replay using the same commit SHA will return the identical tree regardless of how `main` advances. Total blob count at the pinned tree: **844 files**. The recursive listing contains:
 
 - **NO** `hooks.json` at any path
 - **NO** `.claude/` directory at any path
@@ -257,7 +257,7 @@ Recent 15 commits to `main` (verbatim from `gh api repos/HKUDS/OpenSpace/commits
 **Red-flag signals** (all verbatim from commit messages above):
 
 1. **8 runtime bugs in a single code review round** (`f3a064d`, 2026-04-05) — for a 2-week-old project, having 8 bugs surface in one review pass indicates the core paths are still being exercised for the first time by external users. Mercury would be running into bug #9, #10, #11 if it mounted now.
-2. **Security fix 5 days ago** (`af1eb5b`, 2026-04-03) — *"stop leaking Python tracebacks to MCP clients"* is a non-trivial MCP server information-disclosure leak. The MCP integration surface (which is the only viable Mercury integration path per Section 3) was leaking stack traces to clients until essentially yesterday in evaluation terms. Mercury must NOT mount an MCP server with such recent information-disclosure history.
+2. **Security fix 5 days ago** (`af1eb5b`, 2026-04-03) — *"stop leaking Python tracebacks to MCP clients"* is a non-trivial MCP server information-disclosure leak. The MCP integration surface (which is the only viable Mercury integration path per Section 3) was leaking stack traces to clients until essentially yesterday in evaluation terms. **Mercury should NOT mount an MCP server with such recent information-disclosure history without an explicit security review and a documented soak period** (Mercury currently has no formal security-admission policy; the design subagent recommends adding one as a follow-up; meanwhile this is a judgment call against the prevailing mount-first vs. security-conservatism trade-off).
 3. **Transport layer added 1 day before evaluation** (`114f06b`, 2026-04-07) — adding SSE/HTTP transport to an MCP server is not a cosmetic change. A transport layer with 24 hours of existence has had zero days of stability testing under real load.
 4. **Multiple PR review regression follow-ups** (`a23792a`, `a3a7340`) — PRs land with regressions that need follow-up commits within hours. This is a "move fast and break things" cadence, not a "production-ready mounting target" cadence.
 
@@ -287,7 +287,7 @@ Already covered in Section 3 (the LOC scenario table). Key takeaway repeated for
 | Submodule mountable | Possible/undocumented | Plugin-only | Possible + plugin runtime assumptions | **Python package + MCP server (pip install -e modules/openspace)** |
 | Claude Code integration method | Plugin/marketplace | Plugin/marketplace | Plugin/marketplace | **MCP server config + host-skill copy** |
 | Anthropic marketplace | No | No | Yes | **No** |
-| npm/PyPI publication | `get-shit-done-cc@1.34.2` (npm) | `oh-my-claude-sisyphus` (npm) | Not published (`01studio` squats `superpowers` on npm) | **Not published** (`openspace` on PyPI is Brandon Sexton's 2023 astrodynamics package v2.5.1) |
+| npm/PyPI publication | `get-shit-done-cc@1.34.2` (npm) | `oh-my-claude-sisyphus` (npm) | **Not published under usable name** (`01studio` squats `superpowers` on npm) | **Not published under usable name** (`openspace` on PyPI is Brandon Sexton's unrelated 2023 astrodynamics package v2.5.1, NOT HKUDS/OpenSpace) |
 | Windows native | Bash + issues | Patched + tested | Polyglot wrapper, freeze fixed v3.6+ | **Optional `pywinauto`/`pywin32` deps; stdio deadlock noted resolved**; no tmux |
 | License | MIT | MIT | MIT | **MIT** |
 | Repo age | ~1 year | ~3-6 months | ~6 months | **15 days** |
@@ -322,7 +322,22 @@ Already covered in Section 3 (the LOC scenario table). Key takeaway repeated for
 
 ## Verification
 
-**Evidence pattern**: This ADR is the canonical, self-contained audit artifact. All load-bearing findings (verbatim hook-absence finding via tree listing + code search, MCP config snippet from README, commit list, comparison table, PyPI name-collision JSON snapshot, pyproject metadata) are reproduced **inline** in Sections 1–7 above with vendor-source permalinks pinned to commit `4791133`. The code-search and GitHub Contents API responses are captured **verbatim inline** in Sections 1, 3, and 4 (not behind a reachable public URL — `https://github.com/search?q=repo:HKUDS/OpenSpace+SubagentStop&type=code` requires GitHub authentication and is not browseable anonymously, so the inline JSON snapshot IS the audit record for that claim, not the URL). A reviewer can independently re-verify every load-bearing claim by either clicking the `raw.githubusercontent.com` permalinks (for file-content claims) or by re-running `gh api` against the same endpoints (for API-response claims). No Mercury-local file is required for verification. The autoresearch process generated a supplementary scratch report at `.research/reports/RESEARCH-openspace-evaluation-2026-04-08.md` in the operating session; per Mercury convention (also applied to the merged GSD ADR PR #193, OMC ADR PR #195, and Superpowers ADR PR #197), that scratch file is not committed because the ADR Rationale sections fully reproduce the load-bearing content.
+**Evidence pattern**: This ADR is the canonical, self-contained audit artifact. All load-bearing findings are reproduced **inline** in Sections 1–7 above. The evidence falls into **two distinct reproducibility classes** — reviewers must understand the difference:
+
+**Class A — Commit-reproducible (deterministic, immutable)**: file-content claims pinned to commit `4791133e11a45872b063c75968965c447e835455` and tree SHA `8d1981b12961f2dde32cdbc5887155cdd8bb59b4`. These will return identical content forever (until Git's SHA-1 collision becomes practical, which is not a 2026 concern). Sources of this class:
+- `raw.githubusercontent.com/HKUDS/OpenSpace/4791133.../README.md`
+- `raw.githubusercontent.com/HKUDS/OpenSpace/4791133.../pyproject.toml`
+- `raw.githubusercontent.com/HKUDS/OpenSpace/4791133.../openspace/__main__.py`
+- `gh api repos/HKUDS/OpenSpace/git/trees/4791133...?recursive=1` (the recursive tree listing, Section 1)
+- `gh api repos/HKUDS/OpenSpace/contents/openspace/host_skills?ref=4791133...` (Section 3)
+
+**Class B — Time-snapshot re-verifiable (mutable, captured inline)**: API endpoints that reflect dynamic state at the moment of capture. These responses are captured **verbatim inline** in this ADR with the capture timestamp; the inline snapshot IS the audit record, not the URL. The original URL can be re-queried later, but the response may differ. Sources of this class:
+- `gh api repos/HKUDS/OpenSpace` repository metadata (Section 4) — captured 2026-04-08T09:05Z
+- `gh api repos/HKUDS/OpenSpace/commits?per_page=15` recent commit history (Section 4) — captured 2026-04-08T09:10Z
+- `gh api search/code?q=repo:HKUDS/OpenSpace+SubagentStop` code search (Section 1) — captured 2026-04-08T09:05Z; the public URL `https://github.com/search?q=repo:HKUDS/OpenSpace+SubagentStop&type=code` requires GitHub authentication and is not anonymously browseable
+- `https://pypi.org/pypi/openspace/json` PyPI package state (Section 3) — captured 2026-04-08T09:15Z
+
+A reviewer can independently re-verify Class A claims by clicking the `raw.githubusercontent.com/HKUDS/OpenSpace/4791133.../...` permalinks (or running the equivalent `gh api .../{commit_sha}/...` calls). Class B claims are re-verified by re-running the same `gh api` / WebFetch calls and comparing against the inline snapshot — if the live response now differs, the divergence itself is a finding worth filing as a follow-up. No Mercury-local file is required for verification of either class. The autoresearch process generated a supplementary scratch report at `.research/reports/RESEARCH-openspace-evaluation-2026-04-08.md` in the operating session; per Mercury convention (also applied to the merged GSD ADR PR #193, OMC ADR PR #195, and Superpowers ADR PR #197), that scratch file is not committed because the ADR Rationale sections fully reproduce the load-bearing content.
 
 Final autoresearch gate metrics:
 
@@ -349,7 +364,7 @@ Verification: PASS — mechanical checklist completed in the operating session. 
 - Mercury direction: `.mercury/docs/DIRECTION.md`
 - Phase 2 acceptance criterion: `.mercury/docs/EXECUTION-PLAN.md` §2-3 *"Stop Hook 实现"*
 - Mount-first principle: `CLAUDE.md` MUST section
-- OpenSpace repo: https://github.com/HKUDS/OpenSpace
+- OpenSpace repo at pinned commit (audit-stable, replaces the mutable repo homepage): https://github.com/HKUDS/OpenSpace/tree/4791133e11a45872b063c75968965c447e835455
 - OpenSpace README at pinned commit: https://raw.githubusercontent.com/HKUDS/OpenSpace/4791133e11a45872b063c75968965c447e835455/README.md
 - OpenSpace `pyproject.toml` at pinned commit: https://raw.githubusercontent.com/HKUDS/OpenSpace/4791133e11a45872b063c75968965c447e835455/pyproject.toml
 - OpenSpace `__main__.py` at pinned commit: https://raw.githubusercontent.com/HKUDS/OpenSpace/4791133e11a45872b063c75968965c447e835455/openspace/__main__.py
