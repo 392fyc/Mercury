@@ -37,9 +37,24 @@ The user chose **Path β** with 6 explicit answers to the design doc's open ques
 
 **Phase 2 §2-3 is COMPLETE.** Mercury now mechanically blocks `dev` sub-agents from completing `SubagentStop` while the project's test command returns a non-zero exit code.
 
+### Definition of Complete
+
+"Complete" in this record means the following code-level criteria are all satisfied:
+
+- **Code shipped to develop**: PR #207 merged at `1d335fb`; `adapters/mercury-test-gate/` is on the `develop` branch.
+- **Unit tests passing**: 20/20 tests pass via `node --test` (10 hook integration cases + 10 resolve-command cases). The acceptance criterion is code-level test coverage, not runtime observation.
+- **Adapter live and registered**: `.claude/settings.json` registers `mercury-test-gate/hook.cjs` on the `SubagentStop` event with matcher `dev`; the hook fires on every dev sub-agent stop attempt.
+
+The following are **observation-period work, not blocking**:
+
+- End-to-end integration test with a real failing pipeline (requires natural occurrence or purpose-built harness — deferred per user decision, session 26).
+- Layer coexistence observation: confirming Mercury's mechanical gate and OMC's Ralph-loop LLM gate do not produce conflicting decisions in practice.
+
+These deferred items are tracked in §"What Phase 2 does NOT yet provide" and §"Phase 3 Prerequisites" below. Their resolution does not retroactively change the COMPLETE status of Phase 2's code-level acceptance criterion.
+
 ### What was shipped (PR #207, merged `1d335fb`)
 
-- **`adapters/mercury-test-gate/`** — 200 LOC Node.js `.cjs` adapter (at the CLAUDE.md `<200` cap, which is the sanctioned bridge-adapter size for mount-first gaps)
+- **`adapters/mercury-test-gate/`** — 200 LOC Node.js `.cjs` adapter (at the ≤200 LOC cap defined in CLAUDE.md — 200 is the boundary and is compliant; this is the sanctioned bridge-adapter size for mount-first gaps)
   - `hook.cjs` (65 LOC) — `SubagentStop` entry: parses stdin JSON, dispatches through scope check → re-entry guard → test-command resolution → timed subprocess → exit-code interpretation → spec-compliant output
   - `lib/resolve-command.cjs` (43 LOC) — convention file `.mercury/config/test-gate.yaml` > auto-detect (`package.json`#scripts.test → `pyproject.toml [tool.pytest]` → `Makefile test:` target → `Cargo.toml` presence)
   - `lib/run-command.cjs` (31 LOC) — timeout-wrapped subprocess with cross-platform process-tree kill (POSIX detached + `kill(-pid)`, Windows `taskkill /F /T /PID`)
@@ -187,13 +202,13 @@ This is **stronger than Path α** (which would accept only OMC's LLM layer) and 
 ### Positive outcomes
 
 - **Real mechanical guarantee**: the core Phase 2 criterion is met. `grep -r 'decision.*block' adapters/mercury-test-gate/hook.cjs` surfaces the exact line, and `node --test adapters/mercury-test-gate/test/hook.test.cjs` reproduces the enforcement path.
-- **Mount-first principle honored**: OMC is mounted untouched (via plugin). The only Mercury-owned code is the 200-LOC adapter that fills the load-bearing gap OMC doesn't ship. This is the correct application of the `<200 LOC adapter cap` rule from CLAUDE.md.
+- **Mount-first principle honored**: OMC is mounted untouched (via plugin). The only Mercury-owned code is the 200-LOC adapter that fills the load-bearing gap OMC doesn't ship. This is the correct application of the ≤200 LOC adapter cap rule from CLAUDE.md (200 is at-cap-compliant).
 - **Layer model preserves both gates**: Mercury and OMC both fire on `SubagentStop`, giving Mercury belt-and-suspenders enforcement (mechanical + LLM-level) without redundant code.
 - **All 4 Phase 2-1 candidates are now documented for selective future absorption**: none are wasted. Even the REJECTs have explicit follow-up paths (Superpowers cherry-pick, OpenSpace #141, GSD #192).
 
 ### Negative / trade-offs
 
-- **Adapter is now Mercury-owned code to maintain**: 200 LOC of Node.js + tests must be kept working across Node version upgrades, Claude Code spec changes, and platform differences. The `code.claude.com/docs/en/hooks` spec was pinned at 2026-04-08 verification; if Anthropic changes the Stop hook schema, Mercury must follow.
+- **Adapter is now Mercury-owned code to maintain**: 200 LOC of Node.js + tests (at the ≤200 LOC cap — compliant at the boundary) must be kept working across Node version upgrades, Claude Code spec changes, and platform differences. The `code.claude.com/docs/en/hooks` spec was pinned at 2026-04-08 verification; if Anthropic changes the Stop hook schema, Mercury must follow.
 - **OMC dependency adds supply-chain surface**: `/plugin install oh-my-claudecode` pulls a third-party plugin. Mercury's security posture now depends on OMC's maintenance quality. Observable via: `/oh-my-claudecode:omc-doctor` diagnostic command.
 - **Fail-open default is a weakened guarantee** (Q2): projects without a recognized test manifest default to letting stop proceed. A project maintainer who expects strict gating must set `MERCURY_TEST_GATE_STRICT=1` explicitly. This is a deliberate trade-off for UX (don't brick docs-only projects) but a reviewer reading this ADR should know it exists.
 - **Bounded retry is N=3 by configuration, not enforcement** (Q14): a determined bypass could in theory trigger 3 blocks then a 4th successful stop with still-red tests. Mitigation: the 4th attempt logs a MAIN-visible AUDIT trail to stderr. A more-strict variant could be built as a follow-up if empirical operation shows abuse.
@@ -203,7 +218,7 @@ This is **stronger than Path α** (which would accept only OMC's LLM layer) and 
 - **Real-world block trigger count per week**: unknown until observed. If it's zero for weeks, the gate is either working perfectly or dev agents never write failing tests — both are hard to distinguish without intentional failure injection.
 - **OMC Ralph loop interaction under test-failure**: when both Mercury and OMC fire, does OMC's reason message get shown? Does the LLM see both? Unknown until observed.
 - **Windows-specific process-tree kill edge cases**: `taskkill /F /T /PID` is well-documented but has edge cases with detached Git Bash subprocesses. Mercury dev primarily runs on Windows + Git Bash — any regression here should surface quickly.
-- **200-LOC cap headroom**: the adapter is at exactly 200 LOC. Any future enhancement (more auto-detect patterns, more fail-mode nuance, per-agent scope expansion) needs either trimming elsewhere or a CLAUDE.md cap relaxation. The cap exists for mount-first purity; trimming is preferred.
+- **≤200 LOC cap headroom**: the adapter is at exactly 200 LOC — at the cap boundary, compliant. Any future enhancement (more auto-detect patterns, more fail-mode nuance, per-agent scope expansion) needs either trimming elsewhere or a CLAUDE.md cap relaxation. The cap exists for mount-first purity; trimming is preferred.
 
 ---
 
