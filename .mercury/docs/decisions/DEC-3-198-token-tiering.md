@@ -77,6 +77,8 @@ The env var is **priority 1 — a HARD override of frontmatter (priority 3)**. S
 - Opus weekly bucket consumption reduced by routing dev/acceptance/research traffic to Sonnet — preserves headroom for the binding constraint on Mercury autonomous runs.
 - Sonnet sub-agents continue functioning when Main Opus is rate-limited (per-model bucket independence) — improves dev-pipeline robustness on long runs.
 - Critic moves to Opus, satisfying the existing "different model than dev" bias-separation requirement that was previously implicit.
+- **Bonus: Opus tier runs at 1M context on Max plans automatically.** Post-merge runtime verification (2026-04-08) showed `critic` and `design` sub-agents self-report as `claude-opus-4-6[1m]` — the 1M-token context window. Per the [Claude Code model-config doc](https://code.claude.com/docs/en/model-config) and [Anthropic 1M GA announcement](https://claude.com/blog/1m-context-ga): *"On Max, Team, and Enterprise plans, Opus is automatically upgraded to 1M context with no additional configuration."* This gives critic and design the ability to ingest large PR diffs or multi-document architectural contexts in a single pass without truncation — an upside not anticipated when the ADR was drafted.
+  - Sonnet 4.6 on Max can ALSO reach 1M context, but only via `/extra-usage` opt-in (Sonnet 1M is NOT included in the Max subscription by default). Mercury's Sonnet-tier sub-agents (`dev`/`acceptance`/`research`) operate at the standard 200k context window in practice, which is sufficient for their workloads (code edits, test runs, one-shot web lookups). No action required.
 
 ### Negative / Caveats
 
