@@ -7,16 +7,21 @@ const { runCommand } = require('./lib/run-command.cjs');
 const { checkAndIncrement, clearAttempts } = require('./lib/attempt-tracker.cjs');
 
 const GATED = ['dev'];
-const TIMEOUT = parseInt(process.env.MERCURY_TEST_GATE_TIMEOUT_SEC || '300', 10);
+// TIMEOUT clamped to positive integer; falls back to 300s on 0/negative/NaN/non-numeric.
+const TIMEOUT = (() => { const n = parseInt(process.env.MERCURY_TEST_GATE_TIMEOUT_SEC, 10); return Number.isFinite(n) && n > 0 ? n : 300; })();
 const STRICT = process.env.MERCURY_TEST_GATE_STRICT === '1';
 const TAG = '[mercury-test-gate]';
-
 const block = (reason) => { process.stdout.write(JSON.stringify({ decision: 'block', reason }) + '\n'); process.exit(0); };
 const pass = () => process.exit(0);
 
 async function main() {
   let input;
-  try { input = JSON.parse(fs.readFileSync(0, 'utf8')); } catch (_) { pass(); }
+  try { input = JSON.parse(fs.readFileSync(0, 'utf8')); }
+  catch (e) {
+    process.stderr.write(`${TAG} WARNING: failed to parse SubagentStop stdin JSON (${e.message}); fail-open. Set MERCURY_TEST_GATE_STRICT=1 to fail-closed on this condition.\n`);
+    if (STRICT) block('Mercury test gate: received malformed SubagentStop input JSON. Strict mode requires valid hook input.');
+    pass();
+  }
 
   const { stop_hook_active = false, agent_type = '', agent_id = 'unknown', session_id = 'unknown', cwd: inputCwd } = input;
   const cwd = inputCwd || process.cwd();
