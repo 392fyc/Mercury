@@ -190,7 +190,10 @@ INPUT ← read_stdin_json()
 
 # 1. Re-entry guard — avoid infinite block loop
 IF INPUT.stop_hook_active == true:
-    EMIT {"decision": null}    # see Q15 — `null` is NOT in the official Stop hook spec; placeholder for "no opinion" pending Q15 resolution. See Q14 for the bypass-vulnerability concern this re-entry policy creates.
+    # No stdout output → spec-safe "no opinion" per Claude Code Stop hook docs.
+    # See Q14 for the bypass-vulnerability concern this re-entry policy creates.
+    # See Q15 for the rationale on emitting nothing instead of `{"decision": null}`
+    # (which is NOT in the official spec).
     EXIT 0
 
 # 2. Scope check — only enforce for tracked dev-style agents
