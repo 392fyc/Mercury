@@ -190,7 +190,7 @@ INPUT ← read_stdin_json()
 
 # 1. Re-entry guard — avoid infinite block loop
 IF INPUT.stop_hook_active == true:
-    EMIT {"decision": null}    # let Stop proceed; we've already blocked once
+    EMIT {"decision": null}    # see Q15 — `null` is NOT in the official Stop hook spec; placeholder for "no opinion" pending Q15 resolution. See Q14 for the bypass-vulnerability concern this re-entry policy creates.
     EXIT 0
 
 # 2. Scope check — only enforce for tracked dev-style agents
@@ -203,6 +203,9 @@ test_cmd ← resolve_test_command(cwd = INPUT.cwd, agent = INPUT.agent_type)
 IF test_cmd == NULL:
     # No test command known for this task — fail open or fail closed?
     # Design choice: FAIL OPEN with a log warning. Rationale in §3.4.
+    # NOTE: see Q2 — Argus PR #205 review flagged that this fail-open default
+    #       conflicts with the mechanical-acceptance semantics; Q2 is now the
+    #       binding question, not a settled answer.
     LOG "no test command resolved; skipping test gate"
     EXIT 0
 
@@ -388,12 +391,14 @@ This is a user decision. The design agent's job is to make the trade-off legible
 | # | Question | Why it matters | Design agent's suggested default |
 |---|---|---|---|
 | Q1 | What is the source of truth for the test command? TaskBundle field (O1), convention file (O2), env var (O3), auto-detect (O4), or hybrid? | Drives `resolve-command.cjs` architecture | O2 (convention file) + O4 (auto-detect fallback) |
-| Q2 | Fail-open or fail-closed when no test command resolves? | Determines UX on new / docs-only projects | Fail-open with warning; opt-in strict mode via env var |
+| Q2 | Fail-open or fail-closed when no test command resolves? | Determines UX on new / docs-only projects. **Argus PR #205 review (2026-04-08) flagged that the suggested fail-open default conflicts with the mechanical-acceptance semantics in EXECUTION-PLAN §2-3 — the recommended default is now contested and treated as an open question, NOT a settled answer.** | ~~Fail-open with warning; opt-in strict mode via env var~~ — **CONTESTED**, see PR #205 review thread |
 | Q3 | Which agent types are in scope? Only `dev`? Also `acceptance`? Also `critic`? | Drives the agent-type matcher in the hook | Start with `dev` only; extend if needed |
 | Q4 | Where does the adapter live — `adapters/mercury-test-gate/` or `.claude/hooks/mercury-test-gate/`? | Affects packaging and future standalone extraction | `adapters/mercury-test-gate/` (consistent with DIRECTION.md modular principle — adapter is independently detachable) |
 | Q5 | Hook language — Node.js `.cjs`, bash polyglot, or Python? | Drives Windows compat story | Node.js `.cjs` (see §3.5) |
 | Q6 | Default test-run timeout? | Drives `MERCURY_TEST_GATE_TIMEOUT_SEC` default | 300s (5 min), env-overridable |
 | Q7 | Should the adapter also run under the plain `Stop` event (main agent), or only `SubagentStop` (dev sub-agent)? | Determines scope — original criterion says "dev sub-agent" specifically | Only `SubagentStop` — matches criterion wording exactly |
+| Q14 | What is the policy when `INPUT.stop_hook_active == true` (re-entry after a prior block)? Current pseudocode lets Stop proceed to avoid infinite loops. **Argus PR #205 review (2026-04-08) flagged that this creates a "block once then bypass" path — the agent gets blocked once with red tests, then re-attempts Stop and succeeds.** Options: (i) current "block-once" semantics (vulnerable), (ii) bounded retry (e.g. block up to N consecutive Stop attempts within a session window), (iii) configurable per-agent strict mode that blocks unconditionally and relies on a separate timeout to escape infinite-loop scenarios. | Determines whether the mechanical guarantee is real or only single-shot | UNDECIDED — design subagent's original "let through on re-entry" is now treated as a placeholder |
+| Q15 | The pseudocode emits `{"decision": null}` to express "no opinion, let Stop proceed". **Argus PR #205 review (2026-04-08) noted that `null` is NOT in the [Claude Code Stop hook spec](https://code.claude.com/docs/en/hooks)** — only `decision: "block"` (with `reason`) or no JSON output (= no opinion) or exit code 2 are defined. Replace with: (i) empty JSON `{}` on stdout, (ii) no stdout output at all + exit 0, or (iii) verify `decision: null` against the latest Anthropic docs in case the spec has been extended. | Determines whether the implementation produces undefined-behavior output that may be interpreted differently across Claude Code versions | Replace with **no stdout output + exit 0** as the spec-safe "no opinion" path |
 
 ### 7.2 Questions gating Path α
 
@@ -460,7 +465,7 @@ Source: `https://code.claude.com/docs/en/hooks` — fetched by design agent this
   - **Path α**: accept OMC's LLM-level gate, update EXECUTION-PLAN wording, 0 LOC, 1–2 hours. Weakens the guarantee — R1 (agent skips gate) and R4 (UltraQA max-cycles exit with red tests) are full-blast-radius failure modes.
   - **Path β**: mount OMC AND write a thin Mercury adapter (`adapters/mercury-test-gate/`, ~80–150 LOC Node.js hook). 6–10 hours. Keeps the guarantee strong and mechanical. Layer model — adapter is orthogonal to OMC's own hook.
 - Design agent recommends **Path β** on technical grounds. Path α is legitimate if time pressure or Phase 2 throwaway-ness dominates.
-- 13 open questions listed in §7 for user to answer before implementation begins — most critical are Q1 (test command source), Q3 (agent type scope), Q5 (hook language), and (for Path α) Q8 (explicit acknowledgment of R1/R4 risk).
+- 15 open questions listed in §7 for user to answer before implementation begins — most critical are Q1 (test command source), Q2 (fail mode default — **CONTESTED post-Argus-review**), Q3 (agent type scope), Q5 (hook language), Q14 (`stop_hook_active` re-entry bypass — **CONTESTED post-Argus-review**), Q15 (`{"decision": null}` not in spec — **CONTESTED post-Argus-review**), and (for Path α) Q8 (explicit acknowledgment of R1/R4 risk).
 - A Path γ (belt-and-suspenders) folds into Path β. A Path δ (self-research, skip OMC) is dismissed as a mount-first violation unless OMC proves unmountable.
 - This is a **user decision**. The design agent frames the trade-off; the owner commits.
 
