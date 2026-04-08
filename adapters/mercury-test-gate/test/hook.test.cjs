@@ -162,3 +162,60 @@ test('stop_hook_active=true, count >= 3 → no-op + audit log', () => {
   assert.equal(r.stdout.trim(), ''); // no block decision
   assert.ok(r.stderr.includes('AUDIT'), `expected AUDIT in stderr, got: ${r.stderr}`);
 });
+
+// ─── Test 9: persistence across 1→2→3 blocks + pass-through ──────────────────
+test('re-entry 1→2→3 persistence: count increments across invocations', () => {
+  const dir = makeTmpDir({ 'package.json': JSON.stringify({ scripts: { test: 'node -e "process.exit(1)"' } }) });
+  const sessionId = 'persist-s1';
+  const agentId = 'persist-a1';
+  const input = { hook_event_name: 'SubagentStop', agent_type: 'dev', stop_hook_active: true, session_id: sessionId, agent_id: agentId, cwd: dir };
+
+  // Attempt 1: block with count 1
+  let r = invokeHook(input);
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /re-entry block 1\/3/);
+
+  // Attempt 2: block with count 2
+  r = invokeHook(input);
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /re-entry block 2\/3/);
+
+  // Attempt 3: block with count 3
+  r = invokeHook(input);
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /re-entry block 3\/3/);
+
+  // Attempt 4: pass-through + audit, state cleared
+  r = invokeHook(input);
+  assert.equal(r.status, 0);
+  assert.equal(r.stdout.trim(), '');
+  assert.ok(r.stderr.includes('AUDIT'), `expected AUDIT after 3 blocks, got: ${r.stderr}`);
+
+  // Verify state file has the key deleted after pass-through
+  const stateFile = path.join(dir, '.mercury', 'state', 'test-gate-attempts.json');
+  const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+  assert.equal(state[`${sessionId}:${agentId}`], undefined, 'state should be cleared after pass-through');
+});
+
+// ─── Test 10: tests-pass clears stale retry counter ──────────────────────────
+test('successful test run clears stale retry counter from prior blocks', () => {
+  const dir = makeTmpDir({ 'package.json': JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }) });
+  const sessionId = 'clear-s1';
+  const agentId = 'clear-a1';
+  const stateFile = path.join(dir, '.mercury', 'state', 'test-gate-attempts.json');
+
+  // Pre-seed the state file as if a prior block happened (count=2)
+  fs.mkdirSync(path.dirname(stateFile), { recursive: true });
+  fs.writeFileSync(stateFile, JSON.stringify({
+    [`${sessionId}:${agentId}`]: { count: 2, first_attempt_at: new Date().toISOString() },
+  }));
+
+  // Invoke with stop_hook_active=false (first-time stop attempt) + green tests
+  const r = invokeHook({ hook_event_name: 'SubagentStop', agent_type: 'dev', stop_hook_active: false, session_id: sessionId, agent_id: agentId, cwd: dir });
+  assert.equal(r.status, 0);
+  assert.equal(r.stdout.trim(), ''); // no block — tests pass
+
+  // The stale counter should be cleared
+  const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+  assert.equal(state[`${sessionId}:${agentId}`], undefined, 'stale retry state should be cleared on green test run');
+});

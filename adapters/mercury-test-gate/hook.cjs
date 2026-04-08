@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { resolveCommand } = require('./lib/resolve-command.cjs');
 const { runCommand } = require('./lib/run-command.cjs');
-const { checkAndIncrement } = require('./lib/attempt-tracker.cjs');
+const { checkAndIncrement, clearAttempts } = require('./lib/attempt-tracker.cjs');
 
 const GATED = ['dev'];
 const TIMEOUT = parseInt(process.env.MERCURY_TEST_GATE_TIMEOUT_SEC || '300', 10);
@@ -52,7 +52,9 @@ async function main() {
     block(`Mercury test gate: \`${testCmd}\` exited ${r.exit_code}.\nLast output:\n${tail}\nCannot stop while tests are failing. Fix and retry.`);
   }
 
-  pass(); // tests pass
+  // Tests passed — clear any stale retry counters from prior blocked attempts.
+  clearAttempts(path.join(cwd, '.mercury', 'state'), session_id, agent_id);
+  pass();
 }
 
 main().catch((e) => { process.stderr.write(`${TAG} Unexpected error: ${e.message}\n`); process.exit(0); });
