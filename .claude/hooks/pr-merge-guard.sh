@@ -98,8 +98,23 @@ MATCHED_SEG=""
 while IFS= read -r _seg; do
   _seg=$(printf '%s' "$_seg" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
   [ -z "$_seg" ] && continue
-  # Strip leading VAR=value env-var prefixes (e.g. GH_TOKEN=x gh pr merge ...)
-  _first_cmd=$(printf '%s' "$_seg" | sed 's/^\([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]*\)*//')
+  # Iteratively normalize the leading portion of the segment, stripping
+  # any combination of:
+  #   - VAR=value env-var prefixes (e.g. GH_TOKEN=x gh ...)
+  #   - command wrappers (env, command, exec, builtin, nohup, time)
+  #   - short/long flags that those wrappers may accept (-i, -u, -p, --)
+  # The loop runs until the string stops changing (bounded to 5 passes).
+  # This closes the `env ... gh pr merge` and `command gh pr merge`
+  # bypass vectors flagged on PR #210.
+  _first_cmd="$_seg"
+  for _i in 1 2 3 4 5; do
+    _prev_cmd="$_first_cmd"
+    _first_cmd=$(printf '%s' "$_first_cmd" | sed 's/^[[:space:]]*//')
+    _first_cmd=$(printf '%s' "$_first_cmd" | sed 's/^\([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]*\)*//')
+    _first_cmd=$(printf '%s' "$_first_cmd" | sed -E 's/^(env|command|exec|builtin|nohup|time)[[:space:]]+//')
+    _first_cmd=$(printf '%s' "$_first_cmd" | sed -E 's/^(--|-[A-Za-z][A-Za-z0-9-]*)([[:space:]]+|$)//')
+    [ "$_first_cmd" = "$_prev_cmd" ] && break
+  done
   if printf '%s' "$_first_cmd" | grep -qE '^gh[[:space:]]+pr[[:space:]]+merge([[:space:]]|$)'; then
     _INTERCEPT=1
     MATCHED_SEG="$_first_cmd"
@@ -133,6 +148,13 @@ for _tok in $MATCHED_SEG; do
   _prev="$_tok"
 done
 if [ -n "$REPO_FLAG" ]; then
+  # Strip surrounding quotes if the token carried them through
+  # (e.g. `-R "owner/name"` or `-R 'owner/name'`). Real GitHub repo
+  # identifiers match [A-Za-z0-9._-]+/[A-Za-z0-9._-]+ and never need
+  # quoting, but be defensive in case the source command quoted the
+  # value anyway.
+  REPO_FLAG="${REPO_FLAG%\"}"; REPO_FLAG="${REPO_FLAG#\"}"
+  REPO_FLAG="${REPO_FLAG%\'}"; REPO_FLAG="${REPO_FLAG#\'}"
   _REPO_ARG="--repo $REPO_FLAG"
 else
   _REPO_ARG=""
