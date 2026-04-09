@@ -115,9 +115,79 @@ while IFS= read -r _seg; do
     _first_cmd=$(printf '%s' "$_first_cmd" | sed -E 's/^(--|-[A-Za-z][A-Za-z0-9-]*)([[:space:]]+|$)//')
     [ "$_first_cmd" = "$_prev_cmd" ] && break
   done
-  if printf '%s' "$_first_cmd" | grep -qE '^gh[[:space:]]+pr[[:space:]]+merge([[:space:]]|$)'; then
+  # Token-walker state machine: match `gh [global-opts] pr [sub-opts] merge [merge-args]`.
+  # This allows global gh options like `-R owner/name` to appear between `gh`
+  # and the `pr` subcommand (addresses PR #210 Argus finding `gh -R X pr merge` bypass).
+  # Uses bash array word-splitting on $_first_cmd — adequate for the command prefix
+  # since global options and subcommand names are never quoted in realistic usage.
+  # Quoted values in the MERGE tail (e.g. `-t "my title"`) are handled separately by
+  # merge-arg extraction below.
+  set -f  # disable glob expansion during the split
+  # shellcheck disable=SC2206
+  _tokens=( $_first_cmd )
+  set +f
+  _global_repo=""
+  _pr_idx=-1
+  _merge_idx=-1
+  if [ "${_tokens[0]:-}" = "gh" ]; then
+    _i=1
+    _ntok=${#_tokens[@]}
+    # Scan gh-global options until we hit `pr` or a non-option non-subcommand token
+    while [ "$_i" -lt "$_ntok" ]; do
+      _tok="${_tokens[$_i]}"
+      case "$_tok" in
+        -R|--repo)
+          _i=$((_i + 1))
+          _global_repo="${_tokens[$_i]:-}"
+          ;;
+        --repo=*)
+          _global_repo="${_tok#--repo=}"
+          ;;
+        --help|--version|-h)
+          ;;
+        -*)
+          # Unknown global option — assume no value (best-effort).
+          ;;
+        pr)
+          _pr_idx=$_i
+          _i=$((_i + 1))
+          break
+          ;;
+        *)
+          _i=$_ntok  # non-pr subcommand — not a merge
+          break
+          ;;
+      esac
+      _i=$((_i + 1))
+    done
+    # If we found `pr`, scan for `merge` (skipping any sub-opts)
+    if [ "$_pr_idx" -ge 0 ]; then
+      while [ "$_i" -lt "$_ntok" ]; do
+        _tok="${_tokens[$_i]}"
+        case "$_tok" in
+          merge)
+            _merge_idx=$_i
+            break
+            ;;
+          -*)
+            ;;  # sub-subcommand-level option, skip
+          *)
+            _i=$_ntok  # non-merge, abort
+            break
+            ;;
+        esac
+        _i=$((_i + 1))
+      done
+    fi
+  fi
+  if [ "$_merge_idx" -ge 0 ]; then
     _INTERCEPT=1
     MATCHED_SEG="$_first_cmd"
+    GLOBAL_REPO_FLAG="$_global_repo"
+    # Capture the merge-tail: everything after the `merge` token, as a string.
+    # This is a raw slice from the original _first_cmd string, NOT the tokens
+    # array, so quoted values inside the tail are preserved verbatim.
+    MERGE_TAIL=$(printf '%s' "$_first_cmd" | sed -E 's/^.*[[:space:]]merge([[:space:]]+|$)//')
     break
   fi
 done <<EOF
@@ -126,13 +196,13 @@ EOF
 
 [ "$_INTERCEPT" -eq 1 ] || exit 0
 
-# ── Parse -R / --repo from the MATCHED segment only ─────────────
-# Scoping to the matched merge segment prevents a prior `gh pr view -R A`
-# in the same chained command from polluting the repo flag when the
-# actual merge targets repo B.
+# ── Parse -R / --repo from the MERGE tail only, fall back to global ──
+# Merge-local -R takes precedence over any global -R captured before the
+# `pr` subcommand. This handles `gh -R A pr merge 5 -R B` → repo = B.
 REPO_FLAG=""
 _prev=""
-for _tok in $MATCHED_SEG; do
+# shellcheck disable=SC2086
+for _tok in $MERGE_TAIL; do
   case "$_prev" in
     -R|--repo)
       REPO_FLAG="$_tok"
@@ -147,51 +217,65 @@ for _tok in $MATCHED_SEG; do
   esac
   _prev="$_tok"
 done
+# Fall back to the global -R parsed during segment detection
+[ -z "$REPO_FLAG" ] && REPO_FLAG="${GLOBAL_REPO_FLAG:-}"
+# Strip surrounding quotes defensively (real repo names never need them).
+REPO_FLAG="${REPO_FLAG%\"}"; REPO_FLAG="${REPO_FLAG#\"}"
+REPO_FLAG="${REPO_FLAG%\'}"; REPO_FLAG="${REPO_FLAG#\'}"
+# Build _REPO_ARG as a bash array for safe expansion at call sites.
+# Replaces the previous `--repo $REPO_FLAG` string concat which word-split
+# unsafely if the value ever contained whitespace or metacharacters.
 if [ -n "$REPO_FLAG" ]; then
-  # Strip surrounding quotes if the token carried them through
-  # (e.g. `-R "owner/name"` or `-R 'owner/name'`). Real GitHub repo
-  # identifiers match [A-Za-z0-9._-]+/[A-Za-z0-9._-]+ and never need
-  # quoting, but be defensive in case the source command quoted the
-  # value anyway.
-  REPO_FLAG="${REPO_FLAG%\"}"; REPO_FLAG="${REPO_FLAG#\"}"
-  REPO_FLAG="${REPO_FLAG%\'}"; REPO_FLAG="${REPO_FLAG#\'}"
-  _REPO_ARG="--repo $REPO_FLAG"
+  _REPO_ARG=(--repo "$REPO_FLAG")
 else
-  _REPO_ARG=""
+  _REPO_ARG=()
 fi
 
-# ── Extract PR selector from the matched segment ────────────────
-# Strip `gh pr merge` prefix, then walk tokens skipping flags.
-MERGE_ARGS=$(printf '%s' "$MATCHED_SEG" | sed 's/^gh[[:space:]][[:space:]]*pr[[:space:]][[:space:]]*merge[[:space:]]*//')
+# ── Extract PR selector from the MERGE tail ─────────────────────
+# MERGE_TAIL contains just the tokens after `merge`. Walk them with a
+# value-taking-flag skip list so the parser does not misidentify an option
+# value (e.g. `-t "my title"`) as the PR selector.
+# Value-taking options for `gh pr merge`:
+#   -R / --repo           (also global — already handled above, but keep here for local scope)
+#   -b / --body STRING
+#   -B / --body-file FILE
+#   -t / --subject STRING
+#   -A / --author-email STRING
+#   --match-head-commit SHA
 PR_SELECTOR=""
 _skip_next=0
-for token in $MERGE_ARGS; do
+# shellcheck disable=SC2086
+for token in $MERGE_TAIL; do
   if [ "$_skip_next" -eq 1 ]; then
     _skip_next=0
     continue
   fi
   case "$token" in
-    -R|--repo)
-      # Next token is the repo value, skip it
+    -R|--repo|-b|--body|-B|--body-file|-t|--subject|-A|--author-email|--match-head-commit)
       _skip_next=1
+      continue
+      ;;
+    --repo=*|--body=*|--body-file=*|--subject=*|--author-email=*|--match-head-commit=*)
       continue
       ;;
     -*) continue ;;
     *) PR_SELECTOR="$token"; break ;;
   esac
 done
+# Defensive quote strip on the selector itself (real PR numbers are plain
+# integers or URLs, but a `gh pr merge "5"` form could carry quotes).
+PR_SELECTOR="${PR_SELECTOR%\"}"; PR_SELECTOR="${PR_SELECTOR#\"}"
+PR_SELECTOR="${PR_SELECTOR%\'}"; PR_SELECTOR="${PR_SELECTOR#\'}"
 PR_NUMBER=""
 
 case "$PR_SELECTOR" in
   ''|--*)
     # No selector or flag-only; fallback to current branch PR
-    # shellcheck disable=SC2086
-    PR_NUMBER=$(gh pr view $_REPO_ARG --json number -q '.number' 2>/dev/null)
+    PR_NUMBER=$(gh pr view "${_REPO_ARG[@]}" --json number -q '.number' 2>/dev/null)
     ;;
   *[!0-9]*)
     # URL or branch name selector — resolve via gh
-    # shellcheck disable=SC2086
-    PR_NUMBER=$(gh pr view "$PR_SELECTOR" $_REPO_ARG --json number -q '.number' 2>/dev/null)
+    PR_NUMBER=$(gh pr view "$PR_SELECTOR" "${_REPO_ARG[@]}" --json number -q '.number' 2>/dev/null)
     ;;
   *)
     # Pure numeric
@@ -219,8 +303,7 @@ fi
 
 # ── Primary gate: reviewDecision ──────────────────────────────────
 # This covers approvals from any source: Argus, CodeRabbit, or human.
-# shellcheck disable=SC2086
-REVIEW_DECISION=$(gh pr view "$PR_NUMBER" $_REPO_ARG --json reviewDecision --jq '.reviewDecision // "REVIEW_REQUIRED"' 2>/dev/null | tr '[:lower:]' '[:upper:]')
+REVIEW_DECISION=$(gh pr view "$PR_NUMBER" "${_REPO_ARG[@]}" --json reviewDecision --jq '.reviewDecision // "REVIEW_REQUIRED"' 2>/dev/null | tr '[:lower:]' '[:upper:]')
 
 if [ "$REVIEW_DECISION" = "APPROVED" ]; then
   exit 0
@@ -232,8 +315,7 @@ fi
 if [ -n "$REPO_FLAG" ]; then
   REPO="$REPO_FLAG"
 else
-  # shellcheck disable=SC2086
-  REPO=$(gh pr view "$PR_NUMBER" $_REPO_ARG --json baseRepository --jq '.baseRepository.nameWithOwner' 2>/dev/null)
+  REPO=$(gh pr view "$PR_NUMBER" "${_REPO_ARG[@]}" --json baseRepository --jq '.baseRepository.nameWithOwner' 2>/dev/null)
   if [ -z "$REPO" ]; then
     REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null)
   fi
@@ -247,8 +329,7 @@ BOT_REVIEW_STATE=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
   )] | last | .state // empty' 2>/dev/null)
 
 # Also check legacy CodeRabbit CI check (transition period)
-# shellcheck disable=SC2086
-CR_CI_STATUS=$(gh pr checks "$PR_NUMBER" $_REPO_ARG --json name,state -q '.[] | select(.name | test("CodeRabbit";"i")) | .state' 2>/dev/null | head -n1 | tr '[:upper:]' '[:lower:]')
+CR_CI_STATUS=$(gh pr checks "$PR_NUMBER" "${_REPO_ARG[@]}" --json name,state -q '.[] | select(.name | test("CodeRabbit";"i")) | .state' 2>/dev/null | head -n1 | tr '[:upper:]' '[:lower:]')
 
 # ── Block CHANGES_REQUESTED before any bot/CI allow gates ─────────
 # This prevents stale bot approvals or legacy CI success from bypassing
