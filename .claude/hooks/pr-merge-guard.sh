@@ -10,15 +10,25 @@
 #     The hook parsed PR number from `gh pr merge N -R owner/repo` but then called
 #     `gh pr view "$PR_NUMBER"` without --repo, so it queried Mercury's PR #N instead
 #     of the target repo's PR #N and incorrectly blocked an APPROVED merge.
-#     Fix: parse -R / --repo / --repo=VALUE from the command; propagate to every gh call.
+#     Fix: parse -R / --repo / --repo=VALUE and propagate to every gh call.
 #
 #   Session 27 / Issue #189 — Bug 2: grep pattern matched command text inside Write/Edit
 #     content. Creating Issue #189 itself triggered the hook because the body text
-#     contained the substring "gh pr merge". The old pattern fired on any Bash command
-#     whose text contained that substring.
-#     Fix: anchor the match to command structure — only fire when a token sequence
-#     "gh pr merge" appears at the start of a logical command segment (after optional
-#     env-var prefixes, and across &&, ||, ;, | separators).
+#     contained the substring "gh pr merge". First attempt used an inverse whitelist
+#     (first token must be `gh`) + naive sed-based segment splitting; Argus flagged
+#     the whitelist as a bypass vector (`echo ok && gh pr merge N` would skip) and
+#     the repo parsing as cross-segment bleed.
+#
+#   Session 27 / PR #210 iteration 2 — proper fix:
+#     - Quote-aware awk segment splitter: respects single/double quote state, so
+#       `git commit -m "...gh pr merge..."` and `echo '...;gh pr merge...'` both
+#       produce a single segment whose first token is git/echo, which does not
+#       match `^gh pr merge` → no false positive.
+#     - Inverse whitelist removed: `echo ok && gh pr merge N` now correctly splits
+#       into two segments, the second begins with `gh pr merge`, intercept fires.
+#     - -R/--repo parsing is scoped to the matched merge segment only, not the
+#       whole command — prevents `gh pr view -R A && gh pr merge 5 -R B` from
+#       picking up repo A when validating the B merge.
 
 INPUT=$(cat)
 # Extract command (jq preferred, sed fallback)
@@ -28,39 +38,71 @@ else
   COMMAND=$(echo "$INPUT" | sed -n 's/.*"command"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 fi
 
-# ── Bug 2 fix (part 1): inverse whitelist — first token must be gh ──
-# If the outer command's first real token is anything other than `gh`,
-# skip entirely. This handles the common false-positive of
-# `git commit -m "body gh pr merge"`, `cat <<EOF ... gh pr merge ... EOF`,
-# `for k in ...; do ... gh pr merge ...`, etc. where the literal text
-# appears inside a quoted/heredoc body, not as a real command.
-# Strips leading whitespace + VAR=value env prefixes before checking.
-# Realistic chained merges always begin with `gh` (e.g.
-# `gh pr checks N && gh pr merge N`), so this is both simpler and
-# more accurate than an explicit per-program whitelist.
-_stripped=$(printf '%s' "$COMMAND" | sed 's/^[[:space:]]*//; s/^\([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]*\)*//')
-_first_prog=$(printf '%s' "$_stripped" | awk '{print $1}')
-if [ "$_first_prog" != "gh" ]; then
-  exit 0
-fi
+# ── Quote-aware segment splitter ─────────────────────────────────
+# Splits $COMMAND on shell separators (;, |, ||, &&) while respecting
+# single-quoted and double-quoted regions. Inside single quotes no
+# interpretation occurs until the closing '. Inside double quotes,
+# `\"` is an escaped quote and does NOT close the string; any other
+# character passes through. Separators inside either quote type are
+# emitted into the buffer verbatim. This is a minimal shell parser —
+# it does not handle here-docs or backtick subshells, but those are
+# irrelevant for the merge-detection use case.
+#
+# SQ is passed in as a variable because awk scripts are wrapped in
+# bash single quotes, so a literal single quote character is not
+# representable inline.
+_SEGMENTS=$(printf '%s\n' "$COMMAND" | awk -v SQ="'" '
+BEGIN { in_sq=0; in_dq=0; buf=""; esc=0 }
+{
+  line = $0
+  n = length(line)
+  for (i = 1; i <= n; i++) {
+    c = substr(line, i, 1)
+    if (esc) { buf = buf c; esc = 0; continue }
+    if (in_sq) {
+      if (c == SQ) in_sq = 0
+      buf = buf c
+      continue
+    }
+    if (in_dq) {
+      if (c == "\\") { buf = buf c; esc = 1; continue }
+      if (c == "\"") in_dq = 0
+      buf = buf c
+      continue
+    }
+    if (c == SQ) { in_sq = 1; buf = buf c; continue }
+    if (c == "\"") { in_dq = 1; buf = buf c; continue }
+    if (c == ";") { print buf; buf = ""; continue }
+    if (c == "|") {
+      nc = (i < n) ? substr(line, i+1, 1) : ""
+      if (nc == "|") { print buf; buf = ""; i++ }
+      else { print buf; buf = "" }
+      continue
+    }
+    if (c == "&") {
+      nc = (i < n) ? substr(line, i+1, 1) : ""
+      if (nc == "&") { print buf; buf = ""; i++; continue }
+      print buf; buf = ""; continue
+    }
+    buf = buf c
+  }
+  # preserve line breaks inside quoted regions, separate lines outside
+  buf = buf " "
+}
+END { if (buf != "") print buf }
+')
 
-# ── Bug 2 fix (part 2): anchor match to command structure ────────
-# Split the command on shell separators (&&, ||, ;, |) so each logical
-# segment is checked independently. Only intercept when a segment's
-# first meaningful token sequence is literally: gh  pr  merge.
-# Note: text-based splitting does NOT respect quote boundaries, so a
-# literal `; gh pr merge` inside a quoted body of a non-whitelisted
-# first program would still false-positive. The whitelist above
-# covers the realistic cases.
+# ── Walk segments and find a real `gh pr merge` invocation ──────
 _INTERCEPT=0
-_SEGMENTS=$(printf '%s' "$COMMAND" | sed 's/&&/\n/g; s/||/\n/g; s/;/\n/g; s/|/\n/g')
+MATCHED_SEG=""
 while IFS= read -r _seg; do
-  _seg=$(printf '%s' "$_seg" | sed 's/^[[:space:]]*//')
+  _seg=$(printf '%s' "$_seg" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
   [ -z "$_seg" ] && continue
   # Strip leading VAR=value env-var prefixes (e.g. GH_TOKEN=x gh pr merge ...)
   _first_cmd=$(printf '%s' "$_seg" | sed 's/^\([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]*\)*//')
   if printf '%s' "$_first_cmd" | grep -qE '^gh[[:space:]]+pr[[:space:]]+merge([[:space:]]|$)'; then
     _INTERCEPT=1
+    MATCHED_SEG="$_first_cmd"
     break
   fi
 done <<EOF
@@ -69,10 +111,13 @@ EOF
 
 [ "$_INTERCEPT" -eq 1 ] || exit 0
 
-# ── Bug 1 fix: parse -R / --repo and propagate to all gh calls ───
+# ── Parse -R / --repo from the MATCHED segment only ─────────────
+# Scoping to the matched merge segment prevents a prior `gh pr view -R A`
+# in the same chained command from polluting the repo flag when the
+# actual merge targets repo B.
 REPO_FLAG=""
 _prev=""
-for _tok in $COMMAND; do
+for _tok in $MATCHED_SEG; do
   case "$_prev" in
     -R|--repo)
       REPO_FLAG="$_tok"
@@ -93,9 +138,9 @@ else
   _REPO_ARG=""
 fi
 
-# Extract PR selector — first non-flag token after `gh pr merge`
-# Strip `gh pr merge` prefix, then find first token not starting with -
-MERGE_ARGS=$(echo "$COMMAND" | sed -n 's/.*gh[[:space:]][[:space:]]*pr[[:space:]][[:space:]]*merge[[:space:]][[:space:]]*//p')
+# ── Extract PR selector from the matched segment ────────────────
+# Strip `gh pr merge` prefix, then walk tokens skipping flags.
+MERGE_ARGS=$(printf '%s' "$MATCHED_SEG" | sed 's/^gh[[:space:]][[:space:]]*pr[[:space:]][[:space:]]*merge[[:space:]]*//')
 PR_SELECTOR=""
 _skip_next=0
 for token in $MERGE_ARGS; do
