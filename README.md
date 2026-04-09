@@ -124,6 +124,39 @@ Define your agents in `mercury.config.json` at the project root. See `mercury.co
 
 **Validation:** If the config file is missing or contains invalid JSON, Mercury falls back to built-in defaults and logs a warning in the GUI console. Required fields (`id`, `displayName`, `cli`, `roles`, `integration`, `capabilities`, `restrictions`, `maxConcurrentSessions`) are validated at load time — agents with missing fields are skipped with a warning. Config changes require an app restart; hot-reload is not currently supported.
 
+## Example Files
+
+Several configuration files are shipped as `.example` templates. Copy and customize before use:
+
+| Template | Target | Purpose |
+|---|---|---|
+| `mercury.config.example.json` | `mercury.config.json` | Agent definitions (see [Configuration](#configuration)) |
+| `.pr_agent.toml.example` | `.pr_agent.toml` | PR review bot configuration (Argus / Qodo Merge) |
+| `CLAUDE.local.md.example` | `CLAUDE.local.md` | Claude Code local instructions (caveman concise mode) |
+
+`mercury.config.json`, `.pr_agent.toml`, and `CLAUDE.local.md` are gitignored — changes stay local.
+
+### Caveman Mode (CLAUDE.local.md)
+
+Enables persistent concise output style via [caveman](https://github.com/JuliusBrussee/caveman) — drops filler ~30-40%, preserves all technical content.
+
+```bash
+# Via skill (recommended) — takes effect on next session restart
+/caveman-on          # enable lite mode (default)
+/caveman-on full     # enable full mode
+/caveman-off         # disable
+
+# Or manually
+cp CLAUDE.local.md.example CLAUDE.local.md
+```
+
+### PR Review Bot (.pr_agent.toml)
+
+```bash
+cp .pr_agent.toml.example .pr_agent.toml
+# Edit .pr_agent.toml with your review bot instructions
+```
+
 ## License
 
 MIT

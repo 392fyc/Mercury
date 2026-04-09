@@ -119,6 +119,7 @@
       }
     ]
   },
+  "language": "zh-CN",
   "enabledPlugins": {
     "codex@openai-codex": true,
     "claude-hud@claude-hud": true,

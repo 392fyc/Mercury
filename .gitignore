@@ -44,6 +44,7 @@ desktop.ini
 $RECYCLE.BIN/
 
 # Claude Code
+CLAUDE.local.md
 .claude/plans/
 .claude/hooks/state/
 .claude/scheduled_tasks.lock
