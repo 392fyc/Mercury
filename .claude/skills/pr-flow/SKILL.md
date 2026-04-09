@@ -107,16 +107,31 @@ gh pr create "${PR_ARGS[@]}"
 
 **MANDATORY**: Create a CronCreate job to poll. Do NOT use sleep loops.
 
+> **Review polling field selection (see #190)**
+> Use `reviewDecision` as the authoritative approval gate — it reflects GitHub's own per-reviewer-latest aggregation and flips to `APPROVED` only when all requested reviews are satisfied.
+> Always include `state` in the JSON query so polling can stop cleanly on MERGED / CLOSED / DRAFT transitions. A cron that ignores `state` will keep polling a closed PR until it hits the quiet-check timeout, producing false alarms.
+> Prefer `latestReviews` over `reviews` when you need "the most recent review per reviewer": `reviews` is the full chronological array and its last element can be an older COMMENTED review that predates a newer APPROVED review from the same reviewer. `latestReviews` is deduplicated per-user.
+> For "is there any new inline finding" detection, query `gh api repos/<owner>/<repo>/pulls/<N>/comments --paginate` (review comments endpoint). Always pass `--paginate` — the default page size is 30 and large PRs can exceed it, silently hiding new findings. Track a "last processed comment id or timestamp" per PR so each poll is incremental rather than re-scanning.
+
 ```
 CronCreate:
   cron: "*/10 * * * *"
   prompt: |
     Check PR #<PR_NUMBER> review status.
-    1. Run: gh pr view <PR_NUMBER> --json reviews,reviewDecision
-    2. If reviewDecision is APPROVED → report to user, delete this cron
-    3. If new inline comments from argus-review[bot] exist → report to user for Phase 3
-    4. Track no-activity count in .pr-flow-check-count-<PR_NUMBER>
-    5. After 3 quiet checks, post "@argus-review review" (max 3 total triggers per cron_safety rule)
+    1. Run: gh pr view <PR_NUMBER> --json state,isDraft,reviewDecision,latestReviews
+    2. If state is MERGED or CLOSED → PR is terminal, report to user, delete this cron
+    3. If isDraft is true → PR moved back to DRAFT, stop polling and report to user, delete this cron
+    4. If state is OPEN and reviewDecision is APPROVED → report to user, delete this cron
+    5. For new-finding detection:
+       a. Read last_checked_iso from .pr-flow-last-checked-<PR_NUMBER> (or use the PR creation time on first run).
+       b. Capture the current time as new_checked_iso = now() BEFORE making the API call.
+       c. Run: gh api "repos/<OWNER>/<REPO>/pulls/<PR_NUMBER>/comments?since=<last_checked_iso>" --paginate \
+                --jq '.[] | select(.user.login == "argus-review[bot]")'
+       d. Process any returned comments as new findings.
+       e. Atomically overwrite .pr-flow-last-checked-<PR_NUMBER> with new_checked_iso (do NOT set it to the last comment's timestamp — use the pre-API wall clock so comments arriving during the API call are not missed on the next poll).
+    6. If new inline comments from argus-review[bot] exist → report to user for Phase 3
+    7. Track no-activity count in .pr-flow-check-count-<PR_NUMBER>
+    8. After 3 quiet checks, post "@argus-review review" (max 3 total triggers per cron_safety rule)
   recurring: true
 ```
 
@@ -236,16 +251,34 @@ git push
 
 Argus receives the push event and will automatically run incremental review. Create a CronCreate job to poll for the response:
 
+> **Incremental detection semantics (see #190)**
+> `latestReviews` is deduplicated per reviewer, so `latestReviews[argus]` gives Argus's single newest review regardless of how many COMMENTED rounds preceded it. That is the right field to answer "is Argus's current verdict APPROVED?" but it is NOT sufficient to answer "did any new Argus activity happen after the fix commit" — for that, compare `latestReviews[argus].submittedAt` against the fix commit timestamp, or iterate the full `reviews` array filtered by `submittedAt > fix_commit_time`. The cron below uses the timestamp-comparison approach.
+>
+> **Reviewer login form — GraphQL vs REST (must match the API)**
+> The two GitHub surfaces return different login strings for the same bot account, and mixing them silently drops matches:
+> - `gh pr view --json latestReviews` (GraphQL) → `.author.login == "argus-review"` (no `[bot]` suffix)
+> - `gh api repos/.../pulls/<N>/reviews` and `.../comments` (REST) → `.user.login == "argus-review[bot]"` (with suffix)
+> Use the matching form for each API. The same-PR cron uses both forms intentionally because it calls both surfaces.
+
 ```
 CronCreate:
   cron: "*/10 * * * *"
   prompt: |
     Check PR #<PR_NUMBER> for Argus incremental review after fix push.
-    1. Run: gh pr view <PR_NUMBER> --json reviews,reviewDecision
-    2. Check for new reviews from argus-review[bot] after the fix commit
-    3. If APPROVED → report to user, delete this cron
-    4. If new COMMENT review with findings → report findings to user
-    5. After 6 quiet checks (1 hour), report timeout to user for manual intervention
+    Concrete jq filter pattern to use in step 1 below (substitute FIX_COMMIT_TIME at cron-creation time, not at cron-runtime).
+    The `latestArgus` extraction wraps the `select` in `map(...) | .[0] // {state: null, submittedAt: null}` so a missing reviewer yields a known-shape default object instead of an empty stream that would crash downstream `.submittedAt` dereferences.
+      gh pr view <PR_NUMBER> --json state,isDraft,reviewDecision,latestReviews \
+        --jq '{decision: .reviewDecision, state, isDraft, latestArgus: ((.latestReviews // []) | map(select(.author.login == "argus-review")) | .[0] // {state: null, submittedAt: null})}'
+    1. Run the gh pr view query above.
+    2. If state is MERGED or CLOSED → PR is terminal, report to user, delete this cron
+    3. If isDraft is true → PR moved to DRAFT, stop polling and report to user, delete this cron
+    4. If decision is APPROVED AND latestArgus.submittedAt is non-null AND latestArgus.submittedAt > "<FIX_COMMIT_TIME>" (ISO string comparison, both in UTC Zulu) → report APPROVED to user, delete this cron
+    5. For new-finding detection, run (note the REST-side `argus-review[bot]` login form with the `[bot]` suffix — this is NOT the same as the GraphQL `argus-review` form used in step 1):
+       gh api "repos/<OWNER>/<REPO>/pulls/<PR_NUMBER>/comments?since=<FIX_COMMIT_TIME>" --paginate \
+         --jq '.[] | select(.user.login == "argus-review[bot]") | {id, path, line, body}'
+       Report any hits as new findings.
+    6. If new COMMENT review with findings → report findings to user
+    7. After 6 quiet checks (1 hour), report timeout to user for manual intervention
   recurring: true
 ```
 
