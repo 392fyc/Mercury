@@ -22,14 +22,15 @@ Based on [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) (MIT)
 Default intensity: `lite`.
 
 1. Read `CLAUDE.local.md.example` from the project root
-2. If intensity is `full` or `ultra`, replace the `<!-- caveman-mode: lite -->` ... `<!-- end-intensity -->` block with the appropriate variant (see intensity variants below)
-3. Write the result to `CLAUDE.local.md` (overwrite if exists)
+2. Validate the template contains exactly one `<!-- caveman-mode: ... -->` to `<!-- end-intensity -->` block; if not, abort with error: "Template block missing or duplicated — check CLAUDE.local.md.example"
+3. If intensity is `full` or `ultra`, replace that single block with the appropriate variant (see intensity variants below)
+4. Write the result to `CLAUDE.local.md` (overwrite if exists) only after successful validation/replacement
 4. Print: "Caveman [intensity] mode enabled. **Restart session to activate.**"
 
 ### `/caveman-off`
 
 1. Check if `CLAUDE.local.md` exists
-2. If yes: delete it with `Bash: rm "$CLAUDE_PROJECT_DIR/CLAUDE.local.md"`
+2. If yes: delete it with `Bash: [ -n "$CLAUDE_PROJECT_DIR" ] && [ -f "$CLAUDE_PROJECT_DIR/CLAUDE.local.md" ] && rm -- "$CLAUDE_PROJECT_DIR/CLAUDE.local.md"`
 3. Print: "Caveman mode disabled. **Restart session to deactivate.**"
 4. If no: print "Caveman mode is already off."
 
