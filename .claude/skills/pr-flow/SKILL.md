@@ -107,12 +107,17 @@ gh pr create "${PR_ARGS[@]}"
 
 **MANDATORY**: Create a CronCreate job to poll. Do NOT use sleep loops.
 
+> **Review polling field selection (see #190)**
+> Use `reviewDecision` as the authoritative approval gate — it reflects GitHub's own per-reviewer-latest aggregation and flips to `APPROVED` only when all requested reviews are satisfied.
+> Prefer `latestReviews` over `reviews` when you need "the most recent review per reviewer": `reviews` is the full chronological array and its last element can be an older COMMENTED review that predates a newer APPROVED review from the same reviewer. `latestReviews` is deduplicated per-user.
+> For "are there new inline findings" detection, use `gh api repos/<owner>/<repo>/pulls/<N>/comments` (review comments endpoint), NOT the review list.
+
 ```
 CronCreate:
   cron: "*/10 * * * *"
   prompt: |
     Check PR #<PR_NUMBER> review status.
-    1. Run: gh pr view <PR_NUMBER> --json reviews,reviewDecision
+    1. Run: gh pr view <PR_NUMBER> --json reviewDecision,latestReviews
     2. If reviewDecision is APPROVED → report to user, delete this cron
     3. If new inline comments from argus-review[bot] exist → report to user for Phase 3
     4. Track no-activity count in .pr-flow-check-count-<PR_NUMBER>
@@ -241,9 +246,9 @@ CronCreate:
   cron: "*/10 * * * *"
   prompt: |
     Check PR #<PR_NUMBER> for Argus incremental review after fix push.
-    1. Run: gh pr view <PR_NUMBER> --json reviews,reviewDecision
-    2. Check for new reviews from argus-review[bot] after the fix commit
-    3. If APPROVED → report to user, delete this cron
+    1. Run: gh pr view <PR_NUMBER> --json reviewDecision,latestReviews
+    2. Check for new reviews from argus-review[bot] after the fix commit (latestReviews gives per-reviewer most-recent state)
+    3. If reviewDecision is APPROVED → report to user, delete this cron
     4. If new COMMENT review with findings → report findings to user
     5. After 6 quiet checks (1 hour), report timeout to user for manual intervention
   recurring: true
