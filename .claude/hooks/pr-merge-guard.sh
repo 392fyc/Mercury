@@ -112,6 +112,11 @@ while IFS= read -r _seg; do
     _first_cmd=$(printf '%s' "$_first_cmd" | sed 's/^[[:space:]]*//')
     _first_cmd=$(printf '%s' "$_first_cmd" | sed 's/^\([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]*\)*//')
     _first_cmd=$(printf '%s' "$_first_cmd" | sed -E 's/^(env|command|exec|builtin|nohup|time)[[:space:]]+//')
+    # env-specific value-taking flags (-u NAME, -S STR, -C DIR) must be
+    # consumed WITH their value so the value is not mistaken for the command
+    # name on the next strip pass. This closes the `env -u VAR gh pr merge`
+    # bypass flagged on PR #210 iteration 4.
+    _first_cmd=$(printf '%s' "$_first_cmd" | sed -E 's/^-(u|S|C)[[:space:]]+[^[:space:]]+[[:space:]]+//')
     _first_cmd=$(printf '%s' "$_first_cmd" | sed -E 's/^(--|-[A-Za-z][A-Za-z0-9-]*)([[:space:]]+|$)//')
     [ "$_first_cmd" = "$_prev_cmd" ] && break
   done
@@ -273,8 +278,20 @@ case "$PR_SELECTOR" in
     # No selector or flag-only; fallback to current branch PR
     PR_NUMBER=$(gh pr view "${_REPO_ARG[@]}" --json number -q '.number' 2>/dev/null)
     ;;
+  http://*|https://*)
+    # PR URL selector — parse owner/repo from the URL path so the
+    # subsequent gh calls target the correct repo even when the user
+    # did not pass -R/--repo explicitly. Closes PR #210 iteration-4
+    # cross-repo-URL misfire flagged by Argus (lines 278-320).
+    _url_repo=$(printf '%s' "$PR_SELECTOR" | sed -E 's|^https?://[^/]+/([^/[:space:]]+)/([^/[:space:]]+)/pull/[0-9]+.*|\1/\2|')
+    if [ -n "$_url_repo" ] && [ "$_url_repo" != "$PR_SELECTOR" ] && [ -z "$REPO_FLAG" ]; then
+      REPO_FLAG="$_url_repo"
+      _REPO_ARG=(--repo "$REPO_FLAG")
+    fi
+    PR_NUMBER=$(gh pr view "$PR_SELECTOR" "${_REPO_ARG[@]}" --json number -q '.number' 2>/dev/null)
+    ;;
   *[!0-9]*)
-    # URL or branch name selector — resolve via gh
+    # Non-numeric non-URL (branch name) — resolve via gh
     PR_NUMBER=$(gh pr view "$PR_SELECTOR" "${_REPO_ARG[@]}" --json number -q '.number' 2>/dev/null)
     ;;
   *)
