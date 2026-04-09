@@ -118,16 +118,17 @@ CronCreate:
   cron: "*/10 * * * *"
   prompt: |
     Check PR #<PR_NUMBER> review status.
-    1. Run: gh pr view <PR_NUMBER> --json state,reviewDecision,latestReviews
+    1. Run: gh pr view <PR_NUMBER> --json state,isDraft,reviewDecision,latestReviews
     2. If state is MERGED or CLOSED → PR is terminal, report to user, delete this cron
-    3. If state is OPEN and reviewDecision is APPROVED → report to user, delete this cron
-    4. For new-finding detection use:
+    3. If isDraft is true → PR moved back to DRAFT, stop polling and report to user, delete this cron
+    4. If state is OPEN and reviewDecision is APPROVED → report to user, delete this cron
+    5. For new-finding detection use:
        gh api "repos/<OWNER>/<REPO>/pulls/<PR_NUMBER>/comments?since=<last_checked_iso>" --paginate
        and filter to user.login == "argus-review[bot]"
        Track last_checked in .pr-flow-last-checked-<PR_NUMBER>.
-    5. If new inline comments from argus-review[bot] exist → report to user for Phase 3
-    6. Track no-activity count in .pr-flow-check-count-<PR_NUMBER>
-    7. After 3 quiet checks, post "@argus-review review" (max 3 total triggers per cron_safety rule)
+    6. If new inline comments from argus-review[bot] exist → report to user for Phase 3
+    7. Track no-activity count in .pr-flow-check-count-<PR_NUMBER>
+    8. After 3 quiet checks, post "@argus-review review" (max 3 total triggers per cron_safety rule)
   recurring: true
 ```
 
@@ -255,14 +256,19 @@ CronCreate:
   cron: "*/10 * * * *"
   prompt: |
     Check PR #<PR_NUMBER> for Argus incremental review after fix push.
-    1. Run: gh pr view <PR_NUMBER> --json state,reviewDecision,latestReviews,headRefOid
+    Concrete jq filter pattern to use in step 3 below (substitute FIX_COMMIT_TIME at cron-creation time, not at cron-runtime):
+      gh pr view <PR_NUMBER> --json state,isDraft,reviewDecision,latestReviews \
+        --jq '{decision: .reviewDecision, state, draft: .isDraft, latestArgus: (.latestReviews[] | select(.author.login == "argus-review") | {state, submittedAt})}'
+    1. Run the gh pr view query above.
     2. If state is MERGED or CLOSED → PR is terminal, report to user, delete this cron
-    3. If reviewDecision is APPROVED AND latestReviews[argus-review].submittedAt > <FIX_COMMIT_TIME> → report APPROVED to user, delete this cron
-    4. For new-finding detection, run:
-       gh api "repos/<OWNER>/<REPO>/pulls/<PR_NUMBER>/comments?since=<FIX_COMMIT_TIME>" --paginate
-       Filter to user.login == "argus-review[bot]" and report any hits as new findings
-    5. If new COMMENT review with findings → report findings to user
-    6. After 6 quiet checks (1 hour), report timeout to user for manual intervention
+    3. If isDraft is true → PR moved to DRAFT, stop polling and report to user, delete this cron
+    4. If decision is APPROVED AND latestArgus.submittedAt > "<FIX_COMMIT_TIME>" (ISO string comparison, both in UTC Zulu) → report APPROVED to user, delete this cron
+    5. For new-finding detection, run:
+       gh api "repos/<OWNER>/<REPO>/pulls/<PR_NUMBER>/comments?since=<FIX_COMMIT_TIME>" --paginate \
+         --jq '.[] | select(.user.login == "argus-review[bot]") | {id, path, line, body}'
+       Report any hits as new findings.
+    6. If new COMMENT review with findings → report findings to user
+    7. After 6 quiet checks (1 hour), report timeout to user for manual intervention
   recurring: true
 ```
 
