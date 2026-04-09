@@ -122,10 +122,13 @@ CronCreate:
     2. If state is MERGED or CLOSED → PR is terminal, report to user, delete this cron
     3. If isDraft is true → PR moved back to DRAFT, stop polling and report to user, delete this cron
     4. If state is OPEN and reviewDecision is APPROVED → report to user, delete this cron
-    5. For new-finding detection use:
-       gh api "repos/<OWNER>/<REPO>/pulls/<PR_NUMBER>/comments?since=<last_checked_iso>" --paginate
-       and filter to user.login == "argus-review[bot]"
-       Track last_checked in .pr-flow-last-checked-<PR_NUMBER>.
+    5. For new-finding detection:
+       a. Read last_checked_iso from .pr-flow-last-checked-<PR_NUMBER> (or use the PR creation time on first run).
+       b. Capture the current time as new_checked_iso = now() BEFORE making the API call.
+       c. Run: gh api "repos/<OWNER>/<REPO>/pulls/<PR_NUMBER>/comments?since=<last_checked_iso>" --paginate \
+                --jq '.[] | select(.user.login == "argus-review[bot]")'
+       d. Process any returned comments as new findings.
+       e. Atomically overwrite .pr-flow-last-checked-<PR_NUMBER> with new_checked_iso (do NOT set it to the last comment's timestamp — use the pre-API wall clock so comments arriving during the API call are not missed on the next poll).
     6. If new inline comments from argus-review[bot] exist → report to user for Phase 3
     7. Track no-activity count in .pr-flow-check-count-<PR_NUMBER>
     8. After 3 quiet checks, post "@argus-review review" (max 3 total triggers per cron_safety rule)
@@ -265,7 +268,7 @@ CronCreate:
     Concrete jq filter pattern to use in step 1 below (substitute FIX_COMMIT_TIME at cron-creation time, not at cron-runtime).
     The `latestArgus` extraction wraps the `select` in `map(...) | .[0] // {state: null, submittedAt: null}` so a missing reviewer yields a known-shape default object instead of an empty stream that would crash downstream `.submittedAt` dereferences.
       gh pr view <PR_NUMBER> --json state,isDraft,reviewDecision,latestReviews \
-        --jq '{decision: .reviewDecision, state, draft: .isDraft, latestArgus: ((.latestReviews // []) | map(select(.author.login == "argus-review")) | .[0] // {state: null, submittedAt: null})}'
+        --jq '{decision: .reviewDecision, state, isDraft, latestArgus: ((.latestReviews // []) | map(select(.author.login == "argus-review")) | .[0] // {state: null, submittedAt: null})}'
     1. Run the gh pr view query above.
     2. If state is MERGED or CLOSED → PR is terminal, report to user, delete this cron
     3. If isDraft is true → PR moved to DRAFT, stop polling and report to user, delete this cron
