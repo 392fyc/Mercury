@@ -95,39 +95,6 @@
         ]
       }
     ],
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "uv run --directory \"$AGENTKB_DIR\" python \"$AGENTKB_DIR/hooks/session-start.py\"",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "SessionEnd": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "uv run --directory \"$AGENTKB_DIR\" python \"$AGENTKB_DIR/hooks/session-end.py\"",
-            "timeout": 15
-          }
-        ]
-      }
-    ],
-    "PreCompact": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "uv run --directory \"$AGENTKB_DIR\" python \"$AGENTKB_DIR/hooks/pre-compact.py\"",
-            "timeout": 15
-          }
-        ]
-      }
-    ],
     "Stop": [
       {
         "hooks": [
