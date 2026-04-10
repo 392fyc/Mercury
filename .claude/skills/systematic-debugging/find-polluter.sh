@@ -7,8 +7,12 @@
 
 # find-polluter.sh - Find which test creates unwanted files/state
 #
-# Usage: ./find-polluter.sh <file-or-dir-to-watch> <test-glob-pattern>
+# Usage: ./find-polluter.sh <file-or-dir-to-watch> <test-glob-pattern> [test-command]
 # Example: ./find-polluter.sh '.git' 'src/**/*.test.ts'
+# Example: ./find-polluter.sh '.git' 'src/**/*.test.ts' 'npx jest --silent'
+#
+# The test command receives the test file path as its last argument.
+# Default: npx vitest run (override via 3rd arg or TEST_RUNNER env var)
 #
 # Runs tests one-by-one, checks after each whether the watched
 # file/directory appeared. Stops at the first polluter.
@@ -17,10 +21,14 @@ set -e
 
 POLLUTION_CHECK="$1"
 TEST_PATTERN="$2"
+TEST_CMD="${3:-${TEST_RUNNER:-npx vitest run}}"
 
 if [ -z "$POLLUTION_CHECK" ] || [ -z "$TEST_PATTERN" ]; then
-  echo "Usage: $0 <file-or-dir-to-watch> <test-glob-pattern>"
+  echo "Usage: $0 <file-or-dir-to-watch> <test-glob-pattern> [test-command]"
   echo "Example: $0 '.git' 'src/**/*.test.ts'"
+  echo "Example: $0 '.git' 'src/**/*.test.ts' 'npx jest --silent'"
+  echo ""
+  echo "Override test runner via 3rd argument or TEST_RUNNER env var."
   exit 1
 fi
 
@@ -49,7 +57,7 @@ for TEST_FILE in $TEST_FILES; do
   rm -rf "$POLLUTION_CHECK" 2>/dev/null || true
 
   echo "[$CURRENT/$TOTAL] Running: $TEST_FILE"
-  npx vitest run "$TEST_FILE" --reporter=silent > /dev/null 2>&1 || true
+  $TEST_CMD "$TEST_FILE" > /dev/null 2>&1 || true
 
   if [ -e "$POLLUTION_CHECK" ]; then
     echo ""
@@ -59,7 +67,7 @@ for TEST_FILE in $TEST_FILES; do
     echo "====================================="
     echo ""
     echo "To investigate:"
-    echo "  1. Run: npx vitest run $TEST_FILE"
+    echo "  1. Run: $TEST_CMD $TEST_FILE"
     echo "  2. Check for git init, fs.mkdirSync, or similar calls"
     echo "  3. Look for missing cleanup in afterEach/afterAll"
     FOUND=true
