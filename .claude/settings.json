@@ -95,6 +95,39 @@
         ]
       }
     ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --directory D:/Mercury/AgentKB python D:/Mercury/AgentKB/hooks/session-start.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --directory D:/Mercury/AgentKB python D:/Mercury/AgentKB/hooks/session-end.py",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --directory D:/Mercury/AgentKB python D:/Mercury/AgentKB/hooks/pre-compact.py",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
