@@ -33,7 +33,7 @@ const result = getResult();
 expect(result).toBeDefined();
 
 // GOOD: Waiting for condition
-await waitFor(() => getResult() !== undefined);
+await waitFor(() => getResult() !== undefined, 'result to be defined');
 const result = getResult();
 expect(result).toBeDefined();
 ```

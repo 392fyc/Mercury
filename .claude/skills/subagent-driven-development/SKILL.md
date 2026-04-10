@@ -5,6 +5,7 @@ description: >-
   (spec compliance then code quality). Use when implementing a multi-task plan
   within the current session using isolated subagents.
 user-invocable: true
+allowed-tools: Read, Glob, Grep, Agent
 ---
 
 <!-- Cherry-picked from obra/superpowers (MIT, Copyright 2025 Jesse Vincent)
