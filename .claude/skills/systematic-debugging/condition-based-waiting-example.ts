@@ -39,15 +39,23 @@ export function waitForEvent(
     const startTime = Date.now();
 
     const check = () => {
-      const events = threadManager.getEvents(threadId);
-      const event = events.find((e) => e.type === eventType);
+      try {
+        const events = threadManager.getEvents(threadId);
+        const event = events.find((e) => e.type === eventType);
 
-      if (event) {
-        resolve(event);
-      } else if (Date.now() - startTime > timeoutMs) {
-        reject(new Error(`Timeout waiting for ${eventType} event after ${timeoutMs}ms`));
-      } else {
+        if (event) {
+          resolve(event);
+          return;
+        }
+
+        if (Date.now() - startTime > timeoutMs) {
+          reject(new Error(`Timeout waiting for ${eventType} event after ${timeoutMs}ms`));
+          return;
+        }
+
         setTimeout(check, 10); // Poll every 10ms for efficiency
+      } catch (error) {
+        reject(error instanceof Error ? error : new Error(String(error)));
       }
     };
 
@@ -80,19 +88,27 @@ export function waitForEventCount(
     const startTime = Date.now();
 
     const check = () => {
-      const events = threadManager.getEvents(threadId);
-      const matchingEvents = events.filter((e) => e.type === eventType);
+      try {
+        const events = threadManager.getEvents(threadId);
+        const matchingEvents = events.filter((e) => e.type === eventType);
 
-      if (matchingEvents.length >= count) {
-        resolve(matchingEvents);
-      } else if (Date.now() - startTime > timeoutMs) {
-        reject(
-          new Error(
-            `Timeout waiting for ${count} ${eventType} events after ${timeoutMs}ms (got ${matchingEvents.length})`
-          )
-        );
-      } else {
+        if (matchingEvents.length >= count) {
+          resolve(matchingEvents);
+          return;
+        }
+
+        if (Date.now() - startTime > timeoutMs) {
+          reject(
+            new Error(
+              `Timeout waiting for ${count} ${eventType} events after ${timeoutMs}ms (got ${matchingEvents.length})`
+            )
+          );
+          return;
+        }
+
         setTimeout(check, 10);
+      } catch (error) {
+        reject(error instanceof Error ? error : new Error(String(error)));
       }
     };
 
@@ -131,15 +147,23 @@ export function waitForEventMatch(
     const startTime = Date.now();
 
     const check = () => {
-      const events = threadManager.getEvents(threadId);
-      const event = events.find(predicate);
+      try {
+        const events = threadManager.getEvents(threadId);
+        const event = events.find(predicate);
 
-      if (event) {
-        resolve(event);
-      } else if (Date.now() - startTime > timeoutMs) {
-        reject(new Error(`Timeout waiting for ${description} after ${timeoutMs}ms`));
-      } else {
+        if (event) {
+          resolve(event);
+          return;
+        }
+
+        if (Date.now() - startTime > timeoutMs) {
+          reject(new Error(`Timeout waiting for ${description} after ${timeoutMs}ms`));
+          return;
+        }
+
         setTimeout(check, 10);
+      } catch (error) {
+        reject(error instanceof Error ? error : new Error(String(error)));
       }
     };
 

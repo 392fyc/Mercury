@@ -32,29 +32,36 @@ if [ -z "$POLLUTION_CHECK" ] || [ -z "$TEST_PATTERN" ]; then
   exit 1
 fi
 
+# Safety guard: refuse dangerous paths that could cause catastrophic deletion
+case "$POLLUTION_CHECK" in
+  ""|"/"|"."|"./"|".."|"../"|"~"|"~/")
+    echo "ERROR: Refusing unsafe pollution check path: '$POLLUTION_CHECK'"
+    exit 1
+    ;;
+esac
+
 # Clean up before starting
-rm -rf "$POLLUTION_CHECK" 2>/dev/null || true
+rm -rf -- "$POLLUTION_CHECK" 2>/dev/null || true
 
-# Find all matching test files
-TEST_FILES=$(find . -path "./$TEST_PATTERN" -type f 2>/dev/null | sort)
-
-if [ -z "$TEST_FILES" ]; then
-  echo "No test files matched pattern: $TEST_PATTERN"
-  exit 1
-fi
-
-TOTAL=$(printf '%s\n' "$TEST_FILES" | wc -l | tr -d ' ')
+# Find all matching test files (use mapfile for safe handling of spaces in paths)
+mapfile -d '' -t TEST_FILES < <(find . -path "./$TEST_PATTERN" -type f -print0 2>/dev/null | sort -z)
+TOTAL=${#TEST_FILES[@]}
 CURRENT=0
 FOUND=false
+
+if [ "$TOTAL" -eq 0 ]; then
+  echo "No test files matched pattern '$TEST_PATTERN'"
+  exit 0
+fi
 
 echo "Checking $TOTAL test files for pollution of '$POLLUTION_CHECK'..."
 echo ""
 
-for TEST_FILE in $TEST_FILES; do
+for TEST_FILE in "${TEST_FILES[@]}"; do
   CURRENT=$((CURRENT + 1))
 
   # Clean before each test
-  rm -rf "$POLLUTION_CHECK" 2>/dev/null || true
+  rm -rf -- "$POLLUTION_CHECK" 2>/dev/null || true
 
   echo "[$CURRENT/$TOTAL] Running: $TEST_FILE"
   $TEST_CMD "$TEST_FILE" > /dev/null 2>&1 || true
