@@ -357,7 +357,59 @@ adapters/
 
 ---
 
-## 八、参考资源
+## 八、Post-Phase-2 观察
+
+> 基于 Phase 2-1 exhaustive evaluation（4 候选项目、6 ADR、1 design doc、1 实现 PR）得出的方法论观察。
+> 写入日期: 2026-04-10 | 依据: DEC-4 §Phase 3 Prerequisites #5
+
+### 8-1. Claude Code Hook 生态现状
+
+Phase 2-1 评估了 4 个外部项目的 hook 能力，发现 Claude Code hook 生态存在**明显分层**：
+
+| Hook 事件 | 生态覆盖度 | 说明 |
+|-----------|-----------|------|
+| `SessionStart` | 广泛 | GSD (9 hooks)、Superpowers、OMC、claude-memory-compiler 均实现 |
+| `PreToolUse` / `PostToolUse` | 广泛 | GSD 以此为核心，工具级拦截是最成熟的 hook 模式 |
+| `SubagentStop` | 极少 | **仅 OMC 有 scaffold**（Ralph loop iteration counter），但为 LLM-level 而非 mechanical |
+| `PreCompact` / `PostCompact` | 少 | claude-memory-compiler 利用 PreCompact 做 session 捕获，少数项目涉及 |
+
+**结论**: `SubagentStop` mechanical enforcement 是 Claude Code 生态的真空地带。Mercury 的 `mercury-test-gate` adapter 填补了此空白，且是目前已知唯一的 exit-code-based mechanical stop hook 实现。
+
+### 8-2. 外部项目挂载的实战教训
+
+| 教训 | 来源 | 说明 |
+|------|------|------|
+| **REJECT ≠ 无价值** | DEC-4 §Non-Selected Analysis | Phase 2-1 的 4 个 REJECT/DEFER 判定仅针对 Stop hook 维度。每个项目在其他维度有 cherry-pick 价值（Superpowers 技能库、OpenSpace 自进化、GSD 多角色库） |
+| **挂载标准须窄化** | Phase 2-1 全程 | "能不能用"的判定必须对齐到具体验收标准（exit-code mechanical enforcement），而非泛化的"好不好" |
+| **Layer model 优于 replace model** | Path β 决策 | OMC (LLM-level) + Mercury (mechanical) 双层叠加 > 任何单层方案 |
+| **adapter ≤200 LOC 是硬约束** | mercury-test-gate 实现 | 200 LOC 边界验证可行但无余量。功能扩展需先 trim 再加，或申请 cap relaxation |
+
+### 8-3. 发布渠道观察
+
+| 渠道 | 代表项目 | Mercury 关注点 |
+|------|---------|---------------|
+| **Anthropic Plugin Marketplace** | Superpowers, OMC | 活跃、有官方背书、安装简单 (`/plugin install`) |
+| **npm** | GSD (`get-shit-done-cc@1.34.2`) | 版本管理成熟，dependency chain 清晰 |
+| **PyPI** | claude-agent-sdk, mcp-server-qnap-qvs | Python 生态用 `uv` / `pip`，claude-memory-compiler 依赖此链 |
+| **GitHub-only** | OpenSpace | 无注册包 → 只能 submodule 或 `git+` install → 依赖管理脆弱 |
+
+**对 Phase 3 的指导**: Memory Layer 候选项目 (claude-memory-compiler) 走 Python/PyPI 路线。Mercury 主体是 Node.js，需要接受 Python runtime 作为编译层依赖，或自建 Node.js 替代。
+
+### 8-4. 质量门禁的层级模型
+
+Phase 2 的最终架构揭示了 agent 质量门禁的**三层模型**：
+
+```
+Layer 3: 人类审查 (Argus PR review, 用户确认)
+Layer 2: LLM-level 自律 (OMC Ralph loop, Superpowers verification-before-completion)
+Layer 1: Mechanical enforcement (mercury-test-gate exit-code check)
+```
+
+每层独立运行，任一层可阻止低质量输出。Layer 1 是基础保障（bypass-proof），Layer 2 增加灵活性，Layer 3 提供最终人类判断。未来 Mercury 模块设计应遵循此层级 — 新门禁优先放在 Layer 1，不足时上浮。
+
+---
+
+## 九、参考资源
 
 外部引用经人工抽样验证（截至 2026-04-07，GSD 纠偏与 get-shit-done 评估完成时）；链接有效性以 ADR 发布时间为准，后续可能因上游变更失效。
 验证证据索引：详见 ADR `.mercury/docs/research/phase2-1-get-shit-done-evaluation.md#references`。
