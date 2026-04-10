@@ -256,7 +256,7 @@ Phase 3 start criteria will be decided when these prerequisites are satisfied, N
 - Tracking Issues for non-selected candidates:
   - #141 — OpenSpace self-evolving skill engine (deferred research, recycle comment `#141#issuecomment-4205801987`)
   - #192 — GSD agent cherry-pick evaluation (pre-existing tracker)
-  - *new Issue TBD* — Superpowers skill cherry-pick (to be filed as follow-up, not blocking DEC-4)
+  - #209 — Superpowers skill cherry-pick (verification-before-completion, subagent-driven-development, systematic-debugging)
 - Claude Code Stop hook spec: https://code.claude.com/docs/en/hooks (verified 2026-04-08 in design doc and implementation review)
 - Mercury direction: `.mercury/docs/DIRECTION.md`
 - Mount-first + adapter cap: `CLAUDE.md` MUST section
