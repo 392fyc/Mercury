@@ -23,6 +23,21 @@ Read these docs on demand when you need the corresponding information:
 | Dispatch prompt templates | `.mercury/templates/` |
 | Architecture research (PR #162) | `.mercury/docs/research/issue-158-architecture-evaluation.md` |
 
+## Related Repositories
+
+Mercury 的部分功能跨仓库运作。以下仓库通过 `$AGENTKB_DIR` 环境变量关联，不作为 submodule 挂载。
+
+| Repo | Location (env var) | Purpose | 关系 |
+|------|-------------------|---------|------|
+| **AgentKB** | `$AGENTKB_DIR` | Memory Layer — 存储层、编译层、周期维护 | hooks 注册在全局 settings.json，脚本在 AgentKB |
+| **Mercury_KB** | *(archived, 无 env var)* | 项目专属 KB (Obsidian vault, archived) | 已归档，被 AgentKB 取代 |
+
+**跨仓库开发注意事项：**
+- `dev-pipeline` 等 skill 假设单仓库工作，跨仓库任务需直接实现
+- AgentKB 的 hooks/scripts 变更不走 Mercury PR 流程（独立仓库）
+- AgentKB hooks 已迁移到全局 `~/.claude/settings.json`（非项目级），命令中使用 `$AGENTKB_DIR` 引用路径
+- 新环境验证: 运行 `cat ~/.claude/settings.json | grep AGENTKB` 确认全局 hooks 已注册
+
 ## MUST
 
 - **Direction first**: all development decisions must align with `.mercury/docs/DIRECTION.md`. When in doubt, consult the direction document.
