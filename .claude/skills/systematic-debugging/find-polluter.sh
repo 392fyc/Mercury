@@ -29,7 +29,13 @@ rm -rf "$POLLUTION_CHECK" 2>/dev/null || true
 
 # Find all matching test files
 TEST_FILES=$(find . -path "./$TEST_PATTERN" -type f 2>/dev/null | sort)
-TOTAL=$(echo "$TEST_FILES" | wc -l | tr -d ' ')
+
+if [ -z "$TEST_FILES" ]; then
+  echo "No test files matched pattern: $TEST_PATTERN"
+  exit 1
+fi
+
+TOTAL=$(printf '%s\n' "$TEST_FILES" | wc -l | tr -d ' ')
 CURRENT=0
 FOUND=false
 
