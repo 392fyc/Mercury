@@ -295,7 +295,7 @@ These techniques are part of systematic debugging and available in this director
 
 **Related skills:**
 - **TDD methodology** - Write failing test case first (Phase 4, Step 1)
-- **[verification-before-completion](../verification-before-completion/)** - Verify fix worked before claiming success
+- **verification-before-completion** (`.claude/skills/verification-before-completion/`) - Verify fix worked before claiming success
 
 ## Real-World Impact
 

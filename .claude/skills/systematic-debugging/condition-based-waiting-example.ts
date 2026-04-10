@@ -4,12 +4,18 @@
 // Date: 2026-04-10
 // Issue: #209
 
-// Complete implementation of condition-based waiting utilities
-// From: Lace test infrastructure improvements (2025-10-03)
-// Context: Fixed 15 flaky tests by replacing arbitrary timeouts
+// REFERENCE EXAMPLE — not meant to be compiled directly.
+// Shows condition-based waiting pattern from Lace test infrastructure (2025-10-03).
+// Adapt the types and imports to your own project when applying this pattern.
 
-import type { ThreadManager } from '~/threads/thread-manager';
-import type { LaceEvent, LaceEventType } from '~/threads/types';
+// Original imports (Lace-specific, shown for context):
+// import type { ThreadManager } from '~/threads/thread-manager';
+// import type { LaceEvent, LaceEventType } from '~/threads/types';
+
+// Generic type placeholders for the pattern:
+type ThreadManager = { getEvents(threadId: string): LaceEvent[] };
+type LaceEvent = { type: string; data?: unknown };
+type LaceEventType = string;
 
 /**
  * Wait for a specific event type to appear in thread
