@@ -28,6 +28,7 @@ For lighter research (1-2 questions, single-source verification), use the `web-r
 2. **Every factual claim requires a source URL or an explicit UNVERIFIED tag** -- no exceptions.
 3. **Agent self-reports are not evidence** -- use independent verification (subagent or checklist).
 4. **"Should work" / "probably" / "I believe" are banned** -- use "verified at [URL]" or "UNVERIFIED".
+5. **Never paste raw WebSearch/WebFetch output into the report or conversation** -- extract claim + URL + 1-sentence evidence only. Raw search dumps bloat context and have caused session stops (Issue #215). Use the Search Worker Protocol (below) to keep raw results out of the autoresearch agent's own context.
 
 ## Rationalization Prevention
 
@@ -95,8 +96,13 @@ Round N:
   1. RESTORE  -- Read research-manifest.json + {RESULTS_FILE} + report
                 (for reports > 200 lines, read only the section for the current question)
   2. PLAN     -- Pick 1-3 unanswered or weakest questions for this round
-  3. SEARCH   -- WebSearch + WebFetch, minimum 3 searches per question,
-                use different angles and query variations
+  3. SEARCH   -- Dispatch one worker sub-agent per selected question via
+                Agent() (see "Search Worker Protocol" below). Worker does
+                WebSearch + WebFetch (minimum 3 searches, different angles)
+                and returns a compressed summary under 500 tokens. If Agent()
+                is unavailable (nested subagent / Codex mode), call WebSearch
+                directly but extract only claim + URL + 1-sentence evidence;
+                never leave raw search result text in conversation context.
   4. WRITE    -- Update report with findings, cite every claim with [URL]
                 or mark UNVERIFIED. Document contradictions between sources.
   5. GATE     -- Run mechanical quality gate (see below)
@@ -105,6 +111,49 @@ Round N:
                 ANY metric FAILED -> go to Round N+1
                 Round N = max_rounds -> go to VERIFICATION with gaps flagged
 ```
+
+## Search Worker Protocol
+
+**Why**: WebSearch/WebFetch return 1-3K tokens per call. A typical research round runs 9-15 searches, injecting 15-45K tokens of raw HTML/snippet text into the autoresearch agent's own context window. Over 4+ rounds this causes context pressure and has triggered session stops (Issue #215, #101 Gap 4).
+
+**Fix**: isolate search I/O inside a worker sub-agent whose only job is to search and return a compressed summary. Raw search output lives and dies inside the worker's isolated context; only the summary flows back to autoresearch.
+
+**Dispatch pattern** (run once per question per round when `Agent()` is available):
+
+```text
+Agent(
+  description: "autoresearch worker Q{n} round {r}",
+  subagent_type: "general-purpose",
+  prompt: |
+    You are a search worker for autoresearch.
+    Round: {r}
+    Question: {full question text}
+    Prior findings (if any): {one-line recap, max 100 tokens}
+
+    Your ONLY job: perform 3-5 WebSearch/WebFetch calls using varied query
+    angles and return a compressed summary.
+
+    MANDATORY output format -- under 500 tokens total, nothing else:
+
+    ## Findings for Q{n}
+    - Claim 1: <one sentence> [source URL]
+    - Claim 2: <one sentence> [source URL]
+    - Claim 3: <one sentence> [source URL]
+    - Contradiction (if any): <one sentence> [URL A] vs [URL B]
+    - Unanswered aspect (if any): <one sentence>
+
+    HARD RULES:
+    - DO NOT paste raw search result snippets, titles, or metadata beyond the URL
+    - DO NOT narrate your search process ("I searched for...", "I found...")
+    - Every claim needs a source URL or an UNVERIFIED tag
+    - Count your output tokens; if over 500, cut the weakest claims
+    - If fewer than 3 substantive findings exist, return what you have and note the gap
+)
+```
+
+The autoresearch agent ingests only the <500 token summary per worker call. Over 4 rounds × 3 questions × 500 tokens = 6K tokens of search state, versus 60-180K tokens under the old inline pattern.
+
+**Fallback** (nested subagent mode, Codex mode, or `Agent()` not available): call WebSearch directly but immediately extract claim + URL + 1-sentence evidence into the report. Do NOT reference the raw search results again in later turns. Treat the raw output as write-once, read-once ephemeral data.
 
 ## Quality Gate -- Mechanical Counting
 
