@@ -1,6 +1,6 @@
 {
   "enabled": true,
-  "no_progress_threshold": 3,
+  "no_progress_threshold": 5,
   "same_error_threshold": 5,
   "duplicate_call_threshold": 3,
   "read_write_ratio_threshold": 8
