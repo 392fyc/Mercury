@@ -1,0 +1,145 @@
+[
+  {
+    "path": ".claude/skills/systematic-debugging/SKILL.md",
+    "upstream_repo": "obra/superpowers",
+    "upstream_path": "skills/systematic-debugging/SKILL.md",
+    "upstream_sha_at_import": "917e5f53b16b115b70a3a355ed5f4993b9f8b73d",
+    "upstream_license": "MIT",
+    "import_pr": 216,
+    "import_date": "2026-04-10",
+    "import_rationale": "DEC-4 approved cherry-pick: root-cause debugging enforcement for Mercury quality workflow (Issue #209)",
+    "last_drift_check": null
+  },
+  {
+    "path": ".claude/skills/systematic-debugging/condition-based-waiting.md",
+    "upstream_repo": "obra/superpowers",
+    "upstream_path": "skills/systematic-debugging/condition-based-waiting.md",
+    "upstream_sha_at_import": "917e5f53b16b115b70a3a355ed5f4993b9f8b73d",
+    "upstream_license": "MIT",
+    "import_pr": 216,
+    "import_date": "2026-04-10",
+    "import_rationale": "Supporting doc for systematic-debugging skill (Issue #209)",
+    "last_drift_check": null
+  },
+  {
+    "path": ".claude/skills/systematic-debugging/condition-based-waiting-example.ts",
+    "upstream_repo": "obra/superpowers",
+    "upstream_path": "skills/systematic-debugging/condition-based-waiting-example.ts",
+    "upstream_sha_at_import": "917e5f53b16b115b70a3a355ed5f4993b9f8b73d",
+    "upstream_license": "MIT",
+    "import_pr": 216,
+    "import_date": "2026-04-10",
+    "import_rationale": "Supporting example for systematic-debugging skill (Issue #209)",
+    "last_drift_check": null
+  },
+  {
+    "path": ".claude/skills/systematic-debugging/defense-in-depth.md",
+    "upstream_repo": "obra/superpowers",
+    "upstream_path": "skills/systematic-debugging/defense-in-depth.md",
+    "upstream_sha_at_import": "917e5f53b16b115b70a3a355ed5f4993b9f8b73d",
+    "upstream_license": "MIT",
+    "import_pr": 216,
+    "import_date": "2026-04-10",
+    "import_rationale": "Supporting doc for systematic-debugging skill (Issue #209)",
+    "last_drift_check": null
+  },
+  {
+    "path": ".claude/skills/systematic-debugging/find-polluter.sh",
+    "upstream_repo": "obra/superpowers",
+    "upstream_path": "skills/systematic-debugging/find-polluter.sh",
+    "upstream_sha_at_import": "917e5f53b16b115b70a3a355ed5f4993b9f8b73d",
+    "upstream_license": "MIT",
+    "import_pr": 216,
+    "import_date": "2026-04-10",
+    "import_rationale": "Supporting script for systematic-debugging skill (Issue #209)",
+    "last_drift_check": null
+  },
+  {
+    "path": ".claude/skills/systematic-debugging/root-cause-tracing.md",
+    "upstream_repo": "obra/superpowers",
+    "upstream_path": "skills/systematic-debugging/root-cause-tracing.md",
+    "upstream_sha_at_import": "917e5f53b16b115b70a3a355ed5f4993b9f8b73d",
+    "upstream_license": "MIT",
+    "import_pr": 216,
+    "import_date": "2026-04-10",
+    "import_rationale": "Supporting doc for systematic-debugging skill (Issue #209)",
+    "last_drift_check": null
+  },
+  {
+    "path": ".claude/skills/subagent-driven-development/SKILL.md",
+    "upstream_repo": "obra/superpowers",
+    "upstream_path": "skills/subagent-driven-development/SKILL.md",
+    "upstream_sha_at_import": "917e5f53b16b115b70a3a355ed5f4993b9f8b73d",
+    "upstream_license": "MIT",
+    "import_pr": 216,
+    "import_date": "2026-04-10",
+    "import_rationale": "DEC-4 approved cherry-pick: fresh-subagent-per-task execution pattern (Issue #209)",
+    "last_drift_check": null
+  },
+  {
+    "path": ".claude/skills/subagent-driven-development/code-quality-reviewer-prompt.md",
+    "upstream_repo": "obra/superpowers",
+    "upstream_path": "skills/subagent-driven-development/code-quality-reviewer-prompt.md",
+    "upstream_sha_at_import": "917e5f53b16b115b70a3a355ed5f4993b9f8b73d",
+    "upstream_license": "MIT",
+    "import_pr": 216,
+    "import_date": "2026-04-10",
+    "import_rationale": "Supporting prompt template for subagent-driven-development skill (Issue #209)",
+    "last_drift_check": null
+  },
+  {
+    "path": ".claude/skills/subagent-driven-development/implementer-prompt.md",
+    "upstream_repo": "obra/superpowers",
+    "upstream_path": "skills/subagent-driven-development/implementer-prompt.md",
+    "upstream_sha_at_import": "917e5f53b16b115b70a3a355ed5f4993b9f8b73d",
+    "upstream_license": "MIT",
+    "import_pr": 216,
+    "import_date": "2026-04-10",
+    "import_rationale": "Supporting prompt template for subagent-driven-development skill (Issue #209)",
+    "last_drift_check": null
+  },
+  {
+    "path": ".claude/skills/subagent-driven-development/spec-reviewer-prompt.md",
+    "upstream_repo": "obra/superpowers",
+    "upstream_path": "skills/subagent-driven-development/spec-reviewer-prompt.md",
+    "upstream_sha_at_import": "917e5f53b16b115b70a3a355ed5f4993b9f8b73d",
+    "upstream_license": "MIT",
+    "import_pr": 216,
+    "import_date": "2026-04-10",
+    "import_rationale": "Supporting prompt template for subagent-driven-development skill (Issue #209)",
+    "last_drift_check": null
+  },
+  {
+    "path": ".claude/skills/verification-before-completion/SKILL.md",
+    "upstream_repo": "obra/superpowers",
+    "upstream_path": "skills/verification-before-completion/SKILL.md",
+    "upstream_sha_at_import": "917e5f53b16b115b70a3a355ed5f4993b9f8b73d",
+    "upstream_license": "MIT",
+    "import_pr": 216,
+    "import_date": "2026-04-10",
+    "import_rationale": "DEC-4 approved cherry-pick: evidence-before-claims verification enforcement (Issue #209)",
+    "last_drift_check": null
+  },
+  {
+    "path": ".claude/skills/caveman-toggle/SKILL.md",
+    "upstream_repo": "JuliusBrussee/caveman",
+    "upstream_path": "skills/caveman/SKILL.md",
+    "upstream_sha_at_import": "26c25e39b3aee469dbb017427ab55ee1d32de1a8",
+    "upstream_license": "MIT",
+    "import_pr": 214,
+    "import_date": "2026-04-10",
+    "import_rationale": "Adapted caveman prompt text into Mercury-native persistent toggle skill (Issue #213)",
+    "last_drift_check": null
+  },
+  {
+    "path": "CLAUDE.local.md.example",
+    "upstream_repo": "JuliusBrussee/caveman",
+    "upstream_path": "skills/caveman/SKILL.md",
+    "upstream_sha_at_import": "26c25e39b3aee469dbb017427ab55ee1d32de1a8",
+    "upstream_license": "MIT",
+    "import_pr": 214,
+    "import_date": "2026-04-10",
+    "import_rationale": "Contains caveman prompt text extracted from upstream SKILL.md for use as CLAUDE.local.md injection template (Issue #213)",
+    "last_drift_check": null
+  }
+]
