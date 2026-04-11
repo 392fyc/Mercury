@@ -159,7 +159,11 @@ The autoresearch agent ingests only the <500 token summary per worker call. Over
 2. **Extract claim + URL + 1-sentence evidence immediately** and write the extracted entries to the report before the current turn ends. Do this inline, not in a subsequent turn.
 3. **Allow UNVERIFIED gaps explicitly**: if 1-2 searches do not cover the question, mark the remaining slots as `UNVERIFIED: only N search calls permitted in fallback mode` (or other specific reason) rather than extending the search budget to chase full coverage. Coverage gaps are preferable to context pressure that stops the session entirely.
 4. **Do NOT reference the raw search results again** in later turns. After extraction, treat the raw output as write-once, read-once ephemeral data — no quoting, no summarizing, no re-citing. Only the extracted claim + URL entries survive into subsequent turns.
-5. When the quality gate later evaluates `unverified_rate`, fallback-mode runs are expected to have a higher UNVERIFIED rate than worker-mode runs. This is acceptable by design — the alternative is session-stop risk.
+5. **Fallback mode terminates via `max_rounds`, not via gate-pass.** The quality gate's `unverified_rate <= 0.1` threshold is intentionally hard to satisfy in fallback mode, and that is by design. The expected termination path in fallback mode is: run all `max_rounds` iterations, hit the "max rounds reached → VERIFICATION with gaps flagged" branch, and emit a report with explicit UNVERIFIED items. This means:
+   - **Set `MAX_ROUNDS` lower in fallback mode** (2-3 instead of 5-10) to avoid burning turns on a gate that will never pass
+   - **Do NOT retry indefinitely** hoping to reduce `unverified_rate` below 0.1 — the budget cap makes that impossible by construction
+   - **The final output summary must flag "mode: fallback"** so downstream consumers know the report has intentionally reduced citation density
+   - **Worker mode is the only path where gate-pass termination is likely.** If the caller needs a gate-passing report, they MUST provide a top-level `Agent()`-capable context.
 
 ## Quality Gate -- Mechanical Counting
 
