@@ -77,12 +77,16 @@ function loadState(statePath) {
   }
 }
 
-// Atomic write via temp-file + rename (prevents partial reads on concurrent writes).
+// Atomic write via unique temp-file + rename (unique name prevents concurrent-write collisions).
 function saveState(statePath, state) {
   fs.mkdirSync(path.dirname(statePath), { recursive: true });
-  const tmp = statePath + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
-  fs.renameSync(tmp, statePath);
+  const tmp = `${statePath}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
+    fs.renameSync(tmp, statePath);
+  } finally {
+    try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch { /* ignore cleanup error */ }
+  }
 }
 
 // ── Tool classification ──────────────────────────────────────────────────────
