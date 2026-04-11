@@ -2,6 +2,7 @@
   "name": "mercury",
   "version": "0.0.1",
   "private": true,
+  "license": "MIT",
   "description": "AI Agent harness framework — session continuity, memory, quality gates",
   "type": "module",
   "scripts": {},
