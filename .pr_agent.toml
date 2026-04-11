@@ -23,8 +23,9 @@ Mercury project review rules (MUST check every PR):
 5. **No hardcoded local paths**: Reject any hardcoded paths like C:/Users/*, D:/Mercury/*,
    /share/homes/*. Env vars ($AGENTKB_DIR etc.) must be used instead.
 
-6. **No self-research**: If an external project solves the problem, it should be mounted
-   as a submodule rather than reimplemented. Flag reimplementations of existing OSS tools.
+6. **No self-research**: Flag if new code reimplements functionality already provided by an
+   existing OSS tool (verifiable by: same public API, >50 lines of parallel logic, no
+   Mercury-specific adaptation). The correct approach is submodule mount + thin adapter.
 
 7. **PR target branch**: All PRs must target `develop`, never `master`/`main` directly.
    Flag if base branch is incorrect.
