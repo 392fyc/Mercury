@@ -93,7 +93,7 @@ Mercury 的核心价值不在代码里，在方法论里。
 
 **技术方向** (需调研确定):
 - Agent SDK: ClaudeSDKClient 支持 session resume/fork，自动 context compaction，可通过 max_budget_usd 控制花费
-- PostCompact hook: 在 context 压缩后触发，可获取 compact_summary，用于保存关键状态
+- PostCompact hook: 在 context 压缩后触发，可获取 compact_summary (UNVERIFIED — 官方文档仅列出 `session_id`/`transcript_path`/`compact_trigger`/`cwd`；`compact_summary` 需从 `transcript_path` 指向的 JSONL 提取，参见 `.research/reports/RESEARCH-Session-Continuity-183-2026-04-11.md`)，用于保存关键状态
 - CLI wrapper: 监控 claude -p 进程，检测完成/超时后启动新 session 并传递 handoff
 - Dispatch + Channels: 利用原生异步任务机制实现链式执行
 

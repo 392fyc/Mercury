@@ -28,6 +28,7 @@ For lighter research (1-2 questions, single-source verification), use the `web-r
 2. **Every factual claim requires a source URL or an explicit UNVERIFIED tag** -- no exceptions.
 3. **Agent self-reports are not evidence** -- use independent verification (subagent or checklist).
 4. **"Should work" / "probably" / "I believe" are banned** -- use "verified at [URL]" or "UNVERIFIED".
+5. **Never paste raw WebSearch/WebFetch output into the report or conversation** -- extract claim + URL + 1-sentence evidence only. Raw search dumps bloat context and have caused session stops (Issue #215). Use the Search Worker Protocol (below) to keep raw results out of the autoresearch agent's own context.
 
 ## Rationalization Prevention
 
@@ -95,8 +96,13 @@ Round N:
   1. RESTORE  -- Read research-manifest.json + {RESULTS_FILE} + report
                 (for reports > 200 lines, read only the section for the current question)
   2. PLAN     -- Pick 1-3 unanswered or weakest questions for this round
-  3. SEARCH   -- WebSearch + WebFetch, minimum 3 searches per question,
-                use different angles and query variations
+  3. SEARCH   -- Dispatch one worker sub-agent per selected question via
+                Agent() (see "Search Worker Protocol" below). Worker does
+                WebSearch + WebFetch (minimum 3 searches, different angles)
+                and returns a compressed summary under 500 tokens. If Agent()
+                is unavailable (nested subagent / Codex mode), call WebSearch
+                directly but extract only claim + URL + 1-sentence evidence;
+                never leave raw search result text in conversation context.
   4. WRITE    -- Update report with findings, cite every claim with [URL]
                 or mark UNVERIFIED. Document contradictions between sources.
   5. GATE     -- Run mechanical quality gate (see below)
@@ -105,6 +111,59 @@ Round N:
                 ANY metric FAILED -> go to Round N+1
                 Round N = max_rounds -> go to VERIFICATION with gaps flagged
 ```
+
+## Search Worker Protocol
+
+**Why**: WebSearch/WebFetch return 1-3K tokens per call. A typical research round runs 9-15 searches, injecting 15-45K tokens of raw HTML/snippet text into the autoresearch agent's own context window. Over 4+ rounds this causes context pressure and has triggered session stops (Issue #215, #101 Gap 4).
+
+**Fix**: isolate search I/O inside a worker sub-agent whose only job is to search and return a compressed summary. Raw search output lives and dies inside the worker's isolated context; only the summary flows back to autoresearch.
+
+**Dispatch pattern** (run once per question per round when `Agent()` is available):
+
+```text
+Agent(
+  description: "autoresearch worker Q{n} round {r}",
+  subagent_type: "general-purpose",
+  prompt: |
+    You are a search worker for autoresearch.
+    Round: {r}
+    Question: {full question text}
+    Prior findings (if any): {one-line recap, max 100 tokens}
+
+    Your ONLY job: perform 3-5 WebSearch/WebFetch calls using varied query
+    angles and return a compressed summary.
+
+    MANDATORY output format -- under 500 tokens total, nothing else:
+
+    ## Findings for Q{n}
+    - Claim 1: <one sentence> [source URL] | UNVERIFIED: <reason if no source>
+    - Claim 2: <one sentence> [source URL] | UNVERIFIED: <reason if no source>
+    - Claim 3: <one sentence> [source URL] | UNVERIFIED: <reason if no source>
+    - Contradiction (if any): <one sentence> [URL A] vs [URL B]
+    - Unanswered aspect (if any): <one sentence>
+
+    HARD RULES:
+    - DO NOT paste raw search result snippets, titles, or metadata beyond the URL
+    - DO NOT narrate your search process ("I searched for...", "I found...")
+    - Each claim MUST end with EITHER `[source URL]` OR `UNVERIFIED: <reason>` — never fabricate a URL to satisfy the format. Missing evidence should be explicitly marked UNVERIFIED, not papered over.
+    - Count your output tokens; if over 500, cut the weakest claims before returning.
+    - If fewer than 3 substantive findings exist, return what you have and mark the remaining slots UNVERIFIED with the reason.
+)
+```
+
+The autoresearch agent ingests only the <500 token summary per worker call. Over 4 rounds × 3 questions × 500 tokens = 6K tokens of search state, versus 60-180K tokens under the old inline pattern.
+
+**Fallback** (nested subagent mode, Codex mode, or `Agent()` not available): the primary context protection is much weaker in this mode because the nested agent cannot offload search I/O to a worker. Apply this reduced-budget protocol:
+
+1. **Cap the search budget to 1-2 WebSearch calls per question** (not the normal 3-5). Breadth is sacrificed intentionally to protect the main context window from bloat.
+2. **Extract claim + URL + 1-sentence evidence immediately** and write the extracted entries to the report before the current turn ends. Do this inline, not in a subsequent turn.
+3. **Allow UNVERIFIED gaps explicitly**: if 1-2 searches do not cover the question, mark the remaining slots as `UNVERIFIED: only N search calls permitted in fallback mode` (or other specific reason) rather than extending the search budget to chase full coverage. Coverage gaps are preferable to context pressure that stops the session entirely.
+4. **Do NOT reference the raw search results again** in later turns. After extraction, treat the raw output as write-once, read-once ephemeral data — no quoting, no summarizing, no re-citing. Only the extracted claim + URL entries survive into subsequent turns.
+5. **Fallback mode terminates via `max_rounds`, not via gate-pass.** The quality gate's `unverified_rate <= 0.1` threshold is intentionally hard to satisfy in fallback mode, and that is by design. The expected termination path in fallback mode is: run all `max_rounds` iterations, hit the "max rounds reached → VERIFICATION with gaps flagged" branch, and emit a report with explicit UNVERIFIED items. This means:
+   - **Set `MAX_ROUNDS` lower in fallback mode** (2-3 instead of 5-10) to avoid burning turns on a gate that will never pass
+   - **Do NOT retry indefinitely** hoping to reduce `unverified_rate` below 0.1 — the budget cap makes that impossible by construction
+   - **The final output summary must flag "mode: fallback"** so downstream consumers know the report has intentionally reduced citation density
+   - **Worker mode is the only path where gate-pass termination is likely.** If the caller needs a gate-passing report, they MUST provide a top-level `Agent()`-capable context.
 
 ## Quality Gate -- Mechanical Counting
 
