@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
-# Upstream drift check — reads .mercury/state/upstream-manifest.json and checks
-# whether each cherry-picked artifact's upstream file has changed since import.
+# Upstream drift check — aggregates upstream-manifest.json from all deployment
+# layers and checks whether each cherry-picked artifact's upstream file has
+# changed since import.
+#
+# Manifest discovery (merged in order):
+#   project-scope: $REPO_ROOT/.mercury/state/upstream-manifest.json
+#   user-scope:    ~/.claude/upstream-manifest.json  (if present)
 #
 # Compares upstream file blob SHA at recorded import SHA vs current HEAD.
 # Does NOT compare local copy (local files have Mercury adaptations/headers).
 #
-# Supports two deployment scopes tracked in manifest:
-#   scope=project  — file lives in the repo (path relative to repo root)
-#   scope=user     — file lives in user-global dir (e.g. ~/.claude/skills/)
+# scope field in manifest:
+#   project — artifact lives in the repo (path relative to repo root)
+#   user    — artifact lives in user-global dir (~/.claude/...)
 #
 # Output per artifact: CLEAN | CHANGED | UPSTREAM_GONE | SKIP
 # Summary includes per-scope counts.
@@ -18,12 +23,8 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-MANIFEST="$REPO_ROOT/.mercury/state/upstream-manifest.json"
-
-if [[ ! -f "$MANIFEST" ]]; then
-  echo "ERROR: manifest not found at $MANIFEST" >&2
-  exit 1
-fi
+PROJECT_MANIFEST="$REPO_ROOT/.mercury/state/upstream-manifest.json"
+USER_MANIFEST="${HOME}/.claude/upstream-manifest.json"
 
 for cmd in jq gh; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -32,20 +33,39 @@ for cmd in jq gh; do
   fi
 done
 
-count=$(jq 'length' "$MANIFEST")
-clean=0; changed=0; gone=0; skipped=0
-scope_project=0; scope_user=0; scope_unknown=0
+# Discover and merge manifests from all layers
+manifest_files=()
+[[ -f "$PROJECT_MANIFEST" ]] && manifest_files+=("$PROJECT_MANIFEST")
+[[ -f "$USER_MANIFEST" ]]    && manifest_files+=("$USER_MANIFEST")
+
+if [[ ${#manifest_files[@]} -eq 0 ]]; then
+  echo "ERROR: no manifest found at project ($PROJECT_MANIFEST) or user ($USER_MANIFEST) level" >&2
+  exit 1
+fi
+
+# Merge all manifest arrays into one temporary file
+MERGED="$(mktemp)"
+trap 'rm -f "$MERGED"' EXIT
+jq -s 'add' "${manifest_files[@]}" > "$MERGED"
+
+count=$(jq 'length' "$MERGED")
+sources=""
+for f in "${manifest_files[@]}"; do sources="$sources $f"; done
 
 echo "Upstream drift check — $count artifacts"
+echo "Manifests:$(echo "$sources")"
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "---"
 
+clean=0; changed=0; gone=0; skipped=0
+scope_project=0; scope_user=0; scope_unknown=0
+
 for ((i=0; i<count; i++)); do
-  local_path=$(jq -r ".[$i].path" "$MANIFEST")
-  scope=$(jq -r ".[$i].scope // \"project\"" "$MANIFEST")
-  upstream_repo=$(jq -r ".[$i].upstream_repo" "$MANIFEST")
-  upstream_path=$(jq -r ".[$i].upstream_path" "$MANIFEST")
-  recorded_sha=$(jq -r ".[$i].upstream_sha_at_import" "$MANIFEST")
+  local_path=$(jq -r ".[$i].path" "$MERGED")
+  scope=$(jq -r ".[$i].scope // \"project\"" "$MERGED")
+  upstream_repo=$(jq -r ".[$i].upstream_repo" "$MERGED")
+  upstream_path=$(jq -r ".[$i].upstream_path" "$MERGED")
+  recorded_sha=$(jq -r ".[$i].upstream_sha_at_import" "$MERGED")
 
   # Tally scope counts — whitelist-validated
   case "$scope" in
