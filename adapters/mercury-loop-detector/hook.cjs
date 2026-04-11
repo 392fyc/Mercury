@@ -24,7 +24,7 @@ const pass  = () => process.exit(0);
 
 const DEFAULTS = {
   enabled: true,
-  no_progress_threshold: 3,       // consecutive action calls (non-read/write/error) with no write
+  no_progress_threshold: 5,       // consecutive action calls (non-read/write/error) with no write
   same_error_threshold: 5,        // consecutive calls sharing the same error signature
   duplicate_call_threshold: 3,    // consecutive identical tool+input hash calls (success only)
   read_write_ratio_threshold: 8   // consecutive read-only calls with no writes
@@ -51,13 +51,9 @@ function loadConfig(cwd) {
 
 // ── State (independent counters per session) ─────────────────────────────────
 
-const EMPTY_STATE = () => ({
-  session_id: null,
-  dup_count: 0, dup_tool: null, dup_hash: null,
-  err_count: 0, err_last: null,
-  read_count: 0,
-  np_count: 0
-});
+const EMPTY_STATE = () => ({ session_id: null,
+  dup_count: 0, dup_tool: null, dup_hash: null, err_count: 0, err_last: null,
+  read_count: 0, np_count: 0 });
 
 function safeInt(v) { return Number.isFinite(v) && v >= 0 ? Math.round(v) : 0; }
 
@@ -95,7 +91,6 @@ const WRITE_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit', 'MultiEdit']);
 const READ_TOOLS  = new Set(['Read', 'Glob', 'Grep']);
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
 function hashInput(input) {
   const s = typeof input === 'string' ? input : JSON.stringify(input ?? '');
   return crypto.createHash('sha256').update(s).digest('hex').slice(0, 8); // sha256: FIPS-safe
@@ -103,19 +98,20 @@ function hashInput(input) {
 
 function toStr(v) { return typeof v === 'string' ? v : JSON.stringify(v ?? ''); }
 
+// Scan first+last 1500 chars; skips large-JSON middle (false-positive risk). Trade-off: mid-only errors missed (real tool errors appear at start/end).
+function scanStr(r) { const s = toStr(r); return s.length <= 3000 ? s : s.slice(0, 1500) + '\n' + s.slice(-1500); }
+
 function hasError(response) {
-  return /\b(?:error|failed|exception)\b|exit code [1-9]/i.test(toStr(response));
+  return /\b(?:error|failed|exception)\b|exit code [1-9]/i.test(scanStr(response));
 }
 
 function errorSig(response) {
-  const m = toStr(response).match(/(?:error|failed|exception|exit code \d+)[^.\n]{0,80}/i);
+  const m = scanStr(response).match(/(?:error|failed|exception|exit code \d+)[^.\n]{0,80}/i);
   return m ? m[0].trim().slice(0, 80) : null;
 }
-
 // ── Update independent counters ──────────────────────────────────────────────
 
 function update(state, tool, hash, is_write, is_read, errored, err_sig) {
-  // duplicate_call: repeated identical SUCCESSFUL calls (errors tracked by same_error)
   if (!errored) {
     if (tool === state.dup_tool && hash === state.dup_hash) { state.dup_count++; }
     else { state.dup_count = 1; state.dup_tool = tool; state.dup_hash = hash; }
@@ -123,7 +119,6 @@ function update(state, tool, hash, is_write, is_read, errored, err_sig) {
     state.dup_count = 0; state.dup_tool = null; state.dup_hash = null;
   }
 
-  // same_error: consecutive calls with an identical error signature
   if (errored && err_sig) {
     if (err_sig === state.err_last) { state.err_count++; }
     else { state.err_count = 1; state.err_last = err_sig; }
@@ -131,12 +126,10 @@ function update(state, tool, hash, is_write, is_read, errored, err_sig) {
     state.err_count = 0; state.err_last = null;
   }
 
-  // read_write_ratio: consecutive read-tool calls; resets on write or non-read
   if (is_write)     { state.read_count = 0; }
   else if (is_read) { state.read_count++; }
-  else              { state.read_count = 0; } // Bash/Agent/etc. breaks read streak
+  else              { state.read_count = 0; }
 
-  // no_progress: action calls (non-read, non-write, non-error) without any file write
   if (is_write || is_read || errored) { state.np_count = 0; }
   else                                { state.np_count++; }
 }
