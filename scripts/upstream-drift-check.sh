@@ -34,7 +34,7 @@ done
 
 count=$(jq 'length' "$MANIFEST")
 clean=0; changed=0; gone=0; skipped=0
-scope_project=0; scope_user=0
+scope_project=0; scope_user=0; scope_unknown=0
 
 echo "Upstream drift check — $count artifacts"
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -47,12 +47,13 @@ for ((i=0; i<count; i++)); do
   upstream_path=$(jq -r ".[$i].upstream_path" "$MANIFEST")
   recorded_sha=$(jq -r ".[$i].upstream_sha_at_import" "$MANIFEST")
 
-  # Tally scope counts
-  if [[ "$scope" == "user" ]]; then
-    scope_user=$((scope_user + 1))
-  else
-    scope_project=$((scope_project + 1))
-  fi
+  # Tally scope counts — whitelist-validated
+  case "$scope" in
+    project) scope_project=$((scope_project + 1)) ;;
+    user)    scope_user=$((scope_user + 1)) ;;
+    *)       scope_unknown=$((scope_unknown + 1))
+             echo "WARNING: unknown scope '$scope' in manifest entry $i — counted separately" >&2 ;;
+  esac
 
   printf "[%-7s] %-65s " "$scope" "$local_path"
 
@@ -117,4 +118,4 @@ done
 
 echo "---"
 echo "Summary: CLEAN=$clean  CHANGED=$changed  UPSTREAM_GONE=$gone  SKIP=$skipped  total=$count"
-echo "Scopes:  project=$scope_project  user=$scope_user"
+echo "Scopes:  project=$scope_project  user=$scope_user  unknown=$scope_unknown"
