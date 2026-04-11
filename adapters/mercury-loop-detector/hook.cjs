@@ -98,8 +98,8 @@ function hashInput(input) {
 
 function toStr(v) { return typeof v === 'string' ? v : JSON.stringify(v ?? ''); }
 
-// Scan first+mid+last 1000 chars each; avoids false positives from middle JSON blobs, retains middle error coverage.
-function scanStr(r) { const s = toStr(r); if (s.length <= 3000) return s; const m = Math.floor(s.length / 2); return s.slice(0, 1000) + '\n' + s.slice(m - 500, m + 500) + '\n' + s.slice(-1000); }
+// Scan first+last 1500 chars; skips large-JSON middle (false-positive risk). Trade-off: mid-only errors missed (real tool errors appear at start/end).
+function scanStr(r) { const s = toStr(r); return s.length <= 3000 ? s : s.slice(0, 1500) + '\n' + s.slice(-1500); }
 
 function hasError(response) {
   return /\b(?:error|failed|exception)\b|exit code [1-9]/i.test(scanStr(response));
