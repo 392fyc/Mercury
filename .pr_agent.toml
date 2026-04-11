@@ -7,7 +7,8 @@ extra_instructions = """
 Mercury project review rules (MUST check every PR):
 
 1. **Issue reference**: PR description must contain Closes/Fixes/Resolves/Refs #N.
-   Flag as blocker if missing.
+   Flag as blocker if missing. Exception: pure chore/doc PRs with no functional code
+   changes (e.g., typo fixes, README updates) may omit the issue reference.
 
 2. **Modular design**: Every new feature must be independently detachable.
    Flag if a feature assumes Mercury as the only consumer or creates tight coupling.
@@ -25,9 +26,11 @@ Mercury project review rules (MUST check every PR):
 
 6. **No self-research**: Flag if new code reimplements functionality already provided by an
    existing OSS tool (verifiable by: same public API, >50 lines of parallel logic, no
-   Mercury-specific adaptation). The correct approach is submodule mount + thin adapter.
+   Mercury-specific adaptation, OSS tool has >100 GitHub stars and active maintenance).
+   The correct approach is submodule mount + thin adapter.
 
 7. **PR target branch**: All PRs must target `develop`, never `master`/`main` directly.
+   Exception: `release/*` and `hotfix/*` branches may merge to `master` directly.
    Flag if base branch is incorrect.
 """
 
