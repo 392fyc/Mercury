@@ -1,6 +1,7 @@
 [
   {
     "path": ".claude/skills/systematic-debugging/SKILL.md",
+    "scope": "project",
     "upstream_repo": "obra/superpowers",
     "upstream_path": "skills/systematic-debugging/SKILL.md",
     "upstream_sha_at_import": "917e5f53b16b115b70a3a355ed5f4993b9f8b73d",
@@ -12,6 +13,7 @@
   },
   {
     "path": ".claude/skills/systematic-debugging/condition-based-waiting.md",
+    "scope": "project",
     "upstream_repo": "obra/superpowers",
     "upstream_path": "skills/systematic-debugging/condition-based-waiting.md",
     "upstream_sha_at_import": "917e5f53b16b115b70a3a355ed5f4993b9f8b73d",
@@ -23,6 +25,7 @@
   },
   {
     "path": ".claude/skills/systematic-debugging/condition-based-waiting-example.ts",
+    "scope": "project",
     "upstream_repo": "obra/superpowers",
     "upstream_path": "skills/systematic-debugging/condition-based-waiting-example.ts",
     "upstream_sha_at_import": "917e5f53b16b115b70a3a355ed5f4993b9f8b73d",
@@ -34,6 +37,7 @@
   },
   {
     "path": ".claude/skills/systematic-debugging/defense-in-depth.md",
+    "scope": "project",
     "upstream_repo": "obra/superpowers",
     "upstream_path": "skills/systematic-debugging/defense-in-depth.md",
     "upstream_sha_at_import": "917e5f53b16b115b70a3a355ed5f4993b9f8b73d",
@@ -45,6 +49,7 @@
   },
   {
     "path": ".claude/skills/systematic-debugging/find-polluter.sh",
+    "scope": "project",
     "upstream_repo": "obra/superpowers",
     "upstream_path": "skills/systematic-debugging/find-polluter.sh",
     "upstream_sha_at_import": "917e5f53b16b115b70a3a355ed5f4993b9f8b73d",
@@ -56,6 +61,7 @@
   },
   {
     "path": ".claude/skills/systematic-debugging/root-cause-tracing.md",
+    "scope": "project",
     "upstream_repo": "obra/superpowers",
     "upstream_path": "skills/systematic-debugging/root-cause-tracing.md",
     "upstream_sha_at_import": "917e5f53b16b115b70a3a355ed5f4993b9f8b73d",
@@ -67,6 +73,7 @@
   },
   {
     "path": ".claude/skills/subagent-driven-development/SKILL.md",
+    "scope": "project",
     "upstream_repo": "obra/superpowers",
     "upstream_path": "skills/subagent-driven-development/SKILL.md",
     "upstream_sha_at_import": "917e5f53b16b115b70a3a355ed5f4993b9f8b73d",
@@ -78,6 +85,7 @@
   },
   {
     "path": ".claude/skills/subagent-driven-development/code-quality-reviewer-prompt.md",
+    "scope": "project",
     "upstream_repo": "obra/superpowers",
     "upstream_path": "skills/subagent-driven-development/code-quality-reviewer-prompt.md",
     "upstream_sha_at_import": "917e5f53b16b115b70a3a355ed5f4993b9f8b73d",
@@ -89,6 +97,7 @@
   },
   {
     "path": ".claude/skills/subagent-driven-development/implementer-prompt.md",
+    "scope": "project",
     "upstream_repo": "obra/superpowers",
     "upstream_path": "skills/subagent-driven-development/implementer-prompt.md",
     "upstream_sha_at_import": "917e5f53b16b115b70a3a355ed5f4993b9f8b73d",
@@ -100,6 +109,7 @@
   },
   {
     "path": ".claude/skills/subagent-driven-development/spec-reviewer-prompt.md",
+    "scope": "project",
     "upstream_repo": "obra/superpowers",
     "upstream_path": "skills/subagent-driven-development/spec-reviewer-prompt.md",
     "upstream_sha_at_import": "917e5f53b16b115b70a3a355ed5f4993b9f8b73d",
@@ -111,6 +121,7 @@
   },
   {
     "path": ".claude/skills/verification-before-completion/SKILL.md",
+    "scope": "project",
     "upstream_repo": "obra/superpowers",
     "upstream_path": "skills/verification-before-completion/SKILL.md",
     "upstream_sha_at_import": "917e5f53b16b115b70a3a355ed5f4993b9f8b73d",
@@ -122,6 +133,7 @@
   },
   {
     "path": ".claude/skills/caveman-toggle/SKILL.md",
+    "scope": "project",
     "upstream_repo": "JuliusBrussee/caveman",
     "upstream_path": "skills/caveman/SKILL.md",
     "upstream_sha_at_import": "26c25e39b3aee469dbb017427ab55ee1d32de1a8",
@@ -133,6 +145,7 @@
   },
   {
     "path": "CLAUDE.local.md.example",
+    "scope": "project",
     "upstream_repo": "JuliusBrussee/caveman",
     "upstream_path": "skills/caveman/SKILL.md",
     "upstream_sha_at_import": "26c25e39b3aee469dbb017427ab55ee1d32de1a8",
