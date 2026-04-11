@@ -5,6 +5,11 @@ description: >-
   discipline: run verification command, read output, THEN claim result. Use when
   making completion claims, expressing satisfaction, or before commit/PR/task-done.
 user-invocable: false
+upstream_source: "https://github.com/obra/superpowers"
+upstream_sha: "917e5f53b16b115b70a3a355ed5f4993b9f8b73d"
+upstream_license: "MIT"
+cherry_picked_in: 216
+cherry_picked_at: "2026-04-10"
 ---
 
 <!-- Cherry-picked from obra/superpowers (MIT, Copyright 2025 Jesse Vincent)

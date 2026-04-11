@@ -10,6 +10,8 @@
 #   /caveman-off       — deactivate (deletes CLAUDE.local.md)
 #
 # Or copy manually: cp CLAUDE.local.md.example CLAUDE.local.md
+# Based on JuliusBrussee/caveman (MIT) https://github.com/JuliusBrussee/caveman
+# SHA: 26c25e39b3aee469dbb017427ab55ee1d32de1a8 (v1.3.0), imported via PR #214 / Issue #213
 
 <!-- caveman-mode: lite -->
 Respond terse like smart caveman. Drop filler words, hedging, pleasantries.

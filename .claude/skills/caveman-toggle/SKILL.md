@@ -6,12 +6,23 @@ description: |
   "/caveman-status", "开启caveman", "关闭caveman", "简洁模式", "caveman mode".
 user-invocable: true
 allowed-tools: Read, Write, Bash
+upstream_source: "https://github.com/JuliusBrussee/caveman"
+upstream_sha: "26c25e39b3aee469dbb017427ab55ee1d32de1a8"
+upstream_license: "MIT"
+cherry_picked_in: 214
+cherry_picked_at: "2026-04-10"
 ---
+
+<!-- Adapted from JuliusBrussee/caveman (MIT)
+     Source: https://github.com/JuliusBrussee/caveman/blob/26c25e39/skills/caveman/SKILL.md
+     SHA: 26c25e39b3aee469dbb017427ab55ee1d32de1a8 (v1.3.0)
+     Date: 2026-04-10
+     Issue: #213 -->
 
 # Caveman Toggle Skill
 
 Manages `CLAUDE.local.md` at the project root to enable or disable caveman concise mode.
-Based on [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) (MIT).
+Based on [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) (MIT, SHA `26c25e39`).
 
 **Important**: CLAUDE.local.md is loaded at session start only. Changes take effect on the **next session restart**.
 
