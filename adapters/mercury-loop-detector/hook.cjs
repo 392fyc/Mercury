@@ -165,6 +165,13 @@ function main() {
   const { tool_name = '', tool_input = {}, tool_response = '', session_id = '' } = input;
   const cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
 
+  // Fail-open when session_id is absent: without it we cannot isolate per-session state
+  // and would risk cross-session counter contamination.
+  if (!session_id) {
+    process.stderr.write(`${TAG} WARNING: no session_id in hook payload; skipping state accumulation\n`);
+    pass();
+  }
+
   const cfg = loadConfig(cwd);
   if (!cfg.enabled) pass();
 
