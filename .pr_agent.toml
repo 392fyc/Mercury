@@ -1,0 +1,44 @@
+# Mercury project-scope PR-Agent configuration
+# Overrides Argus container defaults for this repository.
+# Ref: https://pr-agent-docs.codium.ai/usage-guide/configuration_options/
+
+[pr_reviewer]
+extra_instructions = """
+Mercury project review rules (MUST check every PR):
+
+1. **Issue reference**: PR description must contain Closes/Fixes/Resolves/Refs #N.
+   Flag as blocker if missing. Exception: pure chore/doc PRs with no functional code
+   changes (e.g., typo fixes, README updates) may omit the issue reference.
+
+2. **Modular design**: Every new feature must be independently detachable.
+   Flag if a feature assumes Mercury as the only consumer or creates tight coupling.
+
+3. **Adapter size**: No adapter/integration file should exceed 200 lines.
+   Flag files over 200 lines that act as adapters or integration glue.
+
+4. **Cherry-pick compliance**: Any file cherry-picked from an external project must
+   include a manifest entry in `.mercury/state/upstream-manifest.json` and SKILL.md
+   frontmatter (upstream_source, upstream_sha, upstream_license fields).
+   Flag cherry-picks without manifest entries as blockers.
+
+5. **No hardcoded local paths**: Reject any hardcoded paths like C:/Users/*, D:/Mercury/*,
+   /share/homes/*. Env vars ($AGENTKB_DIR etc.) must be used instead.
+
+6. **No self-research**: Flag if new code reimplements functionality already provided by an
+   existing OSS tool (verifiable by: same public API, >50 lines of parallel logic, no
+   Mercury-specific adaptation, OSS tool has >100 GitHub stars and active maintenance).
+   The correct approach is submodule mount + thin adapter.
+
+7. **PR target branch**: All PRs must target `develop`, never `master`/`main` directly.
+   Exception: `release/*` and `hotfix/*` branches may merge to `master` directly.
+   Flag if base branch is incorrect.
+"""
+
+[pr_code_suggestions]
+extra_instructions = """
+Focus code suggestions on:
+- Hardcoded paths or secrets that should use environment variables
+- Adapter files exceeding 200 lines (suggest splitting)
+- Missing error handling at system boundaries (user input, external APIs)
+- Security issues: command injection, path traversal, credential exposure
+"""

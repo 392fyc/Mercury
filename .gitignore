@@ -72,9 +72,9 @@ mercury.config.json
 # Autoresearch state (standalone mode, transient)
 .research/
 
-# PR review agent (deployment-specific, use .pr_agent.toml.example as template)
-.pr_agent.toml
+# PR review agent guide (deployment-specific doc, not committed)
 .mercury/docs/guides/argus-review-guide.md
+# .pr_agent.toml is committed (project-scope config for Argus use_repo_settings_file)
 
 # KB managed separately in parallel directory (D:/Mercury/Mercury_KB), never inside repo
 Mercury_KB/
