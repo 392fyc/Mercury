@@ -1,9 +1,9 @@
 # Phase 4-1 ADR — Session Continuity 技术方案选型
 
-**Status**: DECIDED — 2026-04-13
+**Status**: DECIDED — 2026-04-13 (用户已拍板选定 Option D)
 **Date**: 2026-04-12 (updated 2026-04-13)
-**Issue**: #183 (parent: Phase 3 Memory Layer)
-**Decision authority**: User (最终方案选型需用户拍板)
+**Issue**: #238 (Phase 4-1 实现), parent: #183 (Phase 4 Session Continuity)
+**Decision authority**: User (已完成决策)
 **Research artifact**: `.research/reports/RESEARCH-Session-Continuity-183-2026-04-11.md` (5 questions, 30+ sources)
 
 ---
@@ -123,38 +123,31 @@ Phase 4 在此基础上增加 **结构化 handoff 生成 + 自动续接** 能力
 
 ---
 
-## 待决策事项（需用户拍板）
+## 已决策事项（S47 用户拍板完成）
 
-**核心问题**: 选择哪个 Option？
+**选定方案**: Option D (Hybrid: Stop-hook handoff + SDK resume)
 
-推荐优先级：D > A > B > C
-
-**若选 Option D / A，需确认**：
-1. **Orchestrator 形态**: 独立 Python 脚本（手动运行）vs 后台守护进程 vs Task Scheduler 定时任务？
-2. **启动方式变更**: 用户是否接受改用 `python orchestrator.py` 启动 Claude Code？或保持 `claude` 直接启动，由 Stop hook 处理？
-3. **Handoff 粒度**: 每次 Stop 都写 handoff（高频但轻量）vs 仅在 context 耗尽时写（低频但必要）？
-
-**若选 Option B**：
-- 仅解决"不丢 context"问题，不实现自动续接，接受需要人工粘贴 handoff
+**已确认细节**：
+1. **Orchestrator 形态**: 独立 Python 脚本（`handoff-orchestrator.py`），用户通过 `/handoff` skill 触发
+2. **启动方式**: 保持 `claude` 直接启动，`/handoff` 在 session 内调用，orchestrator 负责续接
+3. **Handoff 粒度**: 用户主动 `/handoff` 或 agent 自主调用；PreCompact 自动写 checkpoint 作为底稿
 
 ---
 
-## 实施计划（草案，待选型确认后细化）
+## 实施计划（已执行，S48 完成）
 
 ### Phase 4-1 子里程碑
 
-| 里程碑 | 内容 | 依赖 |
+| 里程碑 | 内容 | 状态 |
 |--------|------|------|
-| M1: Stop hook | 实现强制 handoff 写入的 Stop hook，exit code 2 拦截 | — |
-| M2: Handoff schema | 定义结构化 handoff 格式（兼容 auto-memory + AgentKB） | M1 |
-| M3: SDK orchestrator | Python 脚本包装会话生命周期（如选 A/D） | M1+M2 |
-| M4: E2E 验证 | 跨会话任务恢复 + AgentKB 知识查询完整测试 | M3 |
+| M0: PreCompact checkpoint | flush.py 检测 PreCompact 触发，写 session-checkpoint.md 到 auto-memory | 🔄 AgentKB PR#5 |
+| M2: session_chain 表 | skill_stats.py 新增表 + session-end.py 自动记录 | 🔄 AgentKB PR#5 |
+| M1: /handoff skill | 全局 skill + handoff-orchestrator.py (Agent SDK) | 🔄 AgentKB PR#5 |
 
 ---
 
 ## 关联 Issues
 
 - **父 Issue**: #183 — Cross-Session State & Continuity (OPEN)
-- **Phase 4-1 子 Issue**: 待创建（关联 #183）
-- **Phase 3 已关闭**: #217 (NAS KB 架构) #218 (MCP compile) #219 (kb-lint)
-- **Phase 3 P1 open**: #232 (flush.py PreCompact fix — 已修复，待 PR)
+- **Phase 4-1 实现 Issue**: #238 (OPEN, 关联 #183)
+- **Phase 3 已关闭**: #217 (NAS KB 架构) #232 (flush.py PreCompact fix, merged)

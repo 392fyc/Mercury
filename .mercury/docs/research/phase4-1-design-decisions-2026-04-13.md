@@ -17,7 +17,7 @@
 
 ### 续接方式
 
-**选定 Option B（Agent SDK 自动启动新 session）**：
+**选定 Option D（Hybrid: Stop-hook handoff + Agent SDK resume）**：
 - 生成 handoff doc → 通过 Agent SDK 自动开新 session → 注入 handoff 作为 prompt 前缀
 - 目标：agent 在有足够背景信息的情况下可自主推进任务，减少人类反复干预
 - 这是多 agent team 工作的前置条件
