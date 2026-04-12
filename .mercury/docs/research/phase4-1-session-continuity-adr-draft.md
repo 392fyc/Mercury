@@ -1,7 +1,7 @@
 # Phase 4-1 ADR — Session Continuity 技术方案选型
 
-**Status**: DRAFT — AWAITING USER DECISION
-**Date**: 2026-04-12
+**Status**: DECIDED — 2026-04-13
+**Date**: 2026-04-12 (updated 2026-04-13)
 **Issue**: #183 (parent: Phase 3 Memory Layer)
 **Decision authority**: User (最终方案选型需用户拍板)
 **Research artifact**: `.research/reports/RESEARCH-Session-Continuity-183-2026-04-11.md` (5 questions, 30+ sources)
