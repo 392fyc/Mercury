@@ -248,24 +248,29 @@ adapters/         # 适配层
 - Session B-C (Mode B): 原型实现 + 卡死检测
 **注意**: 这是技术难度最高的模块，预计需要更多迭代
 
-### 4-1. 技术方案调研
-- Agent SDK session resume/fork 能力实测
-- PostCompact hook 状态保存方案验证
-- CLI wrapper 方案原型
-- 对比三种方案的可靠性、复杂度、token 成本
+### 4-1. Session Continuity 基础 — 代码已实现，待合并 (S47-S48)
+- ✅ ADR 完成: Option D (Hybrid) 方案选定 (PR #239, merged)
+- ✅ Agent SDK session resume/fork 能力已验证
+- 🔄 M0/M2/M1 代码已实现于 AgentKB [PR#5](https://github.com/392fyc/claude-memory-compiler/pull/5)，**待 merge 后本阶段方可标记完成**
+- 注: 本仓库为文档状态同步，功能代码在 AgentKB 仓库
+- 研究报告: `.mercury/docs/research/phase4-1-*`, `.research/reports/RESEARCH-OpenClaw-*`
 
-### 4-2. 原型实现
-- 基于调研结果选择方案
-- 实现最小可用的 session 接力机制
-- 集成 Memory Layer（handoff 状态写入 KB）
+### 4-2. Worktree-per-task + session_chain 增强
+- 基于 4-1 的 session_chain 表扩展
+- 强制 worktree-per-task 隔离
+- 评估 OMC `project-session-manager` skill 集成
 
-### 4-3. 卡死检测
-- 实现 sliding window 循环检测
-- 多级超时（soft → idle → hard）
-- 卡死后自动生成诊断报告 + 通知用户
+### 4-3. Compact-prevention 模式
+- 接近 context 上限时主动 `/handoff`
+- PreCompact/PostCompact hooks 重定位
+
+### 4-4. 卡死检测 (S37, #226) — 核心已交付，增强待定
+- ✅ sliding window 循环检测已实现并交付 (PR #229, #231, merged)
+- ⏳ 增强: 多级超时（soft → idle → hard）
+- ⏳ 增强: 卡死后自动生成诊断报告 + 通知用户（依赖 Phase 5 Notify Hub）
 
 **产出**: agent 可以自动跨 session 继续工作
-**人类干预点**: 技术方案选择；首次 session 接力时确认状态传递完整性
+**人类干预点**: ~~技术方案选择（已完成，Option D）~~；首次 session 接力时确认状态传递完整性
 **验收标准**: agent 在 context 耗尽后自动启动新 session 并继续之前的任务
 **Phase 4 完成后解锁**: agent 可长时间自主工作 ← 核心里程碑
 
