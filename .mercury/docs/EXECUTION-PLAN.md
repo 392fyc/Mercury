@@ -248,13 +248,13 @@ adapters/         # 适配层
 - Session B-C (Mode B): 原型实现 + 卡死检测
 **注意**: 这是技术难度最高的模块，预计需要更多迭代
 
-### 4-1. Session Continuity 基础 ✅ (S47-S48)
-- ✅ ADR 完成: Option D (Hybrid) 方案选定 (PR #239)
+### 4-1. Session Continuity 基础 (S47-S48)
+- ✅ ADR 完成: Option D (Hybrid) 方案选定 (PR #239, merged)
 - ✅ Agent SDK session resume/fork 能力已验证
-- ✅ M0: PreCompact → auto-memory checkpoint (`flush.py`)
-- ✅ M2: `session_chain` SQLite 表 + SessionEnd 自动记录
-- ✅ M1: `/handoff` 全局 skill + `handoff-orchestrator.py` (Agent SDK 续接)
-- 实现位置: AgentKB PR#5, Mercury #238
+- 🔄 M0: PreCompact → auto-memory checkpoint (`flush.py`) — AgentKB PR#5, pending merge
+- 🔄 M2: `session_chain` SQLite 表 + SessionEnd 自动记录 — AgentKB PR#5, pending merge
+- 🔄 M1: `/handoff` 全局 skill + `handoff-orchestrator.py` — AgentKB PR#5, pending merge
+- 实现位置: AgentKB [PR#5](https://github.com/392fyc/claude-memory-compiler/pull/5)
 - 研究报告: `.mercury/docs/research/phase4-1-*`, `.research/reports/RESEARCH-OpenClaw-*`
 
 ### 4-2. Worktree-per-task + session_chain 增强
@@ -266,10 +266,10 @@ adapters/         # 适配层
 - 接近 context 上限时主动 `/handoff`
 - PreCompact/PostCompact hooks 重定位
 
-### 4-4. 卡死检测 ✅ (S37, #226)
-- ✅ sliding window 循环检测已实现 (PR #229, #231)
-- 多级超时（soft → idle → hard）待实现
-- 卡死后自动生成诊断报告 + 通知用户
+### 4-4. 卡死检测 (S37, #226) — 部分完成
+- ✅ sliding window 循环检测已实现 (PR #229, #231, merged)
+- ⏳ 多级超时（soft → idle → hard）待实现
+- ⏳ 卡死后自动生成诊断报告 + 通知用户
 
 **产出**: agent 可以自动跨 session 继续工作
 **人类干预点**: 技术方案选择；首次 session 接力时确认状态传递完整性
