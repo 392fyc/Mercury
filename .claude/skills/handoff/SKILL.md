@@ -87,8 +87,8 @@ from pathlib import Path
 
 agentkb_dir = os.environ.get('AGENTKB_DIR')
 if not agentkb_dir:
-    print('AGENTKB_DIR is not set', file=sys.stderr)
-    sys.exit(1)
+    print('AGENTKB_DIR is not set — skipping session_chain update')
+    sys.exit(0)
 
 db = Path(agentkb_dir) / 'stats' / 'skill-usage.db'
 if not db.exists():
