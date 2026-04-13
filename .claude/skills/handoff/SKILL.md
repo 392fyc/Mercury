@@ -82,16 +82,29 @@ Otherwise write: "No additional instructions.">
 Run this to update the session chain record:
 ```bash
 python -c "
-import sqlite3, json
+import os, sqlite3, sys
 from pathlib import Path
-db = Path('$AGENTKB_DIR/stats/skill-usage.db')
-if db.exists():
+
+agentkb_dir = os.environ.get('AGENTKB_DIR')
+if not agentkb_dir:
+    print('AGENTKB_DIR is not set', file=sys.stderr)
+    sys.exit(1)
+
+db = Path(agentkb_dir) / 'stats' / 'skill-usage.db'
+if not db.exists():
+    print('skill-usage.db not found, skip session_chain update')
+    sys.exit(0)
+
+try:
     with sqlite3.connect(str(db)) as c:
         c.execute('''UPDATE session_chain SET handoff_doc=?, status='handoff'
                      WHERE session_id=? AND status IN ('active','complete')''',
                   ('<path to session-handoff.md>', '<session_id>'))
         c.commit()
         print('session_chain updated')
+except Exception as e:
+    print(f'failed to update session_chain: {e}', file=sys.stderr)
+    sys.exit(1)
 "
 ```
 
@@ -102,7 +115,7 @@ if db.exists():
 ## Step 5: Offer Continuation (Optional)
 
 Ask the user if they want to automatically start a new session:
-- If yes, run: `uv run --directory $AGENTKB_DIR python $AGENTKB_DIR/scripts/handoff-orchestrator.py --handoff-doc <path>`
+- If yes, run: `uv run --directory "$AGENTKB_DIR" python "$AGENTKB_DIR/scripts/handoff-orchestrator.py" --handoff-doc "<absolute_handoff_path>"`
 - If no, the user will manually paste the starting prompt into a new session
 
 Do NOT auto-launch the orchestrator without user confirmation.
