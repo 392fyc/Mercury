@@ -43,14 +43,20 @@ Also check:
 Run the following to identify the highest-priority actionable next task:
 ```bash
 # 1. Get P0 and P1 open issues
-gh issue list --label "P0" --state open --json number,title,labels --limit 10
-gh issue list --label "P1" --state open --json number,title,labels --limit 10
+gh issue list --label "P0" --state open --json number,title,labels --limit 50
+gh issue list --label "P1" --state open --json number,title,labels --limit 50
 
 # 2. Get Todo/In-Progress items from GitHub Project #3
-gh project item-list 3 --owner "$(gh repo view --json owner --jq '.owner.login')" --format json --limit 30 | \
-  python -c "import json,sys; data=json.load(sys.stdin); \
-  items=[i for i in data['items'] if i.get('status') in ('Todo','In Progress')]; \
-  [print(i.get('priority','?'), i.get('title','?'), i.get('status','?')) for i in sorted(items, key=lambda x: x.get('priority','P9'))]"
+gh project item-list 3 --owner "$(gh repo view --json owner --jq '.owner.login')" --format json --limit 100 | \
+  python -c "
+import json, sys
+data = json.load(sys.stdin)
+items = [i for i in data.get('items', []) if i.get('status') in ('Todo', 'In Progress')]
+status_order = {'In Progress': 0, 'Todo': 1}
+for i in sorted(items, key=lambda x: (status_order.get(x.get('status', ''), 9), x.get('priority', 'P9'))):
+    num = i.get('content', {}).get('number', '?')
+    print(f'#{num} [{i.get(\"priority\",\"?\")}] {i.get(\"title\",\"?\")} ({i.get(\"status\",\"?\")})')
+"
 ```
 
 Use this data to determine: **what is the single most actionable next task?**
@@ -58,7 +64,7 @@ Selection criteria (in order):
 1. Actively blocked P1 bugs with known root cause
 2. In-Progress items from the Project board
 3. Highest-priority P0 Todo from Project board
-4. Next Phase sub-item per EXECUTION-PLAN.md
+4. Next Phase sub-item per `.mercury/docs/EXECUTION-PLAN.md`
 
 Do NOT produce a menu. Pick one primary task and one secondary task (fallback after primary completes).
 
