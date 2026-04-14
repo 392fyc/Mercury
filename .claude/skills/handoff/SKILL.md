@@ -47,7 +47,7 @@ gh issue list --label "P1" --state open --json number,title,labels --limit 10
 # Add P0 label check too if applicable
 
 # 2. Get Todo/In-Progress items from GitHub Project #3
-gh project item-list 3 --owner <repo-owner> --format json --limit 30 | \
+gh project item-list 3 --owner "$(gh repo view --json owner --jq '.owner.login')" --format json --limit 30 | \
   python -c "import json,sys; data=json.load(sys.stdin); \
   items=[i for i in data['items'] if i.get('status') in ('Todo','In Progress')]; \
   [print(i.get('priority','?'), i.get('title','?'), i.get('status','?')) for i in sorted(items, key=lambda x: x.get('priority','P9'))]"
@@ -125,16 +125,29 @@ Otherwise write: "No additional instructions.">
 Run this to update the session chain record:
 ```bash
 python -c "
-import sqlite3, json
+import os, sqlite3, sys
 from pathlib import Path
-db = Path('$AGENTKB_DIR/stats/skill-usage.db')
-if db.exists():
+
+agentkb_dir = os.environ.get('AGENTKB_DIR')
+if not agentkb_dir:
+    print('AGENTKB_DIR is not set — skipping session_chain update')
+    sys.exit(0)
+
+db = Path(agentkb_dir) / 'stats' / 'skill-usage.db'
+if not db.exists():
+    print('skill-usage.db not found, skip session_chain update')
+    sys.exit(0)
+
+try:
     with sqlite3.connect(str(db)) as c:
         c.execute('''UPDATE session_chain SET handoff_doc=?, status='handoff'
                      WHERE session_id=? AND status IN ('active','complete')''',
                   ('<path to session-handoff.md>', '<session_id>'))
         c.commit()
         print('session_chain updated')
+except Exception as e:
+    print(f'failed to update session_chain: {e}', file=sys.stderr)
+    sys.exit(1)
 "
 ```
 
@@ -145,7 +158,7 @@ if db.exists():
 ## Step 5: Offer Continuation (Optional)
 
 Ask the user if they want to automatically start a new session:
-- If yes, run: `uv run --directory $AGENTKB_DIR python $AGENTKB_DIR/scripts/handoff-orchestrator.py --handoff-doc <path>`
+- If yes, run: `uv run --directory "$AGENTKB_DIR" python "$AGENTKB_DIR/scripts/handoff-orchestrator.py" --handoff-doc "<absolute_handoff_path>"`
 - If no, the user will manually paste the starting prompt into a new session
 
 Do NOT auto-launch the orchestrator without user confirmation.
