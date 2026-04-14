@@ -38,6 +38,36 @@ Also check:
 - Recent commits: `git log --oneline -10`
 - Any open tasks in the session
 
+**MANDATORY: Query GitHub Project and Issues for next task determination**
+
+Run the following to identify the highest-priority actionable next task:
+```bash
+# 1. Get P0 and P1 open issues
+gh issue list --label "P0" --state open --json number,title,labels --limit 50
+gh issue list --label "P1" --state open --json number,title,labels --limit 50
+
+# 2. Get Todo/In-Progress items from GitHub Project #3
+gh project item-list 3 --owner "$(gh repo view --json owner --jq '.owner.login')" --format json --limit 100 | \
+  python -c "
+import json, sys
+data = json.load(sys.stdin)
+items = [i for i in data.get('items', []) if i.get('status') in ('Todo', 'In Progress')]
+status_order = {'In Progress': 0, 'Todo': 1}
+for i in sorted(items, key=lambda x: (status_order.get(x.get('status', ''), 9), x.get('priority', 'P9'))):
+    num = i.get('content', {}).get('number', '?')
+    print(f'#{num} [{i.get(\"priority\",\"?\")}] {i.get(\"title\",\"?\")} ({i.get(\"status\",\"?\")})')
+"
+```
+
+Use this data to determine: **what is the single most actionable next task?**
+Selection criteria (in order):
+1. Actively blocked P1 bugs with known root cause
+2. In-Progress items from the Project board
+3. Highest-priority P0 Todo from Project board
+4. Next Phase sub-item per `.mercury/docs/EXECUTION-PLAN.md`
+
+Do NOT produce a menu. Pick one primary task and one secondary task (fallback after primary completes).
+
 ## Step 2: Generate Handoff Document
 
 Write a structured handoff document to:
@@ -57,11 +87,28 @@ type: project
 
 ## Starting Prompt
 
-<A ready-to-paste prompt for the next session. This is the PRIMARY artifact.
-Include enough context that the next session can immediately resume work.>
+这是 S{N+1}。以下是 S{N} 的完整交接。
+
+### 当前状态
+<repo/branch/commit状态，clean/dirty>
+
+### S{N+1} 主任务：<Issue #N — 具体任务标题>
+
+**背景**：<1-2句说明为什么这是最高优先级，来自Issue/Project数据>
+
+**执行步骤**：
+1. <具体可执行步骤，包含文件路径和命令>
+2. <具体可执行步骤>
+3. <验证方法>
+4. <提交/PR步骤>
+
+**次要任务（主任务完成后）**：<Issue #N 或 Phase X-Y，一句话描述>
+
+### 参考文档
+<仅列出主任务相关的文档>
 
 ## Task State
-- **Issue**: #N [title]
+- **Issue**: #N [title] (status)
 - **Branch**: <branch name>
 - **Completed**: <commit hashes and what they did>
 - **In Progress**: <current step, blockers>
@@ -76,6 +123,8 @@ Include enough context that the next session can immediately resume work.>
 <If /handoff was called with arguments, place them here.
 Otherwise write: "No additional instructions.">
 ```
+
+**CRITICAL RULE for Starting Prompt**: The prompt MUST contain a single primary task with numbered execution steps. It MUST NOT be a bulleted list of options. The next session agent should be able to start executing step 1 immediately without asking for direction.
 
 ## Step 3: Update session_chain (if DB exists)
 
