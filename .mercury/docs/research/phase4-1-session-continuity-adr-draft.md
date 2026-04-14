@@ -24,7 +24,7 @@ Mercury 的 Phase 4 目标是实现 **Session Continuity**：当一个 Claude Co
 |------|------|
 | AgentKB daily log (flush.py) | ✅ 运行中 |
 | SessionEnd hook | ✅ 全局注册 |
-| PreCompact hook | ✅ 已修复 (#232, AgentKB PR#9: bypass SDK → `claude -p`) |
+| PreCompact hook | ✅ 已修复 (#232, AgentKB [PR#9](https://github.com/392fyc/claude-memory-compiler/pull/9) `9c5adde`: bypass SDK → `claude -p`) |
 | NAS rsync 备份 | ✅ 每小时 rc=0 |
 | AgentKB compile pipeline | ✅ 运行中 |
 
@@ -150,4 +150,4 @@ Phase 4 在此基础上增加 **结构化 handoff 生成 + 自动续接** 能力
 
 - **父 Issue**: #183 — Cross-Session State & Continuity (OPEN)
 - **Phase 4-1 实现 Issue**: #238 (OPEN, 关联 #183)
-- **Phase 3 已关闭**: #217 (NAS KB 架构) #232 (flush.py PreCompact fix — bypass Agent SDK with `claude -p` subprocess, AgentKB PR#9)
+- **Phase 3 已关闭**: #217 (NAS KB 架构) #232 (flush.py PreCompact fix — bypass Agent SDK with `claude -p` subprocess, AgentKB [PR#9](https://github.com/392fyc/claude-memory-compiler/pull/9) `9c5adde`; 验证: SessionEnd FLUSH_OK 6s, PreCompact saved 1298 chars 14s)
