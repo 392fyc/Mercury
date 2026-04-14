@@ -42,9 +42,9 @@ Also check:
 
 Run the following to identify the highest-priority actionable next task:
 ```bash
-# 1. Get P0/P1 open issues
+# 1. Get P0 and P1 open issues
+gh issue list --label "P0" --state open --json number,title,labels --limit 10
 gh issue list --label "P1" --state open --json number,title,labels --limit 10
-# Add P0 label check too if applicable
 
 # 2. Get Todo/In-Progress items from GitHub Project #3
 gh project item-list 3 --owner "$(gh repo view --json owner --jq '.owner.login')" --format json --limit 30 | \
