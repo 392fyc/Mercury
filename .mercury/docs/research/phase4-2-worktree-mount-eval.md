@@ -24,7 +24,7 @@ Additionally, the research scope was extended to:
 
 ## R1: OMC `project-session-manager` (PSM)
 
-**Source**: `~/.claude/plugins/marketplaces/omc/skills/project-session-manager/`
+**Source**: `<CLAUDE_PLUGINS_DIR>/marketplaces/omc/skills/project-session-manager/` (local install; `CLAUDE_PLUGINS_DIR` defaults to `~/.claude/plugins/`)
 (local installed version `4.11.2`; latest `v4.11.6` at 2026-04-13)
 
 ### Key findings
@@ -242,7 +242,7 @@ Three ops: **ingest** (compile source), **query** (search + synthesise), **lint*
 |---|---|---|---|
 | 1 | Mercury | `.mercury/docs/research/phase4-2-worktree-mount-eval.md` (this file) | ⬜ PR pending |
 | 2 | Mercury | `.mercury/docs/EXECUTION-PLAN.md` — Phase 4-1 correction + Phase 4-2 expansion | ⬜ PR pending |
-| 3 | Mercury | Issues: (a) Phase 4-2.a session_chain DB, (b) Phase 4-2.b worktree-per-task impl, (c) Phase 3 Karpathy-pattern improvements | ⬜ to be filed |
+| 3 | Mercury | Issues: (a) Phase 4-2.a session_chain DB → #246, (b) Phase 4-2.b worktree-per-task impl → #247, (c) Phase 3 Karpathy-pattern improvements → #248 | ✅ filed (S54) |
 | 4 | Mercury | `.mercury/state/upstream-manifest.json` — mark `claude-memory-compiler` as UNLICENSED | ⬜ PR pending |
 | 5 | AgentKB | `scripts/flush.py:244-245` — `DETACHED_PROCESS` → `CREATE_NO_WINDOW` (terminal-flash root fix) | ⬜ cross-workspace PR |
 | 6 | claude-handoff | `session_chain` DB MVP | ⬜ cross-workspace PR (separate scope) |
