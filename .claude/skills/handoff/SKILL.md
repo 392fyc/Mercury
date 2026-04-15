@@ -88,15 +88,13 @@ else
   gh issue list --label "P0" --state open --json number,title,labels --limit 50 2>/dev/null || true
   gh issue list --label "P1" --state open --json number,title,labels --limit 50 2>/dev/null || true
 
-  # Project number: configurable. Mercury convention is Project #3; override
-  # via $HANDOFF_PROJECT_NUM for any other repo. When the variable is unset
-  # and the repo is NOT Mercury, skip the project query rather than guess.
+  # Project number: configurable via $HANDOFF_PROJECT_NUM. No per-repo
+  # auto-fallback — the skill stays agnostic about which GitHub Project
+  # belongs to which repo. Callers that want Project integration (e.g.
+  # Mercury with Project #3) set the env var in their shell profile or
+  # per-session before invoking /handoff.
   OWNER=$(gh repo view --json owner --jq '.owner.login' 2>/dev/null)
-  REPO=$(gh repo view --json name --jq '.name' 2>/dev/null)
   PROJ_NUM="${HANDOFF_PROJECT_NUM:-}"
-  if [ -z "$PROJ_NUM" ] && [ "$OWNER/$REPO" = "392fyc/Mercury" ]; then
-    PROJ_NUM=3
-  fi
 
   if [ -n "$PROJ_NUM" ]; then
     gh project item-list "$PROJ_NUM" --owner "$OWNER" --format json --limit 100 2>/dev/null | \
@@ -113,7 +111,7 @@ for i in sorted(items, key=lambda x: (status_order.get(x.get('status', ''), 9), 
     print(f'#{num} [{i.get(\"priority\",\"?\")}] {i.get(\"title\",\"?\")} ({i.get(\"status\",\"?\")})')
 " 2>/dev/null || true
   else
-    echo "INFO: HANDOFF_PROJECT_NUM not set and repo is not Mercury — skipping Project query"
+    echo "INFO: HANDOFF_PROJECT_NUM not set — skipping Project query (set it to enable)"
   fi
 fi
 ```
