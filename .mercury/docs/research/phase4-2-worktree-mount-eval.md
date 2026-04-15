@@ -2,7 +2,7 @@
 
 > **Status**: research synthesis (Mercury S54)
 > **Date**: 2026-04-16
-> **Issue**: #183 (parent) / Phase 4-2 sub-tracks (to be filed)
+> **Issue**: #183 (parent) / Phase 4-2 sub-tracks: #246 (4-2.a session_chain DB), #247 (4-2.b worktree-per-task), #248 (Karpathy-pattern)
 > **Upstream research protocol**: WebSearch + WebFetch + local skill source inspection
 
 ## Executive Summary
