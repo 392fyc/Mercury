@@ -1,53 +1,84 @@
 ---
 name: handoff
-description: Generate a structured handoff document and optionally start a new session via Agent SDK to continue the task
-argument-hint: "[optional additional instructions for the next session]"
-level: 4
+description: Generate a structured handoff document and ready-to-paste starting prompt for the next session. Use `/handoff` for manual mode (output only). Use `/handoff:auto` to auto-launch the new session via `claude` CLI after the document is written.
+argument-hint: "[:auto] [optional extra instructions for the next session]"
+user-invocable: true
+allowed-tools:
+  - Read
+  - Write
+  - Bash
+  - Glob
+  - Grep
 ---
 
-<Purpose>
-Generate a structured handoff document capturing the current session's task state, key decisions, and pending work. Write it to auto-memory so the next session inherits full context. Optionally launch a continuation session via the Agent SDK handoff orchestrator.
-</Purpose>
+# /handoff — Session Handoff & Continuation
 
-<Use_When>
-- User says "/handoff", "handoff", "交接", "转手"
-- Agent reaches a natural task boundary and needs to continue in a new session
-- Context is getting large and a clean handoff would preserve quality
-- User wants to pause work and resume later with full context
-</Use_When>
+You are executing the handoff skill. This is the **only** entry point for
+handoff — nothing triggers automatically. Follow these steps precisely.
 
-<Do_Not_Use_When>
-- Task is fully complete with nothing to continue
-- User just wants a summary (use normal conversation instead)
-</Do_Not_Use_When>
+## Invocation modes
 
-<Instructions>
-When this skill is invoked, follow these steps exactly:
+Parse `$ARGUMENTS`:
 
-## Step 1: Gather State
+| Trigger | Mode | Behavior |
+|---|---|---|
+| `/handoff` (no args) | **manual** | Write doc + output starting prompt in chat. Do NOT launch a new session. Old session stays alive. |
+| `/handoff <instructions>` | **manual + extra** | Same as manual; put `<instructions>` into the "User Instructions" section of the handoff doc. |
+| `/handoff:auto` | **auto** | Write doc + output starting prompt + **auto-launch** new session via `claude` CLI after Pre-Termination Checklist passes. Old session should `/exit` after. |
+| `/handoff:auto <instructions>` | **auto + extra** | Same as auto, with extra instructions embedded. |
+| `/handoff auto` (legacy) | **auto** | Same as `/handoff:auto`. Accept both syntaxes. |
 
-Read the current session checkpoint if it exists:
+Default (no explicit auto): manual mode. Never auto-launch without an
+explicit `:auto` / `auto` token.
+
+## Step 1: Gather Context
+
+Layer these sources (each optional):
+
+### Layer 1: Conversation context (always available)
+
+You have the full conversation in context. Synthesize:
+- What the user was working on
+- Decisions made and their rationale
+- Problems encountered and solutions found
+- Incomplete work and known next steps
+
+### Layer 2: Memory search (agentic)
+
+Search the project's auto-memory directory:
 ```
-~/.claude/projects/<encoded_cwd>/memory/session-checkpoint.md
+~/.claude/projects/<encoded_cwd>/memory/
 ```
+Where `<encoded_cwd>` is the cwd with `:` `\` `/` replaced by `-`, leading
+`-` stripped.
 
-Where encoded_cwd is the current working directory with `:` `\` `/` replaced by `-` and leading `-` stripped.
+Glob for `*.md`. Read previous handoffs, checkpoints, project memories.
 
-Also check:
-- Current git branch: `git rev-parse --abbrev-ref HEAD`
-- Recent commits: `git log --oneline -10`
-- Any open tasks in the session
+### Layer 3: Project documentation (if present)
 
-**MANDATORY: Query GitHub Project and Issues for next task determination**
+Skim `CLAUDE.md`, `AGENTS.md`, `README.md` at project root or parents.
+Extract what's relevant to the handoff.
 
-Run the following to identify the highest-priority actionable next task:
+### Layer 4: Version control (optional)
+
+If git is available:
 ```bash
-# 1. Get P0 and P1 open issues
-gh issue list --label "P0" --state open --json number,title,labels --limit 50
-gh issue list --label "P1" --state open --json number,title,labels --limit 50
+git status --short 2>/dev/null
+git log --oneline -5 2>/dev/null
+git branch --show-current 2>/dev/null
+```
 
-# 2. Get Todo/In-Progress items from GitHub Project #3
-gh project item-list 3 --owner "$(gh repo view --json owner --jq '.owner.login')" --format json --limit 100 | \
+### Layer 5: GitHub Project / Issues (MANDATORY for Mercury-class repos)
+
+If the project uses GitHub Issues + a GitHub Project (v2), query for next-task selection:
+
+```bash
+# Adjust project number per repo. Mercury uses Project #3.
+gh issue list --label "P0" --state open --json number,title,labels --limit 50 2>/dev/null
+gh issue list --label "P1" --state open --json number,title,labels --limit 50 2>/dev/null
+
+OWNER=$(gh repo view --json owner --jq '.owner.login' 2>/dev/null)
+gh project item-list 3 --owner "$OWNER" --format json --limit 100 2>/dev/null | \
   python -c "
 import json, sys
 data = json.load(sys.stdin)
@@ -59,113 +90,210 @@ for i in sorted(items, key=lambda x: (status_order.get(x.get('status', ''), 9), 
 "
 ```
 
-Use this data to determine: **what is the single most actionable next task?**
 Selection criteria (in order):
 1. Actively blocked P1 bugs with known root cause
 2. In-Progress items from the Project board
 3. Highest-priority P0 Todo from Project board
-4. Next Phase sub-item per `.mercury/docs/EXECUTION-PLAN.md`
+4. Next Phase sub-item per `.mercury/docs/EXECUTION-PLAN.md` (or equivalent)
 
-Do NOT produce a menu. Pick one primary task and one secondary task (fallback after primary completes).
+Pick **one** primary task + one secondary fallback. Never produce a menu.
 
 ## Step 2: Generate Handoff Document
 
-Write a structured handoff document to:
+Write to:
 ```
 ~/.claude/projects/<encoded_cwd>/memory/session-handoff.md
 ```
 
-Use this format:
-
 ```markdown
 ---
 name: session_handoff
-description: "Session handoff — <one-line summary of current task>"
+description: "Session handoff — <one-line summary>"
 type: project
 ---
-# Session Handoff — <date>
+# Session Handoff — <YYYY-MM-DD>
 
 ## Starting Prompt
 
-这是 S{N+1}。以下是 S{N} 的完整交接。
+这是 S{N+1}。<1-line context>。
 
 ### 当前状态
-<repo/branch/commit状态，clean/dirty>
+<repo / branch / commit / clean or dirty>
 
-### S{N+1} 主任务：<Issue #N — 具体任务标题>
+### S{N+1} 主任务：<Issue #N — specific title>
 
-**背景**：<1-2句说明为什么这是最高优先级，来自Issue/Project数据>
+**背景**：<1-2 lines why this is highest priority, cite Issue/Project>
 
 **执行步骤**：
-1. <具体可执行步骤，包含文件路径和命令>
-2. <具体可执行步骤>
-3. <验证方法>
-4. <提交/PR步骤>
+1. <actionable step with file paths / commands>
+2. <actionable step>
+3. <verification>
+4. <commit / PR>
 
-**次要任务（主任务完成后）**：<Issue #N 或 Phase X-Y，一句话描述>
+**次要任务（主任务完成后）**：<Issue #N or Phase X-Y, one line>
 
 ### 参考文档
-<仅列出主任务相关的文档>
+<only main-task-related docs>
 
 ## Task State
-- **Issue**: #N [title] (status)
-- **Branch**: <branch name>
-- **Completed**: <commit hashes and what they did>
-- **In Progress**: <current step, blockers>
+- **Primary Issue**: #N [title] (status)
+- **Branch**: <branch>
+- **Completed**: <commits + what they did>
+- **In Progress**: <current step / blockers>
 - **Pending**: <remaining items>
 
 ## Key Context (compact-loss protection)
-- <Architecture decisions that must not be lost>
-- <Gotchas or constraints discovered>
-- <Important file paths and their roles>
+- <architecture decisions not recoverable from code>
+- <gotchas / constraints>
+- <important file paths + roles>
 
 ## User Instructions
-<If /handoff was called with arguments, place them here.
-Otherwise write: "No additional instructions.">
+<If args passed in, embed here. Else "No additional instructions.">
 ```
 
-**CRITICAL RULE for Starting Prompt**: The prompt MUST contain a single primary task with numbered execution steps. It MUST NOT be a bulleted list of options. The next session agent should be able to start executing step 1 immediately without asking for direction.
+**CRITICAL RULE for Starting Prompt**: one primary task with numbered
+execution steps. Never a menu of options. The next session must be able to
+start executing step 1 without asking for direction.
 
-## Step 3: Update session_chain (if DB exists)
+## Step 3: Session-chain update (best-effort, optional)
 
-Run this to update the session chain record:
+Session-chain tracking is provided by the `claude-handoff` plugin (see
+`github.com/392fyc/claude-handoff`). If the plugin's session_chain DB
+exists, record this handoff edge:
+
 ```bash
 python -c "
-import os, sqlite3, sys
+import os, sys
 from pathlib import Path
 
-agentkb_dir = os.environ.get('AGENTKB_DIR')
-if not agentkb_dir:
-    print('AGENTKB_DIR is not set — skipping session_chain update')
+# Plugin DB default location (claude-handoff plugin)
+db_path = Path(os.environ.get('CLAUDE_HANDOFF_DB') or
+                Path.home() / '.claude' / 'handoff' / 'session_chain.db')
+if not db_path.exists():
+    print('session_chain DB not found — skipping (plugin not installed or scaffold-only)')
     sys.exit(0)
 
-db = Path(agentkb_dir) / 'stats' / 'skill-usage.db'
-if not db.exists():
-    print('skill-usage.db not found, skip session_chain update')
-    sys.exit(0)
-
+# Defer actual writes to the plugin's session_chain package; do not duplicate
+# schema logic here. If the package is importable, use it; else skip.
 try:
-    with sqlite3.connect(str(db)) as c:
-        c.execute('''UPDATE session_chain SET handoff_doc=?, status='handoff'
-                     WHERE session_id=? AND status IN ('active','complete')''',
-                  ('<path to session-handoff.md>', '<session_id>'))
-        c.commit()
-        print('session_chain updated')
-except Exception as e:
-    print(f'failed to update session_chain: {e}', file=sys.stderr)
-    sys.exit(1)
+    from session_chain import SessionChainDB
+except ImportError:
+    print('session_chain package not importable — skipping (scaffold not wired yet)')
+    sys.exit(0)
+
+db = SessionChainDB(db_path)
+parent = os.environ.get('CLAUDE_SESSION_ID')
+if not parent:
+    print('CLAUDE_SESSION_ID not set — cannot record handoff edge')
+    sys.exit(0)
+
+db.record_handoff(
+    chain_id=os.environ.get('CLAUDE_HANDOFF_CHAIN_ID') or parent,
+    parent_session_id=parent,
+    child_session_id=None,  # bound later by child session's SessionStart hook
+    project_dir=os.getcwd(),
+    task_ref=os.environ.get('CLAUDE_HANDOFF_TASK_REF'),
+)
+print('session_chain edge recorded (child pending)')
 "
 ```
 
-## Step 4: Output the Starting Prompt
+**IMPORTANT**: the AGENTKB-based orchestrator path (`$AGENTKB_DIR/scripts/handoff-orchestrator.py`)
+is **deprecated**. Do not call it. The replacement is the `claude-handoff`
+plugin's session_chain module (above), currently a scaffold — write side
+may not yet be wired at session-start.py.
 
-**CRITICAL**: Output the Starting Prompt section directly in the chat response so the user can copy-paste it as the first message of a new session. This is the primary deliverable — the file is the backup.
+## Step 4: Pre-Termination Checklist
 
-## Step 5: Offer Continuation (Optional)
+Before launching a new session (auto mode) OR outputting the prompt (manual
+mode), verify **all** in-flight work has finished. A handoff is a
+**terminal event** for the old session — nothing carries over automatically.
 
-Ask the user if they want to automatically start a new session:
-- If yes, run: `uv run --directory "$AGENTKB_DIR" python "$AGENTKB_DIR/scripts/handoff-orchestrator.py" --handoff-doc "<absolute_handoff_path>"`
-- If no, the user will manually paste the starting prompt into a new session
+Confirm each:
 
-Do NOT auto-launch the orchestrator without user confirmation.
-</Instructions>
+- **No pending tool calls.** All Bash / file / tool operations returned.
+- **No background processes.** `run_in_background` tasks, builds, spawned
+  subprocesses have completed OR the user has explicitly accepted they
+  continue after handoff.
+- **No unsaved state.** Edits / commits / writes are actually on disk.
+- **No pending user questions.** If the old session owes a reply, answer it.
+
+If any item is incomplete, finish or defer explicitly. Surface status:
+"All pending work done — ready to hand off?"
+
+## Step 5: Output & Dispatch
+
+Always do **both** of these — never skip either:
+
+1. **Output the Starting Prompt section directly in chat** — PRIMARY
+   artifact. User pastes it verbatim as the first message of a new session.
+2. **Save the full handoff document** to the memory path above. The auto-
+   memory system will load it at next session start.
+
+### Manual mode (`/handoff` default)
+
+After Step 5.1 + 5.2, **stop**. Tell the user the old session stays alive;
+they can copy the prompt to a new session manually or continue working in
+this one. Do NOT spawn any new process.
+
+Optional: offer to launch if the user later says so (Step 6).
+
+### Auto mode (`/handoff:auto`)
+
+After Step 5.1 + 5.2, and Pre-Termination Checklist passed:
+
+**Windows** (Windows Terminal with new tab):
+```bash
+wt -w 0 nt --title "Handoff" -- claude "<STARTING_PROMPT_VERBATIM>"
+```
+
+**macOS / Linux** (background new session in a new terminal):
+```bash
+# If terminal multiplexer is preferred:
+tmux new-window -n handoff "claude \"<STARTING_PROMPT_VERBATIM>\""
+# Or plain background spawn:
+claude "<STARTING_PROMPT_VERBATIM>" &
+```
+
+The positional argument to `claude` is the session's first user message —
+documented at <https://code.claude.com/docs/en/cli-reference>. The
+SessionStart hook will inject the full handoff document as
+`additionalContext`, so the new session has everything.
+
+**Quoting considerations**:
+- The starting prompt may contain double quotes, backticks, `$` signs, and
+  newlines.
+- Prefer writing the prompt to a temp file and using `claude "$(cat
+  /tmp/handoff-prompt.txt)"` on POSIX, or using PowerShell's here-string on
+  Windows, to avoid shell-escape hazards.
+- If the prompt starts with `-`, it will be parsed as a CLI option (see
+  <https://github.com/anthropics/claude-code/issues/3844>); prefix with
+  `-- ` or wrap to avoid.
+
+After spawning the new process, do NOT continue producing output in the old
+session. The old session's job is done. Advise user to `/exit` (or close
+tab) once they confirm the new session is running.
+
+## Step 6: Post-Dispatch (manual mode only, optional)
+
+If the user returns after manual mode and says "launch it now", re-enter
+the auto path from Step 5 (auto mode).
+
+## Rules
+
+- Starting Prompt must be **self-contained** — zero context assumed in the
+  new session.
+- Include specific file paths, line numbers, commands.
+- Never include secrets, API keys, credentials.
+- The chat-output prompt is the PRIMARY deliverable — never skip it.
+- Do NOT add automatic hooks for SessionEnd or PreCompact — handoff is
+  **explicit only**.
+- Handoff is a **terminal event** for the old session.
+- Before terminating, verify all pending work has completed. Nothing
+  carries over automatically.
+- Manual mode MUST NOT spawn processes. Only `:auto` (or legacy `auto`) token
+  triggers the `claude` CLI launch.
+- The legacy `$AGENTKB_DIR/scripts/handoff-orchestrator.py` path is
+  DEPRECATED. Do not invoke it. The `claude-handoff` plugin is the
+  canonical session-continuity module
+  (<https://github.com/392fyc/claude-handoff>).
