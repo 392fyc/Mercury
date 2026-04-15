@@ -233,7 +233,7 @@ Per question:
 - Q6: ✅ 2 URLs
 - Q7: ✅ 4 URLs (one per candidate)
 
-No `UNVERIFIED` claims remain without justification.
+No `UNVERIFIED` claims remain **in decision-critical findings**; residual items below are open research threads retained for future-session awareness, not gaps in the Top-1/Alternate recommendation.
 Contradictions documented (vendor-only Cognee production claims, mem0 v1 vs v2 tracks).
 
 Step B (adversarial review subagent) skipped — Round 3 already performed red-team verification on Top-2.
@@ -252,8 +252,8 @@ Step B (adversarial review subagent) skipped — Round 3 already performed red-t
 
 ## Next Actions (post-research)
 
-1. Close Issue #250 with this report as decision
-2. Create implementation issue: "feat(memory): adopt mem0 as Mercury memory layer (Phase 3 rebuild)"
+1. Close Issue #250 once PR #251 merges; the research mandate is fulfilled and implementation is tracked separately — PR #251 intentionally uses `Closes part of #250` so the research-scope is recorded while implementation stays open.
+2. Create implementation issue: "feat(memory): adopt mem0 as Mercury memory layer (Phase 3 rebuild)" — filed as #252 (S54).
 3. Update `.mercury/docs/EXECUTION-PLAN.md` Phase 3 section to reflect rebuild path
 4. Re-evaluate `#248` (Karpathy improvements): most of the gap items (log.md, query→wiki write-back) are subsumed by mem0's native operations; close or slim
 5. Plan Phase A-C migration (3 sessions total estimated)
