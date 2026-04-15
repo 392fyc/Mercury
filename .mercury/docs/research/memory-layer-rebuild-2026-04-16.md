@@ -133,6 +133,15 @@ hooks, re-enable file-based hooks. Zero data loss.
 
 **R3 red-team found 3 P1 bugs** (#4099 / #4453 / #4799) + **R4 discovered #4536** contradicting facts silent corruption. **All workaroundable for Mercury** (single-user, no threshold, str content, non-Gemini-3 models; #4536 needs dedup guard).
 
+> **Mercury adoption preconditions (must remain true for this recommendation to hold)**:
+> 1. **Single-user runtime** — multi-tenant use reopens #4099/#4536 blast radius.
+> 2. **Never pass `threshold=` to `search()`** — #4453 silently drops results when this param is set.
+> 3. **Content is always a plain string** — list-shaped content hits #4799 `AttributeError`.
+> 4. **Model is not Gemini-3** — #4536 contradicting-fact corruption strongest on Gemini-3; Claude/GPT less affected but still require `dedup_guard`.
+> 5. **Telemetry opt-out enforced** — `MEM0_TELEMETRY=false` + `ANONYMIZED_TELEMETRY=false` set globally (GDPR risk per #2901).
+>
+> If any precondition is violated in future work, this recommendation must be re-derived.
+
 Sources: <https://github.com/mem0ai/mem0>, <https://docs.mem0.ai/open-source/overview>, <https://docs.mem0.ai/integrations/claude-code>, <https://github.com/mem0ai/mem0/issues/4099>, <https://github.com/mem0ai/mem0/issues/4453>, <https://github.com/mem0ai/mem0/issues/4799>, <https://github.com/mem0ai/mem0/issues/4536>, <https://github.com/mem0ai/mem0/issues/2901>, <https://dev.to/n3rdh4ck3r/how-to-give-claude-code-persistent-memory-with-a-self-hosted-mem0-mcp-server-h68>, <https://techcrunch.com/2025/10/28/mem0-raises-24m-from-yc-peak-xv-and-basis-set-to-build-the-memory-layer-for-ai-apps/>
 
 ### Q3 — Letta (REJECTED)
@@ -252,8 +261,8 @@ Step B (adversarial review subagent) skipped — Round 3 already performed red-t
 
 ## Next Actions (post-research)
 
-1. Close Issue #250 once PR #251 merges; the research mandate is fulfilled and implementation is tracked separately — PR #251 intentionally uses `Closes part of #250` so the research-scope is recorded while implementation stays open.
-2. Create implementation issue: "feat(memory): adopt mem0 as Mercury memory layer (Phase 3 rebuild)" — filed as #252 (S54).
+1. Close Issue #250 once the research PR carrying this document merges; the research mandate is fulfilled and implementation stays tracked on the implementation issue. The research PR uses `Closes part of #250` so only the research-scope is recorded; the implementation-scope remains open until the implementation issue ships.
+2. Create (or link) an implementation issue: "feat(memory): adopt mem0 as Mercury memory layer (Phase 3 rebuild)". The specific issue number is recorded in S54's handoff log rather than pinned here, so this document stays stable if GitHub numbering shifts.
 3. Update `.mercury/docs/EXECUTION-PLAN.md` Phase 3 section to reflect rebuild path
 4. Re-evaluate `#248` (Karpathy improvements): most of the gap items (log.md, query→wiki write-back) are subsumed by mem0's native operations; close or slim
 5. Plan Phase A-C migration (3 sessions total estimated)
