@@ -22,14 +22,22 @@ Parse `$ARGUMENTS`:
 
 | Trigger | Mode | Behavior |
 |---|---|---|
-| `/handoff` (no args) | **manual** | Write doc + output starting prompt in chat. Do NOT launch a new session. Old session stays alive. |
+| `/handoff` (no args) | **manual** | Write doc + output starting prompt in chat. Do NOT launch a new session. Old session stays alive by user choice. |
 | `/handoff <instructions>` | **manual + extra** | Same as manual; put `<instructions>` into the "User Instructions" section of the handoff doc. |
-| `/handoff:auto` | **auto** | Write doc + output starting prompt + **auto-launch** new session via `claude` CLI after Pre-Termination Checklist passes. Old session should `/exit` after. |
+| `/handoff:auto` | **auto** | Write doc + output starting prompt + **auto-launch** new session via `claude` CLI after Pre-Termination Checklist passes. Old session should `/exit` after — auto mode treats the old session as a terminal event. |
 | `/handoff:auto <instructions>` | **auto + extra** | Same as auto, with extra instructions embedded. |
 | `/handoff auto` (legacy) | **auto** | Same as `/handoff:auto`. Accept both syntaxes. |
 
 Default (no explicit auto): manual mode. Never auto-launch without an
 explicit `:auto` / `auto` token.
+
+**Terminal-event semantics**: "handoff is a terminal event for the old
+session" only applies to **auto mode** — the old session is expected to
+`/exit` immediately after spawning the new one. In **manual mode** the
+skill does NOT terminate the session; the user decides whether to `/exit`,
+paste the prompt into a fresh session elsewhere, or keep working. Both are
+valid; the skill itself writes the doc and outputs the prompt, nothing
+else.
 
 ## Step 1: Gather Context
 
@@ -68,26 +76,46 @@ git log --oneline -5 2>/dev/null
 git branch --show-current 2>/dev/null
 ```
 
-### Layer 5: GitHub Project / Issues (MANDATORY for Mercury-class repos)
+### Layer 5: GitHub Project / Issues (best-effort — skip cleanly if unavailable)
 
-If the project uses GitHub Issues + a GitHub Project (v2), query for next-task selection:
+If the project uses GitHub Issues + a GitHub Project (v2), query for next-task selection. This layer is **best-effort**: if `gh` is missing, unauthenticated, or the repo has no Project, skip this layer and fall back to Layers 1–4 + `.mercury/docs/EXECUTION-PLAN.md` (or the repo's equivalent plan). Never let a Layer 5 failure block the handoff.
 
 ```bash
-# Adjust project number per repo. Mercury uses Project #3.
-gh issue list --label "P0" --state open --json number,title,labels --limit 50 2>/dev/null
-gh issue list --label "P1" --state open --json number,title,labels --limit 50 2>/dev/null
+# Pre-flight: bail out gracefully if gh is unavailable or unauthenticated.
+if ! command -v gh >/dev/null 2>&1 || ! gh auth status >/dev/null 2>&1; then
+  echo "INFO: gh CLI unavailable — skipping Layer 5"
+else
+  gh issue list --label "P0" --state open --json number,title,labels --limit 50 2>/dev/null || true
+  gh issue list --label "P1" --state open --json number,title,labels --limit 50 2>/dev/null || true
 
-OWNER=$(gh repo view --json owner --jq '.owner.login' 2>/dev/null)
-gh project item-list 3 --owner "$OWNER" --format json --limit 100 2>/dev/null | \
-  python -c "
+  # Project number: configurable. Mercury convention is Project #3; override
+  # via $HANDOFF_PROJECT_NUM for any other repo. When the variable is unset
+  # and the repo is NOT Mercury, skip the project query rather than guess.
+  OWNER=$(gh repo view --json owner --jq '.owner.login' 2>/dev/null)
+  REPO=$(gh repo view --json name --jq '.name' 2>/dev/null)
+  PROJ_NUM="${HANDOFF_PROJECT_NUM:-}"
+  if [ -z "$PROJ_NUM" ] && [ "$OWNER/$REPO" = "392fyc/Mercury" ]; then
+    PROJ_NUM=3
+  fi
+
+  if [ -n "$PROJ_NUM" ]; then
+    gh project item-list "$PROJ_NUM" --owner "$OWNER" --format json --limit 100 2>/dev/null | \
+      python -c "
 import json, sys
-data = json.load(sys.stdin)
+try:
+    data = json.loads(sys.stdin.read() or '{}')
+except json.JSONDecodeError:
+    sys.exit(0)  # gh returned empty/invalid — silently skip
 items = [i for i in data.get('items', []) if i.get('status') in ('Todo', 'In Progress')]
 status_order = {'In Progress': 0, 'Todo': 1}
 for i in sorted(items, key=lambda x: (status_order.get(x.get('status', ''), 9), x.get('priority', 'P9'))):
     num = i.get('content', {}).get('number', '?')
     print(f'#{num} [{i.get(\"priority\",\"?\")}] {i.get(\"title\",\"?\")} ({i.get(\"status\",\"?\")})')
-"
+" 2>/dev/null || true
+  else
+    echo "INFO: HANDOFF_PROJECT_NUM not set and repo is not Mercury — skipping Project query"
+  fi
+fi
 ```
 
 Selection criteria (in order):
@@ -242,33 +270,53 @@ Optional: offer to launch if the user later says so (Step 6).
 
 After Step 5.1 + 5.2, and Pre-Termination Checklist passed:
 
-**Windows** (Windows Terminal with new tab):
+**Required launch pattern — write prompt to a temp file, then pass via
+`claude -- "$(...)"` to defeat option parsing and shell-escape hazards.**
+The inline string forms below are shown only as the final shape of the
+command; do NOT concatenate an unescaped prompt directly into the command
+line.
+
 ```bash
-wt -w 0 nt --title "Handoff" -- claude "<STARTING_PROMPT_VERBATIM>"
+# Step A (all platforms): write the verbatim prompt to a locked-down temp file.
+TMP=$(mktemp) && chmod 600 "$TMP" && cat > "$TMP" <<'PROMPT_EOF'
+<STARTING_PROMPT_VERBATIM>
+PROMPT_EOF
 ```
 
-**macOS / Linux** (background new session in a new terminal):
+**Windows** (Windows Terminal, new tab — `wt` opens a real new tab):
 ```bash
-# If terminal multiplexer is preferred:
-tmux new-window -n handoff "claude \"<STARTING_PROMPT_VERBATIM>\""
-# Or plain background spawn:
-claude "<STARTING_PROMPT_VERBATIM>" &
+wt -w 0 nt --title "Handoff" -- claude -- "$(cat "$TMP")"
 ```
 
-The positional argument to `claude` is the session's first user message —
-documented at <https://code.claude.com/docs/en/cli-reference>. The
+**macOS / Linux with tmux** (real new window, detached from current TTY):
+```bash
+tmux new-window -n handoff "claude -- \"\$(cat $TMP)\""
+```
+
+**macOS / Linux without tmux** — there is no portable "new terminal"
+primitive. `claude "..." &` only backgrounds the process in the **current
+shell**; it will inherit the current TTY and die when the shell exits or
+the tab is closed. If you need real isolation, use `tmux new-session -d`
+or the terminal emulator's own CLI (e.g. `osascript -e 'tell app
+"Terminal" to do script ...'` on macOS, `gnome-terminal --` on Linux).
+Otherwise fall back to manual mode and let the user open the new session
+themselves.
+
+```bash
+# Detached tmux session (survives current shell exit):
+tmux new-session -d -s handoff "claude -- \"\$(cat $TMP)\""
+# Then `tmux attach -t handoff` from the user's preferred terminal.
+```
+
+The positional argument after `--` is the session's first user message —
+documented at <https://code.claude.com/docs/en/cli-reference>. The `--`
+sentinel ensures a prompt beginning with `-` is not parsed as a CLI option
+(<https://github.com/anthropics/claude-code/issues/3844>). The
 SessionStart hook will inject the full handoff document as
 `additionalContext`, so the new session has everything.
 
-**Quoting considerations**:
-- The starting prompt may contain double quotes, backticks, `$` signs, and
-  newlines.
-- Prefer writing the prompt to a temp file and using `claude "$(cat
-  /tmp/handoff-prompt.txt)"` on POSIX, or using PowerShell's here-string on
-  Windows, to avoid shell-escape hazards.
-- If the prompt starts with `-`, it will be parsed as a CLI option (see
-  <https://github.com/anthropics/claude-code/issues/3844>); prefix with
-  `-- ` or wrap to avoid.
+Clean up the temp file after launch (`rm -f "$TMP"`) once the new session
+has started.
 
 After spawning the new process, do NOT continue producing output in the old
 session. The old session's job is done. Advise user to `/exit` (or close
