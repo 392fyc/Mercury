@@ -31,6 +31,13 @@ Parse `$ARGUMENTS`:
 Default (no explicit auto): manual mode. Never auto-launch without an
 explicit `:auto` / `auto` token.
 
+**Strict parsing**: `:auto` must be either the first argument or part of
+the command syntax (`/handoff:auto`). `/handoff auto` is accepted only
+when `auto` is the **sole** argument or the first whitespace-delimited
+token (i.e., `/handoff auto <extra>` is auto+extra, `/handoff automatic`
+is **manual** with instructions "automatic"). This prevents accidental
+auto-spawn from user instructions that happen to start with "auto".
+
 **Terminal-event semantics**: "handoff is a terminal event for the old
 session" only applies to **auto mode** — the old session is expected to
 `/exit` immediately after spawning the new one. In **manual mode** the
@@ -338,8 +345,20 @@ sentinel ensures a prompt beginning with `-` is not parsed as a CLI option
 SessionStart hook will inject the full handoff document as
 `additionalContext`, so the new session has everything.
 
-Clean up the temp file after launch (`rm -f "$TMP"`) once the new session
-has started.
+**Cleanup (always run, regardless of branch taken)**:
+
+```bash
+# POSIX: run after launch succeeds; use trap for failure paths.
+trap 'rm -f "$TMP"' EXIT
+```
+
+```powershell
+# PowerShell: run after launch; use try/finally for failure paths.
+try { <launch command> } finally { Remove-Item -LiteralPath $TMP -Force -ErrorAction SilentlyContinue }
+```
+
+This guarantees the handoff prompt (which may reference internal paths
+or planning context) never persists on disk past the launch moment.
 
 After spawning the new process, do NOT continue producing output in the old
 session. The old session's job is done. Advise user to `/exit` (or close
