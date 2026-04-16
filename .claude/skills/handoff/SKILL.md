@@ -274,11 +274,36 @@ The inline string forms below are shown only as the final shape of the
 command; do NOT concatenate an unescaped prompt directly into the command
 line.
 
+**Prerequisites**: auto-mode launch assumes a POSIX-like shell (`mktemp`,
+`chmod`, `cat`, heredoc). On Windows this means **Git Bash / MSYS2 / WSL**
+(which Mercury uses) — native `cmd.exe` and non-interactive PowerShell do
+**not** satisfy this. If the host shell is not POSIX-compatible, fall back
+to manual mode or use the PowerShell equivalent shown further below.
+
+**Command-line length**: `claude` receives the prompt as a single positional
+argument, which is subject to OS argv limits (Windows `CreateProcess` ≈
+32 KB, Linux/macOS 128 KB+). Typical handoff prompts (~1–3 KB) are well
+under any limit. For abnormally large prompts (> 30 KB on Windows), pipe
+the file to `claude` via stdin or split the prompt into a separate
+`--input-file`-style mechanism (check `claude --help` on the installed
+version; stdin support is documented at
+<https://code.claude.com/docs/en/cli-reference>).
+
 ```bash
-# Step A (all platforms): write the verbatim prompt to a locked-down temp file.
+# Step A (POSIX shells — Git Bash, WSL, macOS, Linux):
+# write the verbatim prompt to a locked-down temp file.
 TMP=$(mktemp) && chmod 600 "$TMP" && cat > "$TMP" <<'PROMPT_EOF'
 <STARTING_PROMPT_VERBATIM>
 PROMPT_EOF
+```
+
+```powershell
+# Step A (PowerShell on Windows, if no Git Bash):
+$TMP = [System.IO.Path]::GetTempFileName()
+Set-Content -LiteralPath $TMP -Value @'
+<STARTING_PROMPT_VERBATIM>
+'@
+# PowerShell $TMP permissions default to user-only on NTFS.
 ```
 
 **Windows** (Windows Terminal, new tab — `wt` opens a real new tab):
@@ -334,9 +359,12 @@ the auto path from Step 5 (auto mode).
 - The chat-output prompt is the PRIMARY deliverable — never skip it.
 - Do NOT add automatic hooks for SessionEnd or PreCompact — handoff is
   **explicit only**.
-- Handoff is a **terminal event** for the old session.
-- Before terminating, verify all pending work has completed. Nothing
-  carries over automatically.
+- **Mode-scoped termination**: auto mode treats handoff as a terminal
+  event for the old session (spawn new → /exit old). Manual mode does
+  NOT terminate; the user decides. Never apply auto-mode termination to
+  a manual invocation.
+- Before terminating (auto mode) verify all pending work has completed.
+  Nothing carries over automatically.
 - Manual mode MUST NOT spawn processes. Only `:auto` (or legacy `auto`) token
   triggers the `claude` CLI launch.
 - The legacy `$AGENTKB_DIR/scripts/handoff-orchestrator.py` path is
