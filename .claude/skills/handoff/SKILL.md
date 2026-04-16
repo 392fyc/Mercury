@@ -3,12 +3,7 @@ name: handoff
 description: Generate a structured handoff document and ready-to-paste starting prompt for the next session. Use `/handoff` for manual mode (output only). Use `/handoff auto` to auto-launch the new session via `claude` CLI after the document is written.
 argument-hint: "[auto] [optional extra instructions for the next session]"
 user-invocable: true
-allowed-tools:
-  - Read
-  - Write
-  - Bash
-  - Glob
-  - Grep
+allowed-tools: Read, Write, Bash, Glob, Grep
 ---
 
 # /handoff — Session Handoff & Continuation
@@ -345,7 +340,7 @@ wt -w 0 nt --title "Handoff" -- claude "$(cat "$TMP")"
 
 **macOS / Linux with tmux** (real new window, detached from current TTY):
 ```bash
-tmux new-window -n handoff "claude \"\$(cat $TMP)\""
+tmux new-window -n handoff "claude \"\$(cat \"$TMP\")\""
 ```
 
 **macOS / Linux without tmux** — there is no portable "new terminal"
@@ -359,7 +354,7 @@ themselves.
 
 ```bash
 # Detached tmux session (survives current shell exit):
-tmux new-session -d -s handoff "claude \"\$(cat $TMP)\""
+tmux new-session -d -s handoff "claude \"\$(cat \"$TMP\")\""
 # Then `tmux attach -t handoff` from the user's preferred terminal.
 ```
 
