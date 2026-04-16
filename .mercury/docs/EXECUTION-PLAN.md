@@ -248,17 +248,43 @@ adapters/         # 适配层
 - Session B-C (Mode B): 原型实现 + 卡死检测
 **注意**: 这是技术难度最高的模块，预计需要更多迭代
 
-### 4-1. Session Continuity 基础 — 代码已实现，待合并 (S47-S48)
-- ✅ ADR 完成: Option D (Hybrid) 方案选定 (PR #239, merged)
-- ✅ Agent SDK session resume/fork 能力已验证
-- 🔄 M0/M2/M1 代码已实现于 AgentKB [PR#5](https://github.com/392fyc/claude-memory-compiler/pull/5)，**待 merge 后本阶段方可标记完成**
-- 注: 本仓库为文档状态同步，功能代码在 AgentKB 仓库
-- 研究报告: `.mercury/docs/research/phase4-1-*`, `.research/reports/RESEARCH-OpenClaw-*`
+### 4-1. Session Continuity 基础 — ⚠ 路径变更，原方案废弃 (S47-S54)
 
-### 4-2. Worktree-per-task + session_chain 增强
-- 基于 4-1 的 session_chain 表扩展
-- 强制 worktree-per-task 隔离
-- 评估 OMC `project-session-manager` skill 集成
+**状态更正（2026-04-16 / S54）**：原计划的 `session_chain` + `handoff-orchestrator` 路径（AgentKB PR#5 / `agentKB-phase4-1-components`）**已废弃并由独立插件取代**。
+
+- ✅ **实际产出**：`claude-handoff` 独立插件 v1.0.0-alpha.1 已公开发布于 <https://github.com/392fyc/claude-handoff>（MIT）。提供 handoff skill、PreTermination Checklist、跨 session 指令传递的 MVP。
+- ✅ ADR (PR #239) 保留作为设计参考，但 Option D (Hybrid) 的 orchestrator 部分**未实现**。
+- ⚠ AgentKB 侧的 `session_chain` 表 + `handoff-orchestrator` **未落地**（Plan D 废弃，见 KB 概念 `agentKB-phase4-1-components`）。
+- 🔄 **遗留缺口**：`session_chain` DB（跨 session 关联跟踪）仍是必需组件，已迁移至 Phase 4-2.a，作为 `claude-handoff` 插件的扩展实现。
+
+研究报告：`.mercury/docs/research/phase4-1-*`, `.research/reports/RESEARCH-OpenClaw-*`, `.mercury/docs/research/phase4-2-worktree-mount-eval.md`
+
+### 4-2. Worktree-per-task + session_chain DB (S54 重新拆解)
+
+基于 S54 研究结论（`.mercury/docs/research/phase4-2-worktree-mount-eval.md`），Phase 4-2 拆成三条独立子轨：
+
+#### 4-2.a session_chain DB (claude-handoff 扩展)
+- **实现位置**：`github.com/392fyc/claude-handoff` 插件仓库（非 Mercury 主仓）
+- **Scope**：SQLite `session_chains` 表跟踪 parent↔child session 关联；提供 read/write API 给 session-start.py 和 handoff skill
+- **Upsert 约束**：使用 `INSERT OR IGNORE ... ON CONFLICT DO UPDATE`（参 KB 概念 `sqlite-upsert-semantics`，禁用 `INSERT OR REPLACE`）
+
+#### 4-2.b Worktree-per-task 隔离 (自研)
+- **路径决策**：**自研 ~60-80 行 bash/Python 封装**，不整仓挂载 OMC 或 Superpowers（见研究报告 R1/R2）
+- **参考素材**：OMC `worktree.sh`（结构参考）+ Superpowers `using-git-worktrees/SKILL.md`（prompt discipline 参考，若 cherry-pick 需走 upstream-manifest 流程）
+- **API**：`create_worktree(task_id, branch_slug)` / `remove_worktree(task_id)` / `list_orphans()`
+- **集成点**：dev-pipeline skill 在分发 dev subagent 前注入 `worktreePath` 到 TaskBundle
+- **Out of scope (MVP)**：tmux、session registry、GitHub API polling cleanup
+
+#### 4-2.c OMC/Superpowers 挂载评估 (已完成)
+- 结论：均不支持 orchestrator 程序化多 subagent 并发驱动（OMC PSM 是 1:1 人工触发；Superpowers 并行 worktree 是 Issue #469 未实现的 roadmap）
+- 仅做选择性 cherry-pick，折入 4-2.b
+
+**产出**：agent 可以自动跨 session 继续工作，同时多个 dev subagent 可并行工作于隔离 worktree
+**人类干预点**：~~技术方案选择（已完成，Option D）~~（已废弃）；4-2.b 首次多 worktree 并行时确认隔离正确性
+**验收标准**：
+1. session_chain DB 能查询任意 session 的 parent/child 链（4-2.a）
+2. Mercury dev-pipeline 分发 N 个 subagent 时能自动创建 N 个隔离 worktree 并在 PR merge 后清理（4-2.b）
+3. agent 在 context 耗尽后自动启动新 session 并继续之前的任务（Phase 4 整体目标）
 
 ### 4-3. Compact-prevention 模式
 - 接近 context 上限时主动 `/handoff`
