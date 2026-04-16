@@ -1,7 +1,7 @@
 ---
 name: handoff
-description: Generate a structured handoff document and ready-to-paste starting prompt for the next session. Use `/handoff` for manual mode (output only). Use `/handoff:auto` to auto-launch the new session via `claude` CLI after the document is written.
-argument-hint: "[:auto] [optional extra instructions for the next session]"
+description: Generate a structured handoff document and ready-to-paste starting prompt for the next session. Use `/handoff` for manual mode (output only). Use `/handoff auto` to auto-launch the new session via `claude` CLI after the document is written.
+argument-hint: "[auto] [optional extra instructions for the next session]"
 user-invocable: true
 allowed-tools:
   - Read
@@ -24,19 +24,24 @@ Parse `$ARGUMENTS`:
 |---|---|---|
 | `/handoff` (no args) | **manual** | Write doc + output starting prompt in chat. Do NOT launch a new session. Old session stays alive by user choice. |
 | `/handoff <instructions>` | **manual + extra** | Same as manual; put `<instructions>` into the "User Instructions" section of the handoff doc. |
-| `/handoff:auto` | **auto** | Write doc + output starting prompt + **auto-launch** new session via `claude` CLI after Pre-Termination Checklist passes. Old session should `/exit` after — auto mode treats the old session as a terminal event. |
-| `/handoff:auto <instructions>` | **auto + extra** | Same as auto, with extra instructions embedded. |
-| `/handoff auto` (legacy) | **auto** | Same as `/handoff:auto`. Accept both syntaxes. |
+| `/handoff auto` | **auto** | Write doc + output starting prompt + **auto-launch** new session via `claude` CLI after Pre-Termination Checklist passes. Old session should `/exit` after — auto mode treats the old session as a terminal event. |
+| `/handoff auto <instructions>` | **auto + extra** | Same as auto, with extra instructions embedded. |
 
-Default (no explicit auto): manual mode. Never auto-launch without an
-explicit `:auto` / `auto` token.
+Default (no explicit `auto`): manual mode. Never auto-launch without an
+explicit `auto` token as the first whitespace-delimited argument.
 
-**Strict parsing**: `:auto` must be either the first argument or part of
-the command syntax (`/handoff:auto`). `/handoff auto` is accepted only
-when `auto` is the **sole** argument or the first whitespace-delimited
-token (i.e., `/handoff auto <extra>` is auto+extra, `/handoff automatic`
-is **manual** with instructions "automatic"). This prevents accidental
-auto-spawn from user instructions that happen to start with "auto".
+**Note on `/handoff:auto`**: Claude Code's colon syntax (`<x>:<y>`) is
+reserved for plugin namespacing (e.g. `/plugin-name:skill-name`). A
+project-level skill registered as `handoff` only resolves via `/handoff`,
+and `/handoff:auto` is NOT a valid slash invocation for this skill — the
+parser will treat it as an unknown command. Always use `/handoff auto`
+(space-delimited).
+
+**Strict parsing**: `auto` must be the **sole** argument or the first
+whitespace-delimited token (i.e., `/handoff auto <extra>` is auto+extra,
+`/handoff automatic` is **manual** with instructions "automatic"). This
+prevents accidental auto-spawn from user instructions that happen to
+start with "auto".
 
 **Terminal-event semantics**: "handoff is a terminal event for the old
 session" only applies to **auto mode** — the old session is expected to
@@ -271,15 +276,20 @@ this one. Do NOT spawn any new process.
 
 Optional: offer to launch if the user later says so (Step 6).
 
-### Auto mode (`/handoff:auto`)
+### Auto mode (`/handoff auto`)
 
 After Step 5.1 + 5.2, and Pre-Termination Checklist passed:
 
-**Required launch pattern — write prompt to a temp file, then pass via
-`claude -- "$(...)"` to defeat option parsing and shell-escape hazards.**
-The inline string forms below are shown only as the final shape of the
-command; do NOT concatenate an unescaped prompt directly into the command
-line.
+**Required launch pattern — write prompt to a locked-down temp file, then
+pass via `claude "$(cat ...)"` as a single positional argument.** This
+matches the canonical `claude-handoff` plugin shape
+(<https://github.com/392fyc/claude-handoff>) which has been validated
+end-to-end on Windows (wt + PowerShell profile). Do NOT insert a `--`
+sentinel between `claude` and the prompt — on Windows, `wt` spawns
+`claude.cmd` (npm shim) directly via CreateProcess; cmd.exe's batch
+re-parser can mis-handle the extra `--`, causing the new tab to open
+with no running process. Handoff prompts always start with literal text
+(e.g. `这是 S{N+1}`), never with `-`, so the `--` sentinel is unnecessary.
 
 **Prerequisites**: auto-mode launch assumes a POSIX-like shell (`mktemp`,
 `chmod`, `cat`, heredoc). On Windows this means **Git Bash / MSYS2 / WSL**
@@ -315,12 +325,12 @@ Set-Content -LiteralPath $TMP -Value @'
 
 **Windows** (Windows Terminal, new tab — `wt` opens a real new tab):
 ```bash
-wt -w 0 nt --title "Handoff" -- claude -- "$(cat "$TMP")"
+wt -w 0 nt --title "Handoff" -- claude "$(cat "$TMP")"
 ```
 
 **macOS / Linux with tmux** (real new window, detached from current TTY):
 ```bash
-tmux new-window -n handoff "claude -- \"\$(cat $TMP)\""
+tmux new-window -n handoff "claude \"\$(cat $TMP)\""
 ```
 
 **macOS / Linux without tmux** — there is no portable "new terminal"
@@ -334,14 +344,12 @@ themselves.
 
 ```bash
 # Detached tmux session (survives current shell exit):
-tmux new-session -d -s handoff "claude -- \"\$(cat $TMP)\""
+tmux new-session -d -s handoff "claude \"\$(cat $TMP)\""
 # Then `tmux attach -t handoff` from the user's preferred terminal.
 ```
 
-The positional argument after `--` is the session's first user message —
-documented at <https://code.claude.com/docs/en/cli-reference>. The `--`
-sentinel ensures a prompt beginning with `-` is not parsed as a CLI option
-(<https://github.com/anthropics/claude-code/issues/3844>). The
+The positional argument to `claude` is the session's first user message —
+documented at <https://code.claude.com/docs/en/cli-reference>. The
 SessionStart hook will inject the full handoff document as
 `additionalContext`, so the new session has everything.
 
@@ -384,8 +392,9 @@ the auto path from Step 5 (auto mode).
   a manual invocation.
 - Before terminating (auto mode) verify all pending work has completed.
   Nothing carries over automatically.
-- Manual mode MUST NOT spawn processes. Only `:auto` (or legacy `auto`) token
-  triggers the `claude` CLI launch.
+- Manual mode MUST NOT spawn processes. Only the `auto` token (as the
+  first whitespace-delimited argument to `/handoff`) triggers the `claude`
+  CLI launch.
 - The legacy `$AGENTKB_DIR/scripts/handoff-orchestrator.py` path is
   DEPRECATED. Do not invoke it. The `claude-handoff` plugin is the
   canonical session-continuity module
