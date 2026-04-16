@@ -246,8 +246,14 @@ may not yet be wired at session-start.py.
 ## Step 4: Pre-Termination Checklist
 
 Before launching a new session (auto mode) OR outputting the prompt (manual
-mode), verify **all** in-flight work has finished. A handoff is a
-**terminal event** for the old session — nothing carries over automatically.
+mode), verify **all** in-flight work has finished or been explicitly
+deferred. In **auto mode**, the handoff is a **terminal event** for the
+old session — once the new session is spawned, the old session should
+`/exit`. In **manual mode**, producing the handoff prompt is **not**
+itself a terminal event; the output is a stable snapshot that the next
+session (or the current session continuing) can pick up from. In either
+mode, nothing carries over automatically to the next session unless it
+goes through the written handoff document + auto-memory path.
 
 Confirm each:
 
