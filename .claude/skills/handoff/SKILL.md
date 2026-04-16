@@ -108,7 +108,9 @@ else
   OWNER=$(gh repo view --json owner --jq '.owner.login' 2>/dev/null)
   PROJ_NUM="${HANDOFF_PROJECT_NUM:-}"
 
-  if [ -n "$PROJ_NUM" ]; then
+  if [ -z "$OWNER" ]; then
+    echo "INFO: could not resolve repo owner via gh — skipping Project query"
+  elif [ -n "$PROJ_NUM" ]; then
     gh project item-list "$PROJ_NUM" --owner "$OWNER" --format json --limit 100 2>/dev/null | \
       python -c "
 import json, sys
@@ -308,14 +310,21 @@ version; stdin support is documented at
 
 ```bash
 # Step A (POSIX shells — Git Bash, WSL, macOS, Linux):
-# write the verbatim prompt to a locked-down temp file.
-TMP=$(mktemp) && chmod 600 "$TMP" && cat > "$TMP" <<'PROMPT_EOF'
+# Create temp file, register cleanup BEFORE writing sensitive content, then write.
+# Ordering rationale: if any later step (chmod, heredoc, launch) fails or is
+# interrupted, the EXIT trap still fires and removes the file. Registering the
+# trap after the write would leave a window where a crash leaks handoff content.
+TMP=$(mktemp) || { echo "ERROR: mktemp failed" >&2; exit 1; }
+trap 'rm -f "$TMP"' EXIT
+chmod 600 "$TMP" || { echo "ERROR: chmod failed" >&2; exit 1; }
+cat > "$TMP" <<'PROMPT_EOF'
 <STARTING_PROMPT_VERBATIM>
 PROMPT_EOF
 ```
 
 ```powershell
 # Step A (PowerShell on Windows, if no Git Bash):
+# Register cleanup via try/finally around the launch (see Step B below).
 $TMP = [System.IO.Path]::GetTempFileName()
 Set-Content -LiteralPath $TMP -Value @'
 <STARTING_PROMPT_VERBATIM>
@@ -353,15 +362,18 @@ documented at <https://code.claude.com/docs/en/cli-reference>. The
 SessionStart hook will inject the full handoff document as
 `additionalContext`, so the new session has everything.
 
-**Cleanup (always run, regardless of branch taken)**:
+**Cleanup**:
 
-```bash
-# POSIX: run after launch succeeds; use trap for failure paths.
-trap 'rm -f "$TMP"' EXIT
-```
+On POSIX shells the `trap 'rm -f "$TMP"' EXIT` is already registered in
+Step A above, immediately after `mktemp` — it fires on the shell's EXIT
+regardless of whether the launch command succeeded, failed, or was
+interrupted. No additional cleanup code is needed here.
+
+On PowerShell, wrap the launch in try/finally so the temp file is removed
+even if the launch throws:
 
 ```powershell
-# PowerShell: run after launch; use try/finally for failure paths.
+# PowerShell: register cleanup around the launch.
 try { <launch command> } finally { Remove-Item -LiteralPath $TMP -Force -ErrorAction SilentlyContinue }
 ```
 
