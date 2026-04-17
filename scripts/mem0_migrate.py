@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from mem0_hooks import add_safe  # noqa: E402
 
 
-def _parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
+def _parse_frontmatter(text: str, dropped: dict[str, int] | None = None) -> tuple[dict[str, Any], str]:
     """Minimal YAML frontmatter extractor.
 
     Accepts only root-level ``key: value`` lines. Indented continuation lines,
@@ -27,6 +27,10 @@ def _parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     than promoted to new keys. Empty frontmatter (``---\\n---\\n``) is
     recognised and stripped. Anything that does not look like frontmatter is
     returned untouched so the body survives intact.
+
+    ``dropped`` (if provided) is a counter dict updated in-place with keys
+    ``indented`` / ``list`` / ``empty_value`` / ``comment`` so migration can
+    report aggregate data-loss at end-of-run.
     """
     # Normalize line endings — Path.read_text uses universal newlines on POSIX
     # but callers may hand us raw bytes.decode() with CRLF preserved; belt +
@@ -48,10 +52,21 @@ def _parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
         return meta, body
     for raw in header.splitlines():
         stripped = raw.strip()
-        if not stripped or stripped.startswith("#"):
+        if not stripped:
             continue
-        # drop indented / list-item / non-key lines — keep strict root-level only
-        if raw != stripped or stripped.startswith("- ") or ":" not in stripped:
+        if stripped.startswith("#"):
+            if dropped is not None:
+                dropped["comment"] = dropped.get("comment", 0) + 1
+            continue
+        if raw != stripped:
+            if dropped is not None:
+                dropped["indented"] = dropped.get("indented", 0) + 1
+            continue
+        if stripped.startswith("- "):
+            if dropped is not None:
+                dropped["list"] = dropped.get("list", 0) + 1
+            continue
+        if ":" not in stripped:
             continue
         key, _, value = stripped.partition(":")
         key = key.strip()
@@ -59,6 +74,8 @@ def _parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
         # empty scalar = YAML mapping container; drop rather than store a
         # misleading empty string keyed by a parent node name.
         if not key or not value:
+            if dropped is not None and key:
+                dropped["empty_value"] = dropped.get("empty_value", 0) + 1
             continue
         meta[key] = value
     return meta, body
@@ -67,6 +84,7 @@ def _parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
 def migrate(source: Path, user_id: str, dry_run: bool) -> tuple[int, int]:
     added = 0
     skipped = 0
+    dropped: dict[str, int] = {}
     for path in sorted(source.rglob("*.md")):
         rel = path.relative_to(source).as_posix()
         try:
@@ -75,7 +93,7 @@ def migrate(source: Path, user_id: str, dry_run: bool) -> tuple[int, int]:
             print(f"SKIP {rel}: {exc}")
             skipped += 1
             continue
-        meta, body = _parse_frontmatter(raw)
+        meta, body = _parse_frontmatter(raw, dropped=dropped)
         body = body.strip()
         if not body:
             skipped += 1
@@ -97,6 +115,9 @@ def migrate(source: Path, user_id: str, dry_run: bool) -> tuple[int, int]:
         else:
             print(f"ADD  {rel}")
             added += 1
+    if dropped:
+        summary = ", ".join(f"{k}={v}" for k, v in sorted(dropped.items()))
+        print(f"\nfrontmatter keys dropped (by reason): {summary}")
     return added, skipped
 
 

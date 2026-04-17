@@ -20,6 +20,7 @@ os.environ.setdefault("MEM0_TELEMETRY", "false")
 os.environ.setdefault("ANONYMIZED_TELEMETRY", "false")
 
 import json  # noqa: E402
+import sys  # noqa: E402
 import threading  # noqa: E402
 from pathlib import Path  # noqa: E402
 from typing import Any  # noqa: E402
@@ -53,13 +54,25 @@ def _build_config() -> dict[str, Any]:
     override = os.environ.get("MERCURY_MEM0_CONFIG")
     if override:
         base_dir = Path(__file__).resolve().parents[1]
+        cfg_path = Path(override).expanduser().resolve()
+        # Bad JSON is a caller mistake — raise loudly rather than mask with
+        # defaults; path / missing-file issues warn and fall through.
         try:
-            cfg_path = Path(override).expanduser().resolve()
-            cfg_path.relative_to(base_dir)  # must live inside the repo
+            cfg_path.relative_to(base_dir)
+        except ValueError:
+            print(
+                f"[mem0_hooks] WARNING: MERCURY_MEM0_CONFIG={override} is outside"
+                f" the repo ({base_dir}); using defaults.",
+                file=sys.stderr,
+            )
+        else:
             if cfg_path.is_file():
                 return json.loads(cfg_path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            print(f"[mem0_hooks] MERCURY_MEM0_CONFIG unusable, falling back to defaults: {exc}")
+            print(
+                f"[mem0_hooks] WARNING: MERCURY_MEM0_CONFIG={override} not found;"
+                " using defaults.",
+                file=sys.stderr,
+            )
     return {
         "vector_store": {
             "provider": "qdrant",
