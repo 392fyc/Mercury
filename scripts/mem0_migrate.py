@@ -43,10 +43,15 @@ def _parse_frontmatter(text: str, dropped: dict[str, int] | None = None) -> tupl
     # opening and closing fences counts for both, making empty frontmatter
     # ('---\n---\nbody') parse correctly.
     end = text.find("\n---\n", 3)
-    if end == -1:
+    if end != -1:
+        header = text[4:end]
+        body = text[end + 5 :]
+    elif text.endswith("\n---"):
+        # Document ending with a bare '---' fence (no trailing newline).
+        header = text[4:-4]
+        body = ""
+    else:
         return {}, text
-    header = text[4:end]
-    body = text[end + 5 :]
     meta: dict[str, Any] = {}
     if not header.strip():
         return meta, body

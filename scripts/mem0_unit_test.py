@@ -80,6 +80,11 @@ def main() -> int:
         meta == {"title": "real"} and body == "x",
         "frontmatter: container keys dropped, scalar kept",
     )
+    meta, body = mem0_migrate._parse_frontmatter("---\ntitle: t\n---")
+    check(
+        meta == {"title": "t"} and body == "",
+        "frontmatter: tail-less (no trailing newline) handled",
+    )
 
     print(f"\nresult: {len(FAILURES)} failure(s)")
     return 0 if not FAILURES else 1

@@ -57,7 +57,7 @@ Optional overrides:
 
 - `MERCURY_MEM0_QDRANT_PATH` — Qdrant on-disk storage (default `.mercury/state/mem0/qdrant`)
 - `MERCURY_MEM0_HISTORY_PATH` — SQLite history DB (default `.mercury/state/mem0/history.db`)
-- `MERCURY_MEM0_CONFIG` — JSON path overriding the full `Memory.from_config` dict
+- `MERCURY_MEM0_CONFIG` — JSON path overriding the full `Memory.from_config` dict. **The path must live inside the repo directory** (enforced via `Path.relative_to(repo_root)`); paths outside the repo are ignored with a `stderr` warning and defaults are used. This is a deliberate security clamp — see commit `56d28b3` — so untrusted env vars cannot redirect reads to arbitrary filesystem locations.
 
 Default paths live under `.mercury/state/` (git-ignored; chosen over `/tmp/qdrant` because that path is broken on Windows).
 
