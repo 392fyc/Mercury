@@ -1,0 +1,5 @@
+# Mercury memory layer — mem0 self-hosted stack.
+# Pinned against research doc memory-layer-rebuild-2026-04-16.md (v1.0.11 stable; v2.0.0b still beta).
+# Verified 2026-04-17: pypi.org/project/mem0ai/, docs.mem0.ai/open-source/overview
+mem0ai>=1.0.11,<2.0.0
+qdrant-client>=1.9.0
