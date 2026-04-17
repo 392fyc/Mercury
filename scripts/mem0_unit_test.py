@@ -61,6 +61,7 @@ def main() -> int:
         mem0_hooks._coerce_str([{"content": b"x"}]) is None,
         "coerce: list with dict{'content': bytes} rejects whole container",
     )
+    check(mem0_hooks._coerce_str({"a", "b"}) is None, "coerce: set rejected (non-deterministic order)")
 
     # _build_config shape + paths resolve
     cfg = mem0_hooks._build_config()

@@ -103,10 +103,11 @@ def get_memory() -> Any:
 def _coerce_str(content: Any) -> str | None:
     """Return a safe string for mem0, or None if the input should be rejected.
 
-    Accepted: str, dict (pulls "content" key), list/tuple/set of the above.
-    Rejected (returns None): None, bytes, bytearray, and any other shape —
-    generators / arbitrary Iterables are refused so we never silently consume
-    a large stream or mis-concatenate unexpected objects.
+    Accepted: str, dict (pulls "content" key), list/tuple of the above.
+    Rejected (returns None): None, bytes, bytearray, set (iteration order is
+    non-deterministic → memory contents would drift across runs), and any
+    other shape — generators / arbitrary Iterables are refused so we never
+    silently consume a large stream or mis-concatenate unexpected objects.
     """
     if content is None:
         return None
@@ -118,7 +119,7 @@ def _coerce_str(content: Any) -> str | None:
         if "content" in content:
             return str(content["content"])
         return None
-    if isinstance(content, (list, tuple, set)):
+    if isinstance(content, (list, tuple)):
         parts: list[str] = []
         for item in content:
             if isinstance(item, str):
