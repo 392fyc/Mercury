@@ -1,0 +1,153 @@
+"""One-shot AgentKB Markdown -> mem0 migration.
+
+Iterates Markdown under $AGENTKB_DIR (or --source), strips YAML frontmatter,
+and calls add_safe() with parsed metadata. Read-only on source files.
+
+Usage:
+    python scripts/mem0_migrate.py [--source PATH] [--user-id ID] [--dry-run]
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+from pathlib import Path
+from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from mem0_hooks import add_safe  # noqa: E402
+
+
+def _parse_frontmatter(text: str, dropped: dict[str, int] | None = None) -> tuple[dict[str, Any], str]:
+    """Minimal YAML frontmatter extractor.
+
+    Accepts only root-level ``key: value`` lines. Indented continuation lines,
+    list items (``- ...``), and nested mappings are silently dropped rather
+    than promoted to new keys. Empty frontmatter (``---\\n---\\n``) is
+    recognised and stripped. Anything that does not look like frontmatter is
+    returned untouched so the body survives intact.
+
+    ``dropped`` (if provided) is a counter dict updated in-place with keys
+    ``indented`` / ``list`` / ``empty_value`` / ``comment`` so migration can
+    report aggregate data-loss at end-of-run.
+    """
+    # Normalize line endings — Path.read_text uses universal newlines on POSIX
+    # but callers may hand us raw bytes.decode() with CRLF preserved; belt +
+    # suspenders so Windows files still parse correctly.
+    if "\r\n" in text:
+        text = text.replace("\r\n", "\n")
+    if not text.startswith("---\n"):
+        return {}, text
+    # Start the close-marker search at index 3 so the shared '\n' between
+    # opening and closing fences counts for both, making empty frontmatter
+    # ('---\n---\nbody') parse correctly.
+    end = text.find("\n---\n", 3)
+    if end != -1:
+        header = text[4:end]
+        body = text[end + 5 :]
+    elif text.endswith("\n---"):
+        # Document ending with a bare '---' fence (no trailing newline).
+        header = text[4:-4]
+        body = ""
+    else:
+        return {}, text
+    meta: dict[str, Any] = {}
+    if not header.strip():
+        return meta, body
+    for raw in header.splitlines():
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("#"):
+            if dropped is not None:
+                dropped["comment"] = dropped.get("comment", 0) + 1
+            continue
+        if raw != stripped:
+            if dropped is not None:
+                dropped["indented"] = dropped.get("indented", 0) + 1
+            continue
+        if stripped.startswith("- "):
+            if dropped is not None:
+                dropped["list"] = dropped.get("list", 0) + 1
+            continue
+        if ":" not in stripped:
+            continue
+        key, _, value = stripped.partition(":")
+        key = key.strip()
+        value = value.strip().strip("'\"")
+        # empty scalar = YAML mapping container; drop rather than store a
+        # misleading empty string keyed by a parent node name.
+        if not key or not value:
+            if dropped is not None and key:
+                dropped["empty_value"] = dropped.get("empty_value", 0) + 1
+            continue
+        meta[key] = value
+    return meta, body
+
+
+def migrate(source: Path, user_id: str, dry_run: bool) -> tuple[int, int, int]:
+    """Return (added, skipped, errors). errors > 0 means non-zero exit."""
+    added = 0
+    skipped = 0
+    errors = 0
+    dropped: dict[str, int] = {}
+    for path in sorted(source.rglob("*.md")):
+        rel = path.relative_to(source).as_posix()
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            print(f"ERR  {rel}: {exc}")
+            errors += 1
+            continue
+        meta, body = _parse_frontmatter(raw, dropped=dropped)
+        body = body.strip()
+        if not body:
+            skipped += 1
+            continue
+        meta["source_path"] = rel
+        if dry_run:
+            print(f"DRY  {rel} ({len(body)} chars, meta={list(meta)})")
+            added += 1
+            continue
+        try:
+            result = add_safe(body, user_id=user_id, metadata=meta)
+        except Exception as exc:
+            print(f"ERR  {rel}: {exc}")
+            errors += 1
+            continue
+        if result is None:
+            print(f"SKIP {rel}: empty or dedup")
+            skipped += 1
+        else:
+            print(f"ADD  {rel}")
+            added += 1
+    if dropped:
+        summary = ", ".join(f"{k}={v}" for k, v in sorted(dropped.items()))
+        print(f"\nfrontmatter keys dropped (by reason): {summary}")
+    return added, skipped, errors
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--source",
+        default=os.environ.get("AGENTKB_DIR"),
+        help="Directory containing AgentKB Markdown (default: $AGENTKB_DIR)",
+    )
+    parser.add_argument("--user-id", default="mercury")
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args()
+    if not args.source:
+        parser.error("--source or $AGENTKB_DIR required")
+    source = Path(args.source).resolve()
+    if not source.is_dir():
+        parser.error(f"source not a directory: {source}")
+    added, skipped, errors = migrate(source, args.user_id, args.dry_run)
+    mode = "dry-run" if args.dry_run else "live"
+    print(f"\nDone. added={added} skipped={skipped} errors={errors} mode={mode}")
+    return 1 if errors else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

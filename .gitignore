@@ -72,6 +72,9 @@ mercury.config.json
 # Autoresearch state (standalone mode, transient)
 .research/
 
+# mem0 test venv (Phase A)
+.venv-mem0/
+
 # PR review agent guide (deployment-specific doc, not committed)
 .mercury/docs/guides/argus-review-guide.md
 # .pr_agent.toml is committed (project-scope config for Argus use_repo_settings_file)
