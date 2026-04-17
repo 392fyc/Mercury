@@ -36,10 +36,20 @@ Mercury 的部分功能跨仓库运作。以下表格记录外部仓库与 Mercu
 
 **跨仓库开发注意事项：**
 - `dev-pipeline` 等 skill 假设单仓库工作，跨仓库任务需直接实现
-- 用户级 hooks / scripts 变更不走 Mercury PR 流程（直接编辑 `~/.claude/`，需要 backup 后验证）
-- 新环境验证: 运行 `ls ~/.claude/hooks/ ~/.claude/scripts/` 看到 `pre-compact.py`/`session-end.py`/`flush.py`/`mem0_hooks.py`/`mem0_bridge.py` 即为 #259 后状态；`grep AGENTKB ~/.claude/settings.json` 应返回 0 行
-- 安装依赖: `cd ~/.claude && uv sync` 建立 `~/.claude/.venv/` 并装 mem0ai + qdrant-client
+- 用户级 hooks / scripts 变更不走 Mercury PR 流程。相关路径里 `~/.claude` 等价于 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}`；命令示例可任选一种书写，env 形式在多账户 / CI 下更可移植
+- 新环境验证: 运行 `ls "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/scripts/"` 看到 `pre-compact.py`/`session-end.py`/`flush.py`/`mem0_hooks.py`/`mem0_bridge.py` 即为 #259 后状态；`grep AGENTKB "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"` 应返回 0 行
+- 安装依赖: `cd "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" && uv sync` 建立 `.venv/` 并装 mem0ai + qdrant-client
 - 回滚通道: `MERCURY_MEM0_DISABLED=1` / `AGENTKB_MEM0_DISABLED=1` / `uv remove mem0ai` 任一即可 no-op mem0 写入路径
+
+**用户级变更治理（避免"仓库外漂移"）：**
+- **变更记录位置**: 每次修改 `~/.claude/hooks/`、`~/.claude/scripts/`、`~/.claude/settings.json` 时，在 Mercury 内开对应 Issue（类似 #259），在 Issue 下记录"命令清单 + 最终 diff 摘要 + 验证步骤"。Issue 关闭即成为该用户级变更的权威记录
+- **验证清单（必须全部通过）**:
+  1. `settings.json` JSON 合法（`python -c "import json; json.load(open('settings.json'))"`）
+  2. 每个涉及的 hook 脚本在合成 stdin 下 exit 0（见 #259 PR body 的验证示例）
+  3. 相关单测或 smoke test 通过（如 `mem0_bridge_test.py` 7/7）
+  4. 一次真实 hook 触发观察无回归
+- **回滚步骤**: 所有用户级变更前先 `cp ~/.claude/settings.json ~/.claude/settings.json.backup-pre-<issue>`；发现回归时 `mv` 回去即可；mem0 层额外可通过 env var 软关
+- **环境依赖审计**: 定期跑 `grep -rE "AGENTKB_DIR|\$AGENTKB" ~/.claude/` 确认未遗漏旧路径引用
 
 ## MUST
 
