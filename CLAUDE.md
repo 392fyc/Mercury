@@ -42,14 +42,14 @@ Mercury 的部分功能跨仓库运作。以下表格记录外部仓库与 Mercu
 - 回滚通道: `MERCURY_MEM0_DISABLED=1` / `AGENTKB_MEM0_DISABLED=1` / `uv remove mem0ai` 任一即可 no-op mem0 写入路径
 
 **用户级变更治理（避免"仓库外漂移"）：**
-- **变更记录位置**: 每次修改 `~/.claude/hooks/`、`~/.claude/scripts/`、`~/.claude/settings.json` 时，在 Mercury 内开对应 Issue（类似 #259），在 Issue 下记录"命令清单 + 最终 diff 摘要 + 验证步骤"。Issue 关闭即成为该用户级变更的权威记录
+- **变更记录位置**: 每次修改 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/`、`.../scripts/`、`.../settings.json` 时，在 Mercury 内开对应 Issue（类似 #259），在 Issue 下记录"命令清单 + 最终 diff 摘要 + 验证步骤"。Issue 关闭即成为该用户级变更的权威记录
 - **验证清单（必须全部通过）**:
   1. `settings.json` JSON 合法（`python -c "import json; json.load(open('settings.json'))"`）
   2. 每个涉及的 hook 脚本在合成 stdin 下 exit 0（见 #259 PR body 的验证示例）
   3. 相关单测或 smoke test 通过（如 `mem0_bridge_test.py` 7/7）
   4. 一次真实 hook 触发观察无回归
-- **回滚步骤**: 所有用户级变更前先 `cp ~/.claude/settings.json ~/.claude/settings.json.backup-pre-<issue>`；发现回归时 `mv` 回去即可；mem0 层额外可通过 env var 软关
-- **环境依赖审计**: 定期跑 `grep -rE "AGENTKB_DIR|\$AGENTKB" ~/.claude/` 确认未遗漏旧路径引用
+- **回滚步骤**: 所有用户级变更前先 `CC="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; cp "$CC/settings.json" "$CC/settings.json.backup-pre-<issue>"`；发现回归时 `mv` 回去即可；mem0 层额外可通过 env var 软关
+- **环境依赖审计**: 定期跑 `grep -rE "AGENTKB_DIR|\$AGENTKB" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/"` 确认未遗漏旧路径引用
 
 ## MUST
 
