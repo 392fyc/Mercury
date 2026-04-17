@@ -28,6 +28,11 @@ def _parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     recognised and stripped. Anything that does not look like frontmatter is
     returned untouched so the body survives intact.
     """
+    # Normalize line endings — Path.read_text uses universal newlines on POSIX
+    # but callers may hand us raw bytes.decode() with CRLF preserved; belt +
+    # suspenders so Windows files still parse correctly.
+    if "\r\n" in text:
+        text = text.replace("\r\n", "\n")
     if not text.startswith("---\n"):
         return {}, text
     # Start the close-marker search at index 3 so the shared '\n' between

@@ -22,7 +22,7 @@ os.environ.setdefault("ANONYMIZED_TELEMETRY", "false")
 import json  # noqa: E402
 import threading  # noqa: E402
 from pathlib import Path  # noqa: E402
-from typing import Any, Iterable  # noqa: E402
+from typing import Any  # noqa: E402
 
 _DEFAULT_USER = "mercury"
 _DEDUP_THRESHOLD = 0.92
@@ -51,8 +51,15 @@ def _default_history_path() -> str:
 
 def _build_config() -> dict[str, Any]:
     override = os.environ.get("MERCURY_MEM0_CONFIG")
-    if override and Path(override).exists():
-        return json.loads(Path(override).read_text(encoding="utf-8"))
+    if override:
+        base_dir = Path(__file__).resolve().parents[1]
+        try:
+            cfg_path = Path(override).expanduser().resolve()
+            cfg_path.relative_to(base_dir)  # must live inside the repo
+            if cfg_path.is_file():
+                return json.loads(cfg_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            print(f"[mem0_hooks] MERCURY_MEM0_CONFIG unusable, falling back to defaults: {exc}")
     return {
         "vector_store": {
             "provider": "qdrant",
@@ -81,8 +88,10 @@ def get_memory() -> Any:
 def _coerce_str(content: Any) -> str | None:
     """Return a safe string for mem0, or None if the input should be rejected.
 
-    Rejects None and bytes outright (would otherwise store junk like 'None' or
-    "b'...'"); everything else is rendered via str(). Lists are joined on '\\n'.
+    Accepted: str, dict (pulls "content" key), list/tuple/set of the above.
+    Rejected (returns None): None, bytes, bytearray, and any other shape —
+    generators / arbitrary Iterables are refused so we never silently consume
+    a large stream or mis-concatenate unexpected objects.
     """
     if content is None:
         return None
@@ -90,15 +99,21 @@ def _coerce_str(content: Any) -> str | None:
         return None
     if isinstance(content, str):
         return content
-    if isinstance(content, Iterable):
+    if isinstance(content, dict):
+        if "content" in content:
+            return str(content["content"])
+        return None
+    if isinstance(content, (list, tuple, set)):
         parts: list[str] = []
         for item in content:
             if isinstance(item, dict) and "content" in item:
                 parts.append(str(item["content"]))
+            elif isinstance(item, str):
+                parts.append(item)
             else:
                 parts.append(str(item))
         return "\n".join(p for p in parts if p)
-    return str(content)
+    return None
 
 
 def dedup_guard(content: str, user_id: str) -> bool:
@@ -149,8 +164,12 @@ def search_safe(
     mem = get_memory()
     result = mem.search(query=query, user_id=user_id, limit=limit)
     if isinstance(result, dict):
-        return result.get("results", []) or []
-    return list(result or [])
+        rows = result.get("results", [])
+        return rows if isinstance(rows, list) else []
+    if isinstance(result, list):
+        return result
+    print(f"[mem0_hooks] unexpected search() return type: {type(result).__name__}")
+    return []
 
 
 def reset_for_tests() -> None:

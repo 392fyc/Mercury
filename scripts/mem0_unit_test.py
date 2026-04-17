@@ -39,6 +39,16 @@ def main() -> int:
     check(mem0_hooks._coerce_str(None) is None, "coerce: None rejected")
     check(mem0_hooks._coerce_str(b"bytes") is None, "coerce: bytes rejected")
     check(mem0_hooks._coerce_str(bytearray(b"x")) is None, "coerce: bytearray rejected")
+    check(mem0_hooks._coerce_str((x for x in ["a"])) is None, "coerce: generator rejected")
+    check(mem0_hooks._coerce_str(42) is None, "coerce: int rejected")
+
+    # _coerce_str: accepted container shapes
+    check(
+        mem0_hooks._coerce_str({"content": "x"}) == "x",
+        "coerce: dict with content key",
+    )
+    check(mem0_hooks._coerce_str({"other": 1}) is None, "coerce: dict without content rejected")
+    check(mem0_hooks._coerce_str(("a", "b")) == "a\nb", "coerce: tuple of str")
 
     # _build_config shape + paths resolve
     cfg = mem0_hooks._build_config()
