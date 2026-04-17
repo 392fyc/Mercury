@@ -49,6 +49,18 @@ def main() -> int:
     )
     check(mem0_hooks._coerce_str({"other": 1}) is None, "coerce: dict without content rejected")
     check(mem0_hooks._coerce_str(("a", "b")) == "a\nb", "coerce: tuple of str")
+    check(
+        mem0_hooks._coerce_str(["ok", None]) is None,
+        "coerce: list with None element rejects whole container",
+    )
+    check(
+        mem0_hooks._coerce_str([{"content": None}]) is None,
+        "coerce: list with dict{'content': None} rejects whole container",
+    )
+    check(
+        mem0_hooks._coerce_str([{"content": b"x"}]) is None,
+        "coerce: list with dict{'content': bytes} rejects whole container",
+    )
 
     # _build_config shape + paths resolve
     cfg = mem0_hooks._build_config()

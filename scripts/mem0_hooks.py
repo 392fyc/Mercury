@@ -15,9 +15,11 @@ from __future__ import annotations
 import os
 
 # Must run before anything that could trigger a `mem0` import anywhere in the
-# process; mem0's PostHog telemetry reads these at module-load time.
-os.environ.setdefault("MEM0_TELEMETRY", "false")
-os.environ.setdefault("ANONYMIZED_TELEMETRY", "false")
+# process; mem0's PostHog telemetry reads these at module-load time. Force
+# (not setdefault) so a parent process that exported MEM0_TELEMETRY=true
+# cannot re-enable PostHog reporting behind our back.
+os.environ["MEM0_TELEMETRY"] = "false"
+os.environ["ANONYMIZED_TELEMETRY"] = "false"
 
 import json  # noqa: E402
 import sys  # noqa: E402
@@ -119,12 +121,18 @@ def _coerce_str(content: Any) -> str | None:
     if isinstance(content, (list, tuple, set)):
         parts: list[str] = []
         for item in content:
-            if isinstance(item, dict) and "content" in item:
-                parts.append(str(item["content"]))
-            elif isinstance(item, str):
+            if isinstance(item, str):
                 parts.append(item)
+            elif isinstance(item, dict) and "content" in item:
+                piece = item["content"]
+                if isinstance(piece, str):
+                    parts.append(piece)
+                else:
+                    # nested non-string content — reject whole container rather
+                    # than silently stringify None/bytes/objects into the memory
+                    return None
             else:
-                parts.append(str(item))
+                return None
         return "\n".join(p for p in parts if p)
     return None
 

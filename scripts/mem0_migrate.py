@@ -86,17 +86,19 @@ def _parse_frontmatter(text: str, dropped: dict[str, int] | None = None) -> tupl
     return meta, body
 
 
-def migrate(source: Path, user_id: str, dry_run: bool) -> tuple[int, int]:
+def migrate(source: Path, user_id: str, dry_run: bool) -> tuple[int, int, int]:
+    """Return (added, skipped, errors). errors > 0 means non-zero exit."""
     added = 0
     skipped = 0
+    errors = 0
     dropped: dict[str, int] = {}
     for path in sorted(source.rglob("*.md")):
         rel = path.relative_to(source).as_posix()
         try:
             raw = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:
-            print(f"SKIP {rel}: {exc}")
-            skipped += 1
+            print(f"ERR  {rel}: {exc}")
+            errors += 1
             continue
         meta, body = _parse_frontmatter(raw, dropped=dropped)
         body = body.strip()
@@ -112,7 +114,7 @@ def migrate(source: Path, user_id: str, dry_run: bool) -> tuple[int, int]:
             result = add_safe(body, user_id=user_id, metadata=meta)
         except Exception as exc:
             print(f"ERR  {rel}: {exc}")
-            skipped += 1
+            errors += 1
             continue
         if result is None:
             print(f"SKIP {rel}: empty or dedup")
@@ -123,7 +125,7 @@ def migrate(source: Path, user_id: str, dry_run: bool) -> tuple[int, int]:
     if dropped:
         summary = ", ".join(f"{k}={v}" for k, v in sorted(dropped.items()))
         print(f"\nfrontmatter keys dropped (by reason): {summary}")
-    return added, skipped
+    return added, skipped, errors
 
 
 def main() -> int:
@@ -141,9 +143,10 @@ def main() -> int:
     source = Path(args.source).resolve()
     if not source.is_dir():
         parser.error(f"source not a directory: {source}")
-    added, skipped = migrate(source, args.user_id, args.dry_run)
-    print(f"\nDone. added={added} skipped={skipped} mode={'dry-run' if args.dry_run else 'live'}")
-    return 0
+    added, skipped, errors = migrate(source, args.user_id, args.dry_run)
+    mode = "dry-run" if args.dry_run else "live"
+    print(f"\nDone. added={added} skipped={skipped} errors={errors} mode={mode}")
+    return 1 if errors else 0
 
 
 if __name__ == "__main__":

@@ -50,7 +50,8 @@ def main() -> int:
     seed = "Mercury branch model is develop->master"
     add_safe(seed, user_id=USER, skip_dedup=True)
     hits = search_safe(seed, user_id=USER, limit=3)
-    top = max((h.get("score", 0) for h in hits), default=0)
+    scores = [h.get("score", 0) for h in hits if isinstance(h, dict)]
+    top = max(scores, default=0)
     print(f"     dedup probe: top score for identical text = {top:.4f}")
     again = add_safe(seed, user_id=USER)
     check(again is None, f"#4536 dedup_guard rejected near-duplicate (again={again!r})")
