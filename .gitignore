@@ -54,7 +54,7 @@ CLAUDE.local.md
 CLAUDE.md
 
 # Git worktrees (transient, managed by Main Agent)
-.worktrees/
+/.worktrees/
 
 # Mercury runtime state
 .mercury/state/test-gate-attempts.json

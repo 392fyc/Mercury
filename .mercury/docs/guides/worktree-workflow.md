@@ -21,9 +21,9 @@ rules and merge procedures.
 
 | Actor | Responsibility |
 |-------|----------------|
-| Main Agent | Creates worktree + branch before dispatch; injects `worktreePath` into TaskBundle; merges/deletes after PR merge |
-| Dev Agent | Works exclusively inside `worktreePath`; never switches branches or leaves the worktree |
-| Orchestrator | (Future) automates worktree creation via `prepareBundleTaskExecution`; detects orphaned worktrees |
+| Main Agent | Creates worktree + branch before dispatch; injects `worktreePath` into TaskBundle; removes worktree + branch after PR merge |
+| Dev Agent | Uses `cd <worktreePath>` before any file operation; never switches branches or creates/modifies worktrees |
+| Reaper | `scripts/worktree-reaper.sh` — detects and removes orphaned worktrees (no open PR, older than 7 days) |
 
 ---
 
@@ -35,7 +35,7 @@ Main: git worktree add <path> -b <branch>
   --> TaskBundle.branch = <branch>
         |
         v
-Dispatch -> Dev Agent works inside worktreePath
+Dispatch -> Dev Agent: cd <worktreePath>, work exclusively inside it
         |
         v
 Dev: commit + push (from within worktreePath, never switches branch)
@@ -44,7 +44,7 @@ Dev: commit + push (from within worktreePath, never switches branch)
 Main: review -> PR -> review bot -> merge
         |
         v
-Main: git worktree remove <path> + git branch -d <branch>
+Main: git worktree remove --force <path> + git branch -d <branch>
 ```
 
 ---
@@ -53,190 +53,117 @@ Main: git worktree remove <path> + git branch -d <branch>
 
 | Artifact | Pattern | Example |
 |----------|---------|---------|
-| Worktree path | `.worktrees/{taskId}` | `.worktrees/TASK-a1b2c3d4` |
-| Branch | `feature/{taskId}-{slug}` (existing rule; `taskId` includes `TASK-` prefix) | `feature/TASK-a1b2c3d4-add-auth` |
+| Worktree path | `.worktrees/{taskId}` | `.worktrees/247-worktree-per-task` |
+| Branch | `feat/{taskId}` or `feat/{taskId}-{slug}` per git-flow.md | `feat/247-worktree-per-task` |
 
-The worktree root (`.worktrees/`) belongs in `.gitignore` — worktrees are
-transient and must not be committed.
+The worktree root (`.worktrees/`) is listed in `.gitignore` as `/.worktrees/` —
+worktrees are transient and must not be committed.
 
 ---
 
-## TaskBundle Schema Extension (Proposal)
+## TaskBundle Schema Extension
 
-> **Note:** `worktreePath` and `dependsOn` are proposed fields not yet present
-> on the `TaskBundle` interface in `packages/core/src/types.ts`. They require a
-> future implementation step that adds the fields to the interface and enforces
-> the `worktreePath`+`branch` co-set invariant via Zod schema or a runtime guard.
+`worktreePath` is a first-class field in the TaskBundle. Main fills it in
+Phase 2 of the dev-pipeline skill before dispatching to the dev agent:
 
-Add two optional fields to `TaskBundle`:
-
-```typescript
-interface TaskBundle {
-  // ... existing fields ...
-
-  /** Absolute path to the git worktree for this task.
-   *  Set by Main Agent before dispatch; Dev Agent works exclusively here.
-   *  Undefined for tasks that pre-date worktree workflow or single-task sessions.
-   *  Design constraint: worktreePath and branch must always be set together. */
-  worktreePath?: string;
-
-  /** Task IDs this task depends on. The scheduler must complete dependsOn tasks
-   *  before dispatching this one. Parallel-safe tasks leave this unset or empty. */
-  dependsOn?: string[];
+```json
+{
+  "taskId": "247-worktree-per-task",
+  "worktreePath": "/absolute/path/to/repo/.worktrees/247-worktree-per-task",
+  "...": "other fields"
 }
 ```
+
+The dev agent receives `worktreePath` in its prompt and runs `cd <worktreePath>`
+before every file operation. Dev never creates or removes worktrees.
+
+---
+
+## Dev-Pipeline Integration
+
+Worktree management is embedded in the
+[`dev-pipeline` skill](.../../.claude/skills/dev-pipeline/SKILL.md):
+
+| Phase | Action |
+|-------|--------|
+| **Phase 2 — Dispatch Dev** | Main runs `git worktree add "${REPO_ROOT}/.worktrees/${TASK_ID}" -b "${TASK_BRANCH}"` then injects the absolute path into `TaskBundle.worktreePath` before dispatch |
+| **Phase 2 — Dev prompt** | Prompt explicitly instructs dev to `cd <worktreePath>` before any file operation |
+| **Phase 2 — Forbidden list** | Dev agents are forbidden from "Creating or modifying git worktrees (Main's responsibility)" |
+| **Phase 5 — Cleanup** | On every terminal exit path (pass, blocked, escalation): `git worktree remove --force "${WORKTREE_PATH}" && git branch -d "${TASK_BRANCH}"` |
+| **Phase 6 — Step 5.1** | After PR merge confirmed, same cleanup block runs as final action |
 
 ---
 
 ## Dispatch Protocol (Main Agent)
 
-Before dispatching a task that will run in parallel with other active tasks,
-Main Agent MUST:
+Before dispatching a task, Main MUST:
 
 1. **Create the branch and worktree:**
 
    ```bash
-   git worktree add .worktrees/{taskId} -b feature/{taskId}-{slug}
+   REPO_ROOT=$(git rev-parse --show-toplevel)
+   WORKTREE_PATH="${REPO_ROOT}/.worktrees/${TASK_ID}"
+   git worktree add "${WORKTREE_PATH}" -b "${TASK_BRANCH}"
    ```
 
-2. **Inject into TaskBundle** (via `update_task` RPC or at task creation):
+2. **Inject into TaskBundle:**
 
    ```json
-   { "worktreePath": "/absolute/path/.worktrees/{taskId}",
-     "branch": "feature/{taskId}-{slug}" }
+   { "worktreePath": "/absolute/path/.worktrees/{taskId}" }
    ```
 
-3. **Emphasise in dispatch prompt** (to be handled by `buildDevPrompt` when
-   `task.worktreePath` is set — see Prompt Integration section below):
-   > You are working inside the isolated worktree at `<worktreePath>`.
-   > Do not navigate outside this directory. Do not switch branches.
+3. **Instruct dev in dispatch prompt:**
+   > Working directory: `<worktreePath>`. Use `cd <worktreePath>` before any file operation.
 
 4. **After PR merge**, clean up:
 
    ```bash
-   git worktree remove .worktrees/{taskId}
-   git branch -d feature/{taskId}-{slug}
+   git worktree remove --force "${WORKTREE_PATH}"
+   git branch -d "${TASK_BRANCH}"
    ```
 
 ---
 
-## Prompt Integration
+## Orphan Reaper
 
-`buildDevPrompt` (in `packages/orchestrator/src/task-manager.ts`) will, when
-implemented, prepend a worktree constraint block when `task.worktreePath` is
-set. When implemented, this block will replace the existing Dev Agent Git
-Permissions table for worktree-enabled tasks, making the isolation constraint
-explicit rather than implicit. This is a planned integration and is not yet
-implemented.
+`scripts/worktree-reaper.sh` detects and removes worktrees that have no open
+PR and are older than `WORKTREE_AGE_DAYS` days (default: 7).
 
-Proposed block:
+```bash
+# Preview what would be reaped (safe, default)
+bash scripts/worktree-reaper.sh --dry-run
 
-```markdown
-## Worktree Isolation
-You are working in an isolated git worktree.
-Working directory: {worktreePath}
-Branch: {branch}
-
-CONSTRAINTS:
-- All git operations must execute within {worktreePath}
-- Do NOT run git checkout, git switch, or git branch -d
-- Do NOT navigate to the main working directory or other worktrees
-- Commits and pushes go to branch {branch} only
+# Actually delete orphaned worktrees
+bash scripts/worktree-reaper.sh --prune
 ```
 
----
+The script:
+- Uses `gh pr list --state open` to identify active PR branches
+- Keeps any worktree whose branch has an open PR, regardless of age
+- Keeps any worktree newer than `WORKTREE_AGE_DAYS` days
+- On `--prune`: runs `git worktree remove --force` + `git branch -d`
+- Supports `WORKTREE_ROOT` and `WORKTREE_AGE_DAYS` env var overrides
 
-## Dependency Management
+Run via `scripts/worktree-reaper.sh --dry-run` at session start to inspect
+any worktrees left behind by interrupted pipeline runs.
 
-```text
-dependsOn: []          -> fully independent -> dispatch immediately, own worktree
-dependsOn: [taskId]    -> wait for taskId to reach status=completed before dispatch
-```
-
-The scheduler (future orchestrator enhancement) checks `dependsOn` before each
-dispatch wave. Tasks with unresolved dependencies are held in `drafted` status
-until prerequisites complete.
-
-For the current session (spec-only), dependency enforcement remains manual:
-Main Agent reviews `dependsOn` fields before dispatching.
+Tests: `bash tests/test_worktree_reaper.sh` (exits 0, TAP output).
 
 ---
 
 ## Merge Strategy
 
-Each worktree produces an independent PR (`feature/{taskId}-{slug}` into
-`develop`). PRs are merged in dependency order when dependencies exist.
-Conflicts are resolved by Main Agent via rebase before merge; after rebasing a
-pushed branch, `--force-with-lease` is used to update the PR branch (direct
-force-push without lease is prohibited).
+Each worktree produces an independent PR (`feat/{taskId}` into `develop`).
+PRs are merged in dependency order when dependencies exist. Conflicts are
+resolved by Main Agent via rebase before merge; after rebasing a pushed branch,
+`--force-with-lease` is used to update the PR branch (direct force-push without
+lease is prohibited).
 
 ```text
-develop --> feature/TASK-a1b2c3d4-add-auth     (independent)         -> PR -> merge
-        --> feature/TASK-e5f6g7h8-add-logging  (independent)         -> PR -> merge
-        --> feature/TASK-i9j0k1l2-refactor-auth (dependsOn TASK-a1b2c3d4) -> wait -> PR -> merge
+develop --> feat/TASK-a1b2c3d4-add-auth     (independent)         -> PR -> merge
+        --> feat/TASK-e5f6g7h8-add-logging  (independent)         -> PR -> merge
+        --> feat/TASK-i9j0k1l2-refactor-auth (dependsOn TASK-a1b2c3d4) -> wait -> PR -> merge
 ```
-
----
-
-## Orphan Detection
-
-A worktree is orphaned when its associated task has reached a terminal state
-(`verified`, `closed`, or `failed`) but the worktree directory still exists,
-and no non-terminal task currently references that worktree path.
-Detection rule:
-
-```bash
-# Terminal TaskStatus values: verified, closed, failed
-# Non-terminal TaskStatus values: drafted, dispatched, in_progress,
-#   implementation_done, main_review, acceptance, blocked
-
-git worktree list | grep ".worktrees/" | while read wt_path _rest; do
-  taskId=$(basename "$wt_path")
-
-  # 1. Get task status via get_task RPC
-  status=$(orchestrator-rpc '{"method":"get_task","params":{"taskId":"'"$taskId"'"}}' \
-    | jq -r '.status // "unknown"')
-
-  # 2. Check if terminal
-  if [[ "$status" =~ ^(verified|closed|failed)$ ]]; then
-
-    # 3. Verify no non-terminal task still references this worktree path
-    active_refs=$(orchestrator-rpc '{"method":"list_tasks","params":{}}' \
-      | jq -r '.tasks[]
-          | select(
-              (.status | IN("drafted","dispatched","in_progress",
-                            "implementation_done","main_review","acceptance","blocked"))
-              and .worktreePath == "'"$wt_path"'"
-            )
-          | .taskId')
-
-    if [[ -z "$active_refs" ]]; then
-      echo "ORPHAN: $wt_path (task $taskId is $status, no active references)"
-      # request manual confirmation before removal — may contain uncommitted work
-    fi
-  fi
-done
-```
-
-Main Agent runs orphan detection at session start. Removal requires explicit
-confirmation — worktrees may contain uncommitted work.
-
----
-
-## Future Orchestrator Interface
-
-The following orchestrator methods are proposed for a future implementation
-phase (not part of this spec release):
-
-| Method | Description |
-|--------|-------------|
-| `createWorktree(taskId, branchSlug)` | git worktree add + updates TaskBundle |
-| `removeWorktree(taskId)` | git worktree remove + branch delete |
-| `listOrphanedWorktrees()` | Cross-references worktree list with task statuses |
-| `prepareParallelWave(taskIds[])` | Creates worktrees for all tasks in a wave batch |
-
-`dispatch_task` RPC response will include `worktreePath` when a worktree is
-active for the task.
 
 ---
 
@@ -244,20 +171,17 @@ active for the task.
 
 | Existing Rule | How Worktree Workflow Satisfies It |
 |---------------|-------------------------------------|
-| Dev agents must never switch branches ([`git-flow.md`](git-flow.md)) | Worktree is branch-locked at creation; the same branch cannot be checked out in multiple worktrees simultaneously, ensuring work isolation |
+| Dev agents must never switch branches ([`git-flow.md`](git-flow.md)) | Worktree is branch-locked at creation; the same branch cannot be checked out in multiple worktrees simultaneously |
 | All code enters develop through PRs ([`git-flow.md`](git-flow.md)) | Each worktree branch becomes an independent PR |
 | Main creates branches, Dev does not ([`git-flow.md`](git-flow.md)) | Main creates worktree+branch pre-dispatch; Dev only commits |
 
 ---
 
-## Open Questions (deferred to implementation phase)
+## Open Questions (deferred)
 
 1. Should `.worktrees/` be nested inside the repo root or alongside it (sibling
-   directory)? Sibling avoids any risk of accidentally committing worktree state.
-   Current spec uses repo-root nesting (`.worktrees/{taskId}`).
+   directory)? Current implementation uses repo-root nesting (`.worktrees/{taskId}`).
 2. For tasks that share a dependency, should the dependent task inherit the
-   parent's worktree or get a fresh one from develop? Fresh worktree is safer
-   and keeps each task's change set isolated for review.
+   parent's worktree or get a fresh one from develop? Fresh worktree is safer.
 3. How does the acceptance agent reference files — via worktree path or repo
-   root? Acceptance likely needs the repo root for blind review, since the
-   worktree is task-specific and may diverge from the base.
+   root? Acceptance likely needs the repo root for blind review.
