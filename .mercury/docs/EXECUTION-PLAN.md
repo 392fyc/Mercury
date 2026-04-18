@@ -259,7 +259,7 @@ adapters/         # 适配层
 
 研究报告：`.mercury/docs/research/phase4-1-*`, `.research/reports/RESEARCH-OpenClaw-*`, `.mercury/docs/research/phase4-2-worktree-mount-eval.md`
 
-### 4-2. Worktree-per-task + session_chain DB (S54 重新拆解)
+### 4-2. Worktree-per-task + session_chain DB (S54 重新拆解) — ✅ Complete (2026-04-18)
 
 基于 S54 研究结论（`.mercury/docs/research/phase4-2-worktree-mount-eval.md`），Phase 4-2 拆成三条独立子轨：
 
@@ -267,6 +267,7 @@ adapters/         # 适配层
 - **实现位置**：`github.com/392fyc/claude-handoff` 插件仓库（非 Mercury 主仓）
 - **Scope**：SQLite `session_chains` 表跟踪 parent↔child session 关联；提供 read/write API 给 session-start.py 和 handoff skill
 - **Upsert 约束**：使用 `INSERT OR IGNORE ... ON CONFLICT DO UPDATE`（参 KB 概念 `sqlite-upsert-semantics`，禁用 `INSERT OR REPLACE`）
+- Issue #246 — delivered via claude-handoff v0.3.0 (2026-04-17)
 
 #### 4-2.b Worktree-per-task 隔离 (自研)
 - **路径决策**：**自研 ~60-80 行 bash/Python 封装**，不整仓挂载 OMC 或 Superpowers（见研究报告 R1/R2）
@@ -274,6 +275,7 @@ adapters/         # 适配层
 - **API**：`create_worktree(task_id, branch_slug)` / `remove_worktree(task_id)` / `list_orphans()`
 - **集成点**：dev-pipeline skill 在分发 dev subagent 前注入 `worktreePath` 到 TaskBundle
 - **Out of scope (MVP)**：tmux、session registry、GitHub API polling cleanup
+- Issue #247 + Mercury PR #263 merged 2026-04-18
 
 #### 4-2.c OMC/Superpowers 挂载评估 (已完成)
 - 结论：均不支持 orchestrator 程序化多 subagent 并发驱动（OMC PSM 是 1:1 人工触发；Superpowers 并行 worktree 是 Issue #469 未实现的 roadmap）
