@@ -245,17 +245,19 @@ git worktree remove --force "${WORKTREE_PATH}" || {
   git worktree remove --force "${WORKTREE_PATH}" || echo "WARN: git worktree remove retry failed for ${WORKTREE_PATH}" >&2
 }
 # rm -rf fallback: require non-empty path, existing dir, not a symlink, AND path whitelist.
-# The case pattern `*/.worktrees/*` constrains deletion to Mercury's managed worktree root
-# (Phase 2 sets WORKTREE_PATH="${REPO_ROOT}/.worktrees/${TASK_ID}", so the check refuses to
-# delete anything outside that conventional layout even if the variable is corrupted).
-# `rm -- "${path}"` uses POSIX rm's `--` end-of-options terminator (rm(1)).
+# The case pattern pins the allowed root to *this repo's* `${REPO_ROOT}/.worktrees/` prefix so
+# a corrupted WORKTREE_PATH cannot delete a different repo's worktree directory. We recompute
+# REPO_ROOT here (Phase 2's local var is out of scope by Phase 5) and fall back to a pattern
+# that matches nothing if we are outside a git repo — refuse-by-default semantics.
+# `rm -rf -- "${path}"` uses POSIX rm's `--` end-of-options terminator (rm(1)).
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
 if [ -n "${WORKTREE_PATH}" ] && [ -d "${WORKTREE_PATH}" ] && [ ! -L "${WORKTREE_PATH}" ]; then
   case "${WORKTREE_PATH}" in
-    */.worktrees/*)
+    "${REPO_ROOT}/.worktrees/"*)
       rm -rf -- "${WORKTREE_PATH}" || echo "WARN: rm -rf fallback failed for ${WORKTREE_PATH}" >&2
       ;;
     *)
-      echo "WARN: refuse to rm -rf unexpected path: ${WORKTREE_PATH}" >&2
+      echo "WARN: refuse to rm -rf path outside ${REPO_ROOT:-<unknown>}/.worktrees/: ${WORKTREE_PATH}" >&2
       ;;
   esac
 fi
