@@ -231,8 +231,8 @@ Path convention: every user-level path uses `${CLAUDE_CONFIG_DIR:-$HOME/.claude}
     "blocking: prerequisite S4-verification Issue CLOSED with signal verdict (PRESENT|ABSENT)"
   ],
   "verifyCommands": [
-    "python -c \"import json, os; p = os.path.expanduser(os.environ.get('CLAUDE_SETTINGS_PATH', os.path.join(os.environ.get('CLAUDE_CONFIG_DIR', os.path.expanduser('~/.claude')), 'settings.json'))); json.load(open(p, encoding='utf-8'))\"",
-    "python -c \"import os; p = os.path.join(os.environ.get('CLAUDE_CONFIG_DIR', os.path.expanduser('~/.claude')), 'hooks/statusline-context.py'); assert os.path.isfile(p), p\""
+    "python -c \"import json, os; base = os.environ.get('CLAUDE_CONFIG_DIR') or os.path.join(os.path.expanduser('~'), '.claude'); p = os.environ.get('CLAUDE_SETTINGS_PATH') or os.path.join(base, 'settings.json'); json.load(open(p, encoding='utf-8'))\"",
+    "python -c \"import os; base = os.environ.get('CLAUDE_CONFIG_DIR') or os.path.join(os.path.expanduser('~'), '.claude'); p = os.path.join(base, 'hooks/statusline-context.py'); assert os.path.isfile(p), p\""
   ]
 }
 ```
