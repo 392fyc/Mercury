@@ -10,7 +10,7 @@
 
 ## Executive Summary
 
-Claude Code auto-compacts conversation context around ~83.5% window usage (buffer 33K on 200K). The existing Mercury setup uses `PreCompact` + `SessionEnd` hooks only for **flush-to-memory** (knowledge salvage); it does **not** proactively terminate the session. Phase 4-3 goal is to **trigger `/handoff` before compaction destroys working context**, so the next session resumes from structured state rather than a summarization residue.
+Claude Code auto-compacts conversation context around ~83.5% window usage (buffer 33K on 200K, third-party observation, UNVERIFIED against official telemetry — see §Sources / Verification notes). The existing Mercury setup uses `PreCompact` + `SessionEnd` hooks only for **flush-to-memory** (knowledge salvage); it does **not** proactively terminate the session. Phase 4-3 goal is to **trigger `/handoff` before compaction destroys working context**, so the next session resumes from structured state rather than a summarization residue.
 
 **Verdict**: adopt **Option B — Threshold-driven main-loop advisory + PreCompact fail-safe** (hybrid).
 
@@ -32,7 +32,7 @@ Source: <https://code.claude.com/docs/en/hooks> (fetched 2026-04-19). Cross-chec
 | Matcher | `auto`\|`manual` | `auto`\|`manual` | `source: "compact"` | — | `load_reason: "compact"` |
 | Payload | `session_id`, `transcript_path`, `cwd`, `permission_mode`, `hook_event_name`, `trigger: auto\|manual` | same as PreCompact | `source: "compact"`, plus session_id / transcript_path | session_id / source / transcript_path | `file_path`, `memory_type`, `load_reason: "compact"` |
 | Can block compaction | **Yes** — exit 2 (stderr shown) or `{"decision":"block","reason":...}` | **No** — cannot prevent, advisory only | n/a | n/a | n/a |
-| Can inject context into new session | No (compaction not yet run) | No (structured output supported but not guaranteed re-injection into compacted transcript; see issue #40492) | **Yes** — instruction-load path can additionalContext | — | Yes (SessionStart-style re-injection during compact) |
+| Can inject context into new session | No (compaction not yet run) | No (structured output supported but not guaranteed re-injection into compacted transcript; see issue #40492) | **Yes** — instruction-load path can emit `additionalContext` into the post-compact session | — | Yes (SessionStart-style re-injection during compact) |
 | Runs in same process as main agent | No (subprocess, stdin JSON) | No | No | No | No |
 | Can run `/handoff` | No — hooks are subprocess with no slash-command access | No | No | No | No |
 | Observed runtime (Mercury today) | `pre-compact.py` extracts last 30 turns → `flush.py` async spawn → mem0 write | not registered | not registered | `session-end.py` does the same + session_chain DB write | not registered |
@@ -201,7 +201,7 @@ Any implementation Issue (B.1 / B.2) that depends on an `UNVERIFIED` signal MUST
 
 ### TaskBundle skeleton (for S61+ if approved)
 
-Path convention: every user-level path uses `${CLAUDE_CONFIG_DIR:-$HOME/.claude}` (per Mercury CLAUDE.md "Related Repositories" section). This is portable across POSIX and Windows (via CLAUDE_CONFIG_DIR explicit override), multi-user, and matches existing Mercury hook code. **Never hardcode `~/.claude/...`** in TaskBundle scopes — the executor shells may not expand `~` correctly on Windows PowerShell, and hardcoding breaks CI and container scenarios.
+Path convention: every user-level path uses `${CLAUDE_CONFIG_DIR:-$HOME/.claude}`, matching the form used throughout Mercury `CLAUDE.md` "Related Repositories" section and the existing Mercury hook codebase (`pre-compact.py`, `session-end.py`). This is portable across POSIX and Windows (via `CLAUDE_CONFIG_DIR` explicit override), multi-user, and keeps TaskBundle scopes stable under CI / container execution. As a Mercury Phase 4-3 convention, **avoid hardcoding `~/.claude/...`** in TaskBundle scopes — the executor shells may not expand `~` correctly on Windows PowerShell, and hardcoding breaks CI and container scenarios. (Mercury `CLAUDE.md` does not state this prohibition verbatim, but uses the env-var form consistently and records it as the canonical shape for cross-platform user-level paths.)
 
 ```json
 {
