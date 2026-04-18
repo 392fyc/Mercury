@@ -235,9 +235,21 @@ Based on the acceptance verdict:
 
 ```bash
 rm -f "$SHA_FILE"
-# Remove the isolated worktree and its branch (--force so uncommitted state does not block).
-git worktree remove --force "${WORKTREE_PATH}"
-git branch -d "${TASK_BRANCH}"
+# Remove the isolated worktree and its branch.
+# On Windows, `git worktree remove --force` may partially succeed: git metadata
+# (.git/worktrees/<name>/) is removed but the physical directory is retained due
+# to OS file locks (see Mercury #265). Retry once after a short sleep, then fall
+# back to rm -rf on the residual directory.
+git worktree remove --force "${WORKTREE_PATH}" || {
+  sleep 2
+  git worktree remove --force "${WORKTREE_PATH}" || true
+}
+if [ -d "${WORKTREE_PATH}" ] && [ ! -L "${WORKTREE_PATH}" ]; then
+  rm -rf "${WORKTREE_PATH}" || true
+fi
+# `|| true`: if git metadata still references the worktree (extreme retry-failure path),
+# `git branch -d` would refuse with "branch is checked out". Don't abort the cleanup chain.
+git branch -d "${TASK_BRANCH}" || true
 ```
 
 This runs on `pass`, `blocked`, escalation after `partial`/`fail`, and on iteration-cap escalation. The ONLY paths that skip cleanup are intra-iteration dev re-dispatches (because Phase 3 still needs the SHA and the worktree is still active). If the loop terminates without reaching one of these branches (e.g. host crash), the SHA file at `${TMPDIR:-/tmp}/dev-pipeline-task-start-sha-${BRANCH_KEY}` will be cleaned up on the next pipeline run against the same branch (the new invocation overwrites it) or by OS tmp eviction; orphaned worktrees under `.worktrees/` can be reclaimed by `scripts/worktree-reaper.sh --prune`.
@@ -251,12 +263,7 @@ On pass:
 2. If user requested PR: invoke `/pr-flow`
 3. Mark related GitHub Project item Done (via `/gh-project-flow` if Mercury self-dev) or via `Closes #N` in PR (general case)
 4. Summarize in Chinese for the user
-5. After PR merge is confirmed, run the Phase 5 Cleanup block as the final action:
-   ```bash
-   rm -f "$SHA_FILE"
-   git worktree remove --force "${WORKTREE_PATH}"
-   git branch -d "${TASK_BRANCH}"
-   ```
+5. After PR merge is confirmed, run the **Phase 5 Cleanup block** as the final action (see Phase 5 above — the retry + rm-rf fallback logic is the SoT and is not duplicated here).
 
 **Single source of truth**: the Phase 5 Cleanup block is the only authoritative description of when `$SHA_FILE` is removed. Phase 6 only reaches it via the `pass` branch above. If you find yourself debating "should I clean up here", re-read Phase 5.
 
