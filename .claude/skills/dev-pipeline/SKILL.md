@@ -63,15 +63,16 @@ Before invoking this skill, the following must be true:
   ],
   "verifyCommands": [
     "<exact bash command to validate, e.g. pnpm test packages/foo>"
-  ]
+  ],
+  "worktreePath": "<absolute path — injected by Main in Phase 2; leave blank here>"
 }
 ```
 
-**Gate**: every field non-empty. If definitionOfDone contains a subjective phrase (clean, elegant, good), rewrite it as a measurable criterion or escalate to the user.
+**Gate**: every field non-empty (except `worktreePath`, which is filled by Main in Phase 2). If definitionOfDone contains a subjective phrase (clean, elegant, good), rewrite it as a measurable criterion or escalate to the user.
 
 ## Phase 2: Dispatch Dev
 
-**Before dispatching**, capture the task-start SHA so Phase 3 can compute the diff range correctly (do not rely on `HEAD~1`). Store it OUTSIDE the working tree to avoid repo pollution:
+**Before dispatching**, capture the task-start SHA and create the isolated worktree for this task:
 
 ```bash
 TASK_START_SHA=$(git rev-parse HEAD)
@@ -82,26 +83,40 @@ BRANCH_KEY=$(git rev-parse --abbrev-ref HEAD | tr '/' '_' | tr -cd '[:alnum:]_-'
 SHA_FILE="${TMPDIR:-/tmp}/dev-pipeline-task-start-sha-${BRANCH_KEY}"
 echo "$TASK_START_SHA" > "$SHA_FILE"
 # Phase 6 cleanup: rm -f "$SHA_FILE"
+
+# Create isolated worktree for this task. Main creates the branch; Dev never does.
+# TaskBundle.taskId is the short slug from Phase 1 (e.g. "247-worktree-per-task").
+TASK_ID="<taskId from TaskBundle>"
+TASK_BRANCH="feat/${TASK_ID}"   # or feature/${TASK_ID}-<slug> per git-flow.md convention
+REPO_ROOT=$(git rev-parse --show-toplevel)
+WORKTREE_PATH="${REPO_ROOT}/.worktrees/${TASK_ID}"
+git worktree add "${WORKTREE_PATH}" -b "${TASK_BRANCH}"
+# Inject absolute path back into the TaskBundle before dispatch:
+#   TaskBundle.worktreePath = "${WORKTREE_PATH}"
+# Phase 6 cleanup: git worktree remove --force "${WORKTREE_PATH}" && git branch -d "${TASK_BRANCH}"
 ```
 
-The file is keyed by the current branch name (slash-sanitized). This is stable across Bash invocations within the same pipeline run, and concurrent pipelines collide only if they are on the same branch — which would be a pre-existing git conflict anyway. Phase 6 hand-off must remove it.
+The SHA file is keyed by the current branch name (slash-sanitized). This is stable across Bash invocations within the same pipeline run, and concurrent pipelines collide only if they are on the same branch — which would be a pre-existing git conflict anyway. Phase 6 hand-off must remove both it and the worktree.
 
 Use the Agent tool with subagent_type set to dev. The prompt template:
 
 ```
 You are operating under the dev agent role (.claude/agents/dev.md). Implement the following task and return a JSON receipt as your final message.
 
+**Working directory: `<worktreePath>` (isolated git worktree). Use `cd <worktreePath>` before any file operation.**
+
 ## TaskBundle
-[paste TaskBundle JSON built in Phase 1]
+[paste TaskBundle JSON built in Phase 1, with worktreePath field filled in]
 
 ## Execution Protocol
-1. Read every file listed in readScope.
-2. Implement within allowedWriteScope only. Touching anything in mustNotTouch is forbidden.
-3. Run every command in verifyCommands. ALL must pass before you commit.
-4. Self-fix once if a verifyCommand fails. If it still fails, STOP and report — do NOT commit broken code.
-5. Commit with format type(scope): summary (Mercury convention).
-6. Push to current branch.
-7. Output the JSON receipt below as your FINAL message.
+1. cd <worktreePath> — all file reads/writes and git commands run from this directory.
+2. Read every file listed in readScope.
+3. Implement within allowedWriteScope only. Touching anything in mustNotTouch is forbidden.
+4. Run every command in verifyCommands. ALL must pass before you commit.
+5. Self-fix once if a verifyCommand fails. If it still fails, STOP and report — do NOT commit broken code.
+6. Commit with format type(scope): summary (Mercury convention).
+7. Push to current branch.
+8. Output the JSON receipt below as your FINAL message.
 
 ## Receipt template
 {
@@ -121,6 +136,7 @@ You are operating under the dev agent role (.claude/agents/dev.md). Implement th
 - git switch, git checkout, git branch, git reset, git rebase, git merge, git push --force
 - git add -A or git add .
 - Modifying CLAUDE.md or any file under .claude/agents/
+- Creating or modifying git worktrees (Main's responsibility)
 - Picking up additional work after the receipt is filed
 ```
 
@@ -219,9 +235,12 @@ Based on the acceptance verdict:
 
 ```bash
 rm -f "$SHA_FILE"
+# Remove the isolated worktree and its branch (--force so uncommitted state does not block).
+git worktree remove --force "${WORKTREE_PATH}"
+git branch -d "${TASK_BRANCH}"
 ```
 
-This runs on `pass`, `blocked`, escalation after `partial`/`fail`, and on iteration-cap escalation. The ONLY paths that skip cleanup are intra-iteration dev re-dispatches (because Phase 3 still needs the SHA). If the loop terminates without reaching one of these branches (e.g. host crash), the file at `${TMPDIR:-/tmp}/dev-pipeline-task-start-sha-${BRANCH_KEY}` will be cleaned up on the next pipeline run against the same branch (the new invocation overwrites it) or by OS tmp eviction; the branch-key naming prevents cross-branch collision.
+This runs on `pass`, `blocked`, escalation after `partial`/`fail`, and on iteration-cap escalation. The ONLY paths that skip cleanup are intra-iteration dev re-dispatches (because Phase 3 still needs the SHA and the worktree is still active). If the loop terminates without reaching one of these branches (e.g. host crash), the SHA file at `${TMPDIR:-/tmp}/dev-pipeline-task-start-sha-${BRANCH_KEY}` will be cleaned up on the next pipeline run against the same branch (the new invocation overwrites it) or by OS tmp eviction; orphaned worktrees under `.worktrees/` can be reclaimed by `scripts/worktree-reaper.sh --prune`.
 
 ## Phase 6: Hand-off
 
@@ -232,7 +251,12 @@ On pass:
 2. If user requested PR: invoke `/pr-flow`
 3. Mark related GitHub Project item Done (via `/gh-project-flow` if Mercury self-dev) or via `Closes #N` in PR (general case)
 4. Summarize in Chinese for the user
-5. Run the Phase 5 Cleanup block (`rm -f "$SHA_FILE"`) as the final action
+5. After PR merge is confirmed, run the Phase 5 Cleanup block as the final action:
+   ```bash
+   rm -f "$SHA_FILE"
+   git worktree remove --force "${WORKTREE_PATH}"
+   git branch -d "${TASK_BRANCH}"
+   ```
 
 **Single source of truth**: the Phase 5 Cleanup block is the only authoritative description of when `$SHA_FILE` is removed. Phase 6 only reaches it via the `pass` branch above. If you find yourself debating "should I clean up here", re-read Phase 5.
 
