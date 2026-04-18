@@ -242,14 +242,28 @@ rm -f "$SHA_FILE"
 # back to rm -rf on the residual directory.
 git worktree remove --force "${WORKTREE_PATH}" || {
   sleep 2
-  git worktree remove --force "${WORKTREE_PATH}" || true
+  git worktree remove --force "${WORKTREE_PATH}" || echo "WARN: git worktree remove retry failed for ${WORKTREE_PATH}" >&2
 }
-if [ -d "${WORKTREE_PATH}" ] && [ ! -L "${WORKTREE_PATH}" ]; then
-  rm -rf "${WORKTREE_PATH}" || true
+# rm -rf fallback: require non-empty path, existing dir, not a symlink, AND path whitelist.
+# The case pattern `*/.worktrees/*` constrains deletion to Mercury's managed worktree root
+# (Phase 2 sets WORKTREE_PATH="${REPO_ROOT}/.worktrees/${TASK_ID}", so the check refuses to
+# delete anything outside that conventional layout even if the variable is corrupted).
+# `rm -- "${path}"` uses POSIX rm's `--` end-of-options terminator (rm(1)).
+if [ -n "${WORKTREE_PATH}" ] && [ -d "${WORKTREE_PATH}" ] && [ ! -L "${WORKTREE_PATH}" ]; then
+  case "${WORKTREE_PATH}" in
+    */.worktrees/*)
+      rm -rf -- "${WORKTREE_PATH}" || echo "WARN: rm -rf fallback failed for ${WORKTREE_PATH}" >&2
+      ;;
+    *)
+      echo "WARN: refuse to rm -rf unexpected path: ${WORKTREE_PATH}" >&2
+      ;;
+  esac
 fi
-# `|| true`: if git metadata still references the worktree (extreme retry-failure path),
-# `git branch -d` would refuse with "branch is checked out". Don't abort the cleanup chain.
-git branch -d "${TASK_BRANCH}" || true
+# `|| echo WARN`: surface cleanup failures to stderr rather than silently swallowing them.
+# If worktree metadata still references the branch (extreme retry-failure path), `git branch -d`
+# refuses with "branch is checked out". We warn and continue — orphan branch can be reclaimed
+# by `scripts/worktree-reaper.sh --prune` on the next cycle.
+git branch -d "${TASK_BRANCH}" || echo "WARN: git branch -d ${TASK_BRANCH} failed (likely still registered in a worktree)" >&2
 ```
 
 This runs on `pass`, `blocked`, escalation after `partial`/`fail`, and on iteration-cap escalation. The ONLY paths that skip cleanup are intra-iteration dev re-dispatches (because Phase 3 still needs the SHA and the worktree is still active). If the loop terminates without reaching one of these branches (e.g. host crash), the SHA file at `${TMPDIR:-/tmp}/dev-pipeline-task-start-sha-${BRANCH_KEY}` will be cleaned up on the next pipeline run against the same branch (the new invocation overwrites it) or by OS tmp eviction; orphaned worktrees under `.worktrees/` can be reclaimed by `scripts/worktree-reaper.sh --prune`.
