@@ -281,7 +281,7 @@ On pass:
 2. If user requested PR: invoke `/pr-flow`
 3. Mark related GitHub Project item Done (via `/gh-project-flow` if Mercury self-dev) or via `Closes #N` in PR (general case)
 4. Summarize in Chinese for the user
-5. After PR merge is confirmed, run the **Phase 5 Cleanup block** as the final action (see Phase 5 above — the retry + rm-rf fallback logic is the SoT and is not duplicated here).
+5. After PR merge is confirmed, run the **Phase 5 Cleanup block** as the final action (see Phase 5 above — the retry + `rm -rf` fallback logic is the SoT and is not duplicated here).
 
 **Single source of truth**: the Phase 5 Cleanup block is the only authoritative description of when `$SHA_FILE` is removed. Phase 6 only reaches it via the `pass` branch above. If you find yourself debating "should I clean up here", re-read Phase 5.
 
