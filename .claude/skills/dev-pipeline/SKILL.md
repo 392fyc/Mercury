@@ -235,9 +235,39 @@ Based on the acceptance verdict:
 
 ```bash
 rm -f "$SHA_FILE"
-# Remove the isolated worktree and its branch (--force so uncommitted state does not block).
-git worktree remove --force "${WORKTREE_PATH}"
-git branch -d "${TASK_BRANCH}"
+# Remove the isolated worktree and its branch.
+# On Windows, `git worktree remove --force` may partially succeed: git metadata
+# (.git/worktrees/<name>/) is removed but the physical directory is retained due
+# to OS file locks (see Mercury #265). Retry once after a short sleep, then fall
+# back to rm -rf on the residual directory.
+git worktree remove --force "${WORKTREE_PATH}" || {
+  sleep 2
+  git worktree remove --force "${WORKTREE_PATH}" || echo "WARN: git worktree remove retry failed for ${WORKTREE_PATH}" >&2
+}
+# rm -rf fallback: require non-empty path, existing dir, not a symlink, AND path whitelist.
+# The case pattern pins the allowed root to *this repo's* `${REPO_ROOT}/.worktrees/` prefix so
+# a corrupted WORKTREE_PATH cannot delete a different repo's worktree directory. We recompute
+# REPO_ROOT here (Phase 2's local var is out of scope by Phase 5) and fall back to a pattern
+# that matches nothing if we are outside a git repo — refuse-by-default semantics.
+# `rm -rf -- "${path}"` uses POSIX rm's `--` end-of-options terminator (rm(1)).
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+if [ -z "${REPO_ROOT}" ]; then
+  echo "WARN: cannot determine REPO_ROOT (cwd not in a git repo) — skipping rm -rf fallback for ${WORKTREE_PATH}" >&2
+elif [ -n "${WORKTREE_PATH}" ] && [ -d "${WORKTREE_PATH}" ] && [ ! -L "${WORKTREE_PATH}" ]; then
+  case "${WORKTREE_PATH}" in
+    "${REPO_ROOT}/.worktrees/"*)
+      rm -rf -- "${WORKTREE_PATH}" || echo "WARN: rm -rf fallback failed for ${WORKTREE_PATH}" >&2
+      ;;
+    *)
+      echo "WARN: refuse to rm -rf path outside ${REPO_ROOT}/.worktrees/: ${WORKTREE_PATH}" >&2
+      ;;
+  esac
+fi
+# `|| echo WARN`: surface cleanup failures to stderr rather than silently swallowing them.
+# If worktree metadata still references the branch (extreme retry-failure path), `git branch -d`
+# refuses with "branch is checked out". We warn and continue — orphan branch can be reclaimed
+# by `scripts/worktree-reaper.sh --prune` on the next cycle.
+git branch -d "${TASK_BRANCH}" || echo "WARN: git branch -d ${TASK_BRANCH} failed (likely still registered in a worktree)" >&2
 ```
 
 This runs on `pass`, `blocked`, escalation after `partial`/`fail`, and on iteration-cap escalation. The ONLY paths that skip cleanup are intra-iteration dev re-dispatches (because Phase 3 still needs the SHA and the worktree is still active). If the loop terminates without reaching one of these branches (e.g. host crash), the SHA file at `${TMPDIR:-/tmp}/dev-pipeline-task-start-sha-${BRANCH_KEY}` will be cleaned up on the next pipeline run against the same branch (the new invocation overwrites it) or by OS tmp eviction; orphaned worktrees under `.worktrees/` can be reclaimed by `scripts/worktree-reaper.sh --prune`.
@@ -251,12 +281,7 @@ On pass:
 2. If user requested PR: invoke `/pr-flow`
 3. Mark related GitHub Project item Done (via `/gh-project-flow` if Mercury self-dev) or via `Closes #N` in PR (general case)
 4. Summarize in Chinese for the user
-5. After PR merge is confirmed, run the Phase 5 Cleanup block as the final action:
-   ```bash
-   rm -f "$SHA_FILE"
-   git worktree remove --force "${WORKTREE_PATH}"
-   git branch -d "${TASK_BRANCH}"
-   ```
+5. After PR merge is confirmed, run the **Phase 5 Cleanup block** as the final action (see Phase 5 above — the retry + `rm -rf` fallback logic is the SoT and is not duplicated here).
 
 **Single source of truth**: the Phase 5 Cleanup block is the only authoritative description of when `$SHA_FILE` is removed. Phase 6 only reaches it via the `pass` branch above. If you find yourself debating "should I clean up here", re-read Phase 5.
 
