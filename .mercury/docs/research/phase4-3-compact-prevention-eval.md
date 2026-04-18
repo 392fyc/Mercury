@@ -175,7 +175,7 @@ Concrete rollout plan (to be split into implementation Issues):
 
 ### Issue #<next>: B.1 statusline advisory (MVP)
 
-- Add `~/.claude/hooks/statusline-context.py` that prints context-pressure indicator using **S4 if verified accessible**, else **S3** token-estimate with batching.
+- Add `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/statusline-context.py` that prints context-pressure indicator using **S4 if verified accessible**, else **S3** token-estimate with batching.
 - Dry-run only; collect telemetry over 2 sessions.
 - AcceptanceCriteria: indicator visible in statusline; no regression on existing statusline output.
 - Effort: ~40 LOC + 1 session of validation.
@@ -183,50 +183,61 @@ Concrete rollout plan (to be split into implementation Issues):
 ### Issue #<next>: B.2 PreCompact block + lowered override
 
 - Set `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=75` (configurable, user can disable).
-- Extend `~/.claude/hooks/pre-compact.py` to emit `{"decision":"block","reason":...}` *on first auto-trigger*, record block in `flush.log` with session_id + turn_count.
+- Extend `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/pre-compact.py` to emit `{"decision":"block","reason":...}` *on first auto-trigger*, record block in `flush.log` with session_id + turn_count.
 - Add escape-hatch: if block count for same session_id ≥ 2, let compact proceed (agent may be ignoring block intentionally).
 - Record in user-level-changes Issue per CLAUDE.md governance.
 - AcceptanceCriteria: (1) session near threshold shows block reason to main agent; (2) after one `/handoff:auto`, next session starts clean; (3) rollback = `unset CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` OR revert hook edit.
 - Effort: ~30 LOC + 1 real-session verify.
 
-### Issue #<next>: verify S4 (`remaining_percentage`) availability (prerequisite)
+### Issue #<next>: verify S4 (`remaining_percentage`) availability (prerequisite — hard gate)
 
-- Empirical: write temp hook that dumps full PreCompact / SessionStart / statusline payload to a file; inspect keys; report in Issue.
-- Decision gate: if S4 present → use in B.1; else fall back to S3 estimator (implementation effort +15 LOC, may drop to S2 if tokenizer install is prohibitive).
-- Effort: ~1 hour.
+Any implementation Issue (B.1 / B.2) that depends on an `UNVERIFIED` signal MUST NOT start before this prerequisite Issue closes. "Verify-before-depend" is a hardened acceptance criterion on B.1/B.2, not just a nice-to-have.
+
+- **Empirical probe (redacted)**: write temp hook that records **only the top-level keys** of the PreCompact / SessionStart / statusline payload (not values). If a value must be sampled for type inference, redact it (hash or prefix-only) before writing. Store output in a permission-restricted temp file (mode `0600` or Windows equivalent), inspect, then delete on inspection completion. Do **not** commit payload samples — only the discovered key-list goes in the Issue.
+  - Rationale: `session_id`, `transcript_path`, `cwd` are session-identifying metadata; `transcript_path` further points at conversation content. These must not land in a world-readable file or git history.
+- **Decision gate**: if S4 present → use in B.1; else fall back to S3 estimator (implementation effort +15 LOC, may drop to S2 if tokenizer install is prohibitive).
+- **Effort**: ~1 hour.
+- **Acceptance on B.1/B.2 tickets (hard gate)**: "Prerequisite Issue (S4 verification) is CLOSED with a key-list of the signal field and verdict PRESENT/ABSENT" — listed as *blocking acceptance* in the implementation TaskBundle, not as a non-functional suggestion.
 
 ### TaskBundle skeleton (for S61+ if approved)
+
+Path convention: every user-level path uses `${CLAUDE_CONFIG_DIR:-$HOME/.claude}` (per Mercury CLAUDE.md "Related Repositories" section). This is portable across POSIX and Windows (via CLAUDE_CONFIG_DIR explicit override), multi-user, and matches existing Mercury hook code. **Never hardcode `~/.claude/...`** in TaskBundle scopes — the executor shells may not expand `~` correctly on Windows PowerShell, and hardcoding breaks CI and container scenarios.
 
 ```json
 {
   "taskId": "phase-4-3-b1-statusline-advisory",
   "issue": "mercury#<B.1-issue>",
   "title": "Phase 4-3 B.1 — statusline context-pressure indicator",
-  "context": "MVP advisory for compact-prevention; reads S4 (if verified) else S3 tokenizer estimate; displays threshold warning in statusline. Non-blocking.",
+  "context": "MVP advisory for compact-prevention; reads S4 (if verified via prerequisite Issue) else S3 tokenizer estimate; displays threshold warning in statusline. Non-blocking.",
   "definitionOfDone": [
-    "~/.claude/hooks/statusline-context.py present and registered in settings.json",
-    "~/.claude/settings.json JSON valid; hook exits 0 on synthetic stdin",
+    "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/statusline-context.py present and registered in settings.json",
+    "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json JSON valid; hook exits 0 on synthetic stdin",
     "indicator visible in at least one live session",
-    "Issue body records 2 sessions of telemetry"
+    "Issue body records 2 sessions of telemetry",
+    "prerequisite S4-verification Issue is CLOSED before merge"
   ],
-  "allowedWriteScope": ["~/.claude/hooks/statusline-context.py", "~/.claude/settings.json"],
+  "allowedWriteScope": [
+    "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/statusline-context.py",
+    "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+  ],
   "readScope": [
-    "~/.claude/hooks/pre-compact.py",
-    "~/.claude/hooks/session-end.py",
+    "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/pre-compact.py",
+    "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/session-end.py",
     "docs/user-level-changes Issue for B.1"
   ],
   "acceptanceCriteria": [
     "no regression on existing statusline output",
-    "sensitivity to S4 vs S3 documented in PR body"
+    "sensitivity to S4 vs S3 documented in PR body",
+    "blocking: prerequisite S4-verification Issue CLOSED with signal verdict (PRESENT|ABSENT)"
   ],
   "verifyCommands": [
-    "python -c \"import json,os; json.load(open(os.path.expandvars('~/.claude/settings.json')))\"",
-    "echo '{\"session_id\":\"test\"}' | python ~/.claude/hooks/statusline-context.py"
+    "python -c \"import json, os; p = os.path.expanduser(os.environ.get('CLAUDE_SETTINGS_PATH', os.path.join(os.environ.get('CLAUDE_CONFIG_DIR', os.path.expanduser('~/.claude')), 'settings.json'))); json.load(open(p, encoding='utf-8'))\"",
+    "python -c \"import os; p = os.path.join(os.environ.get('CLAUDE_CONFIG_DIR', os.path.expanduser('~/.claude')), 'hooks/statusline-context.py'); assert os.path.isfile(p), p\""
   ]
 }
 ```
 
-(B.2 TaskBundle drafted analogously; content deferred to post-approval of B.1.)
+(B.2 TaskBundle drafted analogously; content deferred to post-approval of B.1. Same `${CLAUDE_CONFIG_DIR:-$HOME/.claude}` convention applies.)
 
 ---
 
