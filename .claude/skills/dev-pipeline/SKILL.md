@@ -251,13 +251,15 @@ git worktree remove --force "${WORKTREE_PATH}" || {
 # that matches nothing if we are outside a git repo — refuse-by-default semantics.
 # `rm -rf -- "${path}"` uses POSIX rm's `--` end-of-options terminator (rm(1)).
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
-if [ -n "${WORKTREE_PATH}" ] && [ -d "${WORKTREE_PATH}" ] && [ ! -L "${WORKTREE_PATH}" ]; then
+if [ -z "${REPO_ROOT}" ]; then
+  echo "WARN: cannot determine REPO_ROOT (cwd not in a git repo) — skipping rm -rf fallback for ${WORKTREE_PATH}" >&2
+elif [ -n "${WORKTREE_PATH}" ] && [ -d "${WORKTREE_PATH}" ] && [ ! -L "${WORKTREE_PATH}" ]; then
   case "${WORKTREE_PATH}" in
     "${REPO_ROOT}/.worktrees/"*)
       rm -rf -- "${WORKTREE_PATH}" || echo "WARN: rm -rf fallback failed for ${WORKTREE_PATH}" >&2
       ;;
     *)
-      echo "WARN: refuse to rm -rf path outside ${REPO_ROOT:-<unknown>}/.worktrees/: ${WORKTREE_PATH}" >&2
+      echo "WARN: refuse to rm -rf path outside ${REPO_ROOT}/.worktrees/: ${WORKTREE_PATH}" >&2
       ;;
   esac
 fi
