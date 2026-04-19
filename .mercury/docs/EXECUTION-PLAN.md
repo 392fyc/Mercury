@@ -288,7 +288,7 @@ adapters/         # 适配层
 2. Mercury dev-pipeline 分发 N 个 subagent 时能自动创建 N 个隔离 worktree 并在 PR merge 后清理（4-2.b）
 3. agent 在 context 耗尽后自动启动新 session 并继续之前的任务（Phase 4 整体目标）
 
-### 4-3. Compact-prevention 模式 — B.1 landed (soak), B.2 Implemented (pending soak)
+### 4-3. Compact-prevention 模式 — B.1 Implemented (acceptance-pending), B.2 Implemented (acceptance-pending)
 
 研究：`.mercury/docs/research/phase4-3-compact-prevention-eval.md` (S60)。Option B 分层执行。
 
@@ -301,7 +301,7 @@ adapters/         # 适配层
 - 阈值 env var `MERCURY_CTX_ADVISORY_PCT` override；Windows UTF-8 fixed (`PYTHONIOENCODING=utf-8`)
 - Soak 验证：2+ sessions 确认无 regression + null-safe + 渲染正确
 
-#### 4-3. B.2 PreCompact block + CLAUDE_AUTOCOMPACT_PCT_OVERRIDE — ✅ Implemented, pending real-session soak (S63, Issue #270, 2026-04-20)
+#### 4-3. B.2 PreCompact block + CLAUDE_AUTOCOMPACT_PCT_OVERRIDE — ✅ Implemented, acceptance-pending (S63, Issue #270, 2026-04-19 UTC)
 - `settings.json.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "75"` (official env var **VERIFIED** via code.claude.com/docs/en/env-vars)
 - `pre-compact.py` 首次 auto-trigger 返回 `{"decision":"block","reason":...}`；同 session 第 2 次 auto-trigger → escape-hatch 放行；`trigger=manual` 从不 block
 - Per-session counter at `scripts/pre-compact-block-counter.json`；决策与计数写 `flush.log`
