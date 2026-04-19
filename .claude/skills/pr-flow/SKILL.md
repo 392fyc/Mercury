@@ -139,7 +139,7 @@ CronCreate:
 
 When cron reports reviews arrived:
 1. `CronDelete` the polling job
-2. Clean up: `rm -f .pr-flow-check-count-*`
+2. Clean up: `rm -f .pr-flow-check-count-* .pr-flow-last-checked-*`
 3. Proceed to Phase 3
 
 ## Phase 3: Read + Triage ALL Findings
@@ -348,7 +348,7 @@ gh pr merge "$PR_NUMBER" --squash --delete-branch
 ## Phase 7: Cleanup
 
 ```bash
-rm -f .pr-flow-iteration-* .pr-flow-check-count-* .pr-flow-multi.txt
+rm -f .pr-flow-iteration-* .pr-flow-check-count-* .pr-flow-last-checked-* .pr-flow-multi.txt
 
 BRANCH=$(gh pr view "$PR_NUMBER" --json headRefName --jq '.headRefName')
 
