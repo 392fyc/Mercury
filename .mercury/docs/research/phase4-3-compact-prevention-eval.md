@@ -56,7 +56,7 @@ Goal: detect "approaching context limit" *before* compaction begins, from a posi
 
 ### S1. `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` + PreCompact-block
 
-**Mechanism**: lower `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` to e.g. `60` so auto-compact triggers at 60% usage (default ~83.5%). PreCompact(auto) then blocks with `decision: block`, reason = "Mercury: please run /handoff auto to preserve working context". Main agent sees stderr / block message next turn.
+**Mechanism**: lower `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` to e.g. `60` so auto-compact triggers at 60% usage (default ~95% per official env-vars reference, superseding third-party `claudefa.st` 83.5% claim — see Verification notes). PreCompact(auto) then blocks with `decision: block`, reason = "Mercury: please run /handoff auto to preserve working context". Main agent is expected to see stderr / block message next turn — **empirical verification pending per §6 Open Question 2** (B.2 soak).
 
 | Dimension | Eval |
 |---|---|
@@ -297,6 +297,6 @@ Local source (Mercury baseline):
 - `PreCompact` `{"decision": "block", "reason": ...}` — confirmed in `code.claude.com/docs/en/hooks`.
 - `SessionStart` `source: "compact"` matcher — confirmed in `code.claude.com/docs/en/hooks`.
 - `InstructionsLoaded` `load_reason: "compact"` — confirmed in `code.claude.com/docs/en/hooks`.
-- Auto-compact `~83.5%` trigger / `33K` buffer — **third-party source only**, marked UNVERIFIED against official telemetry.
-- `remaining_percentage` field — **third-party source only**, UNVERIFIED; B.1 implementation must probe first.
-- `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` env var — GitHub issue thread confirms; **UNVERIFIED** against official env-var reference page (not yet located).
+- Auto-compact `~83.5%` trigger / `33K` buffer — third-party source; **corrected to ~95% default** per official env-vars reference (see `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` note below, 2026-04-20). 33K buffer figure remains UNVERIFIED.
+- `remaining_percentage` field — **VERIFIED** 2026-04-19 (S61, Issue #268): PRESENT in statusline stdin (`context_window.used_percentage`), ABSENT in all hook payloads (PreCompact / SessionStart / SessionEnd / PostCompact). B.1 uses statusline wrapper path; B.2 cannot depend on hook payload and uses `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` gate instead.
+- `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` env var — **VERIFIED** 2026-04-20 against <https://code.claude.com/docs/en/env-vars>. Accepts 1-100; default ~95%; values above default have no effect (see anthropics/claude-code#31806). Aligns with `context_window.used_percentage` statusline field. Related: `CLAUDE_CODE_AUTO_COMPACT_WINDOW` for token-window override.
