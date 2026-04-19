@@ -302,6 +302,7 @@ adapters/         # 适配层
 - Soak 验证：2+ sessions 确认无 regression + null-safe + 渲染正确
 
 #### 4-3. B.2 PreCompact block + CLAUDE_AUTOCOMPACT_PCT_OVERRIDE — ✅ Implemented, acceptance-pending (S63, Issue #270, 2026-04-19 UTC)
+- **Rollout order 偏离说明**：Issue #270 原定 "B.1 soak ≥ 2 sessions 后再推 B.2"；S63 用户指令提前 B.2 实装，B.1+B.2 现在并行 soak（S62+S63 作为 B.1 的 2 session soak 期，尚未观察到 statusline regression）。若 B.1 soak 期间发现问题，B.2 的 env var + hook 可独立回滚不影响 B.1
 - `settings.json.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "75"` (official env var **VERIFIED** via code.claude.com/docs/en/env-vars)
 - `pre-compact.py` 首次 auto-trigger 返回 `{"decision":"block","reason":...}`；同 session 第 2 次 auto-trigger → escape-hatch 放行；`trigger=manual` 从不 block
 - Per-session counter at `scripts/pre-compact-block-counter.json`；决策与计数写 `flush.log`
