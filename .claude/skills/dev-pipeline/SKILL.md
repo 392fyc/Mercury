@@ -235,39 +235,28 @@ Based on the acceptance verdict:
 
 ```bash
 rm -f "$SHA_FILE"
-# Remove the isolated worktree and its branch.
-# On Windows, `git worktree remove --force` may partially succeed: git metadata
-# (.git/worktrees/<name>/) is removed but the physical directory is retained due
-# to OS file locks (see Mercury #265). Retry once after a short sleep, then fall
-# back to rm -rf on the residual directory.
-git worktree remove --force "${WORKTREE_PATH}" || {
-  sleep 2
-  git worktree remove --force "${WORKTREE_PATH}" || echo "WARN: git worktree remove retry failed for ${WORKTREE_PATH}" >&2
-}
-# rm -rf fallback: require non-empty path, existing dir, not a symlink, AND path whitelist.
-# The case pattern pins the allowed root to *this repo's* `${REPO_ROOT}/.worktrees/` prefix so
-# a corrupted WORKTREE_PATH cannot delete a different repo's worktree directory. We recompute
-# REPO_ROOT here (Phase 2's local var is out of scope by Phase 5) and fall back to a pattern
-# that matches nothing if we are outside a git repo — refuse-by-default semantics.
-# `rm -rf -- "${path}"` uses POSIX rm's `--` end-of-options terminator (rm(1)).
+
+# Worktree + branch cleanup is delegated to scripts/cleanup-worktree-branch.sh, which also backs
+# Phase 7 of the pr-flow skill. Keeping one source of truth avoids drift (see Mercury #274).
+#
+# --force invokes the retry + rm -rf fallback (whitelisted to $REPO_ROOT/.worktrees/) needed for
+# the Windows file-lock case (Mercury #265). --worktree-path is the path Main created in Phase 2;
+# passing it explicitly skips discovery since dev-pipeline always knows the exact path.
+#
+# BASE_BRANCH positional arg is Main's current branch — the parent branch Main was on when it
+# created the worktree. The script uses BASE_BRANCH only if HEAD happens to be on TASK_BRANCH at
+# cleanup time, which cannot occur under normal dev-pipeline flow (Main stays on its own branch
+# while the dev subagent operates in the isolated worktree on TASK_BRANCH). In any degenerate
+# state where that invariant is violated, `git switch` to Main's own branch is a safe no-op.
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
-if [ -z "${REPO_ROOT}" ]; then
-  echo "WARN: cannot determine REPO_ROOT (cwd not in a git repo) — skipping rm -rf fallback for ${WORKTREE_PATH}" >&2
-elif [ -n "${WORKTREE_PATH}" ] && [ -d "${WORKTREE_PATH}" ] && [ ! -L "${WORKTREE_PATH}" ]; then
-  case "${WORKTREE_PATH}" in
-    "${REPO_ROOT}/.worktrees/"*)
-      rm -rf -- "${WORKTREE_PATH}" || echo "WARN: rm -rf fallback failed for ${WORKTREE_PATH}" >&2
-      ;;
-    *)
-      echo "WARN: refuse to rm -rf path outside ${REPO_ROOT}/.worktrees/: ${WORKTREE_PATH}" >&2
-      ;;
-  esac
+if [ -z "$REPO_ROOT" ]; then
+  echo "WARN: cannot determine REPO_ROOT — skipping worktree/branch cleanup" >&2
+else
+  bash "$REPO_ROOT/scripts/cleanup-worktree-branch.sh" \
+    "$TASK_BRANCH" "$(git rev-parse --abbrev-ref HEAD)" \
+    --force --worktree-path "$WORKTREE_PATH" \
+    || echo "WARN: cleanup-worktree-branch.sh exited non-zero — see stderr" >&2
 fi
-# `|| echo WARN`: surface cleanup failures to stderr rather than silently swallowing them.
-# If worktree metadata still references the branch (extreme retry-failure path), `git branch -d`
-# refuses with "branch is checked out". We warn and continue — orphan branch can be reclaimed
-# by `scripts/worktree-reaper.sh --prune` on the next cycle.
-git branch -d "${TASK_BRANCH}" || echo "WARN: git branch -d ${TASK_BRANCH} failed (likely still registered in a worktree)" >&2
 ```
 
 This runs on `pass`, `blocked`, escalation after `partial`/`fail`, and on iteration-cap escalation. The ONLY paths that skip cleanup are intra-iteration dev re-dispatches (because Phase 3 still needs the SHA and the worktree is still active). If the loop terminates without reaching one of these branches (e.g. host crash), the SHA file at `${TMPDIR:-/tmp}/dev-pipeline-task-start-sha-${BRANCH_KEY}` will be cleaned up on the next pipeline run against the same branch (the new invocation overwrites it) or by OS tmp eviction; orphaned worktrees under `.worktrees/` can be reclaimed by `scripts/worktree-reaper.sh --prune`.
