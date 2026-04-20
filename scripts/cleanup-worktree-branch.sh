@@ -79,15 +79,16 @@ run() {
   "$@"
 }
 
-# ---------- discover worktrees ----------
-# IMPORTANT: discovery MUST happen BEFORE the pre-switch below. `git switch` changes
-# the main worktree's branch association in `git worktree list --porcelain`, which
-# would alter what auto-discovery finds.
-
+# Discover worktrees BEFORE pre-switch: `git switch` changes the main worktree's branch
+# association in `git worktree list --porcelain`, altering discovery results.
 WT_FAIL=0
 WT_PATHS=""
-
 if [ -n "$EXPLICIT_WT_PATH" ]; then
+  # --worktree-path is high-risk user input. Reject newlines so a value cannot expand into
+  # multiple paths inside the while-read loop below.
+  case "$EXPLICIT_WT_PATH" in
+    *$'\n'*|*$'\r'*) die "--worktree-path must be a single-line path" ;;
+  esac
   WT_PATHS="$EXPLICIT_WT_PATH"
 else
   if ! WT_LIST=$(git worktree list --porcelain 2>&1); then
@@ -99,9 +100,7 @@ else
     $0 == ref { print path }
   ')
 fi
-
-# ---------- pre-switch (leave BRANCH if HEAD is on it) ----------
-
+# Pre-switch off BRANCH if HEAD is on it (required before branch -d).
 if [ "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" = "$BRANCH" ]; then
   if ! run git switch "$BASE_BRANCH" 2>/dev/null; then
     if ! run git checkout "$BASE_BRANCH" 2>/dev/null; then
@@ -111,16 +110,14 @@ if [ "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" = "$BRANCH" ]; then
   fi
 fi
 
-# ---------- worktree removal ----------
-
 remove_force() {
   # dev-pipeline: retry Windows file-lock, then rm -rf within $REPO_ROOT/.worktrees/ whitelist.
   # Canonicalize the path via `cd && pwd -P` before the whitelist check so a caller cannot
   # escape via `..` segments (textual prefix match alone is not enough — #277 review finding).
   local wt="$1"
-  run git worktree remove --force "$wt" && return 0
+  run git worktree remove --force -- "$wt" && return 0
   sleep 2
-  run git worktree remove --force "$wt" && return 0
+  run git worktree remove --force -- "$wt" && return 0
   warn "git worktree remove retry failed for $wt"
   [ -n "$wt" ] && [ -d "$wt" ] && [ ! -L "$wt" ] || return 1
   local wt_canon
@@ -150,6 +147,9 @@ remove_safe() {
   if ! git -C "$wt" status --porcelain >/dev/null 2>&1; then
     warn "worktree $wt is inaccessible — pruning"
     run git worktree prune --expire=now || return 1
+    # In dry-run mode `run` is a no-op: the prune above didn't actually execute, so the
+    # post-action verification below would incorrectly report failure. Short-circuit.
+    [ "$DRY_RUN" -eq 1 ] && return 0
     if git worktree list --porcelain | grep -Fq "worktree $wt"; then
       warn "worktree $wt still registered after prune"
       return 1
@@ -160,7 +160,7 @@ remove_safe() {
     warn "worktree $wt has uncommitted changes — skipping"
     return 1
   fi
-  run git worktree remove "$wt"
+  run git worktree remove -- "$wt"
 }
 
 while IFS= read -r wt_path; do
@@ -183,12 +183,12 @@ done <<< "$WT_PATHS"
 #     original Phase 7 guard (dirty worktree → preserve branch so the user can inspect).
 
 if [ "$WT_FAIL" -eq 0 ]; then
-  if ! run git branch -d "$BRANCH"; then
+  if ! run git branch -d -- "$BRANCH"; then
     warn "git branch -d $BRANCH failed (likely still registered in a worktree)"
   fi
   exit 0
 elif [ "$FORCE" -eq 1 ]; then
-  if ! run git branch -d "$BRANCH"; then
+  if ! run git branch -d -- "$BRANCH"; then
     warn "git branch -d $BRANCH failed (worktree cleanup incomplete — expected)"
   fi
   exit 1

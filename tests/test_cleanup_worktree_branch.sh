@@ -232,6 +232,30 @@ test_force_deletes_branch_even_on_wt_fail() {
   cleanup_sandbox "$sb"
 }
 
+# ---------- test: --worktree-path rejects newline injection ----------
+TOTAL=$((TOTAL + 1))
+test_worktree_path_rejects_newline() {
+  local sb
+  sb=$(mk_sandbox) || { fail "setup failed"; return; }
+  (
+    cd "$sb" || exit 1
+    mkdir -p "$sb/innocent-target"
+    echo "sentinel" > "$sb/innocent-target/SENTINEL"
+    git worktree remove --force "$sb/.worktrees/feat-test"
+    # Path with embedded newline: the first line is an attacker-controlled target.
+    local malicious="$sb/innocent-target"$'\n'"$sb/.worktrees/feat-test"
+    out=$(bash "$SCRIPT" feat/test main --force --worktree-path "$malicious" 2>&1)
+    rc=$?
+    [ "$rc" -eq 2 ] || { echo "expected exit 2, got $rc"; exit 1; }
+    echo "$out" | grep -q "single-line path" || { echo "no rejection message"; exit 1; }
+    [ -f "$sb/innocent-target/SENTINEL" ] || { echo "sentinel deleted — newline injection worked"; exit 1; }
+  )
+  if [ $? -eq 0 ]; then pass "--worktree-path rejects newline-injected value"
+  else fail "--worktree-path rejects newline-injected value"
+  fi
+  cleanup_sandbox "$sb"
+}
+
 # ---------- test: remote URL credentials are stripped from observability echo ----------
 TOTAL=$((TOTAL + 1))
 test_remote_credential_strip() {
@@ -332,6 +356,7 @@ test_force_deletes_branch_even_on_wt_fail
 test_no_worktree_still_deletes_branch
 test_rmrf_traversal_guard
 test_remote_credential_strip
+test_worktree_path_rejects_newline
 
 echo ""
 echo "Summary: $((TOTAL - FAILED))/$TOTAL tests passed"
