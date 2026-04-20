@@ -1,36 +1,17 @@
 #!/usr/bin/env bash
 # cleanup-worktree-branch.sh — shared worktree + branch cleanup for dev-pipeline + pr-flow.
+# Single source of truth for the inline blocks that diverged in S62 (see Mercury #274).
 #
-# Unifies two prior inline implementations (dev-pipeline/SKILL.md Phase 5 cleanup block
-# and pr-flow/SKILL.md Phase 7 cleanup block) behind one SoT script to eliminate drift.
+# Usage: cleanup-worktree-branch.sh <BRANCH> <BASE_BRANCH> [--force] [--worktree-path PATH] [--dry-run]
 #
-# Usage:
-#   cleanup-worktree-branch.sh <BRANCH> <BASE_BRANCH> [options]
+# --force: dev-pipeline semantics — `git worktree remove --force` with retry + rm -rf fallback
+#   whitelisted to $REPO_ROOT/.worktrees/ (symlink-guarded) + unconditional `git branch -d` attempt.
+# (no flag): pr-flow semantics — safe mode; dirty worktrees are preserved, branch kept for review.
+# --worktree-path PATH: skip auto-discovery (used by dev-pipeline which creates the path itself).
+# --dry-run: print destructive commands without executing.
 #
-# Positional:
-#   BRANCH        Branch whose worktree(s) should be removed and whose local ref should be deleted.
-#   BASE_BRANCH   Branch to switch HEAD to before worktree removal (if HEAD is currently on BRANCH).
-#
-# Options:
-#   --force                    Use `git worktree remove --force` + Windows file-lock retry + rm -rf fallback.
-#                              Skips uncommitted-changes check. Intended for dev-pipeline where the
-#                              worktree is throwaway by construction.
-#   --worktree-path <path>     Explicit worktree path to clean (skip discovery). Intended for
-#                              dev-pipeline where the path was created by the same skill run.
-#                              Without this flag, the script discovers all worktrees whose branch
-#                              matches BRANCH via `git worktree list --porcelain`.
-#   --dry-run                  Print destructive commands without executing them.
-#
-# Exit codes:
-#   0   All worktrees removed AND local branch deleted.
-#   1   Worktree cleanup incomplete (at least one worktree remove failed or a worktree had
-#       uncommitted changes in safe mode). Local branch is NOT deleted in this case.
-#   2   Invalid arguments or unrecoverable git error (not inside a repo, etc.).
-#
-# Safety:
-#   The rm -rf fallback (activated only under --force + Windows file-lock) is restricted to paths
-#   matching "<REPO_ROOT>/.worktrees/*" and refuses to follow symlinks. Any other path triggers a
-#   warning and is left on disk.
+# Exit: 0 = complete; 1 = worktree cleanup incomplete (branch preservation in safe mode);
+#       2 = invalid args / not inside a git repo.
 
 set -u
 
@@ -89,6 +70,11 @@ done
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
 MAIN_WT="$REPO_ROOT"
 
+# Cross-repo observability (per Mercury feedback_cross_repo_declare): print repo + remote so
+# a user or log reader can verify at a glance which repo this invocation is operating on.
+REPO_REMOTE=$(git remote get-url origin 2>/dev/null || echo "(no origin)")
+echo "cleanup-worktree-branch: repo=$REPO_ROOT remote=$REPO_REMOTE branch=$BRANCH base=$BASE_BRANCH force=$FORCE dry-run=$DRY_RUN" >&2
+
 run() {
   if [ "$DRY_RUN" -eq 1 ]; then
     echo "[dry-run] $*"
@@ -132,47 +118,35 @@ fi
 # ---------- worktree removal ----------
 
 remove_force() {
-  # dev-pipeline semantics: --force, retry once on transient Windows file lock,
-  # fall back to rm -rf within the $REPO_ROOT/.worktrees/ whitelist.
+  # dev-pipeline: retry Windows file-lock, then rm -rf within $REPO_ROOT/.worktrees/ whitelist.
   local wt="$1"
-  if run git worktree remove --force "$wt"; then
-    return 0
-  fi
+  run git worktree remove --force "$wt" && return 0
   sleep 2
-  if run git worktree remove --force "$wt"; then
-    return 0
-  fi
+  run git worktree remove --force "$wt" && return 0
   warn "git worktree remove retry failed for $wt"
-  if [ -n "$wt" ] && [ -d "$wt" ] && [ ! -L "$wt" ]; then
-    case "$wt" in
-      "$REPO_ROOT/.worktrees/"*)
-        if run rm -rf -- "$wt"; then
-          # Prune stale worktree metadata that still references the now-deleted path,
-          # otherwise subsequent `git branch -d` may refuse ("branch is checked out").
-          run git worktree prune 2>/dev/null || true
-          return 0
-        fi
-        warn "rm -rf fallback failed for $wt"
-        return 1
-        ;;
-      *)
-        warn "refuse to rm -rf path outside $REPO_ROOT/.worktrees/: $wt"
-        return 1
-        ;;
-    esac
-  fi
-  return 1
+  [ -n "$wt" ] && [ -d "$wt" ] && [ ! -L "$wt" ] || return 1
+  case "$wt" in
+    "$REPO_ROOT/.worktrees/"*)
+      if run rm -rf -- "$wt"; then
+        run git worktree prune 2>/dev/null || true   # clear stale metadata
+        return 0
+      fi
+      warn "rm -rf fallback failed for $wt"
+      return 1
+      ;;
+    *)
+      warn "refuse to rm -rf path outside $REPO_ROOT/.worktrees/: $wt"
+      return 1
+      ;;
+  esac
 }
 
 remove_safe() {
-  # pr-flow semantics: no --force. Inaccessible worktrees are pruned; dirty worktrees are
-  # preserved (and reported as failure so the branch is not deleted).
+  # pr-flow: preserve dirty worktrees. Inaccessible → prune; clean → plain remove.
   local wt="$1"
   if ! git -C "$wt" status --porcelain >/dev/null 2>&1; then
     warn "worktree $wt is inaccessible — pruning"
-    if ! run git worktree prune --expire=now; then
-      return 1
-    fi
+    run git worktree prune --expire=now || return 1
     if git worktree list --porcelain | grep -Fq "worktree $wt"; then
       warn "worktree $wt still registered after prune"
       return 1
