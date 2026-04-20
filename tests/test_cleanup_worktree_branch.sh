@@ -249,7 +249,9 @@ test_remote_credential_strip() {
     for url_variant in \
       "https://user:supersecret@example.com/repo.git" \
       "ssh://user:supersecret@example.com/repo.git" \
-      "user:supersecret@example.com:repo.git"; do
+      "user:supersecret@example.com:repo.git" \
+      "https://supersecret@example.com/repo.git" \
+      "https://supersecret-gh-pat-12345@example.com/repo.git"; do
       git remote remove origin 2>/dev/null || true
       git remote add origin "$url_variant"
       # Reuse the same branch for each variant: recreate feat/test if it was deleted by a prior run.
