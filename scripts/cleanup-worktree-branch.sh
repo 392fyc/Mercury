@@ -1,32 +1,17 @@
 #!/usr/bin/env bash
-# cleanup-worktree-branch.sh — shared worktree + branch cleanup for dev-pipeline + pr-flow.
-# Single source of truth for the inline blocks that diverged in S62 (see Mercury #274).
-#
+# cleanup-worktree-branch.sh — shared worktree + branch cleanup (dev-pipeline Phase 5 + pr-flow
+# Phase 7). SoT for the inline blocks that diverged in S62 (see Mercury #274).
 # Usage: cleanup-worktree-branch.sh <BRANCH> <BASE_BRANCH> [--force] [--worktree-path PATH] [--dry-run]
-#
-# --force: dev-pipeline semantics — `git worktree remove --force` with retry + rm -rf fallback
-#   whitelisted to $REPO_ROOT/.worktrees/ (symlink-guarded) + unconditional `git branch -d` attempt.
-# (no flag): pr-flow semantics — safe mode; dirty worktrees are preserved, branch kept for review.
-# --worktree-path PATH: skip auto-discovery (used by dev-pipeline which creates the path itself).
-# --dry-run: print destructive commands without executing.
-#
-# Exit: 0 = complete; 1 = worktree cleanup incomplete (branch preservation in safe mode);
-#       2 = invalid args / not inside a git repo.
+#   --force        dev-pipeline: retry + rm -rf whitelist + unconditional `git branch -d`
+#   (no flag)      pr-flow safe mode: preserve dirty worktrees, gated branch delete
+#   --worktree-path PATH  skip auto-discovery
+#   --dry-run      print destructive commands without executing
+# Exit: 0 complete | 1 worktree cleanup incomplete | 2 invalid args / not in a git repo
 
 set -u
 
-# ---------- utilities ----------
-
-die() {
-  echo "cleanup-worktree-branch: $1" >&2
-  exit 2
-}
-
-warn() {
-  echo "WARN: $1" >&2
-}
-
-# ---------- arg parse ----------
+die()  { echo "cleanup-worktree-branch: $1" >&2; exit 2; }
+warn() { echo "WARN: $1" >&2; }
 
 BRANCH=""
 BASE_BRANCH=""
@@ -44,7 +29,7 @@ while [ $# -gt 0 ]; do
       shift 2
       ;;
     -h|--help)
-      sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     --) shift; break ;;
@@ -68,6 +53,9 @@ done
 [ -n "$BASE_BRANCH" ] || die "missing BASE_BRANCH argument"
 
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
+# Canonical form: resolve symlinks and `..` so the rm -rf whitelist cannot be bypassed by
+# a caller passing e.g. "$REPO_ROOT/.worktrees/../etc" that textually matches the prefix.
+REPO_ROOT_CANON=$(cd "$REPO_ROOT" && pwd -P) || die "cannot canonicalize REPO_ROOT"
 MAIN_WT="$REPO_ROOT"
 
 # Cross-repo observability (per Mercury feedback_cross_repo_declare): print repo + remote so
@@ -119,23 +107,30 @@ fi
 
 remove_force() {
   # dev-pipeline: retry Windows file-lock, then rm -rf within $REPO_ROOT/.worktrees/ whitelist.
+  # Canonicalize the path via `cd && pwd -P` before the whitelist check so a caller cannot
+  # escape via `..` segments (textual prefix match alone is not enough — #277 review finding).
   local wt="$1"
   run git worktree remove --force "$wt" && return 0
   sleep 2
   run git worktree remove --force "$wt" && return 0
   warn "git worktree remove retry failed for $wt"
   [ -n "$wt" ] && [ -d "$wt" ] && [ ! -L "$wt" ] || return 1
-  case "$wt" in
-    "$REPO_ROOT/.worktrees/"*)
-      if run rm -rf -- "$wt"; then
+  local wt_canon
+  wt_canon=$(cd "$wt" 2>/dev/null && pwd -P) || {
+    warn "cannot canonicalize $wt — refusing rm -rf fallback"
+    return 1
+  }
+  case "$wt_canon" in
+    "$REPO_ROOT_CANON/.worktrees/"*)
+      if run rm -rf -- "$wt_canon"; then
         run git worktree prune 2>/dev/null || true   # clear stale metadata
         return 0
       fi
-      warn "rm -rf fallback failed for $wt"
+      warn "rm -rf fallback failed for $wt_canon"
       return 1
       ;;
     *)
-      warn "refuse to rm -rf path outside $REPO_ROOT/.worktrees/: $wt"
+      warn "refuse to rm -rf path outside $REPO_ROOT_CANON/.worktrees/ (canonical: $wt_canon)"
       return 1
       ;;
   esac

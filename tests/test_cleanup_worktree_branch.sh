@@ -232,6 +232,31 @@ test_force_deletes_branch_even_on_wt_fail() {
   cleanup_sandbox "$sb"
 }
 
+# ---------- test: rm -rf whitelist resists `..` path traversal ----------
+TOTAL=$((TOTAL + 1))
+test_rmrf_traversal_guard() {
+  # Attacker passes a path that textually starts with "$REPO_ROOT/.worktrees/" but, after
+  # canonicalization, resolves OUTSIDE the whitelist via `..`. The script MUST refuse and
+  # preserve the sentinel file in the escape target.
+  local sb
+  sb=$(mk_sandbox) || { fail "setup failed"; return; }
+  (
+    cd "$sb" || exit 1
+    mkdir -p "$sb/escape-target"
+    echo "sentinel" > "$sb/escape-target/SENTINEL"
+    # Traversal path: textually inside .worktrees/ but resolves to $sb/escape-target.
+    local traversal="$sb/.worktrees/../escape-target"
+    git worktree remove --force "$sb/.worktrees/feat-test"
+    bash "$SCRIPT" feat/test main --force --worktree-path "$traversal" 2>&1 | grep -q "refuse to rm -rf" \
+      || { echo "expected 'refuse to rm -rf' warning on traversal path"; exit 1; }
+    [ -f "$sb/escape-target/SENTINEL" ] || { echo "sentinel deleted — traversal guard bypassed"; exit 1; }
+  )
+  if [ $? -eq 0 ]; then pass "rm -rf refuses canonicalized path outside whitelist (traversal guard)"
+  else fail "rm -rf refuses canonicalized path outside whitelist (traversal guard)"
+  fi
+  cleanup_sandbox "$sb"
+}
+
 # ---------- test: branch with no registered worktree -> safe mode still deletes branch ----------
 TOTAL=$((TOTAL + 1))
 test_no_worktree_still_deletes_branch() {
@@ -263,6 +288,7 @@ test_rmrf_whitelist_guard
 test_pre_switch_runs
 test_force_deletes_branch_even_on_wt_fail
 test_no_worktree_still_deletes_branch
+test_rmrf_traversal_guard
 
 echo ""
 echo "Summary: $((TOTAL - FAILED))/$TOTAL tests passed"
