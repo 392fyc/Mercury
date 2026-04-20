@@ -235,22 +235,39 @@ test_force_deletes_branch_even_on_wt_fail() {
 # ---------- test: remote URL credentials are stripped from observability echo ----------
 TOTAL=$((TOTAL + 1))
 test_remote_credential_strip() {
+  # Covers three forms Argus flagged across iter-3 and iter-4:
+  #   (a) https://user:token@host/path — classic HTTPS with token
+  #   (b) ssh://user:token@host/path   — SSH URL form with token
+  #   (c) user:token@host:path         — SCP-like form with credentials
+  # All must be redacted. Plain `git@host:path` SSH (no colon in userinfo) must pass through.
   local sb
   sb=$(mk_sandbox) || { fail "setup failed"; return; }
   (
     cd "$sb" || exit 1
-    # Inject a fake origin URL with embedded credentials. The script's observability echo
-    # MUST strip the userinfo before logging (per #277 iter-3 finding).
-    git remote add origin "https://user:supersecret-token@example.com/repo.git"
     git worktree remove --force "$sb/.worktrees/feat-test"
+
+    for url_variant in \
+      "https://user:supersecret@example.com/repo.git" \
+      "ssh://user:supersecret@example.com/repo.git" \
+      "user:supersecret@example.com:repo.git"; do
+      git remote remove origin 2>/dev/null || true
+      git remote add origin "$url_variant"
+      # Reuse the same branch for each variant: recreate feat/test if it was deleted by a prior run.
+      git show-ref --verify --quiet refs/heads/feat/test || git branch feat/test
+      out=$(bash "$SCRIPT" feat/test main 2>&1)
+      echo "$out" | grep -q "supersecret" && { echo "credential leaked for variant: $url_variant => $out"; exit 1; }
+      echo "$out" | grep -q "\[REDACTED\]@" || { echo "no [REDACTED] marker for variant: $url_variant"; exit 1; }
+    done
+
+    # Bare git@host:path SSH (no colon in userinfo — not a credential form) must pass through unchanged.
+    git remote remove origin
+    git remote add origin "git@example.com:repo.git"
+    git show-ref --verify --quiet refs/heads/feat/test || git branch feat/test
     out=$(bash "$SCRIPT" feat/test main 2>&1)
-    # Token must not appear in output
-    echo "$out" | grep -q "supersecret-token" && { echo "credential leaked in log: $out"; exit 1; }
-    # Sanitized form must appear (starts with https:// and omits the userinfo)
-    echo "$out" | grep -q "remote=https://example.com/repo.git" || { echo "sanitized remote not found"; exit 1; }
+    echo "$out" | grep -q "remote=git@example.com:repo.git" || { echo "plain git@host:path mangled: $out"; exit 1; }
   )
-  if [ $? -eq 0 ]; then pass "remote URL credentials stripped from observability echo"
-  else fail "remote URL credentials stripped from observability echo"
+  if [ $? -eq 0 ]; then pass "remote URL credentials stripped across https/ssh/scp-like forms"
+  else fail "remote URL credentials stripped across https/ssh/scp-like forms"
   fi
   cleanup_sandbox "$sb"
 }

@@ -63,7 +63,10 @@ MAIN_WT="$REPO_ROOT"
 # Strip any embedded credentials (`https://user:token@host/...` or `ssh://user@host/...`) before
 # logging — the remote URL may contain secrets and this runs in CI/terminal scrollback contexts.
 REPO_REMOTE=$(git remote get-url origin 2>/dev/null || echo "(no origin)")
-REPO_REMOTE_SAFE=$(printf '%s' "$REPO_REMOTE" | sed -E 's#(^[a-z]+://)[^/@]*@#\1#')
+# Redact any `user:pass@` userinfo block regardless of scheme. Covers HTTPS (`https://u:p@h/...`),
+# SSH-URL (`ssh://u:p@h/...`), and SCP-like (`u:p@h:path`). Leaves `git@host:path` alone because
+# it has no colon inside the userinfo (SSH standard, no credential material).
+REPO_REMOTE_SAFE=$(printf '%s' "$REPO_REMOTE" | sed -E 's#[^/@[:space:]]+:[^/@[:space:]]+@#[REDACTED]@#g')
 echo "cleanup-worktree-branch: repo=$REPO_ROOT remote=$REPO_REMOTE_SAFE branch=$BRANCH base=$BASE_BRANCH force=$FORCE dry-run=$DRY_RUN" >&2
 
 run() {
