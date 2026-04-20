@@ -232,6 +232,29 @@ test_force_deletes_branch_even_on_wt_fail() {
   cleanup_sandbox "$sb"
 }
 
+# ---------- test: remote URL credentials are stripped from observability echo ----------
+TOTAL=$((TOTAL + 1))
+test_remote_credential_strip() {
+  local sb
+  sb=$(mk_sandbox) || { fail "setup failed"; return; }
+  (
+    cd "$sb" || exit 1
+    # Inject a fake origin URL with embedded credentials. The script's observability echo
+    # MUST strip the userinfo before logging (per #277 iter-3 finding).
+    git remote add origin "https://user:supersecret-token@example.com/repo.git"
+    git worktree remove --force "$sb/.worktrees/feat-test"
+    out=$(bash "$SCRIPT" feat/test main 2>&1)
+    # Token must not appear in output
+    echo "$out" | grep -q "supersecret-token" && { echo "credential leaked in log: $out"; exit 1; }
+    # Sanitized form must appear (starts with https:// and omits the userinfo)
+    echo "$out" | grep -q "remote=https://example.com/repo.git" || { echo "sanitized remote not found"; exit 1; }
+  )
+  if [ $? -eq 0 ]; then pass "remote URL credentials stripped from observability echo"
+  else fail "remote URL credentials stripped from observability echo"
+  fi
+  cleanup_sandbox "$sb"
+}
+
 # ---------- test: rm -rf whitelist resists `..` path traversal ----------
 TOTAL=$((TOTAL + 1))
 test_rmrf_traversal_guard() {
@@ -289,6 +312,7 @@ test_pre_switch_runs
 test_force_deletes_branch_even_on_wt_fail
 test_no_worktree_still_deletes_branch
 test_rmrf_traversal_guard
+test_remote_credential_strip
 
 echo ""
 echo "Summary: $((TOTAL - FAILED))/$TOTAL tests passed"

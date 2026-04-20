@@ -60,8 +60,11 @@ MAIN_WT="$REPO_ROOT"
 
 # Cross-repo observability (per Mercury feedback_cross_repo_declare): print repo + remote so
 # a user or log reader can verify at a glance which repo this invocation is operating on.
+# Strip any embedded credentials (`https://user:token@host/...` or `ssh://user@host/...`) before
+# logging — the remote URL may contain secrets and this runs in CI/terminal scrollback contexts.
 REPO_REMOTE=$(git remote get-url origin 2>/dev/null || echo "(no origin)")
-echo "cleanup-worktree-branch: repo=$REPO_ROOT remote=$REPO_REMOTE branch=$BRANCH base=$BASE_BRANCH force=$FORCE dry-run=$DRY_RUN" >&2
+REPO_REMOTE_SAFE=$(printf '%s' "$REPO_REMOTE" | sed -E 's#(^[a-z]+://)[^/@]*@#\1#')
+echo "cleanup-worktree-branch: repo=$REPO_ROOT remote=$REPO_REMOTE_SAFE branch=$BRANCH base=$BASE_BRANCH force=$FORCE dry-run=$DRY_RUN" >&2
 
 run() {
   if [ "$DRY_RUN" -eq 1 ]; then
