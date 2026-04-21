@@ -53,9 +53,9 @@ Evaluate each proposed pattern on four axes:
 # Feasibility Report: <question>
 
 ## Options Evaluated
-| Option | Cost | Art Debt | Coupling | Payoff |
-|--------|------|----------|----------|--------|
-| <name> | S/M/L | none/some/heavy | light/medium/heavy | <specific decision added> |
+| Option | Cost | Art Debt | Coupling | Payoff | Feasibility |
+|--------|------|----------|----------|--------|-------------|
+| <name> | S/M/L | none/some/heavy | light/medium/heavy | <specific decision added> | <low–med / med–high / etc. — always a range, never a point> |
 
 ## Top 3 Risks
 1. **<risk name>** — <1-line mechanism + which option(s) it applies to + mitigation if any>

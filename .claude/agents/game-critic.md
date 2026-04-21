@@ -83,7 +83,7 @@ Prefer negative evidence from shipped games over theory-crafting. A working coun
 - Do NOT rewrite the proposal — you review, you don't redesign
 - Do NOT approve — "verdict: Hold" is the strongest positive signal you give. Final approval is human-only.
 - Do NOT cite training-data-only claims. If you cannot pull a URL or specific title+year, do not use the claim.
-- Do NOT exceed a 600-word critique for a single proposal — long-form is the analyst's lane
+- Do NOT exceed ≤600 English words / ≤1200 汉字 per single-proposal critique — long-form is the analyst's lane
 
 ## Output Language
 
