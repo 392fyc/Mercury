@@ -154,5 +154,41 @@
     "import_date": "2026-04-10",
     "import_rationale": "Contains caveman prompt text extracted from upstream SKILL.md for use as CLAUDE.local.md injection template (Issue #213)",
     "last_drift_check": null
+  },
+  {
+    "path": ".claude/agents/game-researcher.md",
+    "scope": "project",
+    "upstream_repo": "msitarzewski/agency-agents",
+    "upstream_path": "product/product-trend-researcher.md",
+    "upstream_sha_at_import": "783f6a72bfd7f3135700ac273c619d92821b419a",
+    "upstream_license": "MIT",
+    "import_pr": 281,
+    "import_date": "2026-04-21",
+    "import_rationale": "Game-dev A→B→C subagent chain stage 1 (information aggregation) for SoT production trial (Issue #281)",
+    "last_drift_check": null
+  },
+  {
+    "path": ".claude/agents/game-analyst.md",
+    "scope": "project",
+    "upstream_repo": "msitarzewski/agency-agents",
+    "upstream_path": "sales/sales-pipeline-analyst.md",
+    "upstream_sha_at_import": "783f6a72bfd7f3135700ac273c619d92821b419a",
+    "upstream_license": "MIT",
+    "import_pr": 281,
+    "import_date": "2026-04-21",
+    "import_rationale": "Game-dev A→B→C subagent chain stage 2 (feasibility analysis) for SoT production trial (Issue #281)",
+    "last_drift_check": null
+  },
+  {
+    "path": ".claude/agents/game-critic.md",
+    "scope": "project",
+    "upstream_repo": "msitarzewski/agency-agents",
+    "upstream_path": "engineering/engineering-code-reviewer.md",
+    "upstream_sha_at_import": "783f6a72bfd7f3135700ac273c619d92821b419a",
+    "upstream_license": "MIT",
+    "import_pr": 281,
+    "import_date": "2026-04-21",
+    "import_rationale": "Game-dev A→B→C subagent chain stage 3 (adversarial validation) for SoT production trial (Issue #281)",
+    "last_drift_check": null
   }
 ]
