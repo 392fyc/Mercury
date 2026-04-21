@@ -1,7 +1,7 @@
 ---
 name: game-researcher
 description: Game-design information aggregator. Accepts a tactical-RPG / game-mechanics question and returns structured raw data with citations — genre precedents, platform references, community discussion, known patterns. No judgment, no final decision. Paired with game-analyst + game-critic for SoT-style production trials.
-tools: WebSearch, WebFetch, Read
+tools: WebSearch, Read
 model: haiku
 upstream_source: msitarzewski/agency-agents
 upstream_sha: 783f6a72bfd7f3135700ac273c619d92821b419a
