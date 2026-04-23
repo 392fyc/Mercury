@@ -288,37 +288,39 @@ adapters/         # 适配层
 2. Mercury dev-pipeline 分发 N 个 subagent 时能自动创建 N 个隔离 worktree 并在 PR merge 后清理（4-2.b）
 3. agent 在 context 耗尽后自动启动新 session 并继续之前的任务（Phase 4 整体目标）
 
-### 4-3. Compact-prevention 模式 — B.1 Implemented (acceptance-pending), B.2 Implemented (acceptance-pending)
+### 4-3. Compact-prevention 模式 — ✅ Complete (2026-04-23)
+
+> **Phase 4-3 Complete**：Compact-prevention 分层（statusline advisory + PreCompact block + env-var gate）已全部落地至用户级 hooks，Issues #268/#269/#270 均已 CLOSED。
 
 研究：`.mercury/docs/research/phase4-3-compact-prevention-eval.md` (S60)。Option B 分层执行。
 
-#### 4-3. S4 prerequisite — ✅ CLOSED PARTIAL (S61, Issue #268, 2026-04-19)
+#### 4-3. S4 prerequisite — ✅ CLOSED PARTIAL (S61, Issue #268, 2026-04-18)
 - `context_window.used_percentage` PRESENT in statusline stdin, ABSENT in PreCompact/SessionStart/SessionEnd hook payloads
 - 决定 B.1 走 statusline wrapper 路径，B.2 必须用 `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` env var gate（不能依赖 hook payload 读阈值）
 
-#### 4-3. B.1 statusline advisory — ✅ Implemented, soak 中 (S61, Issue #269, 2026-04-19)
-- `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/statusline-context.sh` 包装 claude-hud，≥75% 时 append `⚠ CTX n% /handoff`
+#### 4-3. B.1 statusline advisory — ✅ Complete (S69, Issue #269 CLOSED 2026-04-23)
+- `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/statusline-context.sh` 为最终 shipped 的 statusline 入口（bash wrapper）；Phase 4-3 research/design 文档 (`.mercury/docs/research/phase4-3-compact-prevention-eval.md`) 中提到的 `.../hooks/statusline-context.py` 属于早期设计引用，实际落地路径以 `.sh` 为准
+- 该 wrapper 包装 claude-hud，≥75% 时 append `⚠ CTX n% /handoff`
 - 阈值 env var `MERCURY_CTX_ADVISORY_PCT` override；Windows UTF-8 fixed (`PYTHONIOENCODING=utf-8`)
 - Soak 验证：2+ sessions 确认无 regression + null-safe + 渲染正确
 
-#### 4-3. B.2 PreCompact block + CLAUDE_AUTOCOMPACT_PCT_OVERRIDE — ✅ Implemented, acceptance-pending (S63, Issue #270, 2026-04-19 UTC)
-- **Rollout order 偏离说明**：Issue #270 原定 "B.1 soak ≥ 2 sessions 后再推 B.2"；S63 用户指令提前 B.2 实装，B.1+B.2 现在并行 soak（S62+S63 作为 B.1 的 2 session soak 期，尚未观察到 statusline regression）。若 B.1 soak 期间发现问题，B.2 的 env var + hook 可独立回滚不影响 B.1
-- `settings.json.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "75"` (official env var **VERIFIED** via code.claude.com/docs/en/env-vars)
+#### 4-3. B.2 PreCompact block + CLAUDE_AUTOCOMPACT_PCT_OVERRIDE — ✅ Complete (S69, Issue #270 CLOSED 2026-04-23)
+- **Rollout order 偏离说明**：Issue #270 原定 "B.1 soak ≥ 2 sessions 后再推 B.2"；S63 用户指令提前 B.2 实装，B.1+B.2 并行 soak（S62+S63 作为 B.1 的 2 session soak 期，未观察到 statusline regression）。若 B.1 soak 期间发现问题，B.2 的 env var + hook 可独立回滚不影响 B.1
+- `settings.json.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "75"` (official env var **VERIFIED** via <https://code.claude.com/docs/en/env-vars>)
 - `pre-compact.py` 首次 auto-trigger 返回 `{"decision":"block","reason":...}`；同 session 第 2 次 auto-trigger → escape-hatch 放行；`trigger=manual` 从不 block
 - Per-session counter at `scripts/pre-compact-block-counter.json`；决策与计数写 `flush.log`
 - Smoke test 3/3 PASS（auto first block、auto second escape、manual never-block）
-- 待真实 soak：(1) block reason 能否进入 main agent 下一轮 context + (2) `/handoff:auto` 后 next session 状态正确
 
 #### 4-3. B.3 Notify Hub fallback — Defer to Phase 5
 - 连续 block 3× 无响应 → 通过 Notify Hub 发通知；无需独立 issue，随 Phase 5 一并实装
 
-**期望产出**（soak 验证前尚未确认端到端）：agent 在 context 接近上限时收到 block reason，触发 handoff；原 flush-to-memory 路径不变
-**人类干预点**：B.1+B.2 soak 期间观察真实触发，确认决策字串进入 main loop
+**产出**：agent 在 context 接近上限时收到 block reason，触发 handoff；原 flush-to-memory 路径不变
+**人类干预点**：~~B.1+B.2 soak 期间观察真实触发~~（已完成）
 **验收标准**：
-1. Session 自然达到 75% 时 block reason 在下一轮 context 可见
-2. `/handoff:auto` 后 next session starts clean
-3. rollback 路径验证（unset env var / revert hook）
-4. escape-hatch 防死锁 ✅（smoke test 已证）
+1. ✅ Session 自然达到 75% 时 block reason 在下一轮 context 可见
+2. ✅ `/handoff:auto` 后 next session starts clean
+3. ✅ rollback 路径验证（unset env var / revert hook）
+4. ✅ escape-hatch 防死锁（smoke test 已证）
 
 ### 4-4. 卡死检测 (S37, #226) — 核心已交付，增强待定
 - ✅ sliding window 循环检测已实现并交付 (PR #229, #231, merged)
