@@ -1,7 +1,7 @@
 ---
 name: dual-verify
 description: |
-  Run parallel Claude Code deep-review and Codex code-audit, then consolidate findings before marking PR ready. Use instead of /code-review or auto-verify when doing pre-merge review. Trigger on: "dual verify", "dual-verify", "parallel review", "run dual verify", "双路验证", "双向验证", "并行review", "双路review".
+  Run Claude Code deep-review and Codex code-audit in parallel, then consolidate findings. **This is the mandatory pre-commit review step per Mercury CLAUDE.md** — use this instead of /code-review or /auto-verify. Trigger: 'dual verify', 'dual-verify', 'parallel review', 'run dual verify', '双路验证', '并行review', '代码审查', 'review before commit'. Use before any PR creation or direct commit to protected branches.
 user-invocable: true
 allowed-tools: Bash, Read, Grep, Glob, Agent
 ---

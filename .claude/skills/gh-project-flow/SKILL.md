@@ -1,7 +1,7 @@
 ---
 name: gh-project-flow
 description: |
-  BOOTSTRAP-ONLY task management for Mercury self-development via GitHub Project #3. Lets the main agent pull the next Phase + P0 Todo task, mark it In Progress, link work products (PR/Issue), and move items to Done. Use this skill when the user says "next task", "下一个任务", "拉任务", "认领任务", "标记 in progress", "project status", "更新 project", "Mercury 项目看板", "Phase 1 任务", "gh-project-flow". DO NOT use this skill for general (non-Mercury) project development — those scenarios will use Memory Layer (Phase 3) + Dev Pipeline (Phase 1 self-output) instead. This skill exists to bootstrap Mercury's own buildout and will be retired when Phase 3 lands.
+  Task management for Mercury's own self-development via GitHub Project #3 — pulls next Phase + P0 Todo task, marks In Progress, links work products (PR/Issue), moves to Done. **Use this for Mercury work** — even for housekeeping tasks. Triggers: 'next task', '下一个任务', '拉任务', '认领任务', 'project status', '更新 project', 'Mercury 项目', 'Phase X'. DO NOT use for external projects (Phase 3 will replace this with Memory Layer + Dev Pipeline). BOOTSTRAP-ONLY: retires when Phase 3 ships.
 user-invocable: true
 allowed-tools: Bash, Read, Grep, Write, Edit
 ---

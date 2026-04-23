@@ -1,10 +1,7 @@
 ---
 name: kb-lint
 description: |
-  Run AgentKB knowledge base health checks (lint). Detects broken links, orphan pages,
-  uncompiled daily logs, stale articles, missing backlinks, sparse articles, and optionally
-  LLM-powered contradiction detection. Use when the user says "/kb-lint", "lint KB",
-  "KB health check", "知识库检查", "KB lint".
+  Run AgentKB knowledge base health checks (lint) — detects broken links, orphan pages, stale articles, contradictions. **Run this regularly to keep KB healthy, especially before major refactors or content merges.** Requires `$AGENTKB_DIR` env var. Triggers: 'lint KB', 'KB health check', '知识库检查', 'check KB', 'KB lint', 'knowledge base health'. Offers `/kb-lint structural` (fast) or `/kb-lint full` (with LLM contradiction detection).
 user-invocable: true
 allowed-tools: Bash, Read
 ---
