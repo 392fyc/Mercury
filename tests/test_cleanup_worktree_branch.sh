@@ -385,7 +385,7 @@ FAKEGIT
     # The WARN for failed switch must appear (pre-switch fired).
     echo "$out" | grep -q "failed to switch off branch" || { echo "no pre-switch warning; output: $out"; exit 1; }
     # The branch-d attempt must also appear in output (fired even though WT_FAIL=1).
-    echo "$out" | grep -q "git branch -d\|branch -d feat/test failed" || { echo "no branch-d attempt in output; output: $out"; exit 1; }
+    echo "$out" | grep -Eq 'git branch -d|branch -d feat/test failed' || { echo "no branch-d attempt in output; output: $out"; exit 1; }
   )
   if [ $? -eq 0 ]; then pass "force mode: pre-switch failure still fires branch-d (nit 3)"
   else fail "force mode: pre-switch failure still fires branch-d (nit 3)"

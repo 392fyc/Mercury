@@ -92,9 +92,10 @@ if [ -n "$EXPLICIT_WT_PATH" ]; then
   WT_PATHS="$EXPLICIT_WT_PATH"
 else
   if ! WT_LIST=$(git worktree list --porcelain 2>&1); then
-    warn "git worktree list failed — skipping worktree cleanup"
+    warn "git worktree list failed — skipping worktree removal"
     if [ "$FORCE" -eq 1 ]; then
       WT_FAIL=1
+      WT_PATHS=""
     else
       exit 1
     fi
@@ -108,11 +109,16 @@ fi
 # Pre-switch off BRANCH if HEAD is on it (required before branch -d).
 if [ "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" = "$BRANCH" ]; then
   if ! run git switch -- "$BASE_BRANCH" 2>/dev/null; then
-    if ! run git checkout -- "$BASE_BRANCH" 2>/dev/null; then
-      warn "failed to switch off branch $BRANCH to $BASE_BRANCH — skipping cleanup"
+    # NOTE: `git checkout` fallback intentionally does NOT use `--` before the branch name.
+    # For checkout, `--` is a pathspec separator, so `git checkout -- "$BASE_BRANCH"` would
+    # try to restore a file named "$BASE_BRANCH" from the index instead of switching branches.
+    # `git switch` above already uses `--` safely (switch parses it as a branch separator).
+    if ! run git checkout "$BASE_BRANCH" 2>/dev/null; then
       if [ "$FORCE" -eq 1 ]; then
+        warn "failed to switch off branch $BRANCH to $BASE_BRANCH — skipping worktree removal; branch deletion still attempted under --force"
         WT_FAIL=1
       else
+        warn "failed to switch off branch $BRANCH to $BASE_BRANCH — skipping cleanup"
         exit 1
       fi
     fi
