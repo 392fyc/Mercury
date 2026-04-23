@@ -299,13 +299,14 @@ adapters/         # 适配层
 - 决定 B.1 走 statusline wrapper 路径，B.2 必须用 `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` env var gate（不能依赖 hook payload 读阈值）
 
 #### 4-3. B.1 statusline advisory — ✅ Complete (S69, Issue #269 CLOSED 2026-04-23)
-- `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/statusline-context.sh` 包装 claude-hud，≥75% 时 append `⚠ CTX n% /handoff`
+- `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/statusline-context.sh` 为最终 shipped 的 statusline 入口（bash wrapper）；Phase 4-3 research/design 文档 (`.mercury/docs/research/phase4-3-compact-prevention-eval.md`) 中提到的 `.../hooks/statusline-context.py` 属于早期设计引用，实际落地路径以 `.sh` 为准
+- 该 wrapper 包装 claude-hud，≥75% 时 append `⚠ CTX n% /handoff`
 - 阈值 env var `MERCURY_CTX_ADVISORY_PCT` override；Windows UTF-8 fixed (`PYTHONIOENCODING=utf-8`)
 - Soak 验证：2+ sessions 确认无 regression + null-safe + 渲染正确
 
 #### 4-3. B.2 PreCompact block + CLAUDE_AUTOCOMPACT_PCT_OVERRIDE — ✅ Complete (S69, Issue #270 CLOSED 2026-04-23)
 - **Rollout order 偏离说明**：Issue #270 原定 "B.1 soak ≥ 2 sessions 后再推 B.2"；S63 用户指令提前 B.2 实装，B.1+B.2 并行 soak（S62+S63 作为 B.1 的 2 session soak 期，未观察到 statusline regression）。若 B.1 soak 期间发现问题，B.2 的 env var + hook 可独立回滚不影响 B.1
-- `settings.json.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "75"` (official env var **VERIFIED** via code.claude.com/docs/en/env-vars)
+- `settings.json.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "75"` (official env var **VERIFIED** via <https://code.claude.com/docs/en/env-vars>)
 - `pre-compact.py` 首次 auto-trigger 返回 `{"decision":"block","reason":...}`；同 session 第 2 次 auto-trigger → escape-hatch 放行；`trigger=manual` 从不 block
 - Per-session counter at `scripts/pre-compact-block-counter.json`；决策与计数写 `flush.log`
 - Smoke test 3/3 PASS（auto first block、auto second escape、manual never-block）
