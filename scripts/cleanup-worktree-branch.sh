@@ -109,11 +109,14 @@ fi
 # Pre-switch off BRANCH if HEAD is on it (required before branch -d).
 if [ "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" = "$BRANCH" ]; then
   if ! run git switch -- "$BASE_BRANCH" 2>/dev/null; then
-    # NOTE: `git checkout` fallback intentionally does NOT use `--` before the branch name.
-    # For checkout, `--` is a pathspec separator, so `git checkout -- "$BASE_BRANCH"` would
-    # try to restore a file named "$BASE_BRANCH" from the index instead of switching branches.
-    # `git switch` above already uses `--` safely (switch parses it as a branch separator).
-    if ! run git checkout "$BASE_BRANCH" 2>/dev/null; then
+    # NOTE: `git checkout` fallback uses `refs/heads/$BASE_BRANCH` rather than a bare
+    # branch name for two reasons:
+    #   1. `git checkout -- "$BASE_BRANCH"` would trigger pathspec mode (`--` is a pathspec
+    #      separator for checkout, unlike for switch), so the `--` form is not usable here.
+    #   2. A bare branch name that happens to start with `-` would be reparsed as a flag.
+    #      The full ref form `refs/heads/<name>` is unambiguous — it is always a ref path,
+    #      never interpreted as an option.
+    if ! run git checkout "refs/heads/$BASE_BRANCH" 2>/dev/null; then
       if [ "$FORCE" -eq 1 ]; then
         warn "failed to switch off branch $BRANCH to $BASE_BRANCH — skipping worktree removal; branch deletion still attempted under --force"
         WT_FAIL=1
