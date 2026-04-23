@@ -92,11 +92,12 @@ if [ -n "$EXPLICIT_WT_PATH" ]; then
   WT_PATHS="$EXPLICIT_WT_PATH"
 else
   if ! WT_LIST=$(git worktree list --porcelain 2>&1); then
-    warn "git worktree list failed — skipping worktree removal"
     if [ "$FORCE" -eq 1 ]; then
+      warn "git worktree list failed — --force: continuing to branch deletion anyway"
       WT_FAIL=1
       WT_PATHS=""
     else
+      warn "git worktree list failed — aborting cleanup (safe mode)"
       exit 1
     fi
   else
@@ -120,6 +121,10 @@ if [ "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" = "$BRANCH" ]; then
       if [ "$FORCE" -eq 1 ]; then
         warn "failed to switch off branch $BRANCH to $BASE_BRANCH — skipping worktree removal; branch deletion still attempted under --force"
         WT_FAIL=1
+        # Clear any previously-discovered worktree paths so the removal loop below does not
+        # attempt `git worktree remove` on entries that are still attached to the branch we
+        # could not switch away from (would fail every time, adding noise to the WARN stream).
+        WT_PATHS=""
       else
         warn "failed to switch off branch $BRANCH to $BASE_BRANCH — skipping cleanup"
         exit 1
