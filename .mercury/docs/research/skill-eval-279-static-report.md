@@ -46,13 +46,13 @@
 ### Conflict 1: "review" (dual-verify vs pr-flow)
 - **dual-verify triggers**: "dual verify", "dual-verify", "parallel review", "run dual verify", "双路验证", "并行review"
 - **pr-flow triggers**: "review comments", "check PR status"
-- **Risk**: User says "review my code" → could reasonably trigger either. Current descriptions don't disambiguate pre-merge (dual-verify gates commit) vs post-approval (pr-flow handles Argus review loop).
+- **Risk**: User says "review my code" → could reasonably trigger either. Pre-rewrite descriptions don't disambiguate pre-merge (dual-verify gates commit) vs post-approval (pr-flow handles Argus review loop).
 - **Severity**: **HIGH** — skill scopes overlap conceptually (code review) but target different gates.
 
 ### Conflict 2: "research" (autoresearch vs web-research)
 - **autoresearch triggers**: "autoresearch", "自动研究", "深度调研", "deep research", "comprehensive research", "多轮调研"
 - **web-research triggers**: "研究", "验证", "审查", "查阅", "核实", "调查", "research", "verify", "validate", "check docs"
-- **Risk**: User says "研究一下这个库" (research this library) → autoresearch is mechanical multi-round gate (overkill for 1–2 questions); web-research is the right fit. Current descriptions use different terminology ("deep research" vs "verify") but both claim "research" in Chinese.
+- **Risk**: User says "研究一下这个库" (research this library) → autoresearch is mechanical multi-round gate (overkill for 1–2 questions); web-research is the right fit. Pre-rewrite descriptions use different terminology ("deep research" vs "verify") but both claim "research" in Chinese.
 - **Severity**: **MEDIUM** — both have valid scopes, but trigger phrases aren't mutually exclusive. Autoresearch correctly gates on ≥3 questions, but users won't know this before invoking.
 
 ### Conflict 3: "KB" operations (kb-lint only, minor)
@@ -62,7 +62,7 @@
 
 ### Conflict 4: "handoff" (naming collision, low risk)
 - **handoff** has no explicit trigger phrases in description (just "/handoff" in body).
-- **Conflict with global skill**: `/oh-my-claudecode:handoff` exists as OMC global; Mercury's project-level `handoff` skill uses `/handoff` (space-delimited, per SKILL.md line 30: "Always use `/handoff` (space-delimited)").
+- **Conflict with global skill**: `/oh-my-claudecode:handoff` exists as OMC global; Mercury's project-level `handoff` skill uses `/handoff`, and the skill body's invocation guidance specifically notes "Always use `/handoff auto` (space-delimited)" for the auto-launch variant.
 - **Risk**: OMC reference docs must clarify coexistence (OMC is lower priority; Mercury local skill triggers first).
 - **Severity**: **LOW** — documented but unintuitive.
 
@@ -71,7 +71,7 @@
 ## §4. Per-Skill Description Critique + Optimization
 
 ### 1. **dev-pipeline**
-**Current description** (SKILL.md:3–4):
+**Pre-rewrite description** (SKILL.md:3–4):
 > "Mercury's preset Main → Dev → Acceptance chain for executing a single, well-scoped coding task end-to-end with blind acceptance review. Use this skill when the user says "dev pipeline", "dispatch task", "派发任务", "dev → acceptance", "跑完整开发流程", "dev pipeline 验证", "blind review", "完整开发链", or when a task is ready to be implemented and verified by separate agents (instead of doing it inline). The skill spawns the dev subagent to implement, then spawns the acceptance subagent to blind-review the result, then loops or completes based on the verdict. Independent of Mercury's other modules — works in any repo that has .claude/agents/dev.md + .claude/agents/acceptance.md defined."
 
 **Issues**:
@@ -79,14 +79,14 @@
 - Length adequate (486 chars), triggers clear (8 phrases), bilingual.
 
 **Proposed revision**:
-> "Mercury's preset Main → Dev → Acceptance chain for executing a single, well-scoped coding task end-to-end with blind acceptance review. **Use this skill proactively** whenever the user has a ready-to-implement task (instead of coding inline) — even if they don't explicitly ask for 'dev pipeline'. Say 'dev pipeline', 'dispatch task', '派发任务', 'blind review', '完整开发链', or when task is scoped: the skill spawns dev subagent to implement, acceptance subagent to blind-review, then loops or completes based on verdict. Independent of Mercury's other modules — works in any repo with .claude/agents/dev.md + .claude/agents/acceptance.md."
+> "Mercury's preset Main → Dev → Acceptance chain for executing a single, well-scoped coding task end-to-end with blind acceptance review. **Use this skill proactively** whenever the user has a ready-to-implement task (instead of coding inline) — even if they don't explicitly ask for 'dev pipeline'. Say 'dev pipeline', 'dispatch task', '派发任务', 'blind review', or '完整开发链'. When the task is well-scoped, the skill spawns dev subagent to implement, acceptance subagent to blind-review, then loops or completes based on verdict. Independent of Mercury's other modules — works in any repo with .claude/agents/dev.md + .claude/agents/acceptance.md."
 
 **Grade**: A (strong) → A (stronger push).
 
 ---
 
 ### 2. **pr-flow**
-**Current description** (SKILL.md:2–4):
+**Pre-rewrite description** (SKILL.md:2–4):
 > "Automate the full PR lifecycle with Argus review bot: create PR, poll for review, read findings, fix issues, push and wait for Argus fix-detection resolve + incremental review, merge after approval. Use this skill when the user says "PR", "pull request", "create PR", "merge PR", "提PR", "合并", "PR流程", "开PR", "check PR status", "review comments", "标准PR流程". Use this skill after dev work reaches `implementation_done`, the branch is pushed, and the task has passed `main_review`. It replaces the manual C4-C7 steps in the Mercury workflow."
 
 **Issues**:
@@ -101,7 +101,7 @@
 ---
 
 ### 3. **dual-verify**
-**Current description** (SKILL.md:2–4):
+**Pre-rewrite description** (SKILL.md:2–4):
 > "Run parallel Claude Code deep-review and Codex code-audit, then consolidate findings before marking PR ready. Use instead of /code-review or auto-verify when doing pre-merge review. Trigger on: "dual verify", "dual-verify", "parallel review", "run dual verify", "双路验证", "双向验证", "并行review", "双路review"."
 
 **Issues**:
@@ -110,14 +110,14 @@
 - Trigger "parallel review" overlaps with pr-flow's "review comments" — needs disambiguation in conversation (dual-verify = before merge gate; pr-flow = post-approval Argus loop).
 
 **Proposed revision**:
-> "Run parallel Claude Code deep-review and Codex code-audit in parallel, then consolidate findings. **This is the mandatory pre-commit review step per Mercury CLAUDE.md** — use this instead of /code-review or /auto-verify. Trigger: 'dual verify', 'dual-verify', 'parallel review', 'run dual verify', '双路验证', '并行review', '代码审查', 'review before commit'. Use before any PR creation or direct commit to protected branches."
+> "Run Claude Code deep-review and Codex code-audit in parallel, then consolidate findings. **This is the mandatory pre-commit review step per Mercury CLAUDE.md** — use this instead of /code-review or /auto-verify. Trigger: 'dual verify', 'dual-verify', 'parallel review', 'run dual verify', '双路验证', '并行review', '代码审查', 'review before commit'. Use before any PR creation or direct commit to protected branches."
 
 **Grade**: A (strong) → A (mandatory framing reinforces MUST compliance).
 
 ---
 
 ### 4. **handoff**
-**Current description** (SKILL.md:2–3):
+**Pre-rewrite description** (SKILL.md:2–3):
 > "Generate a structured handoff document and ready-to-paste starting prompt for the next session. Use `/handoff` for manual mode (output only). Use `/handoff auto` to auto-launch the new session via `claude` CLI after the document is written."
 
 **Issues**:
@@ -133,7 +133,7 @@
 ---
 
 ### 5. **autoresearch**
-**Current description** (SKILL.md:2–4):
+**Pre-rewrite description** (SKILL.md:2–4):
 > "Autonomous iterative research protocol with mechanical quality gates. Multi-round search loops with per-round verification -- the agent does NOT decide when to stop, only the gate does. Works standalone or under Mercury dispatch. Triggers: "autoresearch", "自动研究", "深度调研", "deep research", "comprehensive research", "多轮调研"."
 
 **Issues**:
@@ -149,7 +149,7 @@
 ---
 
 ### 6. **kb-lint**
-**Current description** (SKILL.md:2–7):
+**Pre-rewrite description** (SKILL.md:2–7):
 > "Run AgentKB knowledge base health checks (lint). Detects broken links, orphan pages, uncompiled daily logs, stale articles, missing backlinks, sparse articles, and optionally LLM-powered contradiction detection. Use when the user says "/kb-lint", "lint KB", "KB health check", "知识库检查", "KB lint"."
 
 **Issues**:
@@ -166,7 +166,7 @@
 ---
 
 ### 7. **web-research**
-**Current description** (SKILL.md:2–4):
+**Pre-rewrite description** (SKILL.md:2–4):
 > "Mercury's mandatory web research protocol for verifying external SDK/API/CLI behavior before writing code. Use this skill whenever the task involves importing external packages, referencing API signatures, claiming package versions, using CLI flags, or integrating with third-party tools. Also use when the user says "研究", "验证", "审查", "查阅", "核实", "调查", "research", "verify", "validate", "check docs", "look up". This skill should be consulted proactively — even if the user doesn't explicitly ask for research, any code touching external dependencies needs verification first. Training data is frequently wrong about API signatures and versions; a 2-minute search prevents hours of debugging."
 
 **Issues**:
@@ -182,7 +182,7 @@
 ---
 
 ### 8. **gh-project-flow**
-**Current description** (SKILL.md:2–4):
+**Pre-rewrite description** (SKILL.md:2–4):
 > "BOOTSTRAP-ONLY task management for Mercury self-development via GitHub Project #3. Lets the main agent pull the next Phase + P0 Todo task, mark it In Progress, link work products (PR/Issue), and move items to Done. Use this skill when the user says "next task", "下一个任务", "拉任务", "认领任务", "标记 in progress", "project status", "更新 project", "Mercury 项目看板", "Phase 1 任务", "gh-project-flow". DO NOT use this skill for general (non-Mercury) project development — those scenarios will use Memory Layer (Phase 3) + Dev Pipeline (Phase 1 self-output) instead. This skill exists to bootstrap Mercury's own buildout and will be retired when Phase 3 lands."
 
 **Issues**:
@@ -198,7 +198,7 @@
 ---
 
 ### 9. **caveman-toggle**
-**Current description** (SKILL.md:2–6):
+**Pre-rewrite description** (SKILL.md:2–6):
 > "Toggle persistent caveman concise mode for Mercury. Manages CLAUDE.local.md to enable/disable terse output style across sessions. Use when the user says "/caveman-on", "/caveman-off", "/caveman-status", "开启caveman", "关闭caveman", "简洁模式", "caveman mode"."
 
 **Issues**:
@@ -244,7 +244,7 @@
 **Decision**: Scope is meta (session continuation protocol). Keep active.
 **Rationale**: Aligns with CLAUDE.md terminology standards ("handoff" = prompt + doc, both artifacts). User-invoked only, not auto-triggered.
 **Action**: Adopt proposed revision §4.4 to add value prop ("context preservation") and clarify triggers ("context limits", "handoff to colleague").
-**Justification**: Independent; user-controlled; essential for long tasks. Current description is too terse.
+**Justification**: Independent; user-controlled; essential for long tasks. Pre-rewrite description was too terse.
 
 ---
 
@@ -260,7 +260,7 @@
 **Decision**: Scope is support tool (AgentKB health checks). Keep active but with lower priority.
 **Rationale**: Aligns with DIRECTION.md §7 (KB maintenance). Optional but recommended regularly.
 **Action**: Adopt proposed revision §4.6 to add proactive push ("run regularly", "before major refactors") and clarify `$AGENTKB_DIR` dependency upfront.
-**Justification**: Independent; ≤200 LOC; useful for KB quality. Current description is too passive.
+**Justification**: Independent; ≤200 LOC; useful for KB quality. Pre-rewrite description was too passive.
 
 ---
 

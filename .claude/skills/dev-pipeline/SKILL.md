@@ -1,7 +1,7 @@
 ---
 name: dev-pipeline
 description: |
-  Mercury's preset Main → Dev → Acceptance chain for executing a single, well-scoped coding task end-to-end with blind acceptance review. **Use this skill proactively** whenever the user has a ready-to-implement task (instead of coding inline) — even if they don't explicitly ask for 'dev pipeline'. Say 'dev pipeline', 'dispatch task', '派发任务', 'blind review', '完整开发链', or when task is scoped: the skill spawns dev subagent to implement, acceptance subagent to blind-review, then loops or completes based on verdict. Independent of Mercury's other modules — works in any repo with .claude/agents/dev.md + .claude/agents/acceptance.md.
+  Mercury's preset Main → Dev → Acceptance chain for executing a single, well-scoped coding task end-to-end with blind acceptance review. **Use this skill proactively** whenever the user has a ready-to-implement task (instead of coding inline) — even if they don't explicitly ask for 'dev pipeline'. Say 'dev pipeline', 'dispatch task', '派发任务', 'blind review', or '完整开发链'. When the task is well-scoped, the skill spawns dev subagent to implement, acceptance subagent to blind-review, then loops or completes based on verdict. Independent of Mercury's other modules — works in any repo with .claude/agents/dev.md + .claude/agents/acceptance.md.
 user-invocable: true
 allowed-tools: Read, Write, Edit, Glob, Grep, Bash, Agent, WebSearch, WebFetch
 ---
