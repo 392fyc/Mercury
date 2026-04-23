@@ -343,6 +343,98 @@ test_no_worktree_still_deletes_branch() {
   cleanup_sandbox "$sb"
 }
 
+# ---------- test: --force falls through to branch-d when pre-switch fails (nit 3) ----------
+TOTAL=$((TOTAL + 1))
+test_force_preswitch_fail_still_deletes_branch() {
+  # Simulate pre-switch failure under --force: inject a fake git wrapper on PATH that makes
+  # `git switch` and `git checkout` fail, but passes all other git subcommands through.
+  # We verify that the branch-d path is still *attempted* (WT_FAIL=1 does not skip it).
+  # Because HEAD stays on feat/test (switch was blocked), git will refuse the delete —
+  # but the WARN message from the branch-d attempt confirms it fired.
+  local sb
+  sb=$(mk_sandbox) || { fail "setup failed"; return; }
+  # Resolve real git path outside the subshell (before PATH is modified).
+  local real_git
+  real_git=$(command -v git)
+  (
+    cd "$sb" || exit 1
+    # Remove the real worktree and prune so no other worktree references feat/test.
+    "$real_git" worktree remove --force "$sb/.worktrees/feat-test"
+    "$real_git" worktree prune
+    # Move HEAD onto the branch so a pre-switch is actually attempted by the script.
+    "$real_git" switch feat/test
+
+    # Create a fake git wrapper that intercepts switch and checkout.
+    local fake_bin
+    fake_bin=$(mktemp -d)
+    cat > "$fake_bin/git" <<FAKEGIT
+#!/usr/bin/env bash
+# Intercept switch and checkout; pass everything else to real git.
+if [ "\$1" = "switch" ] || [ "\$1" = "checkout" ]; then
+  exit 1
+fi
+exec "$real_git" "\$@"
+FAKEGIT
+    chmod +x "$fake_bin/git"
+
+    out=$(PATH="$fake_bin:$PATH" bash "$SCRIPT" feat/test main --force 2>&1)
+    rc=$?
+    rm -rf "$fake_bin"
+    # Exit must be 1 (WT_FAIL path, not exit 2).
+    [ "$rc" -eq 1 ] || { echo "expected exit 1, got $rc; output: $out"; exit 1; }
+    # The WARN for failed switch must appear (pre-switch fired).
+    echo "$out" | grep -q "failed to switch off branch" || { echo "no pre-switch warning; output: $out"; exit 1; }
+    # The branch-d attempt must also appear in output (fired even though WT_FAIL=1).
+    echo "$out" | grep -Eq 'git branch -d|branch -d feat/test failed' || { echo "no branch-d attempt in output; output: $out"; exit 1; }
+  )
+  if [ $? -eq 0 ]; then pass "force mode: pre-switch failure still fires branch-d (nit 3)"
+  else fail "force mode: pre-switch failure still fires branch-d (nit 3)"
+  fi
+  cleanup_sandbox "$sb"
+}
+
+# ---------- test: --force falls through to branch-d when worktree list fails (nit 4) ----------
+TOTAL=$((TOTAL + 1))
+test_force_wtlist_fail_still_deletes_branch() {
+  # Simulate `git worktree list` failure under --force: inject a fake git wrapper that makes
+  # `git worktree list` exit non-zero, passes everything else through.
+  local sb
+  sb=$(mk_sandbox) || { fail "setup failed"; return; }
+  # Resolve real git path outside the subshell (before PATH is modified).
+  local real_git
+  real_git=$(command -v git)
+  (
+    cd "$sb" || exit 1
+    # Remove the real worktree so the branch is not checked out anywhere else.
+    "$real_git" worktree remove --force "$sb/.worktrees/feat-test"
+
+    # Create a fake git wrapper in a temp bin dir.
+    local fake_bin
+    fake_bin=$(mktemp -d)
+    cat > "$fake_bin/git" <<FAKEGIT
+#!/usr/bin/env bash
+# Intercept \`git worktree list\`; pass everything else to real git.
+if [ "\$1" = "worktree" ] && [ "\$2" = "list" ]; then
+  echo "simulated worktree list failure" >&2
+  exit 1
+fi
+exec "$real_git" "\$@"
+FAKEGIT
+    chmod +x "$fake_bin/git"
+
+    PATH="$fake_bin:$PATH" bash "$SCRIPT" feat/test main --force 2>&1
+    rc=$?
+    rm -rf "$fake_bin"
+    # Should exit 1 (WT_FAIL=1 due to list failure) but branch must be deleted.
+    [ "$rc" -eq 1 ] || { echo "expected exit 1, got $rc"; exit 1; }
+    "$real_git" show-ref --verify --quiet refs/heads/feat/test && { echo "branch NOT deleted despite --force"; exit 1; } || true
+  )
+  if [ $? -eq 0 ]; then pass "force mode: worktree list failure still fires branch-d (nit 4)"
+  else fail "force mode: worktree list failure still fires branch-d (nit 4)"
+  fi
+  cleanup_sandbox "$sb"
+}
+
 # ---------- run all tests ----------
 
 test_force_explicit_path
@@ -357,6 +449,8 @@ test_no_worktree_still_deletes_branch
 test_rmrf_traversal_guard
 test_remote_credential_strip
 test_worktree_path_rejects_newline
+test_force_preswitch_fail_still_deletes_branch
+test_force_wtlist_fail_still_deletes_branch
 
 echo ""
 echo "Summary: $((TOTAL - FAILED))/$TOTAL tests passed"

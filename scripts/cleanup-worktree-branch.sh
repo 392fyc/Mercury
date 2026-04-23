@@ -92,20 +92,43 @@ if [ -n "$EXPLICIT_WT_PATH" ]; then
   WT_PATHS="$EXPLICIT_WT_PATH"
 else
   if ! WT_LIST=$(git worktree list --porcelain 2>&1); then
-    warn "git worktree list failed — skipping worktree and branch cleanup"
-    exit 1
+    if [ "$FORCE" -eq 1 ]; then
+      warn "git worktree list failed — --force: continuing to branch deletion anyway"
+      WT_FAIL=1
+      WT_PATHS=""
+    else
+      warn "git worktree list failed — aborting cleanup (safe mode)"
+      exit 1
+    fi
+  else
+    WT_PATHS=$(printf '%s\n' "$WT_LIST" | awk -v ref="branch refs/heads/$BRANCH" '
+      /^worktree / { path = substr($0, 10) }
+      $0 == ref { print path }
+    ')
   fi
-  WT_PATHS=$(echo "$WT_LIST" | awk -v ref="branch refs/heads/$BRANCH" '
-    /^worktree / { path = substr($0, 10) }
-    $0 == ref { print path }
-  ')
 fi
 # Pre-switch off BRANCH if HEAD is on it (required before branch -d).
 if [ "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" = "$BRANCH" ]; then
-  if ! run git switch "$BASE_BRANCH" 2>/dev/null; then
-    if ! run git checkout "$BASE_BRANCH" 2>/dev/null; then
-      warn "failed to switch off branch $BRANCH to $BASE_BRANCH — skipping cleanup"
-      exit 1
+  if ! run git switch -- "$BASE_BRANCH" 2>/dev/null; then
+    # NOTE: `git checkout` fallback uses `refs/heads/$BASE_BRANCH` rather than a bare
+    # branch name for two reasons:
+    #   1. `git checkout -- "$BASE_BRANCH"` would trigger pathspec mode (`--` is a pathspec
+    #      separator for checkout, unlike for switch), so the `--` form is not usable here.
+    #   2. A bare branch name that happens to start with `-` would be reparsed as a flag.
+    #      The full ref form `refs/heads/<name>` is unambiguous — it is always a ref path,
+    #      never interpreted as an option.
+    if ! run git checkout "refs/heads/$BASE_BRANCH" 2>/dev/null; then
+      if [ "$FORCE" -eq 1 ]; then
+        warn "failed to switch off branch $BRANCH to $BASE_BRANCH — skipping worktree removal; branch deletion still attempted under --force"
+        WT_FAIL=1
+        # Clear any previously-discovered worktree paths so the removal loop below does not
+        # attempt `git worktree remove` on entries that are still attached to the branch we
+        # could not switch away from (would fail every time, adding noise to the WARN stream).
+        WT_PATHS=""
+      else
+        warn "failed to switch off branch $BRANCH to $BASE_BRANCH — skipping cleanup"
+        exit 1
+      fi
     fi
   fi
 fi
