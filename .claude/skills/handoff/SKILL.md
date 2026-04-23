@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Generate a structured handoff document and ready-to-paste starting prompt for the next session. Use `/handoff` for manual mode (output only). Use `/handoff auto` to auto-launch the new session via `claude` CLI after the document is written.
+description: "Generate a structured handoff document + ready-to-paste starting prompt for the next session, preserving context across session boundaries. **Use `/handoff` whenever you reach context limits, need to hand off to a colleague, or want to continue in a fresh session.** Modes: `/handoff` (manual mode, output prompt), `/handoff auto` (auto-launch next session). Includes state summary, acceptance criteria, references — no manual reconstruction needed."
 argument-hint: "[auto] [optional extra instructions for the next session]"
 user-invocable: true
 allowed-tools: Read, Write, Bash, Glob, Grep

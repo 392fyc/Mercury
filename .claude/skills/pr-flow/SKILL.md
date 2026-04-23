@@ -1,7 +1,7 @@
 ---
 name: pr-flow
 description: |
-  Automate the full PR lifecycle with Argus review bot: create PR, poll for review, read findings, fix issues, push and wait for Argus fix-detection resolve + incremental review, merge after approval. Use this skill when the user says "PR", "pull request", "create PR", "merge PR", "提PR", "合并", "PR流程", "开PR", "check PR status", "review comments", "标准PR流程". Use this skill after dev work reaches `implementation_done`, the branch is pushed, and the task has passed `main_review`. It replaces the manual C4-C7 steps in the Mercury workflow.
+  Automate the full PR lifecycle with Argus review bot: create PR, poll for review, read findings, fix issues, push and wait for Argus incremental review, merge after approval. **Always use this skill when code is ready to PR** — even if the user only says 'push' or 'merge' — to avoid manual Argus polling. Trigger: 'PR', 'pull request', 'create PR', 'merge PR', '提PR', '合并', 'PR流程', 'check PR status'. Use after dev work reaches `implementation_done` and branch is pushed. Replaces manual C4-C7 steps in Mercury workflow.
 user-invocable: true
 allowed-tools: Bash, Read, Grep, Glob, Edit, Write, WebSearch, WebFetch, Agent, TodoWrite, CronCreate, CronDelete
 ---

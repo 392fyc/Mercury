@@ -1,7 +1,7 @@
 ---
 name: web-research
 description: |
-  Mercury's mandatory web research protocol for verifying external SDK/API/CLI behavior before writing code. Use this skill whenever the task involves importing external packages, referencing API signatures, claiming package versions, using CLI flags, or integrating with third-party tools. Also use when the user says "研究", "验证", "审查", "查阅", "核实", "调查", "research", "verify", "validate", "check docs", "look up". This skill should be consulted proactively — even if the user doesn't explicitly ask for research, any code touching external dependencies needs verification first. Training data is frequently wrong about API signatures and versions; a 2-minute search prevents hours of debugging.
+  Mercury's mandatory web research protocol for verifying external SDK/API/CLI behavior before writing code. **Use proactively whenever the task involves importing external packages, referencing API signatures, claiming versions, using CLI flags, or integrating third-party tools — even if the user doesn't explicitly ask.** For ≥3-question deep investigations, use autoresearch instead. Triggers: '研究', '验证', '审查', '查阅', 'research', 'verify', 'validate', 'check docs', 'look up'. Training data is frequently wrong about API signatures and versions; a 2-minute search prevents hours of debugging.
 user-invocable: true
 allowed-tools: WebSearch, WebFetch, Read, Grep
 ---

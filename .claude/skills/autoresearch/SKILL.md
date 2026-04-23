@@ -1,7 +1,7 @@
 ---
 name: autoresearch
 description: |
-  Autonomous iterative research protocol with mechanical quality gates. Multi-round search loops with per-round verification -- the agent does NOT decide when to stop, only the gate does. Works standalone or under Mercury dispatch. Triggers: "autoresearch", "自动研究", "深度调研", "deep research", "comprehensive research", "多轮调研".
+  Autonomous iterative research with mechanical quality gates — multi-round loops, per-round verification, agent doesn't self-decide completion (gate does). **Use this proactively for ≥3 research questions or multi-source verification** — even if the user just says 'research X'. For quick lookups (1–2 questions, single source), use web-research instead. Triggers: 'autoresearch', '自动研究', '深度调研', 'deep research', '多轮调研', 'comprehensive research'. Works standalone or under Mercury dispatch.
 user-invocable: true
 allowed-tools: WebSearch, WebFetch, Read, Write, Grep, Glob, Agent, Bash
 ---
