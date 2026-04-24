@@ -76,7 +76,7 @@ On session start, Claude Code auto-loads every agent under `.claude/agents/`, ev
 
 ## Skills and sub-agents
 
-The 12 skills under `.claude/skills/` and 9 sub-agents under `.claude/agents/` are **detachable** — each directory is self-contained and can be copied into another Claude Code project. Skill frontmatter lists the trigger phrases in English and Chinese.
+The skills under `.claude/skills/` and sub-agents under `.claude/agents/` are **detachable** — each directory is self-contained and can be copied into another Claude Code project. Skill frontmatter lists the trigger phrases in English and Chinese. For an authoritative list, see the directory contents directly; this README describes notable ones rather than pinning an exact count (to avoid drift between the tree and the prose).
 
 Notable skills:
 
