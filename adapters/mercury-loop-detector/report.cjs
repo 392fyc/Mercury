@@ -12,15 +12,14 @@ const TAG = '[mercury-loop-detector]';
 const KEEP_DEFAULT = 50;
 
 /**
- * Format a Date as filesystem-safe ISO string: 2026-04-24T120000Z
- * (no colons, no dots in the time part)
+ * Format a Date as filesystem-safe ISO string: 2026-04-24T120000123Z
+ * (no colons, no dots — milliseconds retained to avoid same-second filename collision on Windows)
  * @param {Date} d
  * @returns {string}
  */
 function isoFsSafe(d) {
   return d.toISOString()
-    .replace(/\.\d{3}Z$/, 'Z')  // remove milliseconds
-    .replace(/:/g, '');           // 2026-04-24T120000Z
+    .replace(/[:.]/g, '');  // 2026-04-24T120000123Z (retain ms, remove colons+dots)
 }
 
 /**
@@ -74,9 +73,9 @@ function writeStallReport(cwd, session_id, stall_type, stall_reason, state, last
     }
   };
 
+  const tmp = `${fpath}.${process.pid}.${Date.now()}.tmp`;
   try {
     fs.mkdirSync(dir, { recursive: true });
-    const tmp = `${fpath}.${process.pid}.${Date.now()}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(report, null, 2));
     fs.renameSync(tmp, fpath);
     pruneReports(cwd, KEEP_DEFAULT);
@@ -84,6 +83,8 @@ function writeStallReport(cwd, session_id, stall_type, stall_reason, state, last
   } catch (e) {
     process.stderr.write(`${TAG} WARNING: failed to write stall report: ${e.message}\n`);
     return null;
+  } finally {
+    try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch { /* ignore */ }
   }
 }
 

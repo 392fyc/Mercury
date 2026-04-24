@@ -4,7 +4,7 @@
 // Mercury Loop Detector — Test suite
 // Runner: node --test adapters/mercury-loop-detector/*.test.cjs
 
-const { test, describe, before, after, beforeEach } = require('node:test');
+const { test, describe, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs     = require('fs');
 const path   = require('path');
@@ -155,7 +155,7 @@ describe('timeout: soft and idle warn, do not block', () => {
 describe('timeout: hard blocks and writes report', () => {
   let tmpDir;
   beforeEach(() => { tmpDir = makeTmpDir(); });
-  after(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
 
   test('hard timeout returns level=hard, should_block=true', () => {
     const now   = Date.now();
@@ -186,7 +186,7 @@ describe('timeout: hard blocks and writes report', () => {
 describe('detectStall fires → writeStallReport', () => {
   let tmpDir;
   beforeEach(() => { tmpDir = makeTmpDir(); });
-  after(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
 
   test('stall report is written on detectStall hit', () => {
     const state = makeState({ dup_count: 3, dup_tool: 'Read', dup_hash: 'aabb1122' });
@@ -376,11 +376,116 @@ describe('invalid session_id fails open', () => {
 // ── isoFsSafe helper ──────────────────────────────────────────────────────────
 
 describe('isoFsSafe formatting', () => {
-  test('removes colons and milliseconds', () => {
+  test('removes colons and dots, retains milliseconds', () => {
     const d = new Date('2026-04-24T12:34:56.789Z');
     const s = isoFsSafe(d);
-    assert.equal(s, '2026-04-24T123456Z');
+    assert.equal(s, '2026-04-24T123456789Z');
     assert.ok(!s.includes(':'), 'no colons');
     assert.ok(!s.includes('.'), 'no dots');
+    assert.ok(s.includes('789'), 'milliseconds retained');
+  });
+});
+
+// ── 9. hook.cjs end-to-end integration ──────────────────────────────────────
+
+describe('hook.cjs end-to-end integration', () => {
+  const { execFileSync } = require('child_process');
+  const HOOK = path.join(__dirname, 'hook.cjs');
+  let counter = 0;
+  let tmpDirs = [];
+
+  function freshEnv(tmpDir) {
+    return { ...process.env, CLAUDE_PROJECT_DIR: tmpDir };
+  }
+
+  function uniqueSession() {
+    return `ete-session-${process.pid}-${++counter}-${Date.now()}`;
+  }
+
+  afterEach(() => {
+    for (const d of tmpDirs) {
+      try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+    tmpDirs = [];
+  });
+
+  test('ETE happy path: normal tool call exits 0 with no block output', () => {
+    const tmpDir = makeTmpDir();
+    tmpDirs.push(tmpDir);
+    const payload = JSON.stringify({
+      tool_name: 'Read',
+      tool_input: { file_path: '/some/file.txt' },
+      tool_response: 'file contents here',
+      session_id: uniqueSession()
+    });
+    let stdout;
+    try {
+      stdout = execFileSync('node', [HOOK], {
+        input: payload,
+        env: freshEnv(tmpDir),
+        timeout: 10000
+      }).toString();
+    } catch (e) {
+      // exit code 0 with block output also lands here if stdout non-empty
+      stdout = e.stdout ? e.stdout.toString() : '';
+      // Re-throw if process actually errored (non-zero exit for unexpected reasons)
+      if (e.status !== 0) throw e;
+    }
+    // Happy path: no block decision in stdout
+    assert.ok(!stdout.includes('"block"'), `unexpected block output: ${stdout}`);
+  });
+
+  test('ETE stall trigger: no_progress threshold reached causes block with report', () => {
+    const tmpDir = makeTmpDir();
+    tmpDirs.push(tmpDir);
+    const session_id = uniqueSession();
+    const stateDir = path.join(tmpDir, '.mercury', 'state');
+    fs.mkdirSync(stateDir, { recursive: true });
+
+    // Pre-seed np_count at threshold-1 (default=5, seed at 4).
+    // Sending a non-read/non-write/non-error tool call increments np_count to 5 → block.
+    // 'Bash' with successful response and non-error output is classified as "action" (not read/write).
+    const preState = {
+      session_id,
+      dup_count: 0, dup_tool: null, dup_hash: null,
+      err_count: 0, err_last: null,
+      read_count: 0, np_count: 4,
+      last_activity_ts: Date.now(), last_write_ts: Date.now()
+    };
+    fs.writeFileSync(path.join(stateDir, 'loop-detector.json'), JSON.stringify(preState, null, 2));
+
+    // Bash with non-error response: is_write=false, is_read=false, errored=false → np_count++
+    const payload = JSON.stringify({
+      tool_name: 'Bash',
+      tool_input: { command: 'echo hello' },
+      tool_response: 'hello',
+      session_id
+    });
+
+    let stdout = '';
+    let exitCode = 0;
+    try {
+      stdout = execFileSync('node', [HOOK], {
+        input: payload,
+        env: freshEnv(tmpDir),
+        timeout: 10000
+      }).toString();
+    } catch (e) {
+      stdout = e.stdout ? e.stdout.toString() : '';
+      exitCode = e.status ?? 0;
+    }
+
+    // hook exits 0 even on block (process.exit(0) in block())
+    assert.equal(exitCode, 0, 'hook should exit 0 even on block');
+    assert.ok(stdout.includes('"block"'), `expected block decision in stdout, got: ${stdout}`);
+
+    // Verify stall report written
+    const reportDir = path.join(tmpDir, '.mercury', 'state', 'stall-reports');
+    assert.ok(fs.existsSync(reportDir), 'stall-reports dir should exist');
+    const reports = fs.readdirSync(reportDir).filter(f => f.endsWith('.json'));
+    assert.ok(reports.length >= 1, 'at least one report should be written');
+    const report = JSON.parse(fs.readFileSync(path.join(reportDir, reports[0]), 'utf8'));
+    assert.equal(report.session_id, session_id);
+    assert.equal(report.stall_type, 'no_progress');
   });
 });
