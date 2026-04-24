@@ -148,20 +148,22 @@ function main() {
   if (tr) {
     process.stderr.write(tr.message + '\n');
     if (tr.should_block) {
-      writeStallReport(cwd, session_id, 'timeout_hard', tr.message, state,
+      const fullReason = `Mercury loop detector: ${tr.message}\n(Buffer reset. If this is a false positive, resume your work.)`;
+      writeStallReport(cwd, session_id, 'timeout_hard', fullReason, state,
         { name: tool_name, input_hash: ihash, errored, err_sig });
       Object.assign(state, EMPTY_STATE()); state.session_id = session_id; saveState(statePath, state);
-      block(`Mercury loop detector: ${tr.message}\n(Buffer reset. If this is a false positive, resume your work.)`);
+      block(fullReason);
     }
   }
 
   // Stall signal check
   const stall = detectStall(state, cfg);
   if (stall) {
-    writeStallReport(cwd, session_id, stall.type, stall.reason, state,
+    const fullReason = `Mercury loop detector: ${stall.reason}\n(Buffer reset. If this is a false positive, resume your work.)`;
+    writeStallReport(cwd, session_id, stall.type, fullReason, state,
       { name: tool_name, input_hash: ihash, errored, err_sig });
     Object.assign(state, EMPTY_STATE()); state.session_id = session_id; saveState(statePath, state);
-    block(`Mercury loop detector: ${stall.reason}\n(Buffer reset. If this is a false positive, resume your work.)`);
+    block(fullReason);
   }
 
   pass();

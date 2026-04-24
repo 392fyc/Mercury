@@ -557,5 +557,10 @@ describe('hook.cjs end-to-end integration', () => {
     const report = JSON.parse(fs.readFileSync(path.join(reportDir, reports[0]), 'utf8'));
     assert.equal(report.session_id, session_id);
     assert.equal(report.stall_type, 'no_progress');
+    // stall_reason must be the full block reason string, not the short internal reason
+    assert.ok(report.stall_reason.startsWith('Mercury loop detector: '),
+      `stall_reason should start with prefix, got: ${report.stall_reason}`);
+    assert.ok(report.stall_reason.includes('Buffer reset.'),
+      `stall_reason should include "Buffer reset.", got: ${report.stall_reason}`);
   });
 });
