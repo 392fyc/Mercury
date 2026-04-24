@@ -322,10 +322,11 @@ adapters/         # 适配层
 3. ✅ rollback 路径验证（unset env var / revert hook）
 4. ✅ escape-hatch 防死锁（smoke test 已证）
 
-### 4-4. 卡死检测 (S37, #226) — 核心已交付，增强待定
+### 4-4. 卡死检测 (S37, #226) — 核心已交付，增强分两批
 - ✅ sliding window 循环检测已实现并交付 (PR #229, #231, merged)
-- ⏳ 增强: 多级超时（soft → idle → hard）
-- ⏳ 增强: 卡死后自动生成诊断报告 + 通知用户（依赖 Phase 5 Notify Hub）
+- ✅ 增强 A: 多级超时 (soft → idle → hard) — Issue #290 落地
+- ✅ 增强 B: 卡死后诊断报告 → 写文件 (.mercury/state/stall-reports/) — Issue #290 落地
+- ⏳ 增强 C (Phase 5 依赖): 卡死后推送通知给用户（随 Phase 5 Notify Hub 落地）
 
 **产出**: agent 可以自动跨 session 继续工作
 **人类干预点**: ~~技术方案选择（已完成，Option D）~~；首次 session 接力时确认状态传递完整性
