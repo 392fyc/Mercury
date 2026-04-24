@@ -13,7 +13,10 @@
     "@types/node": "^25.5.0",
     "typescript": "^5.9.3"
   },
-  "dependencies": {},
+  "dependencies": {
+    "node-telegram-bot-api": "^0.67.0",
+    "@modelcontextprotocol/sdk": "^1.29.0"
+  },
   "pnpm": {
     "onlyBuiltDependencies": ["better-sqlite3"]
   }
