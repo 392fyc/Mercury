@@ -373,6 +373,76 @@ describe('invalid session_id fails open', () => {
   });
 });
 
+// ── 10. Security: session_id path traversal prevention ───────────────────────
+
+describe('writeStallReport session_id sanitization', () => {
+  let tmpDir;
+  beforeEach(() => { tmpDir = makeTmpDir(); });
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+  test('traversal session_id "../evil" writes safe file inside stall-reports/', () => {
+    const state = makeState();
+    const last_tool = { name: 'Bash', input_hash: 'aa', errored: false, err_sig: null };
+    const fpath = writeStallReport(tmpDir, '../evil', 'no_progress', 'reason', state, last_tool);
+    assert.ok(fpath, 'should return a file path');
+    // File must be inside the expected stall-reports dir, not above it
+    const reportDir = path.join(tmpDir, '.mercury', 'state', 'stall-reports');
+    assert.ok(fpath.startsWith(reportDir), `fpath ${fpath} must start with ${reportDir}`);
+    assert.ok(fs.existsSync(fpath), 'file must exist');
+    // Filename must not contain slashes or ".." sequences
+    const fname = path.basename(fpath);
+    assert.ok(!fname.includes('/') && !fname.includes('\\'), 'no path separator in filename');
+    assert.ok(!fname.includes('..'), 'no ".." in filename');
+    // Report JSON preserves original session_id for traceability
+    const report = JSON.parse(fs.readFileSync(fpath, 'utf8'));
+    assert.equal(report.session_id, '../evil');
+  });
+
+  test('all-slash session_id "///" returns null + stderr warn', () => {
+    const state = makeState();
+    const last_tool = { name: 'Bash', input_hash: 'bb', errored: false, err_sig: null };
+    let warnMsg = '';
+    const origWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk, ...a) => { warnMsg += String(chunk); return true; };
+    const result = writeStallReport(tmpDir, '///', 'no_progress', 'reason', state, last_tool);
+    process.stderr.write = origWrite;
+    assert.equal(result, null);
+    assert.match(warnMsg, /no safe chars/);
+  });
+
+  // Optional: verify mode 0o600 on Unix (skipped on Windows)
+  test('report file has mode 0o600 (Unix only)', { skip: process.platform === 'win32' }, () => {
+    const state = makeState();
+    const last_tool = { name: 'Bash', input_hash: 'cc', errored: false, err_sig: null };
+    const fpath = writeStallReport(tmpDir, 'sess-mode-test', 'no_progress', 'reason', state, last_tool);
+    assert.ok(fpath, 'should write file');
+    const mode = fs.statSync(fpath).mode & 0o777;
+    assert.equal(mode, 0o600, `expected mode 0o600, got 0o${mode.toString(8)}`);
+  });
+});
+
+// ── 11. Security: resolveThresholds order validation ─────────────────────────
+
+describe('resolveThresholds order validation', () => {
+  test('reversed env vars (soft=900, idle=60, hard=30) → TIMEOUT_DEFAULTS + stderr warn', () => {
+    process.env.MERCURY_TIMEOUT_SOFT_SEC = '900';
+    process.env.MERCURY_TIMEOUT_IDLE_SEC = '60';
+    process.env.MERCURY_TIMEOUT_HARD_SEC = '30';
+    let warnMsg = '';
+    const origWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk, ...a) => { warnMsg += String(chunk); return true; };
+    const result = resolveThresholds(makeCfg());
+    process.stderr.write = origWrite;
+    delete process.env.MERCURY_TIMEOUT_SOFT_SEC;
+    delete process.env.MERCURY_TIMEOUT_IDLE_SEC;
+    delete process.env.MERCURY_TIMEOUT_HARD_SEC;
+    assert.equal(result.soft, TIMEOUT_DEFAULTS.timeout_soft_sec);
+    assert.equal(result.idle, TIMEOUT_DEFAULTS.timeout_idle_sec);
+    assert.equal(result.hard, TIMEOUT_DEFAULTS.timeout_hard_sec);
+    assert.match(warnMsg, /soft<=idle<=hard/);
+  });
+});
+
 // ── isoFsSafe helper ──────────────────────────────────────────────────────────
 
 describe('isoFsSafe formatting', () => {

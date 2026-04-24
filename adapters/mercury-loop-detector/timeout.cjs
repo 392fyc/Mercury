@@ -28,11 +28,22 @@ function resolveThresholds(cfg) {
   const envIdle = parseFloat(process.env.MERCURY_TIMEOUT_IDLE_SEC);
   const envHard = parseFloat(process.env.MERCURY_TIMEOUT_HARD_SEC);
 
-  return {
+  const result = {
     soft: clampSec(Number.isFinite(envSoft) ? envSoft : cfg.timeout_soft_sec,  TIMEOUT_DEFAULTS.timeout_soft_sec),
     idle: clampSec(Number.isFinite(envIdle) ? envIdle : cfg.timeout_idle_sec,  TIMEOUT_DEFAULTS.timeout_idle_sec),
     hard: clampSec(Number.isFinite(envHard) ? envHard : cfg.timeout_hard_sec,  TIMEOUT_DEFAULTS.timeout_hard_sec)
   };
+
+  // Sanity: must satisfy soft <= idle <= hard. If not, fail-open to defaults + warn.
+  if (result.soft > result.idle || result.idle > result.hard) {
+    process.stderr.write(`${TAG} WARNING: timeout thresholds violate soft<=idle<=hard (got soft=${result.soft} idle=${result.idle} hard=${result.hard}); falling back to defaults\n`);
+    return {
+      soft: TIMEOUT_DEFAULTS.timeout_soft_sec,
+      idle: TIMEOUT_DEFAULTS.timeout_idle_sec,
+      hard: TIMEOUT_DEFAULTS.timeout_hard_sec
+    };
+  }
+  return result;
 }
 
 /**

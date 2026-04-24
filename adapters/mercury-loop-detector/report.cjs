@@ -42,11 +42,26 @@ function writeStallReport(cwd, session_id, stall_type, stall_reason, state, last
     return null;
   }
 
+  // Sanitize session_id for filesystem use:
+  //   1. Replace non-whitelisted chars [^a-zA-Z0-9._-] with '_'
+  //   2. Strip leading dots/hyphens to prevent ".." prefix and hidden-file names
+  //   3. Require at least one alphanumeric char to ensure meaningful output
+  //   4. Truncate to 64 chars
+  // Prevents path traversal (/, ../) and illegal filename chars.
+  const safeSessionId = String(session_id)
+    .replace(/[^a-zA-Z0-9._-]/g, '_')
+    .replace(/^[._-]+/, '')
+    .slice(0, 64);
+  if (!safeSessionId || !/[a-zA-Z0-9]/.test(safeSessionId)) {
+    process.stderr.write(`${TAG} WARNING: cannot write stall report — session_id has no safe chars\n`);
+    return null;
+  }
+
   const now    = new Date();
   const isoTs  = now.toISOString();
   const fsTs   = isoFsSafe(now);
   const dir    = path.join(cwd, '.mercury', 'state', 'stall-reports');
-  const fname  = `${session_id}-${fsTs}.json`;
+  const fname  = `${safeSessionId}-${fsTs}.json`;
   const fpath  = path.join(dir, fname);
 
   const report = {
@@ -76,7 +91,7 @@ function writeStallReport(cwd, session_id, stall_type, stall_reason, state, last
   const tmp = `${fpath}.${process.pid}.${Date.now()}.tmp`;
   try {
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(tmp, JSON.stringify(report, null, 2));
+    fs.writeFileSync(tmp, JSON.stringify(report, null, 2), { mode: 0o600 });
     fs.renameSync(tmp, fpath);
     pruneReports(cwd, KEEP_DEFAULT);
     return fpath;
