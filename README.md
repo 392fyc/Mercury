@@ -27,8 +27,7 @@ Mercury (lightweight core — only builds what no external project provides)
 ├── .claude/
 │   ├── agents/        sub-agent role definitions (main, dev, acceptance, critic, design, research, game-*)
 │   ├── skills/        reusable workflow skills (pr-flow, autoresearch, dev-pipeline, dual-verify, ...)
-│   ├── hooks/         SessionStart, PreToolUse, PostToolUse, PreCompact, Stop hooks
-│   └── commands/      slash commands
+│   └── hooks/         SessionStart, PreToolUse, PostToolUse, PreCompact, Stop hooks
 ├── .mercury/
 │   ├── docs/          DIRECTION.md + EXECUTION-PLAN.md + guides/ + research/
 │   ├── templates/     dispatch prompt templates
@@ -109,14 +108,14 @@ When files from an external project are cherry-picked into Mercury, the cherry-p
 
 ## Example files
 
-Configuration templates ship as `.example` files — copy and customize before use; the targets are gitignored.
+Two `.example` files ship at the repo root. They serve two different tracking models:
 
-| Template | Target | Purpose |
+| Template | Target | Tracking model |
 |---|---|---|
-| `.pr_agent.toml.example` | `.pr_agent.toml` | PR review bot instructions (Argus / Qodo Merge) |
-| `CLAUDE.local.md.example` | `CLAUDE.local.md` | Claude Code local instructions (caveman concise mode) |
+| `CLAUDE.local.md.example` | `CLAUDE.local.md` | Target is **gitignored** — personal instructions per developer |
+| `.pr_agent.toml.example` | `.pr_agent.toml` | Target is **committed** (project-scope config for Argus); the `.example` is reference material when setting up the file elsewhere |
 
-### Caveman mode
+### Caveman mode (local, gitignored)
 
 Persistent concise-output style based on [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) (MIT). Activate via the `caveman-toggle` skill:
 
@@ -128,12 +127,9 @@ Persistent concise-output style based on [JuliusBrussee/caveman](https://github.
 
 Or manually: `cp CLAUDE.local.md.example CLAUDE.local.md`.
 
-### PR review bot
+### PR review bot (committed)
 
-```bash
-cp .pr_agent.toml.example .pr_agent.toml
-# edit .pr_agent.toml with your review bot instructions
-```
+`.pr_agent.toml` is already committed; edit it in place rather than copying from the `.example`. The `.example` exists for bootstrapping the file in another repo or regenerating from scratch.
 
 ## Documentation index
 
