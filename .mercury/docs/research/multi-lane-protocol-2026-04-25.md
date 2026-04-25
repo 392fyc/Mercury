@@ -399,8 +399,24 @@ User becomes arbitrator. PR is NOT auto-merge — user must explicitly approve.
 and `SESSION_INDEX.md` contain only auto-generated index lines via
 `scripts/regenerate-memory-index.sh` (run pre-commit or post-merge hook).
 
-**Migration**: existing `MEMORY.md` content stays; new sessions write to per-session files
-going forward. Index regenerated each commit.
+**Migration plan**:
+- **Phase A (additive, non-breaking)**: deploy `scripts/regenerate-memory-index.sh`. Script reads `memory/sessions/*.md` frontmatter (session ID, lane, date, summary), generates index lines, writes to a separate `memory/INDEX.generated.md` for diff inspection. Existing `MEMORY.md` / `SESSION_INDEX.md` untouched. Run for ≥3 sessions to verify output stability.
+- **Phase B (cutover, BREAKING)**: split existing `MEMORY.md` and `SESSION_INDEX.md` rows into per-session files at `memory/sessions/S<N>-<lane>.md`. Replace `MEMORY.md` and `SESSION_INDEX.md` content with generated index. Tag pre-cutover commit `lane-protocol-v0.1-pre-cutover` for instant rollback.
+- **Phase C (lock-in)**: enable pre-commit hook rejecting direct edits to `MEMORY.md` / `SESSION_INDEX.md` outside the regenerate script.
+
+**Consistency guarantees**:
+- Script output deterministic (sort by session ID + lane); `git diff` after regenerate must be either empty or only the new session's row added
+- Pre-commit hook validates index matches source files before allowing commit
+- Per-session files are append-only at session granularity (no mid-session rewrites); content frozen post-handoff
+
+**Failure rollback**:
+- If regenerate script fails (parse error, missing frontmatter): script exits non-zero, pre-commit blocks; user fixes source file or runs `scripts/regenerate-memory-index.sh --fallback-preserve` which keeps existing index
+- If Phase B cutover causes index drift: revert to `lane-protocol-v0.1-pre-cutover` tag (single git command); existing `MEMORY.md` / `SESSION_INDEX.md` content restored verbatim
+- Orphaned per-session files (lane closed but file remains): handled by `scripts/lane-sweep.sh` (Rule 3.1) — flagged not deleted
+
+**Out-of-scope**:
+- Migration of historical `feedback_*.md`, `project_*.md`, `reference_*.md` files (these are not session-scoped; remain untouched)
+- AgentKB / mem0 layer integration (memory layer rebuild #252 is orthogonal)
 
 ### Modify Rule 2 — Shorten branch prefix (P3)
 
@@ -452,17 +468,28 @@ Rationale: Miller's 7±2 + multi-agent research consensus + WIP limit theory.
 
 ## Post-research Action Items
 
-1. Comment Issue #292 with executive summary (this report) + recommendation
-2. Update `memory/feedback_lane_protocol.md` with v0.1 delta annotations (without overwriting v0)
-3. File follow-up Issues (P1/P2) for v0.1 deltas implementation:
+Items split by ownership: S1-side-multi-lane (this session) vs main lane S74+ (post-decision).
+
+### Completed by S1-side-multi-lane (delivered before this PR)
+
+- ✅ **Item 1 — Comment Issue #292** with executive summary + recommendation. Posted as [#issuecomment-4319812413](https://github.com/392fyc/Mercury/issues/292#issuecomment-4319812413). Visible on the Issue, not in this PR's diff (intentional — Issue comments are not repo files).
+- ✅ **Item 2 — Update `memory/feedback_lane_protocol.md`** with v0.1 delta annotations. Appended new "## v0.1 Delta Proposal" section; original v0 rules untouched. NOT in this PR diff because the file lives in user-level memory layer (`~/.claude/projects/.../memory/`) outside the repo, gitignored. Confirmation: see `memory/feedback_lane_protocol.md` post-research delta section.
+- ✅ **Item 6 — Retain `session-handoff-side-multi-lane.md`** as audit trail. Updated to closing-handoff state in user-level memory layer.
+
+### Deferred to main lane S74+ (HOLD-OPEN per >2-rule revision clause)
+
+- ⏸️ **Item 3 — File follow-up Issues** for v0.1 deltas implementation. Side lane scope is research-output only; implementation Issues require main-lane decision on which deltas to accept:
    - P1: Rule 1.1 probe-after-write script
    - P0: Rule 7 per-session file restructure (BREAKING)
    - P1: Rule 3.1+3.2 stale lane scripts
    - P2: Rule 4.1 emergency escalation docs
    - P3: Rule 2 branch prefix shortening
-4. Close Issue #292
-5. Mark `LANES.md` `side-multi-lane` status → `closed`
-6. Retain `session-handoff-side-multi-lane.md` as audit trail
+- ⏸️ **Item 4 — Close Issue #292**. Held open per S1 starting prompt clause: "research 发现 protocol 需重大修订（>2 rules 改动）→ Issue 保留 + 提 v0.1 proposal + main lane 决策". 6 rule changes + 1 cap → hold open.
+- ⏸️ **Item 5 — Mark `LANES.md` side-multi-lane status `paused` → `closed`**. Currently set to `paused` (research delivered, awaiting decision). Flips to `closed` when main lane resolves Issue #292.
+
+### Tracking
+
+This split is **intentional** — side lane scope ends at research delivery. Implementation lives outside lane scope; main lane S74+ owns acceptance decisions. The PR delivers the research artifact (design doc); other items are tracked via Issue #292 status + LANES.md `paused` status + memory file annotations.
 
 ---
 
