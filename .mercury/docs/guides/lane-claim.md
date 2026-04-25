@@ -32,6 +32,25 @@ scripts/lane-claim.sh <lane-name> <issue-number> [--dry-run] [--no-assignee]
 | `--no-assignee` | Skip `--add-assignee @me`. Use when the wrapper runs in CI/bot context where `@me` resolves to the bot account. |
 | `-h`, `--help` | Print usage from this script's header. |
 
+| Env var | Effect |
+|---------|--------|
+| `GH_REPO=<owner>/<repo>` | Override repo target. Without this, the wrapper resolves the repo from the current cwd via `gh repo view`. Set this in CI / off-cwd contexts to prevent accidentally writing to the wrong repo. |
+
+### Repo target pinning
+
+The repo is resolved **once** at script start and passed explicitly to every subsequent `gh issue *`
+call as `--repo <owner>/<repo>`. This defends against:
+
+- **Cross-repo writes**: a `cd` mid-script (impossible in this single-file script, but a future
+  refactor could introduce one) cannot redirect writes to a different repo.
+- **CI / fork contexts**: where `gh` may auto-resolve to an unexpected repo because of
+  `git remote` configuration. CI should always set `GH_REPO` explicitly.
+- **Wrong-cwd execution**: running the script from a sibling repo silently writes to that repo
+  unless `GH_REPO` is set.
+
+If the wrapper cannot resolve the repo (no git repo + no `GH_REPO`), it exits with code `2`
+before any GitHub API call.
+
 ### Exit codes
 
 | Exit | Meaning |
@@ -98,7 +117,7 @@ Tests do not touch real GitHub — safe to run in CI on every commit.
 ## Source references
 
 - Issue [#309](https://github.com/392fyc/Mercury/issues/309) — acceptance criteria
-- [`feedback_lane_protocol.md`](https://github.com/392fyc/Mercury/blob/develop/.mercury/docs/research/multi-lane-protocol-2026-04-25.md) (user-memory, repo mirror in research doc)
+- [Multi-lane protocol research design doc](https://github.com/392fyc/Mercury/blob/develop/.mercury/docs/research/multi-lane-protocol-2026-04-25.md) — repo-side authority for the v0 7 rules (the protocol is also mirrored in user-memory `feedback_lane_protocol.md`, which is per-machine and not web-accessible)
 - [v0.1 Delta companion](../lane-protocol-v0.1-deltas.md#delta-1--rule-11-probe-after-write-p1)
 - [GitHub Releases API race condition (devactivity.com)](https://devactivity.com/insights/mastering-github-releases-avoiding-race-conditions-for-enhanced-engineering-productivity/)
 - [GitHub community discussion #9252 — concurrency group bug](https://github.com/orgs/community/discussions/9252)

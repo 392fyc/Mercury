@@ -53,6 +53,7 @@ assert_exit 2 "lane starting with hyphen rejected" "$SCRIPT" -bad 309
 assert_exit 2 "non-numeric issue rejected"         "$SCRIPT" good 0xFF
 assert_exit 2 "unknown flag rejected"              "$SCRIPT" --bogus good 309
 assert_exit 2 "empty issue rejected"               "$SCRIPT" good ""
+assert_exit 2 "issue=0 rejected (positive integer)" "$SCRIPT" good 0
 
 # ---------------------------------------------------------------------------
 # gh stubs for happy path + race + zero-label edge case
@@ -73,11 +74,18 @@ chmod +x "$TMP/bin/gh-happy"
 
 cat > "$TMP/bin/gh-race" <<'EOF'
 #!/usr/bin/env bash
+# When the wrapper invokes `issue comment`, record the call by appending to
+# the marker file so tests can assert the side-effect — not just exit code.
 case "$1 $2" in
   "issue edit")    exit 0 ;;
   "issue view")    echo '{"labels":[{"name":"lane:main"},{"name":"lane:other"}]}' ; exit 0 ;;
   "api user")      echo 'testuser' ; exit 0 ;;
-  "issue comment") exit 0 ;;
+  "issue comment")
+    if [ -n "${LANE_CLAIM_TEST_COMMENT_MARKER:-}" ]; then
+      printf 'comment-called %s\n' "$*" >> "$LANE_CLAIM_TEST_COMMENT_MARKER"
+    fi
+    exit 0
+    ;;
   *) echo "stub-race: unhandled $*" >&2 ; exit 99 ;;
 esac
 EOF
@@ -110,13 +118,28 @@ stub() {
 echo
 echo "[scenarios]"
 
+# All scenarios pin GH_REPO so stubs don't need to mock `gh repo view`. This
+# also exercises the production code path that resolves repo from env.
+export GH_REPO="test-owner/test-repo"
+
 stub gh-happy
 PATH="$TMP/bin:$PATH" assert_exit 0 "happy path (1 lane label) → exit 0" \
   "$SCRIPT" --no-assignee test 309
 
 stub gh-race
-PATH="$TMP/bin:$PATH" assert_exit 1 "race detected (2 lane labels) → exit 1" \
+COMMENT_MARKER="$TMP/comment-called"
+rm -f "$COMMENT_MARKER"
+LANE_CLAIM_TEST_COMMENT_MARKER="$COMMENT_MARKER" PATH="$TMP/bin:$PATH" \
+  assert_exit 1 "race detected (2 lane labels) → exit 1" \
   "$SCRIPT" --no-assignee main 309
+
+# Side-effect assertion: the wrapper MUST post a conflict comment in race scenario
+# (acceptance criterion from #309 — exit code alone is insufficient evidence).
+if [ -s "$COMMENT_MARKER" ] && grep -q 'comment-called' "$COMMENT_MARKER"; then
+  pass "race scenario triggered gh issue comment side-effect"
+else
+  fail "race scenario did NOT trigger gh issue comment (marker: $COMMENT_MARKER)"
+fi
 
 stub gh-zero
 PATH="$TMP/bin:$PATH" assert_exit 1 "zero lane labels post-write → exit 1" \
