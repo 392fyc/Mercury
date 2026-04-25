@@ -2,6 +2,8 @@
 
 MCP channel server — one instance per Claude Code session, bridging the session to `mercury-channel-router`.
 
+> **PREREQUISITE**: Claude Code MUST be launched from the **project root directory** for `.mcp.json` relative paths to resolve correctly. Launching from a subdirectory will fail to load this adapter.
+
 ## Role
 
 - Spawned by Claude Code via `.mcp.json` when the session starts with `--dangerously-load-development-channels`.

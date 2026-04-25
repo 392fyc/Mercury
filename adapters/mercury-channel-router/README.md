@@ -25,7 +25,7 @@ MERCURY_TELEGRAM_BOT_TOKEN=<token> node adapters/mercury-channel-router/router.c
 | Variable | Required | Description |
 |---|---|---|
 | `MERCURY_TELEGRAM_BOT_TOKEN` | Yes (for Telegram) | BotFather token |
-| `MERCURY_TELEGRAM_ALLOWED_USER_IDS` | Recommended | Comma-separated Telegram user IDs (sender allowlist). Empty = allow all. |
+| `MERCURY_TELEGRAM_ALLOWED_USER_IDS` | **REQUIRED for inbound** | Comma-separated Telegram user IDs (sender allowlist). Empty = all inbound messages dropped (fail-closed). |
 | `MERCURY_TELEGRAM_CHAT_ID` | No | Default chat_id for `/notify` when no session has chatted yet |
 | `MERCURY_ROUTER_PORT` | No | IPC port (default: 8788) |
 | `MERCURY_NOTIFY_DISABLED` | No | Disables Telegram polling entirely; IPC still works |

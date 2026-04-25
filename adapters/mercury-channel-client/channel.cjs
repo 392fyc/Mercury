@@ -9,11 +9,14 @@ const { Server } = require('@modelcontextprotocol/sdk/server/index.js');
 const { StdioServerTransport } = require('@modelcontextprotocol/sdk/server/stdio.js');
 const { CallToolRequestSchema, ListToolsRequestSchema } = require('@modelcontextprotocol/sdk/types.js');
 const crypto = require('crypto');
-const path = require('path');
+const path   = require('path');
+const fs     = require('fs');
+const os     = require('os');
 const { execSync } = require('child_process');
 
 const PORT       = Number(process.env.MERCURY_ROUTER_PORT) || 8788;
 const ROUTER_CJS = path.join(__dirname, '..', 'mercury-channel-router', 'router.cjs');
+const TOKEN_FILE = path.join(os.homedir(), '.mercury', 'router.token');
 const TAG        = '[mercury-channel-client]';
 
 // ── Session identity ──────────────────────────────────────────────────────────
@@ -25,10 +28,30 @@ const PROJECT_PATH  = process.env.CLAUDE_PROJECT_DIR || process.cwd();
 // ADR §7.6: 6-char prefix = first 6 hex chars of sha1(SESSION_ID)
 const SESSION_SHORT = crypto.createHash('sha1').update(SESSION_ID).digest('hex').slice(0,6);
 
+// ── IPC token reader (with retry for router startup race) ────────────────────
+async function readToken(retries = 5, delayMs = 200) {
+  for (let i = 0; i < retries; i++) {
+    try { return fs.readFileSync(TOKEN_FILE, 'utf8').trim(); } catch {}
+    if (i < retries - 1) await new Promise(r => setTimeout(r, delayMs));
+  }
+  return null;
+}
+
+// token cache — resolved once after router starts
+let _token = null;
+async function getToken() {
+  if (_token) return _token;
+  _token = await readToken();
+  return _token;
+}
+
 // ── Router IPC helpers ────────────────────────────────────────────────────────
 async function routerFetch(path_, opts = {}) {
   const url = `http://127.0.0.1:${PORT}${path_}`;
-  return fetch(url, { signal: AbortSignal.timeout(3000), ...opts });
+  const token = await getToken();
+  const headers = { ...(opts.headers || {}) };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  return fetch(url, { signal: AbortSignal.timeout(3000), ...opts, headers });
 }
 
 async function ensureRouter() {
@@ -125,9 +148,10 @@ let sseActive = true;
 async function connectInbox() {
   while (sseActive) {
     try {
-      const res = await fetch(`http://127.0.0.1:${PORT}/inbox/${SESSION_ID}`, {
-        signal: AbortSignal.timeout(60000),
-      });
+      const token = await getToken();
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      // no AbortSignal timeout: SSE is indefinite-lived; reconnect only on real disconnect
+      const res = await fetch(`http://127.0.0.1:${PORT}/inbox/${SESSION_ID}`, { headers });
       if (!res.ok || !res.body) { await new Promise(r => setTimeout(r, 2000)); continue; }
       const reader = res.body.getReader();
       const dec    = new TextDecoder();
@@ -178,12 +202,17 @@ async function shutdown() {
 }
 process.on('SIGTERM', shutdown);
 process.on('SIGINT',  shutdown);
-process.on('exit',    () => { try { require('child_process').execSync(`node -e "require('node:http').request({hostname:'127.0.0.1',port:${PORT},path:'/register/${SESSION_ID}',method:'DELETE'}).end()"`, { timeout: 2000 }); } catch {} });
+// Fix H3: removed unsafe process.on('exit') execSync with string-interpolated shell command.
+// SIGTERM/SIGINT + beforeExit cover all normal exit paths without shell injection risk.
+process.on('beforeExit', async () => { await deregister(); });
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 (async () => {
   try {
     await ensureRouter();
+    // read token after router is up (router writes token file on listen success)
+    _token = await readToken(10, 300);
+    if (!_token) process.stderr.write(`${TAG} WARNING: could not read router token; IPC calls will be unauthenticated\n`);
     const registered = await register();
     if (registered) connectInbox().catch(e => process.stderr.write(`${TAG} inbox error: ${e.message}\n`));
   } catch (e) {

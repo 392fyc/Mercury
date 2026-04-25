@@ -5,14 +5,25 @@
 // Callers: hook scripts (loop-detector, post-commit, etc.).
 // Never throws; always returns {ok, ...}.
 
-const PORT = process.env.MERCURY_ROUTER_PORT || 8788;
+const fs   = require('fs');
+const os   = require('os');
+const path = require('path');
+
+const PORT       = process.env.MERCURY_ROUTER_PORT || 8788;
+const TOKEN_FILE = path.join(os.homedir(), '.mercury', 'router.token');
+
+function readToken() {
+  try { return fs.readFileSync(TOKEN_FILE, 'utf8').trim(); } catch { return null; }
+}
 
 async function notify(severity, title, body, options = {}) {
   if (process.env.MERCURY_NOTIFY_DISABLED) return { ok: true, skipped: true };
+  const token = readToken();
+  if (!token) return { ok: false, error: 'no_token' };
   try {
     const res = await fetch(`http://127.0.0.1:${PORT}/notify`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
       body: JSON.stringify({ severity, title, body, ...options }),
       signal: AbortSignal.timeout(2000),
     });
