@@ -97,8 +97,13 @@ command -v jq >/dev/null 2>&1 || die "jq not installed or not on PATH"
 # or env mutation cannot redirect writes.
 REPO="${GH_REPO:-}"
 if [ -z "$REPO" ]; then
+  # gh repo view can fail for several reasons: not in a git repo, no `origin`
+  # remote, gh auth missing, network/API outage. Don't claim "not in a git repo"
+  # specifically — the actual stderr is suppressed for cleanliness so the
+  # caller cannot distinguish reasons. Suggest GH_REPO as the deterministic
+  # override path.
   REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null) \
-    || die "cannot determine target repo: not in a git repo and GH_REPO not set"
+    || die "cannot determine target repo via GH_REPO or gh repo view (no git repo, no origin remote, gh auth missing, or API/network error)"
 fi
 case "$REPO" in
   */*) ;;
@@ -145,7 +150,7 @@ GitHub REST API non-atomic — concurrent claims both succeeded silently. Manual
 2. Other lane(s): \`gh issue edit $ISSUE --remove-label lane:<other>\`
 3. Loser lanes close their session and fall back to non-conflicting work
 
-Source: [Mercury feedback_lane_protocol.md Rule 1.1](https://github.com/392fyc/Mercury/blob/develop/.mercury/docs/guides/lane-claim.md).
+Source: [Mercury lane-claim.md (Rule 1.1 in-repo guide)](https://github.com/392fyc/Mercury/blob/develop/.mercury/docs/guides/lane-claim.md).
 EOF
 )
   if ! gh issue comment "$ISSUE" --repo "$REPO" --body "$COMMENT_BODY" >/dev/null 2>&1; then

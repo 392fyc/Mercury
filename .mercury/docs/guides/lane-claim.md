@@ -26,15 +26,12 @@ verify exactly one `lane:*` prefix is present. Conflict → abort + comment + no
 scripts/lane-claim.sh <lane-name> <issue-number> [--dry-run] [--no-assignee]
 ```
 
-| Flag | Effect |
-|------|--------|
-| `--dry-run` | Print the intended actions without calling `gh`. Useful for CI validation. |
+| Flag / Env var | Effect |
+|----------------|--------|
+| `--dry-run` | Print the intended actions without calling `gh`/`jq`. Strict offline — works without `gh` installed. |
 | `--no-assignee` | Skip `--add-assignee @me`. Use when the wrapper runs in CI/bot context where `@me` resolves to the bot account. |
 | `-h`, `--help` | Print usage from this script's header. |
-
-| Env var | Effect |
-|---------|--------|
-| `GH_REPO=<owner>/<repo>` | Override repo target. Without this, the wrapper resolves the repo from the current cwd via `gh repo view`. Set this in CI / off-cwd contexts to prevent accidentally writing to the wrong repo. |
+| `GH_REPO=<owner>/<repo>` (env) | Override repo target. Without this, the wrapper resolves the repo from the current cwd via `gh repo view`. Set this in CI / off-cwd contexts to prevent accidentally writing to the wrong repo. |
 
 ### Repo target pinning
 
@@ -56,8 +53,8 @@ before any GitHub API call.
 | Exit | Meaning |
 |------|---------|
 | `0` | Clean claim — exactly one `lane:*` label present after probe |
-| `1` | Conflict — multiple `lane:*` labels OR zero `lane:*` labels post-write; conflict comment posted on the Issue |
-| `2` | Invalid args, `gh` or `jq` missing, or `gh` API error |
+| `1` | Either multiple `lane:*` labels (conflict — Issue comment posted) OR zero `lane:*` labels (silent edit failure — warn only, no comment) |
+| `2` | Invalid args, `gh`/`jq` missing, cannot resolve target repo, or `gh` API error |
 
 ### Examples
 

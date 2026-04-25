@@ -158,7 +158,8 @@ stub gh-edit-fail
 PATH="$TMP/bin:$PATH" assert_exit 2 "gh edit failure → exit 2" \
   "$SCRIPT" --no-assignee test 309
 
-# --dry-run path: doesn't even call gh — should succeed without stub
+# --dry-run path: strict offline (no gh / jq / git invocations) since iter 2 fix.
+# Verified separately at the CLI with PATH=/usr/bin:/bin (no gh, no jq) → exit 0.
 PATH="$TMP/bin:$PATH" assert_exit 0 "--dry-run skips API → exit 0" \
   "$SCRIPT" --dry-run --no-assignee test 309
 
