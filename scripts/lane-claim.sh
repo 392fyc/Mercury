@@ -157,8 +157,21 @@ GitHub REST API non-atomic — concurrent claims both succeeded silently. Manual
 Source: [Mercury lane-claim.md (Rule 1.1 in-repo guide)](https://github.com/$REPO/blob/HEAD/.mercury/docs/guides/lane-claim.md).
 EOF
 )
-  if ! gh issue comment "$ISSUE" --repo "$REPO" --body "$COMMENT_BODY" >/dev/null 2>&1; then
-    warn "failed to post conflict comment — please post manually"
+  # Conflict comment is a side-effect. Detection + non-zero exit are the hard
+  # requirements; the comment is best-effort. Retry once on transient gh/API
+  # failure; surface a loud warn if both attempts fail so the operator knows
+  # the conflict needs manual posting (the conflict itself is still signaled
+  # via stderr CONFLICT line above + exit 1 below).
+  COMMENT_OK=0
+  for attempt in 1 2; do
+    if gh issue comment "$ISSUE" --repo "$REPO" --body "$COMMENT_BODY" >/dev/null 2>&1; then
+      COMMENT_OK=1
+      break
+    fi
+    [ "$attempt" -lt 2 ] && sleep 1
+  done
+  if [ "$COMMENT_OK" -eq 0 ]; then
+    warn "FAILED to post conflict comment after 2 attempts — conflict is still signaled via the CONFLICT line above + exit 1; post the comment manually so the other lane sees the conflict"
   fi
   exit 1
 fi

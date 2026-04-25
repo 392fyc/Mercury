@@ -134,6 +134,28 @@ esac
 EOF
 chmod +x "$TMP/bin/gh-other-lane"
 
+# gh-race-comment-fail: race scenario (2 lane:* labels) where `issue comment`
+# always returns non-zero. Verifies the wrapper retries 2x then warns + still
+# exits 1 (conflict detection is the hard requirement; comment posting is
+# best-effort).
+cat > "$TMP/bin/gh-race-comment-fail" <<'EOF'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "issue edit")    exit 0 ;;
+  "issue view")    echo '{"labels":[{"name":"lane:main"},{"name":"lane:other"}]}' ; exit 0 ;;
+  "api user")      echo 'testuser' ; exit 0 ;;
+  "issue comment")
+    if [ -n "${LANE_CLAIM_TEST_COMMENT_FAIL_LOG:-}" ]; then
+      printf 'attempt\n' >> "$LANE_CLAIM_TEST_COMMENT_FAIL_LOG"
+    fi
+    echo "fake gh issue comment failure" >&2
+    exit 1
+    ;;
+  *) echo "stub-race-fail: unhandled $*" >&2 ; exit 99 ;;
+esac
+EOF
+chmod +x "$TMP/bin/gh-race-comment-fail"
+
 stub() {
   ln -sf "$TMP/bin/$1" "$TMP/bin/gh"
 }
@@ -171,6 +193,21 @@ PATH="$TMP/bin:$PATH" assert_exit 1 "zero lane labels post-write → exit 1" \
 stub gh-other-lane
 PATH="$TMP/bin:$PATH" assert_exit 1 "single lane:* label belongs to other lane → exit 1" \
   "$SCRIPT" --no-assignee test 309
+
+stub gh-race-comment-fail
+COMMENT_FAIL_LOG="$TMP/comment-fail-log"
+rm -f "$COMMENT_FAIL_LOG"
+LANE_CLAIM_TEST_COMMENT_FAIL_LOG="$COMMENT_FAIL_LOG" PATH="$TMP/bin:$PATH" \
+  assert_exit 1 "race + comment-failure → exit 1 (conflict still signaled)" \
+  "$SCRIPT" --no-assignee main 309
+
+# Side-effect: wrapper must retry 2x on comment failure
+ATTEMPTS=$(wc -l < "$COMMENT_FAIL_LOG" 2>/dev/null | tr -d ' ')
+if [ "$ATTEMPTS" = "2" ]; then
+  pass "comment-failure path retries exactly 2 times before warn"
+else
+  fail "comment-failure path attempt count = $ATTEMPTS (expected 2)"
+fi
 
 stub gh-edit-fail
 PATH="$TMP/bin:$PATH" assert_exit 2 "gh edit failure → exit 2" \
