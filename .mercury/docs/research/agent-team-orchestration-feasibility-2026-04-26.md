@@ -29,7 +29,7 @@ All LOC counts in this document are obtained via `wc -l` on the repository check
 This document uses several Mercury-internal terms defined here for external readers:
 
 - **Lane** — a parallel work stream pinned to a git branch prefix and a lane-tag (e.g. `lane:main`, `lane:side-multi-lane`). One lane = one autonomous Claude Code session line. Up to 5 active lanes per the v0.1 hard cap.
-- **Lane Protocol Rules 1–8** — the 8 numbered rules in `memory/feedback_lane_protocol.md` v0.2 (Issue claim, branch prefix, tmp isolation, main-lane spec authority, per-lane state, LANES.md registry, append-only shared index, autonomous chain). See `.mercury/docs/research/multi-lane-protocol-2026-04-25.md` for full text.
+- **Lane Protocol Rules 1–8** — the 8 numbered rules defined in user-memory `memory/feedback_lane_protocol.md` v0.2 (Issue claim, branch prefix, tmp isolation, main-lane spec authority, per-lane state, LANES.md registry, append-only shared index, autonomous chain). The full rule TEXT lives ONLY in user-memory (per Path conventions § above — not in repo). The in-repo PR-auditable companion `.mercury/docs/research/multi-lane-protocol-2026-04-25.md` contains the v0 → v0.1 delta proposal that references rule numbering but does NOT enumerate the rule bodies; for the canonical rule text consult user-memory or `.mercury/docs/lane-protocol-v0.1-deltas.md`.
 - **Probe-after-write (Rule 1.1)** — re-query GitHub Issue labels immediately after `gh issue edit --add-label` to detect concurrent claim races.
 - **Autonomous chain (Rule 8 v0.2)** — side lane self-driven Issue progression without per-step user approval.
 - **SoT 10-state task machine** — pre-pivot Source-of-Truth task lifecycle: `drafted → dispatched → in_progress → implementation_done → main_review → acceptance → verified → closed` plus `blocked`, `cancelled`. Lives in `archive/packages/orchestrator/src/task-manager.ts`.
@@ -91,7 +91,12 @@ The "main = Director, side = Dev Teams" metaphor maps as follows:
 | **Lane lifecycle coordinator** | `scripts/lane-spawn.sh`, `scripts/lane-close.sh`, `scripts/lane-sweep.sh` — spawn/teardown/stale-prune; Rule 3.1+3.2 scripts planned but not built | Small (<1d each, ~2d total) | P1 |
 | **Director command surface (lane-aware)** | Router extension: inbound Telegram commands can target a specific lane (`@lane-name <cmd>`); currently routes only to `activeId` session | Small (<1d) | P2 |
 
-**Total effort estimate**: 6–11 person-days across 5 modules, all Small–Medium. New scripts target the ≤200 LOC adapter cap; existing adapters cluster around the cap (router 220, channel-client 231) — both edge cases predate the cap and are grandfathered per CLAUDE.md "DO NOT — adapters exceeding 200 lines"; new modules must respect 200. No Anthropic official agent teams feature is required for this architecture — it augments but does not replace the lane protocol.
+**Total effort estimate**: 6–11 person-days across 5 modules, all Small–Medium. **Adapter LOC cap compliance**: CLAUDE.md and DIRECTION.md both enumerate the ≤200 LOC adapter cap as a HARD constraint with no documented grandfathering. The current `mercury-channel-router` (220 LOC) and `mercury-channel-client` (231 LOC) are already over-cap — these are pre-existing constraint violations that this research surfaces but does NOT excuse. Two follow-on items that should be filed alongside this research's Phase A/B/C plan:
+
+1. **Refactor router → ≤200 LOC** by extracting Telegram bot setup OR session registry into a separate file (Issue to be filed)
+2. **Refactor channel-client → ≤200 LOC** similarly (Issue to be filed)
+
+All NEW modules from Phase A/B/C MUST respect the 200 LOC cap. No Anthropic official agent teams feature is required for this architecture — it augments but does not replace the lane protocol.
 
 ### 1.4 Does This Require Anthropic Agent Teams?
 
@@ -165,7 +170,7 @@ Multi-agent adapter migration plan (App-Server → MCP). AD-001 through AD-004 s
 | `archive/roles/*.yaml` | 100% | Already salvaged | All 6 roles → `.claude/agents/*.md` (Phase 0 done) |
 | `archive/docs/architecture-evolution-plan.md` | Reference | Active reference | G1-G3, G9 gap IDs; AD-001/002 principles |
 
-**Key finding**: The archive's most valuable contribution is **design validation**, not code transplant. The orchestrator's notification broadcaster, session persistence, and task state machine all proved correct — and Mercury's current adapters re-implement the equivalent patterns at near-cap sizes (router 220, channel-client 231 — both grandfathered against the strict 200 LOC cap; notify 38, loop-detector 174 well below). The archive's 4414-line `orchestrator.ts` proves the same patterns require ~20× more code when bundled with GUI/RPC transport plumbing.
+**Key finding**: The archive's most valuable contribution is **design validation**, not code transplant. The orchestrator's notification broadcaster, session persistence, and task state machine all proved correct — and Mercury's current adapters re-implement the equivalent patterns at near-cap sizes (router 220 and channel-client 231 — both currently exceed the 200 LOC cap; refactor needed per Dim 1.3 follow-on items). `notify` 38 and `loop-detector` 174 are well below cap. The archive's 4414-line `orchestrator.ts` proves the same patterns require ~20× more code when bundled with GUI/RPC transport plumbing — validating the cap as the right design forcing function.
 
 ---
 
@@ -398,21 +403,33 @@ Two related thresholds (clarification per Issue #320 alignment):
 
 The 95 default ensures Issue #320 acceptance compliance; operators can lower via `MERCURY_PAUSE_THRESHOLD` env var if they want earlier pause for safety margin (research-tunable, not hardcoded).
 
+**Script location** (canonical): in-repo `scripts/statusline-mercury.sh`. The user-config path `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/statusline-mercury.sh` referenced in the `settings.json` example below is a **symlink target** created by Phase A install step (e.g. `ln -sf "$REPO_ROOT/scripts/statusline-mercury.sh" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/statusline-mercury.sh"`), keeping the canonical source under repo control while making it discoverable via the standard Claude Code config dir.
+
 ```bash
-# ~/.claude/statusline-mercury.sh
+# scripts/statusline-mercury.sh (in-repo canonical location)
 # Reads rate_limits from Claude Code statusline stdin JSON.
 # Writes .mercury/state/auto-run-paused when 5h usage >= PAUSE_THRESHOLD (default 95, per #320).
 # Deletes marker when usage resets (resets_at passes or usage drops).
 
 #!/bin/bash
-set -euo pipefail
+# Note: NOT using `set -euo pipefail` here because statusline runs frequently in arbitrary cwds
+# (any user shell prompt). A non-zero exit from `set -e` would break the Claude Code UI display
+# in non-repo directories. Instead, every external command is wrapped with `|| true` and explicit
+# null-checks below.
 
 PAUSE_THRESHOLD=${MERCURY_PAUSE_THRESHOLD:-95}  # per Issue #320 acceptance >95%
 WARN_THRESHOLD=${MERCURY_WARN_THRESHOLD:-85}    # early-warning color only
-REPO_ROOT="$(git -C "$(pwd)" rev-parse --show-toplevel 2>/dev/null || true)"
+
+# Resolve repo root via $CLAUDE_PROJECT_DIR (Claude Code-injected env var, set in any session
+# attached to a project) FIRST; fall back to git rev-parse for non-Claude shells.
+if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -d "$CLAUDE_PROJECT_DIR/.git" ]; then
+  REPO_ROOT="$CLAUDE_PROJECT_DIR"
+else
+  REPO_ROOT="$(git -C "$(pwd)" rev-parse --show-toplevel 2>/dev/null || true)"
+fi
+
 if [ -z "$REPO_ROOT" ]; then
-  echo "[statusline-mercury] Not inside a git repository; skip marker logic." >&2
-  # Continue to display path so user still sees usage; just no marker writes.
+  # Outside any git repo / Mercury project: still display usage but skip marker writes.
   STATE_DIR=""
   MARKER=""
 else
@@ -427,35 +444,42 @@ five_hour_pct=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage //
 resets_at=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // 0')
 now=$(date +%s)
 
-# Pause logic: write marker if threshold exceeded (only when in a git repo)
-pct_int=$(printf '%.0f' "$five_hour_pct")
+# FLOOR (not round) for threshold comparison — avoid early false-trigger when 94.6% rounds to 95.
+# Rationale: pause should fire at "definitely ≥95", not "rounds to ≥95".
+pct_floor=$(echo "$five_hour_pct" | cut -d. -f1)
+[ -z "$pct_floor" ] && pct_floor=0
+
+# Pause logic: write marker if FLOORED threshold exceeded (only when in a git repo)
 if [ -n "$MARKER" ]; then
-  if [ "$pct_int" -ge "$PAUSE_THRESHOLD" ]; then
+  if [ "$pct_floor" -ge "$PAUSE_THRESHOLD" ]; then
     mkdir -p "$STATE_DIR"
     echo "$resets_at" > "$MARKER"
-  # Resume logic: delete marker if window has reset
+  # Resume logic: delete marker only after BOTH (a) stored window passed AND (b) current usage
+  # also below threshold. Two-source confirmation reduces false-positive resume risk per Argus
+  # iter 2 finding "重置判定偏乐观" (overly-optimistic reset).
   elif [ -f "$MARKER" ]; then
     stored_reset=$(cat "$MARKER" 2>/dev/null || echo 0)
-    # Validate stored value before integer comparison; corrupted marker → drop it.
     if ! [[ "$stored_reset" =~ ^[0-9]+$ ]]; then
       echo "[statusline-mercury] Invalid pause marker; removing corrupted file." >&2
       rm -f "$MARKER"
-    elif [ "$now" -ge "$stored_reset" ]; then
+    elif [ "$now" -ge "$stored_reset" ] && [ "$pct_floor" -lt "$PAUSE_THRESHOLD" ]; then
+      # Both signals agree usage has cleared: stored window expired AND current % < threshold.
       rm -f "$MARKER"
     fi
+    # If only one signal clears, leave marker in place — next refresh re-evaluates.
   fi
 fi
 
-# Display output
-pct_bar=$(printf '%.0f' "$five_hour_pct")
+# Display output (display rounds for readability, but pause logic uses floor)
+pct_bar=$(printf '%.0f' "$five_hour_pct" 2>/dev/null || echo "?")
 seven_pct=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // "?"')
 model=$(echo "$input" | jq -r '.model.display_name // "?"')
 ctx=$(echo "$input" | jq -r '.context_window.used_percentage // 0' | cut -d. -f1)
 
 # Color code: green < 70%, yellow at WARN_THRESHOLD (default 85), red at PAUSE_THRESHOLD (default 95)
-if [ "$pct_int" -ge "$PAUSE_THRESHOLD" ]; then color='\033[31m'; # red — pause point
-elif [ "$pct_int" -ge "$WARN_THRESHOLD" ]; then color='\033[33m'; # yellow — early warn
-elif [ "$pct_int" -ge 70 ]; then color='\033[33m'; # yellow — soft warn
+if [ "$pct_floor" -ge "$PAUSE_THRESHOLD" ]; then color='\033[31m'; # red — pause point
+elif [ "$pct_floor" -ge "$WARN_THRESHOLD" ]; then color='\033[33m'; # yellow — early warn
+elif [ "$pct_floor" -ge 70 ]; then color='\033[33m'; # yellow — soft warn
 else color='\033[32m'; fi # green
 reset='\033[0m'
 
@@ -465,8 +489,12 @@ echo -e "${color}5h: ${pct_bar}%${reset} | 7d: ${seven_pct}% | ctx: ${ctx}% | ${
 **Auto-run detection** (side lane loop, e.g. in `scripts/lane-autonomous-chain.sh`):
 
 ```bash
-# Check for pause marker before each autonomous iteration
-MARKER=".mercury/state/auto-run-paused"
+# Check for pause marker before each autonomous iteration.
+# Use $CLAUDE_PROJECT_DIR / git-derived repo root rather than relative path so this script is
+# safe to run from arbitrary cwds.
+REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(git -C "$(pwd)" rev-parse --show-toplevel 2>/dev/null || echo .)}"
+MARKER="$REPO_ROOT/.mercury/state/auto-run-paused"
+
 if [ -f "$MARKER" ]; then
   resets_at=$(cat "$MARKER" 2>/dev/null || echo "")
   now=$(date +%s)
@@ -481,22 +509,30 @@ if [ -f "$MARKER" ]; then
     sleep 300  # re-check every 5 min
     continue
   else
-    rm -f "$MARKER"
-    echo "[lane-autonomous] Quota reset detected; resuming autonomous chain."
+    # Window expired per stored timestamp. statusline-mercury.sh requires BOTH timestamp + current
+    # usage below threshold to delete the marker, so if the marker is still here past resets_at,
+    # statusline has either not refreshed yet OR usage is still high. Wait one statusline refresh
+    # cycle (60s default) before assuming clear, then re-check on next loop iteration.
+    echo "[lane-autonomous] Stored window expired but marker still present; awaiting statusline confirmation."
+    sleep 90
+    continue
   fi
 fi
 ```
 
-**Settings wiring** (`~/.claude/settings.json` addition):
+**Settings wiring** (`${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json` addition; the path expands to the user-level Claude Code config dir per the `Related Repositories` section of Mercury CLAUDE.md):
+
 ```json
 {
   "statusLine": {
     "type": "command",
-    "command": "~/.claude/statusline-mercury.sh",
+    "command": "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/statusline-mercury.sh",
     "refreshInterval": 60
   }
 }
 ```
+
+Phase A install step creates the symlink: `ln -sf "$REPO_ROOT/scripts/statusline-mercury.sh" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/statusline-mercury.sh"`. This keeps the canonical source under repo control + version-tracked.
 
 **Durable cron registration** (per Issue #320 acceptance: "Cron must be `durable: true` to survive session restarts"):
 
@@ -580,7 +616,7 @@ Acceptance verification: after `claude` restart, `gh api ... | jq '.cron_jobs'` 
 
 ## Source Index
 
-(≥30 sources, deduplicated by section)
+(59 numbered entries, deduplicated by section. Some entries use letter-suffixed numbering — e.g. `25a`, `35b` — to keep section ordering stable while inserting follow-on sources during review revisions; this is intentional, not gap-numbering.)
 
 ### Anthropic Official
 1. [Orchestrate teams of Claude Code sessions — Claude Code Docs](https://code.claude.com/docs/en/agent-teams) — Dim 3.1, fetched 2026-04-26
