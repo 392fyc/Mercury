@@ -46,7 +46,8 @@ call as `--repo <owner>/<repo>`. This defends against:
   unless `GH_REPO` is set.
 
 If the wrapper cannot resolve the repo (no git repo + no `GH_REPO`), it exits with code `2`
-before any GitHub API call.
+before any issue edit/comment is attempted (`gh repo view` itself may hit the API during
+resolution; only the issue write/probe/comment paths are gated by successful resolution).
 
 ### Known limitation: residual race window
 
@@ -94,13 +95,14 @@ detected `lane:*` labels and asking for human arbitration. The comment template:
 > - `lane:main`
 > - `lane:other`
 >
-> Latest claim: `lane:other` by `@user`.
+> This invocation attempted to add `lane:other` as `@user` (ordering of past claims is not
+> knowable from this side — multiple lane labels are simply present after the probe).
 >
 > GitHub REST API non-atomic — concurrent claims both succeeded silently. Manual arbitration
 > required:
 >
 > 1. Decide which lane owns Issue #N
-> 2. Other lane(s): `gh issue edit N --remove-label lane:<other>`
+> 2. Other lane(s): `gh issue edit N --repo $REPO --remove-label lane:<other>`
 > 3. Loser lanes close their session and fall back to non-conflicting work
 
 The wrapper does **not** auto-remove either label — that decision belongs to the user, since
@@ -127,7 +129,7 @@ Tests do not touch real GitHub — safe to run in CI on every commit.
 ## Source references
 
 - Issue [#309](https://github.com/392fyc/Mercury/issues/309) — acceptance criteria
-- [Multi-lane protocol research design doc](https://github.com/392fyc/Mercury/blob/develop/.mercury/docs/research/multi-lane-protocol-2026-04-25.md) — repo-side authority for the v0 7 rules (the protocol is also mirrored in user-memory `feedback_lane_protocol.md`, which is per-machine and not web-accessible)
+- [Multi-lane protocol research design doc](../research/multi-lane-protocol-2026-04-25.md) — repo-side authority for the v0 7 rules (the protocol is also mirrored in user-memory `feedback_lane_protocol.md`, which is per-machine and not web-accessible)
 - [v0.1 Delta companion](../lane-protocol-v0.1-deltas.md#delta-1--rule-11-probe-after-write-p1)
 - [GitHub Releases API race condition (devactivity.com)](https://devactivity.com/insights/mastering-github-releases-avoiding-race-conditions-for-enhanced-engineering-productivity/)
 - [GitHub community discussion #9252 — concurrency group bug](https://github.com/orgs/community/discussions/9252)

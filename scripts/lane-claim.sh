@@ -78,11 +78,13 @@ if [ "$DRY_RUN" -eq 1 ]; then
   printf '[dry-run] target repo: %s\n' "$REPO_PREVIEW"
   printf '[dry-run] step 1: gh issue edit %s --repo %s --add-label %s\n' \
     "$ISSUE" "$REPO_PREVIEW" "$LABEL"
+  printf '[dry-run] step 2: gh issue view %s --repo %s --json labels (probe + count lane:* labels + ownership-invariant check)\n' \
+    "$ISSUE" "$REPO_PREVIEW"
   if [ "$NO_ASSIGNEE" -eq 0 ]; then
     printf '[dry-run] step 3 (only if probe is clean): gh issue edit %s --repo %s --add-assignee @me\n' \
       "$ISSUE" "$REPO_PREVIEW"
   fi
-  printf '[dry-run] probe + verdict skipped (no gh/jq calls in dry-run)\n'
+  printf '[dry-run] no gh/jq calls executed in dry-run mode\n'
   exit 0
 fi
 
@@ -152,7 +154,7 @@ GitHub REST API non-atomic — concurrent claims both succeeded silently. Manual
 2. Other lane(s): \`gh issue edit $ISSUE --repo $REPO --remove-label lane:<other>\`
 3. Loser lanes close their session and fall back to non-conflicting work
 
-Source: [Mercury lane-claim.md (Rule 1.1 in-repo guide)](https://github.com/392fyc/Mercury/blob/develop/.mercury/docs/guides/lane-claim.md).
+Source: [Mercury lane-claim.md (Rule 1.1 in-repo guide)](https://github.com/$REPO/blob/HEAD/.mercury/docs/guides/lane-claim.md).
 EOF
 )
   if ! gh issue comment "$ISSUE" --repo "$REPO" --body "$COMMENT_BODY" >/dev/null 2>&1; then
