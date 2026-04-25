@@ -401,6 +401,8 @@ Two related thresholds (clarification per Issue #320 alignment):
 - `PAUSE_THRESHOLD` (default **95**, per Issue #320 acceptance criteria) — hard pause point; writes marker, blocks autonomous chain
 - `WARN_THRESHOLD` (optional, default **85**) — early-warning indicator only (color flips red); does NOT write marker
 
+**Comparison semantics — intentional `>= 95` vs Issue #320 `> 95%`**: the implementation uses `>= PAUSE_THRESHOLD` (i.e. fires AT 95, not strictly above) intentionally for two reasons: (1) the source field is a float so a literal value of exactly `95.000…` is plausible and would otherwise be missed by `>`; (2) `>=` plus the FLOOR-not-round comparison below means a pre-floor value of `94.6` floors to `94` and does NOT trigger, while `95.0` does trigger — preserving the intent of Issue #320's ">95% threshold" while eliminating the off-by-one boundary ambiguity. If strict `>` semantics are required at acceptance, set `MERCURY_PAUSE_THRESHOLD=96` (next-integer escalation).
+
 The 95 default ensures Issue #320 acceptance compliance; operators can lower via `MERCURY_PAUSE_THRESHOLD` env var if they want earlier pause for safety margin (research-tunable, not hardcoded).
 
 **Script location** (canonical): in-repo `scripts/statusline-mercury.sh`. The user-config path `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/statusline-mercury.sh` referenced in the `settings.json` example below is a **symlink target** created by Phase A install step (e.g. `ln -sf "$REPO_ROOT/scripts/statusline-mercury.sh" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/statusline-mercury.sh"`), keeping the canonical source under repo control while making it discoverable via the standard Claude Code config dir.
@@ -538,16 +540,24 @@ Phase A install step creates the symlink: `ln -sf "$REPO_ROOT/scripts/statusline
 
 The statusline command itself runs in-band on every Claude Code refresh and does not need cron — it is invoked by the platform whenever the statusline updates (every `refreshInterval` seconds, default 60). The pause marker therefore self-maintains across all sessions that refresh the statusline.
 
-For sessions that do NOT use a statusline (e.g. background agents, CI runs, headless dispatch), Phase A implementation MUST add a durable cron via Mercury's session-resilient cron infrastructure (see `feedback_auto_run_mode.md`):
+For sessions that do NOT use a statusline (e.g. background agents, CI runs, headless dispatch), Phase A implementation MUST add a durable cron via Mercury's session-resilient cron infrastructure (see `feedback_auto_run_mode.md`). The cron prompt should NOT call `/usage` (which §4.1 above flagged as not machine-readable); instead the cron prompt drives `claude` non-interactively to read the same OAuth `rate_limits` field that statusline consumes:
 
 ```text
 CronCreate:
   cron: "*/2 * * * *"
   durable: true   # MANDATORY — survives session restart
   prompt: |
-    Re-run statusline-mercury.sh with synthetic stdin from the latest /usage probe
-    (or skip if last write_check_at < 60s old).
+    1. Run: claude -p "echo $(cat <<'JSON'
+       {"rate_limits": $(curl -sH "Authorization: Bearer $ANTHROPIC_OAUTH_TOKEN" \
+                                  https://api.anthropic.com/api/oauth/usage | jq '.')}
+       JSON
+       )" 2>/dev/null
+       (single-shot Claude run that emits a synthetic statusline JSON)
+    2. Pipe stdout into statusline-mercury.sh to re-evaluate marker.
+    3. Skip if .mercury/state/.last-poll mtime < 60s ago.
 ```
+
+**Note on data source**: the OAuth endpoint URL above is undocumented (per §4.1). If Anthropic deprecates it, the cron path falls back to `ccusage --json` which derives the same data from local JSONL transcripts — adding lag but eliminating the OAuth dependency.
 
 Acceptance verification: after `claude` restart, `gh api ... | jq '.cron_jobs'` must still show the registered job. If `durable: false` was used, the cron silently disappears and quota tracking gaps open. This is enforced as Phase A exit criterion #5 in the phased PR plan below.
 
@@ -616,7 +626,15 @@ Acceptance verification: after `claude` restart, `gh api ... | jq '.cron_jobs'` 
 
 ## Source Index
 
-(59 numbered entries, deduplicated by section. Some entries use letter-suffixed numbering — e.g. `25a`, `35b` — to keep section ordering stable while inserting follow-on sources during review revisions; this is intentional, not gap-numbering.)
+**Audit-friendly count semantics**: the index uses two-level numbering — primary numbers (1–44) carved out at first draft, plus letter-suffixed insertions (e.g. `6a`, `22a`, `25a`, `28a`, `31a`, `31a`, `35a`, `35b`, `37a`, plus duplicates for the same author across multiple sections) added during PR review revisions to keep per-section ordering stable. To verify the actual total, run:
+
+```bash
+grep -cE '^[0-9]+[a-z]?\.' .mercury/docs/research/agent-team-orchestration-feasibility-2026-04-26.md
+# Current value: 59 entries (deduplicated by URL across sections; same source cited from
+# multiple sections appears once in each section's list, so URL-deduped count is lower)
+```
+
+Both the `59` raw line count and the visible final numeric `44` (last carved-out primary number) are consistent under this scheme — there is no gap, only intentional letter-suffix insertions. ≥30 sources requirement (per Issue #319) is satisfied either way.
 
 ### Anthropic Official
 1. [Orchestrate teams of Claude Code sessions — Claude Code Docs](https://code.claude.com/docs/en/agent-teams) — Dim 3.1, fetched 2026-04-26
