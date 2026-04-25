@@ -37,10 +37,15 @@ while [ $# -gt 0 ]; do
     --dry-run) DRY_RUN=1; shift ;;
     --no-assignee) NO_ASSIGNEE=1; shift ;;
     -h|--help)
-      sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,23p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
-    --) shift; break ;;
+    --) shift; while [ $# -gt 0 ]; do
+          if [ -z "$LANE" ]; then LANE="$1"
+          elif [ -z "$ISSUE" ]; then ISSUE="$1"
+          else die "too many positional arguments after --: $1"; fi
+          shift
+        done; break ;;
     -*) die "unknown flag: $1" ;;
     *)
       if [ -z "$LANE" ]; then
@@ -138,7 +143,11 @@ if [ "$LANE_COUNT" -gt 1 ]; then
     "$ISSUE" "$LANE_COUNT" "$(printf '%s' "$LANE_LABELS" | tr '\n' ' ')" >&2
 
   ACTOR=$(gh api user --jq .login 2>/dev/null || echo unknown)
-  LABEL_LIST=$(printf '%s' "$LANE_LABELS" | sed 's/^/- `/' | sed 's/$/`/')
+  # Strip backticks from label names before embedding in the markdown bullet
+  # list. Lane names produced by this script are alnum + hyphen + underscore
+  # (validated above), but other tools could create lane:* labels containing
+  # backticks; embedding raw would break out of inline-code formatting.
+  LABEL_LIST=$(printf '%s' "$LANE_LABELS" | tr -d '`' | sed 's/^/- `/' | sed 's/$/`/')
   COMMENT_BODY=$(cat <<EOF
 :rotating_light: Lane claim conflict detected by \`scripts/lane-claim.sh\` (Rule 1.1 probe-after-write).
 
