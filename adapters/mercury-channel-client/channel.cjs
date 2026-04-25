@@ -183,6 +183,12 @@ async function connectInbox() {
                 method: 'notifications/claude/channel/permission',
                 params: { verdict: evt.verdict, request_id: evt.request_id },
               });
+            } else if (evt.type === 'command') {
+              await mcp.notification({
+                method: 'notifications/claude/channel',
+                params: { source: 'mercury-telegram', label: SESSION_ID,
+                  content: `<channel source="mercury-telegram" chat_id="${String(evt.from_chat).replace(/[^0-9-]/g,'')}" cmd="${xmlEsc(evt.cmd)}">${xmlEsc(evt.cmd)} requested by user</channel>` },
+              });
             }
           } catch {}
         }

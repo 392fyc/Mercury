@@ -32,7 +32,7 @@ function acquireLock() {
         const pid = parseInt(fs.readFileSync(LOCK_FILE,'utf8').trim(),10);
         if (pid && pid !== process.pid) {
           try { process.kill(pid,0); process.stderr.write(`${TAG} already running (pid ${pid})\n`); process.exit(1); }
-          catch { fs.unlinkSync(LOCK_FILE); } // stale — retry
+          catch (e2) { if (e2.code === 'EPERM') { process.stderr.write(`${TAG} pid ${pid} exists (no permission); aborting\n`); process.exit(1); } fs.unlinkSync(LOCK_FILE); } // ESRCH/other → stale, retry
         } else { fs.unlinkSync(LOCK_FILE); }
       } catch { fs.unlinkSync(LOCK_FILE); }
     }
@@ -188,7 +188,7 @@ const server = http.createServer(async (req,res)=>{
     const {severity='info',title='',body:mb='',label:fl}=body;
     const lbl=fl||(sessions.get(activeId)?.label)||'mercury';
     const chatId=lastChatId||(process.env.MERCURY_TELEGRAM_CHAT_ID?Number(process.env.MERCURY_TELEGRAM_CHAT_ID):null);
-    if (chatId) await tgSend(chatId,`[${htmlEsc(lbl)}] <b>${htmlEsc(severity.toUpperCase())}: ${htmlEsc(title)}</b>\n${htmlEsc(mb)}`);
+    if (chatId) await tgSend(chatId,`[${htmlEsc(lbl)}] <b>${htmlEsc(String(severity).toUpperCase())}: ${htmlEsc(title)}</b>\n${htmlEsc(mb)}`);
     return json(res,200,{ok:true});
   }
   if (m==='POST'&&url==='/reply'){
