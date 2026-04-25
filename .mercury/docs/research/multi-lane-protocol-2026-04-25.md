@@ -45,14 +45,15 @@ support parallel session work. This report validates the protocol against:
 - **Cognitive load research** (Miller's 7±2, multi-agent scaling literature)
 - **Rollback path completeness**
 
-**Verdict**: **CONDITIONAL GO** for v1 promotion with the following deltas applied first:
+**Verdict**: **CONDITIONAL GO** for v1 promotion with the following 7 deltas applied first (matches the detailed §"Protocol v0 → v0.1 Proposed Deltas" later in this doc; here grouped for readability):
 
-1. **HARD-CAP at 5 lanes** (cognitive + multi-agent research consensus)
-2. **Replace shared-index append-only with per-session files** (avoid GitLab CHANGELOG conflict crisis)
-3. **Add Rule 1.1**: probe-after-write Issue claim verification
-4. **Add Rule 3.1+3.2**: stale lane / tmp dir cleanup policy (14-day threshold)
-5. **Add Rule 4.1**: emergency spec-change escalation when main lane idle > 48h
-6. **Shorten branch prefix**: `feature/lane-<lane>/TASK-N-*` is too long; switch to `lane/<short>/<N>-<slug>` (consistent with detailed delta below)
+1. **HARD-CAP at 5 lanes** (cognitive + multi-agent research consensus) — doc-only
+2. **Replace shared-index append-only with per-session files** (avoid GitLab CHANGELOG conflict crisis) — Rule 7 (P0 BREAKING)
+3. **Add Rule 1.1**: probe-after-write Issue claim verification — P1
+4. **Add Rule 3.1**: 14-day stale lane sweep — P1
+5. **Add Rule 3.2**: tmp dir auto-prune on close — P2
+6. **Add Rule 4.1**: emergency spec-change escalation when main lane idle > 48h — P2
+7. **Shorten branch prefix**: `feature/lane-<lane>/TASK-N-*` is too long; switch to `lane/<short>/<N>-<slug>` — Rule 2 (P3)
 
 **Rationale for CONDITIONAL not GO**:
 Protocol mechanics work at v0 scale (2 lanes), but two rules have known-broken patterns

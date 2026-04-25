@@ -194,10 +194,8 @@ Main lane S74+ to decide:
 ## Verification commands
 
 PR reviewers running on the original operator's machine can independently verify the parallel
-proposal in user-memory layer. **Note**: `<encoded_cwd>` below is computed by Claude Code at
-session start — it path-encodes the project's working directory (e.g. Windows `D:\Mercury\Mercury`
-becomes `D--Mercury-Mercury`; POSIX `/Users/alice/Mercury` becomes `-Users-alice-Mercury`). To
-discover it without guessing, list the directory:
+proposal in user-memory layer. **Note**: `<encoded_cwd>` is host-specific and operator-specific
+(computed by Claude Code at session start). Discover at runtime instead of guessing:
 
 ```bash
 ENCODED_CWD=$(ls "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/" | grep -i 'mercury' | head -1)
@@ -219,5 +217,4 @@ its failure does not invalidate the proposal.
 
 - Full research: `.mercury/docs/research/multi-lane-protocol-2026-04-25.md`
 - Issue: [#292](https://github.com/392fyc/Mercury/issues/292)
-- v0 protocol (read-only reference): user-memory `feedback_lane_protocol.md` (no v0.1 section
-  yet) OR see "v0 7 rules" snapshot in research doc §"Protocol 7 rules (subject under evaluation)"
+- v0 protocol rules in force (read-only reference): user-memory `feedback_lane_protocol.md`. As of this PR, the user-memory file ALSO contains an appended "v0.1 Delta Proposal" working-cache section mirroring this file's content (see Authority scoping §). For a self-contained snapshot of the 7 v0 rules without leaving repo, see research doc §"Protocol 7 rules (subject under evaluation)".
