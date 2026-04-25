@@ -9,17 +9,31 @@
 
 ## Why this file exists
 
-The v0 lane protocol authoritative file lives in user-level memory at
-`${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory/feedback_lane_protocol.md`
-(gitignored by design — it is a Claude Code memory-system `feedback` artifact, scoped per-user).
-
 When research recommends protocol revisions, those proposals must be **PR-auditable** so reviewers,
-main-lane decision-makers, and future readers can inspect them in repo without needing the
-original session's user-memory access. This file is the canonical PR-internal artifact;
-`feedback_lane_protocol.md` v0.1 section in user memory is a per-user working cache that may
-drift if the user reorganizes memory.
+main-lane decision-makers, and future readers can inspect them in repo without needing access to
+the original session's user-memory layer.
 
-If conflict arises, **this file is the source of truth**.
+## Authority scoping (single conflict-resolution rule)
+
+There are two related artifacts with **non-overlapping scopes**:
+
+| Artifact | Location | Scope | Lifecycle |
+|----------|----------|-------|-----------|
+| **v0 protocol rules** (Rules 1–7) | user-memory `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory/feedback_lane_protocol.md` | **AUTHORITATIVE** for v0 rules currently in force | Stable; updated by main-lane decisions |
+| **v0.1 delta proposal** (this file) | repo `.mercury/docs/lane-protocol-v0.1-deltas.md` | **AUTHORITATIVE** for the proposed deltas under review | Pending main-lane decision; archives once accepted/rejected |
+
+**Single precedence rule**: each artifact owns its declared scope. They never overlap, so
+"conflict" between them is a category error.
+
+- "What is Rule 5 today?" → answer from user-memory `feedback_lane_protocol.md` (v0 authority)
+- "What does the v0.1 proposal change about Rule 5?" → answer from this file (delta authority)
+- "What will Rule 5 be in v1?" → answer = (v0 rules) ⊕ (accepted deltas after main-lane decision)
+  documented in a future v1 doc
+
+The v0 user-memory file also contains a "v0.1 Delta Proposal" working-cache section that mirrors
+this file's content. **If that working cache and this file ever diverge, this file wins** (scope:
+delta proposal). The v0 rules section in the same user-memory file is unaffected by this rule —
+it remains authoritative for v0.
 
 ## Verdict
 
