@@ -199,7 +199,7 @@
     "upstream_path": null,
     "upstream_sha_at_import": null,
     "upstream_license": "n/a (no code copied)",
-    "import_pr": null,
+    "import_pr": 295,
     "import_date": "2026-04-25",
     "import_rationale": "Reference-only adapter inspired by Anthropic Channels reference + openclaw + node-telegram-bot-api. No code cherry-picked.",
     "last_drift_check": null
@@ -211,7 +211,7 @@
     "upstream_path": null,
     "upstream_sha_at_import": null,
     "upstream_license": "n/a (no code copied)",
-    "import_pr": null,
+    "import_pr": 295,
     "import_date": "2026-04-25",
     "import_rationale": "Reference-only adapter inspired by Anthropic Channels reference walkthrough + @modelcontextprotocol/sdk. No code cherry-picked.",
     "last_drift_check": null
@@ -223,7 +223,7 @@
     "upstream_path": null,
     "upstream_sha_at_import": null,
     "upstream_license": "n/a (no code copied)",
-    "import_pr": null,
+    "import_pr": 295,
     "import_date": "2026-04-25",
     "import_rationale": "Original implementation. No upstream references — thin HTTP client wrapping fetch().",
     "last_drift_check": null
