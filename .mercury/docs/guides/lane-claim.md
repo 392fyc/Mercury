@@ -52,8 +52,8 @@ before any GitHub API call.
 
 | Exit | Meaning |
 |------|---------|
-| `0` | Clean claim — exactly one `lane:*` label present after probe |
-| `1` | Either multiple `lane:*` labels (conflict — Issue comment posted) OR zero `lane:*` labels (silent edit failure — warn only, no comment) |
+| `0` | Clean claim — exactly one `lane:*` label after probe AND it matches the requested lane (assignee added in a follow-up call after the probe) |
+| `1` | Verification failed — multiple `lane:*` labels (conflict — Issue comment posted), OR zero `lane:*` labels (silent edit failure — warn only), OR exactly one `lane:*` label that belongs to a different lane (existing owner — warn only) |
 | `2` | Invalid args, `gh`/`jq` missing, cannot resolve target repo, or `gh` API error |
 
 ### Examples

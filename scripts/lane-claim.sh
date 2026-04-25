@@ -70,18 +70,18 @@ esac
 
 LABEL="lane:$LANE"
 
-EDIT_ARGS=(--add-label "$LABEL")
-if [ "$NO_ASSIGNEE" -eq 0 ]; then
-  EDIT_ARGS+=(--add-assignee "@me")
-fi
-
 # Dry-run gate: print intent and exit without any external command (no gh / jq /
 # git invocations). Strict offline semantics — useful for CI validation in
 # minimal containers that may not even have gh installed yet.
 if [ "$DRY_RUN" -eq 1 ]; then
   REPO_PREVIEW="${GH_REPO:-<resolved at runtime via gh repo view>}"
   printf '[dry-run] target repo: %s\n' "$REPO_PREVIEW"
-  printf '[dry-run] gh issue edit %s --repo %s %s\n' "$ISSUE" "$REPO_PREVIEW" "${EDIT_ARGS[*]}"
+  printf '[dry-run] step 1: gh issue edit %s --repo %s --add-label %s\n' \
+    "$ISSUE" "$REPO_PREVIEW" "$LABEL"
+  if [ "$NO_ASSIGNEE" -eq 0 ]; then
+    printf '[dry-run] step 3 (only if probe is clean): gh issue edit %s --repo %s --add-assignee @me\n' \
+      "$ISSUE" "$REPO_PREVIEW"
+  fi
   printf '[dry-run] probe + verdict skipped (no gh/jq calls in dry-run)\n'
   exit 0
 fi
@@ -110,9 +110,11 @@ case "$REPO" in
   *) die "invalid repo format '$REPO' (expected owner/repo)" ;;
 esac
 
-# Step 1: write — add the lane label (+ @me assignee unless suppressed)
-if ! gh issue edit "$ISSUE" --repo "$REPO" "${EDIT_ARGS[@]}" >/dev/null; then
-  die "gh issue edit #$ISSUE failed"
+# Step 1: write LABEL only — assignee deferred until the probe verifies a clean
+# claim (Copilot iter 2 #317: a losing concurrent claimant should not modify
+# assignees on an Issue another lane already owns).
+if ! gh issue edit "$ISSUE" --repo "$REPO" --add-label "$LABEL" >/dev/null; then
+  die "gh issue edit #$ISSUE failed (add-label)"
 fi
 
 # Step 2: probe — re-query labels and count lane:* prefix
@@ -142,12 +144,12 @@ Post-write label set contains $LANE_COUNT \`lane:*\` labels:
 
 $LABEL_LIST
 
-Latest claim: \`$LABEL\` by \`@$ACTOR\`.
+This invocation attempted to add \`$LABEL\` as \`@$ACTOR\` (ordering of past claims is not knowable from this side — multiple lane labels are simply present after the probe).
 
 GitHub REST API non-atomic — concurrent claims both succeeded silently. Manual arbitration required:
 
 1. Decide which lane owns Issue #$ISSUE
-2. Other lane(s): \`gh issue edit $ISSUE --remove-label lane:<other>\`
+2. Other lane(s): \`gh issue edit $ISSUE --repo $REPO --remove-label lane:<other>\`
 3. Loser lanes close their session and fall back to non-conflicting work
 
 Source: [Mercury lane-claim.md (Rule 1.1 in-repo guide)](https://github.com/392fyc/Mercury/blob/develop/.mercury/docs/guides/lane-claim.md).
@@ -172,6 +174,14 @@ if ! printf '%s\n' "$LANE_LABELS" | grep -qxF "$LABEL"; then
   EXISTING=$(printf '%s' "$LANE_LABELS" | tr '\n' ' ' | sed 's/[[:space:]]*$//')
   warn "single lane:* label is '$EXISTING', not requested '$LABEL' — claim did not take effect (existing owner)"
   exit 1
+fi
+
+# Step 3: probe verified clean ownership — now safe to set assignee.
+# Failure here is non-fatal; the label claim is already recorded.
+if [ "$NO_ASSIGNEE" -eq 0 ]; then
+  if ! gh issue edit "$ISSUE" --repo "$REPO" --add-assignee "@me" >/dev/null 2>&1; then
+    warn "label claimed but --add-assignee @me failed — non-fatal, set assignee manually if needed"
+  fi
 fi
 
 printf 'lane-claim: issue #%s claimed by %s (probe verified single lane label)\n' \
