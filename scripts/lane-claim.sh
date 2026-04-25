@@ -68,6 +68,25 @@ case "$ISSUE" in
   ''|*[!0-9]*|0) die "issue must be a positive integer: '$ISSUE'" ;;
 esac
 
+LABEL="lane:$LANE"
+
+EDIT_ARGS=(--add-label "$LABEL")
+if [ "$NO_ASSIGNEE" -eq 0 ]; then
+  EDIT_ARGS+=(--add-assignee "@me")
+fi
+
+# Dry-run gate: print intent and exit without any external command (no gh / jq /
+# git invocations). Strict offline semantics — useful for CI validation in
+# minimal containers that may not even have gh installed yet.
+if [ "$DRY_RUN" -eq 1 ]; then
+  REPO_PREVIEW="${GH_REPO:-<resolved at runtime via gh repo view>}"
+  printf '[dry-run] target repo: %s\n' "$REPO_PREVIEW"
+  printf '[dry-run] gh issue edit %s --repo %s %s\n' "$ISSUE" "$REPO_PREVIEW" "${EDIT_ARGS[*]}"
+  printf '[dry-run] probe + verdict skipped (no gh/jq calls in dry-run)\n'
+  exit 0
+fi
+
+# Live-mode pre-flight: tools + repo target.
 command -v gh >/dev/null 2>&1 || die "gh CLI not installed or not on PATH"
 command -v jq >/dev/null 2>&1 || die "jq not installed or not on PATH"
 
@@ -86,21 +105,7 @@ case "$REPO" in
   *) die "invalid repo format '$REPO' (expected owner/repo)" ;;
 esac
 
-LABEL="lane:$LANE"
-
-EDIT_ARGS=(--add-label "$LABEL")
-if [ "$NO_ASSIGNEE" -eq 0 ]; then
-  EDIT_ARGS+=(--add-assignee "@me")
-fi
-
 # Step 1: write — add the lane label (+ @me assignee unless suppressed)
-if [ "$DRY_RUN" -eq 1 ]; then
-  printf '[dry-run] target repo: %s\n' "$REPO"
-  printf '[dry-run] gh issue edit %s --repo %s %s\n' "$ISSUE" "$REPO" "${EDIT_ARGS[*]}"
-  printf '[dry-run] probe + verdict skipped\n'
-  exit 0
-fi
-
 if ! gh issue edit "$ISSUE" --repo "$REPO" "${EDIT_ARGS[@]}" >/dev/null; then
   die "gh issue edit #$ISSUE failed"
 fi

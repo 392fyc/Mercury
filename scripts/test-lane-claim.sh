@@ -19,6 +19,15 @@ SCRIPT="$REPO_ROOT/scripts/lane-claim.sh"
   exit 2
 }
 
+# The harness stubs `gh` via PATH but does NOT stub `jq` — `lane-claim.sh`
+# pipes the (stubbed) gh JSON output through real `jq`. Slim CI images may
+# omit jq; fail fast with a clear message instead of producing confusing
+# stub-related failures.
+command -v jq >/dev/null 2>&1 || {
+  echo "test-lane-claim: jq not installed — required by lane-claim.sh, not stubbed by the harness" >&2
+  exit 2
+}
+
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
