@@ -18,6 +18,7 @@ const PORT       = Number(process.env.MERCURY_ROUTER_PORT) || 8788;
 const ROUTER_CJS = path.join(__dirname, '..', 'mercury-channel-router', 'router.cjs');
 const TOKEN_FILE = path.join(os.homedir(), '.mercury', 'router.token');
 const TAG        = '[mercury-channel-client]';
+const xmlEsc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');
 
 // ── Session identity ──────────────────────────────────────────────────────────
 const SESSION_ID = process.env.CLAUDE_SESSION_ID || `cc-${process.pid}-${Date.now().toString(36)}`;
@@ -74,6 +75,7 @@ async function register() {
     body: JSON.stringify({ session_id: SESSION_ID, project_path: PROJECT_PATH, branch, pid: process.pid, short_id: SESSION_SHORT }),
   });
   if (res.status === 429) { process.stderr.write(`${TAG} session limit reached; Telegram inactive\n`); return false; }
+  if (!res.ok) { process.stderr.write(`${TAG} register failed: HTTP ${res.status}\n`); return false; }
   return true;
 }
 
@@ -173,7 +175,7 @@ async function connectInbox() {
                 params: {
                   source: 'mercury-telegram',
                   label: SESSION_ID,
-                  content: `<channel source="mercury-telegram" chat_id="${evt.from_chat}">${evt.content}</channel>`,
+                  content: `<channel source="mercury-telegram" chat_id="${String(evt.from_chat).replace(/[^0-9-]/g,'')}">${xmlEsc(evt.content)}</channel>`,
                 },
               });
             } else if (evt.type === 'verdict') {

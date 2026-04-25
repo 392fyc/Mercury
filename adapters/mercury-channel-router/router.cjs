@@ -90,8 +90,15 @@ function scheduleShutdown() {
 
 async function tgSend(chatId, text) {
   if (!bot) return;
-  try { await bot.sendMessage(chatId, text.length>4096?text.slice(0,4090)+'…':text, {parse_mode:'HTML'}); }
-  catch (e) { process.stderr.write(`${TAG} sendMessage error: ${e.message}\n`); }
+  const payload = text.length>4096?text.slice(0,4090)+'…':text;
+  for (let attempt=0; attempt<2; attempt++) {
+    try { await bot.sendMessage(chatId, payload, {parse_mode:'HTML'}); return; }
+    catch (e) {
+      const ra = Number(e?.response?.body?.parameters?.retry_after);
+      if (attempt===0 && Number.isFinite(ra) && ra>0 && ra<=5) { await new Promise(r=>setTimeout(r,ra*1000)); continue; }
+      process.stderr.write(`${TAG} sendMessage error (attempt ${attempt+1}): ${e.message}\n`); return;
+    }
+  }
 }
 
 async function handleCmd(chatId, cmd, args) {
@@ -105,7 +112,12 @@ async function handleCmd(chatId, cmd, args) {
   }
   if (cmd==='help') return tgSend(chatId,'/status /list /cancel /continue /help\n@label text — route\nyes/no &lt;id&gt; — verdict');
   if (cmd==='cancel'||cmd==='continue') {
-    const t=args?[...sessions.values()].find(s=>s.label.includes(args)):sessions.get(activeId);
+    let t = sessions.get(activeId);
+    if (args) {
+      const m = args.match(/^@([\w-]+)$/);
+      if (!m) return tgSend(chatId,`Usage: /${htmlEsc(cmd)} @&lt;label-prefix&gt;`);
+      t = [...sessions.values()].find(s=>s.label.startsWith(m[1]));
+    }
     if (!t) return tgSend(chatId,'No matching session.');
     sendToInbox(t.id,{type:'command',cmd,from_chat:chatId});
     return tgSend(chatId,`Sent /${htmlEsc(cmd)} to [${htmlEsc(t.label)}]`);

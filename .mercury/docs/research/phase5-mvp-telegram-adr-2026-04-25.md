@@ -489,9 +489,9 @@ tmux new-session -d -s handoff "claude ${MERCURY_CHANNELS_FLAGS:-} -- '$SHORT_PR
 
 ### 9.1 Bun 运行时
 
-- 用户必须装：`https://bun.sh/docs/installation` (Windows: `powershell -c "irm bun.sh/install.ps1 | iex"`)
-- Mercury 文档化：`adapters/mercury-channel-client/README.md` 第一行写"requires Bun"
-- 安装目录建议 `D:\Program Files\bun`（按 Mercury D 盘规则）
+- **Bun 是 optional**（Anthropic 文档明说"the only requirement is the MCP SDK; Bun, Node, Deno all work"）。Node 20+ 即可（与 Mercury 现有 `package.json` engines 一致）
+- 若用户选 Bun（性能优化），按平台官方安装指南：`https://bun.sh/docs/installation`
+- 安装路径由用户选择；Mercury 不规定具体磁盘位置（Windows 用户按 Mercury 项目级 D 盘规则可装到非 C 盘，但 plugin 不依赖此规则）
 
 ### 9.2 claude.ai 订阅
 
