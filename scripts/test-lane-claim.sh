@@ -120,6 +120,20 @@ esac
 EOF
 chmod +x "$TMP/bin/gh-edit-fail"
 
+# gh-other-lane: edit silently no-ops; view returns ONE lane:* label, but it's
+# `lane:other` — not the lane the script was asked to claim. Verifies the
+# ownership-mismatch invariant (single label present yet wrong owner).
+cat > "$TMP/bin/gh-other-lane" <<'EOF'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "issue edit")    exit 0 ;;
+  "issue view")    echo '{"labels":[{"name":"lane:other"},{"name":"P2"}]}' ; exit 0 ;;
+  "api user")      echo 'testuser' ; exit 0 ;;
+  *) echo "stub-other-lane: unhandled $*" >&2 ; exit 99 ;;
+esac
+EOF
+chmod +x "$TMP/bin/gh-other-lane"
+
 stub() {
   ln -sf "$TMP/bin/$1" "$TMP/bin/gh"
 }
@@ -152,6 +166,10 @@ fi
 
 stub gh-zero
 PATH="$TMP/bin:$PATH" assert_exit 1 "zero lane labels post-write → exit 1" \
+  "$SCRIPT" --no-assignee test 309
+
+stub gh-other-lane
+PATH="$TMP/bin:$PATH" assert_exit 1 "single lane:* label belongs to other lane → exit 1" \
   "$SCRIPT" --no-assignee test 309
 
 stub gh-edit-fail

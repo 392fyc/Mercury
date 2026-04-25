@@ -164,6 +164,16 @@ if [ "$LANE_COUNT" -eq 0 ]; then
   exit 1
 fi
 
+# Final invariant: the single lane:* label MUST be the one we tried to claim.
+# A mismatch here means the edit silently failed AND a different lane already
+# owns the Issue — exit 1 (treat as ownership conflict, not a clean claim).
+# grep -F (literal) + -x (full-line) avoids regex surprises in $LABEL.
+if ! printf '%s\n' "$LANE_LABELS" | grep -qxF "$LABEL"; then
+  EXISTING=$(printf '%s' "$LANE_LABELS" | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+  warn "single lane:* label is '$EXISTING', not requested '$LABEL' — claim did not take effect (existing owner)"
+  exit 1
+fi
+
 printf 'lane-claim: issue #%s claimed by %s (probe verified single lane label)\n' \
   "$ISSUE" "$LABEL"
 exit 0
