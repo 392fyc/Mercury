@@ -8,6 +8,7 @@ const { spawn }  = require('child_process');
 const { Server } = require('@modelcontextprotocol/sdk/server/index.js');
 const { StdioServerTransport } = require('@modelcontextprotocol/sdk/server/stdio.js');
 const { CallToolRequestSchema, ListToolsRequestSchema } = require('@modelcontextprotocol/sdk/types.js');
+const crypto = require('crypto');
 const path = require('path');
 const { execSync } = require('child_process');
 
@@ -20,7 +21,9 @@ const SESSION_ID = process.env.CLAUDE_SESSION_ID || `cc-${process.pid}-${Date.no
 let   branch     = 'unknown';
 try { branch = execSync('git branch --show-current', { encoding: 'utf8', stdio: ['pipe','pipe','pipe'] }).trim(); } catch {}
 
-const PROJECT_PATH = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+const PROJECT_PATH  = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+// ADR §7.6: 6-char prefix = first 6 hex chars of sha1(SESSION_ID)
+const SESSION_SHORT = crypto.createHash('sha1').update(SESSION_ID).digest('hex').slice(0,6);
 
 // ── Router IPC helpers ────────────────────────────────────────────────────────
 async function routerFetch(path_, opts = {}) {
@@ -45,7 +48,7 @@ async function register() {
   const res = await routerFetch('/register', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session_id: SESSION_ID, project_path: PROJECT_PATH, branch, pid: process.pid }),
+    body: JSON.stringify({ session_id: SESSION_ID, project_path: PROJECT_PATH, branch, pid: process.pid, short_id: SESSION_SHORT }),
   });
   if (res.status === 429) { process.stderr.write(`${TAG} session limit reached; Telegram inactive\n`); return false; }
   return true;
@@ -101,6 +104,20 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     return { content: [{ type: 'text', text: `reply failed: ${e.message}` }], isError: true };
   }
 });
+
+// ── Outbound permission_request relay (ADR §5.2 step 6 + §7.6) ───────────────
+mcp.fallbackNotificationHandler = async (notification) => {
+  if (notification.method !== 'notifications/claude/channel/permission_request') return;
+  const { tool_name = '', description = '', input_preview = '', request_id = '' } = notification.params || {};
+  const prefixed = `${SESSION_SHORT}-${request_id}`;
+  try {
+    await routerFetch('/permission-request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: SESSION_ID, tool_name, description, input_preview, prefixed_request_id: prefixed }),
+    });
+  } catch (e) { process.stderr.write(`${TAG} permission-request relay failed: ${e.message}\n`); }
+};
 
 // ── SSE inbox consumer ────────────────────────────────────────────────────────
 let sseActive = true;

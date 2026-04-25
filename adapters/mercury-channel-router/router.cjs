@@ -102,7 +102,12 @@ async function routeMessage(msg) {
   const cmdM = text.match(/^\/(\w+)(?:\s+(.*))?$/s);
   if (cmdM) { await handleCmd(chatId, cmdM[1], cmdM[2]?.trim()); return; }
   const vM = text.match(/^\s*(y|yes|n|no)\s+([\w-]+)\s*$/i);
-  if (vM) { const v = /^y/i.test(vM[1])?'yes':'no'; for (const s of sessions.values()) sendToInbox(s.id, {type:'verdict',verdict:v,request_id:vM[2]}); return; }
+  if (vM) {
+    const v = /^y/i.test(vM[1])?'yes':'no', rid = vM[2];
+    const pm = rid.match(/^([a-z0-9]{6})-([a-km-z]{5})$/);
+    if (pm) { const t=[...sessions.values()].find(s=>s.shortId===pm[1]); if(t) sendToInbox(t.id,{type:'verdict',verdict:v,request_id:pm[2]}); return; }
+    for (const s of sessions.values()) sendToInbox(s.id, {type:'verdict',verdict:v,request_id:rid}); return;
+  }
   const pM = text.match(/^@([\w-]+)\s+(.+)$/s);
   if (pM) { const t=[...sessions.values()].find(s=>s.label.startsWith(pM[1])); t?sendToInbox(t.id,{type:'message',content:pM[2],from_chat:chatId}):await tgSend(chatId,`No session matching @${pM[1]}`); return; }
   if (!activeId || !sessions.has(activeId)) { await tgSend(chatId, 'No active session. Use /list.'); return; }
@@ -127,10 +132,10 @@ const server = http.createServer(async (req, res) => {
   if (m==='POST' && url==='/register') {
     let body; try{body=await bodyOf(req)}catch{return json(res,400,{error:'bad json'});}
     if (sessions.size>=MAX_SESS) return json(res,429,{error:'session limit reached',max:MAX_SESS});
-    const {session_id,project_path,branch,pid}=body;
+    const {session_id,project_path,branch,pid,short_id}=body;
     if (!session_id) return json(res,400,{error:'session_id required'});
     const label=body.label||deriveLabel({project_path,branch});
-    sessions.set(session_id,{id:session_id,label,project_path,branch,pid,sseClients:[]});
+    sessions.set(session_id,{id:session_id,label,project_path,branch,pid,shortId:short_id||session_id.slice(0,6),sseClients:[]});
     if (!activeId) activeId=session_id; clearTimeout(shutdownTimer); shutdownTimer=null;
     process.stderr.write(`${TAG} registered ${session_id} [${label}]\n`);
     return json(res,200,{ok:true,label,active:activeId===session_id});
@@ -157,6 +162,13 @@ const server = http.createServer(async (req, res) => {
     const {chat_id,text,label}=body; if(!chat_id||!text) return json(res,400,{error:'chat_id and text required'});
     const s=[...sessions.values()].find(x=>x.id===body.session_id)||sessions.get(activeId);
     await tgSend(chat_id,`[${label||(s?.label)||'mercury'}] ${text}`); return json(res,200,{ok:true});
+  }
+  if (m==='POST' && url==='/permission-request') {
+    let body; try{body=await bodyOf(req)}catch{return json(res,400,{error:'bad json'});}
+    const {session_id,tool_name='',description='',input_preview='',prefixed_request_id=''}=body;
+    const chatId=lastChatId||(process.env.MERCURY_TELEGRAM_CHAT_ID?Number(process.env.MERCURY_TELEGRAM_CHAT_ID):null);
+    if (chatId) await tgSend(chatId,`Claude wants to run ${tool_name}: ${description}\n\nReply 'yes ${prefixed_request_id}' or 'no ${prefixed_request_id}'`);
+    return json(res,200,{ok:true});
   }
   json(res,404,{error:'not found'});
 });
