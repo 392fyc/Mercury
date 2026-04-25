@@ -342,20 +342,22 @@ adapters/         # 适配层
 **可用开发模式**: 全部 Phase 1-4 能力 + Session Continuity
 **推荐会话模式**: Mode B（标准开发），agent 可以跨 session 持续开发此模块
 
-### 5-1. 通知接口定义
-- 定义标准通知格式（事件类型、severity、内容）
-- 设计确认/拒绝回调机制
+### 5-1. 通知接口定义 — ✅ Complete (PR #295, merged 2026-04-25)
+- ✅ `notify(severity, title, body, options)` interface 落地 (`adapters/mercury-notify/notify.cjs`)
+- ✅ 双向交互机制：Telegram inbound → Claude Code session via `notifications/claude/channel`，Claude reply via MCP reply tool
+- ✅ 远程权限审批 relay：`notifications/claude/channel/permission_request` + `permission` verdict pair (ADR §5.2 step 6 + §7.6 ID rewriting)
 
-### 5-2. 首个通知渠道
-- 优先实现 Telegram 或 LINE bot（Issue #91）
-- 或利用 Claude Code Channels 原生机制
-- agent commit/PR/异常时自动发通知
-- 用户可回复确认或修改方向
+### 5-2. 首个通知渠道 — ✅ Complete (PR #295, merged 2026-04-25)
+- ✅ Telegram bot via Anthropic Channels API research preview
+- ✅ 三 adapter 架构：`mercury-channel-router` (Telegram polling + IPC + 0-LLM regex routing) + `mercury-channel-client` (MCP server per session) + `mercury-notify` (thin HTTP client for hook scripts)
+- ✅ 限 3 session 同时运行，IPC Bearer token auth，allowlist fail-closed
+- ✅ Issue #91 closed via #293
 
-### 5-3. 与其他模块集成
-- Session Continuity: session 切换时通知
-- Quality Gate: stop 被拦截时通知
-- Dev Pipeline: 任务完成时通知
+### 5-3. 与其他模块集成 — 🟡 Partial
+- ✅ Quality Gate: loop-detector stall → notify wire 已落地 (PR #295)
+- ⏳ Session Continuity: handoff session 切换时通知 — 待 `CLAUDE_HANDOFF_AUTO_LAUNCH_FLAGS` env var 在 claude-handoff plugin merge 后启用 (跨仓库 PR #11)
+- ⏳ Dev Pipeline: dev/acceptance subagent 完成时通知 — 后续接入
+- 🔜 自然语言意图解析（"取消刚才那个"等口语命令）DEFER — MVP 用 deterministic `@<label>` + `/cmd` 已够用；远期 Phase 5-3 加 OpenAI gpt-4o-mini direct intent parser（ADR §11 Phase 5-3 + `router-llm-backend-2026-04-25.md`）
 
 **产出**: 统一通知层 + 至少一个 IM 渠道
 **人类干预点**: 通知渠道选择；通知频率调优（避免过度打扰）
