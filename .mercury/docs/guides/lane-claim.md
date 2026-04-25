@@ -48,6 +48,19 @@ call as `--repo <owner>/<repo>`. This defends against:
 If the wrapper cannot resolve the repo (no git repo + no `GH_REPO`), it exits with code `2`
 before any GitHub API call.
 
+### Known limitation: residual race window
+
+Rule 1.1 reduces but does not eliminate the GitHub REST non-atomic race. There is a small
+residual window between the probe-pass and the follow-up `--add-assignee` call (step 3) during
+which a different lane could add a competing `lane:*` label. If that happens, the assignee will
+still be added before this wrapper returns, even though the Issue effectively has a conflict.
+
+This is accepted residual risk. Adding a second probe would only shift the window — there is no
+atomic compare-and-swap on the GitHub Issues label API. The probe-after-write design is "best
+effort post-hoc detection at the closest point to the write," and the second-write (assignee) is
+a follow-up that should be treated as a non-binding side-effect (assignees can be removed by any
+lane during conflict arbitration without affecting label ownership).
+
 ### Exit codes
 
 | Exit | Meaning |
