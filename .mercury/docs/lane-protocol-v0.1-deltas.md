@@ -19,7 +19,7 @@ There are two related artifacts with **non-overlapping scopes**:
 
 | Artifact | Location | Scope | Lifecycle |
 |----------|----------|-------|-----------|
-| **v0 protocol rules** (Rules 1–7) | user-memory `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory/feedback_lane_protocol.md` | **AUTHORITATIVE** for v0 rules currently in force | Stable; updated by main-lane decisions |
+| **v0 protocol rules** (Rules 1–7) | user-memory `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded_cwd>/memory/feedback_lane_protocol.md` (where `<encoded_cwd>` is the path-encoded form of the project's working directory; for Mercury it is `D--Mercury-Mercury` on Windows but varies by host) | **AUTHORITATIVE** for v0 rules currently in force | Stable; updated by main-lane decisions |
 | **v0.1 delta proposal** (this file) | repo `.mercury/docs/lane-protocol-v0.1-deltas.md` | **AUTHORITATIVE** for the proposed deltas under review | Pending main-lane decision; archives once accepted/rejected |
 
 **Single precedence rule**: each artifact owns its declared scope. They never overlap, so
@@ -193,20 +193,27 @@ Main lane S74+ to decide:
 
 ## Verification commands
 
-PR reviewers can independently verify the parallel proposal in user-memory layer:
+PR reviewers running on the original operator's machine can independently verify the parallel
+proposal in user-memory layer. **Note**: `<encoded_cwd>` below is computed by Claude Code at
+session start — it path-encodes the project's working directory (e.g. Windows `D:\Mercury\Mercury`
+becomes `D--Mercury-Mercury`; POSIX `/Users/alice/Mercury` becomes `-Users-alice-Mercury`). To
+discover it without guessing, list the directory:
 
 ```bash
-# Verify the v0.1 delta section exists in user-memory feedback file (gitignored, per-user)
-MEM_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory"
+ENCODED_CWD=$(ls "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/" | grep -i 'mercury' | head -1)
+MEM_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/${ENCODED_CWD}/memory"
 test -f "$MEM_DIR/feedback_lane_protocol.md" \
   && grep -q "v0.1 Delta Proposal" "$MEM_DIR/feedback_lane_protocol.md" \
   && echo "OK: v0.1 delta section present in user memory" \
   || echo "ABSENT: user-memory file missing or unmodified"
 ```
 
-If user memory is not accessible (different operator running this PR review), this file alone
-is sufficient as the authoritative proposal — it mirrors all content needed for main-lane
-decision.
+**Reviewers without access to the original operator's user-memory** (different machine, CI bot,
+fresh clone) cannot run this check — that is by design, since user-memory is per-machine. For
+those reviewers, **this repo file alone is sufficient as the authoritative proposal** — it
+mirrors all content needed for main-lane decision. The verification command exists only as a
+sanity check that the original operator's user-memory was correctly updated alongside this PR;
+its failure does not invalidate the proposal.
 
 ## Cross-references
 

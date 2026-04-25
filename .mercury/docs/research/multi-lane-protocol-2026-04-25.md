@@ -7,10 +7,37 @@
 
 ---
 
+## Path conventions (read this first)
+
+This document references several files that are **not** in the Mercury git repo. Mercury
+uses Claude Code's user-memory layer (governed by Mercury CLAUDE.md §Related Repositories) for
+session-scoped state. Path shorthand used throughout this report:
+
+| Shorthand | Resolves to | Status |
+|-----------|-------------|--------|
+| `memory/<file>` | `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded_cwd>/memory/<file>` (Claude Code per-project memory) | **NOT in repo** — gitignored by design; Claude Code memory-system artifact |
+| `<encoded_cwd>` | path-encoded form of the project's working directory; for Mercury this is `D--Mercury-Mercury` (Windows `D:\Mercury\Mercury`); on POSIX it would be `-Users--user-Mercury` etc. | computed by Claude Code at session start |
+| `feature/lane-<lane>/...` | actual git branch in this repo | in repo |
+| `.mercury/docs/...` | actual repo files | in repo |
+| `.tmp/...` | repo tmp dir (gitignored but local repo) | repo-local, not committed |
+| `scripts/...` | actual repo scripts | in repo |
+
+When the report says "see `memory/feedback_lane_protocol.md`", that means: look at the
+**user-memory** file (resolved per the table above), not at any repo file. Claude Code
+auto-loads `memory/MEMORY.md` index at session start, which then references the other
+memory files.
+
+The PR-auditable companion `.mercury/docs/lane-protocol-v0.1-deltas.md` is the **in-repo**
+mirror of the v0.1 delta proposal, so PR reviewers without user-memory access can verify
+deltas in this PR's diff.
+
+---
+
 ## Executive Summary
 
-Mercury launched a v0 MVP multi-lane protocol (7 rules, see `memory/feedback_lane_protocol.md`)
-on 2026-04-25 to support parallel session work. This report validates the protocol against:
+Mercury launched a v0 MVP multi-lane protocol (7 rules; see user-memory
+`memory/feedback_lane_protocol.md` per shorthand above — not in this repo) on 2026-04-25 to
+support parallel session work. This report validates the protocol against:
 
 - **5 industry precedents** (git worktree, Claude Code agent teams, trunk-based, Spotify Squads, tmux)
 - **6 adversarial counter-examples** covering rules 1, 3, 4, 6, 7
@@ -25,7 +52,7 @@ on 2026-04-25 to support parallel session work. This report validates the protoc
 3. **Add Rule 1.1**: probe-after-write Issue claim verification
 4. **Add Rule 3.1+3.2**: stale lane / tmp dir cleanup policy (14-day threshold)
 5. **Add Rule 4.1**: emergency spec-change escalation when main lane idle > 48h
-6. **Shorten branch prefix**: `feature/lane-<lane>/TASK-N-*` is too long; switch to `lane/<short>/<N>-*`
+6. **Shorten branch prefix**: `feature/lane-<lane>/TASK-N-*` is too long; switch to `lane/<short>/<N>-<slug>` (consistent with detailed delta below)
 
 **Rationale for CONDITIONAL not GO**:
 Protocol mechanics work at v0 scale (2 lanes), but two rules have known-broken patterns
@@ -49,7 +76,9 @@ in 2025. No precedent suggests the protocol will fail at 2-3 lanes.
 - Each worktree is isolated working directory; branch checkout per dir
 
 **Relevance to Mercury Rule 2**: Mercury's branch-prefix isolation is *weaker* than worktree
-isolation. LANES.md re-implements coordination that worktrees provide natively at FS level.
+isolation. The user-memory `memory/LANES.md` (per Path conventions §) re-implements
+coordination that worktrees provide natively at FS level — i.e. Mercury's lane registry is a
+manual file-based convention layered on top of git, not an in-repo single source of truth.
 
 **Sources**:
 - [git-worktree official docs](https://git-scm.com/docs/git-worktree)
@@ -319,13 +348,13 @@ Not currently documented. Can be derived from single-lane close pattern:
 
 **Status**: IMPLICIT — recommend explicitly documenting in v0.1.
 
-### D5.3 Full rollback to single-chain (LANES.md ROLLBACK section)
+### D5.3 Full rollback to single-chain (user-memory `memory/LANES.md` ROLLBACK section)
 
-Documented:
+Documented (all paths user-memory per Path conventions §, not repo files):
 1. All side lanes → `closed`
-2. Merge side handoffs back into `session-handoff.md`
-3. `feedback_lane_protocol.md` retained as ADR (status: `superseded`)
-4. LANES.md retained as history
+2. Merge side handoffs back into user-memory `memory/session-handoff.md`
+3. User-memory `memory/feedback_lane_protocol.md` retained as ADR (status: `superseded`)
+4. User-memory `memory/LANES.md` retained as history
 
 **Status**: COMPLETE ✅, but should add explicit ADR-style status transition.
 
@@ -394,10 +423,18 @@ User becomes arbitrator. PR is NOT auto-merge — user must explicitly approve.
 
 ### Replace Rule 7 — Per-session files (P0, BREAKING)
 
-**OLD**: append-only edits to `MEMORY.md` and `SESSION_INDEX.md`.
-**NEW**: each session writes its own file in `memory/sessions/S<N>-<lane>.md`. `MEMORY.md`
-and `SESSION_INDEX.md` contain only auto-generated index lines via
-`scripts/regenerate-memory-index.sh` (run pre-commit or post-merge hook).
+All paths in this delta refer to **user-memory** artifacts per the Path conventions § at top
+of doc, not repo files. The proposed `scripts/regenerate-memory-index.sh` is one of the few
+items that would land in-repo (since scripts are repo-tracked).
+
+**OLD**: append-only edits to user-memory `memory/MEMORY.md` and `memory/SESSION_INDEX.md`
+(both resolve to `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded_cwd>/memory/...`,
+not repo files).
+**NEW**: each session writes its own user-memory file at `memory/sessions/S<N>-<lane>.md`
+(again resolved via Path conventions). The user-memory `memory/MEMORY.md` and
+`memory/SESSION_INDEX.md` contain only auto-generated index lines via the in-repo helper
+`scripts/regenerate-memory-index.sh` (invoked from a session-end hook in
+`${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/`).
 
 **Migration plan**:
 - **Phase A (additive, non-breaking)**: deploy `scripts/regenerate-memory-index.sh`. Script reads `memory/sessions/*.md` frontmatter (session ID, lane, date, summary), generates index lines, writes to a separate `memory/INDEX.generated.md` for diff inspection. Existing `MEMORY.md` / `SESSION_INDEX.md` untouched. Run for ≥3 sessions to verify output stability.
@@ -473,8 +510,8 @@ Items split by ownership: S1-side-multi-lane (this session) vs main lane S74+ (p
 ### Completed by S1-side-multi-lane (delivered before this PR)
 
 - ✅ **Item 1 — Comment Issue #292** with executive summary + recommendation. Posted as [#issuecomment-4319812413](https://github.com/392fyc/Mercury/issues/292#issuecomment-4319812413). Visible on the Issue, not in this PR's diff (intentional — Issue comments are not repo files).
-- ✅ **Item 2 — v0.1 delta proposal**. Canonical PR-auditable artifact added at `.mercury/docs/lane-protocol-v0.1-deltas.md` (this PR diff). Mirror written to user-memory layer `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory/feedback_lane_protocol.md` as a per-user working cache (gitignored by design — Claude Code memory-system `feedback` artifact). PR reviewers can verify user-memory mirror via the verification commands in `lane-protocol-v0.1-deltas.md` §"Verification commands".
-- ✅ **Item 6 — Retain side-lane handoff** as audit trail. Updated to closing-handoff state in user-memory layer at `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory/session-handoff-side-multi-lane.md`. Per Mercury's "user-level governance" pattern (CLAUDE.md §Related Repositories), user-memory artifacts are not committed to repo; their existence + content is auditable via the env-var path above.
+- ✅ **Item 2 — v0.1 delta proposal**. Canonical PR-auditable artifact added at `.mercury/docs/lane-protocol-v0.1-deltas.md` (this PR diff). Mirror written to user-memory `memory/feedback_lane_protocol.md` (resolves to `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded_cwd>/memory/...` per Path conventions §) as a per-user working cache. PR reviewers can verify the mirror with verification commands in `lane-protocol-v0.1-deltas.md` §"Verification commands". Reviewers without local access fall back to the in-repo companion file (this is by design; the repo file is the canonical authority).
+- ✅ **Item 6 — Retain side-lane handoff** as audit trail. Updated to closing-handoff state at user-memory `memory/session-handoff-side-multi-lane.md` per Path conventions §. Per Mercury's "user-level governance" pattern (CLAUDE.md §Related Repositories), user-memory artifacts are not committed to repo; the side lane lifecycle is auditable via Issue #292 + LANES status (also user-memory) + this PR's narrative.
 
 ### Deferred to main lane S74+ (HOLD-OPEN per >2-rule revision clause)
 
@@ -484,8 +521,8 @@ Items split by ownership: S1-side-multi-lane (this session) vs main lane S74+ (p
    - P1: Rule 3.1+3.2 stale lane scripts
    - P2: Rule 4.1 emergency escalation docs
    - P3: Rule 2 branch prefix shortening
-- ⏸️ **Item 4 — Close Issue #292**. Held open per S1 starting prompt clause: "research 发现 protocol 需重大修订（>2 rules 改动）→ Issue 保留 + 提 v0.1 proposal + main lane 决策". 6 rule changes + 1 cap → hold open.
-- ⏸️ **Item 5 — Mark `LANES.md` side-multi-lane status `paused` → `closed`**. Currently set to `paused` (research delivered, awaiting decision). Flips to `closed` when main lane resolves Issue #292.
+- ⏸️ **Item 4 — Hold Issue #292 open** (NOT close yet). Per S1 starting prompt hold-open clause: "research 发现 protocol 需重大修订（>2 rules 改动）→ Issue 保留 + 提 v0.1 proposal + main lane 决策". 6 rule changes + 1 cap → exceeds 2-rule threshold → Issue stays OPEN until main lane decides on deltas. **Note**: earlier prose in some sections may have used the shorthand "close Issue #292" to refer to the eventual resolution; the authoritative behavior is hold-open NOW, close-by-main-lane LATER.
+- ⏸️ **Item 5 — Flip user-memory `memory/LANES.md` side-multi-lane status `paused` → `closed`** (per Path conventions §). Currently set to `paused` (research delivered, awaiting decision). Flips to `closed` when main lane resolves Issue #292.
 
 ### Tracking
 
