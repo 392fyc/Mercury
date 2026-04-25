@@ -1,0 +1,223 @@
+#!/usr/bin/env bash
+# scripts/test-lane-claim.sh — smoke + race tests for lane-claim.sh
+#
+# Stubs `gh` via PATH-prepended fakes to avoid real GitHub API calls.
+# Verifies: arg validation, --help, --dry-run, happy path, race detection.
+#
+# Run from repo root (or anywhere — auto-discovers via git rev-parse).
+# Exit 0 if all tests pass; non-zero if any test fails.
+
+set -u
+
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
+  echo "test-lane-claim: not inside a git repo" >&2
+  exit 2
+}
+SCRIPT="$REPO_ROOT/scripts/lane-claim.sh"
+[ -x "$SCRIPT" ] || {
+  echo "test-lane-claim: $SCRIPT missing or not executable" >&2
+  exit 2
+}
+
+# The harness stubs `gh` via PATH but does NOT stub `jq` — `lane-claim.sh`
+# pipes the (stubbed) gh JSON output through real `jq`. Slim CI images may
+# omit jq; fail fast with a clear message instead of producing confusing
+# stub-related failures.
+command -v jq >/dev/null 2>&1 || {
+  echo "test-lane-claim: jq not installed — required by lane-claim.sh, not stubbed by the harness" >&2
+  exit 2
+}
+
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
+PASS=0
+FAIL=0
+pass() { printf '  PASS: %s\n' "$1"; PASS=$((PASS+1)); }
+fail() { printf '  FAIL: %s\n' "$1"; FAIL=$((FAIL+1)); }
+
+assert_exit() {
+  local expected=$1
+  local desc=$2
+  shift 2
+  "$@" >/dev/null 2>&1
+  local actual=$?
+  if [ "$actual" = "$expected" ]; then
+    pass "$desc (exit=$actual)"
+  else
+    fail "$desc (expected exit=$expected got=$actual)"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Arg validation tests (no gh stub needed — validation runs before any API call)
+# ---------------------------------------------------------------------------
+
+echo "[arg-validation]"
+assert_exit 0 "--help prints usage"               "$SCRIPT" --help
+assert_exit 2 "missing both args"                  "$SCRIPT"
+assert_exit 2 "missing issue arg"                  "$SCRIPT" only-lane
+assert_exit 2 "lane with space rejected"           "$SCRIPT" "bad lane" 309
+assert_exit 2 "lane starting with hyphen rejected" "$SCRIPT" -bad 309
+assert_exit 2 "non-numeric issue rejected"         "$SCRIPT" good 0xFF
+assert_exit 2 "unknown flag rejected"              "$SCRIPT" --bogus good 309
+assert_exit 2 "empty issue rejected"               "$SCRIPT" good ""
+assert_exit 2 "issue=0 rejected (positive integer)" "$SCRIPT" good 0
+
+# ---------------------------------------------------------------------------
+# gh stubs for happy path + race + zero-label edge case
+# ---------------------------------------------------------------------------
+
+mkdir -p "$TMP/bin"
+
+cat > "$TMP/bin/gh-happy" <<'EOF'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "issue edit")    exit 0 ;;
+  "issue view")    echo '{"labels":[{"name":"lane:test"},{"name":"P1"}]}' ; exit 0 ;;
+  "api user")      echo 'testuser' ; exit 0 ;;
+  *) echo "stub-happy: unhandled $*" >&2 ; exit 99 ;;
+esac
+EOF
+chmod +x "$TMP/bin/gh-happy"
+
+cat > "$TMP/bin/gh-race" <<'EOF'
+#!/usr/bin/env bash
+# When the wrapper invokes `issue comment`, record the call by appending to
+# the marker file so tests can assert the side-effect — not just exit code.
+case "$1 $2" in
+  "issue edit")    exit 0 ;;
+  "issue view")    echo '{"labels":[{"name":"lane:main"},{"name":"lane:other"}]}' ; exit 0 ;;
+  "api user")      echo 'testuser' ; exit 0 ;;
+  "issue comment")
+    if [ -n "${LANE_CLAIM_TEST_COMMENT_MARKER:-}" ]; then
+      printf 'comment-called %s\n' "$*" >> "$LANE_CLAIM_TEST_COMMENT_MARKER"
+    fi
+    exit 0
+    ;;
+  *) echo "stub-race: unhandled $*" >&2 ; exit 99 ;;
+esac
+EOF
+chmod +x "$TMP/bin/gh-race"
+
+cat > "$TMP/bin/gh-zero" <<'EOF'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "issue edit")    exit 0 ;;
+  "issue view")    echo '{"labels":[{"name":"P1"}]}' ; exit 0 ;;
+  "api user")      echo 'testuser' ; exit 0 ;;
+  *) echo "stub-zero: unhandled $*" >&2 ; exit 99 ;;
+esac
+EOF
+chmod +x "$TMP/bin/gh-zero"
+
+cat > "$TMP/bin/gh-edit-fail" <<'EOF'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "issue edit") echo "fake edit failure" >&2 ; exit 1 ;;
+  *) echo "stub-edit-fail: unhandled $*" >&2 ; exit 99 ;;
+esac
+EOF
+chmod +x "$TMP/bin/gh-edit-fail"
+
+# gh-other-lane: edit silently no-ops; view returns ONE lane:* label, but it's
+# `lane:other` — not the lane the script was asked to claim. Verifies the
+# ownership-mismatch invariant (single label present yet wrong owner).
+cat > "$TMP/bin/gh-other-lane" <<'EOF'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "issue edit")    exit 0 ;;
+  "issue view")    echo '{"labels":[{"name":"lane:other"},{"name":"P2"}]}' ; exit 0 ;;
+  "api user")      echo 'testuser' ; exit 0 ;;
+  *) echo "stub-other-lane: unhandled $*" >&2 ; exit 99 ;;
+esac
+EOF
+chmod +x "$TMP/bin/gh-other-lane"
+
+# gh-race-comment-fail: race scenario (2 lane:* labels) where `issue comment`
+# always returns non-zero. Verifies the wrapper retries 2x then warns + still
+# exits 1 (conflict detection is the hard requirement; comment posting is
+# best-effort).
+cat > "$TMP/bin/gh-race-comment-fail" <<'EOF'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "issue edit")    exit 0 ;;
+  "issue view")    echo '{"labels":[{"name":"lane:main"},{"name":"lane:other"}]}' ; exit 0 ;;
+  "api user")      echo 'testuser' ; exit 0 ;;
+  "issue comment")
+    if [ -n "${LANE_CLAIM_TEST_COMMENT_FAIL_LOG:-}" ]; then
+      printf 'attempt\n' >> "$LANE_CLAIM_TEST_COMMENT_FAIL_LOG"
+    fi
+    echo "fake gh issue comment failure" >&2
+    exit 1
+    ;;
+  *) echo "stub-race-fail: unhandled $*" >&2 ; exit 99 ;;
+esac
+EOF
+chmod +x "$TMP/bin/gh-race-comment-fail"
+
+stub() {
+  ln -sf "$TMP/bin/$1" "$TMP/bin/gh"
+}
+
+echo
+echo "[scenarios]"
+
+# All scenarios pin GH_REPO so stubs don't need to mock `gh repo view`. This
+# also exercises the production code path that resolves repo from env.
+export GH_REPO="test-owner/test-repo"
+
+stub gh-happy
+PATH="$TMP/bin:$PATH" assert_exit 0 "happy path (1 lane label) → exit 0" \
+  "$SCRIPT" --no-assignee test 309
+
+stub gh-race
+COMMENT_MARKER="$TMP/comment-called"
+rm -f "$COMMENT_MARKER"
+LANE_CLAIM_TEST_COMMENT_MARKER="$COMMENT_MARKER" PATH="$TMP/bin:$PATH" \
+  assert_exit 1 "race detected (2 lane labels) → exit 1" \
+  "$SCRIPT" --no-assignee main 309
+
+# Side-effect assertion: the wrapper MUST post a conflict comment in race scenario
+# (acceptance criterion from #309 — exit code alone is insufficient evidence).
+if [ -s "$COMMENT_MARKER" ] && grep -q 'comment-called' "$COMMENT_MARKER"; then
+  pass "race scenario triggered gh issue comment side-effect"
+else
+  fail "race scenario did NOT trigger gh issue comment (marker: $COMMENT_MARKER)"
+fi
+
+stub gh-zero
+PATH="$TMP/bin:$PATH" assert_exit 1 "zero lane labels post-write → exit 1" \
+  "$SCRIPT" --no-assignee test 309
+
+stub gh-other-lane
+PATH="$TMP/bin:$PATH" assert_exit 1 "single lane:* label belongs to other lane → exit 1" \
+  "$SCRIPT" --no-assignee test 309
+
+stub gh-race-comment-fail
+COMMENT_FAIL_LOG="$TMP/comment-fail-log"
+rm -f "$COMMENT_FAIL_LOG"
+LANE_CLAIM_TEST_COMMENT_FAIL_LOG="$COMMENT_FAIL_LOG" PATH="$TMP/bin:$PATH" \
+  assert_exit 1 "race + comment-failure → exit 1 (conflict still signaled)" \
+  "$SCRIPT" --no-assignee main 309
+
+# Side-effect: wrapper must retry 2x on comment failure
+ATTEMPTS=$(wc -l < "$COMMENT_FAIL_LOG" 2>/dev/null | tr -d ' ')
+if [ "$ATTEMPTS" = "2" ]; then
+  pass "comment-failure path retries exactly 2 times before warn"
+else
+  fail "comment-failure path attempt count = $ATTEMPTS (expected 2)"
+fi
+
+stub gh-edit-fail
+PATH="$TMP/bin:$PATH" assert_exit 2 "gh edit failure → exit 2" \
+  "$SCRIPT" --no-assignee test 309
+
+# --dry-run path: strict offline (no gh / jq / git invocations) since iter 2 fix.
+# Verified separately at the CLI with PATH=/usr/bin:/bin (no gh, no jq) → exit 0.
+PATH="$TMP/bin:$PATH" assert_exit 0 "--dry-run skips API → exit 0" \
+  "$SCRIPT" --dry-run --no-assignee test 309
+
+echo
+printf '%d pass / %d fail\n' "$PASS" "$FAIL"
+[ "$FAIL" = "0" ]
