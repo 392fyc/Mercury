@@ -16,7 +16,7 @@ session-scoped state. Path shorthand used throughout this report:
 | Shorthand | Resolves to | Status |
 |-----------|-------------|--------|
 | `memory/<file>` | `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded_cwd>/memory/<file>` (Claude Code per-project memory) | **NOT in repo** — gitignored by design; Claude Code memory-system artifact |
-| `<encoded_cwd>` | path-encoded form of the project's working directory; for Mercury this is `D--Mercury-Mercury` (Windows `D:\Mercury\Mercury`); on POSIX it would be `-Users--user-Mercury` etc. | computed by Claude Code at session start |
+| `<encoded_cwd>` | path-encoded form of the project's working directory, computed by Claude Code at session start; the exact encoding is host-specific and operator-specific (do not hardcode — discover at runtime, e.g. `ls "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/" \| grep -i mercury`) | runtime-derived |
 | `feature/lane-<lane>/...` | actual git branch in this repo | in repo |
 | `.mercury/docs/...` | actual repo files | in repo |
 | `.tmp/...` | repo tmp dir (gitignored but local repo) | repo-local, not committed |

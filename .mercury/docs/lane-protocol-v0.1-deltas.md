@@ -19,7 +19,7 @@ There are two related artifacts with **non-overlapping scopes**:
 
 | Artifact | Location | Scope | Lifecycle |
 |----------|----------|-------|-----------|
-| **v0 protocol rules** (Rules 1–7) | user-memory `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded_cwd>/memory/feedback_lane_protocol.md` (where `<encoded_cwd>` is the path-encoded form of the project's working directory; for Mercury it is `D--Mercury-Mercury` on Windows but varies by host) | **AUTHORITATIVE** for v0 rules currently in force | Stable; updated by main-lane decisions |
+| **v0 protocol rules** (Rules 1–7) | user-memory `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded_cwd>/memory/feedback_lane_protocol.md` (where `<encoded_cwd>` is the host-specific path-encoded form of the project working directory; discover at runtime — see Verification commands § for the discovery snippet) | **AUTHORITATIVE** for v0 rules currently in force | Stable; updated by main-lane decisions |
 | **v0.1 delta proposal** (this file) | repo `.mercury/docs/lane-protocol-v0.1-deltas.md` | **AUTHORITATIVE** for the proposed deltas under review | Pending main-lane decision; archives once accepted/rejected |
 
 **Single precedence rule**: each artifact owns its declared scope. They never overlap, so
