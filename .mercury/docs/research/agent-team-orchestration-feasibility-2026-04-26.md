@@ -15,10 +15,10 @@ This document follows the same path convention established in `multi-lane-protoc
 | Shorthand | Resolves to | Status |
 |-----------|-------------|--------|
 | `memory/<file>` | `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded_cwd>/memory/<file>` (Claude Code per-project user-memory) | NOT in repo — gitignored by design; user-memory artifact, not a repo file |
-| `adapters/<name>/` | `D:/Mercury/Mercury/adapters/<name>/` | In repo |
-| `archive/packages/<name>/src/` | `D:/Mercury/Mercury/archive/packages/<name>/src/` | In repo (archived) |
-| `.mercury/docs/research/` | `D:/Mercury/Mercury/.mercury/docs/research/` | In repo |
-| `.mercury/state/` | `D:/Mercury/Mercury/.mercury/state/` | In repo |
+| `adapters/<name>/` | `${REPO_ROOT}/adapters/<name>/` | In repo |
+| `archive/packages/<name>/src/` | `${REPO_ROOT}/archive/packages/<name>/src/` | In repo (archived) |
+| `.mercury/docs/research/` | `${REPO_ROOT}/.mercury/docs/research/` | In repo |
+| `.mercury/state/` | `${REPO_ROOT}/.mercury/state/` | In repo |
 | `.tmp/...` | repo tmp dir (gitignored but local repo) | repo-local, not committed |
 | `scripts/...` | actual repo scripts | in repo |
 
@@ -392,18 +392,33 @@ Rationale: The statusline `rate_limits.five_hour.used_percentage` field is the o
 
 **Implementation outline**:
 
+Two related thresholds (clarification per Issue #320 alignment):
+- `PAUSE_THRESHOLD` (default **95**, per Issue #320 acceptance criteria) — hard pause point; writes marker, blocks autonomous chain
+- `WARN_THRESHOLD` (optional, default **85**) — early-warning indicator only (color flips red); does NOT write marker
+
+The 95 default ensures Issue #320 acceptance compliance; operators can lower via `MERCURY_PAUSE_THRESHOLD` env var if they want earlier pause for safety margin (research-tunable, not hardcoded).
+
 ```bash
 # ~/.claude/statusline-mercury.sh
 # Reads rate_limits from Claude Code statusline stdin JSON.
-# Writes .mercury/state/auto-run-paused when 5h usage >= PAUSE_THRESHOLD.
+# Writes .mercury/state/auto-run-paused when 5h usage >= PAUSE_THRESHOLD (default 95, per #320).
 # Deletes marker when usage resets (resets_at passes or usage drops).
 
 #!/bin/bash
 set -euo pipefail
 
-PAUSE_THRESHOLD=${MERCURY_PAUSE_THRESHOLD:-85}
-STATE_DIR="$(git -C "$(pwd)" rev-parse --show-toplevel 2>/dev/null)/.mercury/state"
-MARKER="$STATE_DIR/auto-run-paused"
+PAUSE_THRESHOLD=${MERCURY_PAUSE_THRESHOLD:-95}  # per Issue #320 acceptance >95%
+WARN_THRESHOLD=${MERCURY_WARN_THRESHOLD:-85}    # early-warning color only
+REPO_ROOT="$(git -C "$(pwd)" rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -z "$REPO_ROOT" ]; then
+  echo "[statusline-mercury] Not inside a git repository; skip marker logic." >&2
+  # Continue to display path so user still sees usage; just no marker writes.
+  STATE_DIR=""
+  MARKER=""
+else
+  STATE_DIR="$REPO_ROOT/.mercury/state"
+  MARKER="$STATE_DIR/auto-run-paused"
+fi
 
 input=$(cat)
 
@@ -412,16 +427,22 @@ five_hour_pct=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage //
 resets_at=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // 0')
 now=$(date +%s)
 
-# Pause logic: write marker if threshold exceeded
+# Pause logic: write marker if threshold exceeded (only when in a git repo)
 pct_int=$(printf '%.0f' "$five_hour_pct")
-if [ "$pct_int" -ge "$PAUSE_THRESHOLD" ]; then
-  mkdir -p "$STATE_DIR"
-  echo "$resets_at" > "$MARKER"
-# Resume logic: delete marker if window has reset
-elif [ -f "$MARKER" ]; then
-  stored_reset=$(cat "$MARKER" 2>/dev/null || echo 0)
-  if [ "$now" -ge "$stored_reset" ]; then
-    rm -f "$MARKER"
+if [ -n "$MARKER" ]; then
+  if [ "$pct_int" -ge "$PAUSE_THRESHOLD" ]; then
+    mkdir -p "$STATE_DIR"
+    echo "$resets_at" > "$MARKER"
+  # Resume logic: delete marker if window has reset
+  elif [ -f "$MARKER" ]; then
+    stored_reset=$(cat "$MARKER" 2>/dev/null || echo 0)
+    # Validate stored value before integer comparison; corrupted marker → drop it.
+    if ! [[ "$stored_reset" =~ ^[0-9]+$ ]]; then
+      echo "[statusline-mercury] Invalid pause marker; removing corrupted file." >&2
+      rm -f "$MARKER"
+    elif [ "$now" -ge "$stored_reset" ]; then
+      rm -f "$MARKER"
+    fi
   fi
 fi
 
@@ -431,9 +452,10 @@ seven_pct=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // "?"
 model=$(echo "$input" | jq -r '.model.display_name // "?"')
 ctx=$(echo "$input" | jq -r '.context_window.used_percentage // 0' | cut -d. -f1)
 
-# Color code: green < 70%, yellow 70-85%, red >= 85%
-if [ "$pct_int" -ge 85 ]; then color='\033[31m'; # red
-elif [ "$pct_int" -ge 70 ]; then color='\033[33m'; # yellow
+# Color code: green < 70%, yellow at WARN_THRESHOLD (default 85), red at PAUSE_THRESHOLD (default 95)
+if [ "$pct_int" -ge "$PAUSE_THRESHOLD" ]; then color='\033[31m'; # red — pause point
+elif [ "$pct_int" -ge "$WARN_THRESHOLD" ]; then color='\033[33m'; # yellow — early warn
+elif [ "$pct_int" -ge 70 ]; then color='\033[33m'; # yellow — soft warn
 else color='\033[32m'; fi # green
 reset='\033[0m'
 
@@ -446,9 +468,14 @@ echo -e "${color}5h: ${pct_bar}%${reset} | 7d: ${seven_pct}% | ctx: ${ctx}% | ${
 # Check for pause marker before each autonomous iteration
 MARKER=".mercury/state/auto-run-paused"
 if [ -f "$MARKER" ]; then
-  resets_at=$(cat "$MARKER")
+  resets_at=$(cat "$MARKER" 2>/dev/null || echo "")
   now=$(date +%s)
-  if [ "$now" -lt "$resets_at" ]; then
+
+  # Guard against corrupted marker files (non-numeric content) — defense-in-depth at file-system boundary
+  if ! [[ "$resets_at" =~ ^[0-9]+$ ]]; then
+    echo "[lane-autonomous] Invalid pause marker; removing corrupted marker." >&2
+    rm -f "$MARKER"
+  elif [ "$now" -lt "$resets_at" ]; then
     remaining=$(( resets_at - now ))
     echo "[lane-autonomous] 5h quota pause active; $(( remaining / 60 ))m until reset. Sleeping."
     sleep 300  # re-check every 5 min
@@ -470,6 +497,23 @@ fi
   }
 }
 ```
+
+**Durable cron registration** (per Issue #320 acceptance: "Cron must be `durable: true` to survive session restarts"):
+
+The statusline command itself runs in-band on every Claude Code refresh and does not need cron — it is invoked by the platform whenever the statusline updates (every `refreshInterval` seconds, default 60). The pause marker therefore self-maintains across all sessions that refresh the statusline.
+
+For sessions that do NOT use a statusline (e.g. background agents, CI runs, headless dispatch), Phase A implementation MUST add a durable cron via Mercury's session-resilient cron infrastructure (see `feedback_auto_run_mode.md`):
+
+```text
+CronCreate:
+  cron: "*/2 * * * *"
+  durable: true   # MANDATORY — survives session restart
+  prompt: |
+    Re-run statusline-mercury.sh with synthetic stdin from the latest /usage probe
+    (or skip if last write_check_at < 60s old).
+```
+
+Acceptance verification: after `claude` restart, `gh api ... | jq '.cron_jobs'` must still show the registered job. If `durable: false` was used, the cron silently disappears and quota tracking gaps open. This is enforced as Phase A exit criterion #5 in the phased PR plan below.
 
 **Why this path over alternatives**:
 - **Path B (ccusage cron)**: ccusage reads JSONL files which lag real-time; statusline has tighter coupling to live session state. ccusage best for analytics, not control plane.
@@ -508,7 +552,12 @@ fi
 **Phase A — Observability foundation** (est. 1d)
 - PR #A1: `scripts/statusline-mercury.sh` — 5h usage → pause marker → auto-resume detection
 - PR #A2: `scripts/lane-status.sh` — poll GitHub Issues + last-commit timestamps → `.mercury/state/lane-status.json`
-- Acceptance: statusline shows 5h%, marker file created at 85%, deleted on reset; `lane-status.json` updates on cron
+- Acceptance:
+  1. statusline shows 5h%, 7d%, ctx%, model
+  2. marker file `.mercury/state/auto-run-paused` created when `used_percentage >= PAUSE_THRESHOLD` (default 95, per Issue #320 acceptance), deleted when window resets
+  3. corrupted marker (non-numeric content) self-heals (removed without crash)
+  4. `lane-status.json` updates on cron with `last_checked_at` ISO timestamp
+  5. **durable cron registered** for non-statusline sessions (`durable: true` confirmed via `gh api` post-restart)
 
 **Phase B — Lifecycle scripts** (est. 2d)
 - PR #B1: `scripts/lane-spawn.sh` — atomic lane creation (file Issue, create branch, write handoff, update LANES.md, notify Director via Telegram)
