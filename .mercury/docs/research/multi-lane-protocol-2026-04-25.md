@@ -473,8 +473,8 @@ Items split by ownership: S1-side-multi-lane (this session) vs main lane S74+ (p
 ### Completed by S1-side-multi-lane (delivered before this PR)
 
 - ✅ **Item 1 — Comment Issue #292** with executive summary + recommendation. Posted as [#issuecomment-4319812413](https://github.com/392fyc/Mercury/issues/292#issuecomment-4319812413). Visible on the Issue, not in this PR's diff (intentional — Issue comments are not repo files).
-- ✅ **Item 2 — Update `memory/feedback_lane_protocol.md`** with v0.1 delta annotations. Appended new "## v0.1 Delta Proposal" section; original v0 rules untouched. NOT in this PR diff because the file lives in user-level memory layer (`~/.claude/projects/.../memory/`) outside the repo, gitignored. Confirmation: see `memory/feedback_lane_protocol.md` post-research delta section.
-- ✅ **Item 6 — Retain `session-handoff-side-multi-lane.md`** as audit trail. Updated to closing-handoff state in user-level memory layer.
+- ✅ **Item 2 — v0.1 delta proposal**. Canonical PR-auditable artifact added at `.mercury/docs/lane-protocol-v0.1-deltas.md` (this PR diff). Mirror written to user-memory layer `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory/feedback_lane_protocol.md` as a per-user working cache (gitignored by design — Claude Code memory-system `feedback` artifact). PR reviewers can verify user-memory mirror via the verification commands in `lane-protocol-v0.1-deltas.md` §"Verification commands".
+- ✅ **Item 6 — Retain side-lane handoff** as audit trail. Updated to closing-handoff state in user-memory layer at `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory/session-handoff-side-multi-lane.md`. Per Mercury's "user-level governance" pattern (CLAUDE.md §Related Repositories), user-memory artifacts are not committed to repo; their existence + content is auditable via the env-var path above.
 
 ### Deferred to main lane S74+ (HOLD-OPEN per >2-rule revision clause)
 
