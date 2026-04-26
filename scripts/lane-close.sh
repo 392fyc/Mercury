@@ -123,6 +123,17 @@ case "$TMP_DIR_REAL" in
     case "$LEAF" in
       ..|*/..|../*|*/../*) die "refusing --tmp-dir with '..' segment: '$TMP_DIR' → '$TMP_DIR_REAL'" ;;
     esac
+    # Lane-name consistency check (Argus #327 iter 4/5 finding #3): the
+    # leaf's first segment MUST be `lane-<LANE>` (or equal to it). Without
+    # this guard, `lane-close.sh foo --tmp-dir .tmp/lane-bar` would
+    # silently `rm -rf` the WRONG lane's tmp dir while flipping foo's
+    # Status. The lane name was already validated against [A-Za-z0-9_-]
+    # so direct string equality is safe.
+    EXPECTED_LEAF_PREFIX="lane-${LANE}"
+    case "$LEAF" in
+      "$EXPECTED_LEAF_PREFIX"|"$EXPECTED_LEAF_PREFIX"/*) ;;
+      *) die "refusing --tmp-dir whose leaf does not match 'lane-${LANE}': '$TMP_DIR' → '$TMP_DIR_REAL' (leaf=${LEAF})" ;;
+    esac
     ;;
   *)
     die "refusing --tmp-dir outside ${EXPECTED_PREFIX}*: '$TMP_DIR' → '$TMP_DIR_REAL'" ;;

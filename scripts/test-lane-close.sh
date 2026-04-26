@@ -226,6 +226,23 @@ assert_exit 2 "--tmp-dir with trailing /.. refused" \
 # if realpath is unavailable, the literal `..`-segment guard catches them.
 # Both paths exit 2 — the literal-segment guard is the belt-and-braces fallback.
 
+# Lane-name consistency (Argus #327 iter 4/5 finding #3 fix) — refuse
+# --tmp-dir whose leaf doesn't match `lane-<LANE>`. Without this, closing
+# lane=foo with --tmp-dir=.tmp/lane-bar would silently delete bar's data.
+mkdir -p "$TMP/case8-repo/.tmp/lane-other"
+assert_exit 2 "--tmp-dir for OTHER lane refused (leaf doesn't match)" \
+  "$SCRIPT" side-target --yes --force-cross-lane \
+    --lanes-file "$MEM8/LANES.md" --memory-dir "$MEM8" \
+    --repo-root "$TMP/case8-repo" --tmp-dir "$TMP/case8-repo/.tmp/lane-other"
+# Subdirectory under matching lane name accepted.
+mkdir -p "$TMP/case8-repo/.tmp/lane-side-target/sub"
+OUT_SUB=$("$SCRIPT" side-target --yes --force-cross-lane \
+        --lanes-file "$MEM8/LANES.md" --memory-dir "$MEM8" \
+        --repo-root "$TMP/case8-repo" --tmp-dir "$TMP/case8-repo/.tmp/lane-side-target/sub" 2>&1)
+RC_SUB=$?
+[ "$RC_SUB" = "0" ] && pass "--tmp-dir under lane-<LANE>/sub accepted" \
+  || fail "--tmp-dir under matching lane subdir rejected: exit=$RC_SUB out=$OUT_SUB"
+
 # Valid path under .tmp/ accepted (regression — prior happy-path covers this
 # but explicit assertion documents the safe shape). Use a fresh fixture +
 # repo root because the previous safety sub-tests share state and any
