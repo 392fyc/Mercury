@@ -30,6 +30,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Resolve the real git binary BEFORE prepending STUB_BIN to PATH so stubs can
+# delegate without infinite recursion. Walk PATH and skip STUB_BIN entries.
+REAL_GIT=""
+for _p in $(echo "$PATH" | tr ':' '\n'); do
+  _g="$_p/git"
+  if [ -x "$_g" ] && [ "$_p" != "$STUB_BIN" ]; then
+    REAL_GIT="$_g"
+    break
+  fi
+done
+[ -z "$REAL_GIT" ] && { echo "FAIL: real git not found on PATH" >&2; exit 1; }
+
 # ---------------------------------------------------------------------------
 # Stub `gh` — emits canned responses
 # ---------------------------------------------------------------------------
@@ -61,28 +73,15 @@ exit 0
 GHSTUB
 chmod +x "$STUB_BIN/gh"
 
-# ---------------------------------------------------------------------------
-# Stub `git` — intercepts ls-remote and log; passes other git commands through
-# ---------------------------------------------------------------------------
-cat > "$STUB_BIN/git" << 'GITSTUB'
-#!/bin/bash
-# Stub git for lane-status.sh tests
-
-if [[ "$*" == *"ls-remote"* ]]; then
-  printf '%s\t%s\n' 'abc123def456' 'refs/heads/feature/lane-main/TASK-001'
-  printf '%s\t%s\n' '789xyz000111' 'refs/heads/feature/lane-side-multi-lane/TASK-309'
-  exit 0
-fi
-
-if [[ "$*" == *"log"* ]]; then
-  echo "2026-04-26T10:00:00Z"
-  exit 0
-fi
-
-# Pass through all other git commands to the real git (hardcoded to avoid
-# infinite recursion when this stub directory is first on PATH).
-exec '/mingw64/bin/git' "$@"
-GITSTUB
+# Stub `git` — intercepts ls-remote and log; delegates other git commands to REAL_GIT.
+printf '%s\n' '#!/bin/bash' \
+  'if [[ "$*" == *"ls-remote"* ]]; then' \
+  "  printf '%s\t%s\n' 'abc123def456' 'refs/heads/feature/lane-main/TASK-001'" \
+  "  printf '%s\t%s\n' '789xyz000111' 'refs/heads/feature/lane-side-multi-lane/TASK-309'" \
+  '  exit 0; fi' \
+  'if [[ "$*" == *"log"* ]]; then' \
+  '  echo "2026-04-26T10:00:00Z"; exit 0; fi' \
+  "exec '$REAL_GIT' \"\$@\"" > "$STUB_BIN/git"
 chmod +x "$STUB_BIN/git"
 
 # Prepend stub bin to PATH
@@ -169,22 +168,9 @@ else
   fail "T3 --print produces summary header" "stdout: $PRINT_OUT"
 fi
 
-# ---------------------------------------------------------------------------
-# T_DATE — staleness / date-parsing test (validates M1 fix)
+# T_DATE — staleness / date-parsing test (validates M1 fix).
 # Stubs git log to return a controlled timestamp; asserts is_stale accordingly.
-# Uses a fresh STUB_DATE bin prepended to PATH for each subtest.
-# Real git binary resolved once at test-script start to avoid infinite recursion.
-# ---------------------------------------------------------------------------
-
-REAL_GIT="$(command -v git)"
-# In case our own STUB_BIN/git is on PATH, walk PATH to find the real one
-for _p in $(echo "$PATH" | tr ':' '\n'); do
-  _g="$_p/git"
-  if [ -x "$_g" ] && [ "$_p" != "$STUB_BIN" ]; then
-    REAL_GIT="$_g"
-    break
-  fi
-done
+# REAL_GIT was resolved at test-script start (above) so subtest stubs reuse it.
 
 # T_DATE.1: branch committed 30 seconds ago → is_stale: false
 # Issue updatedAt is set far in the future so it never triggers stale alone;

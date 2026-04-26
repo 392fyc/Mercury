@@ -42,8 +42,11 @@ now=$(date +%s)
 
 # FLOOR (not round) for threshold comparison — avoid early false-trigger when 94.6% rounds to 95.
 # Rationale: pause should fire at "definitely >=95", not "rounds to >=95".
+# Numeric-guard: any non-digit input (NaN, empty, "soon", malformed JSON) coerces to 0.
 pct_floor=$(echo "$five_hour_pct" | cut -d. -f1)
-[ -z "$pct_floor" ] && pct_floor=0
+case "$pct_floor" in
+  ''|*[!0-9]*) pct_floor=0 ;;
+esac
 
 # Pause logic: write marker if FLOORED threshold exceeded (only when in a git repo)
 if [ -n "$MARKER" ]; then
