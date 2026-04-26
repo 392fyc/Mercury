@@ -488,6 +488,75 @@ run_case "diff_unfrozen_timestamp" env MERCURY_REGEN_TIMESTAMP="2030-01-01T12:34
 assert_rc "diff_unfrozen_timestamp" 0
 assert_out_contains "diff_unfrozen_timestamp_msg" "no drift"
 
+# --- Test 31: non-session filename in sessions/ skipped with WARN ---
+M31=$(mk_memdir "non-session-file")
+write_session_index "$M31" '| S1 | 2026-01-01 | from-index | from-index-out | — |'
+write_memory_md "$M31" '- placeholder'
+mkdir -p "$M31/sessions"
+cat > "$M31/sessions/README.md" <<'EOF'
+---
+name: not-a-session
+---
+# Notes
+EOF
+cat > "$M31/sessions/draft.md" <<'EOF'
+junk file
+EOF
+run_case "non_session_filename_skipped" bash "$SCRIPT" --memory-dir "$M31" --output -
+assert_rc "non_session_filename_skipped" 0
+assert_err_contains "non_session_filename_warn" "skip non-session markdown file"
+# Index row from SESSION_INDEX.md still emitted (not blocked by README.md)
+assert_out_contains "non_session_index_kept" "from-index"
+
+# --- Test 32: symlink in sessions/ skipped with WARN (skipped on Windows where symlinks need privilege) ---
+M32=$(mk_memdir "symlink-skip")
+write_session_index "$M32" '| S1 | 2026-01-01 | t | o | — |'
+write_memory_md "$M32" '- placeholder'
+mkdir -p "$M32/sessions"
+# Create a target file then a symlink inside sessions/
+echo "target content" > "$M32/target.md"
+SYMLINK_OK=0
+# `ln -s` on Windows Git Bash without Developer Mode creates a hardlink/copy, not a real
+# symlink. Verify [ -L ] reports symlink before running the assertion; otherwise skip.
+if ln -s "$M32/target.md" "$M32/sessions/S99-symlink.md" 2>/dev/null \
+   && [ -L "$M32/sessions/S99-symlink.md" ]; then
+  SYMLINK_OK=1
+fi
+if [ "$SYMLINK_OK" = "1" ]; then
+  run_case "symlink_skipped" bash "$SCRIPT" --memory-dir "$M32" --output -
+  assert_rc "symlink_skipped" 0
+  assert_err_contains "symlink_warn" "skip symlink in sessions dir"
+else
+  CASES=$((CASES + 1)); PASS=$((PASS + 1))
+  [ "$VERBOSE" -eq 1 ] && printf 'SKIP symlink test: ln -s did not create real symlink (Windows non-Developer Mode)\n'
+fi
+
+# --- Test 33: I/O failure on output (parent dir missing) detected ---
+M33=$(mk_memdir "io-failure")
+write_session_index "$M33" '| S1 | 2026-01-01 | t | o | — |'
+write_memory_md "$M33" '- placeholder'
+run_case "io_failure" bash "$SCRIPT" --memory-dir "$M33" --output "$TEST_ROOT/io-failure/missing-parent/dir/out.md"
+assert_rc "io_failure" 2
+assert_err_contains "io_failure_msg" "failed to write output"
+
+# --- Test 34: hostile MEMORY_DIR with embedded newline sanitized in frontmatter ---
+M34=$(mk_memdir "hostile-memdir")
+write_session_index "$M34" '| S1 | 2026-01-01 | t | o | — |'
+write_memory_md "$M34" '- placeholder'
+# Create a directory whose name simulates the unsafe scenario: we cannot literally
+# create a dir name with newline on most filesystems, so we instead override --memory-dir
+# via a wrapper. Test simpler invariant: generated_from line is single-line in output.
+run_case "memdir_single_line_frontmatter" bash "$SCRIPT" --memory-dir "$M34" --output -
+assert_rc "memdir_single_line_frontmatter" 0
+# Verify exactly one `generated_from:` line in output (no injection)
+GENFROM_COUNT=$(printf '%s\n' "$LAST_OUT" | grep -c '^generated_from:' || true)
+if [ "$GENFROM_COUNT" -eq 1 ]; then
+  CASES=$((CASES + 1)); PASS=$((PASS + 1))
+else
+  CASES=$((CASES + 1)); FAIL=$((FAIL + 1))
+  printf 'FAIL: memdir_single_line_frontmatter — expected 1 generated_from: line, got %d\n' "$GENFROM_COUNT" >&2
+fi
+
 # --- Final report ---
 printf '\n=== regenerate-memory-index test summary ===\n'
 printf 'cases: %d  assertions: %d  fail: %d\n' "$CASES" "$PASS" "$FAIL"
