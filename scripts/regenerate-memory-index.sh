@@ -33,7 +33,9 @@
 # Defaults:
 #   --memory-dir   ${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}
 #   --output       <memory-dir>/INDEX.generated.md  (use - to write to stdout)
-#   --format       text  (diff = compare against canonical files + report differences only)
+#   --format       text  (diff = compare fresh regenerate against existing INDEX.generated.md
+#                         snapshot for soak drift detection; does NOT compare against canonical
+#                         MEMORY.md / SESSION_INDEX.md — those are read-only inputs in F.A)
 #
 # Exit codes:
 #   0  clean regenerate (output written; in diff mode: no drift detected)
@@ -177,10 +179,12 @@ parse_memory_session_history() {
         printf "VERBATIM\t\t%s\n", verbatim
       }
     }
-    in_section && /^[^[:space:]-]/ && !/^## / {
-      # Non-bullet, non-heading content within Project (Session History) section.
-      # Examples: stray paragraphs, callouts, blockquotes. Preserve verbatim so
-      # the regenerated output truly matches the doc-claimed "preserved verbatim" guarantee.
+    in_section && !/^## / && !/^- / && /[^[:space:]]/ {
+      # Non-bullet, non-heading, non-empty content within Project (Session History)
+      # section. Examples: stray paragraphs, callouts, blockquotes, INDENTED code
+      # blocks or continuation lines. Preserve verbatim — the regenerated output
+      # truly matches the doc-claimed "preserved verbatim" guarantee regardless of
+      # leading whitespace.
       printf "VERBATIM\t\t%s\n", $0
     }
   ' "$1"
@@ -366,9 +370,13 @@ EOF
 }
 
 if [ "$FORMAT" = "diff" ]; then
-  # Diff mode: regenerate to a tmp file then compare against canonical INDEX.generated.md.
-  # The `generated_at` field changes every run by design; diff mode strips it before
-  # compare so operators get structural drift signal independent of when they ran.
+  # Diff mode: regenerate to a tmp file then compare against the EXISTING
+  # `<memory-dir>/INDEX.generated.md` snapshot from a prior text-mode run. This
+  # detects drift in the regenerated index across consecutive runs (the F.A
+  # soak signal). It does NOT compare against canonical MEMORY.md /
+  # SESSION_INDEX.md — those remain read-only inputs in Phase F.A. The
+  # `generated_at` field changes every run by design and is stripped before
+  # compare so operators get a structural drift signal independent of timestamp.
   DIFF_TMP=$(mktemp) || die "mktemp failed"
   DIFF_STRIPPED_NEW=$(mktemp) || die "mktemp failed"
   DIFF_STRIPPED_OLD=$(mktemp) || die "mktemp failed"

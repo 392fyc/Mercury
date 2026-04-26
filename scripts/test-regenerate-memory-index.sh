@@ -557,6 +557,25 @@ else
   printf 'FAIL: memdir_single_line_frontmatter — expected 1 generated_from: line, got %d\n' "$GENFROM_COUNT" >&2
 fi
 
+# --- Test 35: indented non-bullet content in MEMORY.md history section preserved verbatim ---
+M35=$(mk_memdir "indented-verbatim")
+write_session_index "$M35" '| S1 | 2026-01-01 | t | o | — |'
+cat > "$M35/MEMORY.md" <<'EOF'
+# Memory Index
+
+## Project (Session History)
+- [project_session1_state.md](project_session1_state.md) — S1
+  > Indented blockquote line should be preserved
+    Indented continuation paragraph should also be preserved
+- [project_session2_state.md](project_session2_state.md) — S2
+
+## Reference
+EOF
+run_case "indented_verbatim" bash "$SCRIPT" --memory-dir "$M35" --output -
+assert_rc "indented_verbatim" 0
+assert_out_contains "indented_blockquote_kept" "  > Indented blockquote line should be preserved"
+assert_out_contains "indented_continuation_kept" "    Indented continuation paragraph should also be preserved"
+
 # --- Final report ---
 printf '\n=== regenerate-memory-index test summary ===\n'
 printf 'cases: %d  assertions: %d  fail: %d\n' "$CASES" "$PASS" "$FAIL"

@@ -49,7 +49,7 @@ scripts/regenerate-memory-index.sh [--memory-dir PATH] [--output PATH]
 |------|--------|
 | `--memory-dir PATH` | Override memory dir. Defaults to `MERCURY_MEMORY_DIR` env, then `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory`. |
 | `--output PATH` | Override output path. Defaults to `<memory-dir>/INDEX.generated.md`. Use `-` to write to stdout. |
-| `--format text\|diff` | `text` (default) writes regenerated content. `diff` compares fresh regenerate against existing `INDEX.generated.md` and reports drift (exit 0 = no drift, exit 1 = drift detected). |
+| `--format text\|diff` | `text` (default) writes regenerated content. `diff` compares the fresh regenerate against the existing `<memory-dir>/INDEX.generated.md` snapshot from a prior text-mode run and reports drift (exit 0 = no drift, exit 1 = drift detected). Does **not** compare against canonical `MEMORY.md` / `SESSION_INDEX.md` — those are read-only inputs in Phase F.A. |
 | `MERCURY_MEMORY_DIR` (env) | Same as `--memory-dir`. |
 | `MERCURY_REGEN_TIMESTAMP` (env) | Override `generated_at` field. Tests + operator side-by-side determinism diffs set this for byte-identical comparison; production runs leave unset (live ISO timestamp). Note: `--format diff` strips the `generated_at` line before comparing, so operators do **not** need to set this when running drift checks against an existing `INDEX.generated.md`. |
 
@@ -172,16 +172,16 @@ Phase F.A is non-breaking by construction:
 scripts/test-regenerate-memory-index.sh
 ```
 
-39 test cases / 72 assertions covering arg validation, sort ordering (lane
+40 test cases / 75 assertions covering arg validation, sort ordering (lane
 suffix variants, range rows), source precedence (per-session file overrides
 existing row), malformed-frontmatter detection, missing-required-field
 detection, idempotency (frozen timestamp), custom output paths, env-var
 resolution, diff mode (no drift / drift / no existing snapshot / unfrozen
 timestamp ignored), pipe-character corruption WARN, duplicate-row dedup,
 non-session-filename skip, symlink skip (env-aware), I/O failure detection,
-frontmatter sanitization, hostile content preservation, and empty
-SESSION_INDEX. Tests use synthetic memory dirs only — never touch real
-user-memory layer.
+frontmatter sanitization, indented-verbatim preservation, hostile content
+preservation, and empty SESSION_INDEX. Tests use synthetic memory dirs
+only — never touch real user-memory layer.
 
 ## Forward path
 
