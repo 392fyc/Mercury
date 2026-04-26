@@ -134,6 +134,42 @@ RC_EMPTY=$?
 [ "$RC_EMPTY" = "0" ] && pass "empty active section exits 0" || fail "empty active section exit=$RC_EMPTY"
 assert_contains "empty active section warns" "no active lanes" "$OUT_EMPTY"
 
+# ---- WARN-on-probe-failure (Argus #327 iter 3 finding fix) ----
+# Sweep is report-only, so a per-lane probe failure must NOT crash the run
+# (asymmetric vs check-main-idle.sh which dies). Stub gh that fails for
+# Issue list calls; expect WARN to stderr + report still produced + lane
+# verdict resolves via missing-data semantics (no fatal exit).
+echo
+echo "[probe-warn]"
+mkdir -p "$TMP/bin-warn"
+cat > "$TMP/bin-warn/gh" <<'EOF'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "issue list")  echo "fake gh issue list failure" >&2 ; exit 1 ;;
+  "repo view")   echo '{"nameWithOwner":"test-owner/test-repo"}' ; exit 0 ;;
+  *) echo "stub-warn: unhandled $*" >&2 ; exit 99 ;;
+esac
+EOF
+chmod +x "$TMP/bin-warn/gh"
+
+# Use the synthetic memory dir + LANES.md fixture from earlier (3 active lanes).
+OUT_WARN=$(PATH="$TMP/bin-warn:$PATH" GH_REPO="test-owner/test-repo" \
+  "$SCRIPT" --memory-dir "$MEM" --days 14 --format text 2>&1)
+RC_WARN=$?
+[ "$RC_WARN" = "0" ] && pass "probe failure → exit 0 (sweep continues, asymmetric vs check-main-idle die)" \
+  || fail "probe failure exit=$RC_WARN out=$OUT_WARN"
+if printf '%s' "$OUT_WARN" | grep -q "gh issue probe failed"; then
+  pass "WARN emitted on probe failure"
+else
+  fail "WARN missing in output: $OUT_WARN"
+fi
+# Report still emitted (header + at least one lane row visible).
+if printf '%s' "$OUT_WARN" | grep -q "VERDICT"; then
+  pass "report still emitted despite probe failure"
+else
+  fail "report missing despite WARN: $OUT_WARN"
+fi
+
 # ---- JSON escape (Argus #327 finding #6 fix) ----
 echo
 echo "[json-escape]"

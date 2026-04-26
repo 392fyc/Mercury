@@ -175,14 +175,30 @@ issue_last_ts() {
     return
   fi
   local out iso
-  out=$(gh issue list --repo "$REPO" --label "lane:${lane}" --state all \
-        --limit 200 --json updatedAt 2>/dev/null) || { echo ""; return; }
-  iso=$(printf '%s' "$out" \
-    | jq -r 'if length == 0 then "" else (max_by(.updatedAt).updatedAt) end' 2>/dev/null)
+  # Asymmetric error policy vs check-main-idle.sh: sweep is REPORT-ONLY (no
+  # destructive action gated on its verdict), so a per-lane probe failure
+  # should warn-and-continue rather than abort the entire report. The
+  # AND-gate verdict logic still requires three signals to converge before
+  # declaring stale, so a single missing-data signal can't produce a
+  # false-positive on its own. WARN distinguishes "probe failed" from "no
+  # data" so the operator can investigate (Argus #327 iter 3 finding).
+  if ! out=$(gh issue list --repo "$REPO" --label "lane:${lane}" --state all \
+             --limit 200 --json updatedAt 2>/dev/null); then
+    warn "gh issue probe failed for lane '$lane' — treating as missing data"
+    echo ""; return
+  fi
+  if ! iso=$(printf '%s' "$out" \
+             | jq -r 'if length == 0 then "" else (max_by(.updatedAt).updatedAt) end' 2>/dev/null); then
+    warn "jq parse failed for lane '$lane' Issue probe output — treating as missing data"
+    echo ""; return
+  fi
   if [ -n "$iso" ]; then
-    date -d "$iso" +%s 2>/dev/null \
-      || date -j -f '%Y-%m-%dT%H:%M:%SZ' "$iso" +%s 2>/dev/null \
-      || echo ""
+    if ! ts=$(date -d "$iso" +%s 2>/dev/null) \
+       && ! ts=$(date -j -f '%Y-%m-%dT%H:%M:%SZ' "$iso" +%s 2>/dev/null); then
+      warn "date parse failed for ISO '$iso' (lane '$lane') — treating as missing data"
+      echo ""; return
+    fi
+    echo "$ts"
   else
     echo ""
   fi
