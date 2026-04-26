@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # scripts/lib/date-utils.sh — portable date parsing helpers for Mercury scripts.
 # Source this file; do not execute directly.
 #

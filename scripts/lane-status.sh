@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Mercury cross-lane status aggregator (Issue #322, Phase A).
 # Polls GitHub Issues with lane:* labels + last-commit timestamps on lane branches.
 # Writes .mercury/state/lane-status.json with 15-min staleness gate.
@@ -92,9 +92,10 @@ while IFS= read -r label_name; do
     [ -z "$ref_line" ] && continue
     # ref_line format: "<sha>\trefs/heads/<branch>"
     ref_branch=$(echo "$ref_line" | awk '{print $2}' | sed 's|refs/heads/||' | tr -d '\r')
-    # M1: use TZ=UTC --date format to get UTC timestamp directly, avoiding
-    # %cI's +HH:MM form which BSD date -j cannot parse.
-    last_commit_at=$(git -C "$REPO_ROOT" log -1 \
+    # M1: TZ=UTC + --date=format-local emits the timestamp in UTC, then the
+    # literal Z suffix is honest. Without TZ=UTC, format-local would format in
+    # the local zone but still tack on Z, mislabeling the value (Copilot finding).
+    last_commit_at=$(TZ=UTC git -C "$REPO_ROOT" log -1 \
       --date=format-local:'%Y-%m-%dT%H:%M:%SZ' \
       --format=%cd \
       "origin/${ref_branch}" 2>/dev/null | tr -d '\r' || true)
@@ -169,9 +170,10 @@ final_json=$(jq -n \
 
 OUTPUT_FILE="$STATE_DIR/lane-status.json"
 echo "$final_json" > "$TMP_FILE"
-# Atomic rename; disarm the EXIT trap first so we don't delete the file we just wrote.
-trap - EXIT
-mv "$TMP_FILE" "$OUTPUT_FILE"
+# Atomic rename. Disarm the EXIT trap only AFTER mv succeeds so a failed mv
+# (permission denied, ENOSPC, …) still triggers the cleanup trap and removes
+# the orphaned temp file.
+mv "$TMP_FILE" "$OUTPUT_FILE" && trap - EXIT
 
 # Optional --print summary table.
 if [ "$PRINT_SUMMARY" = "true" ]; then

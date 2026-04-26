@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Mercury 5h-quota statusline (Issue #322 / #320, PR #321 §Dim 4.4 spec).
 # Reads Claude Code statusline JSON via stdin; writes .mercury/state/auto-run-paused
 # when 5h usage >= PAUSE_THRESHOLD (default 95). Two-source resume confirmation.
@@ -35,9 +35,10 @@ fi
 
 input=$(cat)
 
-# Extract rate_limits fields (null-safe with // 0 / // "")
-five_hour_pct=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // 0')
-resets_at=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // 0')
+# Extract rate_limits fields (null-safe with // 0 / // ""). jq stderr suppressed +
+# fallback to 0/"?" so missing-jq or invalid-stdin can't pollute the statusline UI.
+five_hour_pct=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // 0' 2>/dev/null || echo 0)
+resets_at=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // 0' 2>/dev/null || echo 0)
 now=$(date +%s)
 
 # FLOOR (not round) for threshold comparison — avoid early false-trigger when 94.6% rounds to 95.
@@ -74,11 +75,15 @@ if [ -n "$MARKER" ]; then
   fi
 fi
 
-# Display output (display rounds for readability, but pause logic uses floor)
+# Display output (display rounds for readability, but pause logic uses floor).
+# jq stderr suppressed + fallback so a missing jq doesn't pollute the prompt UI.
 pct_bar=$(printf '%.0f' "$five_hour_pct" 2>/dev/null || echo "?")
-seven_pct=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // "?"')
-model=$(echo "$input" | jq -r '.model.display_name // "?"')
-ctx=$(echo "$input" | jq -r '.context_window.used_percentage // 0' | cut -d. -f1)
+seven_pct=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // "?"' 2>/dev/null || echo "?")
+model=$(echo "$input" | jq -r '.model.display_name // "?"' 2>/dev/null || echo "?")
+ctx=$(echo "$input" | jq -r '.context_window.used_percentage // 0' 2>/dev/null | cut -d. -f1)
+case "$ctx" in
+  ''|*[!0-9]*) ctx=0 ;;
+esac
 
 # Color code: green < 70%, yellow at 70 or WARN_THRESHOLD (default 85), red at PAUSE_THRESHOLD (default 95)
 if [ "$pct_floor" -ge "$PAUSE_THRESHOLD" ]; then color='\033[31m'  # red — pause point

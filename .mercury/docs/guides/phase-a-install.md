@@ -52,10 +52,13 @@ existing JSON object — do **not** overwrite the whole file.
 }
 ```
 
-Validate JSON after merging:
+Validate JSON after merging (compute the path in shell so bash `${VAR:-default}`
+expansion happens BEFORE Python sees it — Python's `os.path.expandvars` does NOT
+understand `${VAR:-default}` syntax):
 
 ```bash
-python -c "import json,os; json.load(open(os.path.expandvars('${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json')))" \
+SETTINGS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+python -c "import json, sys; json.load(open(sys.argv[1]))" "$SETTINGS" \
   && echo "JSON valid"
 ```
 
@@ -117,11 +120,19 @@ CronCreate:
 > `durable: true` is **mandatory** — without it the cron silently disappears after session restart,
 > opening quota-tracking gaps (per Issue #320 acceptance criterion 5).
 
-Verify registration survived a session restart:
+Verify registration survived a session restart by listing crons inside Claude Code
+itself — the GitHub API does not expose Claude Code's local cron registry:
+
+> Inside the new Claude Code session, ask the agent to run `CronList` (built-in
+> tool) and confirm the lane-status entry appears. If it is missing, the
+> previous registration was not durable; re-register with `durable: true`.
+
+A separate way to indirectly observe the cron is firing: `lane-status.json`'s
+`last_checked_at` timestamp should be within the configured cron interval:
 
 ```bash
-gh api /repos/392fyc/Mercury/actions/variables 2>/dev/null || \
-  echo "(verify via Claude Code: list active crons)"
+STATE_FILE="${MERCURY_TEST_REPO_ROOT:-$(git rev-parse --show-toplevel)}/.mercury/state/lane-status.json"
+jq -r '.last_checked_at' "$STATE_FILE"
 ```
 
 ---
