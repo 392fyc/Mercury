@@ -4,8 +4,11 @@
 #
 # Atomically:
 #   1. Validate <lane> exists in LANES.md, status != closed
-#   2. Refuse if `.tmp/lane-<lane>/` contains uncommitted/dangerous content
-#      (untracked content the user may want to inspect first)
+#   2. Refuse if `.tmp/lane-<lane>/` contains specific dangerous markers:
+#      any file matching `*.uncommitted` (the documented Mercury "save me
+#      first" suffix) OR a `.git` directory/file (nested checkout artifact).
+#      Other untracked content does NOT block close — operators are expected
+#      to use the `.uncommitted` suffix to flag inspect-first content.
 #   3. Flip the lane's `**Status**: ...` line to `closed` (only that lane's
 #      section — Rule 6 ownership)
 #   4. Remove `.tmp/lane-<lane>/`

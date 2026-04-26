@@ -125,8 +125,8 @@ the review window.
 
 ```bash
 scripts/check-main-idle.sh [--hours N] [--memory-dir PATH]
-                           [--repo OWNER/REPO] [--no-issue-check]
-                           [--format text|json]
+                           [--repo OWNER/REPO] [--repo-root PATH]
+                           [--no-issue-check] [--format text|json]
 ```
 
 | Flag | Effect |
@@ -134,6 +134,7 @@ scripts/check-main-idle.sh [--hours N] [--memory-dir PATH]
 | `--hours N` | Idleness threshold in hours (default 48). |
 | `--memory-dir PATH` | Override memory dir. Defaults to `MERCURY_MEMORY_DIR` env, then `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory`. |
 | `--repo OWNER/REPO` | Pin the GitHub repo. Defaults to `gh repo view` resolution. |
+| `--repo-root PATH` | Pin the local checkout for `git for-each-ref` branch-activity probing. Defaults to `git rev-parse --show-toplevel` from cwd; pass explicitly when invoking outside the Mercury checkout. |
 | `--no-issue-check` | Skip GitHub Issue probe. Useful in CI without `gh` auth. Note: skipping this signal makes the verdict less reliable — issue activity is one of three signals, and absence is treated as "stale" for that signal. |
 | `--format text\|json` | Output format. |
 

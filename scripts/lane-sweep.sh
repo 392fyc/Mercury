@@ -174,7 +174,7 @@ issue_last_ts() {
     echo ""
     return
   fi
-  local out iso
+  local out iso ts
   # Asymmetric error policy vs check-main-idle.sh: sweep is REPORT-ONLY (no
   # destructive action gated on its verdict), so a per-lane probe failure
   # should warn-and-continue rather than abort the entire report. The
@@ -211,7 +211,7 @@ issue_last_ts() {
 # bytes outside \n/\t fall through unescaped, which is acceptable for the
 # defensive use case (Argus #327 finding).
 json_string() {
-  local s=$1
+  local s="$1"
   s=${s//\\/\\\\}
   s=${s//\"/\\\"}
   s=${s//$'\n'/\\n}

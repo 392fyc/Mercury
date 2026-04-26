@@ -35,7 +35,7 @@ or `--days 7` to mirror Claude Code's worktree threshold.
 
 ```bash
 scripts/lane-sweep.sh [--lanes-file PATH] [--memory-dir PATH]
-                      [--days N] [--repo OWNER/REPO]
+                      [--days N] [--repo OWNER/REPO] [--repo-root PATH]
                       [--format text|json] [--no-issue-check]
 ```
 
@@ -46,6 +46,7 @@ scripts/lane-sweep.sh [--lanes-file PATH] [--memory-dir PATH]
 | `--lanes-file PATH` | Override LANES.md location. Defaults to `<memory-dir>/LANES.md`. |
 | `--memory-dir PATH` | Override memory dir. Defaults to `MERCURY_MEMORY_DIR` env, then `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory`. |
 | `--repo OWNER/REPO` | Pin the GitHub repo for Issue activity probe. Defaults to `gh repo view` resolution. |
+| `--repo-root PATH` | Pin the local checkout for `git for-each-ref` branch-activity probing. Defaults to `git rev-parse --show-toplevel` from cwd; pass explicitly when invoking the script outside the Mercury checkout (CI, cron from a different cwd). |
 | `--no-issue-check` | Skip the GitHub Issue probe (offline mode / fast tests). |
 | `MERCURY_MEMORY_DIR` (env) | Same effect as `--memory-dir`. |
 | `GH_REPO` (env) | Same effect as `--repo`. |
