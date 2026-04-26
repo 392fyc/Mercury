@@ -26,7 +26,7 @@ FAIL=0
 CASES=0
 
 # Workdir per test, under unique temp root
-TEST_ROOT=$(mktemp -d -t mercury-regen-test-XXXXXX) || { printf 'test: mktemp failed\n' >&2; exit 1; }
+TEST_ROOT=$(mktemp -d) || { printf 'test: mktemp failed\n' >&2; exit 1; }
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
 mk_memdir() {
@@ -575,6 +575,78 @@ run_case "indented_verbatim" bash "$SCRIPT" --memory-dir "$M35" --output -
 assert_rc "indented_verbatim" 0
 assert_out_contains "indented_blockquote_kept" "  > Indented blockquote line should be preserved"
 assert_out_contains "indented_continuation_kept" "    Indented continuation paragraph should also be preserved"
+
+# --- Test 36: per-session file with YAML block scalar (| or >) rejected ---
+M36=$(mk_memdir "block-scalar-reject")
+write_session_index "$M36" '| S1 | 2026-01-01 | fb | fb | — |'
+write_memory_md "$M36" '- placeholder'
+mkdir -p "$M36/sessions"
+cat > "$M36/sessions/S1.md" <<'EOF'
+---
+name: session_S1
+type: session
+session_id: S1
+date: 2026-01-01
+description: |
+  multi-line block scalar
+  not supported in F.A
+outcome: ok
+---
+# Body
+EOF
+run_case "block_scalar_rejected" bash "$SCRIPT" --memory-dir "$M36" --output -
+assert_rc "block_scalar_rejected" 1
+assert_err_contains "block_scalar_msg" "unsupported YAML block scalar"
+
+# --- Test 37: link bullet with ASCII dash separator preserved verbatim (not normalized) ---
+M37=$(mk_memdir "ascii-dash-bullet")
+write_session_index "$M37" '| S1 | 2026-01-01 | t | o | — |'
+cat > "$M37/MEMORY.md" <<'EOF'
+# Memory Index
+
+## Project (Session History)
+- [project_session1_state.md](project_session1_state.md) - ASCII-dash separator with two-space gap
+- [project_session2_state.md](project_session2_state.md) — em-dash separator stays em-dash
+
+## Reference
+EOF
+run_case "ascii_dash_preserved" bash "$SCRIPT" --memory-dir "$M37" --output -
+assert_rc "ascii_dash_preserved" 0
+# ASCII dash separator + original spacing preserved (not normalized to em dash)
+assert_out_contains "ascii_dash_kept" "- [project_session1_state.md](project_session1_state.md) - ASCII-dash separator"
+# Em dash also preserved as-is
+assert_out_contains "em_dash_kept" "- [project_session2_state.md](project_session2_state.md) — em-dash separator"
+
+# --- Test 38: empty lines within Project (Session History) section preserved ---
+M38=$(mk_memdir "empty-lines-preserved")
+write_session_index "$M38" '| S1 | 2026-01-01 | t | o | — |'
+cat > "$M38/MEMORY.md" <<'EOF'
+# Memory Index
+
+## Project (Session History)
+- [project_session1_state.md](project_session1_state.md) — first
+
+- [project_session2_state.md](project_session2_state.md) — after blank line
+
+## Reference
+EOF
+run_case "empty_lines_preserved" bash "$SCRIPT" --memory-dir "$M38" --output -
+assert_rc "empty_lines_preserved" 0
+# Count blank lines in MEMORY_PROJECT_SESSION_HISTORY_GENERATED section of output
+BLANK_COUNT=$(printf '%s\n' "$LAST_OUT" | awk '
+  /^## MEMORY_PROJECT_SESSION_HISTORY_GENERATED/ { in_sec = 1; next }
+  in_sec && /^## / { exit }
+  in_sec && /^$/ { n++ }
+  END { print n+0 }
+')
+# Expect at least 1 blank line preserved (the separator between bullets) — exact count
+# depends on emit_index template formatting around the section.
+if [ "$BLANK_COUNT" -ge 1 ]; then
+  CASES=$((CASES + 1)); PASS=$((PASS + 1))
+else
+  CASES=$((CASES + 1)); FAIL=$((FAIL + 1))
+  printf 'FAIL: empty_lines_preserved — expected ≥1 blank line in history section, got %d\n' "$BLANK_COUNT" >&2
+fi
 
 # --- Final report ---
 printf '\n=== regenerate-memory-index test summary ===\n'

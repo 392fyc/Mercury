@@ -38,10 +38,12 @@
 #                         MEMORY.md / SESSION_INDEX.md — those are read-only inputs in F.A)
 #
 # Exit codes:
-#   0  clean regenerate (output written; in diff mode: no drift detected)
-#   1  parse error in source file (per-session frontmatter malformed)
-#      OR diff mode detected drift between regenerated content and canonical
-#   2  invalid args / lanes-file missing / memory dir missing
+#   0  clean regenerate (output written; in diff mode: no drift vs prior INDEX.generated.md)
+#   1  parse error in source file (per-session frontmatter malformed / unsupported
+#      block scalar in frontmatter) OR diff mode detected drift vs prior
+#      <memory-dir>/INDEX.generated.md snapshot
+#   2  invalid args / memory dir missing / SESSION_INDEX.md or MEMORY.md missing /
+#      output write failure (disk full / permission denied / parent dir missing)
 
 set -u
 
@@ -63,7 +65,8 @@ while [ $# -gt 0 ]; do
     --format)     shift; [ $# -gt 0 ] || die "--format needs a value"
                   FORMAT="$1"; shift ;;
     -h|--help)
-      sed -n '2,42p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      # Print full Usage + Exit-codes block (must keep this end line in sync if header grows).
+      sed -n '2,46p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     -*) die "unknown flag: $1" ;;
     *)  die "unexpected positional argument: $1" ;;
@@ -99,8 +102,13 @@ MEMORY_FILE="$MEMORY_DIR/MEMORY.md"
 #
 # Emits TSV rows: session_id<TAB>date<TAB>theme<TAB>outcome<TAB>origin
 # from existing SESSION_INDEX.md table. Skips header + separator lines.
-# Pipe characters inside cells are not currently used in canonical content;
-# escaping is documented as a known F.B-time concern.
+# Pipe characters embedded in cell content (observed in current SESSION_INDEX.md
+# at S72/S73 rows) are detected via field-count > 7 → emits WARN to stderr but
+# still continues with positional split. The WARN preserves operator visibility
+# into pre-existing corruption that F.B cutover should repair (escape `|` when
+# writing per-session files). Hard-fail was considered but rejected for F.A:
+# blocking on existing data integrity issues would make F.A non-startable on
+# real Mercury memory dirs (S72/S73 already have embedded `|`).
 # ---------------------------------------------------------------------------
 parse_existing_session_index() {
   awk '
@@ -131,62 +139,22 @@ parse_existing_session_index() {
 }
 
 # ---------------------------------------------------------------------------
-# parse_memory_session_history <file>
+# emit_memory_session_history <file>
 #
-# Emits TSV rows: anchor<TAB>state_file<TAB>summary
-# from MEMORY.md "Project (Session History)" subsection.
-# Format expected: "- [<state-file>](<state-file>) — <summary>"
-# OR "- S62 ..." for sessions without state file (rare).
+# Emits the "Project (Session History)" subsection of MEMORY.md verbatim
+# (between "## Project (Session History)" and the next "## " heading).
+# Empty lines, link bullets with original separator (em dash OR ASCII hyphen)
+# and original spacing, plain bullets, indented blockquotes, and any other
+# content shape are preserved byte-for-byte. F.A is non-breaking — no
+# normalization applied. F.B cutover (Issue #330) will introduce per-session-
+# file driven synthesis at that boundary if needed.
 # ---------------------------------------------------------------------------
-parse_memory_session_history() {
+emit_memory_session_history() {
   awk '
     BEGIN { in_section = 0 }
     /^## Project \(Session History\)/ { in_section = 1; next }
-    /^## / && in_section { in_section = 0 }
-    in_section && /^- / {
-      # Try link pattern first: - [text](target) <separator> summary
-      # Separator is em dash (—, U+2014) or ASCII hyphen with surrounding spaces.
-      # Avoid character class with multibyte char (awk POSIX bracket interpretation
-      # gets confused) — match literal em dash and ASCII dash separately.
-      line = $0
-      anchor_text = ""; summary = ""
-      if (match(line, /^- \[[^]]+\]\([^)]+\)[[:space:]]+—[[:space:]]+/)) {
-        link_end = RSTART + RLENGTH
-        head = substr(line, 1, link_end - 1)
-        summary = substr(line, link_end)
-      } else if (match(line, /^- \[[^]]+\]\([^)]+\)[[:space:]]+-[[:space:]]+/)) {
-        link_end = RSTART + RLENGTH
-        head = substr(line, 1, link_end - 1)
-        summary = substr(line, link_end)
-      }
-      if (summary != "") {
-        if (match(head, /\[[^]]+\]\([^)]+\)/)) {
-          anchor_text = substr(head, RSTART, RLENGTH)
-        }
-        gsub(/^[[:space:]]+|[[:space:]]+$/, "", summary)
-        printf "LINK\t%s\t%s\n", anchor_text, summary
-        next
-      } else if (match(line, /^- S[0-9]/)) {
-        # Plain row without link — preserve verbatim
-        plain = substr(line, 3)  # drop leading "- "
-        gsub(/^[[:space:]]+|[[:space:]]+$/, "", plain)
-        printf "PLAIN\t\t%s\n", plain
-        next
-      } else {
-        # Other "- ..." bullet that did not match link or "- S<N>" plain pattern.
-        # Preserve verbatim — operators may have legitimate non-session bullets here.
-        verbatim = $0
-        printf "VERBATIM\t\t%s\n", verbatim
-      }
-    }
-    in_section && !/^## / && !/^- / && /[^[:space:]]/ {
-      # Non-bullet, non-heading, non-empty content within Project (Session History)
-      # section. Examples: stray paragraphs, callouts, blockquotes, INDENTED code
-      # blocks or continuation lines. Preserve verbatim — the regenerated output
-      # truly matches the doc-claimed "preserved verbatim" guarantee regardless of
-      # leading whitespace.
-      printf "VERBATIM\t\t%s\n", $0
-    }
+    /^## / && in_section { in_section = 0; next }
+    in_section { print }
   ' "$1"
 }
 
@@ -207,30 +175,37 @@ parse_per_session_file() {
     NR == 1 && /^---[[:space:]]*$/ { in_fm = 1; next }
     in_fm && /^---[[:space:]]*$/ { in_fm = 0; ok = 1; exit }
     in_fm {
+      # Reject YAML block scalars (| or >) for required fields — parser only supports
+      # single-line key: value scalars per Phase F.A spec. F.B cutover will write
+      # frontmatter via this contract; soak window catches violations early.
+      if (match($0, /^[[:space:]]*(session_id|date|description|outcome|origin_session_id):[[:space:]]*[|>][[:space:]]*$/)) {
+        print "regenerate-memory-index WARN: unsupported YAML block scalar (| or >) in " file " — frontmatter must use single-line scalars" > "/dev/stderr"
+        exit 1
+      }
       if (match($0, /^[[:space:]]*session_id:[[:space:]]*/)) {
         sid = substr($0, RSTART + RLENGTH)
-        gsub(/^[[:space:]]+|[[:space:]]+$/, "", sid); gsub(/^["'\'']|["'\'']$/, "", sid)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", sid); gsub(/^["\047]|["\047]$/, "", sid)
       } else if (match($0, /^[[:space:]]*date:[[:space:]]*/)) {
         dat = substr($0, RSTART + RLENGTH)
-        gsub(/^[[:space:]]+|[[:space:]]+$/, "", dat); gsub(/^["'\'']|["'\'']$/, "", dat)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", dat); gsub(/^["\047]|["\047]$/, "", dat)
       } else if (match($0, /^[[:space:]]*description:[[:space:]]*/)) {
         thm = substr($0, RSTART + RLENGTH)
-        gsub(/^[[:space:]]+|[[:space:]]+$/, "", thm); gsub(/^["'\'']|["'\'']$/, "", thm)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", thm); gsub(/^["\047]|["\047]$/, "", thm)
       } else if (match($0, /^[[:space:]]*outcome:[[:space:]]*/)) {
         out = substr($0, RSTART + RLENGTH)
-        gsub(/^[[:space:]]+|[[:space:]]+$/, "", out); gsub(/^["'\'']|["'\'']$/, "", out)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", out); gsub(/^["\047]|["\047]$/, "", out)
       } else if (match($0, /^[[:space:]]*origin_session_id:[[:space:]]*/)) {
         v = substr($0, RSTART + RLENGTH)
-        gsub(/^[[:space:]]+|[[:space:]]+$/, "", v); gsub(/^["'\'']|["'\'']$/, "", v)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", v); gsub(/^["\047]|["\047]$/, "", v)
         if (v != "") org = v
       }
     }
     END {
-      if (!ok)             { print "ERR: frontmatter not closed in " file > "/dev/stderr"; exit 1 }
-      if (sid == "")       { print "ERR: session_id missing in " file > "/dev/stderr"; exit 1 }
-      if (dat == "")       { print "ERR: date missing in " file > "/dev/stderr"; exit 1 }
-      if (thm == "")       { print "ERR: description missing in " file > "/dev/stderr"; exit 1 }
-      if (out == "")       { print "ERR: outcome missing in " file > "/dev/stderr"; exit 1 }
+      if (!ok)             { print "regenerate-memory-index WARN: frontmatter not closed in " file > "/dev/stderr"; exit 1 }
+      if (sid == "")       { print "regenerate-memory-index WARN: session_id missing in " file > "/dev/stderr"; exit 1 }
+      if (dat == "")       { print "regenerate-memory-index WARN: date missing in " file > "/dev/stderr"; exit 1 }
+      if (thm == "")       { print "regenerate-memory-index WARN: description missing in " file > "/dev/stderr"; exit 1 }
+      if (out == "")       { print "regenerate-memory-index WARN: outcome missing in " file > "/dev/stderr"; exit 1 }
       printf "%s\t%s\t%s\t%s\t%s\n", sid, dat, thm, out, org
     }
   ' "$file"
@@ -360,13 +335,11 @@ EOF
 
 EOF
 
-  # For F.A: emit the existing MEMORY.md section verbatim, including non-bullet content
-  # via VERBATIM passthrough (covers paragraphs / blockquotes / unusual bullet shapes).
-  parse_memory_session_history "$MEMORY_FILE" | awk -F'\t' '
-    $1 == "LINK"     { printf "- %s — %s\n", $2, $3 }
-    $1 == "PLAIN"    { printf "- %s\n", $3 }
-    $1 == "VERBATIM" { print $3 }
-  '
+  # For F.A: emit the existing MEMORY.md "Project (Session History)" section
+  # byte-for-byte — empty lines preserved, original bullet separator (em dash
+  # or ASCII hyphen) preserved, original spacing preserved. Non-breaking by
+  # construction.
+  emit_memory_session_history "$MEMORY_FILE"
 }
 
 if [ "$FORMAT" = "diff" ]; then

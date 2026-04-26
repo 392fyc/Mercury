@@ -172,16 +172,18 @@ Phase F.A is non-breaking by construction:
 scripts/test-regenerate-memory-index.sh
 ```
 
-40 test cases / 75 assertions covering arg validation, sort ordering (lane
+44 test cases / 82 assertions covering arg validation, sort ordering (lane
 suffix variants, range rows), source precedence (per-session file overrides
 existing row), malformed-frontmatter detection, missing-required-field
-detection, idempotency (frozen timestamp), custom output paths, env-var
-resolution, diff mode (no drift / drift / no existing snapshot / unfrozen
-timestamp ignored), pipe-character corruption WARN, duplicate-row dedup,
-non-session-filename skip, symlink skip (env-aware), I/O failure detection,
-frontmatter sanitization, indented-verbatim preservation, hostile content
-preservation, and empty SESSION_INDEX. Tests use synthetic memory dirs
-only — never touch real user-memory layer.
+detection, YAML block-scalar rejection, idempotency (frozen timestamp),
+custom output paths, env-var resolution, diff mode (no drift / drift / no
+existing snapshot / unfrozen timestamp ignored), pipe-character corruption
+WARN, duplicate-row dedup, non-session-filename skip, symlink skip
+(env-aware), I/O failure detection, frontmatter sanitization,
+indented-verbatim preservation, ASCII-vs-em-dash separator preservation,
+empty-line-in-section preservation, hostile content preservation, and
+empty SESSION_INDEX. Tests use synthetic memory dirs only — never touch
+real user-memory layer.
 
 ## Forward path
 
