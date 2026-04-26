@@ -16,7 +16,7 @@
 #
 # Usage:
 #   scripts/lane-sweep.sh [--lanes-file PATH] [--memory-dir PATH]
-#                         [--days N] [--repo OWNER/REPO]
+#                         [--days N] [--repo OWNER/REPO] [--repo-root PATH]
 #                         [--format text|json] [--no-issue-check]
 #
 # Defaults:
@@ -24,6 +24,8 @@
 #   --memory-dir   ${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}
 #   --days         14
 #   --repo         resolved at runtime via `gh repo view` (or GH_REPO env)
+#   --repo-root    `git rev-parse --show-toplevel` from cwd; pin explicitly
+#                  when running outside the Mercury checkout
 #   --format       text
 #
 # Exit codes:
@@ -40,6 +42,7 @@ FORMAT=text
 LANES_FILE=""
 MEMORY_DIR=""
 REPO=""
+REPO_ROOT=""
 NO_ISSUE_CHECK=0
 
 while [ $# -gt 0 ]; do
@@ -49,14 +52,26 @@ while [ $# -gt 0 ]; do
     --lanes-file)   shift; [ $# -gt 0 ] || die "--lanes-file needs a value"; LANES_FILE="$1"; shift ;;
     --memory-dir)   shift; [ $# -gt 0 ] || die "--memory-dir needs a value"; MEMORY_DIR="$1"; shift ;;
     --repo)         shift; [ $# -gt 0 ] || die "--repo needs a value"; REPO="$1"; shift ;;
+    --repo-root)    shift; [ $# -gt 0 ] || die "--repo-root needs a value"; REPO_ROOT="$1"; shift ;;
     --no-issue-check) NO_ISSUE_CHECK=1; shift ;;
     -h|--help)
-      sed -n '2,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '2,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     -*) die "unknown flag: $1" ;;
     *)  die "unexpected positional argument: $1" ;;
   esac
 done
+
+# Repo-root resolution for branch-activity probe. Without an explicit pin,
+# `git for-each-ref` would silently return empty in non-git contexts, masking
+# operator error (e.g. running the sweep from the wrong directory) as
+# branch_age=inf. Pinning a verified repo root makes the failure mode obvious.
+if [ -z "$REPO_ROOT" ]; then
+  REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) \
+    || die "cannot resolve repo root (cwd is not inside a git checkout — pass --repo-root explicitly)"
+fi
+[ -d "$REPO_ROOT/.git" ] || [ -f "$REPO_ROOT/.git" ] \
+  || die "--repo-root is not a git checkout: $REPO_ROOT"
 
 case "$DAYS" in
   ''|*[!0-9]*|0) die "--days must be a positive integer: '$DAYS'" ;;
@@ -117,6 +132,7 @@ parse_active_lanes() {
 
 # Newest committerdate (unix ts) across refs matching the lane's branch glob.
 # main lane also includes legacy `feature/TASK-*`. Empty output = no refs.
+# Pinned via `git -C "$REPO_ROOT"` so cwd doesn't silently hijack the result.
 branch_last_ts() {
   local lane="$1"
   local patterns=(
@@ -129,7 +145,7 @@ branch_last_ts() {
       "refs/remotes/*/feature/TASK-*"
     )
   fi
-  git for-each-ref --sort=-committerdate --format='%(committerdate:unix)' \
+  git -C "$REPO_ROOT" for-each-ref --sort=-committerdate --format='%(committerdate:unix)' \
     "${patterns[@]}" 2>/dev/null | head -n1
 }
 

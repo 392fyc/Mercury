@@ -2,26 +2,30 @@
 # scripts/check-main-idle.sh — detect main-lane idleness for Rule 4.1
 # emergency spec-change escalation (v0.1 Delta 4, Issue #312).
 #
-# Returns the maximum age across THREE main-lane activity signals and
-# compares it to the threshold (default 48h):
+# Evaluates THREE main-lane activity signals against the threshold
+# (default 48h) and returns "idle" only when ALL THREE are simultaneously
+# older than the threshold (logical AND, not maximum):
 #   1. Newest commit on `feature/lane-main/*` or legacy `feature/TASK-*` refs
 #   2. mtime of `<memory-dir>/session-handoff.md`
 #   3. Newest `updatedAt` of any Issue carrying the `lane:main` label
 #
-# main is "idle" only if ALL THREE are simultaneously older than the threshold.
+# AND-gate prevents a single missing-data signal from producing a false
+# "idle" verdict; all three must converge before the precondition is met.
 # This script is a HELPER — it answers "is the threshold met?", not "should we
 # escalate?". Escalation is always opt-in and arbitrated by the user per
 # Rule 4.1.
 #
 # Usage:
 #   scripts/check-main-idle.sh [--hours N] [--memory-dir PATH]
-#                              [--repo OWNER/REPO] [--no-issue-check]
-#                              [--format text|json]
+#                              [--repo OWNER/REPO] [--repo-root PATH]
+#                              [--no-issue-check] [--format text|json]
 #
 # Defaults:
 #   --hours        48
 #   --memory-dir   ${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}
 #   --repo         resolved at runtime via `gh repo view` (or GH_REPO env)
+#   --repo-root    `git rev-parse --show-toplevel` from cwd; pin explicitly
+#                  when running outside the Mercury checkout
 #   --format       text
 #
 # Exit codes:
@@ -38,6 +42,7 @@ HOURS=48
 FORMAT=text
 MEMORY_DIR=""
 REPO=""
+REPO_ROOT=""
 NO_ISSUE_CHECK=0
 
 while [ $# -gt 0 ]; do
@@ -45,15 +50,26 @@ while [ $# -gt 0 ]; do
     --hours)        shift; [ $# -gt 0 ] || die "--hours needs a value"; HOURS="$1"; shift ;;
     --memory-dir)   shift; [ $# -gt 0 ] || die "--memory-dir needs a value"; MEMORY_DIR="$1"; shift ;;
     --repo)         shift; [ $# -gt 0 ] || die "--repo needs a value"; REPO="$1"; shift ;;
+    --repo-root)    shift; [ $# -gt 0 ] || die "--repo-root needs a value"; REPO_ROOT="$1"; shift ;;
     --format)       shift; [ $# -gt 0 ] || die "--format needs a value"; FORMAT="$1"; shift ;;
     --no-issue-check) NO_ISSUE_CHECK=1; shift ;;
     -h|--help)
-      sed -n '2,32p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '2,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     -*) die "unknown flag: $1" ;;
     *)  die "unexpected positional argument: $1" ;;
   esac
 done
+
+# Repo-root for branch-activity probe. Same rationale as lane-sweep.sh —
+# without an explicit pin, `git for-each-ref` silently returns empty in
+# non-git contexts and masks operator error as branch_age=inf.
+if [ -z "$REPO_ROOT" ]; then
+  REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) \
+    || die "cannot resolve repo root (cwd is not inside a git checkout — pass --repo-root explicitly)"
+fi
+[ -d "$REPO_ROOT/.git" ] || [ -f "$REPO_ROOT/.git" ] \
+  || die "--repo-root is not a git checkout: $REPO_ROOT"
 
 case "$HOURS" in
   ''|*[!0-9]*|0) die "--hours must be a positive integer: '$HOURS'" ;;
@@ -82,7 +98,8 @@ NOW=$(date +%s)
 THRESHOLD_SECS=$((HOURS * 3600))
 
 # 1. Branch activity — main lane ref glob.
-branch_ts=$(git for-each-ref --sort=-committerdate --format='%(committerdate:unix)' \
+# Pinned via `git -C "$REPO_ROOT"` so cwd doesn't silently hijack the result.
+branch_ts=$(git -C "$REPO_ROOT" for-each-ref --sort=-committerdate --format='%(committerdate:unix)' \
   'refs/heads/feature/lane-main/*' \
   'refs/remotes/*/feature/lane-main/*' \
   'refs/heads/feature/TASK-*' \
