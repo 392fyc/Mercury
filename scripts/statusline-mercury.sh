@@ -49,6 +49,12 @@ pct_floor=$(echo "$five_hour_pct" | cut -d. -f1)
 if [ -n "$MARKER" ]; then
   if [ "$pct_floor" -ge "$PAUSE_THRESHOLD" ]; then
     mkdir -p "$STATE_DIR"
+    # m3: coerce non-numeric resets_at to 0 before writing marker (defense-in-depth).
+    if ! [[ "$resets_at" =~ ^[0-9]+$ ]]; then
+      resets_at=0
+    fi
+    # Note: marker write is non-atomic (no flock for Windows MINGW portability).
+    # Concurrent statusline refreshes converge within one refresh cycle.
     echo "$resets_at" > "$MARKER"
   # Resume logic: delete marker only after BOTH (a) stored window passed AND (b) current usage
   # also below threshold. Two-source confirmation reduces false-positive resume risk.

@@ -70,12 +70,13 @@ After restarting Claude Code, the status bar should display:
 Manual smoke test (no Claude Code session needed):
 
 ```bash
-echo '{"rate_limits":{"five_hour":{"used_percentage":96},"seven_day":{"used_percentage":20}},"model":{"display_name":"Opus 4.7"},"context_window":{"used_percentage":30}}' \
+# Use a far-future resets_at so the marker stores a realistic epoch (not 0).
+echo '{"rate_limits":{"five_hour":{"used_percentage":96,"resets_at":9999999999},"seven_day":{"used_percentage":20}},"model":{"display_name":"Opus 4.7"},"context_window":{"used_percentage":30}}' \
   | bash scripts/statusline-mercury.sh
 # → red-colored "5h: 96% | 7d: 20% | ctx: 30% | Opus 4.7"
 # → .mercury/state/auto-run-paused file created
 cat .mercury/state/auto-run-paused
-# → 0  (resets_at from test JSON)
+# → 9999999999  (resets_at echoed from input JSON)
 rm -f .mercury/state/auto-run-paused
 ```
 
@@ -144,7 +145,7 @@ rm -f .mercury/state/auto-run-paused
 | # | Criterion (Issue #322 + #320) | Verification command |
 |---|-------------------------------|----------------------|
 | 1 | statusline shows 5h%, 7d%, ctx%, model | `echo '{"rate_limits":{"five_hour":{"used_percentage":50},"seven_day":{"used_percentage":10}},"model":{"display_name":"Test"},"context_window":{"used_percentage":5}}' \| bash scripts/statusline-mercury.sh` → output contains `5h: 50%` |
-| 2 | marker created when `used_percentage >= 95`, deleted when window resets | `echo '{"rate_limits":{"five_hour":{"used_percentage":96},"seven_day":{}}}' \| bash scripts/statusline-mercury.sh && ls -la .mercury/state/auto-run-paused` |
+| 2 | marker created when `used_percentage >= 95`, deleted when window resets | `echo '{"rate_limits":{"five_hour":{"used_percentage":96,"resets_at":9999999999},"seven_day":{}}}' \| bash scripts/statusline-mercury.sh && ls -la .mercury/state/auto-run-paused` |
 | 3 | corrupted marker (non-numeric) self-heals without crash | `echo "bad" > .mercury/state/auto-run-paused && echo '{"rate_limits":{"five_hour":{"used_percentage":50}}}' \| bash scripts/statusline-mercury.sh 2>&1 \| grep corrupted` |
 | 4 | `lane-status.json` updates with `last_checked_at` ISO timestamp | `bash scripts/lane-status.sh && jq .last_checked_at .mercury/state/lane-status.json` |
 | 5 | durable cron registered (survives session restart) | After `CronCreate durable:true`, restart Claude Code session, then verify cron still listed |

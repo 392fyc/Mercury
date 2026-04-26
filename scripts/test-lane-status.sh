@@ -68,19 +68,20 @@ cat > "$STUB_BIN/git" << 'GITSTUB'
 #!/bin/bash
 # Stub git for lane-status.sh tests
 
-if [[ "$*" == *"ls-remote"*"feature/lane-*"* ]]; then
-  echo "abc123def456	refs/heads/feature/lane-main/TASK-001"
-  echo "789xyz000111	refs/heads/feature/lane-side-multi-lane/TASK-309"
+if [[ "$*" == *"ls-remote"* ]]; then
+  printf '%s\t%s\n' 'abc123def456' 'refs/heads/feature/lane-main/TASK-001'
+  printf '%s\t%s\n' '789xyz000111' 'refs/heads/feature/lane-side-multi-lane/TASK-309'
   exit 0
 fi
 
-if [[ "$*" == *"log"*"-1"*"--format=%cI"* ]]; then
-  echo "2026-04-26T10:00:00+00:00"
+if [[ "$*" == *"log"* ]]; then
+  echo "2026-04-26T10:00:00Z"
   exit 0
 fi
 
-# Pass through all other git commands to the real git
-exec "$(which git)" "$@"
+# Pass through all other git commands to the real git (hardcoded to avoid
+# infinite recursion when this stub directory is first on PATH).
+exec '/mingw64/bin/git' "$@"
 GITSTUB
 chmod +x "$STUB_BIN/git"
 
@@ -167,6 +168,129 @@ if echo "$PRINT_OUT" | grep -q "Lane Status"; then
 else
   fail "T3 --print produces summary header" "stdout: $PRINT_OUT"
 fi
+
+# ---------------------------------------------------------------------------
+# T_DATE — staleness / date-parsing test (validates M1 fix)
+# Stubs git log to return a controlled timestamp; asserts is_stale accordingly.
+# Uses a fresh STUB_DATE bin prepended to PATH for each subtest.
+# Real git binary resolved once at test-script start to avoid infinite recursion.
+# ---------------------------------------------------------------------------
+
+REAL_GIT="$(command -v git)"
+# In case our own STUB_BIN/git is on PATH, walk PATH to find the real one
+for _p in $(echo "$PATH" | tr ':' '\n'); do
+  _g="$_p/git"
+  if [ -x "$_g" ] && [ "$_p" != "$STUB_BIN" ]; then
+    REAL_GIT="$_g"
+    break
+  fi
+done
+
+# T_DATE.1: branch committed 30 seconds ago → is_stale: false
+# Issue updatedAt is set far in the future so it never triggers stale alone;
+# branch timestamp is the controlling signal.
+FRESH_TS="$(date -u -d '30 seconds ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || \
+            date -u -v-30S '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || \
+            date -u '+%Y-%m-%dT%H:%M:%SZ')"
+
+STUB_DATE1="/tmp/mercury-lane-status-stubs-date1-$$"
+mkdir -p "$STUB_DATE1"
+
+# Write gh stub: single lane:main, issue updated far in future (never stale)
+printf '%s\n' '#!/bin/bash' \
+  'if [[ "$*" == *"label list"* ]]; then' \
+  '  echo '"'"'[{"name":"lane:main"}]'"'"'; exit 0; fi' \
+  'if [[ "$*" == *"issue list"* ]]; then' \
+  '  echo '"'"'[{"number":1,"title":"Fresh issue","labels":[{"name":"lane:main"}],"updatedAt":"2099-01-01T00:00:00Z"}]'"'"'; exit 0; fi' \
+  'echo '"'"'[]'"'"'; exit 0' > "$STUB_DATE1/gh"
+chmod +x "$STUB_DATE1/gh"
+
+# Write git stub: returns FRESH_TS for log; real git for everything else
+printf '%s\n' '#!/bin/bash' \
+  'if [[ "$*" == *"ls-remote"* ]]; then' \
+  "  printf '%s\t%s\n' 'aaabbbccc111' 'refs/heads/feature/lane-main/TASK-DATE'; exit 0; fi" \
+  'if [[ "$*" == *"log"* ]]; then' \
+  "  echo '$FRESH_TS'; exit 0; fi" \
+  "exec '$REAL_GIT' \"\$@\"" > "$STUB_DATE1/git"
+chmod +x "$STUB_DATE1/git"
+
+export PATH="$STUB_DATE1:$(echo "$PATH" | sed "s|${STUB_BIN}:||g")"
+
+rm -f "$REPO_ROOT/.mercury/state/lane-status.json"
+set +e
+bash "$LANE_STATUS" 2>/dev/null
+EXIT_D1=$?
+set -e
+
+if [ "$EXIT_D1" -ne 0 ]; then
+  fail "T_DATE.1 script exits 0 (fresh branch)" "exit code: $EXIT_D1"
+elif [ ! -f "$REPO_ROOT/.mercury/state/lane-status.json" ]; then
+  fail "T_DATE.1 output file created" "missing lane-status.json"
+else
+  # Use index 0 — T_DATE stubs emit exactly one lane
+  D1_STALE=$(jq -r '.lanes[0].is_stale' "$REPO_ROOT/.mercury/state/lane-status.json" 2>/dev/null || echo "missing")
+  D1_TS=$(jq -r '.lanes[0].branches[0].last_commit_at // ""' "$REPO_ROOT/.mercury/state/lane-status.json" 2>/dev/null || echo "")
+  if [ "$D1_STALE" = "false" ]; then
+    pass "T_DATE.1 is_stale=false for branch committed 30s ago"
+  else
+    fail "T_DATE.1 is_stale=false for branch committed 30s ago" "got is_stale=$D1_STALE ts=$D1_TS"
+  fi
+  if [ -n "$D1_TS" ] && [ "$D1_TS" != "null" ]; then
+    pass "T_DATE.1 last_commit_at is non-empty: $D1_TS"
+  else
+    fail "T_DATE.1 last_commit_at is non-empty" "got: $D1_TS (full json: $(cat "$REPO_ROOT/.mercury/state/lane-status.json"))"
+  fi
+fi
+
+rm -rf "$STUB_DATE1"
+
+# T_DATE.2: branch committed 1 hour ago → is_stale: true
+# Both issue and branch timestamps are stale so both signals agree.
+STALE_TS="$(date -u -d '1 hour ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || \
+            date -u -v-1H '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || \
+            echo '2000-01-01T00:00:00Z')"
+
+STUB_DATE2="/tmp/mercury-lane-status-stubs-date2-$$"
+mkdir -p "$STUB_DATE2"
+
+printf '%s\n' '#!/bin/bash' \
+  'if [[ "$*" == *"label list"* ]]; then' \
+  '  echo '"'"'[{"name":"lane:main"}]'"'"'; exit 0; fi' \
+  'if [[ "$*" == *"issue list"* ]]; then' \
+  "  echo '[{\"number\":1,\"title\":\"Old\",\"labels\":[{\"name\":\"lane:main\"}],\"updatedAt\":\"$STALE_TS\"}]'; exit 0; fi" \
+  'echo '"'"'[]'"'"'; exit 0' > "$STUB_DATE2/gh"
+chmod +x "$STUB_DATE2/gh"
+
+printf '%s\n' '#!/bin/bash' \
+  'if [[ "$*" == *"ls-remote"* ]]; then' \
+  "  printf '%s\t%s\n' 'aaabbbccc222' 'refs/heads/feature/lane-main/TASK-DATE'; exit 0; fi" \
+  'if [[ "$*" == *"log"* ]]; then' \
+  "  echo '$STALE_TS'; exit 0; fi" \
+  "exec '$REAL_GIT' \"\$@\"" > "$STUB_DATE2/git"
+chmod +x "$STUB_DATE2/git"
+
+export PATH="$STUB_DATE2:$(echo "$PATH" | sed "s|${STUB_DATE1}:||g")"
+
+rm -f "$REPO_ROOT/.mercury/state/lane-status.json"
+set +e
+bash "$LANE_STATUS" 2>/dev/null
+EXIT_D2=$?
+set -e
+
+if [ "$EXIT_D2" -ne 0 ]; then
+  fail "T_DATE.2 script exits 0 (stale branch)" "exit code: $EXIT_D2"
+elif [ ! -f "$REPO_ROOT/.mercury/state/lane-status.json" ]; then
+  fail "T_DATE.2 output file created" "missing lane-status.json"
+else
+  D2_STALE=$(jq -r '.lanes[0].is_stale' "$REPO_ROOT/.mercury/state/lane-status.json" 2>/dev/null || echo "missing")
+  if [ "$D2_STALE" = "true" ]; then
+    pass "T_DATE.2 is_stale=true for branch committed 1h ago"
+  else
+    fail "T_DATE.2 is_stale=true for branch committed 1h ago" "got is_stale=$D2_STALE"
+  fi
+fi
+
+rm -rf "$STUB_DATE2"
 
 # ---------------------------------------------------------------------------
 # Results

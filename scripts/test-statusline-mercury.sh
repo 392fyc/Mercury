@@ -146,6 +146,18 @@ make_json 96.0 | bash "$STATUSLINE" 2>/dev/null
 assert_file_exists "T7 marker preserved when usage still high despite expired ts" "$MARKER"
 
 # ---------------------------------------------------------------------------
+# Test 8 — m3: non-numeric resets_at is coerced to 0 in marker
+# Feed 96% usage with a non-numeric resets_at ("soon"). Expect:
+#   - marker created (pause triggered)
+#   - marker content is "0" (coerced), not "soon"
+# ---------------------------------------------------------------------------
+reset_marker
+NON_NUMERIC_JSON='{"rate_limits":{"five_hour":{"used_percentage":96.5,"resets_at":"soon"},"seven_day":{"used_percentage":18.3}},"model":{"display_name":"Opus 4.7"},"context_window":{"used_percentage":12}}'
+echo "$NON_NUMERIC_JSON" | bash "$STATUSLINE" 2>/dev/null
+assert_file_exists "T8 marker created with non-numeric resets_at" "$MARKER"
+assert_file_content "T8 marker coerced to 0 (not 'soon')" "$MARKER" "0"
+
+# ---------------------------------------------------------------------------
 # Results
 # ---------------------------------------------------------------------------
 echo ""
