@@ -10,8 +10,12 @@
 
 set -euo pipefail
 
-# Config
+# Config — numeric-guard MERCURY_LANE_STALE_MIN so a malformed env var (e.g. "abc")
+# doesn't crash arithmetic eval downstream or inject garbage into jq --argjson.
 STALE_MIN=${MERCURY_LANE_STALE_MIN:-15}
+case "$STALE_MIN" in
+  ''|*[!0-9]*) STALE_MIN=15 ;;
+esac
 PRINT_SUMMARY=false
 for arg in "$@"; do
   [ "$arg" = "--print" ] && PRINT_SUMMARY=true
