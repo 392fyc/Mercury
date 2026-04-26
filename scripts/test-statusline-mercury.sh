@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # scripts/test-statusline-mercury.sh — smoke tests for statusline-mercury.sh (Issue #322)
 # Tests: display output, pause trigger, FLOOR-not-round, boundary 95.0,
 #        corrupted marker self-heal, two-source resume, partial resume guard.

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # scripts/test-lane-status.sh — smoke test for lane-status.sh (Issue #322)
 # Stubs `gh` and `git` network calls to avoid hitting real GitHub.
 # Asserts output JSON is valid and contains required top-level keys.

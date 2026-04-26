@@ -12,6 +12,10 @@
 
 PAUSE_THRESHOLD=${MERCURY_PAUSE_THRESHOLD:-95}  # per Issue #320 acceptance >=95%
 WARN_THRESHOLD=${MERCURY_WARN_THRESHOLD:-85}    # early-warning color only
+# Numeric-guard env overrides — a malformed value (e.g. "abc") would otherwise
+# crash the integer comparisons below with "[: integer expression expected".
+case "$PAUSE_THRESHOLD" in ''|*[!0-9]*) PAUSE_THRESHOLD=95 ;; esac
+case "$WARN_THRESHOLD" in ''|*[!0-9]*) WARN_THRESHOLD=85 ;; esac
 
 # Resolve repo root via $CLAUDE_PROJECT_DIR (Claude Code-injected env var, set in any session
 # attached to a project) FIRST; fall back to git rev-parse for non-Claude shells.
