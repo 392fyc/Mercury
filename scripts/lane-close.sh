@@ -115,8 +115,13 @@ case "$TMP_DIR_REAL" in
     # Resolved path must contain a non-empty leaf beyond .tmp/
     LEAF="${TMP_DIR_REAL#$EXPECTED_PREFIX}"
     [ -n "$LEAF" ] || die "refusing --tmp-dir without leaf segment: '$TMP_DIR' → '$TMP_DIR_REAL'"
+    # Reject any `..` segment in the leaf (handles `lane-foo/..`, `..`,
+    # `a/../b`, etc.). Belt-and-braces: realpath/readlink fallback may have
+    # left literal `..` segments unresolved. Match by exact equality OR
+    # bordered by `/` so that names containing `..` as a literal substring
+    # (e.g. `lane-..foo`) are NOT falsely flagged.
     case "$LEAF" in
-      */*/..) die "refusing --tmp-dir traversal: '$TMP_DIR' → '$TMP_DIR_REAL'" ;;
+      ..|*/..|../*|*/../*) die "refusing --tmp-dir with '..' segment: '$TMP_DIR' → '$TMP_DIR_REAL'" ;;
     esac
     ;;
   *)

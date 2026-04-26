@@ -215,6 +215,17 @@ assert_exit 2 "--tmp-dir outside repo refused" \
     --lanes-file "$MEM8/LANES.md" --memory-dir "$MEM8" \
     --repo-root "$TMP/case8-repo" --tmp-dir "$TMP/elsewhere/lane-x"
 
+# Traversal segments (Argus #327 iter 4 Copilot fix — `..` patterns)
+mkdir -p "$TMP/case8-repo/.tmp"
+assert_exit 2 "--tmp-dir with trailing /.. refused" \
+  "$SCRIPT" side-target --yes --force-cross-lane \
+    --lanes-file "$MEM8/LANES.md" --memory-dir "$MEM8" \
+    --repo-root "$TMP/case8-repo" --tmp-dir "$TMP/case8-repo/.tmp/lane-x/.."
+# Note: `..` and `../*` patterns under .tmp/ are typically resolved by realpath
+# to a path outside .tmp/ and caught by the "outside subtree" branch instead;
+# if realpath is unavailable, the literal `..`-segment guard catches them.
+# Both paths exit 2 — the literal-segment guard is the belt-and-braces fallback.
+
 # Valid path under .tmp/ accepted (regression — prior happy-path covers this
 # but explicit assertion documents the safe shape). Use a fresh fixture +
 # repo root because the previous safety sub-tests share state and any

@@ -92,6 +92,11 @@ if [ "$NO_ISSUE_CHECK" -eq 0 ]; then
     REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null) \
       || die "cannot determine target repo (pass --repo or set GH_REPO)"
   fi
+  # Validate repo shape (owner/repo). Mirrors lane-sweep.sh + lane-claim.sh.
+  case "$REPO" in
+    */*) ;;
+    *) die "invalid repo format '$REPO' (expected owner/repo)" ;;
+  esac
 fi
 
 NOW=$(date +%s)

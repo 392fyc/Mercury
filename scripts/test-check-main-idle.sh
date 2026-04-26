@@ -83,6 +83,15 @@ OUT_JSON=$("$SCRIPT" --hours 48 --memory-dir "$MEM_FRESH" --no-issue-check --for
 assert_contains "json has threshold_hours" '"threshold_hours":48' "$OUT_JSON"
 assert_contains "json has verdict"          '"verdict":"'         "$OUT_JSON"
 
+# ---- repo format validation (Argus #327 iter 4 Copilot fix) ----
+echo
+echo "[repo-format-validation]"
+# GH_REPO without slash → die exit 2 (mirrors lane-sweep.sh + lane-claim.sh)
+RC_BAD=0
+GH_REPO="not-owner-slash-repo" "$SCRIPT" --hours 48 --memory-dir "$MEM_FRESH" >/dev/null 2>&1 || RC_BAD=$?
+[ "$RC_BAD" = "2" ] && pass "invalid GH_REPO format → die exit=2" \
+  || fail "invalid GH_REPO exit=$RC_BAD (expected 2)"
+
 # ---- die-on-tool-failure (Argus #327 finding #5 fix) ----
 # When gh issue list fails (network/auth), check-main-idle.sh MUST exit 2
 # (not silently treat as "no Issue activity" → "idle"). A false "idle"
