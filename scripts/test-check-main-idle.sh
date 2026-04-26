@@ -83,6 +83,33 @@ OUT_JSON=$("$SCRIPT" --hours 48 --memory-dir "$MEM_FRESH" --no-issue-check --for
 assert_contains "json has threshold_hours" '"threshold_hours":48' "$OUT_JSON"
 assert_contains "json has verdict"          '"verdict":"'         "$OUT_JSON"
 
+# ---- die-on-tool-failure (Argus #327 finding #5 fix) ----
+# When gh issue list fails (network/auth), check-main-idle.sh MUST exit 2
+# (not silently treat as "no Issue activity" → "idle"). A false "idle"
+# verdict directly enables spurious Rule 4.1 emergency escalation PRs.
+echo
+echo "[die-on-tool-failure]"
+mkdir -p "$TMP/bin-fail"
+cat > "$TMP/bin-fail/gh" <<'EOF'
+#!/usr/bin/env bash
+echo "fake gh failure" >&2
+exit 1
+EOF
+chmod +x "$TMP/bin-fail/gh"
+
+OUT_FAIL=$(PATH="$TMP/bin-fail:$PATH" GH_REPO="test-owner/test-repo" \
+  "$SCRIPT" --hours 48 --memory-dir "$MEM_FRESH" --format text 2>&1) || RC_FAIL=$?
+RC_FAIL=${RC_FAIL:-0}
+[ "$RC_FAIL" = "2" ] && pass "gh failure → die exit=2 (no spurious idle verdict)" \
+  || fail "gh failure exit=$RC_FAIL out=$OUT_FAIL (expected 2)"
+
+# Verify the die message points to the right escape hatch.
+if printf '%s' "$OUT_FAIL" | grep -q -- "--no-issue-check"; then
+  pass "die message mentions --no-issue-check escape hatch"
+else
+  fail "die message missing escape hatch hint: $OUT_FAIL"
+fi
+
 echo
 printf '%d pass / %d fail\n' "$PASS" "$FAIL"
 [ "$FAIL" = "0" ]

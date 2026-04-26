@@ -50,7 +50,9 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --lanes-file)        shift; [ $# -gt 0 ] || die "--lanes-file needs a value"; LANES_FILE="$1"; shift ;;
     --memory-dir)        shift; [ $# -gt 0 ] || die "--memory-dir needs a value"; MEMORY_DIR="$1"; shift ;;
-    --tmp-dir)           shift; [ $# -gt 0 ] || die "--tmp-dir needs a value"; TMP_DIR="$1"; shift ;;
+    --tmp-dir)           shift; [ $# -gt 0 ] || die "--tmp-dir needs a value"
+                          [ -n "$1" ] || die "--tmp-dir requires a non-empty path (got empty string)"
+                          TMP_DIR="$1"; shift ;;
     --repo-root)         shift; [ $# -gt 0 ] || die "--repo-root needs a value"; REPO_ROOT="$1"; shift ;;
     --yes)               YES=1; shift ;;
     --force-cross-lane)  FORCE_CROSS_LANE=1; shift ;;
@@ -87,6 +89,39 @@ fi
 [ -d "$REPO_ROOT" ] || die "repo root not a directory: $REPO_ROOT"
 
 if [ -z "$TMP_DIR" ]; then TMP_DIR="$REPO_ROOT/.tmp/lane-$LANE"; fi
+
+# Tmp dir safety gate: refuse anything outside the repo's .tmp/ subtree, OR
+# anything that resolves to a root-like / repo-root / parent-of-repo path.
+# This blocks `--tmp-dir /` `--tmp-dir $HOME` `--tmp-dir $REPO_ROOT` etc.
+# from triggering rm -rf later. Rule: TMP_DIR must be REPO_ROOT/.tmp/<something>
+# and the <something> must be non-empty. Empty / root paths refused outright.
+case "$TMP_DIR" in
+  ''|/|/.|/..) die "refusing unsafe --tmp-dir: '$TMP_DIR' (empty or root path)" ;;
+esac
+# Realpath comparison defends against `--tmp-dir $REPO_ROOT/.tmp/lane-foo/..`
+# tricks. realpath is GNU; on systems without it, fall back to readlink -f then
+# raw path comparison (best-effort).
+TMP_DIR_REAL=$(realpath -m "$TMP_DIR" 2>/dev/null \
+            || readlink -f "$TMP_DIR" 2>/dev/null \
+            || printf '%s' "$TMP_DIR")
+REPO_ROOT_REAL=$(realpath -m "$REPO_ROOT" 2>/dev/null \
+              || readlink -f "$REPO_ROOT" 2>/dev/null \
+              || printf '%s' "$REPO_ROOT")
+EXPECTED_PREFIX="${REPO_ROOT_REAL%/}/.tmp/"
+case "$TMP_DIR_REAL" in
+  "$REPO_ROOT_REAL"|"${REPO_ROOT_REAL%/}")
+    die "refusing --tmp-dir that resolves to repo root: '$TMP_DIR' → '$TMP_DIR_REAL'" ;;
+  "$EXPECTED_PREFIX"*)
+    # Resolved path must contain a non-empty leaf beyond .tmp/
+    LEAF="${TMP_DIR_REAL#$EXPECTED_PREFIX}"
+    [ -n "$LEAF" ] || die "refusing --tmp-dir without leaf segment: '$TMP_DIR' → '$TMP_DIR_REAL'"
+    case "$LEAF" in
+      */*/..) die "refusing --tmp-dir traversal: '$TMP_DIR' → '$TMP_DIR_REAL'" ;;
+    esac
+    ;;
+  *)
+    die "refusing --tmp-dir outside ${EXPECTED_PREFIX}*: '$TMP_DIR' → '$TMP_DIR_REAL'" ;;
+esac
 
 # Validate lane is registered in LANES.md and detect current status.
 # The `### \`<lane>\`` heading anchors the section; the next line containing

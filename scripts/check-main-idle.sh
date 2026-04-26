@@ -98,14 +98,20 @@ else
 fi
 
 # 3. Issue activity — `lane:main` label.
+# Distinguish "no Issues with this label" (legitimate empty) from "probe
+# failed" (gh/jq/date error). Failure must NOT silently produce a "main is
+# idle" verdict — that would directly trigger spurious Rule 4.1 emergency
+# escalation PRs (importance 8/10 per Argus #327 review). Die on probe
+# failure; only an empty Issue list is treated as a missing-data signal.
 issue_ts=""
 if [ "$NO_ISSUE_CHECK" -eq 0 ]; then
-  out=$(gh issue list --repo "$REPO" --label "lane:main" --state all --limit 200 --json updatedAt 2>/dev/null) || out=""
-  if [ -n "$out" ]; then
-    iso=$(printf '%s' "$out" | jq -r 'if length == 0 then "" else (max_by(.updatedAt).updatedAt) end' 2>/dev/null)
-    if [ -n "$iso" ]; then
-      issue_ts=$(date -d "$iso" +%s 2>/dev/null || date -j -f '%Y-%m-%dT%H:%M:%SZ' "$iso" +%s 2>/dev/null || echo "")
-    fi
+  out=$(gh issue list --repo "$REPO" --label "lane:main" --state all --limit 200 --json updatedAt 2>/dev/null) \
+    || die "gh issue list failed (Issue activity probe — refusing to verdict 'idle' on tool failure; pass --no-issue-check to bypass)"
+  iso=$(printf '%s' "$out" | jq -r 'if length == 0 then "" else (max_by(.updatedAt).updatedAt) end' 2>/dev/null) \
+    || die "jq parse failed on gh output (Issue activity probe — refusing to verdict on parse error)"
+  if [ -n "$iso" ]; then
+    issue_ts=$(date -d "$iso" +%s 2>/dev/null || date -j -f '%Y-%m-%dT%H:%M:%SZ' "$iso" +%s) \
+      || die "date parse failed for ISO timestamp '$iso' (refusing to verdict on parse error)"
   fi
 fi
 

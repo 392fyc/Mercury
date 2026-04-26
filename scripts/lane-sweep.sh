@@ -172,6 +172,21 @@ issue_last_ts() {
   fi
 }
 
+# Defensive JSON-string escaper for fields read from LANES.md (lane names
+# have no validation upstream — a manually-tampered LANES.md could include
+# quote/backslash/newline that break JSON output). Output INCLUDES the
+# surrounding double-quotes. Handles the common metacharacters; control
+# bytes outside \n/\t fall through unescaped, which is acceptable for the
+# defensive use case (Argus #327 finding).
+json_string() {
+  local s=$1
+  s=${s//\\/\\\\}
+  s=${s//\"/\\\"}
+  s=${s//$'\n'/\\n}
+  s=${s//$'\t'/\\t}
+  printf '"%s"' "$s"
+}
+
 # Age in days from a unix ts (empty → "inf"). Stable formatter for both
 # text rows and JSON age fields.
 age_days() {
@@ -224,8 +239,12 @@ while IFS= read -r lane; do
   else
     [ "$first" -eq 1 ] || printf ','
     first=0
-    printf '{"lane":"%s","branch_age_days":"%s","handoff_age_days":"%s","issue_age_days":"%s","verdict":"%s"}' \
-      "$lane" "$bage" "$hage" "$iage" "$verdict"
+    # Escape lane name (only field that comes from LANES.md text, may contain
+    # arbitrary chars). Other fields are program-generated and constrained
+    # to digits + "inf" + "fresh"/"stale".
+    LANE_J=$(json_string "$lane")
+    printf '{"lane":%s,"branch_age_days":"%s","handoff_age_days":"%s","issue_age_days":"%s","verdict":"%s"}' \
+      "$LANE_J" "$bage" "$hage" "$iage" "$verdict"
   fi
 done <<EOF
 $LANES

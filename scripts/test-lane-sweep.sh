@@ -134,6 +134,49 @@ RC_EMPTY=$?
 [ "$RC_EMPTY" = "0" ] && pass "empty active section exits 0" || fail "empty active section exit=$RC_EMPTY"
 assert_contains "empty active section warns" "no active lanes" "$OUT_EMPTY"
 
+# ---- JSON escape (Argus #327 finding #6 fix) ----
+echo
+echo "[json-escape]"
+JSON_FIX_LANES="$TMP/json-fix-lanes.md"
+cat > "$JSON_FIX_LANES" <<'EOF'
+# Mercury Lanes Registry
+
+## Active Lanes
+
+### `weird"name`
+
+- **Status**: `active`
+
+### `back\slash`
+
+- **Status**: `active`
+
+## Closed Lanes
+EOF
+
+OUT_ESC=$("$SCRIPT" --lanes-file "$JSON_FIX_LANES" --memory-dir "$MEM" \
+          --no-issue-check --format json 2>&1)
+RC_ESC=$?
+[ "$RC_ESC" = "0" ] && pass "weird-lane-name run exits 0" \
+  || fail "weird-lane-name exit=$RC_ESC out=$OUT_ESC"
+
+# JSON validity check via python (best-available cross-platform parser).
+if command -v python >/dev/null 2>&1; then
+  if printf '%s' "$OUT_ESC" | python -c 'import sys,json; json.load(sys.stdin)' 2>/dev/null; then
+    pass "JSON output with quote/backslash in lane name is parseable"
+  else
+    fail "JSON output is INVALID: $OUT_ESC"
+  fi
+elif command -v python3 >/dev/null 2>&1; then
+  if printf '%s' "$OUT_ESC" | python3 -c 'import sys,json; json.load(sys.stdin)' 2>/dev/null; then
+    pass "JSON output with quote/backslash in lane name is parseable (python3)"
+  else
+    fail "JSON output is INVALID: $OUT_ESC"
+  fi
+else
+  echo "  SKIP: python not available — cannot validate JSON" >&2
+fi
+
 echo
 printf '%d pass / %d fail\n' "$PASS" "$FAIL"
 [ "$FAIL" = "0" ]

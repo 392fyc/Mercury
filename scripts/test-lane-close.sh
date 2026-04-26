@@ -180,6 +180,54 @@ RC7=$?
 [ "$RC7" = "1" ] && pass "non-interactive without --yes refuses" \
   || fail "non-interactive exit=$RC7 (expected 1)"
 
+# ---- tmp-dir safety gate (Argus #327 finding #2 fix) ----
+echo
+echo "[tmp-dir-safety]"
+MEM8="$TMP/case8"; mkdir -p "$MEM8"; write_fixture_lanes "$MEM8/LANES.md"
+mkdir -p "$TMP/case8-repo"
+
+# Empty / root paths
+assert_exit 2 "--tmp-dir empty refused" \
+  "$SCRIPT" side-target --yes --force-cross-lane \
+    --lanes-file "$MEM8/LANES.md" --memory-dir "$MEM8" \
+    --repo-root "$TMP/case8-repo" --tmp-dir ""
+assert_exit 2 "--tmp-dir / refused" \
+  "$SCRIPT" side-target --yes --force-cross-lane \
+    --lanes-file "$MEM8/LANES.md" --memory-dir "$MEM8" \
+    --repo-root "$TMP/case8-repo" --tmp-dir "/"
+
+# Repo root itself
+assert_exit 2 "--tmp-dir == repo-root refused" \
+  "$SCRIPT" side-target --yes --force-cross-lane \
+    --lanes-file "$MEM8/LANES.md" --memory-dir "$MEM8" \
+    --repo-root "$TMP/case8-repo" --tmp-dir "$TMP/case8-repo"
+
+# Outside .tmp/ subtree (e.g., HOME-like path under repo)
+mkdir -p "$TMP/case8-repo/some-other-dir"
+assert_exit 2 "--tmp-dir outside .tmp/ subtree refused" \
+  "$SCRIPT" side-target --yes --force-cross-lane \
+    --lanes-file "$MEM8/LANES.md" --memory-dir "$MEM8" \
+    --repo-root "$TMP/case8-repo" --tmp-dir "$TMP/case8-repo/some-other-dir"
+
+# Outside repo entirely
+assert_exit 2 "--tmp-dir outside repo refused" \
+  "$SCRIPT" side-target --yes --force-cross-lane \
+    --lanes-file "$MEM8/LANES.md" --memory-dir "$MEM8" \
+    --repo-root "$TMP/case8-repo" --tmp-dir "$TMP/elsewhere/lane-x"
+
+# Valid path under .tmp/ accepted (regression — prior happy-path covers this
+# but explicit assertion documents the safe shape). Use a fresh fixture +
+# repo root because the previous safety sub-tests share state and any
+# accidental Status flip would poison this assertion.
+MEM8B="$TMP/case8b"; mkdir -p "$MEM8B"; write_fixture_lanes "$MEM8B/LANES.md"
+mkdir -p "$TMP/case8b-repo/.tmp/lane-side-target"
+OUT_OK=$("$SCRIPT" side-target --yes --force-cross-lane \
+        --lanes-file "$MEM8B/LANES.md" --memory-dir "$MEM8B" \
+        --repo-root "$TMP/case8b-repo" --tmp-dir "$TMP/case8b-repo/.tmp/lane-side-target" 2>&1)
+RC_OK=$?
+[ "$RC_OK" = "0" ] && pass "valid --tmp-dir under .tmp/ accepted" \
+  || fail "valid --tmp-dir rejected: exit=$RC_OK out=$OUT_OK"
+
 echo
 printf '%d pass / %d fail\n' "$PASS" "$FAIL"
 [ "$FAIL" = "0" ]

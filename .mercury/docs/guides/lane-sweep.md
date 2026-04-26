@@ -114,8 +114,9 @@ unattended sweeping can install a scheduled job manually:
 ```
 
 ```powershell
-# Windows: register a Scheduled Task
-schtasks /Create /SC MONTHLY /MO 1 /D 1 /TN "MercuryLaneSweep" /TR "bash D:\Mercury\Mercury\scripts\lane-sweep.sh"
+# Windows: register a Scheduled Task. Substitute <REPO_ROOT> with your local
+# Mercury checkout (the script must be invoked via bash on Windows).
+schtasks /Create /SC MONTHLY /MO 1 /D 1 /TN "MercuryLaneSweep" /TR "bash <REPO_ROOT>\scripts\lane-sweep.sh"
 ```
 
 The cron is intentionally not pre-baked because lane operators self-host on
