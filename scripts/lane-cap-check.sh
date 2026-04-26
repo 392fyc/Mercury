@@ -9,10 +9,12 @@
 # either closing an existing lane OR opening an Issue with the
 # `protocol-violation` label requesting a cap raise.
 #
-# This script is ADVISORY — it reports the count + verdict, never blocks.
-# Hard enforcement would require a pre-commit hook that side lanes cannot
-# easily bypass; the cap is sociotechnical (operator + maintainer review)
-# rather than mechanical.
+# This script is ADVISORY — it reports the count + verdict and uses exit
+# code 1 to signal "cap exceeded" so callers can opt-in to gating (CI step
+# / pre-commit hook). The script itself never installs hooks or modifies
+# LANES.md. Hard mechanical enforcement is intentionally out of scope: the
+# cap is sociotechnical (operator + maintainer review), and side lanes
+# cannot easily install or modify shared hooks.
 #
 # Usage:
 #   scripts/lane-cap-check.sh [--lanes-file PATH] [--memory-dir PATH]
@@ -120,14 +122,22 @@ PARSE_OUTPUT=$(awk '
   }
   in_active && current_lane != "" && /^- \*\*Status\*\*:/ {
     had_status = 1
-    if ($0 ~ /^- \*\*Status\*\*: `?active`?/) { print "ACTIVE", current_lane }
+    # `active` MUST be the full Status TOKEN — i.e. followed by either
+    # end-of-line OR a non-identifier char (whitespace, punctuation).
+    # Without this guard, `active-foo` / `active123` / `active-ish` would
+    # false-match. The trailing-token requirement permits well-formed
+    # annotations like "active — Phase B complete; ..." which Mercury
+    # convention uses to attach short notes to the Status line.
+    if ($0 ~ /^- \*\*Status\*\*: `?active`?([^A-Za-z0-9_-]|$)/) { print "ACTIVE", current_lane }
     # closed / paused / other non-active values: tracked but not counted
   }
   END { flush() }
-' "$LANES_FILE")
+' "$LANES_FILE") || die "awk parse failed for LANES.md (refusing to verdict on parse error): $LANES_FILE"
 
-ACTIVE_LANES=$(printf '%s' "$PARSE_OUTPUT" | awk '/^ACTIVE / { sub(/^ACTIVE /, ""); print }')
-ORPHAN_LANES=$(printf '%s' "$PARSE_OUTPUT" | awk '/^ORPHAN / { sub(/^ORPHAN /, ""); print }')
+ACTIVE_LANES=$(printf '%s' "$PARSE_OUTPUT" | awk '/^ACTIVE / { sub(/^ACTIVE /, ""); print }') \
+  || die "awk filter (ACTIVE) failed"
+ORPHAN_LANES=$(printf '%s' "$PARSE_OUTPUT" | awk '/^ORPHAN / { sub(/^ORPHAN /, ""); print }') \
+  || die "awk filter (ORPHAN) failed"
 
 if [ -n "$ORPHAN_LANES" ]; then
   while IFS= read -r orphan; do

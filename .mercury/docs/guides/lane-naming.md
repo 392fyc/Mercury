@@ -166,10 +166,11 @@ protocol violations from one filter.
 scripts/test-lane-cap-check.sh
 ```
 
-24 cases covering arg validation, within-cap, boundary (count == max),
-exceeded, custom max, closed-lane exclusion, JSON output validity, and empty
-Active Lanes section. Tests do NOT touch real GitHub or LANES.md — synthetic
-fixtures only.
+32 cases covering arg validation, within-cap, boundary (count == max),
+exceeded, custom max, closed-lane exclusion, JSON output validity (including
+quote/backslash hostile lane names), parser robustness (orphan-no-status
+WARN, zombie-in-Closed-section exclusion), and empty Active Lanes section.
+Tests do NOT touch real GitHub or LANES.md — synthetic fixtures only.
 
 ## Source references
 

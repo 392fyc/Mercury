@@ -216,6 +216,67 @@ if command -v python >/dev/null 2>&1; then
   fi
 fi
 
+# ---- defensive: regex anchored exact match for `active` ----
+# Verifies Argus #328 review iter 1 — `Status: active-foo` / `active123`
+# / `active-ish` MUST NOT be counted as active (only literal `active`).
+echo
+echo "[regex-anchor]"
+cat > "$MEM/LANES.md" <<'EOF'
+# Mercury Lanes Registry
+
+## Active Lanes
+
+### `lane-genuine`
+
+- **Status**: `active`
+
+### `lane-prefix-attack`
+
+- **Status**: `active-foo`
+
+### `lane-suffix-attack`
+
+- **Status**: `activeless`
+
+### `lane-numeric-attack`
+
+- **Status**: active123
+
+## Closed Lanes
+EOF
+OUT_R=$("$SCRIPT" --memory-dir "$MEM" --max 5 2>&1)
+RC_R=$?
+[ "$RC_R" = "0" ] && pass "regex-anchor exit 0" || fail "regex-anchor exit=$RC_R"
+assert_contains "only genuine lane counted (1 active)" "1 active" "$OUT_R"
+if printf '%s' "$OUT_R" | grep -qE "lane-prefix-attack|lane-suffix-attack|lane-numeric-attack"; then
+  fail "non-active prefix/suffix/numeric lane was incorrectly counted"
+else
+  pass "non-active prefix/suffix/numeric lanes correctly excluded"
+fi
+
+# Mercury convention: trailing annotation after Status value (separated by
+# whitespace + dash/punctuation) IS allowed and counts as active. Without
+# this, real LANES.md entries like `Status: \`active\` — Phase B complete`
+# would false-negative (regression caught during S5 smoke test).
+cat > "$MEM/LANES.md" <<'EOF'
+# Mercury Lanes Registry
+
+## Active Lanes
+
+### `lane-with-annotation`
+
+- **Status**: `active` — Phase B complete; Phase C in progress
+
+### `lane-clean`
+
+- **Status**: `active`
+
+## Closed Lanes
+EOF
+OUT_W=$("$SCRIPT" --memory-dir "$MEM" --max 5 2>&1)
+assert_contains "annotated active still counted (Mercury convention)" "2 active" "$OUT_W"
+assert_contains "annotated lane name in active list" "lane-with-annotation" "$OUT_W"
+
 # ---- empty Active Lanes section → 0 count → within cap ----
 echo
 echo "[empty]"
