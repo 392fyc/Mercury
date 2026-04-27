@@ -7,7 +7,7 @@
 
 ## Problem
 
-`adapters/mercury-loop-detector/hook.cjs:101` only resets `np_count` on `Write/Edit/NotebookEdit/MultiEdit/Read/Glob/Grep`. `Bash`, `Agent`, `Task*`, `Skill`, `ToolSearch` accumulate `np_count` even when they represent legitimate work. Verification phases (test runs, git status, gh polling, smoke tests) trip the default `no_progress_threshold=5` after a handful of legitimate Bash calls.
+`adapters/mercury-loop-detector/hook.cjs:108` (in `update()` defined at line 96) only resets `np_count` on `Write/Edit/NotebookEdit/MultiEdit/Read/Glob/Grep`. `Bash`, `Agent`, `Task*`, `Skill`, `ToolSearch` accumulate `np_count` even when they represent legitimate work. Verification phases (test runs, git status, gh polling, smoke tests) trip the default `no_progress_threshold=5` after a handful of legitimate Bash calls.
 
 **S79 main lane empirical hit**: ≥5× false positives during PR #335 (Phase C) Argus review polling, CronCreate/Delete operations, parallel research Read fan-out.
 **S4-side-multi-lane historical hit**: 3× consecutive false positives during a single verification phase.
@@ -31,19 +31,20 @@
 
 ## Implementation plan
 
-### `hook.cjs`
+### `hook.cjs` (post-fix line numbers)
 
-1. Add `PROGRESS_TOOLS` set after line 74:
+1. `PROGRESS_TOOLS` set declared at lines 80-81 (after the `READ_TOOLS` line 74 + 5-line comment block at 75-79):
    ```js
-   const PROGRESS_TOOLS = new Set(['Bash', 'Agent', 'Task', 'Skill', 'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet', 'TaskOutput', 'TaskStop', 'ToolSearch']);
+   const PROGRESS_TOOLS = new Set(['Bash', 'Agent', 'Skill', 'ToolSearch',
+     'Task', 'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet', 'TaskOutput', 'TaskStop']);
    ```
-2. Pass `is_progress` flag through `update()`:
+2. `is_progress` flag computed in `main()` and passed to `update()` (line 96 signature):
    ```js
    const is_progress = PROGRESS_TOOLS.has(tool_name);
    ```
-3. Update line 101:
+3. `np_count` reset condition at line 108:
    ```js
-   if (is_write || is_read || errored || is_progress) { state.np_count = 0; } else { state.np_count++; }
+   if (is_write || is_read || is_progress || errored) { state.np_count = 0; } else { state.np_count++; }
    ```
 
 **Rationale for PROGRESS_TOOLS membership**:
@@ -83,11 +84,11 @@ To support unit tests of the `update()` helper, either:
 
 No schema change — `no_progress_threshold` keeps default `5`. Behaviour change documented in the loop-detector adapter README/install doc (if any) and in the Issue body / PR description.
 
-### LOC budget
+### LOC budget (post-fix actuals)
 
-- `hook.cjs`: +3 lines (set + flag + condition), -1 line (replace condition). Net +2.
-- `hook.test.cjs`: +~80 lines for 10 new test cases.
-- Adapter cap from PR #335 follow-up (#336): hook.cjs currently ~175 LOC. Net +2 keeps it well under the 200-cap target the side lane is enforcing.
+- `hook.cjs`: 175 → 186 LOC. Net +11 (PROGRESS_TOOLS set + 5-line comment block + threaded `is_progress` flag + dual-mode export wrapper).
+- `hook.test.cjs`: +~190 lines for 13 unit tests + 2 ETE tests.
+- Adapter cap from PR #335 follow-up (#336): 186 LOC well under the 200-cap target the side lane is enforcing.
 
 ## Acceptance criteria
 
@@ -107,7 +108,7 @@ No schema change — `no_progress_threshold` keeps default `5`. Behaviour change
 ## References
 
 - Issue #325 body — full design space + recommended patch sketch
-- `adapters/mercury-loop-detector/hook.cjs:73-101` — current `WRITE_TOOLS`/`READ_TOOLS`/`update()` implementation
+- `adapters/mercury-loop-detector/hook.cjs:73-108` — `WRITE_TOOLS`/`READ_TOOLS`/`PROGRESS_TOOLS` declarations (lines 73-81) + `update()` function (lines 96-109) with the line-108 reset condition
 - `adapters/mercury-loop-detector/hook.test.cjs:55-93` — existing detector regression coverage
 - `memory/feedback_lane_protocol.md` — Rule 8 cross-lane coordination (this Issue is `lane:main` per coordination)
 - S79 handoff doc — Loop-detector false-positive pattern documented in compact-loss section

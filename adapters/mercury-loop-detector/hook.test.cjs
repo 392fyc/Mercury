@@ -649,7 +649,7 @@ describe('hook.cjs ETE: PROGRESS_TOOLS prevents false positive', () => {
   });
 });
 
-// ── 9. hook.cjs end-to-end integration ──────────────────────────────────────
+// ── 14. hook.cjs end-to-end integration ─────────────────────────────────────
 
 describe('hook.cjs end-to-end integration', () => {
   const { execFileSync } = require('child_process');
