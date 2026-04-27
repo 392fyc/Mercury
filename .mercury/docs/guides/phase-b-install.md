@@ -42,7 +42,10 @@ scripts/lane-spawn.sh side-feature-x 350 --dry-run
 
 After spawn:
 
-- `lane:<name>` label applied + assignee on Issue
+- `lane:<name>` label applied to the Issue (assignee NOT auto-set —
+  `lane-spawn.sh` passes `--no-assignee` to `lane-claim.sh` per Issue
+  #317 Copilot iter 2 contention-avoidance; assign manually if you want
+  GitHub UI ownership)
 - Branch `lane/<short>/<issue>-<slug>` created (off `origin/develop`)
 - Handoff template at `<memory-dir>/session-handoff-<lane>.md`
 - New section appended to `LANES.md` (own section per Rule 6)

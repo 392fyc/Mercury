@@ -39,8 +39,11 @@
 #
 # Exit codes:
 #   0  spawn succeeded (or --dry-run path completed)
-#   1  validation failed (lane exists / cap reached / Issue not found / handoff exists)
-#   2  invalid args / missing tools / cannot resolve repo or memory dir / step failure
+#   1  state failure (lane exists / cap reached / Issue not found / handoff
+#      exists / lane-claim conflict / branch exists / git step failure /
+#      awk LANES.md insert failure / user aborted at confirm prompt)
+#   2  argument or environment error (invalid flag / missing gh / cannot
+#      resolve repo or memory dir / unsafe --lanes-file path)
 
 set -u
 
@@ -279,7 +282,10 @@ if [ "$DRY_RUN" -eq 1 ]; then
   exit 0
 fi
 
-# Confirm before mutations unless --yes or non-interactive with --no-claim+--no-branch.
+# Confirm before mutations unless --yes is set. Non-interactive contexts
+# (no tty on stdin) MUST pass --yes regardless of --no-claim/--no-branch —
+# the script never auto-confirms based on flag combination, only on tty
+# detection + explicit --yes.
 if [ "$YES" -eq 0 ]; then
   if [ -t 0 ]; then
     printf 'Spawn lane "%s" for issue #%s (branch=%s)? [y/N] ' "$LANE" "$ISSUE" "$BRANCH"
