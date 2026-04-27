@@ -104,8 +104,11 @@ scripts/lane-spawn.sh newlane 300
 # Pin short name and slug explicitly (bypass Issue title fetch)
 scripts/lane-spawn.sh newlane 300 --short newl --slug "phase-b-test"
 
-# Dry-run preview (no gh / git / FS mutation)
+# Dry-run preview (no FS / git / Issue mutation; gh repo+issue read-only metadata still queried)
 scripts/lane-spawn.sh newlane 300 --dry-run
+
+# Fully-offline dry-run (no gh at all — pre-pin --slug and --repo)
+scripts/lane-spawn.sh newlane 300 --dry-run --no-claim --slug "phase-b-test" --repo OWNER/REPO
 
 # Offline spawn — branch + handoff + LANES.md only, no Issue claim
 scripts/lane-spawn.sh newlane 300 --no-claim --short newl --slug "x"

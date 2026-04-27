@@ -143,18 +143,26 @@ when ready to retire.
 
 ## Rollback
 
-The Phase B scripts are independent of Phase A. To roll back Phase B:
+The Phase B scripts are independent of Phase A. To roll back Phase B,
+prefer reverting the merge commit so history is portable rather than
+relying on `HEAD~1` (which depends on local commit ordering and would
+not point at "pre-Phase-B" once subsequent merges land):
 
 ```bash
-# Remove Phase B scripts
-rm -f scripts/lane-spawn.sh scripts/test-lane-spawn.sh
+# Identify the Phase B merge commit on the develop branch
+PHASE_B_MERGE=$(git log develop --merges --grep='Phase B' --format='%H' | head -n 1)
 
-# Revert lane-close.sh --close-issue enhancement
-git checkout HEAD~1 -- scripts/lane-close.sh scripts/test-lane-close.sh
+# Create a revert commit (preferred — preserves history, works on any branch state)
+git revert -m 1 "$PHASE_B_MERGE"
 
-# Drop B3 cron (inside Claude Code)
+# Drop the B3 sweep cron (inside Claude Code)
 # CronDelete <id>
 ```
+
+If `git revert` is not viable (e.g. the merge has already been built upon),
+fall back to manually deleting the Phase B files and reverting the
+`lane-close.sh` `--close-issue` block — `git log -p -- scripts/lane-close.sh`
+shows which lines belong to Phase B vs the prior PR #327 baseline.
 
 Operators who installed Phase A can keep it — Phase A and Phase B touch
 different surfaces (statusline + lane-status.json vs lane lifecycle).

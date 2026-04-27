@@ -109,6 +109,18 @@ fi
 if [ -z "$LANES_FILE" ]; then LANES_FILE="$MEMORY_DIR/LANES.md"; fi
 [ -f "$LANES_FILE" ] || die "LANES.md not found: $LANES_FILE"
 
+# Path-traversal defense (Argus #334 iter 2 importance:2/10): if --lanes-file
+# was passed explicitly with a path that resolves outside MEMORY_DIR, refuse.
+# The default ($MEMORY_DIR/LANES.md) trivially passes. Operators with custom
+# layouts can pass --memory-dir to widen the boundary deliberately.
+LANES_REAL=$(realpath -m "$LANES_FILE" 2>/dev/null || readlink -f "$LANES_FILE" 2>/dev/null || printf '%s' "$LANES_FILE")
+MEMORY_REAL=$(realpath -m "$MEMORY_DIR" 2>/dev/null || readlink -f "$MEMORY_DIR" 2>/dev/null || printf '%s' "$MEMORY_DIR")
+case "$LANES_REAL" in
+  "${MEMORY_REAL%/}"/*) ;;
+  "$MEMORY_REAL") ;;
+  *) die "--lanes-file resolves outside --memory-dir: '$LANES_REAL' (memory-dir='$MEMORY_REAL')" ;;
+esac
+
 if [ -z "$REPO_ROOT" ]; then
   REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || die "cannot resolve repo root (pass --repo-root)"
 fi
@@ -146,15 +158,35 @@ parse_active_lanes() {
   ' "$1"
 }
 ACTIVE_LANES=$(parse_active_lanes "$LANES_FILE")
-ACTIVE_COUNT=$(printf '%s\n' "$ACTIVE_LANES" | grep -c -v '^$' || true)
+
+# HARD-CAP enforcement counts lanes whose Status resolves to `active`, mirroring
+# scripts/lane-cap-check.sh (Rule 7 reference impl). Counting `### ` headings
+# alone would over-count paused/deprecated rows that linger in the Active Lanes
+# section. awk walks each lane block and emits the lane name only when the
+# block's first **Status** line is exactly `active`.
+ACTIVE_COUNT=$(awk '
+  /^## Active Lanes/ { in_active = 1; in_lane = 0; next }
+  /^## / && in_active { in_active = 0; in_lane = 0 }
+  in_active && /^### `[^`]+`/ { in_lane = 1; status_seen = 0; next }
+  in_lane && !status_seen && /^- \*\*Status\*\*: `?active`?/ {
+    status_seen = 1
+    count++
+    in_lane = 0
+  }
+  in_lane && /^- \*\*Status\*\*:/ { status_seen = 1; in_lane = 0 }
+  END { print count + 0 }
+' "$LANES_FILE")
 
 if printf '%s\n' "$ACTIVE_LANES" | grep -qxF "$LANE"; then
   fail "lane '$LANE' already exists in $LANES_FILE Active Lanes section"
 fi
 
 # Active short-name uniqueness — Rule 2.1 mandates cross-lane unique short.
-# Best-effort: parse Short name field from each active section. Skip if
-# any section has no Short line (legacy lanes pre-Rule 2.1).
+# Parse Short-name field from each active lane section; sections without a
+# `**Short name**:` line (legacy lanes pre-Rule 2.1) simply emit nothing
+# for that section, so they cannot collide with the requested SHORT — they
+# are tolerated rather than skipped explicitly. New spawns always get a
+# Short field written to LANES.md (see step 4 awk).
 EXISTING_SHORTS=$(awk '
   /^## Active Lanes/ { in_active = 1; next }
   /^## / && in_active { in_active = 0 }
@@ -177,8 +209,10 @@ if [ "$NO_CLAIM" -eq 0 ]; then NEED_GH=1; fi
 if [ -z "$SLUG" ]; then NEED_GH=1; fi
 
 if [ "$NEED_GH" -eq 1 ]; then
+  # gh CLI required directly. Note: this script does NOT call jq itself —
+  # `gh --jq` uses gh's built-in jq engine, not the external binary. The
+  # downstream lane-claim.sh wrapper performs its own jq check at exec time.
   command -v gh >/dev/null 2>&1 || die "gh CLI required (or pass --no-claim and --slug to bypass)"
-  command -v jq >/dev/null 2>&1 || die "jq required (or pass --no-claim and --slug to bypass)"
   if [ -z "$REPO" ]; then REPO="${GH_REPO:-}"; fi
   if [ -z "$REPO" ]; then
     REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null) \
@@ -282,8 +316,11 @@ if [ "$NO_BRANCH" -eq 0 ]; then
 fi
 
 # Step 3: write handoff template.
+# Trap heredoc/redirect failure (disk full, permissions, ENOSPC) before any
+# LANES.md mutation in step 4 — leaving step 4 to run on a missing handoff
+# would create a registry row pointing at a file that never existed.
 TODAY=$(date -u +'%Y-%m-%d')
-cat > "$HANDOFF_FILE" <<EOF
+if ! cat > "$HANDOFF_FILE" <<EOF
 ---
 name: session_handoff_${LANE}
 description: Initial handoff for lane '${LANE}' (Issue #${ISSUE}). Written by scripts/lane-spawn.sh.
@@ -329,6 +366,9 @@ This is Mercury **lane '${LANE}'** session 1 (lane info in \`LANES.md\` + \`feed
 
 (written by lane-spawn.sh on ${TODAY} — replace with session-specific content as work begins)
 EOF
+then
+  fail "failed to write handoff template at $HANDOFF_FILE (disk / permissions / quota — LANES.md NOT mutated)"
+fi
 printf 'lane-spawn: wrote handoff %s\n' "$HANDOFF_FILE"
 
 # Step 4: append lane section to LANES.md (own section per Rule 6).
@@ -339,7 +379,10 @@ printf 'lane-spawn: wrote handoff %s\n' "$HANDOFF_FILE"
 # or (b) end-of-file was reached without inserting (header missing trailing
 # `## ` AND we somehow fell through). Both cases preserve LANES.md unchanged
 # because mv only runs on awk success.
-TMP_LANES=$(mktemp)
+# mktemp template: BSD/macOS mktemp requires an explicit XXXXXX template; GNU
+# mktemp without a template silently uses "tmp.XXXXXXXXXX" but the explicit
+# form works on both. Honor $TMPDIR for sandboxed CI environments.
+TMP_LANES=$(mktemp "${TMPDIR:-/tmp}/lane-spawn.XXXXXX")
 awk -v lane="$LANE" -v branch="$BRANCH" -v issue="$ISSUE" \
     -v handoff="session-handoff-${LANE}.md" -v short="$SHORT" -v today="$TODAY" '
   BEGIN { saw_active = 0; in_active = 0; printed = 0 }

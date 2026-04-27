@@ -13,7 +13,9 @@ REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
 SCRIPT="$REPO_ROOT/scripts/lane-spawn.sh"
 [ -x "$SCRIPT" ] || { echo "test-lane-spawn: $SCRIPT missing or not executable" >&2; exit 2; }
 
-TMP=$(mktemp -d)
+# BSD/macOS mktemp requires explicit template form for portability; GNU
+# tolerates either. Honor $TMPDIR for CI sandboxes.
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/test-lane-spawn.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT
 
 PASS=0; FAIL=0
@@ -252,6 +254,27 @@ case "$(cat "$MEM8/LANES.md")" in
   *"**Short name**: \`autolane\`"*) pass "auto-derived short = autolane" ;;
   *) fail "auto-derived short missing/wrong in LANES.md" ;;
 esac
+
+# ---- --lanes-file path traversal defense (Argus iter 2 importance:2/10) ----
+# Spec: --lanes-file resolving outside MEMORY_DIR must be refused before any
+# external mutation. Default --lanes-file = $MEMORY_DIR/LANES.md trivially OK.
+echo
+echo "[lanes-file-path-traversal]"
+MEM_PT="$TMP/case-pt"; mkdir -p "$MEM_PT"; write_fixture_lanes "$MEM_PT/LANES.md"
+mkdir -p "$TMP/case-pt-repo"
+# Create a side LANES.md OUTSIDE memory-dir
+SIDE_LANES="$TMP/elsewhere-lanes.md"
+write_fixture_lanes "$SIDE_LANES"
+
+OUT_PT=$("$SCRIPT" newlane 400 --short newl --slug "x" \
+        --no-claim --no-branch --yes \
+        --memory-dir "$MEM_PT" --lanes-file "$SIDE_LANES" \
+        --repo-root "$TMP/case-pt-repo" 2>&1)
+RC_PT=$?
+[ "$RC_PT" = "2" ] && pass "--lanes-file outside --memory-dir refused (exit=2)" \
+  || fail "--lanes-file path traversal not refused: exit=$RC_PT out=$OUT_PT"
+
+# Default --lanes-file (under --memory-dir) accepted via prior happy-path tests.
 
 # ---- malformed LANES.md (Codex audit Medium) ----
 # Spec: spawn must REFUSE before any external mutation when the registry is
