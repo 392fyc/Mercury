@@ -106,12 +106,20 @@ async function tgSend(chatId, text) {
 }
 
 // Phase C (#324): find session whose label matches the given prefix.
-// Mercury labels include `#324 director-surface` (TASK branches) and
-// `lane-main/foo` (lane branches). Match plain prefix OR the label with a
-// leading `#` stripped, so `@324` finds `#324 director`. Used by
-// /cancel /continue /dir /model /permission-mode.
-const findByLabel = prefix => [...sessions.values()].find(s =>
-  s.label.startsWith(prefix) || s.label.replace(/^#/, '').startsWith(prefix));
+// Resolution order is deterministic regardless of session-register order:
+//   1. exact label equality wins outright
+//   2. otherwise pick the SHORTEST label that prefix-matches (most specific)
+//   3. `#` is stripped from stored labels before prefix-comparison so TASK-style
+//      labels (`#324 director`) match `@324` AND `@#324`
+// Returns undefined if no candidate matches.
+const findByLabel = prefix => {
+  const sess = [...sessions.values()];
+  const exact = sess.find(s => s.label === prefix);
+  if (exact) return exact;
+  const matches = sess.filter(s =>
+    s.label.startsWith(prefix) || s.label.replace(/^#/, '').startsWith(prefix));
+  return matches.sort((a, b) => a.label.length - b.label.length)[0];
+};
 
 // Phase C: parse `@<lane> <payload>` from cmd args. Returns {lane, payload} or null.
 // Lane token allows `#`, word chars and `-` so users can address `@#324` directly
@@ -122,11 +130,29 @@ const parseLanePayload = args => {
   return m ? { lane: m[1].replace(/^#/, ''), payload: m[2].trim() } : null;
 };
 
+// Phase C: payload validators per cmd. Reject anything we can't safely deliver
+// before crossing the trust boundary into the lane session. Allowlist already
+// gates upstream (routeMessage::isAllowed), but defense-in-depth keeps a typo
+// from a trusted user out of `cwd` / `model` / `permission-mode` commands.
+// `dir`: filesystem-safe chars only, no `..` (path traversal).
+// `model`: alphanumeric + `.` `-` `_`, max 64 (covers `claude-opus-4-7`, `sonnet`, etc.).
+// `permission-mode`: enum drawn from Claude Code's documented modes.
+const PERMISSION_MODES = new Set(['strict', 'standard', 'trust', 'plan', 'edit', 'acceptEdits', 'bypassPermissions', 'default']);
+const COMMAND_VALIDATORS = {
+  dir:               v => /^[A-Za-z0-9_./:\\-]+$/.test(v) && !v.split(/[/\\]/).includes('..'),
+  model:             v => /^[A-Za-z0-9._-]{1,64}$/.test(v),
+  'permission-mode': v => PERMISSION_MODES.has(v),
+};
+
 // Phase C: relay a command to a lane's inbox; replies to chat with status.
 // `usage` is the help text shown when args parse fails.
 async function relayLaneCmd(chatId, cmd, args, payloadKey, usage) {
   const lp = parseLanePayload(args);
   if (!lp || !lp.payload) return tgSend(chatId, `Usage: ${usage}`);
+  const validator = COMMAND_VALIDATORS[cmd];
+  if (validator && !validator(lp.payload)) {
+    return tgSend(chatId, `Invalid payload for /${htmlEsc(cmd)}: ${htmlEsc(lp.payload)}`);
+  }
   const t = findByLabel(lp.lane);
   if (!t) return tgSend(chatId, `No session matching @${htmlEsc(lp.lane)}`);
   const event = { type: 'command', cmd, from_chat: chatId };

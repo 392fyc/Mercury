@@ -81,10 +81,17 @@ post_notify() {
     echo "[lane-auto-report] ERROR: cannot read token at $TOKEN_FILE" >&2
     return 1
   fi
-  local token
+  # Pass the Bearer token via -H @file rather than inline so other users on the
+  # box cannot read it via /proc/<pid>/cmdline or `ps -ef`. mktemp + 600 perms
+  # via umask scope; cleanup is unconditional via local trap so a curl crash
+  # cannot leak the file across cron ticks.
+  local token auth_header_file
   token="$(tr -d '\r\n' < "$TOKEN_FILE")"
+  auth_header_file="$(umask 077 && mktemp "$STATE_DIR/.auth-header.XXXXXX")"
+  printf 'Authorization: Bearer %s\n' "$token" > "$auth_header_file"
+  trap 'rm -f "$auth_header_file"' RETURN
   curl --silent --show-error --fail --max-time 5 \
-    -H "Authorization: Bearer $token" \
+    -H @"$auth_header_file" \
     -H "Content-Type: application/json" \
     -X POST \
     --data "$payload" \
@@ -134,12 +141,16 @@ intersect=$(jq -r --arg p "$prev_lanes_csv" \
 while IFS= read -r lane; do
   [ -z "$lane" ] && continue
 
-  prev_lane=$(jq --arg n "$lane" '.lanes[] | select(.name == $n)' "$PREVIOUS")
-  curr_lane=$(jq --arg n "$lane" '.lanes[] | select(.name == $n)' "$CURRENT")
+  # `first(... | select(...)) // {}` ensures missing-lane returns {}, not nothing —
+  # otherwise a stale snapshot with name-renamed lanes would crash the loop under
+  # set -e. Downstream `.issues // []` / `.branches // []` defaults keep partial
+  # snapshots from blowing up when a lane row is missing those keys.
+  prev_lane=$(jq -c --arg n "$lane" 'first(.lanes[] | select(.name == $n)) // {}' "$PREVIOUS")
+  curr_lane=$(jq -c --arg n "$lane" 'first(.lanes[] | select(.name == $n)) // {}' "$CURRENT")
 
-  # 3a. is_stale flip
-  prev_stale=$(echo "$prev_lane" | jq -r '.is_stale' | tr -d '\r')
-  curr_stale=$(echo "$curr_lane" | jq -r '.is_stale' | tr -d '\r')
+  # 3a. is_stale flip — `// false` so a missing field doesn't yield "null"
+  prev_stale=$(echo "$prev_lane" | jq -r '.is_stale // false' | tr -d '\r')
+  curr_stale=$(echo "$curr_lane" | jq -r '.is_stale // false' | tr -d '\r')
   if [ "$prev_stale" != "$curr_stale" ]; then
     if [ "$curr_stale" = "true" ]; then
       emit info "lane:$lane stale" "Lane went idle (no activity > stale window)" "$lane"
@@ -149,8 +160,8 @@ while IFS= read -r lane; do
   fi
 
   # 3b. Issue set change
-  prev_issues=$(echo "$prev_lane" | jq -r '[.issues[].number] | sort | join(",")' | tr -d '\r')
-  curr_issues=$(echo "$curr_lane" | jq -r '[.issues[].number] | sort | join(",")' | tr -d '\r')
+  prev_issues=$(echo "$prev_lane" | jq -r '[((.issues // [])[]?.number)] | sort | join(",")' | tr -d '\r')
+  curr_issues=$(echo "$curr_lane" | jq -r '[((.issues // [])[]?.number)] | sort | join(",")' | tr -d '\r')
   if [ "$prev_issues" != "$curr_issues" ]; then
     emit info "lane:$lane issues changed" "Issues: ${prev_issues:-none} -> ${curr_issues:-none}" "$lane"
   fi
@@ -158,8 +169,8 @@ while IFS= read -r lane; do
   # 3c. Branch commit jump (per branch ref)
   while IFS= read -r ref; do
     [ -z "$ref" ] && continue
-    prev_ts=$(echo "$prev_lane" | jq -r --arg r "$ref" '.branches[] | select(.ref == $r) | .last_commit_at // ""' | tr -d '\r')
-    curr_ts=$(echo "$curr_lane" | jq -r --arg r "$ref" '.branches[] | select(.ref == $r) | .last_commit_at // ""' | tr -d '\r')
+    prev_ts=$(echo "$prev_lane" | jq -r --arg r "$ref" '(.branches // [])[]? | select(.ref == $r) | .last_commit_at // ""' | tr -d '\r')
+    curr_ts=$(echo "$curr_lane" | jq -r --arg r "$ref" '(.branches // [])[]? | select(.ref == $r) | .last_commit_at // ""' | tr -d '\r')
     if [ -n "$curr_ts" ] && [ "$prev_ts" != "$curr_ts" ]; then
       if [ -z "$prev_ts" ]; then
         emit info "lane:$lane branch added" "$ref @ $curr_ts" "$lane"
@@ -167,7 +178,7 @@ while IFS= read -r lane; do
         emit info "lane:$lane commit" "$ref: $prev_ts -> $curr_ts" "$lane"
       fi
     fi
-  done < <(echo "$curr_lane" | jq -r '.branches[].ref' | tr -d '\r')
+  done < <(echo "$curr_lane" | jq -r '(.branches // [])[]?.ref // empty' | tr -d '\r')
 done <<< "$intersect"
 
 # Promote current → previous only when all emissions succeeded. On partial
