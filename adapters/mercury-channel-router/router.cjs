@@ -106,20 +106,42 @@ async function tgSend(chatId, text) {
 }
 
 // Phase C (#324): find session whose label matches the given prefix.
-// Resolution order is deterministic regardless of session-register order:
+// Resolution order is strict and never auto-picks among ambiguous candidates:
 //   1. exact label equality wins outright
-//   2. otherwise pick the SHORTEST label that prefix-matches (most specific)
-//   3. `#` is stripped from stored labels before prefix-comparison so TASK-style
-//      labels (`#324 director`) match `@324` AND `@#324`
-// Returns undefined if no candidate matches.
+//   2. exactly one prefix match (with optional leading `#` stripped) wins
+//   3. multiple prefix matches → ambiguous, caller must surface candidates so
+//      the user retries with a longer disambiguating prefix
+//   4. zero matches → undefined match
+// Return shape:
+//   { match: <session> }  — single resolved target
+//   { match: undefined }  — no candidate
+//   { ambiguous: [labels] } — caller emits "ambiguous, candidates: ..." reply
 const findByLabel = prefix => {
   const sess = [...sessions.values()];
   const exact = sess.find(s => s.label === prefix);
-  if (exact) return exact;
+  if (exact) return { match: exact };
   const matches = sess.filter(s =>
     s.label.startsWith(prefix) || s.label.replace(/^#/, '').startsWith(prefix));
-  return matches.sort((a, b) => a.label.length - b.label.length)[0];
+  if (matches.length === 0) return { match: undefined };
+  if (matches.length === 1) return { match: matches[0] };
+  return { ambiguous: matches.map(s => s.label) };
 };
+
+// Helper: collapse a findByLabel result + a `none-match` reply into a single
+// "match-or-tgSend" branch used by every lane-targeted command. Returns
+// the matched session, or null after sending the appropriate user-facing reply.
+async function resolveLane(chatId, prefix) {
+  const r = findByLabel(prefix);
+  if (r.ambiguous) {
+    await tgSend(chatId, `Ambiguous lane @${htmlEsc(prefix)}; candidates: ${r.ambiguous.map(htmlEsc).join(', ')}`);
+    return null;
+  }
+  if (!r.match) {
+    await tgSend(chatId, `No session matching @${htmlEsc(prefix)}`);
+    return null;
+  }
+  return r.match;
+}
 
 // Phase C: parse `@<lane> <payload>` from cmd args. Returns {lane, payload} or null.
 // Lane token allows `#`, word chars and `-` so users can address `@#324` directly
@@ -153,8 +175,8 @@ async function relayLaneCmd(chatId, cmd, args, payloadKey, usage) {
   if (validator && !validator(lp.payload)) {
     return tgSend(chatId, `Invalid payload for /${htmlEsc(cmd)}: ${htmlEsc(lp.payload)}`);
   }
-  const t = findByLabel(lp.lane);
-  if (!t) return tgSend(chatId, `No session matching @${htmlEsc(lp.lane)}`);
+  const t = await resolveLane(chatId, lp.lane);
+  if (!t) return; // resolveLane already replied (ambiguous OR no-match)
   const event = { type: 'command', cmd, from_chat: chatId };
   event[payloadKey] = lp.payload;
   sendToInbox(t.id, event);
@@ -193,9 +215,11 @@ async function handleCmd(chatId, cmd, args) {
       // are addressable. Trailing `#` is stripped before findByLabel match.
       const m = args.match(/^@(#?[\w-]+)$/);
       if (!m) return tgSend(chatId,`Usage: /${htmlEsc(cmd)} @&lt;label-prefix&gt;`);
-      t = findByLabel(m[1].replace(/^#/, ''));
+      t = await resolveLane(chatId, m[1].replace(/^#/, ''));
+      if (!t) return; // resolveLane already sent the ambiguous / no-match reply
+    } else if (!t) {
+      return tgSend(chatId, 'No matching session.');
     }
-    if (!t) return tgSend(chatId,'No matching session.');
     sendToInbox(t.id,{type:'command',cmd,from_chat:chatId});
     return tgSend(chatId,`Sent /${htmlEsc(cmd)} to [${htmlEsc(t.label)}]`);
   }
