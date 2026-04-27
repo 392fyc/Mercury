@@ -42,7 +42,8 @@ MERCURY_LANE_REPORT_QUIET=1 bash scripts/lane-auto-report.sh
 
 ```bash
 bash scripts/test-lane-auto-report.sh
-# → 13/13 PASS
+# → 15/15 PASS (covers diff transitions, atomic promote, lock contention,
+#               POST-failure retry semantics)
 ```
 
 ### Step 3 — Register cron via Claude Code `CronCreate`

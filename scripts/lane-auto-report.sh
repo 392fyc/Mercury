@@ -83,20 +83,24 @@ post_notify() {
   fi
   # Pass the Bearer token via -H @file rather than inline so other users on the
   # box cannot read it via /proc/<pid>/cmdline or `ps -ef`. mktemp + 600 perms
-  # via umask scope; cleanup is unconditional via local trap so a curl crash
-  # cannot leak the file across cron ticks.
-  local token auth_header_file
+  # via umask scope; explicit rc-capture cleanup avoids `trap RETURN` (which
+  # would persist across function reinvocations and re-fire on every later
+  # return — Argus 3144785807 finding).
+  local token auth_header_file rc=0
   token="$(tr -d '\r\n' < "$TOKEN_FILE")"
   auth_header_file="$(umask 077 && mktemp "$STATE_DIR/.auth-header.XXXXXX")"
   printf 'Authorization: Bearer %s\n' "$token" > "$auth_header_file"
-  trap 'rm -f "$auth_header_file"' RETURN
   curl --silent --show-error --fail --max-time 5 \
     -H @"$auth_header_file" \
     -H "Content-Type: application/json" \
     -X POST \
     --data "$payload" \
-    "http://127.0.0.1:${ROUTER_PORT}/notify" >/dev/null \
-    || { echo "[lane-auto-report] WARN: POST failed for $title" >&2; return 1; }
+    "http://127.0.0.1:${ROUTER_PORT}/notify" >/dev/null || rc=$?
+  rm -f "$auth_header_file"
+  if [ "$rc" -ne 0 ]; then
+    echo "[lane-auto-report] WARN: POST failed for $title" >&2
+    return 1
+  fi
 }
 
 emit_count=0
