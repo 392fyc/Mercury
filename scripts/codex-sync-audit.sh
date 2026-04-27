@@ -112,6 +112,46 @@ NODE_BIN="${CODEX_COMPANION_NODE:-node}"
 command -v "$NODE_BIN" >/dev/null 2>&1 || die "node not found in PATH (set CODEX_COMPANION_NODE to override)" 3
 command -v jq >/dev/null 2>&1 || die "jq not found in PATH (required to parse codex-companion JSON)" 3
 
+# Sort lines containing a path with a version segment (e.g. .../codex/1.0.10/scripts/...)
+# in descending semver order. Read from stdin, write to stdout. Probes once at module load
+# whether the local sort understands -V; if so, uses it. Otherwise falls back to an awk
+# comparator that splits the version segment and compares numerically per-component.
+SORT_V_OK=
+sort_versions_desc() {
+  if [[ -z "$SORT_V_OK" ]]; then
+    if printf '1.0.2\n1.0.10\n' | sort -V >/dev/null 2>&1; then
+      SORT_V_OK=1
+    else
+      SORT_V_OK=0
+      printf 'codex-sync-audit: sort -V unavailable; using awk-based version sort fallback\n' >&2
+    fi
+  fi
+  if [[ "$SORT_V_OK" -eq 1 ]]; then
+    sort -V -r
+  else
+    # Extract the version directory (.../codex/<version>/scripts/codex-companion.mjs),
+    # decorate with a sortable numeric key, sort descending, strip the key.
+    awk -F/ '
+      {
+        # Find the segment immediately before "scripts" — that is the version dir.
+        ver = ""
+        for (i = 1; i <= NF; i++) {
+          if ($i == "scripts" && i > 1) { ver = $(i-1); break }
+        }
+        n = split(ver, parts, ".")
+        # Build a 4-field zero-padded key (1.0.10 → 0000001 0000000 0000010 0000000).
+        # 4 fields covers semver MAJOR.MINOR.PATCH with optional pre-release counter.
+        key = ""
+        for (i = 1; i <= 4; i++) {
+          v = (i <= n ? parts[i] : 0) + 0
+          key = key sprintf("%07d ", v)
+        }
+        print key $0
+      }
+    ' | sort -r | sed 's/^[0-9 ]* //'
+  fi
+}
+
 resolve_companion_script() {
   if [[ -n "${CODEX_COMPANION_SCRIPT:-}" ]]; then
     [[ -f "$CODEX_COMPANION_SCRIPT" ]] || die "CODEX_COMPANION_SCRIPT does not point to a file: $CODEX_COMPANION_SCRIPT" 3
@@ -143,15 +183,17 @@ resolve_companion_script() {
   for prefix in "${prefixes[@]}"; do
     candidates+=("$prefix/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs")
     # Glob each available cached version, sort by semver high-to-low, take the newest.
-    # `sort -V -r` is the GNU version-sort (BSD sort also supports -V on macOS / modern WSL).
-    # Lex sort would mis-order 1.0.10 < 1.0.2 and 10.0.0 < 9.9.9. The `2>/dev/null` on find
-    # suppresses errors when the cache dir does not exist; sort gracefully accepts empty input.
+    # Prefer GNU/BSD `sort -V` (version sort: 1.0.10 > 1.0.2, 10.0.0 > 9.9.9). If the
+    # local sort lacks -V (pre-7.0 GNU coreutils, very old BSD sort) we fall back to
+    # a portable awk comparator that splits the version segment and compares each
+    # numeric component. Lex sort alone would mis-order multi-digit versions and is
+    # not a safe last resort here.
     local cache_glob="$prefix/.claude/plugins/cache/openai-codex/codex"
     if [[ -d "$cache_glob" ]]; then
       local versioned
       while IFS= read -r versioned; do
         [[ -f "$versioned" ]] && candidates+=("$versioned")
-      done < <(find "$cache_glob" -maxdepth 3 -name codex-companion.mjs -path '*/scripts/codex-companion.mjs' 2>/dev/null | sort -V -r)
+      done < <(find "$cache_glob" -maxdepth 3 -name codex-companion.mjs -path '*/scripts/codex-companion.mjs' 2>/dev/null | sort_versions_desc)
     fi
   done
   [[ ${#candidates[@]} -gt 0 ]] || die "neither HOME nor USERPROFILE nor CLAUDE_PLUGIN_ROOT is set; cannot locate codex plugin" 3

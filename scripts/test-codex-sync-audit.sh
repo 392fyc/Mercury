@@ -185,12 +185,11 @@ ec=$?
 set -e
 assert_eq "exit code 3" "3" "$ec"
 
-printf '\n[6b] cache discovery picks highest semver, not lex order\n'
-# Set up a fake $HOME with three cached plugin versions: 1.0.2, 1.0.10, 2.0.0.
-# Lex sort would pick 2.0.0 OR 1.0.2 wrongly when versions skip a digit; semver
-# (sort -V -r) must pick 2.0.0 first, then 1.0.10, then 1.0.2.
+printf '\n[6b] cache discovery picks highest semver, not lex order (default sort -V path)\n'
+# Set up a fake $HOME with five cached plugin versions: 1.0.2, 1.0.10, 2.0.0, 9.9.9, 10.0.0.
+# Lex sort would mis-order 10.0.0 < 9.9.9 and 1.0.10 < 1.0.2; semver must pick 10.0.0 first.
 fake_home="$WORK_DIR/fake-home-semver"
-for v in 1.0.2 1.0.10 2.0.0; do
+for v in 1.0.2 1.0.10 2.0.0 9.9.9 10.0.0; do
   d="$fake_home/.claude/plugins/cache/openai-codex/codex/$v/scripts"
   mkdir -p "$d"
   : > "$d/codex-companion.mjs"
@@ -199,13 +198,44 @@ combined="$(set +e; HOME="$fake_home" USERPROFILE="$fake_home" CLAUDE_PLUGIN_ROO
 out="${combined%$'\n'*}"
 ec="${combined##*$'\n'}"
 assert_eq "exit code 0 in dry-run" "0" "$ec"
-if [[ "$out" == *"/2.0.0/scripts/codex-companion.mjs"* ]]; then
+if [[ "$out" == *"/10.0.0/scripts/codex-companion.mjs"* ]]; then
   PASS=$((PASS + 1))
-  printf '  ✓ resolved to highest semver (2.0.0)\n'
+  printf '  ✓ resolved to highest semver (10.0.0 wins over 9.9.9 / 2.0.0)\n'
 else
   FAIL=$((FAIL + 1))
   FAILURES+=("semver discovery picked wrong version. Output: $out")
   printf '  ✗ semver discovery picked wrong version — output:\n%s\n' "$out"
+fi
+
+printf '\n[6c] awk fallback semver sort works without sort -V\n'
+# Shadow `sort` so the wrapper's capability probe (`printf ... | sort -V`) fails, forcing
+# the awk fallback path. The shadow rejects -V invocations but otherwise delegates to real
+# sort so the wrapper's other sort calls (in the awk pipeline itself) still work.
+fake_bin="$WORK_DIR/fake-bin-no-sortV"
+mkdir -p "$fake_bin"
+real_sort="$(command -v sort)"
+cat > "$fake_bin/sort" <<EOF
+#!/usr/bin/env bash
+for arg in "\$@"; do
+  if [[ "\$arg" == "-V" || "\$arg" == "--version-sort" || "\$arg" == "-V"* ]]; then
+    printf 'fake-sort: -V not supported\n' >&2
+    exit 2
+  fi
+done
+exec "$real_sort" "\$@"
+EOF
+chmod +x "$fake_bin/sort"
+combined="$(set +e; PATH="$fake_bin:$PATH" HOME="$fake_home" USERPROFILE="$fake_home" CLAUDE_PLUGIN_ROOT="" CODEX_COMPANION_SCRIPT="" "$WRAPPER" "$PROMPT_FILE" --dry-run 2>/dev/null; printf '\n%d' "$?")"
+out="${combined%$'\n'*}"
+ec="${combined##*$'\n'}"
+assert_eq "exit code 0 in dry-run (fallback path)" "0" "$ec"
+if [[ "$out" == *"/10.0.0/scripts/codex-companion.mjs"* ]]; then
+  PASS=$((PASS + 1))
+  printf '  ✓ awk fallback also picks 10.0.0\n'
+else
+  FAIL=$((FAIL + 1))
+  FAILURES+=("awk fallback picked wrong version. Output: $out")
+  printf '  ✗ awk fallback picked wrong version — output:\n%s\n' "$out"
 fi
 
 printf '\n[7] success path: emits RESULT marker, exit 0\n'
