@@ -22,14 +22,16 @@ Run Claude Code deep review and Codex code audit in parallel, then consolidate f
 |----------------|-------|
 | TypeScript `tsc --noEmit` | Claude Code |
 | Architecture / logic / integration correctness | Claude Code |
-| Code style / edge cases / error handling | Codex rescue subagent |
-| Metrics completeness (all 4 paths wired) | Codex rescue subagent |
-| Memory leak (Map cleanup on all terminal paths) | Codex rescue subagent |
-| Windows/PowerShell compat | Codex rescue subagent |
+| Code style / edge cases / error handling | Codex (sync audit wrapper) |
+| Metrics completeness (all 4 paths wired) | Codex (sync audit wrapper) |
+| Memory leak (Map cleanup on all terminal paths) | Codex (sync audit wrapper) |
+| Windows/PowerShell compat | Codex (sync audit wrapper) |
 
-Codex is invoked via `Agent` tool (rescue subagent) — no manual terminal step required.
+Codex is invoked via `bash scripts/codex-sync-audit.sh` — direct CLI call into the codex-companion runtime. The wrapper dispatches the audit and **blocks until the verdict is ready or a timeout is hit**, returning structured stdout markers that this skill parses (per Issue #326). The legacy `codex:codex-rescue` subagent path is no longer used here: it returns asynchronously and previously caused dual-verify to silently fall back when the verdict failed to arrive in-thread.
 
 ## Step 1 — Launch parallel reviewers
+
+The two reviewers can run in parallel: kick the Codex audit off via the Bash tool's `run_in_background: true` (or shell `&`), then perform the Claude-side deep review while it runs, then collect both verdicts.
 
 **Claude Code deep review** (this session):
 
@@ -87,7 +89,43 @@ git diff "${REMOTE}/${BASE}...HEAD"
 
 Check: language-appropriate correctness gates (e.g. `tsc --noEmit` for TypeScript, `pnpm lint`, `pytest --collect-only` for Python), logic correctness, integration points, schema compliance, missing branches in switch/if chains, resource leaks.
 
-**Codex audit** (rescue subagent — launch via Agent tool with `subagent_type: codex:codex-rescue`):
+**Codex audit** (sync wrapper — synchronous CLI call, blocks until verdict ready):
+
+```bash
+# 1. Write the audit prompt to a temp file. Keep it concrete: list the diff scope,
+#    explicit checks Codex should perform, and the expected output schema.
+PROMPT_FILE="$(mktemp)"
+cat > "$PROMPT_FILE" <<'EOF'
+Audit branch <branch> vs <base>. Focus on: code style, edge cases,
+error handling, metrics completeness, memory leak / cleanup on terminal paths,
+Windows/PowerShell compat. TypeScript typecheck is not required (Claude side handles it).
+
+Return:
+  Critical: N  High: N  Medium: N  Low: N
+  - <finding-1>
+  - <finding-2>
+  Overall: PASS | NEEDS-CHANGES
+EOF
+
+# 2. Dispatch synchronously. --read-only is the default (the wrapper is named *audit*).
+#    Default --timeout 600 (10 min) and --poll-interval 15 are usually fine; tune for huge diffs.
+bash scripts/codex-sync-audit.sh "$PROMPT_FILE" --timeout 600 --poll-interval 15
+EXIT=$?
+rm -f "$PROMPT_FILE"
+```
+
+Branch on the wrapper's exit code:
+
+| Exit | Marker on stdout | Action |
+|------|------------------|--------|
+| `0` | `===CODEX-SYNC-AUDIT RESULT===` | Codex job ran to terminal `completed` (codex-companion's terminal-success status, per `lib/codex.mjs`). The verdict text is in the JSON payload at **`.storedJob.result.rawOutput`** (machine-readable) or `.storedJob.rendered` (display-formatted). Parse `rawOutput` for the `Critical: N  High: N ...` line + per-finding blocks + `Overall: PASS \| NEEDS-CHANGES`. Note: exit 0 means Codex *replied*, not that it approved — `NEEDS-CHANGES` also exits 0. |
+| `1` | `===CODEX-SYNC-AUDIT FAILED===` | Codex job failed in a non-timeout way. Treat as `Codex: FAIL`; investigate stderr / `node "$COMPANION" result <jobId> --json` before merging. |
+| `124` | `===CODEX-SYNC-AUDIT TIMEOUT===` | Wait budget exceeded. The job continues running in the codex job store; the orchestrator may re-fetch later via `node "$COMPANION" result <jobId> --json` (the same `.storedJob.result.rawOutput` path applies once the job reaches `completed`). For this dual-verify pass, fall back to Claude-only and **disclose** "Dual-verify Codex side: TIMEOUT (jobId `<id>`)" in the PR body. |
+| `130` | (cancellation message on stderr) | User interrupted (Ctrl+C). Wrapper attempted to cancel the codex job. Re-run when ready. |
+| `3` | (none — message on stderr) | Codex CLI not installed / not authenticated, or codex-companion returned malformed JSON. Run `/codex:setup`. Fall back to Claude-only and disclose "Dual-verify Codex side: UNAVAILABLE" in PR body. |
+| `2` | (usage error) | Bug in the dual-verify skill caller — fix the invocation, do not skip. |
+
+> Note: `scripts/codex-sync-audit.sh` bypasses the `codex-rescue` subagent (saves ~25k tokens of forwarder boot per audit per Issue #326 Update 1). The codex-rescue subagent remains available for general "hand a long task to Codex" use cases — only dual-verify uses the direct sync path.
 
 ## Step 2 — Collect results
 
@@ -143,7 +181,12 @@ dual-verify: PASS (Claude: PASS, Codex: PASS, N issues fixed)
 
 ## Fallback
 
-If Codex is unavailable or the session cannot be started:
-- Use `/code-review` (Claude Code built-in) as the sole reviewer.
-- Document in the PR description that dual-verify was attempted but Codex was unavailable.
-- This fallback is acceptable for low-risk changes; high-risk PRs (orchestrator core, auth, schema changes) should wait for Codex availability.
+If `scripts/codex-sync-audit.sh` returns a non-success terminal state, fall back to Claude-only review and disclose the cause in the PR body. The PR body line MUST be one of:
+
+- `Dual-verify Codex side: PASS` (exit 0)
+- `Dual-verify Codex side: NEEDS-CHANGES` (exit 0 with findings; iterate)
+- `Dual-verify Codex side: FAILED` (exit 1; investigate before retrying)
+- `Dual-verify Codex side: TIMEOUT (jobId <id>)` (exit 124; the codex job continues — fetch later via `node "$COMPANION" result <jobId> --json`)
+- `Dual-verify Codex side: UNAVAILABLE` (exit 3; Codex CLI not installed / not authenticated — run `/codex:setup`)
+
+This fallback is acceptable for low-risk changes; high-risk PRs (orchestrator core, auth, schema changes) should re-run dual-verify once Codex is available rather than ship single-reviewer.
