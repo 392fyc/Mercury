@@ -386,11 +386,14 @@ else
 fi
 trap_mock="$WORK_DIR/mock-companion-trap.mjs"
 # .mjs files are ESM-only — `require` is undefined. Use named ESM import.
+# Embed the path as a single-quoted JS string. Avoids bash 4.4-only `${var@Q}`
+# (macOS default bash is 3.2, so @Q would fail there). Test paths come from
+# mktemp -d + optional cygpath -m so they never contain quotes or backslashes.
 cat > "$trap_mock" <<MOCK_EOF
 #!/usr/bin/env node
 import { appendFileSync } from "node:fs";
 const sub = process.argv[2];
-appendFileSync(${trap_log_node@Q}, sub + "\n");
+appendFileSync('${trap_log_node}', sub + "\n");
 function emit(o) { process.stdout.write(JSON.stringify(o) + "\n"); }
 if (sub === "task")   { emit({ jobId: "mock-job-123" }); process.exit(0); }
 if (sub === "status") { emit({ job: { id: "mock-job-123", status: "completed" }, waitTimedOut: false, timeoutMs: 1000 }); process.exit(0); }

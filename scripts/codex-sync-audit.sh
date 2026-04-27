@@ -171,24 +171,33 @@ resolve_companion_script() {
   # that changes on every plugin upgrade — globbing the version directory lets the wrapper survive
   # codex-plugin version bumps without code edits. Newest-wins is good enough; users can always
   # set CODEX_COMPANION_SCRIPT to pin a specific path.
-  # Build unique prefix list explicitly: HOME first, then USERPROFILE only if it differs.
-  # (An earlier version tried to dedupe inside the loop body but skipped HOME on the first iter
-  # whenever HOME==USERPROFILE because both arms of the condition matched.)
-  local -a prefixes=()
-  [[ -n "${HOME:-}" ]] && prefixes+=("$HOME")
+  # Build unique prefix list explicitly. The Claude config root is variable on this team —
+  # Mercury CLAUDE.md treats `${CLAUDE_CONFIG_DIR:-$HOME/.claude}` as the canonical user-level
+  # path (so users with a non-default config dir still get plugins discovered). Treat
+  # CLAUDE_CONFIG_DIR as a full config root (already includes ".claude/..."-style structure
+  # if user uses it that way), but for the conventional case where CLAUDE_CONFIG_DIR is
+  # *itself* the root that contains "plugins/", we map it directly. HOME and USERPROFILE
+  # add their `.claude` segment as before.
+  local -a config_roots=()
+  if [[ -n "${CLAUDE_CONFIG_DIR:-}" ]]; then
+    config_roots+=("$CLAUDE_CONFIG_DIR")
+  fi
+  if [[ -n "${HOME:-}" ]]; then
+    config_roots+=("$HOME/.claude")
+  fi
   if [[ -n "${USERPROFILE:-}" && "${USERPROFILE:-}" != "${HOME:-}" ]]; then
-    prefixes+=("$USERPROFILE")
+    config_roots+=("$USERPROFILE/.claude")
   fi
   local prefix
-  for prefix in "${prefixes[@]}"; do
-    candidates+=("$prefix/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs")
+  for prefix in "${config_roots[@]}"; do
+    candidates+=("$prefix/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs")
     # Glob each available cached version, sort by semver high-to-low, take the newest.
     # Prefer GNU/BSD `sort -V` (version sort: 1.0.10 > 1.0.2, 10.0.0 > 9.9.9). If the
     # local sort lacks -V (pre-7.0 GNU coreutils, very old BSD sort) we fall back to
     # a portable awk comparator that splits the version segment and compares each
     # numeric component. Lex sort alone would mis-order multi-digit versions and is
     # not a safe last resort here.
-    local cache_glob="$prefix/.claude/plugins/cache/openai-codex/codex"
+    local cache_glob="$prefix/plugins/cache/openai-codex/codex"
     if [[ -d "$cache_glob" ]]; then
       local versioned
       while IFS= read -r versioned; do
@@ -196,7 +205,7 @@ resolve_companion_script() {
       done < <(find "$cache_glob" -maxdepth 3 -name codex-companion.mjs -path '*/scripts/codex-companion.mjs' 2>/dev/null | sort_versions_desc)
     fi
   done
-  [[ ${#candidates[@]} -gt 0 ]] || die "neither HOME nor USERPROFILE nor CLAUDE_PLUGIN_ROOT is set; cannot locate codex plugin" 3
+  [[ ${#candidates[@]} -gt 0 ]] || die "no Claude config root resolvable (set CLAUDE_CONFIG_DIR, HOME, USERPROFILE, or CLAUDE_PLUGIN_ROOT) — cannot locate codex plugin" 3
 
   local cand
   for cand in "${candidates[@]}"; do

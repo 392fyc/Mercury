@@ -119,13 +119,27 @@ Branch on the wrapper's exit code:
 | Exit | Marker on stdout | Action |
 |------|------------------|--------|
 | `0` | `===CODEX-SYNC-AUDIT RESULT===` | Codex job ran to terminal `completed` (codex-companion's terminal-success status, per `lib/codex.mjs`). The verdict text is in the JSON payload at **`.storedJob.result.rawOutput`** (machine-readable) or `.storedJob.rendered` (display-formatted). Parse `rawOutput` for the `Critical: N  High: N ...` line + per-finding blocks + `Overall: PASS \| NEEDS-CHANGES`. Note: exit 0 means Codex *replied*, not that it approved — `NEEDS-CHANGES` also exits 0. |
-| `1` | `===CODEX-SYNC-AUDIT FAILED===` | Codex job failed in a non-timeout way. Treat as `Codex: FAIL`; investigate stderr / `node "$COMPANION" result <jobId> --json` before merging. |
-| `124` | `===CODEX-SYNC-AUDIT TIMEOUT===` | Wait budget exceeded. The job continues running in the codex job store; the orchestrator may re-fetch later via `node "$COMPANION" result <jobId> --json` (the same `.storedJob.result.rawOutput` path applies once the job reaches `completed`). For this dual-verify pass, fall back to Claude-only and **disclose** "Dual-verify Codex side: TIMEOUT (jobId `<id>`)" in the PR body. |
+| `1` | `===CODEX-SYNC-AUDIT FAILED===` | Codex job failed in a non-timeout way. Treat as `Codex: FAIL`; investigate stderr / re-fetch the result via the codex-companion CLI (see "Recovery commands" below) before merging. |
+| `124` | `===CODEX-SYNC-AUDIT TIMEOUT===` | Wait budget exceeded. The job continues running in the codex job store; the orchestrator may re-fetch later via the codex-companion CLI (see "Recovery commands" below). The same `.storedJob.result.rawOutput` path applies once the job reaches `completed`. For this dual-verify pass, fall back to Claude-only and **disclose** "Dual-verify Codex side: TIMEOUT (jobId `<id>`)" in the PR body. |
 | `130` | (cancellation message on stderr) | User interrupted (Ctrl+C). Wrapper attempted to cancel the codex job. Re-run when ready. |
 | `3` | (none — message on stderr) | Codex CLI not installed / not authenticated, or codex-companion returned malformed JSON. Run `/codex:setup`. Fall back to Claude-only and disclose "Dual-verify Codex side: UNAVAILABLE" in PR body. |
 | `2` | (usage error) | Bug in the dual-verify skill caller — fix the invocation, do not skip. |
 
 > Note: `scripts/codex-sync-audit.sh` bypasses the `codex-rescue` subagent (saves ~25k tokens of forwarder boot per audit per Issue #326 Update 1). The codex-rescue subagent remains available for general "hand a long task to Codex" use cases — only dual-verify uses the direct sync path.
+
+### Recovery commands
+
+When the wrapper exits 1 or 124, the codex job is still in the codex-companion store and can be inspected by calling the companion CLI directly. The companion script lives at `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs` (or the equivalent `cache/openai-codex/codex/<version>/scripts/codex-companion.mjs` on a versioned install). Set a shell var to that path, then:
+
+```bash
+COMPANION="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs"
+# Inspect the job snapshot:
+node "$COMPANION" status <jobId> --json
+# Once the job reaches `completed`, fetch the verdict payload:
+node "$COMPANION" result <jobId> --json | jq '.storedJob.result.rawOutput'
+```
+
+If `$COMPANION` does not resolve, run `bash scripts/codex-sync-audit.sh --help` — the wrapper logs its discovered companion path on dispatch failure (exit 3) and accepts `CODEX_COMPANION_SCRIPT=<path>` as an env override.
 
 ## Step 2 — Collect results
 
