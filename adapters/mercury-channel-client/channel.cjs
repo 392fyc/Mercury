@@ -184,10 +184,23 @@ async function connectInbox() {
                 params: { verdict: evt.verdict, request_id: evt.request_id },
               });
             } else if (evt.type === 'command') {
+              // Phase C (#324): forward known payload keys (path/model/mode) as XML
+              // attributes AND in body so dir/model/permission-mode commands deliver
+              // the operand to the lane session, not just the bare verb.
+              const chatAttr = String(evt.from_chat).replace(/[^0-9-]/g,'');
+              const payloadParts = [];
+              const bodyParts = [`${xmlEsc(evt.cmd)} requested by user`];
+              for (const key of ['path', 'model', 'mode']) {
+                if (typeof evt[key] === 'string' && evt[key].length > 0) {
+                  payloadParts.push(`${key}="${xmlEsc(evt[key])}"`);
+                  bodyParts.push(`${key}=${xmlEsc(evt[key])}`);
+                }
+              }
+              const attrs = payloadParts.length ? ' ' + payloadParts.join(' ') : '';
               await mcp.notification({
                 method: 'notifications/claude/channel',
                 params: { source: 'mercury-telegram', label: SESSION_ID,
-                  content: `<channel source="mercury-telegram" chat_id="${String(evt.from_chat).replace(/[^0-9-]/g,'')}" cmd="${xmlEsc(evt.cmd)}">${xmlEsc(evt.cmd)} requested by user</channel>` },
+                  content: `<channel source="mercury-telegram" chat_id="${chatAttr}" cmd="${xmlEsc(evt.cmd)}"${attrs}>${bodyParts.join(': ')}</channel>` },
               });
             }
           } catch {}

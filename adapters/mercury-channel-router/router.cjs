@@ -13,7 +13,11 @@ const crypto = require('crypto');
 const PORT       = Number(process.env.MERCURY_ROUTER_PORT) || 8788;
 const LOCK_FILE  = path.join(os.homedir(), '.mercury', 'router.lock');
 const TOKEN_FILE = path.join(os.homedir(), '.mercury', 'router.token');
-const MAX_SESS   = 3;
+// Phase C (#324): bump default 3→5 to match feedback_lane_protocol.md HARD-CAP.
+// MERCURY_ROUTER_MAX_SESS env override is floored to a positive integer; non-finite
+// or non-positive values fall back to default 5 so the cap is always integer.
+const MAX_SESS_RAW = Number(process.env.MERCURY_ROUTER_MAX_SESS);
+const MAX_SESS   = Number.isFinite(MAX_SESS_RAW) && MAX_SESS_RAW >= 1 ? Math.floor(MAX_SESS_RAW) : 5;
 const TAG        = '[mercury-channel-router]';
 
 // IPC auth token — written to TOKEN_FILE after server.listen succeeds
@@ -101,6 +105,84 @@ async function tgSend(chatId, text) {
   }
 }
 
+// Phase C (#324): find session whose label matches the given prefix.
+// Resolution order is strict and never auto-picks among ambiguous candidates:
+//   1. exact label equality wins outright
+//   2. exactly one prefix match (with optional leading `#` stripped) wins
+//   3. multiple prefix matches → ambiguous, caller must surface candidates so
+//      the user retries with a longer disambiguating prefix
+//   4. zero matches → undefined match
+// Return shape:
+//   { match: <session> }  — single resolved target
+//   { match: undefined }  — no candidate
+//   { ambiguous: [labels] } — caller emits "ambiguous, candidates: ..." reply
+const findByLabel = prefix => {
+  const sess = [...sessions.values()];
+  const exact = sess.find(s => s.label === prefix);
+  if (exact) return { match: exact };
+  const matches = sess.filter(s =>
+    s.label.startsWith(prefix) || s.label.replace(/^#/, '').startsWith(prefix));
+  if (matches.length === 0) return { match: undefined };
+  if (matches.length === 1) return { match: matches[0] };
+  return { ambiguous: matches.map(s => s.label) };
+};
+
+// Helper: collapse a findByLabel result + a `none-match` reply into a single
+// "match-or-tgSend" branch used by every lane-targeted command. Returns
+// the matched session, or null after sending the appropriate user-facing reply.
+async function resolveLane(chatId, prefix) {
+  const r = findByLabel(prefix);
+  if (r.ambiguous) {
+    await tgSend(chatId, `Ambiguous lane @${htmlEsc(prefix)}; candidates: ${r.ambiguous.map(htmlEsc).join(', ')}`);
+    return null;
+  }
+  if (!r.match) {
+    await tgSend(chatId, `No session matching @${htmlEsc(prefix)}`);
+    return null;
+  }
+  return r.match;
+}
+
+// Phase C: parse `@<lane> <payload>` from cmd args. Returns {lane, payload} or null.
+// Lane token allows `#`, word chars and `-` so users can address `@#324` directly
+// in addition to the bare numeric form `@324`.
+const parseLanePayload = args => {
+  if (!args) return null;
+  const m = args.match(/^@(#?[\w-]+)\s+(.+)$/s);
+  return m ? { lane: m[1].replace(/^#/, ''), payload: m[2].trim() } : null;
+};
+
+// Phase C: payload validators per cmd. Reject anything we can't safely deliver
+// before crossing the trust boundary into the lane session. Allowlist already
+// gates upstream (routeMessage::isAllowed), but defense-in-depth keeps a typo
+// from a trusted user out of `cwd` / `model` / `permission-mode` commands.
+// `dir`: filesystem-safe chars only, no `..` (path traversal).
+// `model`: alphanumeric + `.` `-` `_`, max 64 (covers `claude-opus-4-7`, `sonnet`, etc.).
+// `permission-mode`: enum drawn from Claude Code's documented modes.
+const PERMISSION_MODES = new Set(['strict', 'standard', 'trust', 'plan', 'edit', 'acceptEdits', 'bypassPermissions', 'default']);
+const COMMAND_VALIDATORS = {
+  dir:               v => /^[A-Za-z0-9_./:\\-]+$/.test(v) && !v.split(/[/\\]/).includes('..'),
+  model:             v => /^[A-Za-z0-9._-]{1,64}$/.test(v),
+  'permission-mode': v => PERMISSION_MODES.has(v),
+};
+
+// Phase C: relay a command to a lane's inbox; replies to chat with status.
+// `usage` is the help text shown when args parse fails.
+async function relayLaneCmd(chatId, cmd, args, payloadKey, usage) {
+  const lp = parseLanePayload(args);
+  if (!lp || !lp.payload) return tgSend(chatId, `Usage: ${usage}`);
+  const validator = COMMAND_VALIDATORS[cmd];
+  if (validator && !validator(lp.payload)) {
+    return tgSend(chatId, `Invalid payload for /${htmlEsc(cmd)}: ${htmlEsc(lp.payload)}`);
+  }
+  const t = await resolveLane(chatId, lp.lane);
+  if (!t) return; // resolveLane already replied (ambiguous OR no-match)
+  const event = { type: 'command', cmd, from_chat: chatId };
+  event[payloadKey] = lp.payload;
+  sendToInbox(t.id, event);
+  return tgSend(chatId, `Sent /${htmlEsc(cmd)} ${htmlEsc(lp.payload)} to [${htmlEsc(t.label)}]`);
+}
+
 async function handleCmd(chatId, cmd, args) {
   if (cmd==='status') {
     const a=sessions.get(activeId);
@@ -110,18 +192,41 @@ async function handleCmd(chatId, cmd, args) {
     if (!sessions.size) return tgSend(chatId,'No sessions registered.');
     return tgSend(chatId,[...sessions.values()].map(s=>`[${htmlEsc(s.label)}]${s.id===activeId?' <b>active</b>':''}`).join('\n'));
   }
-  if (cmd==='help') return tgSend(chatId,'/status /list /cancel /continue /help\n@label text — route\nyes/no &lt;id&gt; — verdict');
+  // Phase C (#324): structured per-lane view; sorted by activeId-first then label.
+  if (cmd==='lanes') {
+    if (!sessions.size) return tgSend(chatId,'No lanes registered.');
+    const rows=[...sessions.values()]
+      .sort((a,b)=>(a.id===activeId?-1:b.id===activeId?1:a.label.localeCompare(b.label)))
+      .map(s=>`[${htmlEsc(s.label)}]${s.id===activeId?' <b>active</b>':''} branch:${htmlEsc(s.branch||'?')} sse:${(s.sseClients||[]).length}`);
+    return tgSend(chatId,rows.join('\n'));
+  }
+  if (cmd==='help') return tgSend(chatId,
+    '/status /list /lanes /help\n'+
+    '/cancel [@label] — abort active or named session\n'+
+    '/continue [@label] — resume\n'+
+    '/dir @label &lt;path&gt; — switch session cwd\n'+
+    '/model @label &lt;name&gt; — switch model\n'+
+    '/permission-mode @label &lt;mode&gt; — switch perm mode\n'+
+    '@label text — route message\nyes/no &lt;id&gt; — verdict');
   if (cmd==='cancel'||cmd==='continue') {
     let t = sessions.get(activeId);
     if (args) {
-      const m = args.match(/^@([\w-]+)$/);
+      // Phase C (#324): accept `@#324` as well as `@324` so TASK-style labels
+      // are addressable. Trailing `#` is stripped before findByLabel match.
+      const m = args.match(/^@(#?[\w-]+)$/);
       if (!m) return tgSend(chatId,`Usage: /${htmlEsc(cmd)} @&lt;label-prefix&gt;`);
-      t = [...sessions.values()].find(s=>s.label.startsWith(m[1]));
+      t = await resolveLane(chatId, m[1].replace(/^#/, ''));
+      if (!t) return; // resolveLane already sent the ambiguous / no-match reply
+    } else if (!t) {
+      return tgSend(chatId, 'No matching session.');
     }
-    if (!t) return tgSend(chatId,'No matching session.');
     sendToInbox(t.id,{type:'command',cmd,from_chat:chatId});
     return tgSend(chatId,`Sent /${htmlEsc(cmd)} to [${htmlEsc(t.label)}]`);
   }
+  // Phase C (#324, subsumes #308): pass-through commands to lane inbox.
+  if (cmd==='dir')             return relayLaneCmd(chatId,'dir',            args,'path', '/dir @&lt;label&gt; &lt;path&gt;');
+  if (cmd==='model')           return relayLaneCmd(chatId,'model',          args,'model','/model @&lt;label&gt; &lt;name&gt;');
+  if (cmd==='permission-mode') return relayLaneCmd(chatId,'permission-mode',args,'mode', '/permission-mode @&lt;label&gt; &lt;mode&gt;');
 }
 
 async function routeMessage(msg) {
