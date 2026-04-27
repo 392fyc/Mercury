@@ -185,6 +185,29 @@ ec=$?
 set -e
 assert_eq "exit code 3" "3" "$ec"
 
+printf '\n[6b] cache discovery picks highest semver, not lex order\n'
+# Set up a fake $HOME with three cached plugin versions: 1.0.2, 1.0.10, 2.0.0.
+# Lex sort would pick 2.0.0 OR 1.0.2 wrongly when versions skip a digit; semver
+# (sort -V -r) must pick 2.0.0 first, then 1.0.10, then 1.0.2.
+fake_home="$WORK_DIR/fake-home-semver"
+for v in 1.0.2 1.0.10 2.0.0; do
+  d="$fake_home/.claude/plugins/cache/openai-codex/codex/$v/scripts"
+  mkdir -p "$d"
+  : > "$d/codex-companion.mjs"
+done
+combined="$(set +e; HOME="$fake_home" USERPROFILE="$fake_home" CLAUDE_PLUGIN_ROOT="" CODEX_COMPANION_SCRIPT="" "$WRAPPER" "$PROMPT_FILE" --dry-run 2>/dev/null; printf '\n%d' "$?")"
+out="${combined%$'\n'*}"
+ec="${combined##*$'\n'}"
+assert_eq "exit code 0 in dry-run" "0" "$ec"
+if [[ "$out" == *"/2.0.0/scripts/codex-companion.mjs"* ]]; then
+  PASS=$((PASS + 1))
+  printf '  ✓ resolved to highest semver (2.0.0)\n'
+else
+  FAIL=$((FAIL + 1))
+  FAILURES+=("semver discovery picked wrong version. Output: $out")
+  printf '  ✗ semver discovery picked wrong version — output:\n%s\n' "$out"
+fi
+
 printf '\n[7] success path: emits RESULT marker, exit 0\n'
 combined="$(run_capture succeeded "$PROMPT_FILE")"
 out="${combined%$'\n'*}"

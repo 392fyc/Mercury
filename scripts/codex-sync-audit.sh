@@ -131,23 +131,27 @@ resolve_companion_script() {
   # that changes on every plugin upgrade — globbing the version directory lets the wrapper survive
   # codex-plugin version bumps without code edits. Newest-wins is good enough; users can always
   # set CODEX_COMPANION_SCRIPT to pin a specific path.
+  # Build unique prefix list explicitly: HOME first, then USERPROFILE only if it differs.
+  # (An earlier version tried to dedupe inside the loop body but skipped HOME on the first iter
+  # whenever HOME==USERPROFILE because both arms of the condition matched.)
+  local -a prefixes=()
+  [[ -n "${HOME:-}" ]] && prefixes+=("$HOME")
+  if [[ -n "${USERPROFILE:-}" && "${USERPROFILE:-}" != "${HOME:-}" ]]; then
+    prefixes+=("$USERPROFILE")
+  fi
   local prefix
-  for prefix in "${HOME:-}" "${USERPROFILE:-}"; do
-    [[ -z "$prefix" ]] && continue
-    # Skip USERPROFILE if it would duplicate HOME-based candidates we already added.
-    if [[ "$prefix" == "${USERPROFILE:-}" && "${USERPROFILE:-}" == "${HOME:-}" ]]; then
-      continue
-    fi
+  for prefix in "${prefixes[@]}"; do
     candidates+=("$prefix/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs")
-    # Glob each available cached version, sort high-to-low, take the newest. The `2>/dev/null`
-    # suppresses the "no match" error when no cache dir exists, and `[[ -f "$f" ]]` filters out
-    # the literal glob pattern (which bash leaves unchanged when nullglob is off).
+    # Glob each available cached version, sort by semver high-to-low, take the newest.
+    # `sort -V -r` is the GNU version-sort (BSD sort also supports -V on macOS / modern WSL).
+    # Lex sort would mis-order 1.0.10 < 1.0.2 and 10.0.0 < 9.9.9. The `2>/dev/null` on find
+    # suppresses errors when the cache dir does not exist; sort gracefully accepts empty input.
     local cache_glob="$prefix/.claude/plugins/cache/openai-codex/codex"
     if [[ -d "$cache_glob" ]]; then
       local versioned
       while IFS= read -r versioned; do
         [[ -f "$versioned" ]] && candidates+=("$versioned")
-      done < <(find "$cache_glob" -maxdepth 3 -name codex-companion.mjs -path '*/scripts/codex-companion.mjs' 2>/dev/null | sort -r)
+      done < <(find "$cache_glob" -maxdepth 3 -name codex-companion.mjs -path '*/scripts/codex-companion.mjs' 2>/dev/null | sort -V -r)
     fi
   done
   [[ ${#candidates[@]} -gt 0 ]] || die "neither HOME nor USERPROFILE nor CLAUDE_PLUGIN_ROOT is set; cannot locate codex plugin" 3
