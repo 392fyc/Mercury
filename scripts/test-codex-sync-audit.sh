@@ -157,6 +157,20 @@ ec=$?
 set -e
 assert_eq "exit code 2" "2" "$ec"
 
+printf '\n[4b] usage error: timeout above 86400-second cap\n'
+set +e
+"$WRAPPER" "$PROMPT_FILE" --timeout 90000 2>/dev/null
+ec=$?
+set -e
+assert_eq "exit code 2 on > 86400s timeout" "2" "$ec"
+
+printf '\n[4c] usage error: poll interval larger than timeout\n'
+set +e
+"$WRAPPER" "$PROMPT_FILE" --timeout 60 --poll-interval 120 2>/dev/null
+ec=$?
+set -e
+assert_eq "exit code 2 on poll > timeout" "2" "$ec"
+
 printf '\n[5] usage error: unknown option\n'
 set +e
 "$WRAPPER" "$PROMPT_FILE" --not-a-flag 2>/dev/null

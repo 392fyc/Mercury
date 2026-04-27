@@ -99,6 +99,13 @@ case "$TIMEOUT_S" in ''|*[!0-9]*) die "--timeout must be a non-negative integer"
 case "$POLL_S" in ''|*[!0-9]*) die "--poll-interval must be a non-negative integer" ;; esac
 [[ "$TIMEOUT_S" -gt 0 ]] || die "--timeout must be > 0"
 [[ "$POLL_S" -gt 0 ]] || die "--poll-interval must be > 0"
+# Upper bounds — guard against arithmetic overflow when multiplying by 1000 to
+# build the *_MS values that go to codex-companion. 86400s (24h) is the longest
+# reasonable single audit; bash arithmetic is 64-bit on modern platforms but the
+# upstream node side may not be, and ms values much larger than 24h serve no
+# practical purpose.
+[[ "$TIMEOUT_S" -le 86400 ]] || die "--timeout must be ≤ 86400 seconds (24h)"
+[[ "$POLL_S" -le "$TIMEOUT_S" ]] || die "--poll-interval ($POLL_S) must be ≤ --timeout ($TIMEOUT_S)"
 
 # --- dependency resolution ---
 NODE_BIN="${CODEX_COMPANION_NODE:-node}"
@@ -120,14 +127,29 @@ resolve_companion_script() {
   if [[ -n "${CLAUDE_PLUGIN_ROOT:-}" ]]; then
     candidates+=("$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs")
   fi
-  if [[ -n "${HOME:-}" ]]; then
-    candidates+=("$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs")
-    candidates+=("$HOME/.claude/plugins/cache/openai-codex/codex/1.0.2/scripts/codex-companion.mjs")
-  fi
-  if [[ -n "${USERPROFILE:-}" && "${USERPROFILE:-}" != "${HOME:-}" ]]; then
-    candidates+=("$USERPROFILE/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs")
-    candidates+=("$USERPROFILE/.claude/plugins/cache/openai-codex/codex/1.0.2/scripts/codex-companion.mjs")
-  fi
+  # The cache path includes a plugin version segment (e.g. .../cache/openai-codex/codex/1.0.2/...)
+  # that changes on every plugin upgrade — globbing the version directory lets the wrapper survive
+  # codex-plugin version bumps without code edits. Newest-wins is good enough; users can always
+  # set CODEX_COMPANION_SCRIPT to pin a specific path.
+  local prefix
+  for prefix in "${HOME:-}" "${USERPROFILE:-}"; do
+    [[ -z "$prefix" ]] && continue
+    # Skip USERPROFILE if it would duplicate HOME-based candidates we already added.
+    if [[ "$prefix" == "${USERPROFILE:-}" && "${USERPROFILE:-}" == "${HOME:-}" ]]; then
+      continue
+    fi
+    candidates+=("$prefix/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs")
+    # Glob each available cached version, sort high-to-low, take the newest. The `2>/dev/null`
+    # suppresses the "no match" error when no cache dir exists, and `[[ -f "$f" ]]` filters out
+    # the literal glob pattern (which bash leaves unchanged when nullglob is off).
+    local cache_glob="$prefix/.claude/plugins/cache/openai-codex/codex"
+    if [[ -d "$cache_glob" ]]; then
+      local versioned
+      while IFS= read -r versioned; do
+        [[ -f "$versioned" ]] && candidates+=("$versioned")
+      done < <(find "$cache_glob" -maxdepth 3 -name codex-companion.mjs -path '*/scripts/codex-companion.mjs' 2>/dev/null | sort -r)
+    fi
+  done
   [[ ${#candidates[@]} -gt 0 ]] || die "neither HOME nor USERPROFILE nor CLAUDE_PLUGIN_ROOT is set; cannot locate codex plugin" 3
 
   local cand
