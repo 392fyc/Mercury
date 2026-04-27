@@ -22,12 +22,20 @@
 #                         [--lanes-file PATH] [--memory-dir PATH]
 #                         [--tmp-dir PATH] [--repo-root PATH]
 #                         [--yes] [--force-cross-lane] [--dry-run]
+#                         [--close-issue --issue N [--rationale TEXT] [--repo OWNER/REPO]]
 #
 # Defaults:
 #   --memory-dir   ${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}
 #   --lanes-file   <memory-dir>/LANES.md
 #   --repo-root    `git rev-parse --show-toplevel`
 #   --tmp-dir      <repo-root>/.tmp/lane-<lane>
+#   --rationale    "Lane <lane-name> closed via scripts/lane-close.sh."
+#   --repo         resolved via gh repo view / GH_REPO env (only when --close-issue)
+#
+# --close-issue (#323 Phase B B2): after Status flip + tmp prune succeed, post
+# a closure-rationale comment on Issue #N then `gh issue close N`. Best-effort
+# external mutation — failure here logs a WARN but does NOT roll back the
+# already-completed local Status flip / tmp prune.
 #
 # Exit codes:
 #   0  lane closed cleanly (or --dry-run path completed)
@@ -48,6 +56,10 @@ REPO_ROOT=""
 YES=0
 FORCE_CROSS_LANE=0
 DRY_RUN=0
+CLOSE_ISSUE=0
+ISSUE_NUM=""
+RATIONALE=""
+REPO=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -60,8 +72,12 @@ while [ $# -gt 0 ]; do
     --yes)               YES=1; shift ;;
     --force-cross-lane)  FORCE_CROSS_LANE=1; shift ;;
     --dry-run)           DRY_RUN=1; shift ;;
+    --close-issue)       CLOSE_ISSUE=1; shift ;;
+    --issue)             shift; [ $# -gt 0 ] || die "--issue needs a value"; ISSUE_NUM="$1"; shift ;;
+    --rationale)         shift; [ $# -gt 0 ] || die "--rationale needs a value"; RATIONALE="$1"; shift ;;
+    --repo)              shift; [ $# -gt 0 ] || die "--repo needs a value"; REPO="$1"; shift ;;
     -h|--help)
-      sed -n '2,32p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     --) shift; while [ $# -gt 0 ]; do
           [ -z "$LANE" ] || die "too many positional args after --: $1"
@@ -79,6 +95,20 @@ case "$LANE" in
   -*) die "lane name must not start with hyphen: '$LANE'" ;;
   *[!A-Za-z0-9_-]*) die "lane name must be [A-Za-z0-9_-]: '$LANE'" ;;
 esac
+
+# --close-issue arg interlock: requires --issue N (positive int).
+if [ "$CLOSE_ISSUE" -eq 1 ]; then
+  [ -n "$ISSUE_NUM" ] || die "--close-issue requires --issue N"
+  case "$ISSUE_NUM" in
+    ''|*[!0-9]*|0) die "--issue must be a positive integer: '$ISSUE_NUM'" ;;
+  esac
+fi
+# --issue / --rationale / --repo without --close-issue is a wiring mistake —
+# surface it loudly. A typo dropping --close-issue would otherwise look
+# correctly configured for remote closure while only closing locally.
+if [ "$CLOSE_ISSUE" -eq 0 ] && { [ -n "$ISSUE_NUM" ] || [ -n "$RATIONALE" ] || [ -n "$REPO" ]; }; then
+  die "--issue/--rationale/--repo only meaningful with --close-issue"
+fi
 
 if [ -z "$MEMORY_DIR" ]; then
   MEMORY_DIR="${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}"
@@ -202,6 +232,10 @@ if [ "$DRY_RUN" -eq 1 ]; then
   else
     printf '[dry-run] no tmp dir at %s (skip rm)\n' "$TMP_DIR"
   fi
+  if [ "$CLOSE_ISSUE" -eq 1 ]; then
+    printf '[dry-run] would gh issue comment #%s + gh issue close #%s (rationale=%s)\n' \
+      "$ISSUE_NUM" "$ISSUE_NUM" "${RATIONALE:-(default)}"
+  fi
   exit 0
 fi
 
@@ -253,4 +287,36 @@ else
 fi
 
 printf 'lane-close: lane %s flipped to `closed` in %s\n' "$LANE" "$LANES_FILE"
+
+# Optional --close-issue: best-effort GitHub Issue closure with rationale.
+# Local Status flip + tmp prune already succeeded above, so a gh failure here
+# emits WARN but does NOT exit non-zero — operator may run `gh issue close` by
+# hand later. Local LANES.md state remains the authoritative record.
+if [ "$CLOSE_ISSUE" -eq 1 ]; then
+  if ! command -v gh >/dev/null 2>&1; then
+    warn "gh CLI not on PATH — skipping --close-issue (lane is already closed locally)"
+  else
+    if [ -z "$REPO" ]; then REPO="${GH_REPO:-}"; fi
+    if [ -z "$REPO" ]; then
+      REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null) \
+        || warn "cannot determine target repo for --close-issue (pass --repo or set GH_REPO)"
+    fi
+    if [ -z "$RATIONALE" ]; then
+      RATIONALE="Lane \`$LANE\` closed via \`scripts/lane-close.sh\` (#323 Phase B B2)."
+    fi
+    if [ -n "$REPO" ]; then
+      if gh issue comment "$ISSUE_NUM" --repo "$REPO" --body "$RATIONALE" >/dev/null 2>&1; then
+        printf 'lane-close: posted closure rationale on #%s\n' "$ISSUE_NUM"
+      else
+        warn "gh issue comment #$ISSUE_NUM failed — closure rationale NOT posted (post manually if needed)"
+      fi
+      if gh issue close "$ISSUE_NUM" --repo "$REPO" --reason completed >/dev/null 2>&1; then
+        printf 'lane-close: closed issue #%s\n' "$ISSUE_NUM"
+      else
+        warn "gh issue close #$ISSUE_NUM failed — issue NOT closed remotely (close manually if needed)"
+      fi
+    fi
+  fi
+fi
+
 exit 0
