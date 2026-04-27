@@ -256,6 +256,136 @@ RC_OK=$?
 [ "$RC_OK" = "0" ] && pass "valid --tmp-dir under .tmp/ accepted" \
   || fail "valid --tmp-dir rejected: exit=$RC_OK out=$OUT_OK"
 
+# ---- --close-issue arg interlock ----
+echo
+echo "[close-issue-args]"
+MEM9="$TMP/case9"; mkdir -p "$MEM9"; write_fixture_lanes "$MEM9/LANES.md"
+mkdir -p "$TMP/case9-repo"
+
+assert_exit 2 "--close-issue without --issue refused" \
+  "$SCRIPT" side-target --yes --force-cross-lane --close-issue \
+    --lanes-file "$MEM9/LANES.md" --memory-dir "$MEM9" \
+    --repo-root "$TMP/case9-repo"
+
+assert_exit 2 "--issue without --close-issue refused" \
+  "$SCRIPT" side-target --yes --force-cross-lane --issue 100 \
+    --lanes-file "$MEM9/LANES.md" --memory-dir "$MEM9" \
+    --repo-root "$TMP/case9-repo"
+
+assert_exit 2 "--rationale without --close-issue refused" \
+  "$SCRIPT" side-target --yes --force-cross-lane --rationale "x" \
+    --lanes-file "$MEM9/LANES.md" --memory-dir "$MEM9" \
+    --repo-root "$TMP/case9-repo"
+
+assert_exit 2 "--repo without --close-issue refused" \
+  "$SCRIPT" side-target --yes --force-cross-lane --repo "owner/repo" \
+    --lanes-file "$MEM9/LANES.md" --memory-dir "$MEM9" \
+    --repo-root "$TMP/case9-repo"
+
+assert_exit 2 "--issue=0 rejected" \
+  "$SCRIPT" side-target --yes --force-cross-lane --close-issue --issue 0 \
+    --lanes-file "$MEM9/LANES.md" --memory-dir "$MEM9" \
+    --repo-root "$TMP/case9-repo"
+
+assert_exit 2 "--issue=abc rejected" \
+  "$SCRIPT" side-target --yes --force-cross-lane --close-issue --issue abc \
+    --lanes-file "$MEM9/LANES.md" --memory-dir "$MEM9" \
+    --repo-root "$TMP/case9-repo"
+
+# ---- --close-issue dry-run printout ----
+echo
+echo "[close-issue-dry-run]"
+MEM10="$TMP/case10"; mkdir -p "$MEM10"; write_fixture_lanes "$MEM10/LANES.md"
+mkdir -p "$TMP/case10-repo"
+OUT10=$("$SCRIPT" side-target --dry-run --force-cross-lane \
+        --close-issue --issue 999 --rationale "test reason" \
+        --lanes-file "$MEM10/LANES.md" --memory-dir "$MEM10" \
+        --repo-root "$TMP/case10-repo" 2>&1)
+RC10=$?
+[ "$RC10" = "0" ] && pass "dry-run with --close-issue exits 0" \
+  || fail "dry-run with --close-issue exit=$RC10: $OUT10"
+case "$OUT10" in
+  *"would gh issue comment #999"*) pass "dry-run prints issue close intent" ;;
+  *) fail "dry-run output missing close intent: $OUT10" ;;
+esac
+
+# ---- --close-issue with stubbed gh ----
+echo
+echo "[close-issue-stub-gh]"
+MEM11="$TMP/case11"; mkdir -p "$MEM11"; write_fixture_lanes "$MEM11/LANES.md"
+mkdir -p "$TMP/case11-repo"
+
+# Build a fake gh on PATH that records its argv to a log file and exits 0.
+STUB_BIN="$TMP/case11-bin"
+mkdir -p "$STUB_BIN"
+GH_LOG="$TMP/case11-gh.log"
+cat > "$STUB_BIN/gh" <<'STUBEOF'
+#!/usr/bin/env bash
+echo "$@" >> "$GH_LOG"
+exit 0
+STUBEOF
+chmod +x "$STUB_BIN/gh"
+
+OUT11=$(PATH="$STUB_BIN:$PATH" GH_LOG="$GH_LOG" GH_REPO="acme/widget" \
+  "$SCRIPT" side-target --yes --force-cross-lane \
+    --close-issue --issue 1234 --rationale "phase b done" \
+    --lanes-file "$MEM11/LANES.md" --memory-dir "$MEM11" \
+    --repo-root "$TMP/case11-repo" 2>&1)
+RC11=$?
+[ "$RC11" = "0" ] && pass "stubbed --close-issue happy path exit 0" \
+  || fail "stubbed --close-issue exit=$RC11: $OUT11"
+
+# Verify Status was flipped despite the new code path.
+TARGET11=$(awk '/^### `side-target`/{s=1; next} /^### / && s {exit} s && /^- \*\*Status\*\*:/ {print; exit}' "$MEM11/LANES.md")
+case "$TARGET11" in
+  *closed*) pass "Status flipped with --close-issue path" ;;
+  *) fail "Status not flipped: '$TARGET11'" ;;
+esac
+
+# gh stub should have been called twice: comment + close.
+[ -f "$GH_LOG" ] && pass "gh stub log written" || fail "gh stub log missing"
+case "$(cat "$GH_LOG" 2>/dev/null)" in
+  *"issue comment 1234"*) pass "gh issue comment recorded" ;;
+  *) fail "gh issue comment not recorded: $(cat "$GH_LOG" 2>/dev/null)" ;;
+esac
+case "$(cat "$GH_LOG" 2>/dev/null)" in
+  *"issue close 1234"*) pass "gh issue close recorded" ;;
+  *) fail "gh issue close not recorded: $(cat "$GH_LOG" 2>/dev/null)" ;;
+esac
+
+# ---- --close-issue: gh failure does NOT roll back local close ----
+echo
+echo "[close-issue-gh-failure]"
+MEM12="$TMP/case12"; mkdir -p "$MEM12"; write_fixture_lanes "$MEM12/LANES.md"
+mkdir -p "$TMP/case12-repo"
+
+STUB_BIN12="$TMP/case12-bin"
+mkdir -p "$STUB_BIN12"
+cat > "$STUB_BIN12/gh" <<'STUBEOF'
+#!/usr/bin/env bash
+exit 1
+STUBEOF
+chmod +x "$STUB_BIN12/gh"
+
+OUT12=$(PATH="$STUB_BIN12:$PATH" GH_REPO="acme/widget" \
+  "$SCRIPT" side-target --yes --force-cross-lane \
+    --close-issue --issue 5678 \
+    --lanes-file "$MEM12/LANES.md" --memory-dir "$MEM12" \
+    --repo-root "$TMP/case12-repo" 2>&1)
+RC12=$?
+# Per design: gh failure WARNs but exit stays 0 because local state was committed.
+[ "$RC12" = "0" ] && pass "gh failure does not flip exit code (local Status already flipped)" \
+  || fail "gh failure should not flip exit: exit=$RC12 out=$OUT12"
+TARGET12=$(awk '/^### `side-target`/{s=1; next} /^### / && s {exit} s && /^- \*\*Status\*\*:/ {print; exit}' "$MEM12/LANES.md")
+case "$TARGET12" in
+  *closed*) pass "Status flipped despite gh failure" ;;
+  *) fail "Status not flipped on gh failure: '$TARGET12'" ;;
+esac
+case "$OUT12" in
+  *WARN*) pass "WARN emitted on gh failure" ;;
+  *) fail "no WARN on gh failure: $OUT12" ;;
+esac
+
 echo
 printf '%d pass / %d fail\n' "$PASS" "$FAIL"
 [ "$FAIL" = "0" ]
