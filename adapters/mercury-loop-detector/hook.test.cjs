@@ -456,6 +456,199 @@ describe('isoFsSafe formatting', () => {
   });
 });
 
+// ── 12. PROGRESS_TOOLS classification (Issue #325) ──────────────────────────
+
+describe('update() progress signal classification', () => {
+  // Pull the actual update fn from hook.cjs to keep behavior in sync — no mirror.
+  const { update, PROGRESS_TOOLS } = require('./hook.cjs');
+
+  function callUpdate(state, tool, opts = {}) {
+    const { is_write = false, is_read = false, errored = false, err_sig = null, hash = 'h1' } = opts;
+    const is_progress = PROGRESS_TOOLS.has(tool);
+    update(state, tool, hash, is_write, is_read, is_progress, errored, err_sig);
+  }
+
+  test('PROGRESS_TOOLS set contains expected tools', () => {
+    for (const t of ['Bash', 'Agent', 'Skill', 'ToolSearch',
+                     'Task', 'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet', 'TaskOutput', 'TaskStop']) {
+      assert.ok(PROGRESS_TOOLS.has(t), `${t} should be in PROGRESS_TOOLS`);
+    }
+  });
+
+  test('Bash with success resets np_count', () => {
+    const state = makeState({ np_count: 4 });
+    callUpdate(state, 'Bash');
+    assert.equal(state.np_count, 0, 'Bash should reset np_count');
+  });
+
+  test('Agent call resets np_count', () => {
+    const state = makeState({ np_count: 4 });
+    callUpdate(state, 'Agent');
+    assert.equal(state.np_count, 0);
+  });
+
+  test('All Task* variants reset np_count', () => {
+    for (const t of ['Task', 'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet', 'TaskOutput', 'TaskStop']) {
+      const state = makeState({ np_count: 4 });
+      callUpdate(state, t);
+      assert.equal(state.np_count, 0, `${t} should reset np_count`);
+    }
+  });
+
+  test('Skill resets np_count', () => {
+    const state = makeState({ np_count: 4 });
+    callUpdate(state, 'Skill');
+    assert.equal(state.np_count, 0);
+  });
+
+  test('ToolSearch resets np_count', () => {
+    const state = makeState({ np_count: 4 });
+    callUpdate(state, 'ToolSearch');
+    assert.equal(state.np_count, 0);
+  });
+
+  test('WebSearch still increments np_count (true-stall pattern preserved)', () => {
+    const state = makeState({ np_count: 4 });
+    callUpdate(state, 'WebSearch');
+    assert.equal(state.np_count, 5, 'WebSearch should not be in PROGRESS_TOOLS');
+  });
+
+  test('WebFetch still increments np_count', () => {
+    const state = makeState({ np_count: 4 });
+    callUpdate(state, 'WebFetch');
+    assert.equal(state.np_count, 5);
+  });
+
+  test('mcp__foo still increments np_count', () => {
+    const state = makeState({ np_count: 4 });
+    callUpdate(state, 'mcp__claude_ai_Gmail__authenticate');
+    assert.equal(state.np_count, 5, 'MCP tools default to non-progress');
+  });
+
+  test('5 consecutive Bash calls do NOT trigger no_progress (#325 fix)', () => {
+    const state = makeState();
+    for (let i = 0; i < 5; i++) {
+      callUpdate(state, 'Bash', { hash: `h${i}` });
+    }
+    assert.equal(state.np_count, 0, 'np_count should never accumulate for Bash');
+    const stall = detectStall(state, makeCfg());
+    assert.equal(stall, null, 'no stall expected from Bash burst');
+  });
+
+  test('5 consecutive WebSearch calls DO trigger no_progress (true-stall preserved)', () => {
+    const state = makeState();
+    for (let i = 0; i < 5; i++) {
+      callUpdate(state, 'WebSearch', { hash: `h${i}` });
+    }
+    assert.equal(state.np_count, 5);
+    const stall = detectStall(state, makeCfg());
+    assert.ok(stall, 'WebSearch burst should trigger stall');
+    assert.equal(stall.type, 'no_progress');
+  });
+
+  test('Bash with error still resets np_count via errored branch', () => {
+    const state = makeState({ np_count: 4 });
+    callUpdate(state, 'Bash', { errored: true, err_sig: 'error: fail' });
+    assert.equal(state.np_count, 0, 'errored=true also resets np_count');
+  });
+
+  test('Mixed burst: 3 Bash + 2 WebSearch keeps np_count at 2 (only WebSearch counted)', () => {
+    const state = makeState();
+    for (let i = 0; i < 3; i++) callUpdate(state, 'Bash',      { hash: `b${i}` });
+    for (let i = 0; i < 2; i++) callUpdate(state, 'WebSearch', { hash: `w${i}` });
+    assert.equal(state.np_count, 2);
+  });
+});
+
+// ── 13. hook.cjs ETE: PROGRESS_TOOLS via process spawn ──────────────────────
+
+describe('hook.cjs ETE: PROGRESS_TOOLS prevents false positive', () => {
+  const { execFileSync } = require('child_process');
+  const HOOK = path.join(__dirname, 'hook.cjs');
+  let counter = 0;
+  let tmpDirs = [];
+
+  function freshEnv(tmpDir) { return { ...process.env, CLAUDE_PROJECT_DIR: tmpDir }; }
+  function uniqueSession()  { return `ete-prog-${process.pid}-${++counter}-${Date.now()}`; }
+
+  afterEach(() => {
+    for (const d of tmpDirs) {
+      try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+    tmpDirs = [];
+  });
+
+  test('ETE: pre-seeded np_count=4 + Bash call does NOT block (was previous false positive)', () => {
+    const tmpDir = makeTmpDir();
+    tmpDirs.push(tmpDir);
+    const session_id = uniqueSession();
+    const stateDir = path.join(tmpDir, '.mercury', 'state');
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(path.join(stateDir, 'loop-detector.json'), JSON.stringify({
+      session_id,
+      dup_count: 0, dup_tool: null, dup_hash: null,
+      err_count: 0, err_last: null,
+      read_count: 0, np_count: 4,
+      last_activity_ts: Date.now(), last_write_ts: Date.now()
+    }, null, 2));
+
+    let stdout = '';
+    try {
+      stdout = execFileSync('node', [HOOK], {
+        input: JSON.stringify({
+          tool_name: 'Bash',
+          tool_input: { command: 'gh pr view 999' },
+          tool_response: 'PR data',
+          session_id
+        }),
+        env: freshEnv(tmpDir),
+        timeout: 10000
+      }).toString();
+    } catch (e) {
+      stdout = e.stdout ? e.stdout.toString() : '';
+      if (e.status !== 0) throw e;
+    }
+    assert.ok(!stdout.includes('"block"'), `Bash should NOT block, got: ${stdout}`);
+
+    const finalState = JSON.parse(fs.readFileSync(path.join(stateDir, 'loop-detector.json'), 'utf8'));
+    assert.equal(finalState.np_count, 0, 'Bash should reset np_count to 0');
+  });
+
+  test('ETE: pre-seeded np_count=4 + WebSearch call DOES block (true-stall preserved)', () => {
+    const tmpDir = makeTmpDir();
+    tmpDirs.push(tmpDir);
+    const session_id = uniqueSession();
+    const stateDir = path.join(tmpDir, '.mercury', 'state');
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(path.join(stateDir, 'loop-detector.json'), JSON.stringify({
+      session_id,
+      dup_count: 0, dup_tool: null, dup_hash: null,
+      err_count: 0, err_last: null,
+      read_count: 0, np_count: 4,
+      last_activity_ts: Date.now(), last_write_ts: Date.now()
+    }, null, 2));
+
+    let stdout = '';
+    try {
+      stdout = execFileSync('node', [HOOK], {
+        input: JSON.stringify({
+          tool_name: 'WebSearch',
+          tool_input: { query: 'docs' },
+          tool_response: 'results',
+          session_id
+        }),
+        env: freshEnv(tmpDir),
+        timeout: 10000
+      }).toString();
+    } catch (e) {
+      stdout = e.stdout ? e.stdout.toString() : '';
+      if (e.status !== 0) throw e;
+    }
+    assert.ok(stdout.includes('"block"'), `WebSearch SHOULD block, got: ${stdout}`);
+    assert.ok(stdout.includes('no_progress'), 'block reason should be no_progress');
+  });
+});
+
 // ── 9. hook.cjs end-to-end integration ──────────────────────────────────────
 
 describe('hook.cjs end-to-end integration', () => {
@@ -513,8 +706,9 @@ describe('hook.cjs end-to-end integration', () => {
     fs.mkdirSync(stateDir, { recursive: true });
 
     // Pre-seed np_count at threshold-1 (default=5, seed at 4).
-    // Sending a non-read/non-write/non-error tool call increments np_count to 5 → block.
-    // 'Bash' with successful response and non-error output is classified as "action" (not read/write).
+    // Sending a non-read/non-write/non-progress/non-error tool call increments np_count to 5 → block.
+    // WebSearch is the canonical true-stall pattern (research without artifacts).
+    // NOTE: Bash/Agent/Task*/Skill/ToolSearch are now in PROGRESS_TOOLS (Issue #325) and reset np_count.
     const preState = {
       session_id,
       dup_count: 0, dup_tool: null, dup_hash: null,
@@ -524,11 +718,11 @@ describe('hook.cjs end-to-end integration', () => {
     };
     fs.writeFileSync(path.join(stateDir, 'loop-detector.json'), JSON.stringify(preState, null, 2));
 
-    // Bash with non-error response: is_write=false, is_read=false, errored=false → np_count++
+    // WebSearch: is_write=false, is_read=false, is_progress=false, errored=false → np_count++
     const payload = JSON.stringify({
-      tool_name: 'Bash',
-      tool_input: { command: 'echo hello' },
-      tool_response: 'hello',
+      tool_name: 'WebSearch',
+      tool_input: { query: 'mercury loop detector' },
+      tool_response: 'Search results: 10 hits',
       session_id
     });
 

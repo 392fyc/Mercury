@@ -70,8 +70,15 @@ function saveState(statePath, state) {
 }
 
 // ── Tool classification + helpers ────────────────────────────────────────────
-const WRITE_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit', 'MultiEdit']);
-const READ_TOOLS  = new Set(['Read', 'Glob', 'Grep']);
+const WRITE_TOOLS    = new Set(['Edit', 'Write', 'NotebookEdit', 'MultiEdit']);
+const READ_TOOLS     = new Set(['Read', 'Glob', 'Grep']);
+// Tools that represent legitimate progress but produce no file artifact —
+// running tests/scripts (Bash), dispatching subagents (Agent), task/skill
+// orchestration (Task*/Skill), and deferred-tool schema fetch (ToolSearch).
+// WebSearch/WebFetch/mcp__* are intentionally NOT here — research loops
+// without artifacts remain the canonical true-stall pattern. See Issue #325.
+const PROGRESS_TOOLS = new Set(['Bash', 'Agent', 'Skill', 'ToolSearch',
+  'Task', 'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet', 'TaskOutput', 'TaskStop']);
 
 function hashInput(input) {
   const s = typeof input === 'string' ? input : JSON.stringify(input ?? '');
@@ -86,7 +93,7 @@ function errorSig(r) {
 }
 
 // ── Update independent counters ───────────────────────────────────────────────
-function update(state, tool, hash, is_write, is_read, errored, err_sig) {
+function update(state, tool, hash, is_write, is_read, is_progress, errored, err_sig) {
   if (!errored) {
     if (tool === state.dup_tool && hash === state.dup_hash) { state.dup_count++; }
     else { state.dup_count = 1; state.dup_tool = tool; state.dup_hash = hash; }
@@ -98,7 +105,7 @@ function update(state, tool, hash, is_write, is_read, errored, err_sig) {
   if (is_write)     { state.read_count = 0; }
   else if (is_read) { state.read_count++; }
   else              { state.read_count = 0; }
-  if (is_write || is_read || errored) { state.np_count = 0; } else { state.np_count++; }
+  if (is_write || is_read || is_progress || errored) { state.np_count = 0; } else { state.np_count++; }
 }
 
 // ── Detect stall (most-specific signal first) ─────────────────────────────────
@@ -132,14 +139,15 @@ function main() {
   const state     = loadState(statePath);
   if (state.session_id !== session_id) { Object.assign(state, EMPTY_STATE()); state.session_id = session_id; }
 
-  const errored  = hasError(tool_response);
-  const err_sig  = errored ? errorSig(tool_response) : null;
-  const is_write = WRITE_TOOLS.has(tool_name);
-  const is_read  = READ_TOOLS.has(tool_name);
-  const now      = Date.now();
-  const ihash    = hashInput(tool_input);
+  const errored     = hasError(tool_response);
+  const err_sig     = errored ? errorSig(tool_response) : null;
+  const is_write    = WRITE_TOOLS.has(tool_name);
+  const is_read     = READ_TOOLS.has(tool_name);
+  const is_progress = PROGRESS_TOOLS.has(tool_name);
+  const now         = Date.now();
+  const ihash       = hashInput(tool_input);
 
-  update(state, tool_name, ihash, is_write, is_read, errored, err_sig);
+  update(state, tool_name, ihash, is_write, is_read, is_progress, errored, err_sig);
   updateTimestamps(state, is_write, now);
   saveState(statePath, state);
 
@@ -171,4 +179,8 @@ function main() {
   pass();
 }
 
-try { main(); } catch (e) { process.stderr.write(`${TAG} fatal: ${e.message}\n`); process.exit(0); }
+if (require.main === module) {
+  try { main(); } catch (e) { process.stderr.write(`${TAG} fatal: ${e.message}\n`); process.exit(0); }
+} else {
+  module.exports = { update, detectStall, PROGRESS_TOOLS, WRITE_TOOLS, READ_TOOLS };
+}
