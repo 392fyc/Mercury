@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# scripts/lane-spawn.sh — Mercury multi-lane atomic spawn ceremony.
-# Implements #323 Phase B B1 (atomic lane creation).
+# scripts/lane-spawn.sh — Mercury multi-lane spawn ceremony.
+# Implements #323 Phase B B1 (lane creation with documented rollback semantics).
 #
-# Steps (all-or-nothing semantics where possible):
+# Steps (best-effort sequencing — see Rollback policy below for partial-failure
+# semantics; this is NOT cryptographic atomicity):
 #   1. Validate <lane>, <issue>, optional --short / --slug args
 #   2. Refuse if <lane> already appears in LANES.md "## Active Lanes" section
 #   3. Refuse if active-lane count is at HARD-CAP=5 (Rule 7 Delta 7 / Issue #314)
