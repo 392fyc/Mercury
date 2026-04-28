@@ -1,29 +1,12 @@
 #!/usr/bin/env python3
-"""mercury-memory-index-validator.py — Phase F.C lock-in (Issue #331).
+"""mercury-memory-index-validator.py — Phase F.C SessionEnd hook (#331).
 
-SessionEnd hook for Claude Code. Runs `regenerate-memory-index.sh --format diff`
-against the Mercury user-memory dir; if drift detected (script exit 1), emits a
-warning to stderr (visible to user only — SessionEnd hooks cannot block).
-
-Best-effort observability: never blocks session termination, never raises.
-SessionEnd output JSON is ignored by Claude Code per the hook contract; only
-stderr is surfaced to user.
-
-Env vars:
-  MERCURY_INDEX_VALIDATOR_DISABLED=1  — no-op the hook (soft-disable)
-  MERCURY_INDEX_AUTOFIX=1             — when drift detected (regen exit 1),
-                                        run `regenerate-memory-index.sh
-                                        --in-place` automatically; emit a
-                                        confirmation stderr message instead
-                                        of a drift warning. Per Issue #331
-                                        Hook 2 spec ("Auto-fix with --in-place
-                                        if MERCURY_INDEX_AUTOFIX=1 set").
-  MERCURY_REPO_ROOT=<path>            — Mercury repo root (required for
-                                        deployed hooks; in-repo invocation
-                                        auto-resolves via __file__).
-
-Per Issue #331 acceptance + Mercury CLAUDE.md §Related Repositories user-level
-governance pattern (model: #259).
+Runs `regenerate-memory-index.sh --format diff`; surfaces drift to stderr
+(SessionEnd cannot block per Claude Code contract). Best-effort observability;
+never raises. Env: MERCURY_INDEX_VALIDATOR_DISABLED=1 (soft-disable),
+MERCURY_INDEX_AUTOFIX=1 (auto `--in-place` on drift per Issue #331 Hook 2),
+MERCURY_REPO_ROOT (required for deployed hooks; in-repo auto-resolves via
+__file__). See `.mercury/docs/guides/memory-index-regenerate.md` §Phase F.C.
 """
 from __future__ import annotations
 
@@ -38,19 +21,9 @@ REGEN_SCRIPT_REL = Path("scripts") / "regenerate-memory-index.sh"
 
 
 def _resolve_repo_root() -> Path | None:
-    """Resolve Mercury repo root with two strategies, no machine-specific fallback.
-
-    1. `MERCURY_REPO_ROOT` env var (preferred for deployed hooks under
-       ~/.claude/hooks/ — set in settings.json env block per deployment guide).
-    2. `__file__`-relative heuristic: when this script lives at
-       <repo>/scripts/hooks/mercury-memory-index-validator.py, parents[2] is
-       the repo root. Works during in-repo invocation and tests; degrades
-       gracefully when the script is copied into ~/.claude/hooks/ (parents[2]
-       there is ~, which won't contain regenerate-memory-index.sh).
-
-    Returns None when no candidate yields a valid repo (silent no-op per
-    SessionEnd observability-only contract). Hardcoded absolute paths are
-    forbidden per Mercury CLAUDE.md `feedback_no_hardcoded_paths`.
+    """Resolve Mercury repo root: MERCURY_REPO_ROOT env (deployed hooks) or
+    `__file__.parents[2]` heuristic (in-repo). No machine-specific fallback
+    per `feedback_no_hardcoded_paths`. Returns None on miss → silent no-op.
     """
     env = os.environ.get("MERCURY_REPO_ROOT", "").strip()
     if env:

@@ -470,9 +470,8 @@ Status of subsequent migration phases:
   anchor `lane-protocol-v0.1-pre-cutover` tagged on develop.
 - **#331 (Phase F.C)** — staged. Source-of-truth scripts live at
   `scripts/hooks/mercury-memory-index-write-guard.py` (PreToolUse) and
-  `scripts/hooks/mercury-memory-index-validator.py` (SessionEnd). 49 test
-  assertions across two harnesses pass (write-guard 23 + validator 26).
-  58 test assertions across two harnesses pass (write-guard 23 + validator 35).
+  `scripts/hooks/mercury-memory-index-validator.py` (SessionEnd). 58 test
+  assertions across two harnesses pass (write-guard 23 + validator 35).
   Implements `MERCURY_INDEX_AUTOFIX=1` env path per Issue #331 Hook 2 spec
   (auto `--in-place` on drift). Deployment to
   `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/` (per #259 user-level governance
