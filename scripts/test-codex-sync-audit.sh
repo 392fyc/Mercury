@@ -40,7 +40,9 @@ assert_contains() {
   fi
 }
 
-WORK_DIR="$(mktemp -d)"
+# `mktemp -d -t` is portable across GNU coreutils and BSD/macOS mktemp; bare
+# `mktemp -d` is GNU-only.
+WORK_DIR="$(mktemp -d -t codex-sync-audit-test.XXXXXX)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
 PROMPT_FILE="$WORK_DIR/prompt.txt"

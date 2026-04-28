@@ -110,7 +110,12 @@ case "$POLL_S" in ''|*[!0-9]*) die "--poll-interval must be a non-negative integ
 # --- dependency resolution ---
 NODE_BIN="${CODEX_COMPANION_NODE:-node}"
 command -v "$NODE_BIN" >/dev/null 2>&1 || die "node not found in PATH (set CODEX_COMPANION_NODE to override)" 3
-command -v jq >/dev/null 2>&1 || die "jq not found in PATH (required to parse codex-companion JSON)" 3
+# `jq` is only needed on the live execution path (dispatching Codex + parsing JSON
+# responses). --dry-run never invokes the companion or parses any JSON, so we skip
+# the jq check there to keep --dry-run usable on minimal hosts that do not have jq.
+if [[ "$DRY_RUN" -ne 1 ]]; then
+  command -v jq >/dev/null 2>&1 || die "jq not found in PATH (required to parse codex-companion JSON)" 3
+fi
 
 # Sort lines containing a path with a version segment (e.g. .../codex/1.0.10/scripts/...)
 # in descending semver order. Read from stdin, write to stdout. Probes once at module load
@@ -284,7 +289,11 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
 fi
 
 # --- 1. dispatch ---
-LAUNCH_JSON="$(run_companion "${DISPATCH_ARGS[@]}")" || die "codex-companion task --background dispatch failed (exit $?)" 3
+# Always log the resolved companion path before dispatch so a failure trace lets
+# the operator see which path was actually used. Quiet success path: this is
+# stderr only, callers parsing stdout markers are unaffected.
+printf 'codex-sync-audit: companion=%s\n' "$COMPANION_SCRIPT" >&2
+LAUNCH_JSON="$(run_companion "${DISPATCH_ARGS[@]}")" || die "codex-companion task --background dispatch failed (exit $?; companion was $COMPANION_SCRIPT)" 3
 
 JOB_ID="$(jq_or_die "$LAUNCH_JSON" '.jobId // empty' 'launch')"
 [[ -n "$JOB_ID" ]] || {

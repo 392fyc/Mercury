@@ -25,7 +25,7 @@ S4 retrospective measured ~25k tokens of pure forwarder boot overhead per dispat
 
 ## Native CLI surface (verified 2026-04-27)
 
-`codex-companion.mjs` (cached at `~/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs`) already exposes the synchronous primitives we need:
+`codex-companion.mjs` (cached at `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs`) already exposes the synchronous primitives we need:
 
 | Subcommand | Synchronous? | Use |
 |------------|--------------|-----|
@@ -97,7 +97,7 @@ C requires upstream PR cycle (uncertain timeline, oh-my-claudecode acceptance), 
 ### Trade-offs accepted
 
 - **Loses subagent context inheritance.** Direct CLI invocation does not see the subagent system prompt or skills (`codex-cli-runtime`, `gpt-5-4-prompting`). For dual-verify the prompt is fully constructed by the skill itself with explicit instructions, so this is not a problem.
-- **Plugin path discovery.** The wrapper must locate `codex-companion.mjs` at runtime. Resolved via env-var precedence (`CODEX_COMPANION_SCRIPT` → `CLAUDE_PLUGIN_ROOT` → `${HOME}/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs`).
+- **Plugin path discovery.** The wrapper must locate `codex-companion.mjs` at runtime. Resolved via env-var precedence: `CODEX_COMPANION_SCRIPT` (full file path) → `CLAUDE_PLUGIN_ROOT` (when set, joined with `/scripts/codex-companion.mjs`) → `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/...` → `$USERPROFILE/.claude/plugins/...` (only when distinct from `$HOME`). The conventional Mercury config root is `${CLAUDE_CONFIG_DIR:-$HOME/.claude}`; the discovery code probes the cache version directory via semver-aware sort to survive plugin upgrades without code changes.
 - **Less forgiving error path.** When the CLI is unavailable (Codex not set up), the wrapper exits nonzero with a clear "Codex unavailable, run /codex:setup" message; dual-verify skill falls back to Claude-only with this message recorded in PR body. Unchanged from current behavior.
 
 ## Implementation plan
@@ -179,8 +179,8 @@ Add section: **Codex side returns synchronously via `scripts/codex-sync-audit.sh
 ## Sources
 
 - Issue #326 spec — <https://github.com/392fyc/Mercury/issues/326>
-- `~/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs` — verified 2026-04-27 from `~/.claude/plugins/cache/openai-codex/codex/1.0.2/` (same content)
+- `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs` — verified 2026-04-27; the same script is cached at `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache/openai-codex/codex/<version>/scripts/codex-companion.mjs` (the `<version>` segment is glob-discovered at runtime via semver sort, so the wrapper survives plugin upgrades).
 - S4-side-multi-lane handoff retrospective ("Codex CLI 不稳定" entry) — corrected by this analysis
 - S80 main lane empirical: codex-rescue background process `bvcebb4wl` / agentId `aba2edb5a494364c0` — silent 2h+ post-13:15:04Z (per session-handoff.md Key Context)
 - Mercury `feedback_dual_verify_gate.md` — current Codex-rescue contract documentation (will be updated)
-- Codex agent definition — `~/.claude/plugins/marketplaces/openai-codex/plugins/codex/agents/codex-rescue.md` (forwarder-only contract, intentionally non-blocking)
+- Codex agent definition — `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/marketplaces/openai-codex/plugins/codex/agents/codex-rescue.md` (forwarder-only contract, intentionally non-blocking)

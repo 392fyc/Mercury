@@ -94,7 +94,9 @@ Check: language-appropriate correctness gates (e.g. `tsc --noEmit` for TypeScrip
 ```bash
 # 1. Write the audit prompt to a temp file. Keep it concrete: list the diff scope,
 #    explicit checks Codex should perform, and the expected output schema.
-PROMPT_FILE="$(mktemp)"
+#    `mktemp -t` works on both GNU coreutils and BSD/macOS mktemp; bare `mktemp` is
+#    not portable across the two (GNU defaults to /tmp/tmp.XXX, BSD requires a template).
+PROMPT_FILE="$(mktemp -t dual-verify-codex.XXXXXX)"
 cat > "$PROMPT_FILE" <<'EOF'
 Audit branch <branch> vs <base>. Focus on: code style, edge cases,
 error handling, metrics completeness, memory leak / cleanup on terminal paths,
