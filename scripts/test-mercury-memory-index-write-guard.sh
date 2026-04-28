@@ -193,7 +193,7 @@ assert_eq "T10.regenerate-stamp.empty-output" "" "$out"
 # blocked. Note Write to canonical (T5/T6) is still unconditionally denied —
 # the discriminator is tool_name (Edit) + region presence.
 mem_dir2="$(setup_tmp_memory_dir_no_markers)"
-TMP_MEM_DIR_LIST="$TMP_MEM_DIR_LIST $mem_dir2"
+TMP_MEM_DIR_LIST+=("$mem_dir2")
 target2="$mem_dir2/MEMORY.md"
 payload="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s","old_string":"no markers here yet","new_string":"hacked"}}' "$target2")"
 out="$(MERCURY_MEMORY_DIR="$mem_dir2" run_hook "$payload")"

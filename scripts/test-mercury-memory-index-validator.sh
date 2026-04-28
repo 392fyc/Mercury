@@ -76,6 +76,42 @@ EOF
   printf '%s' "$dir"
 }
 
+# Stub repo where the script behaves differently per first arg:
+#   --format diff → exit 1 (drift)
+#   --in-place    → exit 0 (autofix succeeds)
+make_stub_repo_drift_then_autofix_ok() {
+  local dir; dir="$(portable_mktemp_d val-fix-ok)"
+  mkdir -p "$dir/scripts"
+  cat > "$dir/scripts/regenerate-memory-index.sh" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+  --format) [ "${2:-}" = "diff" ] && { echo "drift on stderr" >&2; exit 1; } || exit 2 ;;
+  --in-place) echo "in-place autofix complete"; exit 0 ;;
+  *) exit 2 ;;
+esac
+EOF
+  chmod +x "$dir/scripts/regenerate-memory-index.sh"
+  printf '%s' "$dir"
+}
+
+# Stub repo where:
+#   --format diff → exit 1 (drift)
+#   --in-place    → exit 1 (autofix itself fails)
+make_stub_repo_drift_then_autofix_fail() {
+  local dir; dir="$(portable_mktemp_d val-fix-bad)"
+  mkdir -p "$dir/scripts"
+  cat > "$dir/scripts/regenerate-memory-index.sh" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+  --format) [ "${2:-}" = "diff" ] && exit 1 || exit 2 ;;
+  --in-place) echo "autofix failed: write error" >&2; exit 1 ;;
+  *) exit 2 ;;
+esac
+EOF
+  chmod +x "$dir/scripts/regenerate-memory-index.sh"
+  printf '%s' "$dir"
+}
+
 # Stub repo where regenerate --format diff exits 2 (script error, NOT drift)
 make_stub_repo_script_error() {
   local dir; dir="$(portable_mktemp_d val-err)"
@@ -179,6 +215,47 @@ if [ -n "$py_resolved" ]; then
 else
   printf 'SKIP T10.no-bash: cannot resolve %s on PATH\n' "$PY" >&2
 fi
+
+# ----- Test 12: MERCURY_INDEX_AUTOFIX=1 + drift → auto --in-place + confirmation -----
+# Per Issue #331 Hook 2 spec: when drift detected (exit 1) AND autofix env set,
+# validator runs --in-place to refresh canonical, suppresses standard drift
+# warning, emits confirmation message instead.
+repo_fix_ok="$(make_stub_repo_drift_then_autofix_ok)"
+TMP_LIST+=("$repo_fix_ok")
+combined="$(printf '{"session_id":"sess-12"}' | \
+  env MERCURY_REPO_ROOT="$repo_fix_ok" MERCURY_INDEX_AUTOFIX=1 "$PY" "$HOOK" 2>&1)"
+ec=$?
+assert_eq "T12.autofix-ok.exit-code" "0" "$ec"
+assert_contains "T12.autofix-ok.confirmation" "auto-fix via --in-place succeeded" "$combined"
+case "$combined" in
+  *"drift detected at session end (session=sess-12, regen exit=1)"*)
+    FAIL=$((FAIL + 1)); ASSERT=$((ASSERT + 1))
+    printf 'FAIL T12.autofix-ok.suppresses-warning\n  unwanted standard drift warning present\n' >&2 ;;
+  *) PASS=$((PASS + 1)); ASSERT=$((ASSERT + 1)) ;;
+esac
+
+# ----- Test 13: MERCURY_INDEX_AUTOFIX=1 but autofix itself fails → fallback warning -----
+repo_fix_bad="$(make_stub_repo_drift_then_autofix_fail)"
+TMP_LIST+=("$repo_fix_bad")
+combined="$(printf '{"session_id":"sess-13"}' | \
+  env MERCURY_REPO_ROOT="$repo_fix_bad" MERCURY_INDEX_AUTOFIX=1 "$PY" "$HOOK" 2>&1)"
+ec=$?
+assert_eq "T13.autofix-fail.exit-code" "0" "$ec"
+assert_contains "T13.autofix-fail.attempt-noted" "auto-fix exited 1" "$combined"
+assert_contains "T13.autofix-fail.fallback-drift" "drift detected" "$combined"
+
+# ----- Test 14: MERCURY_INDEX_AUTOFIX unset → standard drift warning, no autofix attempt -----
+combined="$(printf '{"session_id":"sess-14"}' | \
+  env MERCURY_REPO_ROOT="$repo_fix_ok" "$PY" "$HOOK" 2>&1)"
+ec=$?
+assert_eq "T14.autofix-unset.exit-code" "0" "$ec"
+assert_contains "T14.autofix-unset.standard-drift" "drift detected" "$combined"
+case "$combined" in
+  *"auto-fix via --in-place succeeded"*)
+    FAIL=$((FAIL + 1)); ASSERT=$((ASSERT + 1))
+    printf 'FAIL T14.autofix-unset.no-fix-attempted\n  unwanted autofix message present\n' >&2 ;;
+  *) PASS=$((PASS + 1)); ASSERT=$((ASSERT + 1)) ;;
+esac
 
 # ----- Test 11: regenerate exit 2 (script error, NOT drift) → distinct warning -----
 # Per Argus iter-2 medium finding: any non-zero exit was treated as drift.

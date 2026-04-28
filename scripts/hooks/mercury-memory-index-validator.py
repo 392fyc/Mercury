@@ -9,8 +9,18 @@ Best-effort observability: never blocks session termination, never raises.
 SessionEnd output JSON is ignored by Claude Code per the hook contract; only
 stderr is surfaced to user.
 
-Soft-disable env var:
-  MERCURY_INDEX_VALIDATOR_DISABLED=1  — no-op the hook
+Env vars:
+  MERCURY_INDEX_VALIDATOR_DISABLED=1  — no-op the hook (soft-disable)
+  MERCURY_INDEX_AUTOFIX=1             — when drift detected (regen exit 1),
+                                        run `regenerate-memory-index.sh
+                                        --in-place` automatically; emit a
+                                        confirmation stderr message instead
+                                        of a drift warning. Per Issue #331
+                                        Hook 2 spec ("Auto-fix with --in-place
+                                        if MERCURY_INDEX_AUTOFIX=1 set").
+  MERCURY_REPO_ROOT=<path>            — Mercury repo root (required for
+                                        deployed hooks; in-repo invocation
+                                        auto-resolves via __file__).
 
 Per Issue #331 acceptance + Mercury CLAUDE.md §Related Repositories user-level
 governance pattern (model: #259).
@@ -126,6 +136,48 @@ def main() -> int:
     session_id = payload.get("session_id", "unknown") if isinstance(payload, dict) else "unknown"
     stderr_tail = (result.stderr or "").strip().splitlines()[-5:]
     stdout_tail = (result.stdout or "").strip().splitlines()[-5:]
+
+    # Auto-fix path (Issue #331 Hook 2 spec): when drift detected (exit 1) AND
+    # MERCURY_INDEX_AUTOFIX=1 set, run --in-place to refresh canonical from
+    # per-session sources. Suppresses the drift warning if the auto-fix
+    # itself succeeds; emits a confirmation message instead so operators
+    # can audit silent rewrites.
+    if result.returncode == 1 and os.environ.get("MERCURY_INDEX_AUTOFIX", "").strip() == "1":
+        try:
+            fix_result = subprocess.run(
+                ["bash", str(script_path), "--in-place"],
+                cwd=str(repo_root),
+                env=env,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=30,
+            )
+        except (subprocess.TimeoutExpired, OSError, UnicodeError) as exc:
+            sys.stderr.write(
+                "Mercury memory-index validator: MERCURY_INDEX_AUTOFIX=1 set "
+                "but --in-place auto-fix failed "
+                f"({exc.__class__.__name__}: {exc}). Drift remains; run "
+                "manually: `bash scripts/regenerate-memory-index.sh "
+                f"--in-place`. (session={session_id})\n"
+            )
+            return 0
+        if fix_result.returncode == 0:
+            sys.stderr.write(
+                "Mercury memory-index validator: drift detected at session "
+                f"end (session={session_id}); MERCURY_INDEX_AUTOFIX=1 set "
+                "→ auto-fix via --in-place succeeded. Canonical files "
+                "refreshed from per-session sources.\n"
+            )
+            return 0
+        # Auto-fix attempted but failed — fall through to standard warning
+        sys.stderr.write(
+            "Mercury memory-index validator: MERCURY_INDEX_AUTOFIX=1 set "
+            "but --in-place auto-fix exited "
+            f"{fix_result.returncode}. Falling back to drift warning.\n"
+        )
+
     if result.returncode == 1:
         # Per regenerate-memory-index.sh exit-code contract: exit 1 == drift
         # detected. Anything else is script failure (parse error / args /

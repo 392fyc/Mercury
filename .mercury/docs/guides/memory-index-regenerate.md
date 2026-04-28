@@ -253,8 +253,9 @@ part of the in-repo PR.
 | `MERCURY_INDEX_GUARD_DISABLED=1` | Short-circuits the PreToolUse hook (allows all edits). Use for emergency manual canonical edits. |
 | `MERCURY_INDEX_REGENERATE=1` | Allows the PreToolUse hook (defense-in-depth marker — auto-set by `regenerate-memory-index.sh`). |
 | `MERCURY_INDEX_VALIDATOR_DISABLED=1` | No-ops the SessionEnd validator. |
+| `MERCURY_INDEX_AUTOFIX=1` | When drift detected at session end, validator runs `regenerate-memory-index.sh --in-place` automatically and emits a confirmation message instead of a drift warning. Per Issue #331 Hook 2 spec. |
 | `MERCURY_REPO_ROOT=<path>` | Mercury repo root used by validator. **Required for deployed hooks** (`~/.claude/hooks/`) — there is no machine-specific fallback. In-repo invocation auto-resolves via `__file__.parents[2]`. If unset and auto-resolution fails → silent no-op. |
-| `MERCURY_MEMORY_DIR=<path>` | Override user-memory dir consumed by both hooks (defaults to `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory`). |
+| `MERCURY_MEMORY_DIR=<path>` | User-memory dir consumed by both hooks. **Recommended for deployed hooks**: default `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory` is coupled to the project name `Mercury` and cwd `D:\Mercury\Mercury` (Claude Code per-project encoding). For non-default checkouts (different drive, project rename, multi-checkout), set explicitly in `settings.json` env block. |
 
 ### Deployment (per #259 user-level governance pattern)
 
@@ -271,18 +272,25 @@ cp scripts/hooks/mercury-memory-index-validator.py   "$CC/hooks/"
 chmod +x "$CC/hooks/mercury-memory-index-write-guard.py" \
          "$CC/hooks/mercury-memory-index-validator.py"
 
-# 3. Set MERCURY_REPO_ROOT in settings.json env block (required when hooks
-#    live outside the repo — no hardcoded fallback). Use placeholder syntax
+# 3. Set MERCURY_REPO_ROOT (required) and MERCURY_MEMORY_DIR (recommended for
+#    non-default checkouts) in settings.json env block. Use placeholder syntax
 #    appropriate to your environment:
 #
 #    "env": {
-#      "MERCURY_REPO_ROOT": "<absolute path to your local Mercury repo>",
+#      "MERCURY_REPO_ROOT":  "<absolute path to your local Mercury repo>",
+#      "MERCURY_MEMORY_DIR": "<absolute path to your Claude Code per-project memory dir>",
 #      ...existing keys...
 #    }
 #
 #    Examples (do NOT copy verbatim — substitute your own checkout path):
-#      Windows:  "MERCURY_REPO_ROOT": "C:\\path\\to\\Mercury"
-#      Unix:     "MERCURY_REPO_ROOT": "/path/to/Mercury"
+#      Windows:  "MERCURY_REPO_ROOT":  "C:\\path\\to\\Mercury"
+#                "MERCURY_MEMORY_DIR": "C:\\Users\\you\\.claude\\projects\\C--path-to-Mercury\\memory"
+#      Unix:     "MERCURY_REPO_ROOT":  "/path/to/Mercury"
+#                "MERCURY_MEMORY_DIR": "/home/you/.claude/projects/-path-to-Mercury/memory"
+#
+#    MERCURY_REPO_ROOT has no fallback — if missing, validator no-ops silently.
+#    MERCURY_MEMORY_DIR defaults to `${CLAUDE_CONFIG_DIR}/projects/D--Mercury-Mercury/memory`
+#    which is correct only for cwd `D:\Mercury\Mercury` on Windows.
 #
 # 4. Register in settings.json hooks block — add to PreToolUse and SessionEnd
 #    arrays (preserve existing entries):
@@ -409,7 +417,7 @@ mutated. Check `.bak` file mtime against original cutover commit timestamp.
 scripts/test-regenerate-memory-index.sh           # F.A — 44 cases / 82 assertions
 scripts/test-regenerate-memory-index-in-place.sh  # F.B — 14 cases / 54 assertions
 scripts/test-mercury-memory-index-write-guard.sh  # F.C — 23 cases / 23 assertions
-scripts/test-mercury-memory-index-validator.sh    # F.C — 26 cases / 26 assertions
+scripts/test-mercury-memory-index-validator.sh    # F.C — 35 cases / 35 assertions
 ```
 
 F.A coverage: arg validation, sort ordering (lane suffix variants, range rows),
@@ -440,7 +448,10 @@ F.C validator coverage: regenerate exit 0 (clean) → no warning; exit 1 (drift)
 → stderr "drift detected" warning with session_id, regen exit code,
 stderr/stdout tails, fix hint; **exit ≠ 0 and ≠ 1** (script error) → stderr
 "regenerate validation failed" warning distinguishing script errors from
-genuine drift (per regenerate exit-code contract); `MERCURY_INDEX_VALIDATOR_DISABLED=1`
+genuine drift (per regenerate exit-code contract);
+**`MERCURY_INDEX_AUTOFIX=1`** → auto-runs `--in-place` on drift, suppresses
+standard drift warning, emits confirmation when fix succeeds, falls back to
+drift warning when fix fails; `MERCURY_INDEX_VALIDATOR_DISABLED=1`
 → silent no-op even on drift; `bash` missing on PATH → stderr FileNotFoundError
 warning + disable hint (no silent failure); generic OSError → minimal stderr
 warning + disable hint; malformed/empty stdin → silent no-op; missing repo
@@ -461,9 +472,12 @@ Status of subsequent migration phases:
   `scripts/hooks/mercury-memory-index-write-guard.py` (PreToolUse) and
   `scripts/hooks/mercury-memory-index-validator.py` (SessionEnd). 49 test
   assertions across two harnesses pass (write-guard 23 + validator 26).
-  Deployment to `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/` (per #259
-  user-level governance model) is operational and gated on F.B 1-week soak
-  passing — see §Phase F.C for deployment commands and verification checklist.
+  58 test assertions across two harnesses pass (write-guard 23 + validator 35).
+  Implements `MERCURY_INDEX_AUTOFIX=1` env path per Issue #331 Hook 2 spec
+  (auto `--in-place` on drift). Deployment to
+  `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/` (per #259 user-level governance
+  model) is operational and gated on F.B 1-week soak passing — see §Phase F.C
+  for deployment commands and verification checklist.
 
 ## Source references
 
