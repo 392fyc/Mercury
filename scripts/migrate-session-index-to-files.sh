@@ -193,10 +193,13 @@ while IFS=$'\t' read -r sid dat thm out org; do
   # this defense-in-depth blocks any input mutation (e.g. operator paste error
   # introducing `../etc/passwd`) from writing outside SESSIONS_DIR.
   # Whitelist: S<N>(-<lane>)? where N is 1+ digits and lane = [a-z][a-z0-9-]*.
-  # Range rows like `S35–S46` (en-dash) are normalized by derive_filename to
-  # `S35-S46` and ALSO match the whitelist (lane portion = `S46`-like) — so
-  # range rows pass the guard but get visible warning if the operator forgot
-  # to split them manually post-migration.
+  # Range rows like `S35–S46` (en-dash) are intentionally REJECTED by this
+  # whitelist (the lane portion `S46` starts uppercase). This is correct
+  # behavior: range rows are a legacy SESSION_INDEX shape that does NOT fit
+  # the per-session-files model — operators must manually split them into
+  # individual stubs (e.g. S35.md ... S46.md) before --in-place cutover.
+  # Skipped range rows surface as `1 skipped` in the final report so the
+  # operator notices and acts.
   # Argus iter 2 fix (规则不一致): align lowercase-lane constraint with the
   # regenerate-memory-index.sh canonical pattern. Original `[A-Za-z]` allowed
   # uppercase suffixes, which migrate would write to disk but `--in-place`
