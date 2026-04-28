@@ -101,6 +101,13 @@ def main() -> int:
             "Mercury repo. Soft-disable: MERCURY_INDEX_VALIDATOR_DISABLED=1.\n"
         )
         return 0
+    except FileNotFoundError:
+        sys.stderr.write(
+            "Mercury memory-index validator: `bash` executable not on PATH — "
+            "drift check skipped. Install Git Bash / MSYS2 / WSL, or set "
+            "MERCURY_INDEX_VALIDATOR_DISABLED=1 to suppress this notice.\n"
+        )
+        return 0
     except OSError:
         return 0
 

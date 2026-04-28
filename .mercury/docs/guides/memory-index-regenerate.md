@@ -272,12 +272,17 @@ chmod +x "$CC/hooks/mercury-memory-index-write-guard.py" \
          "$CC/hooks/mercury-memory-index-validator.py"
 
 # 3. Set MERCURY_REPO_ROOT in settings.json env block (required when hooks
-#    live outside the repo — no hardcoded fallback):
+#    live outside the repo — no hardcoded fallback). Use placeholder syntax
+#    appropriate to your environment:
 #
 #    "env": {
-#      "MERCURY_REPO_ROOT": "D:\\Mercury\\Mercury",
+#      "MERCURY_REPO_ROOT": "<absolute path to your local Mercury repo>",
 #      ...existing keys...
 #    }
+#
+#    Examples (do NOT copy verbatim — substitute your own checkout path):
+#      Windows:  "MERCURY_REPO_ROOT": "C:\\path\\to\\Mercury"
+#      Unix:     "MERCURY_REPO_ROOT": "/path/to/Mercury"
 #
 # 4. Register in settings.json hooks block — add to PreToolUse and SessionEnd
 #    arrays (preserve existing entries):

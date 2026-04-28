@@ -153,6 +153,24 @@ ec=$?
 assert_eq "T9.not-dict.exit-code" "0" "$ec"
 assert_contains "T9.not-dict.placeholder" "session=unknown" "$combined"
 
+# ----- Test 10: bash executable missing on PATH → FileNotFoundError surfaced -----
+# Restrict PATH to ONLY the directory containing $PY itself (so the test can
+# still launch python.exe) but stripped of any bash/git-bash/MSYS2/WSL paths.
+# Without this finding being surfaced, drift check would silently fail (per
+# Argus iter 1 finding 3).
+py_resolved="$(command -v "$PY" 2>/dev/null || echo "")"
+if [ -n "$py_resolved" ]; then
+  py_dir="$(dirname "$py_resolved")"
+  combined="$(printf '{"session_id":"sess-10"}' | \
+    env -i MERCURY_REPO_ROOT="$repo_clean" PATH="$py_dir" SYSTEMROOT="${SYSTEMROOT:-}" "$PY" "$HOOK" 2>&1)"
+  ec=$?
+  assert_eq "T10.no-bash.exit-code" "0" "$ec"
+  assert_contains "T10.no-bash.warning" "bash" "$combined"
+  assert_contains "T10.no-bash.disable-hint" "MERCURY_INDEX_VALIDATOR_DISABLED" "$combined"
+else
+  printf 'SKIP T10.no-bash: cannot resolve %s on PATH\n' "$PY" >&2
+fi
+
 # ----- Summary -----
 printf '\n----\n%d cases / %d assertions / %d fail\n' \
   "$((PASS + FAIL))" "$ASSERT" "$FAIL" >&2
