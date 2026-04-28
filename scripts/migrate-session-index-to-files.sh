@@ -93,13 +93,17 @@ derive_filename() {
 #
 #   S29                -> main
 #   S6-side-multi-lane -> side-multi-lane
-#   S35-S46            -> main (range row, treat as main lane)
+#   S12-team-a         -> team-a   (any hyphen-separated suffix, not just side-*)
+#   S35-S46            -> S46      (range row — caller must validate; treated as
+#                                   sentinel suffix, not a real lane)
 # ---------------------------------------------------------------------------
 derive_lane() {
   local sid="$1"
   case "$sid" in
-    *-side-*)
-      # Strip "S<digits>-" prefix to get lane name
+    S[0-9]*-*)
+      # Strip "S<digits>-" prefix to get lane name. Matches ANY hyphen-separated
+      # suffix (side-* / team-* / experiment-* / etc) — the original `*-side-*`
+      # pattern incorrectly classified non-side lanes as `main`.
       printf '%s' "$sid" | sed 's/^S[0-9]\{1,\}-//'
       ;;
     *)
@@ -183,6 +187,21 @@ parse_session_index_rows() {
 # Iterate rows
 while IFS=$'\t' read -r sid dat thm out org; do
   [ -z "$sid" ] && continue
+
+  # SECURITY: path-traversal guard — validate sid against canonical whitelist
+  # BEFORE constructing $filepath. SESSION_INDEX.md is a trusted local file but
+  # this defense-in-depth blocks any input mutation (e.g. operator paste error
+  # introducing `../etc/passwd`) from writing outside SESSIONS_DIR.
+  # Whitelist: S<N>(-<lane>)? where N is 1+ digits and lane = [a-z][a-z0-9-]*.
+  # Range rows like `S35–S46` (en-dash) are normalized by derive_filename to
+  # `S35-S46` and ALSO match the whitelist (lane portion = `S46`-like) — so
+  # range rows pass the guard but get visible warning if the operator forgot
+  # to split them manually post-migration.
+  if ! [[ "$sid" =~ ^S[0-9]+(-[A-Za-z][A-Za-z0-9-]*)?$ ]]; then
+    warn "path-traversal guard: rejecting non-canonical session_id $sid (expected S<N> or S<N>-<lane> with lane=[A-Za-z][A-Za-z0-9-]*)"
+    SKIPPED=$((SKIPPED + 1))
+    continue
+  fi
 
   filename=$(derive_filename "$sid")
   filepath="$SESSIONS_DIR/$filename"

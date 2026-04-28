@@ -271,15 +271,15 @@ if [ -d "$SESSIONS_DIR" ]; then
     # Restrict to S<N>.md or S<N>-<lane>.md naming. Drafts, READMEs, or accidentally
     # placed files in sessions/ are skipped with WARN rather than failing the whole run.
     ps_base=$(basename "$ps_file")
-    # Tightened pattern (H2 dual-verify fix): lane suffix MUST start with a
-    # lowercase letter and contain only `[a-z0-9-]`. Rejects edge cases like
-    # `S99-.md` (empty suffix), `S99-Upper.md` (uppercase), `S5xtra.md` (no
-    # hyphen separator) that the original `S[0-9]*-*.md` glob accepted.
-    case "$ps_base" in
-      S[0-9].md|S[0-9][0-9].md|S[0-9][0-9][0-9].md) ;;
-      S[0-9]-[a-z][a-z0-9-]*.md|S[0-9][0-9]-[a-z][a-z0-9-]*.md|S[0-9][0-9][0-9]-[a-z][a-z0-9-]*.md) ;;
-      *) warn "skip non-canonical session filename: $ps_base (expected S<N>.md or S<N>-<lane>.md, lane=[a-z][a-z0-9-]*)"; continue ;;
-    esac
+    # Tightened pattern (H2 dual-verify fix + Argus iter1 unbounded-digit fix):
+    # lane suffix MUST start with a lowercase letter and contain only
+    # `[a-z0-9-]`. Session number is unbounded (originally capped at 3 digits;
+    # Argus correctly noted S1000+ would silently skip — fixed via bash regex
+    # since case-glob can't express "1+ digits" cleanly).
+    if ! [[ "$ps_base" =~ ^S[0-9]+(-[a-z][a-z0-9-]*)?\.md$ ]]; then
+      warn "skip non-canonical session filename: $ps_base (expected S<N>.md or S<N>-<lane>.md, lane=[a-z][a-z0-9-]*)"
+      continue
+    fi
     # File path embedded in bullet markdown links is relative to MEMORY.md
     # (which lives one level up from sessions/), so prefix with "sessions/".
     file_path="sessions/$ps_base"
@@ -288,14 +288,15 @@ if [ -d "$SESSIONS_DIR" ]; then
       exit 1
     fi
     sid_field=${row%%$'\t'*}
-    # H2 dual-verify fix: validate session_id matches canonical S<N> or
-    # S<N>-<lane> form AND matches filename basename. Catches frontmatter drift
-    # (e.g. `session_id: arbitrary string` or filename/sid mismatch from rename).
-    case "$sid_field" in
-      S[0-9]|S[0-9][0-9]|S[0-9][0-9][0-9]) ;;
-      S[0-9]-[a-z][a-z0-9-]*|S[0-9][0-9]-[a-z][a-z0-9-]*|S[0-9][0-9][0-9]-[a-z][a-z0-9-]*) ;;
-      *) printf 'regenerate-memory-index: invalid session_id %q in %s (expected S<N> or S<N>-<lane>)\n' "$sid_field" "$ps_file" >&2; exit 1 ;;
-    esac
+    # H2 dual-verify fix + Argus iter1 unbounded-digit fix: validate session_id
+    # matches canonical S<N> or S<N>-<lane> form AND matches filename basename.
+    # Catches frontmatter drift (e.g. `session_id: arbitrary string` or
+    # filename/sid mismatch from rename). Bash regex (not case-glob) so session
+    # number is unbounded.
+    if ! [[ "$sid_field" =~ ^S[0-9]+(-[a-z][a-z0-9-]*)?$ ]]; then
+      printf 'regenerate-memory-index: invalid session_id %q in %s (expected S<N> or S<N>-<lane>)\n' "$sid_field" "$ps_file" >&2
+      exit 1
+    fi
     expected_basename="${sid_field}.md"
     if [ "$expected_basename" != "$ps_base" ]; then
       printf 'regenerate-memory-index: session_id/filename mismatch in %s: frontmatter session_id=%s expects filename %s\n' \
@@ -639,16 +640,26 @@ if [ "$IN_PLACE" = "1" ]; then
   splice_session_index_in_place "$SESSION_INDEX_FILE" "$ROWS_TMP"
   splice_memory_history_in_place "$MEMORY_FILE"        "$BULLETS_TMP"
 
-  # H1 dual-verify fix: post-splice marker verification. If the source file
-  # lacked the expected anchor (`| Session |` table header in SESSION_INDEX or
-  # `## Project (Session History)` heading in MEMORY), the awk first-run state
-  # machine never transitions out of "before" and writes ZERO markers — the
-  # script would otherwise report success on a silent no-op cutover. Failing
-  # here surfaces the missing-anchor case loudly so operators can fix the
-  # canonical file structure before believing the cutover landed.
+  # H1 dual-verify fix + Argus iter1 BEGIN/END symmetry fix: post-splice marker
+  # verification. Three failure modes guarded:
+  #   (a) BEGIN marker missing → source lacked the anchor (`| Session |` /
+  #       `## Project (Session History)`); awk state machine no-op'd silently
+  #   (b) END marker missing OR not exactly one → splice broken mid-write OR
+  #       previous run left a partial state behind; re-running could produce
+  #       structure damage compounding
+  #   (c) BEGIN/END count mismatch (should be exactly one of each) → marker
+  #       duplication from a prior buggy run; operator MUST restore from .bak
+  #       before re-attempting cutover
+  # All cases die loudly with concrete remediation so operators don't believe
+  # a broken cutover landed cleanly. No auto-rollback (operator initiates per
+  # documented Channel 2; auto-restore could mask repeated failures).
   for canonical in "$SESSION_INDEX_FILE" "$MEMORY_FILE"; do
-    if ! grep -qF -- "$IN_PLACE_BEGIN_MARKER" "$canonical"; then
-      die "splice failed: marker absent in $canonical after --in-place (expected anchor: '| Session |' table header in SESSION_INDEX.md OR '## Project (Session History)' heading in MEMORY.md). Restore from .pre-cutover.bak and verify canonical file structure."
+    begin_count=$(grep -cF -- "$IN_PLACE_BEGIN_MARKER" "$canonical" 2>/dev/null || true)
+    begin_count=${begin_count:-0}
+    end_count=$(grep -cF -- "$IN_PLACE_END_MARKER" "$canonical" 2>/dev/null || true)
+    end_count=${end_count:-0}
+    if [ "$begin_count" -ne 1 ] || [ "$end_count" -ne 1 ]; then
+      die "splice verification failed: $canonical has $begin_count BEGIN + $end_count END markers (expected 1+1). Likely missing anchor (table header / heading) OR prior partial-write state. Restore from $canonical.pre-cutover.bak before re-attempting cutover."
     fi
   done
 

@@ -346,7 +346,7 @@ write_memory_md "$M16" '- placeholder'
 write_session_file "$M16" "S1.md" "theme1" "out1"
 run_case "no_table_header_rejected" bash "$SCRIPT" --memory-dir "$M16" --in-place
 assert_rc "no_table_header_rejected_rc" 2
-assert_err_contains "no_table_header_msg" "marker absent"
+assert_err_contains "no_table_header_msg" "splice verification failed"
 
 # --- Test 17: H1 — silent no-op rejection when MEMORY lacks history heading ---
 M17=$(mk_memdir "no-history-heading")
@@ -360,7 +360,7 @@ EOF
 write_session_file "$M17" "S1.md" "theme1" "out1"
 run_case "no_history_heading_rejected" bash "$SCRIPT" --memory-dir "$M17" --in-place
 assert_rc "no_history_heading_rejected_rc" 2
-assert_err_contains "no_history_heading_msg" "marker absent"
+assert_err_contains "no_history_heading_msg" "splice verification failed"
 
 # --- Test 18: H2 — frontmatter session_id mismatching filename rejected ---
 M18=$(mk_memdir "sid-filename-mismatch")
@@ -437,6 +437,32 @@ assert_err_contains "non_canonical_filename_warn1" "skip non-canonical session f
 assert_err_contains "non_canonical_filename_warn2" "skip non-canonical session filename: S5-Upper.md"
 # SESSION_INDEX row falls through; from-index value present
 assert_file_contains "non_canonical_fallback_to_index" "$M20/SESSION_INDEX.md" "from-index"
+
+# --- Test 21: Argus iter1 fix — unbounded session number digits (S1234+) ---
+M21=$(mk_memdir "unbounded-digits")
+write_session_index "$M21" '| S1234 | 2026-01-01 | t | o | — |'
+write_memory_md "$M21" '- placeholder'
+write_session_file "$M21" "S1234.md" "large-num-theme" "large-num-out" "main" "2026-01-01" "S1234"
+run_case "unbounded_digits" bash "$SCRIPT" --memory-dir "$M21" --in-place
+assert_rc "unbounded_digits_rc" 0
+assert_file_contains "unbounded_digits_row" "$M21/SESSION_INDEX.md" "| S1234 | 2026-01-01 | large-num-theme |"
+
+# --- Test 22: Argus iter1 fix — BEGIN/END marker asymmetry detection ---
+M22=$(mk_memdir "asymmetric-markers")
+write_session_index "$M22" '| S1 | 2026-01-01 | t | o | — |'
+write_memory_md "$M22" '- placeholder'
+write_session_file "$M22" "S1.md" "theme1" "out1"
+# First valid run to populate markers
+bash "$SCRIPT" --memory-dir "$M22" --in-place >/dev/null 2>&1
+# Manually corrupt: delete END marker line
+sed -i '/^<!-- END: scripts\/regenerate-memory-index.sh --in-place/d' "$M22/SESSION_INDEX.md"
+# Re-run should detect asymmetry and fail
+run_case "asymmetric_markers_detected" bash "$SCRIPT" --memory-dir "$M22" --in-place
+# Note: subsequent-run path replaces marker content; if BEGIN exists but END is missing,
+# the subsequent-run awk reaches EOF with state="in_marker" and never closes. Output then
+# has BEGIN-with-content but no END — verification step catches it.
+assert_rc "asymmetric_markers_rc" 2
+assert_err_contains "asymmetric_markers_msg" "splice verification failed"
 
 # --- Final report ---
 printf '\n=== regenerate-memory-index --in-place test summary ===\n'
