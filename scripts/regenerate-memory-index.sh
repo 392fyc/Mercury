@@ -28,7 +28,12 @@
 # Out of scope (per Issue #329/#330 acceptance criteria):
 #   - feedback_*.md / project_*.md (non-session) / reference_*.md MEMORY.md rows
 #   - mem0 / claude-handoff session_chain integration (orthogonal #252)
-#   - PreToolUse / SessionEnd hook lock-in (Phase F.C, Issue #331)
+#
+# Companion (Phase F.C, Issue #331): scripts/hooks/mercury-memory-index-write-guard.py
+# (PreToolUse) + scripts/hooks/mercury-memory-index-validator.py (SessionEnd) provide
+# mechanical enforcement of canonical-file edits via the regenerate flow. This script
+# exports MERCURY_INDEX_REGENERATE=1 (defense-in-depth) so script-driven tool-use
+# chains can be distinguished from direct Claude Edit/Write calls.
 #
 # Usage:
 #   scripts/regenerate-memory-index.sh [--memory-dir PATH] [--output PATH]
@@ -55,6 +60,13 @@
 #      --in-place + --output | --format diff combined (mutually exclusive)
 
 set -u
+
+# Phase F.C lock-in (Issue #331): stamp environment so PreToolUse write-guard
+# can identify script-driven runs and short-circuit allow. Defense-in-depth —
+# canonical writes happen via shell I/O which does not fire Edit/Write hooks,
+# but the stamp covers any edge path where a child process invokes Edit/Write
+# (e.g. SDK-driven sub-agent calling regenerate from inside a tool-use chain).
+export MERCURY_INDEX_REGENERATE=1
 
 die()  { printf 'regenerate-memory-index: %s\n' "$1" >&2; exit 2; }
 warn() { printf 'regenerate-memory-index WARN: %s\n' "$1" >&2; }
