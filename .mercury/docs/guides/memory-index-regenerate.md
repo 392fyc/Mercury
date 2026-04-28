@@ -235,7 +235,7 @@ commit/handoff to refresh canonical files from per-session sources.
 
 ## Rollback procedure (Phase F.B)
 
-The cutover has **two rollback channels** for two distinct failure modes.
+The cutover has **three rollback channels** for distinct failure modes — git-side (Channel 1), user-memory side (Channel 2), and combined (Channel 3).
 
 ### Channel 1: Git-side (script/doc regression)
 

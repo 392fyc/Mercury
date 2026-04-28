@@ -252,8 +252,8 @@ parse_per_session_file() {
 # All rows go through one TMPFILE then sorted + emitted.
 # ---------------------------------------------------------------------------
 
-TMPFILE=$(mktemp) || die "mktemp failed"
-TMPSEEN=$(mktemp) || die "mktemp failed"
+TMPFILE=$(mktemp "${TMPDIR:-/tmp}/regen-memidx.XXXXXX") || die "mktemp failed"
+TMPSEEN=$(mktemp "${TMPDIR:-/tmp}/regen-memidx.XXXXXX") || die "mktemp failed"
 trap 'rm -f "$TMPFILE" "$TMPSEEN"' EXIT
 
 # Pass 1: per-session files (authoritative override).
@@ -507,7 +507,7 @@ splice_session_index_in_place() {
   local source_file="$1"
   local rows_file="$2"
   local tmp
-  tmp=$(mktemp) || die "mktemp failed (splice_session_index_in_place)"
+  tmp=$(mktemp "${TMPDIR:-/tmp}/regen-memidx.XXXXXX") || die "mktemp failed (splice_session_index_in_place)"
 
   # Pre-detect marker presence to choose splice strategy. Awk single-pass cannot
   # reliably distinguish first-run (no markers, insert after table separator)
@@ -571,7 +571,7 @@ splice_memory_history_in_place() {
   local source_file="$1"
   local bullets_file="$2"
   local tmp
-  tmp=$(mktemp) || die "mktemp failed (splice_memory_history_in_place)"
+  tmp=$(mktemp "${TMPDIR:-/tmp}/regen-memidx.XXXXXX") || die "mktemp failed (splice_memory_history_in_place)"
 
   # Pre-detect marker presence; same rationale as splice_session_index_in_place.
   if grep -q '^<!-- BEGIN: scripts/regenerate-memory-index.sh --in-place' "$source_file"; then
@@ -618,8 +618,8 @@ splice_memory_history_in_place() {
 # Main: --in-place mode short-circuit (Phase F.B)
 # ---------------------------------------------------------------------------
 if [ "$IN_PLACE" = "1" ]; then
-  ROWS_TMP=$(mktemp)    || die "mktemp failed (rows tmp)"
-  BULLETS_TMP=$(mktemp) || die "mktemp failed (bullets tmp)"
+  ROWS_TMP=$(mktemp "${TMPDIR:-/tmp}/regen-memidx.XXXXXX")    || die "mktemp failed (rows tmp)"
+  BULLETS_TMP=$(mktemp "${TMPDIR:-/tmp}/regen-memidx.XXXXXX") || die "mktemp failed (bullets tmp)"
   trap 'rm -f "$TMPFILE" "$TMPSEEN" "$ROWS_TMP" "$BULLETS_TMP"' EXIT
 
   # First-run safety: backup canonical files before mutation. Operators recover via
@@ -677,9 +677,9 @@ if [ "$FORMAT" = "diff" ]; then
   # SESSION_INDEX.md — those remain read-only inputs in Phase F.A. The
   # `generated_at` field changes every run by design and is stripped before
   # compare so operators get a structural drift signal independent of timestamp.
-  DIFF_TMP=$(mktemp) || die "mktemp failed"
-  DIFF_STRIPPED_NEW=$(mktemp) || die "mktemp failed"
-  DIFF_STRIPPED_OLD=$(mktemp) || die "mktemp failed"
+  DIFF_TMP=$(mktemp "${TMPDIR:-/tmp}/regen-memidx.XXXXXX") || die "mktemp failed"
+  DIFF_STRIPPED_NEW=$(mktemp "${TMPDIR:-/tmp}/regen-memidx.XXXXXX") || die "mktemp failed"
+  DIFF_STRIPPED_OLD=$(mktemp "${TMPDIR:-/tmp}/regen-memidx.XXXXXX") || die "mktemp failed"
   trap 'rm -f "$TMPFILE" "$TMPSEEN" "$DIFF_TMP" "$DIFF_STRIPPED_NEW" "$DIFF_STRIPPED_OLD"' EXIT
   emit_index > "$DIFF_TMP"
   EXISTING_GEN="$MEMORY_DIR/INDEX.generated.md"

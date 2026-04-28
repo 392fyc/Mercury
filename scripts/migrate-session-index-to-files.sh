@@ -32,8 +32,13 @@
 #
 # Exit codes:
 #   0  migration completed (some files may have been skipped — see stderr WARN)
-#   1  source SESSION_INDEX.md unparseable / required field missing
-#   2  invalid args / memory dir missing
+#   2  invalid args / memory dir missing / source SESSION_INDEX.md missing /
+#      mktemp failure / write failure (all routed through `die()`)
+#
+# Note: there is no exit-code-1 path in the current implementation — parse
+# errors are surfaced via WARN+skip+continue (corruption recovery path) rather
+# than abort. If a future revision adds hard-fail-on-parse-error, document
+# exit code 1 here AND add the corresponding `exit 1` path.
 
 set -u
 
@@ -136,7 +141,7 @@ yaml_escape() {
 # ---------------------------------------------------------------------------
 WRITTEN=0
 SKIPPED=0
-STDERR_LOG=$(mktemp) || die "mktemp failed (stderr log)"
+STDERR_LOG=$(mktemp "${TMPDIR:-/tmp}/regen-memidx.XXXXXX") || die "mktemp failed (stderr log)"
 trap 'rm -f "$STDERR_LOG"' EXIT
 
 # ---------------------------------------------------------------------------

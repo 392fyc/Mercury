@@ -28,7 +28,7 @@ SCRIPT="$REPO_ROOT/scripts/regenerate-memory-index.sh"
 sed_inplace() {
   # Usage: sed_inplace <expression> <file>
   local expr="$1"; local file="$2"
-  local tmp; tmp=$(mktemp) || return 1
+  local tmp; tmp=$(mktemp "${TMPDIR:-/tmp}/regen-memidx.XXXXXX") || return 1
   sed "$expr" "$file" > "$tmp" && mv "$tmp" "$file"
 }
 sha256_of() {
@@ -46,7 +46,7 @@ PASS=0
 FAIL=0
 CASES=0
 
-TEST_ROOT=$(mktemp -d) || { printf 'test: mktemp failed\n' >&2; exit 1; }
+TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/regen-memidx-test.XXXXXX") || { printf 'test: mktemp failed\n' >&2; exit 1; }
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
 mk_memdir() {
@@ -119,7 +119,7 @@ run_case() {
   local name="$1"; shift
   CASES=$((CASES + 1))
   local rc tmpout tmperr
-  tmpout=$(mktemp); tmperr=$(mktemp)
+  tmpout=$(mktemp "${TMPDIR:-/tmp}/regen-memidx.XXXXXX"); tmperr=$(mktemp "${TMPDIR:-/tmp}/regen-memidx.XXXXXX")
   if "$@" >"$tmpout" 2>"$tmperr"; then rc=0; else rc=$?; fi
   LAST_OUT=$(cat "$tmpout"); LAST_ERR=$(cat "$tmperr"); LAST_RC=$rc
   rm -f "$tmpout" "$tmperr"
@@ -142,6 +142,9 @@ assert_rc() {
 }
 
 assert_file_contains() {
+  # Argus iter 4 fix: only run_case increments CASES; asserts increment only
+  # PASS/FAIL. Previous version double-counted CASES (one logical case showed
+  # 2 in the summary).
   local name="$1"; local file="$2"; local needle="$3"
   if grep -qF -- "$needle" "$file"; then
     PASS=$((PASS + 1))
@@ -149,7 +152,6 @@ assert_file_contains() {
     FAIL=$((FAIL + 1))
     printf 'FAIL: %s (file %s missing: %s)\n' "$name" "$file" "$needle" >&2
   fi
-  CASES=$((CASES + 1))
 }
 
 assert_file_NOT_contains() {
@@ -160,7 +162,6 @@ assert_file_NOT_contains() {
   else
     PASS=$((PASS + 1))
   fi
-  CASES=$((CASES + 1))
 }
 
 assert_err_contains() {
