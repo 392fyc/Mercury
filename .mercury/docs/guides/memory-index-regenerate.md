@@ -22,7 +22,7 @@ cutover.
 |-------|--------------|------|
 | **F.A (additive)** | Adds regenerate script; canonical files untouched | Issue #329 — landed |
 | **F.B (cutover)** | Splits existing rows into per-session files; replaces canonical sections with generated content via `--in-place` | Issue #330 — landed |
-| **F.C (lock-in)** | Claude Code PreToolUse + SessionEnd hooks prevent direct edits to canonical files | Issue #331 — pending F.B soak stable |
+| **F.C (lock-in)** | Claude Code PreToolUse + SessionEnd hooks prevent direct edits to canonical files | Issue #331 — staged in `scripts/hooks/`, deployment pending F.B 1-week soak |
 
 ## Why this exists
 
@@ -233,6 +233,125 @@ commit/handoff to refresh canonical files from per-session sources.
 - `--in-place + --output` → exit 2 (operators uncertain about target file)
 - `--in-place + --format diff` → exit 2 (cutover is not a diff operation)
 
+## Phase F.C (`~/.claude/hooks/`) — staged
+
+Phase F.C deploys two Claude Code hooks under
+`${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/` to mechanically enforce the F.B
+discipline gate. Source-of-truth scripts live in this repo at
+`scripts/hooks/`; deployment to the user-level hooks dir is operational, not
+part of the in-repo PR.
+
+| Hook | Event | Behavior |
+|------|-------|----------|
+| `mercury-memory-index-write-guard.py` | PreToolUse (matcher `Edit\|Write`) | Returns `permissionDecision: "deny"` when target is canonical `MEMORY.md` / `SESSION_INDEX.md` AND tool is `Write` (full overwrite always blocked) OR tool is `Edit` AND `old_string` falls inside the BEGIN/END marker region. Fail-open posture: no markers found OR file unreadable → allow (operator can re-run `--in-place` to restore markers). |
+| `mercury-memory-index-validator.py` | SessionEnd (matcher `""`) | Runs `regenerate-memory-index.sh --format diff` against the configured memory dir; if drift detected (script exit 1), surfaces a stderr warning to the user. Surfaces a separate stderr notice on `subprocess.TimeoutExpired` (30s). Cannot block — SessionEnd hooks are observability-only per Claude Code contract. |
+
+### Soft-disable env vars
+
+| Env var | Effect |
+|---------|--------|
+| `MERCURY_INDEX_GUARD_DISABLED=1` | Short-circuits the PreToolUse hook (allows all edits). Use for emergency manual canonical edits. |
+| `MERCURY_INDEX_REGENERATE=1` | Allows the PreToolUse hook (defense-in-depth marker — auto-set by `regenerate-memory-index.sh`). |
+| `MERCURY_INDEX_VALIDATOR_DISABLED=1` | No-ops the SessionEnd validator. |
+| `MERCURY_INDEX_AUTOFIX=1` | When drift detected at session end, validator runs `regenerate-memory-index.sh --in-place` automatically and emits a confirmation message instead of a drift warning. Per Issue #331 Hook 2 spec. |
+| `MERCURY_REPO_ROOT=<path>` | Mercury repo root used by validator. **Required for deployed hooks** (`~/.claude/hooks/`) — there is no machine-specific fallback. In-repo invocation auto-resolves via `__file__.parents[2]`. If unset and auto-resolution fails → silent no-op. |
+| `MERCURY_MEMORY_DIR=<path>` | User-memory dir consumed by both hooks. **Recommended for deployed hooks**: default `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory` is coupled to the project name `Mercury` and cwd `D:\Mercury\Mercury` (Claude Code per-project encoding). For non-default checkouts (different drive, project rename, multi-checkout), set explicitly in `settings.json` env block. |
+
+### Deployment (per #259 user-level governance pattern)
+
+```bash
+# 0. Pre-conditions: F.B 1-week soak passed; #331 PR merged.
+
+# 1. Backup settings.json
+CC="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+cp "$CC/settings.json" "$CC/settings.json.backup-pre-331"
+
+# 2. Copy hook scripts
+cp scripts/hooks/mercury-memory-index-write-guard.py "$CC/hooks/"
+cp scripts/hooks/mercury-memory-index-validator.py   "$CC/hooks/"
+chmod +x "$CC/hooks/mercury-memory-index-write-guard.py" \
+         "$CC/hooks/mercury-memory-index-validator.py"
+
+# 3. Set MERCURY_REPO_ROOT (required) and MERCURY_MEMORY_DIR (recommended for
+#    non-default checkouts) in settings.json env block. Use placeholder syntax
+#    appropriate to your environment:
+#
+#    "env": {
+#      "MERCURY_REPO_ROOT":  "<absolute path to your local Mercury repo>",
+#      "MERCURY_MEMORY_DIR": "<absolute path to your Claude Code per-project memory dir>",
+#      ...existing keys...
+#    }
+#
+#    Examples (do NOT copy verbatim — substitute your own checkout path):
+#      Windows:  "MERCURY_REPO_ROOT":  "C:\\path\\to\\Mercury"
+#                "MERCURY_MEMORY_DIR": "C:\\Users\\you\\.claude\\projects\\C--path-to-Mercury\\memory"
+#      Unix:     "MERCURY_REPO_ROOT":  "/path/to/Mercury"
+#                "MERCURY_MEMORY_DIR": "/home/you/.claude/projects/-path-to-Mercury/memory"
+#
+#    MERCURY_REPO_ROOT has no fallback — if missing, validator no-ops silently.
+#    MERCURY_MEMORY_DIR defaults to `${CLAUDE_CONFIG_DIR}/projects/D--Mercury-Mercury/memory`
+#    which is correct only for cwd `D:\Mercury\Mercury` on Windows.
+#
+# 4. Register in settings.json hooks block — add to PreToolUse and SessionEnd
+#    arrays (preserve existing entries):
+#
+#    "PreToolUse": [
+#      ...existing...
+#      {
+#        "matcher": "Edit|Write",
+#        "hooks": [{
+#          "type": "command",
+#          "command": "\"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.venv/Scripts/pythonw.exe\" \"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/mercury-memory-index-write-guard.py\"",
+#          "timeout": 5
+#        }]
+#      }
+#    ],
+#    "SessionEnd": [
+#      ...existing...
+#      {
+#        "hooks": [{
+#          "type": "command",
+#          "command": "\"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.venv/Scripts/pythonw.exe\" \"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/mercury-memory-index-validator.py\"",
+#          "timeout": 30
+#        }]
+#      }
+#    ]
+
+# 5. Verify settings.json JSON validity
+python -c "import json,os; json.load(open(os.path.expandvars('${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json')))"
+
+# 6. Smoke-test: synthetic stdin must produce expected decision
+printf '{"tool_name":"Write","tool_input":{"file_path":"%s/MEMORY.md","content":"x"}}' \
+  "$CC/projects/D--Mercury-Mercury/memory" \
+  | "$CC/.venv/Scripts/pythonw.exe" "$CC/hooks/mercury-memory-index-write-guard.py"
+# Expected: JSON with "permissionDecision": "deny"
+```
+
+### Rollback (Phase F.C)
+
+Two channels:
+
+1. **Soft-disable** (instant, no redeploy): set
+   `MERCURY_INDEX_GUARD_DISABLED=1` and/or `MERCURY_INDEX_VALIDATOR_DISABLED=1`
+   in `~/.claude/settings.json` `env` block. Hooks short-circuit on next
+   invocation.
+2. **Full removal**: restore `settings.json.backup-pre-331` and delete the two
+   hook files. Reverts to F.B discipline-gate model.
+
+### Verification (per #259)
+
+Required before closing #331:
+
+- [ ] `~/.claude/settings.json` JSON valid post-deployment
+- [ ] PreToolUse synthetic stdin: `permissionDecision: deny` for canonical Write
+- [ ] PreToolUse synthetic stdin: empty output for canonical Write with
+      `MERCURY_INDEX_GUARD_DISABLED=1` set
+- [ ] SessionEnd synthetic run: stderr drift warning when memory dir has drift
+- [ ] Real session edits a per-session file → MEMORY.md regenerate refreshes
+      index → no hook noise on clean state
+- [ ] Repo-side test suites: `bash scripts/test-mercury-memory-index-write-guard.sh` and `bash scripts/test-mercury-memory-index-validator.sh` both exit 0
+- [ ] Verification clean for ≥3 real sessions
+
 ## Rollback procedure (Phase F.B)
 
 The cutover has **three rollback channels** for distinct failure modes — git-side (Channel 1), user-memory side (Channel 2), and combined (Channel 3).
@@ -295,21 +414,51 @@ mutated. Check `.bak` file mtime against original cutover commit timestamp.
 ## Tests
 
 ```bash
-scripts/test-regenerate-memory-index.sh
+scripts/test-regenerate-memory-index.sh           # F.A — 44 cases / 82 assertions
+scripts/test-regenerate-memory-index-in-place.sh  # F.B — 14 cases / 54 assertions
+scripts/test-mercury-memory-index-write-guard.sh  # F.C — 23 cases / 23 assertions
+scripts/test-mercury-memory-index-validator.sh    # F.C — 35 cases / 35 assertions
 ```
 
-44 test cases / 82 assertions covering arg validation, sort ordering (lane
-suffix variants, range rows), source precedence (per-session file overrides
-existing row), malformed-frontmatter detection, missing-required-field
-detection, YAML block-scalar rejection, idempotency (frozen timestamp),
-custom output paths, env-var resolution, diff mode (no drift / drift / no
-existing snapshot / unfrozen timestamp ignored), pipe-character corruption
-WARN, duplicate-row dedup, non-session-filename skip, symlink skip
-(env-aware), I/O failure detection, frontmatter sanitization,
+F.A coverage: arg validation, sort ordering (lane suffix variants, range rows),
+source precedence (per-session file overrides existing row), malformed-frontmatter
+detection, missing-required-field detection, YAML block-scalar rejection,
+idempotency (frozen timestamp), custom output paths, env-var resolution, diff
+mode (no drift / drift / no existing snapshot / unfrozen timestamp ignored),
+pipe-character corruption WARN, duplicate-row dedup, non-session-filename skip,
+symlink skip (env-aware), I/O failure detection, frontmatter sanitization,
 indented-verbatim preservation, ASCII-vs-em-dash separator preservation,
-empty-line-in-section preservation, hostile content preservation, and
-empty SESSION_INDEX. Tests use synthetic memory dirs only — never touch
-real user-memory layer.
+empty-line-in-section preservation, hostile content preservation, and empty
+SESSION_INDEX.
+
+F.C write-guard coverage: empty/malformed stdin → silent allow; non-Edit/Write
+tools → silent allow; Edit on non-canonical paths → silent allow; Write on
+canonical MEMORY.md / SESSION_INDEX.md → deny with reason; Edit with
+`old_string` inside marker region → deny; Edit with `old_string` outside
+marker region → silent allow; Edit on canonical file with no markers (pre-cutover
+or post-rollback) → fail-open allow; Edit on missing/unreadable canonical file
+→ fail-open allow; Edit on canonical with invalid UTF-8 bytes → fail-open allow
+(no UnicodeError raise); soft-disable via `MERCURY_INDEX_GUARD_DISABLED=1`
+or `MERCURY_INDEX_REGENERATE=1` → silent allow even on canonical Write;
+case-insensitive bypass attempts (`memory.md`, `Session_Index.MD`) → still
+deny; basename-matches-but-wrong-parent-dir → silent allow; mixed-form
+Windows paths + dot-segment paths → resolved consistently.
+
+F.C validator coverage: regenerate exit 0 (clean) → no warning; exit 1 (drift)
+→ stderr "drift detected" warning with session_id, regen exit code,
+stderr/stdout tails, fix hint; **exit ≠ 0 and ≠ 1** (script error) → stderr
+"regenerate validation failed" warning distinguishing script errors from
+genuine drift (per regenerate exit-code contract);
+**`MERCURY_INDEX_AUTOFIX=1`** → auto-runs `--in-place` on drift, suppresses
+standard drift warning, emits confirmation when fix succeeds, falls back to
+drift warning when fix fails; `MERCURY_INDEX_VALIDATOR_DISABLED=1`
+→ silent no-op even on drift; `bash` missing on PATH → stderr FileNotFoundError
+warning + disable hint (no silent failure); generic OSError → minimal stderr
+warning + disable hint; malformed/empty stdin → silent no-op; missing repo
+root → silent no-op; payload top-level not a dict → unknown placeholder, no
+crash.
+
+Tests use synthetic memory dirs only — never touch real user-memory layer.
 
 ## Forward path
 
@@ -319,11 +468,15 @@ Status of subsequent migration phases:
   flag landed; `migrate-session-index-to-files.sh` helper landed; 75 per-session
   files created; canonical files cut over via marker-bounded splice; pre-cutover
   anchor `lane-protocol-v0.1-pre-cutover` tagged on develop.
-- **#331 (Phase F.C)** — pending. Claude Code PreToolUse hook intercepts direct
-  edits to canonical files between markers; SessionEnd hook validates index
-  drift; deployed under `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/` per #259
-  user-level governance model. Requires F.B soak window (≥1 week stable) before
-  hook deployment.
+- **#331 (Phase F.C)** — staged. Source-of-truth scripts live at
+  `scripts/hooks/mercury-memory-index-write-guard.py` (PreToolUse) and
+  `scripts/hooks/mercury-memory-index-validator.py` (SessionEnd). 58 test
+  assertions across two harnesses pass (write-guard 23 + validator 35).
+  Implements `MERCURY_INDEX_AUTOFIX=1` env path per Issue #331 Hook 2 spec
+  (auto `--in-place` on drift). Deployment to
+  `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/` (per #259 user-level governance
+  model) is operational and gated on F.B 1-week soak passing — see §Phase F.C
+  for deployment commands and verification checklist.
 
 ## Source references
 
