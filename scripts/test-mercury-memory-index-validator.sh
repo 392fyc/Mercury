@@ -42,18 +42,17 @@ assert_contains() {
   esac
 }
 
-assert_not_contains() {
-  local name="$1" needle="$2" hay="$3"
-  ASSERT=$((ASSERT + 1))
-  case "$hay" in
-    *"$needle"*) FAIL=$((FAIL + 1)); printf 'FAIL %s\n  unwanted=%s\n  hay     =%s\n' "$name" "$needle" "$hay" >&2; return 1 ;;
-    *) PASS=$((PASS + 1)); return 0 ;;
-  esac
+# Portable mktemp wrapper (Argus iter-2 finding): bare `mktemp -d` is GNU-only;
+# BSD/macOS requires an explicit template.
+portable_mktemp_d() {
+  local prefix="${1:-mercury-fc-test}"
+  local base="${TMPDIR:-/tmp}"
+  mktemp -d "$base/$prefix.XXXXXX"
 }
 
 # Stub repo where regenerate --format diff exits 0 (no drift)
 make_stub_repo_clean() {
-  local dir; dir="$(mktemp -d)"
+  local dir; dir="$(portable_mktemp_d val-clean)"
   mkdir -p "$dir/scripts"
   cat > "$dir/scripts/regenerate-memory-index.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -65,7 +64,7 @@ EOF
 
 # Stub repo where regenerate --format diff exits 1 (drift)
 make_stub_repo_drift() {
-  local dir; dir="$(mktemp -d)"
+  local dir; dir="$(portable_mktemp_d val-drift)"
   mkdir -p "$dir/scripts"
   cat > "$dir/scripts/regenerate-memory-index.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -77,23 +76,33 @@ EOF
   printf '%s' "$dir"
 }
 
-TMP_LIST=""
-cleanup() { [ -n "${TMP_LIST:-}" ] && for d in $TMP_LIST; do rm -rf "$d" 2>/dev/null || true; done; }
-trap cleanup EXIT
-
-run_hook_capture_all() {
-  local repo="$1" stdin_payload="$2" extra_env="${3:-}"
-  if [ -n "$extra_env" ]; then
-    out_combined="$(printf '%s' "$stdin_payload" | env MERCURY_REPO_ROOT="$repo" "$extra_env" "$PY" "$HOOK" 2>&1)"
-  else
-    out_combined="$(printf '%s' "$stdin_payload" | env MERCURY_REPO_ROOT="$repo" "$PY" "$HOOK" 2>&1)"
-  fi
-  printf '%s' "$out_combined"
+# Stub repo where regenerate --format diff exits 2 (script error, NOT drift)
+make_stub_repo_script_error() {
+  local dir; dir="$(portable_mktemp_d val-err)"
+  mkdir -p "$dir/scripts"
+  cat > "$dir/scripts/regenerate-memory-index.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "missing memory dir or args" >&2
+exit 2
+EOF
+  chmod +x "$dir/scripts/regenerate-memory-index.sh"
+  printf '%s' "$dir"
 }
+
+# Array-based temp dir tracking (Argus iter-2 finding): space-separated string
+# fails on temp paths containing spaces.
+TMP_LIST=()
+cleanup() {
+  local d
+  for d in "${TMP_LIST[@]}"; do
+    [ -n "$d" ] && rm -rf "$d" 2>/dev/null || true
+  done
+}
+trap cleanup EXIT
 
 # ----- Test 1: clean repo (regenerate exit 0) → no warning, exit 0 -----
 repo_clean="$(make_stub_repo_clean)"
-TMP_LIST="$TMP_LIST $repo_clean"
+TMP_LIST+=("$repo_clean")
 out="$(printf '{"session_id":"abc","hook_event_name":"SessionEnd"}' | \
   env MERCURY_REPO_ROOT="$repo_clean" "$PY" "$HOOK" 2>&1)"
 ec=$?
@@ -102,7 +111,7 @@ assert_eq "T1.clean.no-warning" "" "$out"
 
 # ----- Test 2: drift repo (regenerate exit 1) → warning to stderr, exit 0 -----
 repo_drift="$(make_stub_repo_drift)"
-TMP_LIST="$TMP_LIST $repo_drift"
+TMP_LIST+=("$repo_drift")
 combined="$(printf '{"session_id":"sess-2","hook_event_name":"SessionEnd"}' | \
   env MERCURY_REPO_ROOT="$repo_drift" "$PY" "$HOOK" 2>&1)"
 ec=$?
@@ -131,7 +140,7 @@ ec=$?
 assert_eq "T5.empty-stdin.exit-code" "0" "$ec"
 
 # ----- Test 6: missing repo root (env unset + default repo not found) → exit 0 silent -----
-nonexist="$(mktemp -d)"; rm -rf "$nonexist"
+nonexist="$(portable_mktemp_d val-nonexist)"; rm -rf "$nonexist"
 combined="$(printf '{"session_id":"x"}' | env MERCURY_REPO_ROOT="$nonexist" "$PY" "$HOOK" 2>&1)"
 ec=$?
 assert_eq "T6.missing-repo.exit-code" "0" "$ec"
@@ -170,6 +179,23 @@ if [ -n "$py_resolved" ]; then
 else
   printf 'SKIP T10.no-bash: cannot resolve %s on PATH\n' "$PY" >&2
 fi
+
+# ----- Test 11: regenerate exit 2 (script error, NOT drift) → distinct warning -----
+# Per Argus iter-2 medium finding: any non-zero exit was treated as drift.
+# Hook now distinguishes exit 1 (drift) from other non-zero (validation
+# failed) so operators do not chase phantom drift on script errors.
+repo_err="$(make_stub_repo_script_error)"
+TMP_LIST+=("$repo_err")
+combined="$(printf '{"session_id":"sess-11"}' | env MERCURY_REPO_ROOT="$repo_err" "$PY" "$HOOK" 2>&1)"
+ec=$?
+assert_eq "T11.script-error.exit-code" "0" "$ec"
+assert_contains "T11.script-error.kind" "regenerate validation failed" "$combined"
+assert_contains "T11.script-error.exit-noted" "exit 2" "$combined"
+# Must NOT call it "drift" (semantic distinction enforced)
+case "$combined" in
+  *"drift detected at session end"*) FAIL=$((FAIL + 1)); ASSERT=$((ASSERT + 1)); printf 'FAIL T11.script-error.not-drift\n  unwanted="drift detected at session end" present in: %s\n' "$combined" >&2;;
+  *) PASS=$((PASS + 1)); ASSERT=$((ASSERT + 1));;
+esac
 
 # ----- Summary -----
 printf '\n----\n%d cases / %d assertions / %d fail\n' \

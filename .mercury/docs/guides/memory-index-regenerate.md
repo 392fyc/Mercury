@@ -408,8 +408,8 @@ mutated. Check `.bak` file mtime against original cutover commit timestamp.
 ```bash
 scripts/test-regenerate-memory-index.sh           # F.A — 44 cases / 82 assertions
 scripts/test-regenerate-memory-index-in-place.sh  # F.B — 14 cases / 54 assertions
-scripts/test-mercury-memory-index-write-guard.sh  # F.C — 19 cases / 19 assertions
-scripts/test-mercury-memory-index-validator.sh    # F.C — 19 cases / 19 assertions
+scripts/test-mercury-memory-index-write-guard.sh  # F.C — 23 cases / 23 assertions
+scripts/test-mercury-memory-index-validator.sh    # F.C — 26 cases / 26 assertions
 ```
 
 F.A coverage: arg validation, sort ordering (lane suffix variants, range rows),
@@ -429,16 +429,23 @@ canonical MEMORY.md / SESSION_INDEX.md → deny with reason; Edit with
 `old_string` inside marker region → deny; Edit with `old_string` outside
 marker region → silent allow; Edit on canonical file with no markers (pre-cutover
 or post-rollback) → fail-open allow; Edit on missing/unreadable canonical file
-→ fail-open allow; soft-disable via `MERCURY_INDEX_GUARD_DISABLED=1`
+→ fail-open allow; Edit on canonical with invalid UTF-8 bytes → fail-open allow
+(no UnicodeError raise); soft-disable via `MERCURY_INDEX_GUARD_DISABLED=1`
 or `MERCURY_INDEX_REGENERATE=1` → silent allow even on canonical Write;
-basename-matches-but-wrong-parent-dir → silent allow; mixed-form Windows paths
-+ dot-segment paths → resolved consistently.
+case-insensitive bypass attempts (`memory.md`, `Session_Index.MD`) → still
+deny; basename-matches-but-wrong-parent-dir → silent allow; mixed-form
+Windows paths + dot-segment paths → resolved consistently.
 
 F.C validator coverage: regenerate exit 0 (clean) → no warning; exit 1 (drift)
-→ stderr warning with session_id, regen exit code, stderr/stdout tails, fix
-hint; `MERCURY_INDEX_VALIDATOR_DISABLED=1` → silent no-op even on drift;
-malformed/empty stdin → silent no-op; missing repo root → silent no-op;
-payload top-level not a dict → unknown placeholder, no crash.
+→ stderr "drift detected" warning with session_id, regen exit code,
+stderr/stdout tails, fix hint; **exit ≠ 0 and ≠ 1** (script error) → stderr
+"regenerate validation failed" warning distinguishing script errors from
+genuine drift (per regenerate exit-code contract); `MERCURY_INDEX_VALIDATOR_DISABLED=1`
+→ silent no-op even on drift; `bash` missing on PATH → stderr FileNotFoundError
+warning + disable hint (no silent failure); generic OSError → minimal stderr
+warning + disable hint; malformed/empty stdin → silent no-op; missing repo
+root → silent no-op; payload top-level not a dict → unknown placeholder, no
+crash.
 
 Tests use synthetic memory dirs only — never touch real user-memory layer.
 
@@ -452,11 +459,11 @@ Status of subsequent migration phases:
   anchor `lane-protocol-v0.1-pre-cutover` tagged on develop.
 - **#331 (Phase F.C)** — staged. Source-of-truth scripts live at
   `scripts/hooks/mercury-memory-index-write-guard.py` (PreToolUse) and
-  `scripts/hooks/mercury-memory-index-validator.py` (SessionEnd). 38 test
-  assertions across two harnesses pass. Deployment to
-  `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/` (per #259 user-level governance
-  model) is operational and gated on F.B 1-week soak passing — see §Phase F.C
-  for deployment commands and verification checklist.
+  `scripts/hooks/mercury-memory-index-validator.py` (SessionEnd). 49 test
+  assertions across two harnesses pass (write-guard 23 + validator 26).
+  Deployment to `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/` (per #259
+  user-level governance model) is operational and gated on F.B 1-week soak
+  passing — see §Phase F.C for deployment commands and verification checklist.
 
 ## Source references
 

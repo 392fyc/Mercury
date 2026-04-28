@@ -27,6 +27,7 @@ import sys
 from pathlib import Path
 
 CANONICAL_BASENAMES = ("MEMORY.md", "SESSION_INDEX.md")
+CANONICAL_BASENAMES_LOWER = tuple(name.lower() for name in CANONICAL_BASENAMES)
 BEGIN_MARKER_RE = re.compile(
     r"<!--\s*BEGIN:\s*scripts/regenerate-memory-index\.sh\s+--in-place\b"
 )
@@ -66,10 +67,22 @@ def _normalize(path_str: str) -> Path | None:
 
 
 def _is_canonical_target(path: Path, targets: set[Path]) -> bool:
-    if path in targets:
-        return True
-    if path.name not in CANONICAL_BASENAMES:
+    """Case-insensitive match for canonical user-memory MEMORY.md /
+    SESSION_INDEX.md.
+
+    Windows (NTFS, default-case-insensitive) lets `memory.md` bypass a
+    case-sensitive comparison even though the file system resolves both
+    names to the same canonical file. Per Argus iter-2 critical security
+    finding, normalize both basename and full path via str.lower() +
+    os.path.normcase before comparing. samefile() is kept as a fallback
+    for symlink and exotic-filesystem cases.
+    """
+    if path.name.lower() not in CANONICAL_BASENAMES_LOWER:
         return False
+    norm_path = os.path.normcase(str(path))
+    norm_targets = {os.path.normcase(str(t)) for t in targets}
+    if norm_path in norm_targets:
+        return True
     try:
         for t in targets:
             if path.samefile(t):
@@ -105,8 +118,8 @@ def _edit_touches_marker_region(file_path: Path, old_string: str) -> bool:
     if not old_string:
         return False
     try:
-        text = file_path.read_text(encoding="utf-8")
-    except OSError:
+        text = file_path.read_text(encoding="utf-8", errors="replace")
+    except (OSError, UnicodeError):
         return False
     region = _find_marker_region(text)
     if region is None:

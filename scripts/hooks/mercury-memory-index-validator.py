@@ -91,6 +91,8 @@ def main() -> int:
             env=env,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
         )
     except subprocess.TimeoutExpired:
@@ -108,7 +110,14 @@ def main() -> int:
             "MERCURY_INDEX_VALIDATOR_DISABLED=1 to suppress this notice.\n"
         )
         return 0
-    except OSError:
+    except OSError as exc:
+        sys.stderr.write(
+            "Mercury memory-index validator: subprocess error invoking "
+            f"regenerate ({exc.__class__.__name__}: {exc}). Drift check "
+            "skipped. Soft-disable: MERCURY_INDEX_VALIDATOR_DISABLED=1.\n"
+        )
+        return 0
+    except UnicodeError:
         return 0
 
     if result.returncode == 0:
@@ -117,8 +126,20 @@ def main() -> int:
     session_id = payload.get("session_id", "unknown") if isinstance(payload, dict) else "unknown"
     stderr_tail = (result.stderr or "").strip().splitlines()[-5:]
     stdout_tail = (result.stdout or "").strip().splitlines()[-5:]
+    if result.returncode == 1:
+        # Per regenerate-memory-index.sh exit-code contract: exit 1 == drift
+        # detected. Anything else is script failure (parse error / args /
+        # missing file) — distinguish so operators do not chase false drift.
+        kind_msg = "drift detected"
+    else:
+        kind_msg = (
+            "regenerate validation failed (exit "
+            f"{result.returncode} != 1; see exit-code contract in "
+            "scripts/regenerate-memory-index.sh header — likely script "
+            "error, not drift)"
+        )
     sys.stderr.write(
-        "Mercury memory-index validator: drift detected at session end "
+        f"Mercury memory-index validator: {kind_msg} at session end "
         f"(session={session_id}, regen exit={result.returncode}).\n"
     )
     if stderr_tail:

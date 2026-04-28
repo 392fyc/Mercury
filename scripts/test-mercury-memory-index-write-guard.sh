@@ -28,6 +28,15 @@ canon_path() {
   fi
 }
 
+# Portable mktemp wrapper (Argus iter-2 finding): bare `mktemp -d` is GNU-only;
+# BSD/macOS requires an explicit template or `-t prefix`. Use a template
+# rooted at $TMPDIR (or /tmp) with a stable prefix.
+portable_mktemp_d() {
+  local prefix="${1:-mercury-fc-test}"
+  local base="${TMPDIR:-/tmp}"
+  mktemp -d "$base/$prefix.XXXXXX"
+}
+
 [ -f "$HOOK" ] || { printf 'test harness: hook script missing: %s\n' "$HOOK" >&2; exit 2; }
 command -v "$PY" >/dev/null 2>&1 || { printf 'test harness: python missing\n' >&2; exit 2; }
 
@@ -61,14 +70,9 @@ run_hook() {
   printf '%s' "$stdin_payload" | "$PY" "$HOOK"
 }
 
-run_hook_with_env() {
-  local env_kv="$1" stdin_payload="$2"
-  printf '%s' "$stdin_payload" | env "$env_kv" "$PY" "$HOOK"
-}
-
 setup_tmp_memory_dir() {
   local dir
-  dir="$(canon_path "$(mktemp -d)")"
+  dir="$(canon_path "$(portable_mktemp_d wg-mem)")"
   mkdir -p "$dir"
   # NOTE: ASCII-only fixture content. Production canonical files contain UTF-8
   # em dashes (U+2014), but the MSYS2-bash heredoc + Windows-native python.exe
@@ -106,16 +110,23 @@ EOF
 
 setup_tmp_memory_dir_no_markers() {
   local dir
-  dir="$(canon_path "$(mktemp -d)")"
+  dir="$(canon_path "$(portable_mktemp_d wg-nomark)")"
   mkdir -p "$dir"
   printf '# Memory Index\n\nno markers here yet\n' > "$dir/MEMORY.md"
   printf '%s' "$dir"
 }
 
+# Array-based temp dir tracking (Argus iter-2 finding): space-separated string
+# fails on temp paths containing spaces (common in Windows %TMP% under
+# `C:\Users\<First Last>\AppData\Local\Temp`). Bash array iteration with proper
+# quoting is robust.
+TMP_MEM_DIR_LIST=()
 cleanup() {
-  [ -n "${TMP_MEM_DIR_LIST:-}" ] && for d in $TMP_MEM_DIR_LIST; do rm -rf "$d" 2>/dev/null || true; done
+  local d
+  for d in "${TMP_MEM_DIR_LIST[@]}"; do
+    [ -n "$d" ] && rm -rf "$d" 2>/dev/null || true
+  done
 }
-TMP_MEM_DIR_LIST=""
 trap cleanup EXIT
 
 # ----- Test 1: empty stdin → exit 0 silent -----
@@ -139,7 +150,7 @@ assert_eq "T4.edit-non-canonical.empty-output" "" "$out"
 
 # ----- Test 5: Write on canonical MEMORY.md → deny -----
 mem_dir="$(setup_tmp_memory_dir)"
-TMP_MEM_DIR_LIST="$TMP_MEM_DIR_LIST $mem_dir"
+TMP_MEM_DIR_LIST+=("$mem_dir")
 target="$mem_dir/MEMORY.md"
 payload="$(printf '{"tool_name":"Write","tool_input":{"file_path":"%s","content":"x"}}' "$target")"
 out="$(MERCURY_MEMORY_DIR="$mem_dir" run_hook "$payload")"
@@ -189,8 +200,8 @@ out="$(MERCURY_MEMORY_DIR="$mem_dir2" run_hook "$payload")"
 assert_eq "T11.edit-no-markers.allow" "" "$out"
 
 # ----- Test 11b: Edit canonical file is unreadable / missing → ALLOW (fail-open) -----
-mem_dir3="$(canon_path "$(mktemp -d)")"
-TMP_MEM_DIR_LIST="$TMP_MEM_DIR_LIST $mem_dir3"
+mem_dir3="$(canon_path "$(portable_mktemp_d wg-missing)")"
+TMP_MEM_DIR_LIST+=("$mem_dir3")
 ghost="$mem_dir3/MEMORY.md"
 payload="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s","old_string":"x","new_string":"y"}}' "$ghost")"
 out="$(MERCURY_MEMORY_DIR="$mem_dir3" run_hook "$payload")"
@@ -209,8 +220,8 @@ out="$(run_hook '["not-a-dict"]')"
 assert_eq "T14.payload-not-dict.empty-output" "" "$out"
 
 # ----- Test 15: Edit basename matches but parent dir is unrelated → exit 0 silent -----
-unrelated_dir="$(canon_path "$(mktemp -d)")"
-TMP_MEM_DIR_LIST="$TMP_MEM_DIR_LIST $unrelated_dir"
+unrelated_dir="$(canon_path "$(portable_mktemp_d wg-unrelated)")"
+TMP_MEM_DIR_LIST+=("$unrelated_dir")
 unrelated_file="$unrelated_dir/MEMORY.md"
 printf 'unrelated\n' > "$unrelated_file"
 payload="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s","old_string":"unrelated","new_string":"x"}}' "$unrelated_file")"
@@ -224,6 +235,32 @@ target="$mem_dir/./MEMORY.md"
 payload="$(printf '{"tool_name":"Write","tool_input":{"file_path":"%s","content":"x"}}' "$target")"
 out="$(MERCURY_MEMORY_DIR="$mem_dir" run_hook "$payload")"
 assert_contains "T16.dot-segment-path.deny" '"permissionDecision": "deny"' "$out"
+
+# ----- Test 17: case-insensitive basename bypass (Argus iter-2 CRITICAL) -----
+# On Windows (default-case-insensitive NTFS) `memory.md` resolves to the same
+# file as `MEMORY.md`. A case-sensitive guard would let `memory.md` through.
+# Hook now lowercases basename before matching CANONICAL_BASENAMES_LOWER.
+target="$mem_dir/memory.md"
+payload="$(printf '{"tool_name":"Write","tool_input":{"file_path":"%s","content":"x"}}' "$target")"
+out="$(MERCURY_MEMORY_DIR="$mem_dir" run_hook "$payload")"
+assert_contains "T17.lowercase-bypass.deny" '"permissionDecision": "deny"' "$out"
+
+target="$mem_dir/Session_Index.MD"
+payload="$(printf '{"tool_name":"Write","tool_input":{"file_path":"%s","content":"x"}}' "$target")"
+out="$(MERCURY_MEMORY_DIR="$mem_dir" run_hook "$payload")"
+assert_contains "T17.mixed-case-bypass.deny" '"permissionDecision": "deny"' "$out"
+
+# ----- Test 18: invalid UTF-8 in canonical Edit → fail-open allow (no raise) -----
+# Per Argus iter-2: Path.read_text(encoding="utf-8") can raise UnicodeDecodeError
+# on corrupt bytes. Hook now uses errors="replace" + catches UnicodeError so
+# SessionEnd "never raises" contract holds.
+mem_dir4="$(canon_path "$(portable_mktemp_d wg-utf8)")"
+TMP_MEM_DIR_LIST+=("$mem_dir4")
+target="$mem_dir4/MEMORY.md"
+printf '\xff\xfe\xfd invalid utf-8 bytes here\n' > "$target"
+payload="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s","old_string":"x","new_string":"y"}}' "$target")"
+out="$(MERCURY_MEMORY_DIR="$mem_dir4" run_hook "$payload")"
+assert_eq "T18.bad-utf8.allow" "" "$out"
 
 # ----- Summary -----
 printf '\n----\n%d cases / %d assertions / %d fail\n' \
