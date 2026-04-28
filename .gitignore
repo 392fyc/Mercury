@@ -20,6 +20,9 @@ logs/
 npm-debug.log*
 pnpm-debug.log*
 
+# Scratch / per-session ephemera (skill prompt files, audit outputs, etc.)
+.tmp/
+
 # Environment / Secrets
 .env
 .env.*
