@@ -21,6 +21,27 @@ REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { printf 'test: must r
 SCRIPT="$REPO_ROOT/scripts/regenerate-memory-index.sh"
 [ -x "$SCRIPT" ] || { printf 'test: %s not executable\n' "$SCRIPT" >&2; exit 1; }
 
+# Portable helpers (Argus iter 2 fix 可移植性): GNU and BSD sed differ in -i
+# semantics; sha256sum is GNU-only (macOS/BSD use shasum -a 256). Use these
+# helpers instead of direct invocations so the test suite runs cleanly on
+# Linux + macOS + Windows MSYS2 alike.
+sed_inplace() {
+  # Usage: sed_inplace <expression> <file>
+  local expr="$1"; local file="$2"
+  local tmp; tmp=$(mktemp) || return 1
+  sed "$expr" "$file" > "$tmp" && mv "$tmp" "$file"
+}
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    printf 'test: neither sha256sum nor shasum available\n' >&2
+    return 1
+  fi
+}
+
 PASS=0
 FAIL=0
 CASES=0
@@ -214,11 +235,11 @@ write_session_index "$M8" '| S1 | 2026-01-01 | t | o | — |'
 write_memory_md "$M8" '- placeholder'
 write_session_file "$M8" "S1.md" "theme1" "outcome1"
 bash "$SCRIPT" --memory-dir "$M8" --in-place >/dev/null 2>&1
-SHA1_INDEX=$(sha256sum "$M8/SESSION_INDEX.md" | awk '{print $1}')
-SHA1_MEMORY=$(sha256sum "$M8/MEMORY.md" | awk '{print $1}')
+SHA1_INDEX=$(sha256_of "$M8/SESSION_INDEX.md")
+SHA1_MEMORY=$(sha256_of "$M8/MEMORY.md")
 bash "$SCRIPT" --memory-dir "$M8" --in-place >/dev/null 2>&1
-SHA2_INDEX=$(sha256sum "$M8/SESSION_INDEX.md" | awk '{print $1}')
-SHA2_MEMORY=$(sha256sum "$M8/MEMORY.md" | awk '{print $1}')
+SHA2_INDEX=$(sha256_of "$M8/SESSION_INDEX.md")
+SHA2_MEMORY=$(sha256_of "$M8/MEMORY.md")
 CASES=$((CASES + 1))
 if [ "$SHA1_INDEX" = "$SHA2_INDEX" ] && [ "$SHA1_MEMORY" = "$SHA2_MEMORY" ]; then
   PASS=$((PASS + 1))
@@ -454,8 +475,8 @@ write_memory_md "$M22" '- placeholder'
 write_session_file "$M22" "S1.md" "theme1" "out1"
 # First valid run to populate markers
 bash "$SCRIPT" --memory-dir "$M22" --in-place >/dev/null 2>&1
-# Manually corrupt: delete END marker line
-sed -i '/^<!-- END: scripts\/regenerate-memory-index.sh --in-place/d' "$M22/SESSION_INDEX.md"
+# Manually corrupt: delete END marker line (portable — sed -i differs GNU vs BSD)
+sed_inplace '/^<!-- END: scripts\/regenerate-memory-index.sh --in-place/d' "$M22/SESSION_INDEX.md"
 # Re-run should detect asymmetry and fail
 run_case "asymmetric_markers_detected" bash "$SCRIPT" --memory-dir "$M22" --in-place
 # Note: subsequent-run path replaces marker content; if BEGIN exists but END is missing,

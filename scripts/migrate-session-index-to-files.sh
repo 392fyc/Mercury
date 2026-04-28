@@ -197,8 +197,13 @@ while IFS=$'\t' read -r sid dat thm out org; do
   # `S35-S46` and ALSO match the whitelist (lane portion = `S46`-like) — so
   # range rows pass the guard but get visible warning if the operator forgot
   # to split them manually post-migration.
-  if ! [[ "$sid" =~ ^S[0-9]+(-[A-Za-z][A-Za-z0-9-]*)?$ ]]; then
-    warn "path-traversal guard: rejecting non-canonical session_id $sid (expected S<N> or S<N>-<lane> with lane=[A-Za-z][A-Za-z0-9-]*)"
+  # Argus iter 2 fix (规则不一致): align lowercase-lane constraint with the
+  # regenerate-memory-index.sh canonical pattern. Original `[A-Za-z]` allowed
+  # uppercase suffixes, which migrate would write to disk but `--in-place`
+  # would later REJECT, producing a "migrated but not effective" hidden gap.
+  # Lower-case-only matches Mercury Rule 2.1 short-name convention.
+  if ! [[ "$sid" =~ ^S[0-9]+(-[a-z][a-z0-9-]*)?$ ]]; then
+    warn "path-traversal guard: rejecting non-canonical session_id $sid (expected S<N> or S<N>-<lane> with lane=[a-z][a-z0-9-]* — must match regenerate-memory-index.sh)"
     SKIPPED=$((SKIPPED + 1))
     continue
   fi
