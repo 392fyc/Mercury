@@ -1,49 +1,58 @@
 #!/usr/bin/env bash
-# scripts/regenerate-memory-index.sh — Mercury memory-index regeneration (Phase F.A).
-# Implements Phase F.A of feedback_lane_protocol.md Rule 7 REPLACE (v0.1 Delta 5,
-# Issue #329 / parent epic #315).
+# scripts/regenerate-memory-index.sh — Mercury memory-index regeneration.
+# Implements Phase F.A (Issue #329, additive — landed) and Phase F.B (Issue #330,
+# in-place cutover) of feedback_lane_protocol.md Rule 7 REPLACE (v0.1 Delta 5,
+# parent epic #315).
 #
 # Reads a Mercury user-memory directory and emits a regenerated index document
 # combining (a) the SESSION_INDEX.md table region and (b) the
 # "Project (Session History)" bullets region of MEMORY.md.
 #
-# Phase F.A is **non-breaking**: by default the regenerated index is written to
-# a separate file (default <memory-dir>/INDEX.generated.md) so canonical
-# MEMORY.md / SESSION_INDEX.md stay byte-identical during soak. Operators
-# inspect the generated file via `diff` against expected output across multiple
-# sessions to validate determinism before Phase F.B cutover (Issue #330).
+# Modes:
+#   - default (F.A additive):  writes <memory-dir>/INDEX.generated.md;
+#                              canonical MEMORY.md / SESSION_INDEX.md untouched.
+#   - --in-place (F.B cutover): rewrites canonical MEMORY.md "Project (Session
+#                              History)" subsection AND SESSION_INDEX.md table
+#                              body, idempotent via HTML-comment markers.
+#                              BREAKING per Rule 7 v0 → v0.1 promotion.
 #
-# Source precedence (per session row):
+# Source precedence (per session row, both modes):
 #   1. <memory-dir>/sessions/S<N>(-<lane>)?.md frontmatter — when present,
 #      authoritative
 #   2. <memory-dir>/SESSION_INDEX.md existing table row — fallback
 #
-# This precedence lets Phase F.A operate immediately on TODAY's state (no
-# per-session files yet exist) and gracefully accept per-session files as they
-# appear during F.B cutover.
+# Markdown table cells emitted in either mode escape literal `|` to `\|` so
+# pre-existing pipe-corruption rows (S71/S3-side-multi-lane/S4-side-multi-lane/
+# S6-side-multi-lane carry `||` in code-spans) cleanly survive regenerate.
 #
-# Out of scope (per Issue #329 acceptance criteria):
+# Out of scope (per Issue #329/#330 acceptance criteria):
 #   - feedback_*.md / project_*.md (non-session) / reference_*.md MEMORY.md rows
 #   - mem0 / claude-handoff session_chain integration (orthogonal #252)
+#   - PreToolUse / SessionEnd hook lock-in (Phase F.C, Issue #331)
 #
 # Usage:
 #   scripts/regenerate-memory-index.sh [--memory-dir PATH] [--output PATH]
-#                                      [--format text|diff]
+#                                      [--format text|diff] [--in-place]
 #
 # Defaults:
 #   --memory-dir   ${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}
-#   --output       <memory-dir>/INDEX.generated.md  (use - to write to stdout)
+#   --output       <memory-dir>/INDEX.generated.md  (use - to write to stdout;
+#                  ignored when --in-place is set)
 #   --format       text  (diff = compare fresh regenerate against existing INDEX.generated.md
-#                         snapshot for soak drift detection; does NOT compare against canonical
-#                         MEMORY.md / SESSION_INDEX.md — those are read-only inputs in F.A)
+#                         snapshot for drift detection; does NOT compare against canonical
+#                         MEMORY.md / SESSION_INDEX.md; mutually exclusive with --in-place)
+#   --in-place     mutate canonical SESSION_INDEX.md + MEMORY.md (F.B cutover);
+#                  inserts/replaces between HTML-comment markers, idempotent.
 #
 # Exit codes:
-#   0  clean regenerate (output written; in diff mode: no drift vs prior INDEX.generated.md)
+#   0  clean regenerate (output written; in diff mode: no drift vs prior INDEX.generated.md;
+#      in --in-place mode: canonical files mutated successfully)
 #   1  parse error in source file (per-session frontmatter malformed / unsupported
 #      block scalar in frontmatter) OR diff mode detected drift vs prior
 #      <memory-dir>/INDEX.generated.md snapshot
 #   2  invalid args / memory dir missing / SESSION_INDEX.md or MEMORY.md missing /
-#      output write failure (disk full / permission denied / parent dir missing)
+#      output write failure (disk full / permission denied / parent dir missing) /
+#      --in-place + --output | --format diff combined (mutually exclusive)
 
 set -u
 
@@ -53,6 +62,7 @@ warn() { printf 'regenerate-memory-index WARN: %s\n' "$1" >&2; }
 MEMORY_DIR=""
 OUTPUT=""
 FORMAT=text
+IN_PLACE=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -64,9 +74,10 @@ while [ $# -gt 0 ]; do
                   OUTPUT="$1"; shift ;;
     --format)     shift; [ $# -gt 0 ] || die "--format needs a value"
                   FORMAT="$1"; shift ;;
+    --in-place)   IN_PLACE=1; shift ;;
     -h|--help)
       # Print full Usage + Exit-codes block (must keep this end line in sync if header grows).
-      sed -n '2,46p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '2,57p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     -*) die "unknown flag: $1" ;;
     *)  die "unexpected positional argument: $1" ;;
@@ -77,6 +88,14 @@ case "$FORMAT" in
   text|diff) ;;
   *) die "--format must be text or diff (got '$FORMAT')" ;;
 esac
+
+# --in-place is mutually exclusive with --output and --format diff. Combining either
+# silently would leave operators uncertain about which file the cutover actually
+# touched.
+if [ "$IN_PLACE" = "1" ]; then
+  [ -z "$OUTPUT" ]      || die "--in-place is mutually exclusive with --output"
+  [ "$FORMAT" = "text" ] || die "--in-place is mutually exclusive with --format diff"
+fi
 
 if [ -z "$MEMORY_DIR" ]; then
   MEMORY_DIR="${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}"
@@ -100,15 +119,18 @@ MEMORY_FILE="$MEMORY_DIR/MEMORY.md"
 # ---------------------------------------------------------------------------
 # parse_existing_session_index <file>
 #
-# Emits TSV rows: session_id<TAB>date<TAB>theme<TAB>outcome<TAB>origin
+# Emits TSV rows: session_id<TAB>date<TAB>theme<TAB>outcome<TAB>origin<TAB>file_path
 # from existing SESSION_INDEX.md table. Skips header + separator lines.
+# `file_path` is empty for SESSION_INDEX-sourced rows (no per-session file backing).
 # Pipe characters embedded in cell content (observed in current SESSION_INDEX.md
-# at S72/S73 rows) are detected via field-count > 7 → emits WARN to stderr but
-# still continues with positional split. The WARN preserves operator visibility
-# into pre-existing corruption that F.B cutover should repair (escape `|` when
-# writing per-session files). Hard-fail was considered but rejected for F.A:
-# blocking on existing data integrity issues would make F.A non-startable on
-# real Mercury memory dirs (S72/S73 already have embedded `|`).
+# at S71/S3-side-multi-lane/S4-side-multi-lane/S6-side-multi-lane rows from
+# code-span text such as `||` and `\|`) are detected via field-count > 7 → emits
+# WARN to stderr but still continues with positional split. The WARN preserves
+# operator visibility into pre-existing corruption; F.B cutover (--in-place)
+# escapes `|` → `\|` on emit so the rewritten table renders cleanly even when
+# the source had embedded pipes. Hard-fail was considered but rejected: blocking
+# on existing data integrity would make F.A non-startable and F.B unrunnable
+# until upstream cleanup, while WARN-then-continue lets F.B itself be the fix.
 # ---------------------------------------------------------------------------
 parse_existing_session_index() {
   awk '
@@ -121,10 +143,9 @@ parse_existing_session_index() {
       # Canonical 5-column row: f[1]=empty (leading |), f[2..6]=session/date/theme/outcome/origin, f[7]=empty (trailing |)
       if (n < 6) next
       # WARN if cell count > 7 — likely a literal "|" in cell content corrupting split.
-      # F.A handles this by emitting a warn so operators see the corruption during soak; F.B
-      # cutover should escape `|` properly when writing per-session files.
+      # F.B emit_*_only() escapes `|` → `\|` so rewritten table is clean even with corrupt input.
       if (n > 7) {
-        print "regenerate-memory-index WARN: SESSION_INDEX.md row at NR=" NR " has " n " pipe-separated fields (likely embedded `|` in cell — output may drift from canonical)" > "/dev/stderr"
+        print "regenerate-memory-index WARN: SESSION_INDEX.md row at NR=" NR " has " n " pipe-separated fields (likely embedded `|` in cell — F.B --in-place will emit-escape but per-session migration recommended)" > "/dev/stderr"
       }
       sid = f[2]; gsub(/^[[:space:]]+|[[:space:]]+$/, "", sid)
       dat = f[3]; gsub(/^[[:space:]]+|[[:space:]]+$/, "", dat)
@@ -132,7 +153,9 @@ parse_existing_session_index() {
       out = f[5]; gsub(/^[[:space:]]+|[[:space:]]+$/, "", out)
       org = f[6]; gsub(/^[[:space:]]+|[[:space:]]+$/, "", org)
       if (sid == "" || sid == "Session") next
-      printf "%s\t%s\t%s\t%s\t%s\n", sid, dat, thm, out, org
+      # 6th field (file_path) intentionally empty — SESSION_INDEX rows have no
+      # backing per-session file unless one materializes in pass 1.
+      printf "%s\t%s\t%s\t%s\t%s\t\n", sid, dat, thm, out, org
     }
     /^[^|]/ && in_table { in_table = 0 }
   ' "$1"
@@ -159,18 +182,24 @@ emit_memory_session_history() {
 }
 
 # ---------------------------------------------------------------------------
-# parse_per_session_file <file>
+# parse_per_session_file <file> <file_path>
 #
 # Reads a memory/sessions/S<N>(-<lane>)?.md file. Returns TSV row:
-# session_id<TAB>date<TAB>theme<TAB>outcome<TAB>origin
+# session_id<TAB>date<TAB>theme<TAB>outcome<TAB>origin<TAB>file_path
 # OR exits 1 with WARN if frontmatter is malformed.
+#
+# `file_path` is the relative path embedded in the bullet's markdown link
+# (e.g. "sessions/S6-side-multi-lane.md"). Caller is responsible for stable
+# slug — script does not derive it from session_id since lane suffixes,
+# range rows, and special cases need operator-controlled naming.
 #
 # Required frontmatter fields: session_id, date, description, outcome
 # Optional: origin_session_id (defaults to "—" when missing or empty)
 # ---------------------------------------------------------------------------
 parse_per_session_file() {
   local file="$1"
-  awk -v file="$file" '
+  local file_path="$2"
+  awk -v file="$file" -v fpath="$file_path" '
     BEGIN { in_fm = 0; sid = ""; dat = ""; thm = ""; out = ""; org = "—"; ok = 0 }
     NR == 1 && /^---[[:space:]]*$/ { in_fm = 1; next }
     in_fm && /^---[[:space:]]*$/ { in_fm = 0; ok = 1; exit }
@@ -206,7 +235,7 @@ parse_per_session_file() {
       if (dat == "")       { print "regenerate-memory-index WARN: date missing in " file > "/dev/stderr"; exit 1 }
       if (thm == "")       { print "regenerate-memory-index WARN: description missing in " file > "/dev/stderr"; exit 1 }
       if (out == "")       { print "regenerate-memory-index WARN: outcome missing in " file > "/dev/stderr"; exit 1 }
-      printf "%s\t%s\t%s\t%s\t%s\n", sid, dat, thm, out, org
+      printf "%s\t%s\t%s\t%s\t%s\t%s\n", sid, dat, thm, out, org, fpath
     }
   ' "$file"
 }
@@ -242,15 +271,37 @@ if [ -d "$SESSIONS_DIR" ]; then
     # Restrict to S<N>.md or S<N>-<lane>.md naming. Drafts, READMEs, or accidentally
     # placed files in sessions/ are skipped with WARN rather than failing the whole run.
     ps_base=$(basename "$ps_file")
+    # Tightened pattern (H2 dual-verify fix): lane suffix MUST start with a
+    # lowercase letter and contain only `[a-z0-9-]`. Rejects edge cases like
+    # `S99-.md` (empty suffix), `S99-Upper.md` (uppercase), `S5xtra.md` (no
+    # hyphen separator) that the original `S[0-9]*-*.md` glob accepted.
     case "$ps_base" in
-      S[0-9]*.md|S[0-9]*-*.md) ;;
-      *) warn "skip non-session markdown file: $ps_base"; continue ;;
+      S[0-9].md|S[0-9][0-9].md|S[0-9][0-9][0-9].md) ;;
+      S[0-9]-[a-z][a-z0-9-]*.md|S[0-9][0-9]-[a-z][a-z0-9-]*.md|S[0-9][0-9][0-9]-[a-z][a-z0-9-]*.md) ;;
+      *) warn "skip non-canonical session filename: $ps_base (expected S<N>.md or S<N>-<lane>.md, lane=[a-z][a-z0-9-]*)"; continue ;;
     esac
-    if ! row=$(parse_per_session_file "$ps_file"); then
+    # File path embedded in bullet markdown links is relative to MEMORY.md
+    # (which lives one level up from sessions/), so prefix with "sessions/".
+    file_path="sessions/$ps_base"
+    if ! row=$(parse_per_session_file "$ps_file" "$file_path"); then
       printf 'regenerate-memory-index: per-session file parse failed: %s (see WARN above)\n' "$ps_file" >&2
       exit 1
     fi
     sid_field=${row%%$'\t'*}
+    # H2 dual-verify fix: validate session_id matches canonical S<N> or
+    # S<N>-<lane> form AND matches filename basename. Catches frontmatter drift
+    # (e.g. `session_id: arbitrary string` or filename/sid mismatch from rename).
+    case "$sid_field" in
+      S[0-9]|S[0-9][0-9]|S[0-9][0-9][0-9]) ;;
+      S[0-9]-[a-z][a-z0-9-]*|S[0-9][0-9]-[a-z][a-z0-9-]*|S[0-9][0-9][0-9]-[a-z][a-z0-9-]*) ;;
+      *) printf 'regenerate-memory-index: invalid session_id %q in %s (expected S<N> or S<N>-<lane>)\n' "$sid_field" "$ps_file" >&2; exit 1 ;;
+    esac
+    expected_basename="${sid_field}.md"
+    if [ "$expected_basename" != "$ps_base" ]; then
+      printf 'regenerate-memory-index: session_id/filename mismatch in %s: frontmatter session_id=%s expects filename %s\n' \
+        "$ps_file" "$sid_field" "$expected_basename" >&2
+      exit 1
+    fi
     printf '%s\n' "$sid_field" >> "$TMPSEEN"
     printf '%s\n' "$row" >> "$TMPFILE"
   done
@@ -259,10 +310,11 @@ fi
 # Pass 2: SESSION_INDEX.md fallback (only sessions not already covered).
 # Per-pass dedup catches accidental copy-paste duplicates within SESSION_INDEX.md itself
 # (each sid only emitted once across both passes).
-parse_existing_session_index "$SESSION_INDEX_FILE" | while IFS=$'\t' read -r sid dat thm out org; do
+parse_existing_session_index "$SESSION_INDEX_FILE" | while IFS=$'\t' read -r sid dat thm out org fpath; do
   if grep -Fxq -- "$sid" "$TMPSEEN" 2>/dev/null; then continue; fi
   printf '%s\n' "$sid" >> "$TMPSEEN"
-  printf '%s\t%s\t%s\t%s\t%s\n' "$sid" "$dat" "$thm" "$out" "$org"
+  # 6th field intentionally empty for SESSION_INDEX-sourced rows.
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$sid" "$dat" "$thm" "$out" "$org" "$fpath"
 done >> "$TMPFILE"
 
 # Sort by numeric prefix + lane name (stable for ties).
@@ -320,9 +372,26 @@ generated_from: $SAFE_MEMORY_DIR
 |---------|------|----------|----------|-----------------|
 EOF
 
-  # Emit sorted rows
+  # Emit sorted rows. Escape `|` → `\|` in description/outcome cells so
+  # pre-existing pipe-corruption rows (S71/S3-side-multi-lane/S4-side-multi-lane/
+  # S6-side-multi-lane carry literal `||` in code-spans) emit a clean markdown
+  # table. The 6th tab-separated field (file_path) is consumed only by the
+  # MEMORY history bullets emitter, not by this table-row emitter.
+  #
+  # md_escape uses split+join (not gsub) because gsub replacement-string backslash
+  # interpretation in awk is implementation-defined when chained from a shell
+  # heredoc — split+join produces deterministic `\|` (1 backslash, 1 pipe) per
+  # match across gawk/bwk/mawk regardless of POSIX/non-POSIX mode.
   if [ -n "$SORTED" ]; then
-    printf '%s\n' "$SORTED" | awk -F'\t' '{ printf "| %s | %s | %s | %s | %s |\n", $1, $2, $3, $4, $5 }'
+    printf '%s\n' "$SORTED" | awk -F'\t' '
+      function md_escape(s,    n, parts, i, result) {
+        n = split(s, parts, "|")
+        result = parts[1]
+        for (i = 2; i <= n; i++) result = result "\\|" parts[i]
+        return result
+      }
+      { printf "| %s | %s | %s | %s | %s |\n", $1, $2, md_escape($3), md_escape($4), $5 }
+    '
   fi
 
   cat <<EOF
@@ -341,6 +410,253 @@ EOF
   # construction.
   emit_memory_session_history "$MEMORY_FILE"
 }
+
+# ---------------------------------------------------------------------------
+# Phase F.B (--in-place) helpers — Issue #330
+# ---------------------------------------------------------------------------
+#
+# F.B cutover replaces canonical SESSION_INDEX.md table body and MEMORY.md
+# "Project (Session History)" subsection with regenerated content, idempotent
+# via HTML-comment markers. Markers are inserted on first --in-place run and
+# bound the regenerated region on subsequent runs. Pre-existing rows outside
+# the marker region (header / preamble / footer / sibling subsections) are
+# preserved verbatim — splice is line-anchored and never reflows surrounding
+# content.
+#
+# Marker shape:
+#   <!-- BEGIN: scripts/regenerate-memory-index.sh --in-place ... -->
+#   ...regenerated content...
+#   <!-- END: scripts/regenerate-memory-index.sh --in-place -->
+#
+# First-run insertion points:
+#   - SESSION_INDEX.md: immediately after the table separator line (`|---|...`)
+#   - MEMORY.md: immediately after the `## Project (Session History)` heading
+#
+# Subsequent runs: replace existing marker-bounded content. Idempotent —
+# running twice produces byte-identical output.
+# ---------------------------------------------------------------------------
+
+# Markers — kept short to fit cleanly in markdown source. The `regenerate-memory-index.sh`
+# token in BEGIN doubles as a search anchor for operators auditing canonical files.
+IN_PLACE_BEGIN_MARKER='<!-- BEGIN: scripts/regenerate-memory-index.sh --in-place (Issue #330 Phase F.B). Regenerated content — DO NOT edit between markers. -->'
+IN_PLACE_END_MARKER='<!-- END: scripts/regenerate-memory-index.sh --in-place -->'
+
+# emit_session_index_rows_only — emits sorted markdown table rows ONLY (no
+# header, no separator, no wrapping front-matter). Used by --in-place to write
+# the table body that gets spliced between the existing header/separator and
+# the marker region. md_escape uses split+join (see emit_index for rationale).
+emit_session_index_rows_only() {
+  if [ -n "$SORTED" ]; then
+    printf '%s\n' "$SORTED" | awk -F'\t' '
+      function md_escape(s,    n, parts, i, result) {
+        n = split(s, parts, "|")
+        result = parts[1]
+        for (i = 2; i <= n; i++) result = result "\\|" parts[i]
+        return result
+      }
+      { printf "| %s | %s | %s | %s | %s |\n", $1, $2, md_escape($3), md_escape($4), $5 }
+    '
+  fi
+}
+
+# emit_memory_history_bullets — emits MEMORY.md "Project (Session History)"
+# bullets in DESCENDING session order (latest first), one bullet per session.
+# Bullet form when per-session file exists: `- [<file_path>](<file_path>) — <description>`
+# Fallback when only SESSION_INDEX row exists (no per-session file yet):
+#   `- S<id>(-<lane>)? — <description>`
+# Descending order matches existing MEMORY.md convention (latest sessions
+# surface first when MEMORY.md is loaded into Claude Code session context).
+emit_memory_history_bullets() {
+  if [ -n "$SORTED" ]; then
+    printf '%s\n' "$SORTED" | awk -F'\t' '
+      function md_escape(s,    n2, parts2, i2, result2) {
+        n2 = split(s, parts2, "|")
+        result2 = parts2[1]
+        for (i2 = 2; i2 <= n2; i2++) result2 = result2 "\\|" parts2[i2]
+        return result2
+      }
+      { lines[NR] = $0; n = NR }
+      END {
+        for (i = n; i >= 1; i--) {
+          split(lines[i], f, "\t")
+          # f[1]=sid f[2]=date f[3]=theme f[4]=outcome f[5]=origin f[6]=file_path
+          fpath = (f[6] == "") ? "" : f[6]
+          # Markdown bullets render `|` literally — escape for safety even though
+          # bullet content is more permissive than table cells.
+          desc = md_escape(f[3])
+          if (fpath != "") {
+            printf "- [%s](%s) — %s\n", fpath, fpath, desc
+          } else {
+            printf "- %s — %s\n", f[1], desc
+          }
+        }
+      }
+    '
+  fi
+}
+
+# splice_session_index_in_place <source_file> <generated_rows_file>
+# Mutates <source_file> in place: replaces marker-bounded region (subsequent
+# runs) OR inserts marker block right after the table separator (first run).
+# Atomic: writes to tmp file then mv. Operators recover via either:
+#   (a) git revert if the canonical file is in the user-memory layer's git tracking
+#   (b) cp from <memory-dir>/SESSION_INDEX.md.pre-cutover.bak (created on first
+#       --in-place run; see backup logic below)
+splice_session_index_in_place() {
+  local source_file="$1"
+  local rows_file="$2"
+  local tmp
+  tmp=$(mktemp) || die "mktemp failed (splice_session_index_in_place)"
+
+  # Pre-detect marker presence to choose splice strategy. Awk single-pass cannot
+  # reliably distinguish first-run (no markers, insert after table separator)
+  # from subsequent-run (markers exist, replace between them) because the
+  # SESSION_INDEX.md table header is encountered BEFORE the marker line on
+  # subsequent runs — pre-detection sidesteps the rule-ordering ambiguity.
+  if grep -q '^<!-- BEGIN: scripts/regenerate-memory-index.sh --in-place' "$source_file"; then
+    # Subsequent run: marker-bounded replacement. Header/separator and any
+    # other surrounding content are preserved verbatim by the catch-all `print`.
+    awk -v gen="$rows_file" -v begin_m="$IN_PLACE_BEGIN_MARKER" -v end_m="$IN_PLACE_END_MARKER" '
+      index($0, "<!-- BEGIN: scripts/regenerate-memory-index.sh --in-place") == 1 {
+        print begin_m
+        while ((getline line < gen) > 0) print line
+        close(gen)
+        in_marker = 1
+        next
+      }
+      in_marker && index($0, "<!-- END: scripts/regenerate-memory-index.sh --in-place") == 1 {
+        print end_m
+        in_marker = 0
+        next
+      }
+      in_marker { next }
+      { print }
+    ' "$source_file" > "$tmp" || { rm -f "$tmp"; die "awk splice (subsequent) failed for $source_file"; }
+  else
+    # First run: no markers yet — locate table header + separator, insert
+    # marker block immediately after separator, skip existing legacy rows.
+    awk -v gen="$rows_file" -v begin_m="$IN_PLACE_BEGIN_MARKER" -v end_m="$IN_PLACE_END_MARKER" '
+      BEGIN { state = "before" }
+      state == "before" && /^\| Session \|/ { print; state = "header_seen"; next }
+      state == "header_seen" && /^\|---/ {
+        print
+        print begin_m
+        while ((getline line < gen) > 0) print line
+        close(gen)
+        print end_m
+        state = "in_legacy_table"
+        next
+      }
+      # Skip ALL content in the legacy table region: rows (^|), blank lines
+      # between rows (preserve canonical SESSION_INDEX.md may have grown via
+      # append-with-blank-separator pattern, e.g. S3-S70 contiguous + S<later>
+      # rows separated by blank lines). Only headings (#) or blockquotes (>)
+      # signal the end of the legacy table region.
+      state == "in_legacy_table" && /^\|/ { next }
+      state == "in_legacy_table" && /^[[:space:]]*$/ { next }
+      state == "in_legacy_table" { state = "after" }
+      { print }
+    ' "$source_file" > "$tmp" || { rm -f "$tmp"; die "awk splice (first) failed for $source_file"; }
+  fi
+  mv "$tmp" "$source_file" || die "mv failed for $source_file"
+}
+
+# splice_memory_history_in_place <source_file> <generated_bullets_file>
+# Mirror of splice_session_index_in_place for MEMORY.md "Project (Session
+# History)" subsection. First run inserts markers immediately after the
+# `## Project (Session History)` heading; subsequent runs replace marker
+# content. The next `## ` heading bounds the legacy region on first run.
+splice_memory_history_in_place() {
+  local source_file="$1"
+  local bullets_file="$2"
+  local tmp
+  tmp=$(mktemp) || die "mktemp failed (splice_memory_history_in_place)"
+
+  # Pre-detect marker presence; same rationale as splice_session_index_in_place.
+  if grep -q '^<!-- BEGIN: scripts/regenerate-memory-index.sh --in-place' "$source_file"; then
+    # Subsequent run: marker-bounded replacement.
+    awk -v gen="$bullets_file" -v begin_m="$IN_PLACE_BEGIN_MARKER" -v end_m="$IN_PLACE_END_MARKER" '
+      index($0, "<!-- BEGIN: scripts/regenerate-memory-index.sh --in-place") == 1 {
+        print begin_m
+        while ((getline line < gen) > 0) print line
+        close(gen)
+        in_marker = 1
+        next
+      }
+      in_marker && index($0, "<!-- END: scripts/regenerate-memory-index.sh --in-place") == 1 {
+        print end_m
+        in_marker = 0
+        next
+      }
+      in_marker { next }
+      { print }
+    ' "$source_file" > "$tmp" || { rm -f "$tmp"; die "awk splice (subsequent) failed for $source_file"; }
+  else
+    # First run: insert markers immediately after `## Project (Session History)`
+    # heading; skip legacy bullets until next `## ` heading (or EOF).
+    awk -v gen="$bullets_file" -v begin_m="$IN_PLACE_BEGIN_MARKER" -v end_m="$IN_PLACE_END_MARKER" '
+      BEGIN { state = "before" }
+      state == "before" && /^## Project \(Session History\)/ {
+        print
+        print begin_m
+        while ((getline line < gen) > 0) print line
+        close(gen)
+        print end_m
+        state = "in_legacy_history"
+        next
+      }
+      state == "in_legacy_history" && /^## / { state = "after" }
+      state == "in_legacy_history" { next }
+      { print }
+    ' "$source_file" > "$tmp" || { rm -f "$tmp"; die "awk splice (first) failed for $source_file"; }
+  fi
+  mv "$tmp" "$source_file" || die "mv failed for $source_file"
+}
+
+# ---------------------------------------------------------------------------
+# Main: --in-place mode short-circuit (Phase F.B)
+# ---------------------------------------------------------------------------
+if [ "$IN_PLACE" = "1" ]; then
+  ROWS_TMP=$(mktemp)    || die "mktemp failed (rows tmp)"
+  BULLETS_TMP=$(mktemp) || die "mktemp failed (bullets tmp)"
+  trap 'rm -f "$TMPFILE" "$TMPSEEN" "$ROWS_TMP" "$BULLETS_TMP"' EXIT
+
+  # First-run safety: backup canonical files before mutation. Operators recover via
+  # `cp <file>.pre-cutover.bak <file>` if cutover output drifts from expectation.
+  # Skip backup if file already exists (subsequent runs are idempotent — backup
+  # would overwrite the original pre-cutover snapshot with already-mutated content).
+  for canonical in "$SESSION_INDEX_FILE" "$MEMORY_FILE"; do
+    bak="${canonical}.pre-cutover.bak"
+    if [ ! -f "$bak" ]; then
+      cp "$canonical" "$bak" || die "backup failed: $canonical → $bak"
+      printf 'regenerate-memory-index: backup created: %s\n' "$bak" >&2
+    fi
+  done
+
+  emit_session_index_rows_only > "$ROWS_TMP"    || die "emit session index rows failed"
+  emit_memory_history_bullets  > "$BULLETS_TMP" || die "emit memory bullets failed"
+
+  splice_session_index_in_place "$SESSION_INDEX_FILE" "$ROWS_TMP"
+  splice_memory_history_in_place "$MEMORY_FILE"        "$BULLETS_TMP"
+
+  # H1 dual-verify fix: post-splice marker verification. If the source file
+  # lacked the expected anchor (`| Session |` table header in SESSION_INDEX or
+  # `## Project (Session History)` heading in MEMORY), the awk first-run state
+  # machine never transitions out of "before" and writes ZERO markers — the
+  # script would otherwise report success on a silent no-op cutover. Failing
+  # here surfaces the missing-anchor case loudly so operators can fix the
+  # canonical file structure before believing the cutover landed.
+  for canonical in "$SESSION_INDEX_FILE" "$MEMORY_FILE"; do
+    if ! grep -qF -- "$IN_PLACE_BEGIN_MARKER" "$canonical"; then
+      die "splice failed: marker absent in $canonical after --in-place (expected anchor: '| Session |' table header in SESSION_INDEX.md OR '## Project (Session History)' heading in MEMORY.md). Restore from .pre-cutover.bak and verify canonical file structure."
+    fi
+  done
+
+  NCOUNT=0
+  [ -n "$SORTED" ] && NCOUNT=$(printf '%s\n' "$SORTED" | awk 'NF{n++} END{print n+0}')
+  printf 'regenerate-memory-index: in-place cutover complete (%d sessions written to canonical SESSION_INDEX.md + MEMORY.md)\n' "$NCOUNT"
+  exit 0
+fi
 
 if [ "$FORMAT" = "diff" ]; then
   # Diff mode: regenerate to a tmp file then compare against the EXISTING

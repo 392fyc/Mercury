@@ -504,7 +504,7 @@ junk file
 EOF
 run_case "non_session_filename_skipped" bash "$SCRIPT" --memory-dir "$M31" --output -
 assert_rc "non_session_filename_skipped" 0
-assert_err_contains "non_session_filename_warn" "skip non-session markdown file"
+assert_err_contains "non_session_filename_warn" "skip non-canonical session filename"
 # Index row from SESSION_INDEX.md still emitted (not blocked by README.md)
 assert_out_contains "non_session_index_kept" "from-index"
 
