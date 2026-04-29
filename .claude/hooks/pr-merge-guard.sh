@@ -29,6 +29,19 @@
 #     - -R/--repo parsing is scoped to the matched merge segment only, not the
 #       whole command — prevents `gh pr view -R A && gh pr merge 5 -R B` from
 #       picking up repo A when validating the B merge.
+#
+#   Session 82 / Issue #339 — Bug 3: greedy regex consumed body text.
+#     The merge-tail extractor was `sed -E 's/^.*[[:space:]]merge([[:space:]]+|$)//'`.
+#     If `gh pr merge N -b "...merge..."` carried the word `merge` (as a
+#     whitespace-delimited token) inside its commit-body string, the greedy
+#     `^.*` consumed up to the LAST occurrence of `merge` in the input,
+#     leaving MERGE_TAIL with body text only and no PR selector — hook
+#     blocked with "could not determine PR number".
+#     Fix: slice the already-built _tokens array starting at _merge_idx+1.
+#     The token boundary is set by bash word-splitting of $_first_cmd, which
+#     happens before any merge-tail extraction, so body content is naturally
+#     scoped to the flag tokens that introduced it (`-b`, `--body`, etc.) and
+#     the downstream value-skip walker handles it identically to before.
 
 INPUT=$(cat)
 # Extract command (jq preferred, sed fallback)
@@ -189,10 +202,24 @@ while IFS= read -r _seg; do
     _INTERCEPT=1
     MATCHED_SEG="$_first_cmd"
     GLOBAL_REPO_FLAG="$_global_repo"
-    # Capture the merge-tail: everything after the `merge` token, as a string.
-    # This is a raw slice from the original _first_cmd string, NOT the tokens
-    # array, so quoted values inside the tail are preserved verbatim.
-    MERGE_TAIL=$(printf '%s' "$_first_cmd" | sed -E 's/^.*[[:space:]]merge([[:space:]]+|$)//')
+    # Build merge-tail by slicing the tokens array AFTER the `merge` token,
+    # not by regex on the raw string. The previous regex
+    # `^.*[[:space:]]merge([[:space:]]+|$)` was greedy: a merge-commit body
+    # passed via `-b "...merge..."` (or any flag value containing the word
+    # `merge` as a whitespace-delimited token, e.g. "merge into develop")
+    # would let `^.*` consume up to the LAST in-body occurrence, dropping
+    # the actual PR selector. Token-array slice keys off the already-known
+    # _merge_idx and is immune to body-text contamination. (Issue #339.)
+    MERGE_TAIL=""
+    _tail_i=$((_merge_idx + 1))
+    while [ "$_tail_i" -lt "$_ntok" ]; do
+      if [ -z "$MERGE_TAIL" ]; then
+        MERGE_TAIL="${_tokens[$_tail_i]}"
+      else
+        MERGE_TAIL="$MERGE_TAIL ${_tokens[$_tail_i]}"
+      fi
+      _tail_i=$((_tail_i + 1))
+    done
     break
   fi
 done <<EOF
