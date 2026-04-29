@@ -63,19 +63,27 @@ assert_not_contains() {
 }
 
 # Per-scenario isolated working dir so each run gets a fresh state dir.
-WORK_DIR="$(mktemp -d -t pr-merge-guard-test.XXXXXX)"
-trap 'rm -rf "$WORK_DIR"' EXIT
+# Guard mktemp failure explicitly: a missing $WORK_DIR would silently fall
+# through to "$WORK_DIR/..." path concatenation that would resolve to
+# absolute paths under cwd, risking writes outside the temp namespace.
+if ! WORK_DIR="$(mktemp -d -t pr-merge-guard-test.XXXXXX)"; then
+  printf 'failed to create temp dir for test\n' >&2
+  exit 1
+fi
+trap '[[ -n "${WORK_DIR:-}" && -d "$WORK_DIR" ]] && rm -rf "$WORK_DIR"' EXIT
 
 BIN_DIR="$WORK_DIR/bin"
 mkdir -p "$BIN_DIR"
 
 # Mock gh shim. Returns deterministic values for the calls the hook makes,
 # AND records each invocation (full argv) to $MOCK_GH_LOG so tests can assert
-# repo-flag propagation, not just selector extraction.
+# repo-flag propagation, not just selector extraction. The full-argv log is
+# the canonical record — assertions grep it for the repo flag rather than
+# requiring the mock to track repo state itself.
 #
-# Walk argv to find `--json FIELD` and selector (first non-flag positional
-# after `pr view`). Also capture `--repo VALUE` / `--repo=VALUE` / `-R VALUE`
-# into `repo_seen` so the log records what repo the hook downstream-passed.
+# Walk argv to find `--json FIELD` and the selector (first non-flag
+# positional after `pr view`). Skip value-taking flag values so the
+# selector heuristic is not fooled by e.g. `-R owner/repo`.
 cat > "$BIN_DIR/gh" <<'MOCK_EOF'
 #!/usr/bin/env bash
 # mock gh used by test-pr-merge-guard.sh
@@ -93,7 +101,6 @@ shift || true
 shift || true
 json_field=""
 selector=""
-repo_seen=""
 prev=""
 for arg in "$@"; do
   if [[ "$prev" == "--json" ]]; then
@@ -101,19 +108,13 @@ for arg in "$@"; do
     prev=""
     continue
   fi
-  if [[ "$prev" == "-R" || "$prev" == "--repo" ]]; then
-    repo_seen="$arg"
-    prev=""
-    continue
-  fi
-  if [[ "$prev" == "-q" || "$prev" == "--jq" ]]; then
+  if [[ "$prev" == "-q" || "$prev" == "--jq" || "$prev" == "-R" || "$prev" == "--repo" ]]; then
     prev=""
     continue
   fi
   case "$arg" in
     --json|--jq|-q|-R|--repo) prev="$arg"; continue ;;
-    --repo=*) repo_seen="${arg#--repo=}"; continue ;;
-    --jq=*) continue ;;
+    --repo=*|--jq=*) continue ;;
     -*) continue ;;
     *)
       [[ -z "$selector" ]] && selector="$arg"
@@ -176,8 +177,11 @@ chmod +x "$BIN_DIR/gh"
 MOCK_GH_LOG="$WORK_DIR/gh-calls.log"
 
 # Run hook with given command-string. Captures stderr + exit code.
-# Optional second arg: env-var assignments separated by ';' (e.g.
-# 'MOCK_FALLBACK_PR=42;MOCK_REVIEW_DECISION=APPROVED').
+# Optional second arg: ';'-separated VAR=VALUE pairs forwarded to the hook
+# environment (e.g. 'MOCK_FALLBACK_PR=42;MOCK_REVIEW_DECISION=APPROVED').
+# The pairs are split into an array and passed via `env`, so VALUE may
+# contain spaces or shell metacharacters without being interpreted as code
+# (no eval; closes Argus #339-Critical and Copilot ';'-semantics points).
 # Returns: stderr text on stdout (so callers can grep it), exit-code in $?.
 run_hook() {
   local cmd="$1"
@@ -191,13 +195,12 @@ run_hook() {
   mkdir -p "$fake_project"
   : > "$MOCK_GH_LOG"  # reset log
   local rc
+  local -a extra_env_kv=()
   if [[ -n "$extra_env" ]]; then
-    # eval is intentional — extra_env is test-controlled, not user input.
-    eval "PATH=\"$BIN_DIR:\$PATH\" CLAUDE_PROJECT_DIR=\"$fake_project\" MOCK_GH_LOG=\"$MOCK_GH_LOG\" $extra_env bash \"$HOOK\" 2> \"$WORK_DIR/stderr.\$\$\"" <<<"$input" >/dev/null
-  else
-    PATH="$BIN_DIR:$PATH" CLAUDE_PROJECT_DIR="$fake_project" MOCK_GH_LOG="$MOCK_GH_LOG" \
-      bash "$HOOK" 2> "$WORK_DIR/stderr.$$" <<<"$input" >/dev/null
+    IFS=';' read -r -a extra_env_kv <<< "$extra_env"
   fi
+  env "PATH=$BIN_DIR:$PATH" "CLAUDE_PROJECT_DIR=$fake_project" "MOCK_GH_LOG=$MOCK_GH_LOG" \
+    "${extra_env_kv[@]}" bash "$HOOK" 2> "$WORK_DIR/stderr.$$" <<<"$input" >/dev/null
   rc=$?
   cat "$WORK_DIR/stderr.$$" 2>/dev/null || true
   rm -f "$WORK_DIR/stderr.$$"
@@ -379,6 +382,18 @@ rc=$?
 assert_eq "  exit code" "2" "$rc"
 assert_contains "  stderr resolves to PR #42" "PR #42" "$err"
 assert_not_contains "  stderr does not say could-not-determine" "could not determine" "$err"
+
+# Copilot finding #3: prove the ';'-separated multi-var contract really works
+# end-to-end. With MOCK_REVIEW_DECISION=APPROVED, the hook should exit 0
+# (approved → allow merge); with MOCK_FALLBACK_PR=42 supplying the resolved
+# PR. Both vars must reach the hook simultaneously, which only works because
+# run_hook now array-splits and passes via `env` (the previous eval would
+# have either treated `;` as a command separator or required quoting).
+printf '\n[scenario] multi-var extra_env (MOCK_FALLBACK_PR=42;MOCK_REVIEW_DECISION=APPROVED) -> hook approves\n'
+err=$(run_hook 'gh pr merge' 'MOCK_FALLBACK_PR=42;MOCK_REVIEW_DECISION=APPROVED')
+rc=$?
+assert_eq "  exit code" "0" "$rc"
+assert_not_contains "  stderr does not say BLOCKED" "BLOCKED" "$err"
 
 # ---------------------------------------------------------------------------
 # Bypass flag: human-approved merge proceeds
