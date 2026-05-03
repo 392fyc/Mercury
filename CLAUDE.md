@@ -62,6 +62,7 @@ Mercury 的部分功能跨仓库运作。以下表格记录外部仓库与 Mercu
 - **PR to develop**: all code merges into develop must go through a PR. Direct push to develop is forbidden.
 - **Install to D drive**: install software to `D:\Program Files`, not C drive.
 - **Modular design**: every new feature must be independently detachable. If it cannot be used outside Mercury, the coupling is too deep.
+- **External-project adapters under `adapters/<vendor-name>/` MUST stay under 200 lines.** If an external integration needs more than that, rethink the mounting approach. This rule does NOT apply to Mercury-internal tooling under `scripts/` — internal tooling implements the protocol that lives in this repo and isn't trying to mount anything external, so it has no LOC cap (size by need). Empirical drivers: PR #338 (`scripts/codex-sync-audit.sh` ~360 LOC) and PR #346 (`scripts/lane-assertion.sh` ~440 LOC) both hit Argus nit-loops on the adapter-size finding, requiring iter-3+ escape-hatch / disagree replies before APPROVED.
 - **No self-research**: if an external project can solve the problem, mount it via submodule rather than reimplementing.
 
 ## DO NOT
@@ -72,7 +73,7 @@ Mercury 的部分功能跨仓库运作。以下表格记录外部仓库与 Mercu
 - Do not commit without running `/dual-verify`.
 - Do not create PRs without an associated GitHub Issue.
 - Do not build features that assume the model is weak — design for upward compatibility.
-- Do not create adapters exceeding 200 lines — rethink the mounting approach if this happens.
+- Do not create **external-project adapters** under `adapters/<vendor-name>/` exceeding 200 lines — rethink the mounting approach if this happens. (Mercury-internal tooling under `scripts/` is exempt — see MUST §"External-project adapters" carve-out.)
 
 ## Cherry-pick protocol
 
