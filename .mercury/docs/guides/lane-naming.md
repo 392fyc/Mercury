@@ -349,14 +349,112 @@ audit trail; operators may archive it manually if no longer needed.
   routing-bleed risk per Issue #342. Migration is per-lane operator decision
   at next lane-active session.
 
+### Δ10 — `/handoff:auto` worktree integration (Issue [#345](https://github.com/392fyc/Mercury/issues/345))
+
+The `handoff` skill (`.claude/skills/handoff/SKILL.md` Step 5 Auto mode) now
+auto-resolves the active lane's `Worktree path` from `LANES.md` and uses it
+as the new tab's cwd:
+
+1. Lane name is derived from the handoff filename pattern:
+   - `session-handoff.md` → `main`
+   - `session-handoff-<lane>.md` → `<lane>`
+2. `LANES.md` is read for that lane's `Worktree path` bullet (this §
+   Worktree path convention table). awk extraction is bounded by the
+   `### \`<lane-name>\`` heading scope so cross-lane bleed is impossible.
+3. The path is substituted into the spawn command:
+   - Windows: `wt -w 0 nt --title "Handoff: <lane>" -d "<worktree>" -- claude -- "$SHORT_PROMPT"`
+   - tmux:    `tmux new-window -n handoff -c "<worktree>" "claude -- '$SHORT_PROMPT'"`
+4. If the `Worktree path` field is missing → spawn aborts with explicit
+   `Rule 5.1` guidance pointing at `LANES.md`.
+
+This closes the manual-`<cwd>`-substitution failure mode where an operator
+or agent invoking `/handoff:auto` from the main checkout (`D:/Mercury/Mercury`)
+forgot to override `<cwd>` before spawning a side-lane session — reproducing
+the share-cwd routing-bleed scenario that Δ9 was designed to prevent.
+
+### Δ11 — Path C: `[LANE=<name>]` marker + `lane-assertion.sh` (Issue [#345](https://github.com/392fyc/Mercury/issues/345))
+
+The auto-mode SHORT_PROMPT now starts with a `[LANE=<name>]` marker as its
+first whitespace-delimited token. **`<name>` is the lane's full section
+name** (the heading text under `## Active Lanes` in `LANES.md`), NOT the
+short name from the §Δ6 short-prefix convention. The handoff skill
+derives `<name>` from the handoff filename pattern (`session-handoff.md`
+→ `main`; `session-handoff-side-multi-lane.md` → `side-multi-lane`), and
+[`scripts/lane-assertion.sh`](../../../scripts/lane-assertion.sh) looks up
+the matching lane section by exact heading equality. Operators executing
+the assertion manually MUST use the lane section name; using the short
+name (e.g. `side-mlane`) instead would yield exit 4 (Worktree path
+missing) because no lane section heading matches.
+
+```
+[LANE=side-multi-lane] Continue from session handoff. The SessionStart hook injects the full document. Fallback: read <HANDOFF_PATH>
+```
+
+For the `main` lane the section name and short name happen to be
+identical, so `[LANE=main]` works regardless. The distinction matters
+only for side lanes whose section name and short name differ
+(e.g. `side-multi-lane` vs `side-mlane`). Fixes Argus iter2 Minor
+"文档一致性" (PR #346).
+
+The new session validates three-way lane alignment via
+[`scripts/lane-assertion.sh`](../../../scripts/lane-assertion.sh) before any
+work. The script compares:
+
+| Source | Expected | Mismatch exit |
+|--------|----------|---------------|
+| `[LANE=<name>]` marker (CLI / `MERCURY_LANE_MARKER` / `BOOTSTRAP_PROMPT` / stdin) | parsable lane name (`[a-z0-9-]+`) | `1` |
+| Encoded cwd vs encoded `Worktree path` from `LANES.md` | byte-equal after `: \\ /` → `-` slash-encoding | `2` |
+| `git branch --show-current` | matches lane's branch-prefix convention (Rule 2.1 `lane/<short>/*` or legacy `feature/lane-<lane>/TASK-*`). For **side lanes** only `develop` is tolerated as pre-checkout; `master`/`main` are NOT — accepting them would mean a misrouted session on those branches passes the assertion. **Main lane** tolerates all three (`develop`/`master`/`main`) since they are legitimate main-lane operating branches. | `3` |
+| `Worktree path` field present in lane's `LANES.md` section | non-empty | `4` |
+
+Marker source priority: `--marker` CLI → `MERCURY_LANE_MARKER` env →
+`BOOTSTRAP_PROMPT` env → stdin. The first source that yields a parseable
+`[LANE=<name>]` token wins; subsequent sources are not consulted.
+
+The marker character class is intentionally `[a-z0-9-]+` (matches Rule 2.1
+short-name validation): no path-traversal sequences, shell metacharacters,
+or quote characters can leak into the assertion logic via a crafted lane
+name. The lane name is also bounded by Rule 6 (only the owning lane edits
+its own `LANES.md` section), so injection from outside the protocol is
+prevented at the source.
+
+#### Soft-disable
+
+`MERCURY_LANE_ASSERT_DISABLED=1` skips all checks and exits 0 — break-glass
+for legitimate scenarios (recovery sessions, intentional cross-lane debug,
+single-lane operators who don't want the discipline). The skip writes one
+line to stdout so it is auditable in transcripts. Soft-disable is
+session-scoped only; it does not persist.
+
+#### Hook integration (forward-looking)
+
+This Issue scope keeps assertion as a manual / agent-as-first-action step
+to validate the contract in production. If proven stable across ≥3 sessions
+of real auto-handoff usage, follow-up work may wire it into a user-level
+SessionStart hook per `feedback_lane_protocol.md` Rule 5.1 §F.C governance
+pattern (analogous to Issue #259 deployment for mem0). The deferred-hook
+choice is intentional: a SessionStart-time assertion that runs by default
+needs a track record of low false-positive rate before it becomes
+unconditional infrastructure.
+
 ### Cross-references
 
 - `feedback_lane_protocol.md` Rule 5.1 (sub-rule of Rule 5: Per-lane state
-  separation) formalizes the worktree path convention as protocol
+  separation) formalizes the worktree path convention as protocol; §5.1.1
+  + §5.1.2 cover the Δ10/Δ11 contracts
 - `LANES.md` Governance §Lane workspace isolation declares each lane MUST
   state its `Worktree path` field
 - `.mercury/docs/guides/worktree-workflow.md` covers the orthogonal
   task-level worktree scope
+- `.claude/skills/handoff/SKILL.md` Step 5 Auto mode for the spawn-side
+  contract
+- `scripts/lane-assertion.sh` + `scripts/test-lane-assertion.sh` for the
+  consumer-side check (test suite covers happy paths for both lanes,
+  every exit-code branch including `worktree_path_duplicate`, marker
+  source priority + first-non-blank-line semantics, JSON format with
+  backslash/quote escaping, soft-disable, code-fence isolation, paths
+  with spaces/parens, and side-lane branch tightening — see the suite
+  for the current assertion count)
 
 ## Tests
 
@@ -382,7 +480,9 @@ Tests do NOT touch real GitHub or LANES.md — synthetic fixtures only.
 - [Towards a science of scaling agent systems (Google research)](https://research.google/blog/towards-a-science-of-scaling-agent-systems-when-and-why-agent-systems-work/)
 - [Working with WIP limits for Kanban (Atlassian)](https://www.atlassian.com/agile/kanban/wip-limits)
 - Issue [#342](https://github.com/392fyc/Mercury/issues/342) — Δ9 lane-level worktree isolation acceptance criteria + S13 routing-bleed forensic record
+- Issue [#345](https://github.com/392fyc/Mercury/issues/345) — Δ10/Δ11 `/handoff:auto` worktree integration + Path C agent lane-assertion acceptance criteria
 - [Claude Code .claude directory reference](https://code.claude.com/docs/en/claude-directory) — per-project `~/.claude/projects/<project>/` state dir
 - [Claude Code hooks reference](https://code.claude.com/docs/en/hooks) — SessionStart `cwd` JSON field
 - [Windows Terminal command line arguments](https://learn.microsoft.com/en-us/windows/terminal/command-line-arguments) — `new-tab -d <directory>` per-tab starting directory
 - [git-worktree(1)](https://git-scm.com/docs/git-worktree) — multiple working trees from a single repo
+- `feedback_handoff_short_prompt_only.md` — S3-side-multi-lane SHORT_PROMPT lesson (Δ10/Δ11 SHORT_PROMPT design rests on this rule)
