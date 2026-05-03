@@ -283,103 +283,141 @@ Optional: offer to launch if the user later says so (Step 6).
 
 After Step 5.1 + 5.2, and Pre-Termination Checklist passed:
 
-**Required launch pattern — write prompt to a locked-down temp file, then
-pass via `claude "$(cat ...)"` as a single positional argument.** This
-matches the canonical `claude-handoff` plugin shape
-(<https://github.com/392fyc/claude-handoff>) which has been validated
-end-to-end on Windows (wt + PowerShell profile). Do NOT insert a `--`
-sentinel between `claude` and the prompt — on Windows, `wt` spawns
-`claude.cmd` (npm shim) directly via CreateProcess; cmd.exe's batch
-re-parser can mis-handle the extra `--`, causing the new tab to open
-with no running process. Handoff prompts always start with literal text
-(e.g. `这是 S{N+1}`), never with `-`, so the `--` sentinel is unnecessary.
+**Required launch pattern — use a SHORT reference prompt, never inline the
+full handoff content into the command line.** The SessionStart hook already
+injects the full handoff document as `additionalContext`, so the new session
+receives everything automatically. Inlining multi-line/multi-KB content into
+`wt`/`tmux`/shell commands causes catastrophic failures on Windows
+(multi-line expansion breaks argument parsing → error 0x80070002, multiple
+ghost terminal windows; see `feedback_handoff_short_prompt_only.md` —
+S3-side-multi-lane 2026-04-26 forensic record).
 
-**Prerequisites**: auto-mode launch assumes a POSIX-like shell (`mktemp`,
-`chmod`, `cat`, heredoc). On Windows this means **Git Bash / MSYS2 / WSL**
-(which Mercury uses) — native `cmd.exe` and non-interactive PowerShell do
-**not** satisfy this. If the host shell is not POSIX-compatible, fall back
-to manual mode or use the PowerShell equivalent shown further below.
+**SHORT_PROMPT contract (Δ11 — Path C lane assertion)**:
 
-**Command-line length**: `claude` receives the prompt as a single positional
-argument, which is subject to OS argv limits (Windows `CreateProcess` ≈
-32 KB, Linux/macOS 128 KB+). Typical handoff prompts (~1–3 KB) are well
-under any limit. For abnormally large prompts (> 30 KB on Windows), pipe
-the file to `claude` via stdin or split the prompt into a separate
-`--input-file`-style mechanism (check `claude --help` on the installed
-version; stdin support is documented at
-<https://code.claude.com/docs/en/cli-reference>).
+The prompt MUST start with a `[LANE=<name>]` marker as its first
+whitespace-delimited token. The new session's startup checks (via
+`scripts/lane-assertion.sh`) verify three-way alignment between this marker,
+the cwd-encoded project state dir, and the current git branch prefix. If
+the marker is missing or any pair disagrees, the assertion fails fast and
+guides recovery — preventing the share-cwd routing-bleed failure mode
+(Issue #342, S13-side-multi-lane forensic record).
 
 ```bash
-# Step A (POSIX shells — Git Bash, WSL, macOS, Linux):
-# Create temp file, register cleanup BEFORE writing sensitive content, then write.
-# Ordering rationale: if any later step (chmod, heredoc, launch) fails or is
-# interrupted, the EXIT trap still fires and removes the file. Registering the
-# trap after the write would leave a window where a crash leaks handoff content.
-TMP=$(mktemp) || { echo "ERROR: mktemp failed" >&2; exit 1; }
-trap 'rm -f "$TMP"' EXIT
-chmod 600 "$TMP" || { echo "ERROR: chmod failed" >&2; exit 1; }
-cat > "$TMP" <<'PROMPT_EOF'
-<STARTING_PROMPT_VERBATIM>
-PROMPT_EOF
+# Resolve the active lane:
+#   - main lane handoff file    → lane=main
+#   - lane-suffixed handoff file → lane=<suffix> (after first hyphen)
+HANDOFF_BASENAME=$(basename "$HANDOFF_PATH" .md)
+case "$HANDOFF_BASENAME" in
+  session-handoff)             LANE_NAME="main" ;;
+  session-handoff-*)           LANE_NAME="${HANDOFF_BASENAME#session-handoff-}" ;;
+  *)                           echo "ERROR: unrecognised handoff filename: $HANDOFF_BASENAME" >&2; exit 1 ;;
+esac
+
+# Resolve the worktree path from LANES.md (Rule 5.1, Issue #342).
+# This is the cwd that wt/tmux must launch the new session at — its
+# encoding determines ~/.claude/projects/<encoded>/ project state dir.
+LANES_FILE="${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}/LANES.md"
+WORKTREE_PATH_RAW=$(awk -v lane="$LANE_NAME" '
+BEGIN { in_section=0; in_fence=0 }
+/^```/ { in_fence = !in_fence; next }
+in_fence { next }
+/^### `[^`]+`/ {
+  match($0, /^### `[^`]+`/)
+  hdr=substr($0, RSTART+5, RLENGTH-6)
+  in_section=(hdr == lane) ? 1 : 0
+  next
+}
+in_section && /\*\*Worktree path\*\*/ {
+  s=$0
+  i=index(s, "**Worktree path**"); s=substr(s, i+length("**Worktree path**"))
+  if (substr(s, 1, 2) == " (") { e=index(s, ")"); if (e > 0) s=substr(s, e+1) }
+  c=index(s, ":"); if (c == 0) next
+  s=substr(s, c+1); sub(/^[[:space:]]+/, "", s)
+  if (substr(s, 1, 1) == "`") {
+    # Backtick-quoted (canonical) — preserves paths with spaces, but trims
+    # trailing whitespace inside the quoted region to defang invisible typos.
+    s=substr(s, 2); bt=index(s, "`")
+    if (bt > 0) { out=substr(s, 1, bt-1); sub(/[[:space:]]+$/, "", out); if (out != "") print out }
+  } else {
+    sub(/[[:space:]]+$/, "", s); if (s != "") print s
+  }
+}
+' "$LANES_FILE")
+if [ -z "$WORKTREE_PATH_RAW" ]; then
+  echo "ERROR: lane '$LANE_NAME' has no Worktree path field in $LANES_FILE" >&2
+  echo "       Add it per feedback_lane_protocol.md Rule 5.1 before auto-handoff." >&2
+  exit 1
+fi
+# Reject duplicate Worktree path bullets — first-wins would silently route
+# to a stale value.
+WORKTREE_COUNT=$(printf '%s\n' "$WORKTREE_PATH_RAW" | grep -c '^.')
+if [ "$WORKTREE_COUNT" -gt 1 ]; then
+  echo "ERROR: lane '$LANE_NAME' has $WORKTREE_COUNT Worktree path bullets in $LANES_FILE" >&2
+  echo "       Edit the lane section to keep exactly one before auto-handoff." >&2
+  exit 1
+fi
+WORKTREE_PATH="$WORKTREE_PATH_RAW"
+
+SHORT_PROMPT="[LANE=${LANE_NAME}] Continue from session handoff. The SessionStart hook injects the full document. Fallback: read ${HANDOFF_PATH}"
 ```
 
-```powershell
-# Step A (PowerShell on Windows, if no Git Bash):
-# Register cleanup via try/finally around the launch (see Step B below).
-$TMP = [System.IO.Path]::GetTempFileName()
-Set-Content -LiteralPath $TMP -Value @'
-<STARTING_PROMPT_VERBATIM>
-'@
-# PowerShell $TMP permissions default to user-only on NTFS.
-```
+`<encoded_cwd>` for the handoff doc path uses the same `encode_project_path()`
+logic referenced earlier (`:` `\` `/` → `-`, strip leading `-`).
 
-**Windows** (Windows Terminal, new tab — `wt` opens a real new tab):
+**SHORT_PROMPT must remain free of `wt`/`tmux` metacharacters** —
+`;` (command separator), `&` (background), `|` (pipe), `\` outside quotes,
+`$()` (command substitution). The `[LANE=<name>]` marker only contains
+`[a-z0-9-]+` per Rule 2.1 + the literal `[`/`]`/`=` brackets, none of which
+are `wt`/`tmux` metacharacters. The lane name is read from LANES.md (which
+the protocol governs), so injection via crafted lane names is bounded by
+Rule 2.1 + Rule 6 (lane sections only edited by their owning lane).
+
+**Pre-launch alignment smoke check (recommended)**:
+
+If `scripts/lane-assertion.sh` is present in the repo, run it once with the
+SHORT_PROMPT as input — it verifies the marker resolves and Worktree path
+extraction works before spawning a process you may have to clean up:
+
 ```bash
-wt -w 0 nt --title "Handoff" -- claude "$(cat "$TMP")"
+if [ -x scripts/lane-assertion.sh ]; then
+  if ! BOOTSTRAP_PROMPT="$SHORT_PROMPT" bash scripts/lane-assertion.sh \
+       --cwd "$WORKTREE_PATH" --branch "$(git -C "$WORKTREE_PATH" branch --show-current 2>/dev/null || echo develop)"; then
+    echo "ERROR: lane-assertion pre-flight failed — refusing to spawn" >&2
+    exit 1
+  fi
+fi
+```
+
+(Soft-disable via `MERCURY_LANE_ASSERT_DISABLED=1` if break-glass.)
+
+**Windows** (Windows Terminal, new tab):
+```bash
+wt -w 0 nt --title "Handoff: $LANE_NAME" -d "$WORKTREE_PATH" -- claude -- "$SHORT_PROMPT"
 ```
 
 **macOS / Linux with tmux** (real new window, detached from current TTY):
 ```bash
-tmux new-window -n handoff "claude \"\$(cat \"$TMP\")\""
+tmux new-window -n handoff -c "$WORKTREE_PATH" "claude -- '$SHORT_PROMPT'"
 ```
 
 **macOS / Linux without tmux** — there is no portable "new terminal"
-primitive. `claude "..." &` only backgrounds the process in the **current
-shell**; it will inherit the current TTY and die when the shell exits or
-the tab is closed. If you need real isolation, use `tmux new-session -d`
-or the terminal emulator's own CLI (e.g. `osascript -e 'tell app
-"Terminal" to do script ...'` on macOS, `gnome-terminal --` on Linux).
-Otherwise fall back to manual mode and let the user open the new session
-themselves.
+primitive. Use `tmux new-session -d` or the terminal emulator's own CLI
+(`osascript -e 'tell app "Terminal" to do script ...'` on macOS,
+`gnome-terminal --` on Linux). Otherwise fall back to manual mode.
 
 ```bash
-# Detached tmux session (survives current shell exit):
-tmux new-session -d -s handoff "claude \"\$(cat \"$TMP\")\""
-# Then `tmux attach -t handoff` from the user's preferred terminal.
+tmux new-session -d -s handoff -c "$WORKTREE_PATH" "claude -- '$SHORT_PROMPT'"
 ```
 
-The positional argument to `claude` is the session's first user message —
-documented at <https://code.claude.com/docs/en/cli-reference>. The
-SessionStart hook will inject the full handoff document as
-`additionalContext`, so the new session has everything.
-
-**Cleanup**:
-
-On POSIX shells the `trap 'rm -f "$TMP"' EXIT` is already registered in
-Step A above, immediately after `mktemp` — it fires on the shell's EXIT
-regardless of whether the launch command succeeded, failed, or was
-interrupted. No additional cleanup code is needed here.
-
-On PowerShell, wrap the launch in try/finally so the temp file is removed
-even if the launch throws:
-
-```powershell
-# PowerShell: register cleanup around the launch.
-try { <launch command> } finally { Remove-Item -LiteralPath $TMP -Force -ErrorAction SilentlyContinue }
-```
-
-This guarantees the handoff prompt (which may reference internal paths
-or planning context) never persists on disk past the launch moment.
+The positional argument after `--` is the session's first user message —
+documented at <https://code.claude.com/docs/en/cli-reference>. The `--`
+sentinel ensures a prompt beginning with `-` is not parsed as a CLI option
+(<https://github.com/anthropics/claude-code/issues/3844>) — and the
+`[LANE=...]` marker starts with `[` so the sentinel is also defensive
+against any future SHORT_PROMPT variants. The `-d "$WORKTREE_PATH"` flag
+(wt) / `-c "$WORKTREE_PATH"` flag (tmux) sets the new tab's cwd to the
+lane's worktree, so `~/.claude/projects/<encoded>/` resolves to the
+lane-specific state dir per Rule 5.1.
 
 After spawning the new process, do NOT continue producing output in the old
 session. The old session's job is done. Advise user to `/exit` (or close
@@ -412,3 +450,11 @@ the auto path from Step 5 (auto mode).
   DEPRECATED. Do not invoke it. The `claude-handoff` plugin is the
   canonical session-continuity module
   (<https://github.com/392fyc/claude-handoff>).
+- **Δ10/Δ11 (Issue #345)** — auto-mode SHORT_PROMPT MUST start with
+  `[LANE=<name>]` marker, and `wt -d` / `tmux -c` MUST be set to the
+  lane's `Worktree path` field from `LANES.md` (Rule 5.1). The new
+  session's `scripts/lane-assertion.sh` validates three-way alignment
+  (marker × cwd-encoded × branch prefix) at startup. Soft-disable via
+  `MERCURY_LANE_ASSERT_DISABLED=1`. See
+  `.mercury/docs/guides/lane-naming.md` §Lane workspace isolation
+  Δ10/Δ11 sub-sections for the full contract.
