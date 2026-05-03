@@ -185,7 +185,7 @@ ls ~/.claude/projects/ | grep -i <expected-substring>
 
 When two lanes share the same cwd (e.g. both run from `D:/Mercury/Mercury`),
 they share the same project state dir, the same `MEMORY.md`, and the same
-`session-handoff*.md` set — and any SessionStart/SessionEnd hooks that
+`session-handoff[-<lane>].md` set — and any SessionStart/SessionEnd hooks that
 resolve project state from cwd read from the shared state.
 
 S13-side-multi-lane (2026-04-28) hit this empirically: a `main` lane
@@ -257,10 +257,14 @@ After opening a new lane (LANES.md section added, short name declared):
 > proceeding.
 
 ```bash
-# Recommended: create a fresh init branch off develop (avoids checkout collision)
-git worktree add -b lane/<short>/init <repo-root>/Mercury-<short> develop
+# Prerequisite: ensure origin/develop is current to avoid basing the new
+# worktree on a stale local branch (matches scripts/lane-spawn.sh convention)
+git fetch origin
+
+# Recommended: create a fresh init branch off origin/develop (avoids checkout collision)
+git worktree add -b lane/<short>/init <repo-root>/Mercury-<short> origin/develop
 # Mercury team example:
-# git worktree add -b lane/side-mlane/init D:/Mercury/Mercury-side-mlane develop
+# git worktree add -b lane/side-mlane/init D:/Mercury/Mercury-side-mlane origin/develop
 ```
 
 If you instead try `git worktree add <repo-root>/Mercury-<short> develop` and
@@ -268,7 +272,7 @@ If you instead try `git worktree add <repo-root>/Mercury-<short> develop` and
 git refuses with "fatal: 'develop' is already used by worktree at ..." per
 [git-worktree(1)](https://git-scm.com/docs/git-worktree) (a branch can only
 be checked out by one worktree at a time). The `-b lane/<short>/init` form
-above sidesteps the collision by creating a new branch from `develop`. The
+above sidesteps the collision by creating a new branch from `origin/develop`. The
 lane's actual work branches (Rule 2.1 short-prefix `lane/<short>/<N>-<slug>`)
 are created later inside the worktree; the `init` branch can be deleted
 once a real work branch exists.
@@ -292,8 +296,11 @@ your platform's encoding of `<repo-root>/Mercury-<short>`):
 - `~/.claude/projects/<encoded-cwd>/memory/MEMORY.md`
 - `~/.claude/projects/<encoded-cwd>/memory/SESSION_INDEX.md`
 - `~/.claude/projects/<encoded-cwd>/memory/sessions/`
-- `~/.claude/projects/<encoded-cwd>/memory/session-handoff*.md`
-- session transcripts at `~/.claude/projects/<encoded-cwd>/<session>.jsonl`
+- `~/.claude/projects/<encoded-cwd>/memory/session-handoff[-<lane>].md`
+- session transcripts under `~/.claude/projects/<encoded-cwd>/` (Claude Code
+  provides the exact `transcript_path` via the hook payload — see
+  [hooks reference](https://code.claude.com/docs/en/hooks); do not assume a
+  specific filename pattern)
 
 Hooks that resolve project state from cwd (e.g. Mercury's user-level
 SessionStart loader) start routing correctly without code change: SessionStart
