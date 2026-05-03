@@ -160,6 +160,144 @@ lanes, Rule X breach) requiring user arbitration".
 Operators opening cap-raise Issues use this label so the user can triage all
 protocol violations from one filter.
 
+## Lane workspace isolation via git worktree (v0.1 Delta 9, Issue [#342](https://github.com/392fyc/Mercury/issues/342))
+
+### Why lane-level isolation matters
+
+Sessions launched by Claude Code store per-project state under
+`~/.claude/projects/<project>/` (documented at
+<https://code.claude.com/docs/en/claude-directory>). The `<project>`
+subdirectory name is derived from the cwd of the `claude` invocation; the
+exact slash-to-dash encoding (e.g. `D:\Mercury\Mercury` → `D--Mercury-Mercury`)
+is empirically observed in this repo and not a documented contract — verify
+the encoding for your platform before relying on a specific path. When two
+lanes share the same cwd (e.g. both run from `D:/Mercury/Mercury`), they
+share the same project state dir, the same `MEMORY.md`, and the same
+`session-handoff*.md` set — and any SessionStart/SessionEnd hooks that
+resolve project state from cwd read from the shared state.
+
+S13-side-multi-lane (2026-04-28) hit this empirically: a `main` lane
+auto-handoff invocation spawned a new `claude` session in the shared cwd,
+SessionStart hook lane-blindly loaded the **side** lane's handoff (latest
+mtime), and the new session executed side-lane work content under the wrong
+lane identity. Work content was protocol-compliant on its own merits, but
+the routing was wrong — the lane that owned the work had no record of it
+running. See Issue [#342](https://github.com/392fyc/Mercury/issues/342) for
+the full forensic post-mortem.
+
+The fix: give each lane a dedicated git worktree at a distinct path so the
+cwd-encoded project state directory is also distinct.
+
+### Distinguished from task-level worktrees
+
+This § is about **lane-level** isolation (one worktree per active lane,
+long-lived). It is NOT the same scope as the **task-level** worktree spec in
+[`.mercury/docs/guides/worktree-workflow.md`](worktree-workflow.md), which
+covers `.worktrees/{taskId}` worktrees created by the `dev-pipeline` skill
+for a single dev task and removed at PR merge.
+
+| Scope | Path | Lifecycle | Purpose |
+|-------|------|-----------|---------|
+| **Lane-level** (this §) | `D:/Mercury/Mercury-<short>` (or OS-equivalent) | Per active lane; long-lived; removed at lane close | Isolate per-cwd Claude Code project state (MEMORY / handoff / transcripts) |
+| **Task-level** ([`worktree-workflow.md`](worktree-workflow.md)) | `.worktrees/{taskId}` | Per dev task; ephemeral; removed at PR merge | Isolate concurrent dev-pipeline branch checkouts |
+
+A side lane MAY use both: live in `D:/Mercury/Mercury-<short>` for its
+session-state isolation, AND have `dev-pipeline` create
+`.worktrees/{taskId}` inside that lane worktree for parallel dev tasks.
+
+### Worktree path convention
+
+| Lane | Worktree path | Notes |
+|------|---------------|-------|
+| `main` | `D:/Mercury/Mercury` (Windows; Unix example: `~/repos/mercury`) | Backward-compat default; the original repo checkout |
+| `<side>` | `D:/Mercury/Mercury-<short>` (Windows; Unix example: `~/repos/mercury-<short>`) | `<short>` = the lane's `Short name` field (≤8 char, per Δ6); pick any path on Unix that maps cleanly to its encoded `~/.claude/projects/` dirname |
+
+Example: `side-multi-lane` (short name `side-mlane`) →
+`D:/Mercury/Mercury-side-mlane`.
+
+The path lives outside the main checkout so that auto-handoff invocations
+launched from the lane's session can `cd` to a path that resolves to a
+distinct `~/.claude/projects/D--Mercury-Mercury-<short>/` dir.
+
+### Setup at lane open
+
+After opening a new lane (LANES.md section added, short name declared):
+
+```bash
+# Recommended: create a fresh init branch off develop (avoids checkout collision)
+git worktree add -b lane/<short>/init D:/Mercury/Mercury-<short> develop
+```
+
+If you instead try `git worktree add D:/Mercury/Mercury-<short> develop` and
+`develop` is already checked out in the main `D:/Mercury/Mercury` repo,
+git refuses with "fatal: 'develop' is already used by worktree at ..." per
+[git-worktree(1)](https://git-scm.com/docs/git-worktree) (a branch can only
+be checked out by one worktree at a time). The `-b lane/<short>/init` form
+above sidesteps the collision by creating a new branch from `develop`. The
+lane's actual work branches (Rule 2.1 short-prefix `lane/<short>/<N>-<slug>`)
+are created later inside the worktree; the `init` branch can be deleted
+once a real work branch exists.
+
+### Operational expectation
+
+Side-lane sessions launch with the worktree as cwd:
+
+```bash
+cd D:/Mercury/Mercury-<short>
+claude  # SessionStart hook now reads from ~/.claude/projects/D--Mercury-Mercury-<short>/
+```
+
+This makes the per-cwd project state dir distinct from the main lane's,
+which gives each lane its own:
+
+- `~/.claude/projects/D--Mercury-Mercury-<short>/memory/MEMORY.md`
+- `~/.claude/projects/D--Mercury-Mercury-<short>/memory/SESSION_INDEX.md`
+- `~/.claude/projects/D--Mercury-Mercury-<short>/memory/sessions/`
+- `~/.claude/projects/D--Mercury-Mercury-<short>/memory/session-handoff*.md`
+- session transcripts at `~/.claude/projects/D--Mercury-Mercury-<short>/<session>.jsonl`
+
+Hooks that resolve project state from cwd (e.g. Mercury's user-level
+SessionStart loader) start routing correctly without code change: SessionStart
+input includes a `cwd` field
+([documented](https://code.claude.com/docs/en/hooks)), and the hook can
+resolve the corresponding `~/.claude/projects/<project>/` dir from it. Hooks
+that hard-code a project path or use other resolution strategies are
+unaffected by this isolation; verify your specific hook before relying on
+auto-routing.
+
+### Cleanup at lane close
+
+`scripts/lane-close.sh` does **not** currently remove the lane worktree (it
+only flips Status to `closed` + prunes `.tmp/lane-<lane>/` per Rule 3.2).
+Operators run worktree cleanup manually as part of the close ceremony:
+
+```bash
+git worktree remove D:/Mercury/Mercury-<short>
+# OR (if uncommitted state exists and is intentionally being discarded)
+git worktree remove --force D:/Mercury/Mercury-<short>
+```
+
+The `~/.claude/projects/D--Mercury-Mercury-<short>/` user-memory dir is
+preserved as audit trail; operators may archive it manually if no longer
+needed.
+
+### Backward compatibility
+
+- `main` lane keeps `D:/Mercury/Mercury` as its worktree path — no
+  migration needed for existing main-lane workflows.
+- Side lanes that opened before Δ9 ran in the shared cwd; this is a known
+  routing-bleed risk per Issue #342. Migration is per-lane operator decision
+  at next lane-active session.
+
+### Cross-references
+
+- `feedback_lane_protocol.md` Rule 5.1 (sub-rule of Rule 5: Per-lane state
+  separation) formalizes the worktree path convention as protocol
+- `LANES.md` Governance §Lane workspace isolation declares each lane MUST
+  state its `Worktree path` field
+- `.mercury/docs/guides/worktree-workflow.md` covers the orthogonal
+  task-level worktree scope
+
 ## Tests
 
 ```bash
@@ -183,3 +321,8 @@ Tests do NOT touch real GitHub or LANES.md — synthetic fixtures only.
 - [Miller's Law (Laws of UX)](https://lawsofux.com/millers-law/)
 - [Towards a science of scaling agent systems (Google research)](https://research.google/blog/towards-a-science-of-scaling-agent-systems-when-and-why-agent-systems-work/)
 - [Working with WIP limits for Kanban (Atlassian)](https://www.atlassian.com/agile/kanban/wip-limits)
+- Issue [#342](https://github.com/392fyc/Mercury/issues/342) — Δ9 lane-level worktree isolation acceptance criteria + S13 routing-bleed forensic record
+- [Claude Code .claude directory reference](https://code.claude.com/docs/en/claude-directory) — per-project `~/.claude/projects/<project>/` state dir
+- [Claude Code hooks reference](https://code.claude.com/docs/en/hooks) — SessionStart `cwd` JSON field
+- [Windows Terminal command line arguments](https://learn.microsoft.com/en-us/windows/terminal/command-line-arguments) — `new-tab -d <directory>` per-tab starting directory
+- [git-worktree(1)](https://git-scm.com/docs/git-worktree) — multiple working trees from a single repo
