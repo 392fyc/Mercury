@@ -294,33 +294,49 @@ This makes the per-cwd project state dir distinct from the main lane's, but
 isolation applies to Claude Code core's session transcript storage; the
 user-memory layer (MEMORY.md / SESSION_INDEX.md / per-session files /
 handoffs) is intentionally canonical for cross-lane memory-index visibility.
-Concretely (paths shown with `<encoded-cwd>` = your platform's encoding of
-`<repo-root>/Mercury-<short>`, and `<canonical>` = the canonical Mercury
-project memory dir, default `~/.claude/projects/D--Mercury-Mercury/memory`):
+Concretely (illustrative path values — actual values depend on the
+operator's platform encoding + env vars; trust the script + hook resolution
+at runtime, not the literals shown):
 
-- **Per-cwd (Claude Code core, automatic):** session transcripts under
-  `~/.claude/projects/<encoded-cwd>/*.jsonl` (Claude Code provides the exact
-  `transcript_path` via the hook payload — see
-  [hooks reference](https://code.claude.com/docs/en/hooks); do not assume a
-  specific filename pattern)
-- **Canonical (Mercury user-memory, intentional cross-lane visibility):**
-  - `<canonical>/MEMORY.md` — shared memory index (per-session bullets
-    derived from per-session files via `scripts/regenerate-memory-index.sh
-    --in-place`; Rule 6 boundary still binds — each lane only edits its own
-    per-session files, never another lane's bullets)
-  - `<canonical>/SESSION_INDEX.md` — shared session table (same derivation)
-  - `<canonical>/sessions/S<N>(-<lane>)?.md` — per-session frontmatter +
-    body; lane-suffixed files visibly partition ownership while sharing one
-    directory
-  - `<canonical>/session-handoff.md` (main lane) +
-    `<canonical>/session-handoff-<lane>.md` (side lanes) — per-lane handoff
-    files in the same dir
-  - The canonical path is fixed by `scripts/regenerate-memory-index.sh`
-    default (resolves `${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}`)
-    AND by Mercury's user-level SessionStart hook which loads from the same
-    canonical location. Override with the `MERCURY_MEMORY_DIR` env var if a
-    deployment genuinely needs per-cwd memory routing (not the recommended
-    posture for Mercury's lane model).
+- `<encoded-cwd>` = your platform's encoding of `<repo-root>/Mercury-<short>`
+  (Mercury team example: `D--Mercury-Mercury-side-mlane` for
+  `D:/Mercury/Mercury-side-mlane`)
+- `<canonical>` = whatever `MERCURY_MEMORY_DIR` resolves to at runtime, with
+  the script default falling back to
+  `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory`
+  (Mercury team example: `~/.claude/projects/D--Mercury-Mercury/memory` —
+  encoded for the repo's main checkout path)
+
+**Per-cwd (Claude Code core, automatic):** session transcripts under
+`~/.claude/projects/<encoded-cwd>/` (Claude Code provides the exact
+`transcript_path` via the hook payload — see
+[hooks reference](https://code.claude.com/docs/en/hooks); do not assume a
+specific filename pattern or layout — read it from the payload).
+
+**Canonical (Mercury user-memory, intentional cross-lane visibility):**
+
+- `<canonical>/MEMORY.md` — shared memory index (per-session bullets
+  derived from per-session files via
+  `scripts/regenerate-memory-index.sh --in-place`; Rule 6 boundary still
+  binds — each lane only edits its own per-session files, never another
+  lane's bullets)
+- `<canonical>/SESSION_INDEX.md` — shared session table (same derivation)
+- `<canonical>/sessions/S<N>.md` (main lane) +
+  `<canonical>/sessions/S<N>-<lane>.md` (side lanes) — per-session
+  frontmatter + body; lane-suffixed files visibly partition ownership
+  while sharing one directory
+- `<canonical>/session-handoff.md` (main lane) +
+  `<canonical>/session-handoff-<lane>.md` (side lanes) — per-lane
+  handoff files in the same dir
+- The canonical path is fixed by `scripts/regenerate-memory-index.sh`
+  default and by Mercury's user-level SessionStart hook (both read the
+  same `MERCURY_MEMORY_DIR` env var, falling back to the same default).
+  Override with `MERCURY_MEMORY_DIR` if a deployment genuinely needs
+  per-cwd memory routing (not the recommended posture for Mercury's
+  lane model). The literal example shown above is for one specific
+  Mercury checkout; do not hard-code it elsewhere — derive it from the
+  env var or from
+  `bash scripts/regenerate-memory-index.sh --help` at runtime.
 
 **Why canonical (not per-cwd) for user-memory**: Rule 6 (LANES.md is the
 single registry) and Rule 7 (per-session files; canonical MEMORY.md /
