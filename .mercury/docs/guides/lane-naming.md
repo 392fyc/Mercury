@@ -170,9 +170,21 @@ Sessions launched by Claude Code store per-project state under
 subdirectory name is derived from the cwd of the `claude` invocation; the
 exact slash-to-dash encoding (e.g. `D:\Mercury\Mercury` → `D--Mercury-Mercury`)
 is empirically observed in this repo and not a documented contract — verify
-the encoding for your platform before relying on a specific path. When two
-lanes share the same cwd (e.g. both run from `D:/Mercury/Mercury`), they
-share the same project state dir, the same `MEMORY.md`, and the same
+the encoding for your platform before relying on a specific path:
+
+```bash
+# Before opening a new lane worktree at <new-path>, check what dirname
+# Claude Code derives by listing existing project state dirs:
+ls ~/.claude/projects/ | head -20
+
+# After running `claude` once in the new worktree (any prompt is fine,
+# even just a no-op exit), list again to confirm the dirname for the
+# new cwd:
+ls ~/.claude/projects/ | grep -i <expected-substring>
+```
+
+When two lanes share the same cwd (e.g. both run from `D:/Mercury/Mercury`),
+they share the same project state dir, the same `MEMORY.md`, and the same
 `session-handoff*.md` set — and any SessionStart/SessionEnd hooks that
 resolve project state from cwd read from the shared state.
 
@@ -223,6 +235,15 @@ distinct `~/.claude/projects/D--Mercury-Mercury-<short>/` dir.
 
 After opening a new lane (LANES.md section added, short name declared):
 
+> **Safety**: `<short>` MUST already pass Rule 2.1 validation (lowercase
+> + digits + hyphen only, ≤8 chars, globally unique — see §Δ6 above).
+> The Rule 2.1 character class `[a-z0-9-]+` excludes path-traversal
+> sequences (`..`, `/`, `\`), shell metacharacters (`;`, `|`, `$`, backtick,
+> spaces), and quote characters — making string interpolation into the
+> commands below safe at the protocol level. Verify the `Short name` field
+> in your lane's LANES.md section matches `^[a-z0-9-]{1,8}$` before
+> proceeding.
+
 ```bash
 # Recommended: create a fresh init branch off develop (avoids checkout collision)
 git worktree add -b lane/<short>/init D:/Mercury/Mercury-<short> develop
@@ -272,10 +293,20 @@ only flips Status to `closed` + prunes `.tmp/lane-<lane>/` per Rule 3.2).
 Operators run worktree cleanup manually as part of the close ceremony:
 
 ```bash
+# Sanity-check the path resolves to the expected worktree before proceeding,
+# especially before the --force variant:
+git worktree list | grep -F "D:/Mercury/Mercury-<short>"
+
 git worktree remove D:/Mercury/Mercury-<short>
 # OR (if uncommitted state exists and is intentionally being discarded)
 git worktree remove --force D:/Mercury/Mercury-<short>
 ```
+
+`git worktree remove` operates on registered worktrees only (verifiable via
+`git worktree list`) — it cannot remove arbitrary filesystem paths even with
+`--force`, so the operation is bounded to the worktree set this repo knows
+about. Combined with the Rule 2.1 `<short>` validation above, the command
+shape is safe for protocol-conforming inputs.
 
 The `~/.claude/projects/D--Mercury-Mercury-<short>/` user-memory dir is
 preserved as audit trail; operators may archive it manually if no longer
