@@ -390,14 +390,22 @@ fi
 
 (Soft-disable via `MERCURY_LANE_ASSERT_DISABLED=1` if break-glass.)
 
-**Windows** (Windows Terminal, new tab):
+**Windows** (Windows Terminal, new tab) — `wt`'s `-- ...` passes argv
+directly to `CreateProcess`, so the prompt is one argv element with no
+shell re-parse; no extra quoting needed:
 ```bash
 wt -w 0 nt --title "Handoff: $LANE_NAME" -d "$WORKTREE_PATH" -- claude -- "$SHORT_PROMPT"
 ```
 
-**macOS / Linux with tmux** (real new window, detached from current TTY):
+**macOS / Linux with tmux** (real new window, detached from current TTY) —
+`tmux new-window <cmd>` evaluates `<cmd>` via `/bin/sh -c`, so the prompt
+must be safely shell-quoted before embedding. `printf %q` produces a
+bash-portable shell-safe representation that survives even if the prompt
+contains single quotes, dollar signs, or other metacharacters (Argus iter1
+Minor #346: previous naked single-quote wrap was injection-vulnerable):
 ```bash
-tmux new-window -n handoff -c "$WORKTREE_PATH" "claude -- '$SHORT_PROMPT'"
+SHORT_PROMPT_QUOTED=$(printf '%q' "$SHORT_PROMPT")
+tmux new-window -n handoff -c "$WORKTREE_PATH" "claude -- $SHORT_PROMPT_QUOTED"
 ```
 
 **macOS / Linux without tmux** — there is no portable "new terminal"
@@ -406,7 +414,8 @@ primitive. Use `tmux new-session -d` or the terminal emulator's own CLI
 `gnome-terminal --` on Linux). Otherwise fall back to manual mode.
 
 ```bash
-tmux new-session -d -s handoff -c "$WORKTREE_PATH" "claude -- '$SHORT_PROMPT'"
+SHORT_PROMPT_QUOTED=$(printf '%q' "$SHORT_PROMPT")
+tmux new-session -d -s handoff -c "$WORKTREE_PATH" "claude -- $SHORT_PROMPT_QUOTED"
 ```
 
 The positional argument after `--` is the session's first user message —

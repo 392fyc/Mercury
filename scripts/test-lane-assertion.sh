@@ -61,7 +61,7 @@ type: project
 
 - **Handoff file**: `session-handoff.md`
 - **Latest session**: S82
-- **Worktree path** (per Rule 5.1, Issue #342): `D:/Mercury/Mercury`
+- **Worktree path** (per Rule 5.1, Issue #342): `/var/test/main-lane`
 - **Branch prefix**: `feature/lane-main/TASK-<N>-*` or `lane/main/<N>-<slug>`
 - **Status**: `active`
 
@@ -69,7 +69,7 @@ type: project
 
 - **Handoff file**: `session-handoff-side-multi-lane.md`
 - **Latest session**: S16-side-multi-lane
-- **Worktree path** (per Rule 5.1, Issue #342 — landed S15 2026-05-03): `D:/Mercury/Mercury-side-mlane` ✅ materialized at S16
+- **Worktree path** (per Rule 5.1, Issue #342 — landed S15 2026-05-03): `/var/test/side-mlane` ✅ materialized at S16
 - **Short name**: `side-mlane` (8 char)
 - **Branch prefix**: `lane/side-mlane/<N>-<slug>` (Rule 2.1)
 - **Status**: `active`
@@ -101,39 +101,39 @@ run_assert() {
 printf '\n=== Happy paths ===\n'
 
 err=$(env MERCURY_LANE_MARKER='[LANE=main]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury' --branch develop 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch develop 2>&1)
 rc=$?
 assert_eq "main lane on develop — rc=0" "0" "$rc"
 assert_contains "main lane on develop — verdict aligned" "aligned" "$err"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=main]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury' --branch 'feature/lane-main/TASK-100-foo' 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch 'feature/lane-main/TASK-100-foo' 2>&1)
 rc=$?
 assert_eq "main lane legacy branch — rc=0" "0" "$rc"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=main]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury' --branch 'feature/TASK-200-bar' 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch 'feature/TASK-200-bar' 2>&1)
 rc=$?
 assert_eq "main lane legacy TASK- branch — rc=0" "0" "$rc"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=main]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury' --branch 'lane/main/345-handoff' 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch 'lane/main/345-handoff' 2>&1)
 rc=$?
 assert_eq "main lane Rule 2.1 short prefix — rc=0" "0" "$rc"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=side-multi-lane]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury-side-mlane' --branch 'lane/side-mlane/init' 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/side-mlane' --branch 'lane/side-mlane/init' 2>&1)
 rc=$?
 assert_eq "side lane scaffold init branch — rc=0" "0" "$rc"
 assert_contains "side lane verdict line includes lane name" "side-multi-lane" "$err"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=side-multi-lane]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury-side-mlane' --branch 'lane/side-mlane/342-foo' 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/side-mlane' --branch 'lane/side-mlane/342-foo' 2>&1)
 rc=$?
 assert_eq "side lane Rule 2.1 work branch — rc=0" "0" "$rc"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=side-multi-lane]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury-side-mlane' --branch 'feature/lane-side-multi-lane/TASK-310-foo' 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/side-mlane' --branch 'feature/lane-side-multi-lane/TASK-310-foo' 2>&1)
 rc=$?
 assert_eq "side lane legacy long-prefix branch — rc=0" "0" "$rc"
 
@@ -144,23 +144,23 @@ assert_eq "side lane legacy long-prefix branch — rc=0" "0" "$rc"
 printf '\n=== Marker errors (exit 1) ===\n'
 
 err=$(env -u MERCURY_LANE_MARKER -u BOOTSTRAP_PROMPT bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury' --branch develop </dev/null 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch develop </dev/null 2>&1)
 rc=$?
 assert_eq "no marker anywhere — rc=1" "1" "$rc"
 assert_contains "no marker — message guides recovery" "no parseable" "$err"
 
 err=$(env MERCURY_LANE_MARKER='LANE=main' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury' --branch develop 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch develop 2>&1)
 rc=$?
 assert_eq "marker missing brackets — rc=1" "1" "$rc"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury' --branch develop 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch develop 2>&1)
 rc=$?
 assert_eq "marker empty name — rc=1" "1" "$rc"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=Side_Multi]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury' --branch develop 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch develop 2>&1)
 rc=$?
 assert_eq "marker has uppercase/underscore (Rule 2.1 violation) — rc=1" "1" "$rc"
 
@@ -171,14 +171,14 @@ assert_eq "marker has uppercase/underscore (Rule 2.1 violation) — rc=1" "1" "$
 printf '\n=== cwd mismatch (exit 2) ===\n'
 
 err=$(env MERCURY_LANE_MARKER='[LANE=side-multi-lane]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury' --branch 'lane/side-mlane/init' 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch 'lane/side-mlane/init' 2>&1)
 rc=$?
 assert_eq "side lane marker but cwd is main checkout — rc=2" "2" "$rc"
 assert_contains "cwd mismatch — guidance points at cd worktree" "cd " "$err"
-assert_contains "cwd mismatch — references worktree path" "Mercury-side-mlane" "$err"
+assert_contains "cwd mismatch — references worktree path" "side-mlane" "$err"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=main]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury-side-mlane' --branch develop 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/side-mlane' --branch develop 2>&1)
 rc=$?
 assert_eq "main lane marker but cwd is side worktree — rc=2" "2" "$rc"
 
@@ -189,18 +189,18 @@ assert_eq "main lane marker but cwd is side worktree — rc=2" "2" "$rc"
 printf '\n=== Branch mismatch (exit 3) ===\n'
 
 err=$(env MERCURY_LANE_MARKER='[LANE=main]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury' --branch 'lane/side-mlane/init' 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch 'lane/side-mlane/init' 2>&1)
 rc=$?
 assert_eq "main lane on side branch — rc=3" "3" "$rc"
 assert_contains "branch mismatch — explains expected" "expects" "$err"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=side-multi-lane]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury-side-mlane' --branch 'feature/something-unrelated' 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/side-mlane' --branch 'feature/something-unrelated' 2>&1)
 rc=$?
 assert_eq "side lane on unrelated branch — rc=3" "3" "$rc"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=side-multi-lane]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury-side-mlane' --branch 'lane/wrong-short/init' 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/side-mlane' --branch 'lane/wrong-short/init' 2>&1)
 rc=$?
 assert_eq "side lane wrong short-name in branch — rc=3" "3" "$rc"
 
@@ -211,13 +211,13 @@ assert_eq "side lane wrong short-name in branch — rc=3" "3" "$rc"
 printf '\n=== Worktree path missing (exit 4) ===\n'
 
 err=$(env MERCURY_LANE_MARKER='[LANE=nopath]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury-nopath' --branch develop 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/nopath' --branch develop 2>&1)
 rc=$?
 assert_eq "lane has no Worktree path field — rc=4" "4" "$rc"
 assert_contains "missing field — points at LANES.md" "LANES.md" "$err"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=ghostlane]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury-ghost' --branch develop 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/ghost' --branch develop 2>&1)
 rc=$?
 assert_eq "lane name not present in LANES.md at all — rc=4" "4" "$rc"
 
@@ -234,7 +234,7 @@ assert_eq "soft-disabled, no marker — rc=0" "0" "$rc"
 assert_contains "soft-disable announcement on stdout" "soft-disabled" "$err"
 
 err=$(env MERCURY_LANE_ASSERT_DISABLED=1 MERCURY_LANE_MARKER='[LANE=main]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury-side-mlane' --branch 'feature/wrong' 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/side-mlane' --branch 'feature/wrong' 2>&1)
 rc=$?
 assert_eq "soft-disabled with deliberately misaligned state — rc=0" "0" "$rc"
 
@@ -271,18 +271,18 @@ assert_eq "unknown flag — rc=5" "5" "$rc"
 printf '\n=== Marker source priority ===\n'
 
 err=$(env MERCURY_LANE_MARKER='[LANE=side-multi-lane]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --marker '[LANE=main]' --cwd 'D:/Mercury/Mercury' --branch develop 2>&1)
+  --memory-dir "$MEMDIR" --marker '[LANE=main]' --cwd '/var/test/main-lane' --branch develop 2>&1)
 rc=$?
 assert_eq "--marker overrides MERCURY_LANE_MARKER — rc=0 (main wins)" "0" "$rc"
 
 err=$(env -u MERCURY_LANE_MARKER -u BOOTSTRAP_PROMPT bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury' --branch develop \
+  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch develop \
   <<< '[LANE=main] continue from session handoff' 2>&1)
 rc=$?
 assert_eq "stdin marker fallback — rc=0" "0" "$rc"
 
 err=$(env BOOTSTRAP_PROMPT='[LANE=side-multi-lane] continue from handoff' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury-side-mlane' --branch 'lane/side-mlane/init' 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/side-mlane' --branch 'lane/side-mlane/init' 2>&1)
 rc=$?
 assert_eq "BOOTSTRAP_PROMPT env marker — rc=0" "0" "$rc"
 
@@ -377,17 +377,17 @@ assert_eq "single bullet still works -> rc=0" "0" "$rc"
 printf '\n=== encode_path trailing-slash normalization (Codex M#1 regression) ===\n'
 
 err=$(env MERCURY_LANE_MARKER='[LANE=main]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury/' --branch develop 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane/' --branch develop 2>&1)
 rc=$?
 assert_eq "trailing slash on cwd does not falsely block -> rc=0" "0" "$rc"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=main]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury\\' --branch develop 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane\\' --branch develop 2>&1)
 rc=$?
 assert_eq "trailing backslash on cwd does not falsely block -> rc=0" "0" "$rc"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=main]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury///' --branch develop 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane///' --branch develop 2>&1)
 rc=$?
 assert_eq "multiple trailing slashes normalized -> rc=0" "0" "$rc"
 
@@ -399,22 +399,22 @@ assert_eq "multiple trailing slashes normalized -> rc=0" "0" "$rc"
 printf '\n=== Marker source fall-through on malformed earlier source (Codex L#1) ===\n'
 
 err=$(env MERCURY_LANE_MARKER='garbage' BOOTSTRAP_PROMPT='[LANE=main] continue' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury' --branch develop 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch develop 2>&1)
 rc=$?
 assert_eq "MERCURY_LANE_MARKER garbage falls through to BOOTSTRAP_PROMPT -> rc=0" "0" "$rc"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=main] ' BOOTSTRAP_PROMPT='[LANE=side-multi-lane]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury' --branch develop 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch develop 2>&1)
 rc=$?
 assert_eq "trailing-space MERCURY_LANE_MARKER still parses (awk word-splits) -> rc=0" "0" "$rc"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=Bad_Name]' BOOTSTRAP_PROMPT='[LANE=main]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury' --branch develop 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch develop 2>&1)
 rc=$?
 assert_eq "Bad_Name (uppercase+underscore) falls through to valid BOOTSTRAP_PROMPT -> rc=0" "0" "$rc"
 
 err=$(env BOOTSTRAP_PROMPT='[LANE=Bad_Name]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury' --branch develop \
+  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch develop \
   <<< '[LANE=main] continue' 2>&1)
 rc=$?
 assert_eq "malformed BOOTSTRAP_PROMPT falls through to stdin -> rc=0" "0" "$rc"
@@ -459,46 +459,46 @@ assert_eq "cwd with trailing spaces still distinct from trimmed path -> rc=2" "2
 printf '\n=== Marker first-token-only enforcement (Codex iter2 L#1) ===\n'
 
 err=$(env MERCURY_LANE_MARKER='preamble [LANE=main] continue' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury' --branch develop 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch develop 2>&1)
 rc=$?
 assert_eq "marker not first token -> rc=1" "1" "$rc"
 
 err=$(env BOOTSTRAP_PROMPT='garbage [LANE=main] continue' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury' --branch develop 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch develop 2>&1)
 rc=$?
 assert_eq "BOOTSTRAP_PROMPT mid-marker rejected -> rc=1" "1" "$rc"
 
 err=$(env -u MERCURY_LANE_MARKER -u BOOTSTRAP_PROMPT bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury' --branch develop \
+  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch develop \
   <<< 'preamble [LANE=main] continue' 2>&1)
 rc=$?
 assert_eq "stdin mid-marker rejected -> rc=1" "1" "$rc"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=main]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury' --branch develop 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch develop 2>&1)
 rc=$?
 assert_eq "marker as first token (canonical) still passes -> rc=0" "0" "$rc"
 
 err=$(env BOOTSTRAP_PROMPT='[LANE=main] continue from session handoff' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury' --branch develop 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch develop 2>&1)
 rc=$?
 assert_eq "marker as first token of multi-word BOOTSTRAP_PROMPT -> rc=0" "0" "$rc"
 
 # Codex iter3 Low #1: leading blank lines must be skipped — the contract
 # is "first whitespace-delimited token", not "first line's first token".
 err=$(env BOOTSTRAP_PROMPT=$'\n\n[LANE=main] continue' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury' --branch develop 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch develop 2>&1)
 rc=$?
 assert_eq "leading blank lines + marker on line 3 -> rc=0" "0" "$rc"
 
 err=$(env -u MERCURY_LANE_MARKER -u BOOTSTRAP_PROMPT bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury' --branch develop \
+  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch develop \
   <<< $'   \n[LANE=main] continue' 2>&1)
 rc=$?
 assert_eq "stdin with whitespace-only first line + marker line 2 -> rc=0" "0" "$rc"
 
 err=$(env BOOTSTRAP_PROMPT=$'\n\npreamble [LANE=main] continue' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury' --branch develop 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch develop 2>&1)
 rc=$?
 assert_eq "blank lines + mid-token marker still rejected -> rc=1" "1" "$rc"
 
@@ -553,17 +553,35 @@ assert_eq "another-real after fence close -> rc=0" "0" "$rc"
 printf '\n=== JSON format ===\n'
 
 err=$(env MERCURY_LANE_MARKER='[LANE=main]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury' --branch develop --format json 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch develop --format json 2>&1)
 rc=$?
 assert_eq "json happy path — rc=0" "0" "$rc"
 assert_contains "json output starts with {" '{"verdict"' "$err"
 assert_contains "json output includes lane" '"lane":"main"' "$err"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=main]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd 'D:/Mercury/Mercury-side-mlane' --branch develop --format json 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/side-mlane' --branch develop --format json 2>&1)
 rc=$?
 assert_eq "json cwd mismatch — rc=2" "2" "$rc"
 assert_contains "json mismatch verdict" '"cwd_mismatch"' "$err"
+
+# Argus iter1 Minor JSON-escape regression: Windows backslash path in --cwd
+# must produce VALID JSON (backslash escaped, parseable by jq).
+err=$(env MERCURY_LANE_MARKER='[LANE=main]' bash "$ASSERTION" \
+  --memory-dir "$MEMDIR" --cwd 'C:\Windows\Path\With\Backslashes' --branch develop --format json 2>&1)
+rc=$?
+assert_eq "json with Windows backslash path — rc=2" "2" "$rc"
+assert_contains "json escapes backslashes" 'C:\\Windows' "$err"
+parsed=$(printf '%s' "$err" | jq -r '.actual_cwd' 2>/dev/null)
+assert_eq "jq round-trips backslash-escaped JSON" 'C:\Windows\Path\With\Backslashes' "$parsed"
+
+err=$(env MERCURY_LANE_MARKER='[LANE=main]' bash "$ASSERTION" \
+  --memory-dir "$MEMDIR" --cwd '/path/with/"quote' --branch develop --format json 2>&1)
+rc=$?
+assert_eq "json with literal double-quote in cwd — rc=2" "2" "$rc"
+assert_contains "json escapes double-quote" '\"' "$err"
+parsed=$(printf '%s' "$err" | jq -r '.actual_cwd' 2>/dev/null)
+assert_eq "jq round-trips quote-escaped JSON" '/path/with/"quote' "$parsed"
 
 # ───────────────────────────────────────────────────────────────
 # Summary

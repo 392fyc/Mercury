@@ -229,7 +229,7 @@ extract_worktree_path() {
 WORKTREE_PATH_RAW=$(extract_worktree_path "$LANE_NAME" "$LANES_FILE")
 if [ -z "$WORKTREE_PATH_RAW" ]; then
   if [ "$FORMAT" = "json" ]; then
-    printf '{"verdict":"worktree_path_missing","exit":4,"lane":"%s","reason":"no Worktree path field in LANES.md section"}\n' "$LANE_NAME"
+    printf '{"verdict":"worktree_path_missing","exit":4,"lane":"%s","reason":"no Worktree path field in LANES.md section"}\n' "$(json_escape "$LANE_NAME")"
   else
     cat >&2 <<EOF
 $PROG: BLOCKED — lane '$LANE_NAME' has no Worktree path field in LANES.md.
@@ -248,7 +248,7 @@ WORKTREE_COUNT=$(printf '%s\n' "$WORKTREE_PATH_RAW" | grep -c '^.')
 if [ "$WORKTREE_COUNT" -gt 1 ]; then
   if [ "$FORMAT" = "json" ]; then
     printf '{"verdict":"worktree_path_duplicate","exit":6,"lane":"%s","count":%d}\n' \
-      "$LANE_NAME" "$WORKTREE_COUNT"
+      "$(json_escape "$LANE_NAME")" "$WORKTREE_COUNT"
   else
     cat >&2 <<EOF
 $PROG: BLOCKED — lane '$LANE_NAME' has $WORKTREE_COUNT Worktree path bullets in LANES.md.
@@ -268,6 +268,21 @@ WORKTREE_PATH="$WORKTREE_PATH_RAW"
 # slash and colon characters in the cwd become dashes, leading dashes are
 # stripped. Encode both the actual cwd and the expected worktree path,
 # then compare.
+# JSON-string escape: backslash (Windows paths!) and double-quote, plus
+# minimal control-char handling. Pure bash parameter expansion, no fork.
+# Closes Argus iter1 Minor (#346) — `--format json` previously interpolated
+# raw strings into the output, producing invalid JSON for Windows paths
+# containing backslashes or any value containing literal quotes.
+json_escape() {
+  local s="$1"
+  s="${s//\\/\\\\}"   # \ → \\  (must be FIRST so \ in subsequent escapes survives)
+  s="${s//\"/\\\"}"   # " → \"
+  s="${s//$'\n'/\\n}" # newline → \n  (defensive — paths/branches shouldn't contain LF)
+  s="${s//$'\r'/\\r}" # CR → \r
+  s="${s//$'\t'/\\t}" # tab → \t
+  printf '%s' "$s"
+}
+
 encode_path() {
   # Defensive normalization before encoding to dampen trivial-mismatch
   # false-blocks: strip trailing slashes (`D:/Mercury/Mercury/` ≡
@@ -295,7 +310,7 @@ EXPECTED_CWD_ENC=$(encode_path "$WORKTREE_PATH")
 if [ "$ACTUAL_CWD_ENC" != "$EXPECTED_CWD_ENC" ]; then
   if [ "$FORMAT" = "json" ]; then
     printf '{"verdict":"cwd_mismatch","exit":2,"lane":"%s","actual_cwd":"%s","expected_worktree":"%s"}\n' \
-      "$LANE_NAME" "$ACTUAL_CWD" "$WORKTREE_PATH"
+      "$(json_escape "$LANE_NAME")" "$(json_escape "$ACTUAL_CWD")" "$(json_escape "$WORKTREE_PATH")"
   else
     cat >&2 <<EOF
 $PROG: BLOCKED — cwd does not match lane '$LANE_NAME' worktree path.
@@ -391,7 +406,7 @@ fi
 if [ "$branch_ok" -ne 1 ]; then
   if [ "$FORMAT" = "json" ]; then
     printf '{"verdict":"branch_mismatch","exit":3,"lane":"%s","actual_branch":"%s","reason":"%s"}\n' \
-      "$LANE_NAME" "$ACTUAL_BRANCH" "$branch_reason"
+      "$(json_escape "$LANE_NAME")" "$(json_escape "$ACTUAL_BRANCH")" "$(json_escape "$branch_reason")"
   else
     cat >&2 <<EOF
 $PROG: BLOCKED — branch does not match lane '$LANE_NAME' convention.
@@ -406,7 +421,7 @@ fi
 # ── all checks passed ───────────────────────────────────────────
 if [ "$FORMAT" = "json" ]; then
   printf '{"verdict":"aligned","exit":0,"lane":"%s","cwd":"%s","branch":"%s","worktree":"%s"}\n' \
-    "$LANE_NAME" "$ACTUAL_CWD" "$ACTUAL_BRANCH" "$WORKTREE_PATH"
+    "$(json_escape "$LANE_NAME")" "$(json_escape "$ACTUAL_CWD")" "$(json_escape "$ACTUAL_BRANCH")" "$(json_escape "$WORKTREE_PATH")"
 else
   printf '%s: aligned — lane=%s cwd=%s branch=%s\n' "$PROG" "$LANE_NAME" "$ACTUAL_CWD" "$ACTUAL_BRANCH"
 fi
