@@ -328,15 +328,19 @@ specific filename pattern or layout — read it from the payload).
 - `<canonical>/session-handoff.md` (main lane) +
   `<canonical>/session-handoff-<lane>.md` (side lanes) — per-lane
   handoff files in the same dir
-- The canonical path is fixed by `scripts/regenerate-memory-index.sh`
-  default and by Mercury's user-level SessionStart hook (both read the
-  same `MERCURY_MEMORY_DIR` env var, falling back to the same default).
-  Override with `MERCURY_MEMORY_DIR` if a deployment genuinely needs
-  per-cwd memory routing (not the recommended posture for Mercury's
-  lane model). The literal example shown above is for one specific
-  Mercury checkout; do not hard-code it elsewhere — derive it from the
-  env var or from
-  `bash scripts/regenerate-memory-index.sh --help` at runtime.
+- The canonical path is anchored by two converging mechanisms:
+  `scripts/regenerate-memory-index.sh` reads the `MERCURY_MEMORY_DIR`
+  env var explicitly (default fallback shown in `<canonical>` resolution
+  above), and Claude Code core's auto-memory layer + user-level
+  SessionStart hooks resolve the same project-anchored dir at runtime.
+  These are different code paths converging on the same canonical
+  location — if either changes, audit both before relying on routing
+  invariance. Override with `MERCURY_MEMORY_DIR` if a deployment
+  genuinely needs per-cwd memory routing (not the recommended posture
+  for Mercury's lane model). The literal example shown above is for one
+  specific Mercury checkout; do not hard-code it elsewhere — derive it
+  at runtime from the env var or from
+  `bash scripts/regenerate-memory-index.sh --help`.
 
 **Why canonical (not per-cwd) for user-memory**: Rule 6 (LANES.md is the
 single registry) and Rule 7 (per-session files; canonical MEMORY.md /
@@ -345,9 +349,16 @@ every lane can read. Per-cwd routing of memory would fragment the index — a
 side lane wouldn't see main lane's session history, and `regenerate-memory-index.sh`
 output would diverge per worktree. The S13-side-multi-lane routing-bleed
 incident addressed by Rule 5.1 was specifically about handoff-file selection
-under SessionStart hook latest-mtime ambiguity, not about memory-index
-routing; per-cwd jsonl isolation closes that failure mode without touching
-the (intentionally) shared user-memory dir.
+under SessionStart hook latest-mtime ambiguity in shared cwd, not about
+memory-index routing. Worktree-per-lane (Rule 5.1) disambiguates the cwd
+identity so SessionStart-driven handoff selection now operates within an
+unambiguous lane scope, while lane-suffix filenames
+(`session-handoff[-<lane>].md`) provide the partitioning within the shared
+canonical dir. Operators relying on auto-handoff to read the correct
+lane-suffixed file SHOULD verify this empirically the first time a new
+worktree starts a session (S17-side-multi-lane Path A end-to-end validation
+2026-05-03 confirms jsonl per-cwd isolation; handoff-file selection is the
+next observation point if regression suspected).
 
 Hooks that resolve project state from cwd (e.g. Mercury's user-level
 SessionStart loader) start routing correctly for the per-cwd component
