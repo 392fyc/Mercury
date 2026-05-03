@@ -62,6 +62,24 @@ warn() {
   printf '%s: warn: %s\n' "$PROG" "$1" >&2
 }
 
+# JSON-string escape: backslash (Windows paths!) and double-quote, plus
+# minimal control-char handling. Pure bash parameter expansion, no fork.
+# Closes Argus iter1 Minor #346 — `--format json` previously interpolated
+# raw strings into the output, producing invalid JSON for Windows paths
+# containing backslashes or any value containing literal quotes. Defined
+# at script top so all error-branch JSON printers (worktree_path_missing
+# at line ~232, worktree_path_duplicate at line ~250, etc.) see it
+# regardless of execution path. Fixes Argus iter2 Minor "潜在运行错误".
+json_escape() {
+  local s="$1"
+  s="${s//\\/\\\\}"   # \ → \\  (must be FIRST so \ in subsequent escapes survives)
+  s="${s//\"/\\\"}"   # " → \"
+  s="${s//$'\n'/\\n}" # newline → \n  (defensive — paths/branches shouldn't contain LF)
+  s="${s//$'\r'/\\r}" # CR → \r
+  s="${s//$'\t'/\\t}" # tab → \t
+  printf '%s' "$s"
+}
+
 # Soft-disable break-glass — exits cleanly without running checks.
 if [ "${MERCURY_LANE_ASSERT_DISABLED:-}" = "1" ]; then
   printf '%s: soft-disabled via MERCURY_LANE_ASSERT_DISABLED=1\n' "$PROG"
@@ -268,21 +286,6 @@ WORKTREE_PATH="$WORKTREE_PATH_RAW"
 # slash and colon characters in the cwd become dashes, leading dashes are
 # stripped. Encode both the actual cwd and the expected worktree path,
 # then compare.
-# JSON-string escape: backslash (Windows paths!) and double-quote, plus
-# minimal control-char handling. Pure bash parameter expansion, no fork.
-# Closes Argus iter1 Minor (#346) — `--format json` previously interpolated
-# raw strings into the output, producing invalid JSON for Windows paths
-# containing backslashes or any value containing literal quotes.
-json_escape() {
-  local s="$1"
-  s="${s//\\/\\\\}"   # \ → \\  (must be FIRST so \ in subsequent escapes survives)
-  s="${s//\"/\\\"}"   # " → \"
-  s="${s//$'\n'/\\n}" # newline → \n  (defensive — paths/branches shouldn't contain LF)
-  s="${s//$'\r'/\\r}" # CR → \r
-  s="${s//$'\t'/\\t}" # tab → \t
-  printf '%s' "$s"
-}
-
 encode_path() {
   # Defensive normalization before encoding to dampen trivial-mismatch
   # false-blocks: strip trailing slashes (`D:/Mercury/Mercury/` ≡
@@ -395,11 +398,18 @@ else
   ' "$LANES_FILE")
   # Without short name, fall back to lane name itself for branch matching.
   [ -z "$SHORT_NAME" ] && SHORT_NAME="$LANE_NAME"
+  # Side-lane branch tolerance: only `develop` is the canonical pre-checkout
+  # state (lane-naming.md §Setup at lane open uses `git worktree add ...
+  # origin/develop` to scaffold). master/main are NOT legitimate side-lane
+  # operating branches — accepting them would mean a misrouted session on
+  # those branches passes the assertion. Tightened per Argus iter2 Minor
+  # "校验放宽风险" (PR #346). Scaffold + work branches remain accepted via
+  # the lane/<short>/* and feature/lane-<lane>/TASK-* patterns below.
   case "$ACTUAL_BRANCH" in
-    develop|master|main) branch_ok=1 ;;  # tolerated pre-checkout
+    develop) branch_ok=1 ;;  # canonical pre-checkout state for fresh side worktree
     "feature/lane-${LANE_NAME}/TASK-"*) branch_ok=1 ;;
     "lane/${SHORT_NAME}/"*) branch_ok=1 ;;
-    *) branch_reason="lane '$LANE_NAME' (short '$SHORT_NAME') expects feature/lane-${LANE_NAME}/TASK-* or lane/${SHORT_NAME}/*; got '$ACTUAL_BRANCH'" ;;
+    *) branch_reason="lane '$LANE_NAME' (short '$SHORT_NAME') expects develop / feature/lane-${LANE_NAME}/TASK-* / lane/${SHORT_NAME}/*; got '$ACTUAL_BRANCH'" ;;
   esac
 fi
 

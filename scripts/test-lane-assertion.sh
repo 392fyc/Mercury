@@ -584,6 +584,49 @@ parsed=$(printf '%s' "$err" | jq -r '.actual_cwd' 2>/dev/null)
 assert_eq "jq round-trips quote-escaped JSON" '/path/with/"quote' "$parsed"
 
 # ───────────────────────────────────────────────────────────────
+# Argus iter2 Minor "潜在运行错误" — json_escape was previously defined
+# AFTER the worktree_path_missing / worktree_path_duplicate JSON branches,
+# so those error paths could fail with "command not found" before the
+# function-definition reordering fix.
+# ───────────────────────────────────────────────────────────────
+
+printf '\n=== json_escape function ordering (Argus iter2 minor regression) ===\n'
+
+err=$(env MERCURY_LANE_MARKER='[LANE=nopath]' bash "$ASSERTION" \
+  --memory-dir "$MEMDIR" --cwd '/var/test/nopath' --branch develop --format json 2>&1)
+rc=$?
+assert_eq "json worktree_path_missing branch reaches json_escape -> rc=4" "4" "$rc"
+assert_contains "json worktree_path_missing emits valid JSON" '"verdict":"worktree_path_missing"' "$err"
+parsed=$(printf '%s' "$err" | jq -r '.lane' 2>/dev/null)
+assert_eq "jq parses worktree_path_missing JSON output" 'nopath' "$parsed"
+
+# ───────────────────────────────────────────────────────────────
+# Argus iter2 Minor "校验放宽风险" — side lane on master/main MUST NOT pass.
+# ───────────────────────────────────────────────────────────────
+
+printf '\n=== Side lane branch tightening (Argus iter2 校验放宽风险) ===\n'
+
+err=$(env MERCURY_LANE_MARKER='[LANE=side-multi-lane]' bash "$ASSERTION" \
+  --memory-dir "$MEMDIR" --cwd '/var/test/side-mlane' --branch master 2>&1)
+rc=$?
+assert_eq "side lane on master no longer tolerated -> rc=3" "3" "$rc"
+
+err=$(env MERCURY_LANE_MARKER='[LANE=side-multi-lane]' bash "$ASSERTION" \
+  --memory-dir "$MEMDIR" --cwd '/var/test/side-mlane' --branch main 2>&1)
+rc=$?
+assert_eq "side lane on main no longer tolerated -> rc=3" "3" "$rc"
+
+err=$(env MERCURY_LANE_MARKER='[LANE=side-multi-lane]' bash "$ASSERTION" \
+  --memory-dir "$MEMDIR" --cwd '/var/test/side-mlane' --branch develop 2>&1)
+rc=$?
+assert_eq "side lane on develop still works (canonical pre-checkout) -> rc=0" "0" "$rc"
+
+err=$(env MERCURY_LANE_MARKER='[LANE=main]' bash "$ASSERTION" \
+  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch master 2>&1)
+rc=$?
+assert_eq "main lane on master still tolerated -> rc=0" "0" "$rc"
+
+# ───────────────────────────────────────────────────────────────
 # Summary
 # ───────────────────────────────────────────────────────────────
 

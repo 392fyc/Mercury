@@ -375,11 +375,26 @@ the share-cwd routing-bleed scenario that Δ9 was designed to prevent.
 ### Δ11 — Path C: `[LANE=<name>]` marker + `lane-assertion.sh` (Issue [#345](https://github.com/392fyc/Mercury/issues/345))
 
 The auto-mode SHORT_PROMPT now starts with a `[LANE=<name>]` marker as its
-first whitespace-delimited token:
+first whitespace-delimited token. **`<name>` is the lane's full section
+name** (the heading text under `## Active Lanes` in `LANES.md`), NOT the
+short name from the §Δ6 short-prefix convention. The handoff skill
+derives `<name>` from the handoff filename pattern (`session-handoff.md`
+→ `main`; `session-handoff-side-multi-lane.md` → `side-multi-lane`), and
+[`scripts/lane-assertion.sh`](../../../scripts/lane-assertion.sh) looks up
+the matching lane section by exact heading equality. Operators executing
+the assertion manually MUST use the lane section name; using the short
+name (e.g. `side-mlane`) instead would yield exit 4 (Worktree path
+missing) because no lane section heading matches.
 
 ```
-[LANE=side-mlane] Continue from session handoff. The SessionStart hook injects the full document. Fallback: read <HANDOFF_PATH>
+[LANE=side-multi-lane] Continue from session handoff. The SessionStart hook injects the full document. Fallback: read <HANDOFF_PATH>
 ```
+
+For the `main` lane the section name and short name happen to be
+identical, so `[LANE=main]` works regardless. The distinction matters
+only for side lanes whose section name and short name differ
+(e.g. `side-multi-lane` vs `side-mlane`). Fixes Argus iter2 Minor
+"文档一致性" (PR #346).
 
 The new session validates three-way lane alignment via
 [`scripts/lane-assertion.sh`](../../../scripts/lane-assertion.sh) before any
