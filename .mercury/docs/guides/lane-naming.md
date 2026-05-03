@@ -404,7 +404,7 @@ work. The script compares:
 |--------|----------|---------------|
 | `[LANE=<name>]` marker (CLI / `MERCURY_LANE_MARKER` / `BOOTSTRAP_PROMPT` / stdin) | parsable lane name (`[a-z0-9-]+`) | `1` |
 | Encoded cwd vs encoded `Worktree path` from `LANES.md` | byte-equal after `: \\ /` → `-` slash-encoding | `2` |
-| `git branch --show-current` | matches lane's branch-prefix convention (Rule 2.1 `lane/<short>/*` or legacy `feature/lane-<lane>/TASK-*`; `develop`/`master`/`main` tolerated as pre-checkout) | `3` |
+| `git branch --show-current` | matches lane's branch-prefix convention (Rule 2.1 `lane/<short>/*` or legacy `feature/lane-<lane>/TASK-*`). For **side lanes** only `develop` is tolerated as pre-checkout; `master`/`main` are NOT — accepting them would mean a misrouted session on those branches passes the assertion. **Main lane** tolerates all three (`develop`/`master`/`main`) since they are legitimate main-lane operating branches. | `3` |
 | `Worktree path` field present in lane's `LANES.md` section | non-empty | `4` |
 
 Marker source priority: `--marker` CLI → `MERCURY_LANE_MARKER` env →
@@ -449,8 +449,12 @@ unconditional infrastructure.
 - `.claude/skills/handoff/SKILL.md` Step 5 Auto mode for the spawn-side
   contract
 - `scripts/lane-assertion.sh` + `scripts/test-lane-assertion.sh` for the
-  consumer-side check (41-assertion test suite covers happy paths, every
-  exit-code branch, marker source priority, JSON format, and soft-disable)
+  consumer-side check (test suite covers happy paths for both lanes,
+  every exit-code branch including `worktree_path_duplicate`, marker
+  source priority + first-non-blank-line semantics, JSON format with
+  backslash/quote escaping, soft-disable, code-fence isolation, paths
+  with spaces/parens, and side-lane branch tightening — see the suite
+  for the current assertion count)
 
 ## Tests
 

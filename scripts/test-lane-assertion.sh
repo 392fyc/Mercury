@@ -11,8 +11,18 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ASSERTION="$SCRIPT_DIR/lane-assertion.sh"
 [[ -x "$ASSERTION" ]] || { printf 'lane-assertion.sh not executable: %s\n' "$ASSERTION" >&2; exit 1; }
 
+# `jq` is used for round-trip parsing in JSON-format regression tests.
+# If unavailable, those specific assertions are skipped with a clear note
+# rather than failing non-functionally — matches the lane-cap-check.sh
+# soft-dependency pattern and addresses Argus iter3 Minor "测试依赖隐式".
+HAS_JQ=0
+if command -v jq >/dev/null 2>&1; then
+  HAS_JQ=1
+fi
+
 PASS=0
 FAIL=0
+SKIP=0
 declare -a FAILURES=()
 
 assert_eq() {
@@ -572,16 +582,24 @@ err=$(env MERCURY_LANE_MARKER='[LANE=main]' bash "$ASSERTION" \
 rc=$?
 assert_eq "json with Windows backslash path — rc=2" "2" "$rc"
 assert_contains "json escapes backslashes" 'C:\\Windows' "$err"
-parsed=$(printf '%s' "$err" | jq -r '.actual_cwd' 2>/dev/null)
-assert_eq "jq round-trips backslash-escaped JSON" 'C:\Windows\Path\With\Backslashes' "$parsed"
+if [[ $HAS_JQ -eq 1 ]]; then
+  parsed=$(printf '%s' "$err" | jq -r '.actual_cwd' 2>/dev/null)
+  assert_eq "jq round-trips backslash-escaped JSON" 'C:\Windows\Path\With\Backslashes' "$parsed"
+else
+  SKIP=$((SKIP + 1)); printf '  skip (jq not installed): jq round-trips backslash-escaped JSON\n'
+fi
 
 err=$(env MERCURY_LANE_MARKER='[LANE=main]' bash "$ASSERTION" \
   --memory-dir "$MEMDIR" --cwd '/path/with/"quote' --branch develop --format json 2>&1)
 rc=$?
 assert_eq "json with literal double-quote in cwd — rc=2" "2" "$rc"
 assert_contains "json escapes double-quote" '\"' "$err"
-parsed=$(printf '%s' "$err" | jq -r '.actual_cwd' 2>/dev/null)
-assert_eq "jq round-trips quote-escaped JSON" '/path/with/"quote' "$parsed"
+if [[ $HAS_JQ -eq 1 ]]; then
+  parsed=$(printf '%s' "$err" | jq -r '.actual_cwd' 2>/dev/null)
+  assert_eq "jq round-trips quote-escaped JSON" '/path/with/"quote' "$parsed"
+else
+  SKIP=$((SKIP + 1)); printf '  skip (jq not installed): jq round-trips quote-escaped JSON\n'
+fi
 
 # ───────────────────────────────────────────────────────────────
 # Argus iter2 Minor "潜在运行错误" — json_escape was previously defined
@@ -597,8 +615,12 @@ err=$(env MERCURY_LANE_MARKER='[LANE=nopath]' bash "$ASSERTION" \
 rc=$?
 assert_eq "json worktree_path_missing branch reaches json_escape -> rc=4" "4" "$rc"
 assert_contains "json worktree_path_missing emits valid JSON" '"verdict":"worktree_path_missing"' "$err"
-parsed=$(printf '%s' "$err" | jq -r '.lane' 2>/dev/null)
-assert_eq "jq parses worktree_path_missing JSON output" 'nopath' "$parsed"
+if [[ $HAS_JQ -eq 1 ]]; then
+  parsed=$(printf '%s' "$err" | jq -r '.lane' 2>/dev/null)
+  assert_eq "jq parses worktree_path_missing JSON output" 'nopath' "$parsed"
+else
+  SKIP=$((SKIP + 1)); printf '  skip (jq not installed): jq parses worktree_path_missing JSON output\n'
+fi
 
 # ───────────────────────────────────────────────────────────────
 # Argus iter2 Minor "校验放宽风险" — side lane on master/main MUST NOT pass.
@@ -633,6 +655,7 @@ assert_eq "main lane on master still tolerated -> rc=0" "0" "$rc"
 printf '\n=== Summary ===\n'
 printf 'pass: %d\n' "$PASS"
 printf 'fail: %d\n' "$FAIL"
+printf 'skip: %d (jq-dependent assertions when jq not installed)\n' "$SKIP"
 if [[ "$FAIL" -gt 0 ]]; then
   printf '\nFailures:\n'
   for f in "${FAILURES[@]}"; do

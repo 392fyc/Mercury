@@ -25,7 +25,7 @@
 # Soft-disable via MERCURY_LANE_ASSERT_DISABLED=1 for break-glass scenarios.
 #
 # Usage:
-#   scripts/lane-assertion.sh [--marker LANE=name] [--memory-dir PATH]
+#   scripts/lane-assertion.sh [--marker '[LANE=name]'] [--memory-dir PATH]
 #                             [--lanes-file PATH] [--repo-root PATH]
 #                             [--cwd PATH] [--branch NAME] [--format text|json]
 #
@@ -36,6 +36,7 @@
 #   3 — branch prefix mismatch
 #   4 — Worktree path field missing in LANES.md (Rule 5.1 violation)
 #   5 — argument or environment error
+#   6 — Worktree path field has duplicate bullets in LANES.md
 #
 # Marker resolution priority:
 #   --marker CLI flag

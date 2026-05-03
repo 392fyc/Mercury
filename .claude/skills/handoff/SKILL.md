@@ -398,14 +398,17 @@ wt -w 0 nt --title "Handoff: $LANE_NAME" -d "$WORKTREE_PATH" -- claude -- "$SHOR
 ```
 
 **macOS / Linux with tmux** (real new window, detached from current TTY) —
-`tmux new-window <cmd>` evaluates `<cmd>` via `/bin/sh -c`, so the prompt
-must be safely shell-quoted before embedding. `printf %q` produces a
-bash-portable shell-safe representation that survives even if the prompt
-contains single quotes, dollar signs, or other metacharacters (Argus iter1
-Minor #346: previous naked single-quote wrap was injection-vulnerable):
+`tmux new-window <cmd>` runs `<cmd>` via `/bin/sh -c`. Bash's `printf %q`
+can emit `$'...'` ANSI-C quoting for some inputs, which is a bash extension
+not recognized by POSIX sh (dash on Debian/Ubuntu, busybox sh) — so we
+explicitly route through `bash -c` to ensure the quoted form is parsed by
+bash regardless of what `/bin/sh` resolves to. The outer `sh` only sees a
+plain `bash -c "..."` invocation, which is POSIX-portable. Closes Copilot
+iter3 finding on PR #346 (printf %q × dash sh portability):
 ```bash
 SHORT_PROMPT_QUOTED=$(printf '%q' "$SHORT_PROMPT")
-tmux new-window -n handoff -c "$WORKTREE_PATH" "claude -- $SHORT_PROMPT_QUOTED"
+tmux new-window -n handoff -c "$WORKTREE_PATH" \
+  "bash -c \"claude -- $SHORT_PROMPT_QUOTED\""
 ```
 
 **macOS / Linux without tmux** — there is no portable "new terminal"
@@ -415,7 +418,8 @@ primitive. Use `tmux new-session -d` or the terminal emulator's own CLI
 
 ```bash
 SHORT_PROMPT_QUOTED=$(printf '%q' "$SHORT_PROMPT")
-tmux new-session -d -s handoff -c "$WORKTREE_PATH" "claude -- $SHORT_PROMPT_QUOTED"
+tmux new-session -d -s handoff -c "$WORKTREE_PATH" \
+  "bash -c \"claude -- $SHORT_PROMPT_QUOTED\""
 ```
 
 The positional argument after `--` is the session's first user message —
