@@ -220,7 +220,7 @@ for a single dev task and removed at PR merge.
 
 | Scope | Path | Lifecycle | Purpose |
 |-------|------|-----------|---------|
-| **Lane-level** (this §) | `<repo-root>/Mercury-<short>` | Per active lane; long-lived; removed at lane close | Isolate per-cwd Claude Code project state (MEMORY / handoff / transcripts) |
+| **Lane-level** (this §) | `<repo-root>/Mercury-<short>` | Per active lane; long-lived; removed at lane close | Isolate per-cwd Claude Code session transcripts (jsonl); user-memory dir (MEMORY.md / SESSION_INDEX.md / sessions/ / handoffs) is canonical by design — see §Operational expectation |
 | **Task-level** ([`worktree-workflow.md`](worktree-workflow.md)) | `<repo-root>/Mercury/.worktrees/{taskId}` | Per dev task; ephemeral; removed at PR merge | Isolate concurrent dev-pipeline branch checkouts |
 
 A side lane MAY use both: live in `<repo-root>/Mercury-<short>` for its
@@ -289,27 +289,86 @@ claude  # SessionStart hook now reads from ~/.claude/projects/<encoded-cwd>/
 # → ~/.claude/projects/D--Mercury-Mercury-side-mlane/
 ```
 
-This makes the per-cwd project state dir distinct from the main lane's,
-which gives each lane its own (paths shown with `<encoded-cwd>` =
-your platform's encoding of `<repo-root>/Mercury-<short>`):
+This makes the per-cwd project state dir distinct from the main lane's, but
+**not all per-project state is encoded-cwd-routed**. Mercury's per-cwd
+isolation applies to Claude Code core's session transcript storage; the
+user-memory layer (MEMORY.md / SESSION_INDEX.md / per-session files /
+handoffs) is intentionally canonical for cross-lane memory-index visibility.
+Concretely (illustrative path values — actual values depend on the
+operator's platform encoding + env vars; trust the script + hook resolution
+at runtime, not the literals shown):
 
-- `~/.claude/projects/<encoded-cwd>/memory/MEMORY.md`
-- `~/.claude/projects/<encoded-cwd>/memory/SESSION_INDEX.md`
-- `~/.claude/projects/<encoded-cwd>/memory/sessions/`
-- `~/.claude/projects/<encoded-cwd>/memory/session-handoff[-<lane>].md`
-- session transcripts under `~/.claude/projects/<encoded-cwd>/` (Claude Code
-  provides the exact `transcript_path` via the hook payload — see
-  [hooks reference](https://code.claude.com/docs/en/hooks); do not assume a
-  specific filename pattern)
+- `<encoded-cwd>` = your platform's encoding of `<repo-root>/Mercury-<short>`
+  (Mercury team example: `D--Mercury-Mercury-side-mlane` for
+  `D:/Mercury/Mercury-side-mlane`)
+- `<canonical>` = whatever `MERCURY_MEMORY_DIR` resolves to at runtime, with
+  the script default falling back to
+  `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory`
+  (Mercury team example: `~/.claude/projects/D--Mercury-Mercury/memory` —
+  encoded for the repo's main checkout path)
+
+**Per-cwd (Claude Code core, automatic):** session transcripts under
+`~/.claude/projects/<encoded-cwd>/` (Claude Code provides the exact
+`transcript_path` via the hook payload — see
+[hooks reference](https://code.claude.com/docs/en/hooks); do not assume a
+specific filename pattern or layout — read it from the payload).
+
+**Canonical (Mercury user-memory, intentional cross-lane visibility):**
+
+- `<canonical>/MEMORY.md` — shared memory index (per-session bullets
+  derived from per-session files via
+  `scripts/regenerate-memory-index.sh --in-place`; Rule 6 boundary still
+  binds — each lane only edits its own per-session files, never another
+  lane's bullets)
+- `<canonical>/SESSION_INDEX.md` — shared session table (same derivation)
+- `<canonical>/sessions/S<N>.md` (main lane) +
+  `<canonical>/sessions/S<N>-<lane>.md` (side lanes) — per-session
+  frontmatter + body; lane-suffixed files visibly partition ownership
+  while sharing one directory
+- `<canonical>/session-handoff.md` (main lane) +
+  `<canonical>/session-handoff-<lane>.md` (side lanes) — per-lane
+  handoff files in the same dir
+- The canonical path is anchored by two converging mechanisms:
+  `scripts/regenerate-memory-index.sh` reads the `MERCURY_MEMORY_DIR`
+  env var explicitly (default fallback shown in `<canonical>` resolution
+  above), and Claude Code core's auto-memory layer + user-level
+  SessionStart hooks resolve the same project-anchored dir at runtime.
+  These are different code paths converging on the same canonical
+  location — if either changes, audit both before relying on routing
+  invariance. Override with `MERCURY_MEMORY_DIR` if a deployment
+  genuinely needs per-cwd memory routing (not the recommended posture
+  for Mercury's lane model). The literal example shown above is for one
+  specific Mercury checkout; do not hard-code it elsewhere — derive it
+  at runtime from the env var or from
+  `bash scripts/regenerate-memory-index.sh --help`.
+
+**Why canonical (not per-cwd) for user-memory**: Rule 6 (LANES.md is the
+single registry) and Rule 7 (per-session files; canonical MEMORY.md /
+SESSION_INDEX.md auto-regenerated) both assume one shared memory index that
+every lane can read. Per-cwd routing of memory would fragment the index — a
+side lane wouldn't see main lane's session history, and `regenerate-memory-index.sh`
+output would diverge per worktree. The S13-side-multi-lane routing-bleed
+incident addressed by Rule 5.1 was specifically about handoff-file selection
+under SessionStart hook latest-mtime ambiguity in shared cwd, not about
+memory-index routing. Worktree-per-lane (Rule 5.1) disambiguates the cwd
+identity so SessionStart-driven handoff selection now operates within an
+unambiguous lane scope, while lane-suffix filenames
+(`session-handoff[-<lane>].md`) provide the partitioning within the shared
+canonical dir. Operators relying on auto-handoff to read the correct
+lane-suffixed file SHOULD verify this empirically the first time a new
+worktree starts a session (S17-side-multi-lane Path A end-to-end validation
+2026-05-03 confirms jsonl per-cwd isolation; handoff-file selection is the
+next observation point if regression suspected).
 
 Hooks that resolve project state from cwd (e.g. Mercury's user-level
-SessionStart loader) start routing correctly without code change: SessionStart
-input includes a `cwd` field
-([documented](https://code.claude.com/docs/en/hooks)), and the hook can
-resolve the corresponding `~/.claude/projects/<project>/` dir from it. Hooks
-that hard-code a project path or use other resolution strategies are
-unaffected by this isolation; verify your specific hook before relying on
-auto-routing.
+SessionStart loader) start routing correctly for the per-cwd component
+without code change: SessionStart input includes a `cwd` field
+([documented](https://code.claude.com/docs/en/hooks)). Hooks that read
+user-memory files (MEMORY.md / SESSION_INDEX.md / handoffs) continue
+resolving from the canonical path described above; this is the design, not
+a regression. Hooks that hard-code a project path or use other resolution
+strategies are unaffected by this isolation; verify your specific hook
+before relying on auto-routing.
 
 ### Cleanup at lane close
 
