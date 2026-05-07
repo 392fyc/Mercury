@@ -384,8 +384,27 @@ process_segment() {
   for t in "${push_toks[@]}"; do
     case "$t" in --*|-*) continue ;; esac
     if [ "$SKIPPED_REMOTE" = false ]; then
-      SKIPPED_REMOTE=true
-      continue
+      # First non-flag arg is USUALLY the remote name, but `git push REFSPEC`
+      # (no remote) is also valid bash/git syntax. Git treats an arg as a
+      # refspec rather than a remote when:
+      #   - it contains `:` (LHS:RHS form, e.g. `HEAD:develop`)
+      #   - it starts with `+` (force-push prefix, e.g. `+develop`)
+      #   - it starts with `refs/` (fully-qualified ref, e.g. `refs/heads/develop`)
+      # Without this heuristic, those forms slip past Phase 2 because
+      # SKIPPED_REMOTE eats the refspec as "remote", leaving no target seen.
+      # Trade-off: a remote literally named `refs/heads/develop` would now
+      # produce a false-positive block, but such remote names are virtually
+      # nonexistent (git's remote-name conventions are alphanumeric only).
+      # Closes Argus iter-1 Minor "可能绕过" finding (#352).
+      case "$t" in
+        *:*|+*|refs/*)
+          # Looks like a refspec — fall through to target processing below.
+          ;;
+        *)
+          SKIPPED_REMOTE=true
+          continue
+          ;;
+      esac
     fi
     HAS_EXPLICIT_TARGET=true
 

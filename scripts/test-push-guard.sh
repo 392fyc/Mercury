@@ -919,6 +919,59 @@ scenario \
   2 'BLOCKED'
 
 # ===========================================================================
+# Iter-6 bypass closure (Argus iter-1 finding on PR #352)
+# ===========================================================================
+
+# Argus Minor #1: `git push REFSPEC` (no remote arg) is valid syntax —
+# git treats `HEAD:develop` as a refspec, not a remote name. Iter-5
+# SKIPPED_REMOTE eat-first-non-flag heuristic missed this case and let
+# Phase 3 fall through to current-branch check.
+scenario \
+  '`git push HEAD:develop` (no remote, refspec only) -> blocked' \
+  'git push HEAD:develop' \
+  2 'BLOCKED'
+
+scenario \
+  '`git push HEAD:master` (no remote, refspec) -> blocked' \
+  'git push HEAD:master' \
+  2 'BLOCKED'
+
+scenario \
+  '`git push +develop` (no remote, force prefix) -> blocked' \
+  'git push +develop' \
+  2 'BLOCKED'
+
+scenario \
+  '`git push +HEAD:develop` (no remote, force + refspec) -> blocked' \
+  'git push +HEAD:develop' \
+  2 'BLOCKED'
+
+scenario \
+  '`git push refs/heads/develop` (no remote, fully-qualified ref) -> blocked' \
+  'git push refs/heads/develop' \
+  2 'BLOCKED'
+
+scenario \
+  '`git push refs/heads/master` (no remote, fully-qualified ref) -> blocked' \
+  'git push refs/heads/master' \
+  2 'BLOCKED'
+
+scenario \
+  '`git push HEAD:lane/foo` (no remote, refspec to safe target) -> not blocked' \
+  'git push HEAD:lane/foo' \
+  0 ''
+
+scenario \
+  '`git push +lane/foo` (force-push to safe target, no remote) -> not blocked' \
+  'git push +lane/foo' \
+  0 ''
+
+scenario \
+  '`git push refs/heads/lane/foo` (no remote, fully-qualified safe ref) -> not blocked' \
+  'git push refs/heads/lane/foo' \
+  0 ''
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 
