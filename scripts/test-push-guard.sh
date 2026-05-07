@@ -94,6 +94,11 @@ chmod +x "$BIN_DIR/git"
 # environment (e.g. 'MOCK_CURRENT_BRANCH=develop'). Pairs are split into an
 # array and passed via `env`, so VALUE may contain spaces or shell
 # metacharacters without being interpreted as code.
+#
+# Limitation (Copilot iter-1 line 96): VALUE cannot contain `;` because that
+# is the pair separator. Tests in this harness do not need semicolons in
+# values; if a future scenario does, switch to a non-semicolon delimiter
+# (e.g. newline-joined pairs) and update the IFS/read accordingly.
 # Returns: stderr text on stdout (so callers can grep it), exit-code in $?.
 #
 # Newline handling: literal newlines in $cmd (e.g. heredoc-style multi-line
@@ -969,6 +974,63 @@ scenario \
 scenario \
   '`git push refs/heads/lane/foo` (no remote, fully-qualified safe ref) -> not blocked' \
   'git push refs/heads/lane/foo' \
+  0 ''
+
+# ===========================================================================
+# Iter-7 bypass closures (Argus iter-2 + Copilot iter-1)
+# ===========================================================================
+
+# Argus iter-2 Critical (token-collision): with the iter-1..6 untyped
+# protocol (`__SEGEND__` literal as separator marker), a real shell token
+# value equal to that literal would mis-classify as a separator. The fix
+# adopts a typed line-protocol: `TOK\t<value>` for tokens, `SEG` for
+# separators. With TOK\t prefix, ANY token value (including literally
+# `SEG` or `__SEGEND__`) is unambiguously a token.
+scenario \
+  '`git push origin __SEGEND__ develop` (legacy-sentinel token-collision) -> blocked' \
+  'git push origin __SEGEND__ develop' \
+  2 'BLOCKED'
+
+scenario \
+  '`git push origin SEG develop` (current-sentinel token-collision) -> blocked' \
+  'git push origin SEG develop' \
+  2 'BLOCKED'
+
+scenario \
+  '`git push origin __SEGEND__:develop` (sentinel inside refspec) -> blocked' \
+  'git push origin __SEGEND__:develop' \
+  2 'BLOCKED'
+
+# Copilot iter-1 line 300: `sudo`/`doas` were missing from wrapper-strip,
+# so `sudo git push origin develop` slipped past as non-git leading token.
+scenario \
+  '`sudo git push origin develop` -> blocked' \
+  'sudo git push origin develop' \
+  2 'BLOCKED'
+
+scenario \
+  '`sudo -E git push origin develop` (preserve env flag) -> blocked' \
+  'sudo -E git push origin develop' \
+  2 'BLOCKED'
+
+scenario \
+  '`sudo -u username git push origin develop` (sudo with -u value) -> blocked' \
+  'sudo -u username git push origin develop' \
+  2 'BLOCKED'
+
+scenario \
+  '`doas git push origin develop` (BSD doas wrapper) -> blocked' \
+  'doas git push origin develop' \
+  2 'BLOCKED'
+
+scenario \
+  '`sudo --preserve-env=PATH git push origin master` (long flag inline value) -> blocked' \
+  'sudo --preserve-env=PATH git push origin master' \
+  2 'BLOCKED'
+
+scenario \
+  '`sudo git push origin lane/foo` (sudo + safe target) -> not blocked' \
+  'sudo git push origin lane/foo' \
   0 ''
 
 # ===========================================================================

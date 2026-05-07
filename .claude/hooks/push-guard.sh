@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # GATE: block direct push to develop/master — all merges must go through PRs.
-# Token cost: ZERO. No external deps beyond awk + bash + grep.
+# Runtime deps: bash, awk, grep, jq (jq is REQUIRED — Codex iter-2 Critical
+# closed the legacy sed-fallback bypass; the hook hard-blocks if jq is absent).
 #
 # Fix history:
 #   Session 1-side-bug / Issue #349 — Bug: greedy regex consumed body text.
@@ -36,7 +37,7 @@
 #
 #     Iter 2 fix: replace the regex env-strip + bash word-split combo with a
 #     single quote-aware awk tokenizer that emits one shell token per line
-#     plus `__SEGEND__` markers between separators. Bash reads the stream,
+#     plus segment-end markers between separators. Bash reads the stream,
 #     groups tokens per segment, and runs Phase 1/2/3 inline per segment
 #     (no break-on-first). Wrapper-strip is now token-based and unbounded.
 #     Quote-strip in Phase 2 normalization handles literal quote chars
@@ -61,14 +62,32 @@ fi
 
 debug_log "INPUT=$INPUT"
 
-# Detect whether INPUT carries a "command" key BEFORE extraction. Used as a
+# jq availability is the gating discriminator — see Mercury security policy
+# block below for why the sed fallback is unsafe. Test override:
+# MERCURY_PUSH_GUARD_TEST_FORCE_NO_JQ=1 forces the no-jq branch even when jq
+# is installed (used by scripts/test-push-guard.sh).
+HAS_JQ=0
+if [ "${MERCURY_PUSH_GUARD_TEST_FORCE_NO_JQ:-0}" != "1" ] && command -v jq >/dev/null 2>&1; then
+  HAS_JQ=1
+fi
+
+# Detect whether INPUT carries a `command` key BEFORE extraction. Used as a
 # fail-closed signal: if the key exists but COMMAND is empty after extraction,
 # the parser failed and the hook MUST hard-block rather than fall through to
-# exit 0 (codex Medium #349 iter-2).
-if printf '%s' "$INPUT" | grep -q '"command"'; then
+# exit 0 (Codex iter-2 Medium). Use a structured jq check when available so
+# string content inside payload values containing the literal word `command`
+# (e.g. a Write tool's content) does not falsely trigger the hard-block path
+# on machines without jq (Argus iter-2 Medium #1 + Copilot Line 72).
+HAS_CMD_KEY=0
+if [ "$HAS_JQ" -eq 1 ]; then
+  if printf '%s' "$INPUT" | jq -e '(.tool_input // null) | (type=="object") and has("command")' >/dev/null 2>&1; then
+    HAS_CMD_KEY=1
+  fi
+elif printf '%s' "$INPUT" | grep -q '"command"[[:space:]]*:'; then
+  # No-jq fallback — anchor on `"command":` to reduce string-content false
+  # positives. Still imperfect (a value `"\"command\":..."` would match), but
+  # the hard-block below makes this branch a fail-closed gate, not a bypass.
   HAS_CMD_KEY=1
-else
-  HAS_CMD_KEY=0
 fi
 
 # Mercury security policy (Codex iter-2 Critical): jq is required for safe
@@ -76,14 +95,7 @@ fi
 # any embedded `"`, so JSON like `"command":"git push origin \"develop\""`
 # extracts as `git push origin \` — non-empty (so the empty-COMMAND check
 # below does not fire), and the truncated tail bypasses the protected-branch
-# grep. Hard-block instead. Test override: MERCURY_PUSH_GUARD_TEST_FORCE_NO_JQ=1
-# forces this branch even when jq is installed (used by scripts/test-push-guard.sh
-# to exercise the path without requiring a Windows-compatible no-jq PATH).
-HAS_JQ=0
-if [ "${MERCURY_PUSH_GUARD_TEST_FORCE_NO_JQ:-0}" != "1" ] && command -v jq >/dev/null 2>&1; then
-  HAS_JQ=1
-fi
-
+# grep. Hard-block instead.
 if [ "$HAS_JQ" -eq 0 ] && [ "$HAS_CMD_KEY" -eq 1 ]; then
   # block_parser_fail() defined below — declare it inline to avoid forward-ref
   # noise. We could hoist, but the body is tiny and the second use site is the
@@ -136,23 +148,34 @@ if [ -z "$COMMAND" ]; then
 fi
 
 # ── Quote-aware awk tokenizer ──────────────────────────────────────────
-# Emits one shell-style token per line, plus a literal `__SEGEND__` marker
-# at every shell separator (`;` `|` `||` `&` `&&`). Inside single or double
-# quotes, separators are buffered as part of the current token and quote
-# delimiters are stripped (mirrors bash word-expansion). Outside quotes,
-# whitespace splits tokens; `(` `)` `{` `}` are emitted as their own
-# single-character tokens so subshell / group prefixes can be wrapper-
-# stripped without bypassing detection.
+# Emits a typed line-protocol stream:
+#   `TOK\t<value>` — one shell-style token per line
+#   `SEG`          — segment terminator (between `;`, `|`, `||`, `&`, `&&`,
+#                    `(`, `)`, `{`, `}`, backtick, or end-of-line)
+#
+# The `TOK\t` prefix avoids the iter-1..5 token-collision bypass (Argus
+# iter-2 Critical): a real shell token equal to the previous protocol
+# sentinel `__SEGEND__` would have been mis-classified as a separator,
+# splitting `git push origin __SEGEND__ develop` into two segments and
+# letting the protected push slip past the walker. With the prefix, ANY
+# token value (including the literal string `SEG`) is unambiguously a
+# token, not a separator.
+#
+# Inside single or double quotes, separators are buffered as part of the
+# current token and quote delimiters are stripped (mirrors bash word-
+# expansion). Outside quotes, whitespace splits tokens; `(` `)` `{` `}`
+# and backtick are statement-grouping / command-substitution boundaries
+# (emitted as `SEG` so contents are walked as their own segment).
 #
 # This replaces the previous "regex env-strip + bash word-split" pipeline,
 # which mangled quoted env values (e.g. `A="1 2"`) and quoted -C paths
 # (e.g. `git -C "C:/repo with spaces"`). Token boundaries now match shell
-# semantics for our limited subset (no command substitution, no here-docs
-# — same caveat as the sibling pr-merge-guard.sh).
+# semantics for our limited subset (no command substitution recursion into
+# quoted strings, no here-docs — same caveat as the sibling pr-merge-guard.sh).
 _TOK_STREAM=$(printf '%s\n' "$COMMAND" | awk -v SQ="'" '
 BEGIN { in_sq=0; in_dq=0; tok=""; in_tok=0; line_continue=0 }
 function flush_tok() {
-  if (in_tok) { print tok; tok=""; in_tok=0 }
+  if (in_tok) { print "TOK\t" tok; tok=""; in_tok=0 }
 }
 {
   line = $0
@@ -194,22 +217,22 @@ function flush_tok() {
       # Trailing backslash at end of line — bash treats this as line
       # continuation: drop the backslash AND the newline, joining current
       # token with next line. Set line_continue so the per-line tail block
-      # neither flushes nor emits __SEGEND__ (Codex iter-3 Medium).
+      # neither flushes nor emits SEG (Codex iter-3 Medium).
       line_continue = 1
       continue
     }
     if (c == SQ)   { in_sq = 1; in_tok = 1; continue }
     if (c == "\"") { in_dq = 1; in_tok = 1; continue }
-    if (c == ";")  { flush_tok(); print "__SEGEND__"; continue }
+    if (c == ";")  { flush_tok(); print "SEG"; continue }
     if (c == "|") {
       nc = (i < n) ? substr(line, i+1, 1) : ""
-      flush_tok(); print "__SEGEND__"
+      flush_tok(); print "SEG"
       if (nc == "|") i++
       continue
     }
     if (c == "&") {
       nc = (i < n) ? substr(line, i+1, 1) : ""
-      flush_tok(); print "__SEGEND__"
+      flush_tok(); print "SEG"
       if (nc == "&") i++
       continue
     }
@@ -225,7 +248,7 @@ function flush_tok() {
     # need recursive parsing — rare in Claude Code output, accepted).
     if (c == "(" || c == ")" || c == "{" || c == "}" || c == "`") {
       flush_tok()
-      print "__SEGEND__"
+      print "SEG"
       continue
     }
     if (c == " " || c == "\t") {
@@ -242,19 +265,19 @@ function flush_tok() {
     tok = tok " "; in_tok = 1
   } else if (line_continue) {
     # Backslash-newline line-continuation outside quotes: do not flush, do
-    # not emit __SEGEND__. The current token continues onto the next line.
+    # not emit SEG. The current token continues onto the next line.
     line_continue = 0
   } else {
     # Bare newline outside quotes = statement separator (bash semantics).
     # Closes Codex iter-3 High: `echo ok\ngit push origin develop` previously
     # stayed one segment, walker exited on `echo`, never inspected the push.
     flush_tok()
-    print "__SEGEND__"
+    print "SEG"
   }
 }
 END {
   flush_tok()
-  print "__SEGEND__"
+  print "SEG"
 }
 ') || block_parser_fail "awk tokenizer exited non-zero"
 
@@ -281,8 +304,8 @@ process_segment() {
     case "$tok" in
       # Bash logical-NOT (`! cmd` runs cmd, inverts exit code). `(` `{` are
       # NOT in this list — iter-5 promotes them to segment separators (awk
-      # tokenizer emits __SEGEND__ on those chars), so they never reach the
-      # walker as tokens. Closes Codex iter-2 High #2 + iter-4 case/function/
+      # tokenizer emits SEG on those chars), so they never reach the walker
+      # as tokens. Closes Codex iter-2 High #2 + iter-4 case/function/
       # subshell bypasses uniformly.
       "!")
         i=$((i + 1)); _seen_change=1 ;;
@@ -295,7 +318,12 @@ process_segment() {
       # precede a command, but if they did the walker would still exit cleanly.
       if|then|else|elif|do|while|until)
         i=$((i + 1)); _seen_change=1 ;;
-      env|command|exec|builtin|nohup|time)
+      # Sudo/doas added per Copilot iter-1 finding (line 300): `sudo git push
+      # origin develop` previously bypassed because `sudo` led the segment.
+      # Documented limitation: `bash -c "git push origin develop"` is NOT
+      # caught — the inner -c arg would need recursive shell parsing. Rare
+      # in Claude Code output.
+      env|command|exec|builtin|nohup|time|sudo|doas)
         i=$((i + 1)); _seen_change=1 ;;
       # `coproc` and `function` may take an optional/required NAME after the
       # keyword. Skip the keyword, then peek: if the next token is a plain
@@ -445,22 +473,37 @@ process_segment() {
   fi
 }
 
-# Read the awk-emitted token stream, group tokens into segments, and process.
+# Read the awk-emitted typed line-protocol stream, group tokens into segments,
+# and process. Lines beginning with `TOK<TAB>` are tokens (with the TAB-and-
+# everything-before stripped); the bare line `SEG` is a segment terminator.
+# Any other line shape is a protocol violation — ignored to fail closed.
+TAB=$(printf '\t')
+TOK_PREFIX="TOK${TAB}"
 while IFS= read -r line; do
-  if [ "$line" = "__SEGEND__" ]; then
+  if [ "$line" = "SEG" ]; then
     if [ "${#CUR_SEG[@]}" -gt 0 ]; then
       process_segment "${CUR_SEG[@]}"
       CUR_SEG=()
     fi
   else
-    CUR_SEG+=( "$line" )
+    case "$line" in
+      "${TOK_PREFIX}"*)
+        # Strip the TOK\t prefix; the remainder (which may itself equal
+        # the literal string `SEG`) is the token value.
+        CUR_SEG+=( "${line#${TOK_PREFIX}}" )
+        ;;
+      *)
+        # Unrecognized line shape — defensive ignore. The awk tokenizer is
+        # the sole producer; this branch only fires under tampering.
+        ;;
+    esac
   fi
 done <<EOF
 $_TOK_STREAM
 EOF
 
-# Defensive flush: awk's END block always emits a trailing __SEGEND__, but
-# guard the case where the stream was empty or truncated.
+# Defensive flush: awk's END block always emits a trailing SEG, but guard
+# the case where the stream was empty or truncated.
 if [ "${#CUR_SEG[@]}" -gt 0 ]; then
   process_segment "${CUR_SEG[@]}"
 fi
