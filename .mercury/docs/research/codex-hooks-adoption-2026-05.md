@@ -26,7 +26,7 @@ Mercury 现有 13 hook 中 **9 个可直接 port**、**3 个需调整**、**1 �
 
 1. ~~用户 `~/.codex/` 当前 Codex CLI 版本 ≥ v0.128~~ → **EMPIRICAL: 用户原 0.117.0；session 升级到 0.129.0 via `npm install -g @openai/codex@latest`**
 2. ~~`[features] hooks = true` 在 user 或 repo config 启用~~ → **EMPIRICAL: canonical flag 名 `hooks`（per Codex PR #20522 alias），0.129 stage `stable` 默认 `true`；Mercury 显式 `[features] hooks = true` 防 regression；`hooks = true` 仍是合法 alias 但已非 canonical**
-3. ~~Repo 在 `~/.codex/config.toml` `[projects."D:/Mercury/Mercury-side-bug"]` 标 `trust_level = "trusted"`~~ → **完成（user-level patch + backup pre-codex-hooks-adoption-20260508-215243）**
+3. ~~Repo 在 `~/.codex/config.toml` `[projects."<your-worktree-path>"]` 标 `trust_level = "trusted"`~~ → **完成（user-level patch + backup pre-codex-hooks-adoption-20260508-215243）**
 4. Empirical 测试 Windows hook command field 解析 → **CONDITIONAL still — 需 user 在 Codex 实际会话中 trigger Bash/apply_patch 验证 hook 是否 fire；本 PR test harness 仅验证 hook script 在 bash stdin shape 下行为，未验证 Codex spawn path**
 5. Empirical 测试 inline `[hooks]` in `.codex/config.toml` 与外置 `.codex/hooks.json` 不会 double-fire — Mercury 仅用 `hooks.json`，未用 inline，规避此 risk
 6. Empirical 测试 `apply_patch` matcher 是否真的别名 `Edit` / `Write` — 文档断言 yes，empirical 验证仍待真实 Codex apply_patch 触发
@@ -248,7 +248,7 @@ Mercury 现有 13 hook 中 **9 个可直接 port**、**3 个需调整**、**1 �
 
 **Mercury impact**：
 - repo `.codex/hooks.json` 添加不会 displace user-level hooks — Mercury 现在 user-level 是否有 hook 待用户审计
-- **Trust 检查**：必须确认 `~/.codex/config.toml` 内 `[projects."D:/Mercury/Mercury-side-bug"] trust_level = "trusted"` — 否则 repo hooks silent skip
+- **Trust 检查**：必须确认 `~/.codex/config.toml` 内 `[projects."<your-worktree-path>"] trust_level = "trusted"` — 否则 repo hooks silent skip
 - 不会重复 fire 同名 hook（每个 layer 独立注册的 hook 是不同 hook entries）
 
 **Citation**: <https://developers.openai.com/codex/hooks>
@@ -390,7 +390,7 @@ Mercury 现有 13 hook 中 **9 个可直接 port**、**3 个需调整**、**1 �
 | Windows shell invocation 未文档化导致 silent fail | HIGH | MEDIUM | Phase 2 必跑 empirical test hook；保留 `scripts/codex/git-safe.ps1` 作为 last-line defense |
 | `[features] hooks` 默认未启用 | LOW | LOW (empirical: 0.129 默认 `true`) | Phase 2E 在 user `~/.codex/config.toml` 显式 enable 防 regression；canonical name `hooks` 不是 legacy `codex_hooks` |
 | `[features]` section 放置位置导致 TOML scoping bleed | HIGH | HIGH (empirical 命中) | `[features]` MUST 放所有 top-level scalars **之后**；Phase 2B 实施期间命中并修复 |
-| `projects.<path>.trust_level = "trusted"` 未配置 → repo hooks silent skip | MEDIUM | HIGH (新 worktree) | Phase 2 在 user-level config 显式声明 trust list；新增 `D:/Mercury/Mercury-side-bug`（cross-repo governance per CLAUDE.md L37-52） |
+| `projects.<path>.trust_level = "trusted"` 未配置 → repo hooks silent skip | MEDIUM | HIGH (新 worktree) | Phase 2 在 user-level config 显式声明 trust list；新增 `<your-worktree-path>`（cross-repo governance per CLAUDE.md L37-52） |
 | inline `[hooks]` + `hooks.json` 双源 double-fire | LOW | LOW | Mercury 只用 `hooks.json`（per Q4）；不在 `config.toml` 加 `[hooks]` |
 | SubagentStop 无对应 → mercury-test-gate 失效 | MEDIUM | CERTAIN | Stop event + 检测 last_assistant_message 是否含 dev subagent 完成 marker；或暂保留为 Claude Code only feature |
 | `apply_patch` matcher 别名 `Edit`/`Write` 行为差异 | LOW | LOW | 用 canonical `^apply_patch$`，empirical 验证 Edit/Write alias 真的 work |
@@ -501,7 +501,7 @@ per CLAUDE.md L37-52 governance：
 - 备份: `cp ~/.codex/config.toml ~/.codex/config.toml.backup-pre-<issue>`
 - 修改：
   - `[features] hooks = true` (若未 enable)
-  - `[projects."D:/Mercury/Mercury-side-bug"] trust_level = "trusted"` (确保 repo hooks 加载)
+  - `[projects."<your-worktree-path>"] trust_level = "trusted"` (确保 repo hooks 加载)
   - 验证 Codex CLI 版本 ≥ v0.128 (`codex --version`)
 
 ### Phase 2F — `scripts/codex/*.ps1` 简化（可选，本 issue 不必做）
@@ -527,7 +527,7 @@ per CLAUDE.md L37-52 governance：
 4. **CONDITIONAL verify (在 implementation 前)**:
    - `codex --version` ≥ v0.128
    - `cat ~/.codex/config.toml | grep -A1 features` 显示 `hooks = true`（若否，加）
-   - `cat ~/.codex/config.toml | grep -A1 'projects."D:/Mercury/Mercury-side-bug"'` 显示 `trust_level = "trusted"`（若否，加）
+   - `cat ~/.codex/config.toml | grep -A1 'projects."<your-worktree-path>"'` 显示 `trust_level = "trusted"`（若否，加）
    - 写 echo-only test hook，empirical 验证 Windows shell invocation
 5. **Implementation** (Phase 2A-2D)
 6. **Empirical CONDITIONAL #4-#7 测试**:

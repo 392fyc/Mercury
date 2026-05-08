@@ -52,13 +52,16 @@ else
   FILE=$(printf '%s' "$INPUT" | sed -n 's/.*"file_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
   [ -n "$FILE" ] && PATHS="$FILE"
 
-  # Codex apply_patch detection without jq: look for the V4A directive
-  # signature in the raw JSON-encoded command body. Multi-line JSON-string
-  # parsing without a JSON-aware tool is too brittle to extract reliable
-  # paths, so when we detect Codex shape and lack jq, fail CLOSED rather
-  # than silently bypass the scope gate (Codex Issue #357 iter 2 finding).
-  if printf '%s' "$INPUT" \
-    | grep -qE '"command"[[:space:]]*:[[:space:]]*"[^"]*\*\*\* (Begin Patch|Update File:|Add File:|Delete File:|Move to:)'; then
+  # Codex apply_patch detection without jq: look for two independent
+  # signatures in the raw JSON. (1) a `"command":` key, and (2) any V4A
+  # directive marker anywhere in the body. Splitting the check makes the
+  # detection robust against JSON formatting variants (pretty-printed
+  # multi-line input would break a single-line regex that requires the
+  # key and the directive on the same line — Argus iter 2 finding).
+  # When both signatures are present and jq is absent, fail CLOSED rather
+  # than silently bypass the scope gate.
+  if printf '%s' "$INPUT" | grep -qE '"command"[[:space:]]*:' \
+     && printf '%s' "$INPUT" | grep -qE '\*\*\* (Begin Patch|Update File:|Add File:|Delete File:|Move to:)'; then
     echo "Blocked: scope-guard.sh requires \`jq\` for Codex apply_patch shape (V4A patch heredoc). Install jq to enable scope checks; failing closed to avoid silent bypass." >&2
     exit 2
   fi

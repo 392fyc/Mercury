@@ -25,6 +25,17 @@
 
 set -u
 
+# Pre-flight: this harness uses jq to construct payloads and to validate the
+# hook config schema. Surfacing the missing dependency up front avoids the
+# cascade of confusing failures that would otherwise appear when individual
+# test cases call jq inline (Argus iter 2 finding — "依赖前置").
+if ! command -v jq >/dev/null 2>&1; then
+  printf 'test-codex-hooks.sh: jq is required but was not found on PATH.\n' >&2
+  printf '  Install via: apt install jq | brew install jq | pacman -S jq\n' >&2
+  printf '               winget install jqlang.jq         (Windows)\n' >&2
+  exit 2
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 HOOKS_DIR="$REPO_ROOT/.claude/hooks"
