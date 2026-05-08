@@ -446,7 +446,7 @@ name (e.g. `side-mlane`) instead would yield exit 4 (Worktree path
 missing) because no lane section heading matches.
 
 ```
-[LANE=side-multi-lane] Continue from session handoff. The SessionStart hook injects the full document. Fallback: read <HANDOFF_PATH>
+[LANE=side-multi-lane] Continue from session handoff. Read <HANDOFF_PATH> as your first action.
 ```
 
 For the `main` lane the section name and short name happen to be
