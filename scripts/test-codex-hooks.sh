@@ -269,7 +269,17 @@ JQ_BIN="$(command -v jq 2>/dev/null)"
 if [ -n "$JQ_BIN" ]; then
   JQ_DIR="$(dirname "$JQ_BIN")"
   # Build a PATH that drops $JQ_DIR. Use awk to filter colon-separated entries.
-  PATH_NO_JQ=$(printf '%s' "$PATH" | awk -v RS=: -v jqd="$JQ_DIR" 'NR>1{printf ":"} $0!=jqd{printf "%s",$0}')
+  # Build PATH minus $JQ_DIR. Naive 'NR>1{printf ":"}' produced a leading
+  # colon when the first PATH entry equals $JQ_DIR, which silently inserts
+  # the current working directory into PATH (POSIX rule: empty PATH entry
+  # = cwd) and breaks the test isolation. Build the result by accumulating
+  # surviving entries with a proper separator instead. Argus iter-3 finding.
+  PATH_NO_JQ=$(printf '%s' "$PATH" | awk -v RS=: -v jqd="$JQ_DIR" '
+    $0 == jqd { next }
+    out != "" { out = out ":" }
+    { out = out $0 }
+    END { print out }
+  ')
   # Sanity check — jq must NOT be on the trimmed PATH.
   if ! PATH="$PATH_NO_JQ" command -v jq >/dev/null 2>&1; then
     # Case 5g: Codex apply_patch with jq absent MUST fail closed (V4A signature

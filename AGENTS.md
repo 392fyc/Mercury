@@ -16,7 +16,6 @@ Read these docs on demand when you need the corresponding information:
 | Role definitions & boundaries | `.claude/agents/{role}.md` (active); `archive/roles/{role}.yaml` (archived YAML) |
 | SoT task workflow (legacy) | `.mercury/docs/guides/sot-workflow.md` |
 | Git branching rules | `.mercury/docs/guides/git-flow.md` |
-| Lane protocol (multi-lane v1) | feedback_lane_protocol.md (in user memory) |
 | KB directory structure | `.mercury/docs/guides/kb-structure.md` |
 | Project architecture | `.mercury/docs/guides/architecture.md` |
 | Codex hooks ADR | `.mercury/docs/research/codex-hooks-adoption-2026-05.md` |

@@ -13,7 +13,7 @@ MANDATORY: Before writing ANY code that imports an external SDK/API package or r
 4. Include source URLs when reporting technical findings
 5. If web_search fails, mark claims as UNVERIFIED
 6. Never commit or push directly on develop, master, or main
-7. If the current branch is protected or does not match feature/TASK-* or lane/<lane>/<n>-*, stop and move the work to a task branch before committing
+7. If the current branch is protected or does not match feature/TASK-<id> or lane/<lane>/(init|<n>|<n>-<slug>), stop and move the work to a task branch before committing
 8. Codex hooks (.codex/hooks.json) are the primary enforcement layer for Bash + apply_patch tool calls (push-guard / pre-commit-guard / pr-create-guard / pr-merge-guard / scope-guard)
 9. Defense-in-depth: scripts/codex/*.ps1 wrappers (powershell -File scripts/codex/git-safe.ps1 add/commit/push) remain available as fallback when hooks cannot be relied on (e.g. shell invocation in non-Codex contexts)
 10. Before every commit on a PR branch, run the dual-verify skill (parallel Claude Code deep-review + Codex code-audit); for minor commits auto-verify is acceptable; then run `powershell -File scripts/codex/guard.ps1 mark-review`

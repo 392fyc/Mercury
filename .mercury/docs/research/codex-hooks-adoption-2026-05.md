@@ -25,7 +25,7 @@ Mercury 现有 13 hook 中 **9 个可直接 port**、**3 个需调整**、**1 �
 **CONDITIONAL** 项（Phase 2 实施前 / 实施中 验证状态）：
 
 1. ~~用户 `~/.codex/` 当前 Codex CLI 版本 ≥ v0.128~~ → **EMPIRICAL: 用户原 0.117.0；session 升级到 0.129.0 via `npm install -g @openai/codex@latest`**
-2. ~~`[features] hooks = true` 在 user 或 repo config 启用~~ → **EMPIRICAL: canonical flag 名 `hooks`（per Codex PR #20522 alias），0.129 stage `stable` 默认 `true`；Mercury 显式 `[features] hooks = true` 防 regression；`hooks = true` 仍是合法 alias 但已非 canonical**
+2. ~~`[features] hooks = true` 在 user 或 repo config 启用~~ → **EMPIRICAL: canonical flag 名 `hooks`（per Codex PR #20522，原 `codex_hooks` 改名为 `hooks` 并保留为 alias），0.129 stage `stable` 默认 `true`；Mercury 显式 `[features] hooks = true` 防 regression；legacy `codex_hooks = true` 仍是合法 alias 但已非 canonical**
 3. ~~Repo 在 `~/.codex/config.toml` `[projects."<your-worktree-path>"]` 标 `trust_level = "trusted"`~~ → **完成（user-level patch + backup pre-codex-hooks-adoption-20260508-215243）**
 4. Empirical 测试 Windows hook command field 解析 → **CONDITIONAL still — 需 user 在 Codex 实际会话中 trigger Bash/apply_patch 验证 hook 是否 fire；本 PR test harness 仅验证 hook script 在 bash stdin shape 下行为，未验证 Codex spawn path**
 5. Empirical 测试 inline `[hooks]` in `.codex/config.toml` 与外置 `.codex/hooks.json` 不会 double-fire — Mercury 仅用 `hooks.json`，未用 inline，规避此 risk

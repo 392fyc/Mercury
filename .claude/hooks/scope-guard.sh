@@ -47,10 +47,20 @@ if command -v jq >/dev/null 2>&1; then
     fi
   fi
 else
-  # Sed fallback for the Claude Code file_path shape — robust because
-  # file_path is a single quoted string at the JSON top level.
+  # Sed fallback for the Claude Code file_path shape. Caveat: the regex
+  # `[^"]*` does not handle JSON-escaped quote characters and assumes the
+  # JSON value is on a single line. To avoid silently passing a partially-
+  # extracted path past the C-drive block-list, fail CLOSED whenever the
+  # `"file_path":` key is present but the regex extraction fails — the
+  # input is then either pretty-printed or contains escapes the sed
+  # fallback cannot interpret reliably (Argus iter-3 finding).
   FILE=$(printf '%s' "$INPUT" | sed -n 's/.*"file_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
   [ -n "$FILE" ] && PATHS="$FILE"
+
+  if [ -z "$FILE" ] && printf '%s' "$INPUT" | grep -qE '"file_path"[[:space:]]*:'; then
+    echo "Blocked: scope-guard.sh sed fallback could not extract file_path (multi-line JSON or escaped quotes); install jq for full coverage. Failing closed." >&2
+    exit 2
+  fi
 
   # Codex apply_patch detection without jq: look for two independent
   # signatures in the raw JSON. (1) a `"command":` key, and (2) any V4A
