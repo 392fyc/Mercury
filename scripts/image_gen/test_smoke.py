@@ -1,0 +1,143 @@
+"""Module smoke tests — exercise pure-python paths without network.
+
+Run from repo root:
+
+    python -m scripts.image_gen.test_smoke
+
+Covers `--help`, bible JSON load, anchor-block determinism, dry-run
+prompt composition, and verify rubric on a synthetic 4-frame PNG set
+(skipped when Pillow is unavailable).
+"""
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent.parent
+
+BIBLE = {
+    "name": "knight",
+    "identity": ["same green tunic", "same round shield", "same brown boots"],
+    "color_palette": ["#3A86FF", "#FF006E", "#FFBE0B"],
+    "style": "2D pixel art, 32x32 tile",
+    "lighting": "soft front, no hard shadows",
+    "camera": "front, full body",
+    "constraints": ["no text", "no watermarks"],
+}
+
+SCENES = [
+    {"index": 0, "scene": "frame 1 of 4 walk cycle, left foot forward", "filename": "f0.png"},
+    {"index": 1, "scene": "frame 2 of 4 walk cycle, both feet down", "filename": "f1.png"},
+    {"index": 2, "scene": "frame 3 of 4 walk cycle, right foot forward", "filename": "f2.png"},
+    {"index": 3, "scene": "frame 4 of 4 walk cycle, both feet down", "filename": "f3.png"},
+]
+
+
+def test_help() -> None:
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.image_gen", "--help"],
+        capture_output=True, text=True, cwd=ROOT,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "Mercury sprite frame pipeline" in proc.stdout
+    assert "--bible" in proc.stdout and "--scenes" in proc.stdout
+    print("PASS test_help")
+
+
+def test_anchor_block_determinism() -> None:
+    from scripts.image_gen.character_bible import CharacterBible
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "bible.json"
+        path.write_text(json.dumps(BIBLE), encoding="utf-8")
+        b1 = CharacterBible.load(path)
+        b2 = CharacterBible.load(path)
+        a1, a2 = b1.anchor_block(), b2.anchor_block()
+        assert a1 == a2, "anchor block must be deterministic"
+        assert "same green tunic" in a1
+        assert "[no text, no watermarks]" in a1
+    print("PASS test_anchor_block_determinism")
+
+
+def test_dry_run_e2e() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        bible_path = tmp_path / "bible.json"
+        scenes_path = tmp_path / "scenes.json"
+        out_dir = tmp_path / "out"
+        bible_path.write_text(json.dumps(BIBLE), encoding="utf-8")
+        scenes_path.write_text(json.dumps(SCENES), encoding="utf-8")
+        proc = subprocess.run(
+            [sys.executable, "-m", "scripts.image_gen",
+             "--bible", str(bible_path),
+             "--scenes", str(scenes_path),
+             "--out-dir", str(out_dir),
+             "--dry-run"],
+            capture_output=True, text=True, cwd=ROOT,
+        )
+        assert proc.returncode == 0, proc.stderr
+        for scene in SCENES:
+            assert scene["scene"] in proc.stdout, f"missing scene {scene['index']}"
+        assert proc.stdout.count("Character Consistency:") == len(SCENES)
+        assert out_dir.exists()
+    print("PASS test_dry_run_e2e")
+
+
+def test_verify_synthetic() -> None:
+    try:
+        from PIL import Image
+    except ImportError:
+        print("SKIP test_verify_synthetic (Pillow not installed)")
+        return
+    from scripts.image_gen.verify import VerifyConfig, verify_frames
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        frames: list[Path] = []
+        for i in range(4):
+            img = Image.new("RGB", (32, 32), color=(58, 134, 255))
+            p = tmp_path / f"f{i}.png"
+            img.save(p)
+            frames.append(p)
+        cfg = VerifyConfig(expected_count=4, max_palette_size=64)
+        result = verify_frames(frames, cfg)
+        assert result.passed, result.fail_reasons
+
+        cfg_bad = VerifyConfig(expected_count=5)
+        result_bad = verify_frames(frames, cfg_bad)
+        assert not result_bad.passed
+        assert any("frame_count" in r for r in result_bad.fail_reasons)
+    print("PASS test_verify_synthetic")
+
+
+def test_pipeline_command_shape() -> None:
+    from scripts.image_gen.pipeline import GenerationOptions, build_command
+    cmd = build_command(
+        prompt="hello",
+        out_path=Path("/tmp/x.png"),
+        references=[Path("/tmp/ref1.png"), Path("/tmp/ref2.png")],
+        opts=GenerationOptions(model="gpt-image-2", size="1024x1024",
+                               quality="high", output_format="png",
+                               background="opaque"),
+    )
+    assert "-p" in cmd and "hello" in cmd
+    assert "-f" in cmd
+    assert cmd.count("-i") == 2
+    assert "--background" in cmd and "opaque" in cmd
+    assert "--model" in cmd and "gpt-image-2" in cmd
+    print("PASS test_pipeline_command_shape")
+
+
+def main() -> int:
+    test_help()
+    test_anchor_block_determinism()
+    test_dry_run_e2e()
+    test_verify_synthetic()
+    test_pipeline_command_shape()
+    print("ALL SMOKE PASS")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

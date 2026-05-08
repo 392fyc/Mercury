@@ -78,6 +78,12 @@ mercury.config.json
 # mem0 test venv (Phase A)
 .venv-mem0/
 
+# Python build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
 # PR review agent guide (deployment-specific doc, not committed)
 .mercury/docs/guides/argus-review-guide.md
 # .pr_agent.toml is committed (project-scope config for Argus use_repo_settings_file)
