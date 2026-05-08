@@ -71,7 +71,7 @@ backend without touching the pipeline or the skill.
 |---|---|---|
 | `uv` / `uvx` ≥ 0.10 | Slice A mount mechanism | `uvx --version` |
 | Python 3.11+ | Slice B + adapter | `python --version` |
-| `OPENAI_API_KEY` (Tier 1+ verified org) | Real generation | `echo $OPENAI_API_KEY \| head -c 8` |
+| `OPENAI_API_KEY` (Tier 1+ verified org) | Real generation | `[ -n "$OPENAI_API_KEY" ] && echo set` (presence only — never echo any portion of the value) |
 | `Pillow` | verify dimension + palette gates | `python -c "import PIL"` |
 | `ImageHash` | verify character_consistency dHash | `python -c "import imagehash"` |
 | `scikit-image` + `numpy` | verify loop_closure SSIM (only when `--loop-closure` enabled) | `python -c "import skimage, numpy"` |

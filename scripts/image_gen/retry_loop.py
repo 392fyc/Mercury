@@ -53,10 +53,13 @@ _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # `OPENAI_API_KEY`. The required `[=:]` anchor following the key
     # is itself a strong signal — bare keyword substrings without an
     # assignment operator (e.g. "secrets are good") will not match.
+    # Argus iter-3 advisory: also accept JSON-style quoted keys (`"api_key": "..."`)
+    # by allowing an optional matched ['"] pair around the key — common
+    # in dumped payloads / structured logs.
     (re.compile(
-        r"(?i)(api[_-]?key|api[_-]?token|access[_-]?token|"
+        r"(?i)['\"]?(api[_-]?key|api[_-]?token|access[_-]?token|"
         r"refresh[_-]?token|client[_-]?secret|password|passwd|"
-        r"secret|token)\s*[=:]\s*['\"]?[^\s'\"&,;]+"
+        r"secret|token)['\"]?\s*[=:]\s*['\"]?[^\s'\"&,;]+"
     ), r"\1=***"),
 )
 _FEEDBACK_TAIL_MAX = 200  # chars per error line forwarded into prompt
