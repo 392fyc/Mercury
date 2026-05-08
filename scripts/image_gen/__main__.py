@@ -21,7 +21,7 @@ from pathlib import Path
 
 from .character_bible import CharacterBible
 from .pipeline import FrameSpec, GenerationOptions
-from .retry_loop import run_with_retry
+from .retry_loop import run_with_retry, sanitize_stderr
 from .verify import VerifyConfig
 
 SIZE_CHOICES_HELP = "e.g. 1024x1024 (forwarded to upstream gpt-image)"
@@ -165,6 +165,13 @@ def _serialize(report) -> dict:
                         "index": r.spec.index,
                         "success": r.success,
                         "returncode": r.returncode,
+                        # stderr is sanitized via the shared `sanitize_stderr`
+                        # used by the retry feedback path so credential-shaped
+                        # tokens (sk-proj-…, ghp_…, Bearer …) never reach the
+                        # JSON report. Codex Slice C audit Medium #1: docs
+                        # tell agents to inspect this field for timeout/auth/
+                        # rate-limit failures, so it must be present.
+                        "stderr": sanitize_stderr(r.stderr) if r.stderr else "",
                         "out_path": str(r.out_path) if r.out_path else None,
                     }
                     for r in a.frame_results
@@ -172,6 +179,11 @@ def _serialize(report) -> dict:
                 "verify": {
                     "passed": a.verify.passed,
                     "fail_reasons": a.verify.fail_reasons,
+                    # Soft-gate output (character_consistency, loop_closure)
+                    # lands here. Codex Slice C audit Medium #2: the workflow
+                    # guide schema commits to `verify.advisories`, so the
+                    # serializer must emit it even when empty.
+                    "advisories": list(a.verify.advisories),
                     "gates": [asdict(g) for g in a.verify.gates],
                 },
             }

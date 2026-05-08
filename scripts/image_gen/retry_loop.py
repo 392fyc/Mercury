@@ -47,14 +47,28 @@ _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 _FEEDBACK_TAIL_MAX = 200  # chars per error line forwarded into prompt
 
 
-def _sanitize_stderr(text: str) -> str:
-    """Scrub credential-shaped substrings, truncate, return last non-empty line."""
+def sanitize_stderr(text: str) -> str:
+    """Scrub credential-shaped substrings, truncate, return last non-empty line.
+
+    Public so the JSON serializer in `__main__._serialize` can reuse the
+    same scrubbing for `frame_results[*].stderr` — Codex Slice C audit
+    Medium #1 flagged that the documented stderr troubleshooting path is
+    impossible to follow if the field is dropped, but raw stderr cannot
+    be exposed because adapter-side libraries may dump credential-shaped
+    tokens. The underscore-prefixed alias below preserves backward
+    compatibility for in-tree tests that imported the private name.
+    """
     cleaned = text
     for pattern, replacement in _SECRET_PATTERNS:
         cleaned = pattern.sub(replacement, cleaned)
     lines = [ln for ln in cleaned.splitlines() if ln.strip()]
     last = lines[-1] if lines else "unknown error"
     return last.strip()[:_FEEDBACK_TAIL_MAX]
+
+
+# Backward-compat alias for `test_smoke.test_stderr_sanitization` and any
+# other in-tree caller that imported the underscore-prefixed name.
+_sanitize_stderr = sanitize_stderr
 
 
 @dataclass
@@ -79,7 +93,7 @@ def _build_feedback(prev: RetryAttempt | None) -> str:
         return ""
     parts: list[str] = []
     gen_errors = [
-        f"frame {fr.spec.index}: {_sanitize_stderr(fr.stderr)}"
+        f"frame {fr.spec.index}: {sanitize_stderr(fr.stderr)}"
         for fr in prev.frame_results
         if not fr.success
     ]
