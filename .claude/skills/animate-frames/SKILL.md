@@ -112,10 +112,20 @@ The pipeline writes a structured report to stdout:
     {
       "attempt": 1,
       "passed": true,
-      "frame_results": [...],
+      "feedback_used": "",
+      "frame_results": [
+        {
+          "index": 0,
+          "success": true,
+          "returncode": 0,
+          "stderr": "",
+          "out_path": "frames/frame_00.png"
+        }
+      ],
       "verify": {
         "passed": true,
         "fail_reasons": [],
+        "advisories": [],
         "gates": [...]
       }
     }

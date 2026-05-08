@@ -110,8 +110,18 @@ def sanitize_stderr_full(text: str, *, max_chars: int = _REPORT_TAIL_MAX) -> str
     joined = "\n".join(lines)
     if len(joined) <= max_chars:
         return joined
-    truncated = joined[-max_chars:]
-    return f"…[truncated {len(joined) - max_chars} chars]\n" + truncated
+    # Reserve marker length inside the budget so the returned string is
+    # truly bounded by `max_chars` (Copilot iter-2: marker was prepended
+    # ON TOP of the max_chars-truncated content, blowing past the cap).
+    # Use len(joined) as an upper bound for the dropped-count digit
+    # width — actual n is always ≤ len(joined), so reserve is always
+    # large enough.
+    marker_template = "…[truncated {n} chars]\n"
+    reserve = len(marker_template.format(n=len(joined)))
+    content_budget = max(0, max_chars - reserve)
+    truncated = joined[-content_budget:] if content_budget else ""
+    n_dropped = len(joined) - len(truncated)
+    return f"…[truncated {n_dropped} chars]\n{truncated}"
 
 
 # Backward-compat alias for `test_smoke.test_stderr_sanitization` and any
