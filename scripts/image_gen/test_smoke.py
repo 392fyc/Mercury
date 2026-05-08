@@ -210,6 +210,69 @@ def test_scenes_validation() -> None:
     print("PASS test_scenes_validation")
 
 
+def test_path_traversal_rejected() -> None:
+    """Filename with `..` or absolute path must not escape out_dir (Argus iter-1 路径穿越)."""
+    from scripts.image_gen.__main__ import _load_scenes
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        scenes_path = tmp_path / "scenes.json"
+        for label, fname in [
+            ("dotdot escape", "../escaped.png"),
+            ("nested dotdot", "subdir/../../escaped.png"),
+            ("absolute path", str(tmp_path / "outside.png")),
+        ]:
+            scenes_path.write_text(
+                json.dumps([{"index": 0, "scene": "x", "filename": fname}]),
+                encoding="utf-8",
+            )
+            try:
+                _load_scenes(scenes_path, out_dir)
+            except ValueError:
+                continue
+            raise AssertionError(f"{label} ({fname!r}) should have raised ValueError")
+
+        # Sanity: a safe nested path must succeed
+        scenes_path.write_text(
+            json.dumps([{"index": 0, "scene": "x", "filename": "sub/safe.png"}]),
+            encoding="utf-8",
+        )
+        specs = _load_scenes(scenes_path, out_dir)
+        assert len(specs) == 1
+        assert "safe.png" in str(specs[0].out_path)
+    print("PASS test_path_traversal_rejected")
+
+
+def test_adapter_path_env_override() -> None:
+    """MERCURY_GPT_IMAGE_2_ADAPTER must override DEFAULT_ADAPTER_PATH (Argus iter-1 模块耦合)."""
+    import os
+    from scripts.image_gen.pipeline import (
+        ADAPTER_PATH_ENV, DEFAULT_ADAPTER_PATH, resolve_adapter_path,
+    )
+    saved = os.environ.get(ADAPTER_PATH_ENV)
+    try:
+        # Default
+        if ADAPTER_PATH_ENV in os.environ:
+            del os.environ[ADAPTER_PATH_ENV]
+        assert resolve_adapter_path() == DEFAULT_ADAPTER_PATH
+        # Override
+        with tempfile.TemporaryDirectory() as tmp:
+            override = Path(tmp) / "custom_invoke.py"
+            override.write_text("# stub")
+            os.environ[ADAPTER_PATH_ENV] = str(override)
+            resolved = resolve_adapter_path()
+            assert resolved == override.resolve(), (
+                f"expected env override {override.resolve()}, got {resolved}"
+            )
+    finally:
+        if saved is None:
+            os.environ.pop(ADAPTER_PATH_ENV, None)
+        else:
+            os.environ[ADAPTER_PATH_ENV] = saved
+    print("PASS test_adapter_path_env_override")
+
+
 def main() -> int:
     test_help()
     test_anchor_block_determinism()
@@ -219,6 +282,8 @@ def main() -> int:
     test_soft_gate_advisory()
     test_palette_union_field()
     test_scenes_validation()
+    test_path_traversal_rejected()
+    test_adapter_path_env_override()
     print("ALL SMOKE PASS")
     return 0
 

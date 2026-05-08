@@ -12,6 +12,7 @@ established in Slice A (`adapters/gpt-image-2/invoke.py`).
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -19,12 +20,29 @@ from pathlib import Path
 
 from .character_bible import CharacterBible
 
-ADAPTER_PATH = (
+ADAPTER_PATH_ENV = "MERCURY_GPT_IMAGE_2_ADAPTER"
+DEFAULT_ADAPTER_PATH = (
     Path(__file__).resolve().parent.parent.parent
     / "adapters"
     / "gpt-image-2"
     / "invoke.py"
 )
+
+
+def resolve_adapter_path() -> Path:
+    """Resolve the gpt-image-2 adapter path.
+
+    Honors `MERCURY_GPT_IMAGE_2_ADAPTER` env var when set (decouples
+    Slice B from any single repo layout); otherwise falls back to the
+    sibling `adapters/gpt-image-2/invoke.py` resolved from this module's
+    location.
+    """
+    override = os.environ.get(ADAPTER_PATH_ENV)
+    return Path(override).resolve() if override else DEFAULT_ADAPTER_PATH
+
+
+# Backward-compat for callers that imported the module-level constant.
+ADAPTER_PATH = DEFAULT_ADAPTER_PATH
 
 
 @dataclass(frozen=True)
@@ -64,9 +82,11 @@ class GenerationOptions:
 
 
 def build_command(prompt: str, out_path: Path, references: list[Path],
-                  opts: GenerationOptions) -> list[str]:
+                  opts: GenerationOptions,
+                  adapter_path: Path | None = None) -> list[str]:
+    adapter = adapter_path or resolve_adapter_path()
     cmd: list[str] = [
-        sys.executable, str(ADAPTER_PATH),
+        sys.executable, str(adapter),
         "-p", prompt,
         "-f", str(out_path),
         "--model", opts.model,
@@ -83,10 +103,12 @@ def build_command(prompt: str, out_path: Path, references: list[Path],
 
 
 def invoke_adapter(prompt: str, out_path: Path, references: list[Path],
-                   opts: GenerationOptions) -> tuple[int, str]:
-    if not ADAPTER_PATH.exists():
-        return 127, f"adapter not found at {ADAPTER_PATH}"
-    cmd = build_command(prompt, out_path, references, opts)
+                   opts: GenerationOptions,
+                   adapter_path: Path | None = None) -> tuple[int, str]:
+    adapter = adapter_path or resolve_adapter_path()
+    if not adapter.exists():
+        return 127, f"adapter not found at {adapter}"
+    cmd = build_command(prompt, out_path, references, opts, adapter_path=adapter)
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True,
                               timeout=opts.timeout)

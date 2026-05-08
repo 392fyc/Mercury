@@ -66,6 +66,10 @@ def _parser() -> argparse.ArgumentParser:
                    help="expected WxH for verify.dimension_uniformity")
     p.add_argument("--dry-run", action="store_true",
                    help="print composed prompts and exit (no adapter call)")
+    p.add_argument("--allow-skipped-gates", action="store_true",
+                   help="opt-in: run verify even when hard-gate deps "
+                        "(Pillow, imagehash, scikit-image) are missing — "
+                        "skipped gates would otherwise hard-fail in non-dry-run mode")
     return p
 
 
@@ -76,6 +80,25 @@ def _parse_size(text: str | None) -> tuple[int, int] | None:
         raise ValueError(f"--reference-size must be WxH, got {text!r}")
     w, h = text.lower().split("x", 1)
     return (int(w), int(h))
+
+
+def _resolve_safe_out_path(out_dir: Path, filename: str, idx: int) -> Path:
+    """Resolve `out_dir / filename` and verify it stays inside `out_dir`.
+
+    Path-traversal hardening per Argus iter-1: scene filenames originate
+    from user-supplied JSON, so absolute paths and `..` segments must
+    not escape the declared output directory.
+    """
+    candidate = (out_dir / filename).resolve()
+    out_root = out_dir.resolve()
+    try:
+        candidate.relative_to(out_root)
+    except ValueError as exc:
+        raise ValueError(
+            f"scenes[{idx}].filename {filename!r} resolves outside out_dir "
+            f"({candidate} not under {out_root})"
+        ) from exc
+    return candidate
 
 
 def _load_scenes(path: Path, out_dir: Path) -> list[FrameSpec]:
@@ -106,7 +129,8 @@ def _load_scenes(path: Path, out_dir: Path) -> list[FrameSpec]:
             raise ValueError(
                 f"scenes[{i}].filename must be a non-empty str, "
                 f"got {type(fname_raw).__name__}")
-        specs.append(FrameSpec(index=idx, scene=scene, out_path=out_dir / fname))
+        out_path = _resolve_safe_out_path(out_dir, fname, i)
+        specs.append(FrameSpec(index=idx, scene=scene, out_path=out_path))
     return specs
 
 
@@ -153,6 +177,27 @@ def main(argv: list[str] | None = None) -> int:
                 f"{bible.compose_prompt(f.scene)}\n\n"
             )
         return 0
+
+    # Non-dry-run hard-gate dependency check (Argus iter-1 校验弱化).
+    # When Pillow/imagehash/scikit-image are missing, verify gates degrade
+    # to severity="skipped" with passed=True, which would otherwise let a
+    # generation cycle "pass" without any actual frame inspection. Hard
+    # fail unless user explicitly opts in via --allow-skipped-gates.
+    from .verify import _HAS_PIL, _HAS_IMAGEHASH, _HAS_SKIMAGE
+    missing: list[str] = []
+    if not _HAS_PIL:
+        missing.append("Pillow")
+    if not _HAS_IMAGEHASH:
+        missing.append("ImageHash")
+    if args.loop_closure and not _HAS_SKIMAGE:
+        missing.append("scikit-image")
+    if missing and not args.allow_skipped_gates:
+        sys.stderr.write(
+            f"error: verify rubric dependencies missing: {missing}. "
+            f"install via `pip install Pillow ImageHash scikit-image numpy` "
+            f"or pass --allow-skipped-gates to run without these gates.\n"
+        )
+        return 2
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
