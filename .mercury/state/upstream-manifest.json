@@ -227,5 +227,17 @@
     "import_date": "2026-04-25",
     "import_rationale": "Original implementation. No upstream references — thin HTTP client wrapping fetch().",
     "last_drift_check": null
+  },
+  {
+    "path": "adapters/gpt-image-2/invoke.py",
+    "scope": "project",
+    "upstream_repo": "wuyoscar/gpt_image_2_skill",
+    "upstream_path": "pyproject.toml",
+    "upstream_sha_at_import": "6fdd7243dc9605efcf6d66e9394d3d10fc5141f6",
+    "upstream_license": "MIT",
+    "import_pr": 354,
+    "import_date": "2026-05-08",
+    "import_rationale": "Phase 2 Slice A — wuyoscar/gpt_image_2_skill MIT mount via uvx-pinned-SHA per ADR pixel-animation-workflow §7.2.1 + S87 refinement (Issue #351). No upstream source vendored. upstream_path=pyproject.toml tracks the canonical version contract (deps, entry points) so scripts/upstream-drift-check.sh can detect upstream version bumps that affect this adapter's pinned SHA.",
+    "last_drift_check": null
   }
 ]
