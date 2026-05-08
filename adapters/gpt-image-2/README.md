@@ -1,4 +1,4 @@
-# Based on wuyoscar/gpt_image_2_skill (MIT) SHA: 6fdd7243dc9605efcf6d66e9394d3d10fc5141f6
+<!-- Based on wuyoscar/gpt_image_2_skill (MIT) SHA: 6fdd7243dc9605efcf6d66e9394d3d10fc5141f6 -->
 
 # gpt-image-2
 

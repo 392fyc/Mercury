@@ -26,5 +26,5 @@ adapters/
 ## 约束
 
 - 适配层不超过 200 行。超过说明耦合过深，需重新评估挂载方式。
-- 外部项目通过 git submodule 挂载到 `modules/` 目录，或经 `uvx --from git+<repo>@<SHA>` runtime 引用（cherry-pick 协议 §6 SHA pinning）。
-- 详见 `.mercury/docs/DIRECTION.md` 第四章 + `CLAUDE.md` §"Cherry-pick protocol"。
+- 默认通过 git submodule 挂载到 `modules/` 目录（`.mercury/docs/DIRECTION.md` §4）。
+- runtime-only 依赖可经 `uvx --from git+<repo>@<SHA>` 引用，作为 Phase 2 ADR `pixel-animation-workflow` §7.2.1 引入的有限例外（首例：`adapters/gpt-image-2/`）；引入时仍须满足 `CLAUDE.md` §"Cherry-pick protocol"（含 §6 SHA verification）。
