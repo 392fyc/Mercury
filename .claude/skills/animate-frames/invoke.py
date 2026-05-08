@@ -24,22 +24,29 @@ from pathlib import Path
 
 # Repo root = three parents up from this file
 # (.claude/skills/animate-frames/invoke.py -> repo root).
-REPO_ROOT = Path(__file__).resolve().parents[3]
-# Argus iter-1 Minor: relax `parents[3]` hard coupling by sanity-checking
-# the resolved root contains the Slice B target. If not, fall back to
-# walking up looking for the marker — defends against future repo
-# reorganization or skill cherry-picks into a different layout. The
-# `parents[3]` happy path stays the fast default; the walk only runs
-# when the assumption breaks.
+# Argus iter-4: fail-fast when the Slice B target is unreachable from
+# any parent — silent fallback to `parents[3]` would let the subprocess
+# launch with a misconfigured cwd, masking the real layout error
+# behind a confusing ModuleNotFoundError. Prefer a clean assert at
+# import time so the wrapper always points at a valid pipeline root.
 _PIPELINE_MARKER = Path("scripts") / "image_gen" / "__main__.py"
-if not (REPO_ROOT / _PIPELINE_MARKER).is_file():
+
+
+def _resolve_repo_root() -> Path:
+    """Walk parents until the Slice B marker is found. SystemExit if not."""
     for parent in Path(__file__).resolve().parents:
         if (parent / _PIPELINE_MARKER).is_file():
-            REPO_ROOT = parent
-            break
-    # If the marker is still missing after the walk, leave REPO_ROOT at
-    # parents[3] — the subprocess invocation below will surface a clean
-    # ModuleNotFoundError that points at the real misconfig.
+            return parent
+    raise SystemExit(
+        f"animate-frames: cannot locate Slice B pipeline "
+        f"({_PIPELINE_MARKER}) from any parent of this skill — the "
+        f"skill must live inside a Mercury checkout that includes "
+        f"`scripts/image_gen/`. Refusing to launch with a misconfigured "
+        f"cwd."
+    )
+
+
+REPO_ROOT = _resolve_repo_root()
 
 SCENE_TEMPLATES: dict[str, list[dict]] = {
     "walking-cycle": [
@@ -137,9 +144,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         proc = subprocess.run(cmd, cwd=str(REPO_ROOT))
     except OSError as exc:
+        # Argus iter-4 path leak: previously echoed the absolute
+        # REPO_ROOT path, which on shared CI logs would reveal local
+        # filesystem layout. The error category is sufficient for
+        # debugging; layout details can be inspected manually if
+        # needed via the skill's own location.
         sys.stderr.write(
-            f"error: failed to launch `python -m scripts.image_gen` from "
-            f"{REPO_ROOT}: {exc}\n"
+            f"error: failed to launch `python -m scripts.image_gen` "
+            f"from the skill's repo root: {exc.__class__.__name__}: {exc.strerror or exc}\n"
         )
         return 127
     return proc.returncode

@@ -161,7 +161,7 @@ provides 50% discount — see workflow guide §"Cost / rate limits".
 | `error: scenes[i].filename … resolves outside out-dir` | Path traversal in scene filenames (`../`, absolute) | Use plain filenames (`frame_00.png`); pipeline rejects on path-traversal hardening |
 | `error: verify rubric dependencies missing: ['Pillow', ...]` | Verify deps not installed (pipeline hard-fails by default) | `pip install Pillow ImageHash scikit-image numpy` (recommended) **OR** pass `--allow-skipped-gates` to bypass — note this is an explicit safety bypass intended for `--dry-run` / dev scenarios; with skipped gates the run can report `passed=true` without any real frame inspection (false-positive risk). |
 | `passed=false`, `frame_count` failed | Adapter timeout / API rate limit / auth | Check `attempts[*].frame_results[*].stderr` (credentials are scrubbed); raise `--timeout`; check OPENAI tier |
-| `passed=false`, `character_consistency` failing | Identity drift across frames | Add stronger anchor block items; supply more reference images in the bible; lower `--dhash-threshold` for stricter gate |
+| `passed=true` but `character_consistency` advisory present in `verify.advisories` | Identity drift across frames detected by the soft gate; soft gates DO NOT flip `passed=false` (see workflow guide §"Verify rubric") | Add stronger anchor block items; supply more reference images in the bible; if drift is unacceptable, tighten `--dhash-threshold` so the dHash distance also breaches a hard gate, or consume `verify.advisories` directly in caller logic |
 
 ## Detachability
 

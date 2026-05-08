@@ -124,7 +124,15 @@ def sanitize_stderr_full(text: str, *, max_chars: int = _REPORT_TAIL_MAX) -> str
     content_budget = max(0, max_chars - reserve)
     truncated = joined[-content_budget:] if content_budget else ""
     n_dropped = len(joined) - len(truncated)
-    return f"…[truncated {n_dropped} chars]\n{truncated}"
+    result = f"…[truncated {n_dropped} chars]\n{truncated}"
+    # Defensive cap (Copilot iter-3 edge case): if `max_chars` is too
+    # small to even fit the marker (e.g. caller passes max_chars=10),
+    # the marker template alone would exceed the budget. Fall back to
+    # a hard tail-slice; the caller asked for ≤max_chars total, so
+    # honor that contract even at the cost of dropping the marker.
+    if len(result) > max_chars:
+        result = joined[-max_chars:]
+    return result
 
 
 # Backward-compat alias for `test_smoke.test_stderr_sanitization` and any
