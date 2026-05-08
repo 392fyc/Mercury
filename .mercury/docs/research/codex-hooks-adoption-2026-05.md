@@ -1,12 +1,12 @@
 # Codex CLI 0.128+ Hooks Adoption — Mercury side-bug Phase 1 Research ADR
 
-**Issue**: 待 file (Phase 2 step 1)
+**Issue**: [#357](https://github.com/392fyc/Mercury/issues/357) (Refs)
 
 **Status**: Phase 1 Research — verdict **CONDITIONAL_GO (Path C — Hybrid)**
 
 **Date**: 2026-05-08
 **Session**: S2-side-bug
-**Branch (research)**: `lane/side-bug/init` (work branch 待开)
+**Branch**: `lane/side-bug/357-codex-hooks` (Phase 2 implementation)
 **Scope**: 把 Mercury `.claude/hooks/` 13-hook 集移植到 Codex CLI 0.128+ 原生 hooks 架构 + 同步 outdated docs
 
 ---

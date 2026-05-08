@@ -138,6 +138,9 @@ EOF
 }
 
 # Synthesize Claude Code-shaped PreToolUse for Edit/Write — tool_input.file_path.
+# JSON-encode the path via jq -Rs so backslash-bearing paths (UNC, device
+# namespace, Windows drive separators) survive into the payload as valid JSON
+# strings rather than producing invalid escape sequences.
 claude_pretool_edit() {
   local file_path="$1"
   cat <<EOF
@@ -150,7 +153,7 @@ claude_pretool_edit() {
   "turn_id": "test-turn-001",
   "tool_name": "Edit",
   "tool_use_id": "tool-003",
-  "tool_input": {"file_path": "$file_path"}
+  "tool_input": {"file_path": $(printf '%s' "$file_path" | jq -Rs .)}
 }
 EOF
 }
@@ -278,6 +281,25 @@ else
   printf '  skip jq-absent tests — jq not on PATH for harness builder\n'
 fi
 
+printf '\n=== scope-guard.sh — path traversal + UNC defenses ===\n'
+
+# Case 5i: path traversal segment ".." MUST block (Argus iter-1 fix). The hook
+# refuses ".." outright rather than building a complete shell-side normalizer.
+out=$(claude_pretool_edit '../../C:/Program Files/Foo/bar.exe' | bash "$HOOKS_DIR/scope-guard.sh" 2>&1)
+rc=$?
+assert_eq "scope-guard blocks path traversal '..' segment" "2" "$rc"
+
+# Case 5j: UNC long-path form (\\?\C:\Program Files\...) MUST block. Win32
+# verbatim paths normalize to the standard prefix and previously slipped past.
+out=$(claude_pretool_edit '\\?\C:\Program Files\Foo\bar.exe' | bash "$HOOKS_DIR/scope-guard.sh" 2>&1)
+rc=$?
+assert_eq "scope-guard blocks UNC verbatim path \\\\?\\C:\\Program Files" "2" "$rc"
+
+# Case 5k: device-namespace form (\\.\C:\Program Files\...) MUST block.
+out=$(claude_pretool_edit '\\.\C:\Program Files\Foo\bar.exe' | bash "$HOOKS_DIR/scope-guard.sh" 2>&1)
+rc=$?
+assert_eq "scope-guard blocks device namespace \\\\.\\C:\\Program Files" "2" "$rc"
+
 printf '\n=== session-init.sh — Codex UserPromptSubmit ===\n'
 
 # Case 6: UserPromptSubmit shape should be accepted (exit 0, side-effect: writes state file)
@@ -299,7 +321,11 @@ printf '\n=== Codex hooks.json schema validation ===\n'
 jq empty "$HOOK_CONFIG" 2>/dev/null
 assert_eq "hooks.json is valid JSON" "0" "$?"
 
-# Case 9: hooks.json must declare 5 events (PreToolUse, PostToolUse, UserPromptSubmit, Stop)
+# Case 9: hooks.json must declare the 4 events Mercury uses today
+# (PreToolUse, PostToolUse, UserPromptSubmit, Stop). Codex defines 6 lifecycle
+# events total; SessionStart and PermissionRequest are intentionally not wired
+# yet — see ADR §3 Q7 (PermissionRequest) and the "Mercury currently doesn't
+# use SessionStart" note in §5 Phase 2A.
 events=$(jq -r '.hooks | keys[]' "$HOOK_CONFIG" 2>/dev/null | sort | tr '\n' ',')
 assert_contains "hooks.json has PreToolUse" "PreToolUse" "$events"
 assert_contains "hooks.json has PostToolUse" "PostToolUse" "$events"

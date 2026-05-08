@@ -28,8 +28,12 @@ if command -v jq &>/dev/null && [ -f "$_PROJECT/mercury.config.json" ]; then
   VAULT_NAME=$(jq -r '.obsidian.vaultName // "Mercury_KB"' "$_PROJECT/mercury.config.json" 2>/dev/null)
   KB_VAULT_PATH=$(jq -r '.obsidian.vaultPath // empty' "$_PROJECT/mercury.config.json" 2>/dev/null)
 else
-  VAULT_NAME=$(node -e "try{const c=require('$_PROJECT/mercury.config.json');console.log(c.obsidian.vaultName||'Mercury_KB')}catch(e){console.log('Mercury_KB')}" 2>/dev/null)
-  KB_VAULT_PATH=$(node -e "try{console.log(require('$_PROJECT/mercury.config.json').obsidian.vaultPath)}catch(e){}" 2>/dev/null)
+  # Pass the config path via env var rather than interpolating it into the
+  # `node -e` source string. Direct interpolation would break (or in the worst
+  # case execute attacker-controlled JS) on paths containing `'`, `\`, `;`,
+  # ${...}, etc.; piping through process.env keeps the JS literal source clean.
+  VAULT_NAME=$(MCONFIG="$_PROJECT/mercury.config.json" node -e "try{const c=require(process.env.MCONFIG);console.log(c.obsidian.vaultName||'Mercury_KB')}catch(e){console.log('Mercury_KB')}" 2>/dev/null)
+  KB_VAULT_PATH=$(MCONFIG="$_PROJECT/mercury.config.json" node -e "try{console.log(require(process.env.MCONFIG).obsidian.vaultPath)}catch(e){}" 2>/dev/null)
 fi
 # Scan a tasks directory for active task IDs
 scan_active_tasks() {

@@ -70,8 +70,22 @@ fi
 while IFS= read -r FILE; do
   [ -z "$FILE" ] && continue
 
-  # Block software installation to C drive.
-  if printf '%s' "$FILE" | grep -qiE '^[Cc]:[/\\](Program Files|Program Files \(x86\)|ProgramData|Windows|opt)[/\\]'; then
+  # Reject path-traversal segments outright. V4A apply_patch and Claude Code
+  # Edit/Write should never need ".." in tool_input; if a payload contains
+  # one, the input is either malformed or attempting to relativize past the
+  # blocked-prefix check below. Building a complete shell-side path
+  # normalizer is far harder than rejecting outright.
+  if printf '%s' "$FILE" | grep -qE '(^|[/\\])\.\.(/|\\|$)'; then
+    echo "Blocked: scope-guard.sh refuses path-traversal segment '..' (path: $FILE)" >&2
+    exit 2
+  fi
+
+  # Block software installation to C drive — regular path AND UNC long-path
+  # forms. `\\?\C:\Program Files\...` (verbatim) and `\\.\C:\Program Files\...`
+  # (device namespace) both normalize to C:\Program Files\... when the file
+  # system call runs, so both must be caught. Forward / backward slashes are
+  # both accepted by Win32, so the regex covers both.
+  if printf '%s' "$FILE" | grep -qiE '^(\\\\[?.]\\)?[Cc]:[/\\](Program Files|Program Files \(x86\)|ProgramData|Windows|opt)[/\\]'; then
     echo "Blocked: CLAUDE.md — install software to D:\\Program Files, not C drive (path: $FILE)" >&2
     exit 2
   fi
