@@ -109,12 +109,18 @@ chmod +x "$BIN_DIR/git"
 run_hook() {
   local cmd="$1"
   local extra_env="${2:-}"
-  # Build JSON input. Escape backslashes, double-quotes, and literal newlines.
-  local esc
-  esc="${cmd//\\/\\\\}"
-  esc="${esc//\"/\\\"}"
-  esc="${esc//$'\n'/\\n}"
-  local input="{\"tool_input\": {\"command\": \"${esc}\"}}"
+  # Build JSON via jq -n so all JSON escape rules are handled correctly
+  # (closes Copilot iter-2 line-117 finding: the previous manual escape
+  # only covered \\, ", and \n; control chars like \r, \t, and 0x00..0x1f
+  # would have produced malformed JSON). jq is required by the hook
+  # itself, so the dependency was already implicit; making it explicit in
+  # the harness is a robustness no-op for our environment but eliminates
+  # a class of test-side input encoding bugs.
+  local input
+  input=$(jq -nc --arg cmd "$cmd" '{tool_input: {command: $cmd}}') || {
+    printf 'run_hook: jq -n failed to encode JSON input\n' >&2
+    return 1
+  }
   local fake_project="$WORK_DIR/proj-$RANDOM"
   mkdir -p "$fake_project"
   local rc
@@ -1031,6 +1037,44 @@ scenario \
 scenario \
   '`sudo git push origin lane/foo` (sudo + safe target) -> not blocked' \
   'sudo git push origin lane/foo' \
+  0 ''
+
+# ===========================================================================
+# Iter-8 bypass closures (Argus iter-3 + Copilot iter-2)
+# ===========================================================================
+
+# Copilot iter-2 line-199 (real bypass): backslash-newline INSIDE double
+# quotes is bash line-continuation (drops both `\` and newline). Iter-7 awk
+# only handled this OUTSIDE quotes. Inside dq, `\` was appended as literal
+# and the implicit EOL inserted a space, splitting `develop` into
+# `devel\<space>op` — missing the PROTECTED grep.
+scenario \
+  $'`git push origin "devel\\<NL>op"` (dq line-cont across develop) -> blocked' \
+  $'git push origin "devel\\\nop"' \
+  2 'BLOCKED'
+
+scenario \
+  $'`git push origin "maste\\<NL>r"` (dq line-cont across master) -> blocked' \
+  $'git push origin "maste\\\nr"' \
+  2 'BLOCKED'
+
+scenario \
+  $'`git push origin "lane/\\<NL>main/foo"` (dq line-cont safe target) -> not blocked' \
+  $'git push origin "lane/\\\nmain/foo"' \
+  0 ''
+
+# Carriage-return + tab in command (regression for Copilot iter-2 line-117
+# JSON-escaping). Pre-fix: harness escaped only \, ", \n; \r and \t in cmd
+# would have produced malformed JSON. With jq -n encoding, any literal
+# byte is encoded correctly.
+scenario \
+  $'`git push origin lane/foo\\twith-tab` (literal tab in target — JSON encoding) -> not blocked' \
+  $'git push origin lane/foo\twith-tab' \
+  0 ''
+
+scenario \
+  $'CR in body (literal \\r) does not crash JSON encoding — not blocked' \
+  $'git commit -m "develop\\rmaster" && git push origin lane/foo' \
   0 ''
 
 # ===========================================================================

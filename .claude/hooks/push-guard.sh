@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# GATE: block direct push to develop/master — all merges must go through PRs.
-# Runtime deps: bash, awk, grep, jq (jq is REQUIRED — Codex iter-2 Critical
-# closed the legacy sed-fallback bypass; the hook hard-blocks if jq is absent).
+# GATE: block direct push to protected branches (develop / master / main) —
+# all merges must go through PRs. Runtime deps: bash, awk, grep, jq (jq is
+# REQUIRED — Codex iter-2 Critical closed the legacy sed-fallback bypass;
+# the hook hard-blocks if jq is absent).
 #
 # Fix history:
 #   Session 1-side-bug / Issue #349 — Bug: greedy regex consumed body text.
@@ -121,7 +122,7 @@ block_push() {
   local reason="$1"
   debug_log "BLOCKED: $reason"
   cat >&2 <<'MSG'
-BLOCKED: Direct push to develop/master is forbidden (CLAUDE.md rule).
+BLOCKED: Direct push to a protected branch (develop / master / main) is forbidden (CLAUDE.md rule).
 All merges into develop must go through a Pull Request.
 Use: git push -u origin <feature-branch> && gh pr create --base develop
 MSG
@@ -190,10 +191,19 @@ function flush_tok() {
     if (in_dq) {
       if (c == "\\") {
         # POSIX-ish: \" \\ \$ \` are escape sequences inside double quotes;
-        # any other backslash is literal.
+        # any other backslash is literal. Trailing `\` at end of line inside
+        # dq is line-continuation (drop both \ and newline) — bash semantics.
+        # Closes Copilot iter-2 line-199 finding: `git push origin "devel\
+        # op"` parses as `git push origin "develop"` in bash, but iter-7 awk
+        # appended literal `\` then space, leaving `devel\ op` token that
+        # missed the PROTECTED grep.
         nc = (i < n) ? substr(line, i+1, 1) : ""
         if (nc == "\"" || nc == "\\" || nc == "$" || nc == "`") {
           tok = tok nc; i++; continue
+        }
+        if (nc == "") {
+          line_continue = 1
+          continue
         }
         tok = tok c
         continue
@@ -258,19 +268,21 @@ function flush_tok() {
     tok = tok c
     in_tok = 1
   }
-  # End of awk input line.
-  if (in_sq || in_dq) {
-    # Inside a quoted region: preserve the line break as a literal space
-    # (bash semantics for newline inside quotes).
-    tok = tok " "; in_tok = 1
-  } else if (line_continue) {
-    # Backslash-newline line-continuation outside quotes: do not flush, do
-    # not emit SEG. The current token continues onto the next line.
+  # End of awk input line. Three cases by precedence:
+  #   1. line_continue is set (trailing `\` at EOL, anywhere — outside quotes
+  #      OR inside double quotes): drop the implicit newline entirely. The
+  #      token continues onto the next line (bash line-continuation).
+  #   2. Inside a quoted region without line_continue: preserve the line
+  #      break as a literal space (bash semantics for unescaped newline
+  #      inside quotes).
+  #   3. Outside quotes: bare newline = statement separator. Closes Codex
+  #      iter-3 High (`echo ok\ngit push origin develop` would stay one
+  #      segment otherwise).
+  if (line_continue) {
     line_continue = 0
+  } else if (in_sq || in_dq) {
+    tok = tok " "; in_tok = 1
   } else {
-    # Bare newline outside quotes = statement separator (bash semantics).
-    # Closes Codex iter-3 High: `echo ok\ngit push origin develop` previously
-    # stayed one segment, walker exited on `echo`, never inspected the push.
     flush_tok()
     print "SEG"
   }
