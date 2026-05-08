@@ -21,9 +21,10 @@ adapters/
 | `mercury-channel-router/` | Telegram bot router (long-lived process per machine); IPC hub for all sessions |
 | `mercury-channel-client/` | MCP channel server (one per Claude Code session); bridges session to router |
 | `mercury-notify/` | Thin HTTP client for hook scripts to notify via router (fire-and-forget) |
+| `gpt-image-2/` | OpenAI gpt-image-2 image generation; mounts wuyoscar/gpt_image_2_skill via uvx-pinned-SHA |
 
 ## 约束
 
 - 适配层不超过 200 行。超过说明耦合过深，需重新评估挂载方式。
-- 外部项目通过 git submodule 挂载到 `modules/` 目录。
-- 详见 `.mercury/docs/DIRECTION.md` 第四章。
+- 外部项目通过 git submodule 挂载到 `modules/` 目录，或经 `uvx --from git+<repo>@<SHA>` runtime 引用（cherry-pick 协议 §6 SHA pinning）。
+- 详见 `.mercury/docs/DIRECTION.md` 第四章 + `CLAUDE.md` §"Cherry-pick protocol"。
