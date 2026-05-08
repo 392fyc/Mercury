@@ -14,10 +14,18 @@ $ErrorActionPreference = "Stop"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path (Join-Path $scriptDir "..\\..")).Path
-$stateDir = Join-Path $repoRoot ".codex\\state"
+# State dir unified with .claude/hooks/pre-commit-guard.sh:52 (which checks
+# "$_PROJECT/.mercury/state/review-passed"). Previously this script wrote to
+# .codex/state/review-passed, which the Bash hook never read — the Codex
+# fallback commit flow was broken on every branch. Mercury Issue #357.
+$stateDir = Join-Path $repoRoot ".mercury\\state"
 $reviewFlag = Join-Path $stateDir "review-passed"
 $protectedBranches = @("develop", "main", "master")
-$featureTaskPattern = "^feature/TASK-[A-Za-z0-9._-]+$"
+# Accept both feature/TASK-* (legacy) and lane/<lane>/<n>-* (multi-lane v1).
+# feedback_lane_protocol Rule 2.1 mandates "lane/<lane-name>/<short-suffix>"
+# branches for lane work; without this pattern, Codex's commit gate refused
+# all lane-branch commits even when hooks already verified the change.
+$featureTaskPattern = "^(feature/TASK-[A-Za-z0-9._-]+|lane/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+)$"
 
 function Initialize-StateDir {
   if (-not (Test-Path -LiteralPath $stateDir)) {
@@ -62,11 +70,11 @@ function Assert-TaskBranch {
   param([string]$Branch)
 
   if (Test-ProtectedBranch -Branch $Branch) {
-    throw "Protected branch '$Branch' is not allowed for Codex commits or pushes. Use feature/TASK-*."
+    throw "Protected branch '$Branch' is not allowed for Codex commits or pushes. Use feature/TASK-* or lane/<lane>/<n>-*."
   }
 
   if ($Branch -notmatch $featureTaskPattern) {
-    throw "Branch '$Branch' does not match feature/TASK-*. Move the work to a task branch before mutating git state."
+    throw "Branch '$Branch' does not match feature/TASK-* or lane/<lane>/<n>-*. Move the work to a task or lane branch before mutating git state."
   }
 }
 

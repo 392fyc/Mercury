@@ -128,7 +128,22 @@ function main() {
   catch (e) { process.stderr.write(`${TAG} WARNING: stdin parse failed (${e.message}); fail-open\n`); pass(); }
 
   const { tool_name = '', tool_input = {}, tool_response = '', session_id = '' } = input;
-  const cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+  // Resolve repo root: prefer CLAUDE_PROJECT_DIR (set by Claude Code), then
+  // git rev-parse --show-toplevel (works under Codex which provides session
+  // cwd that may be a subdirectory per https://developers.openai.com/codex/hooks),
+  // then fall back to process.cwd() so the hook is never harder to install.
+  function resolveRepoRoot() {
+    if (process.env.CLAUDE_PROJECT_DIR) return process.env.CLAUDE_PROJECT_DIR;
+    try {
+      const top = require('child_process')
+        .execSync('git rev-parse --show-toplevel', { stdio: ['ignore', 'pipe', 'ignore'] })
+        .toString()
+        .trim();
+      if (top) return top;
+    } catch (_) { /* fall through */ }
+    return process.cwd();
+  }
+  const cwd = resolveRepoRoot();
 
   if (!session_id) { process.stderr.write(`${TAG} WARNING: no session_id; skipping state accumulation\n`); pass(); }
 
