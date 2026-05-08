@@ -55,14 +55,25 @@ class GateResult:
 
 @dataclass
 class VerifyResult:
+    """Verify rubric output.
+
+    `passed` reflects HARD gate status only — soft-gate failures
+    (character_consistency, loop_closure) are reported in `advisories`
+    but never flip `passed` to False or trigger retries. This matches
+    ADR §6.1 where character_consistency and loop_closure are explicitly
+    marked soft gates: they're informational signals about drift, not
+    blocking gates.
+    """
     passed: bool
     gates: list[GateResult] = field(default_factory=list)
     fail_reasons: list[str] = field(default_factory=list)
+    advisories: list[str] = field(default_factory=list)
     retry_hints: dict = field(default_factory=dict)
 
     def summary(self) -> str:
         if self.passed:
-            return f"VERIFY PASS — {len(self.gates)} gate(s)"
+            tail = f", {len(self.advisories)} advisory" if self.advisories else ""
+            return f"VERIFY PASS — {len(self.gates)} gate(s){tail}"
         head = f"VERIFY FAIL — {len(self.fail_reasons)} reason(s)"
         body = "; ".join(self.fail_reasons[:5])
         return f"{head}: {body}" if body else head
@@ -121,8 +132,9 @@ def _check_palette(frames: list[Path], max_size: int) -> GateResult:
         return GateResult(name="palette_quantization", passed=True,
                           severity="skipped",
                           detail={"reason": "Pillow not installed"})
-    per_frame = []
+    per_frame_sizes = []
     over = []
+    union: set[tuple[int, int, int]] = set()
     for f in frames:
         try:
             with Image.open(f) as img:
@@ -130,14 +142,20 @@ def _check_palette(frames: list[Path], max_size: int) -> GateResult:
         except OSError as exc:
             over.append({"frame": f.name, "error": str(exc)})
             continue
-        n = len(colors) if colors is not None else max_size + 1
-        per_frame.append({"frame": f.name, "unique_colors": n})
+        if colors is None:
+            n = max_size + 1
+        else:
+            n = len(colors)
+            union.update(c for _, c in colors)
+        per_frame_sizes.append({"frame": f.name, "unique_colors": n})
         if n > max_size:
             over.append({"frame": f.name, "unique_colors": n})
     return GateResult(
         name="palette_quantization",
         passed=not over,
-        detail={"max_allowed": max_size, "per_frame": per_frame,
+        detail={"max_allowed": max_size,
+                "per_frame_sizes": per_frame_sizes,
+                "union_size": len(union),
                 "violations": over},
     )
 
@@ -152,9 +170,19 @@ def _check_consistency(frames: list[Path], threshold: int) -> GateResult:
                           severity="soft",
                           detail={"reason": "need ≥2 frames"})
     hashes = []
+    errors = []
     for f in frames:
-        with Image.open(f) as img:
-            hashes.append(imagehash.dhash(img))
+        try:
+            with Image.open(f) as img:
+                hashes.append(imagehash.dhash(img))
+        except OSError as exc:
+            errors.append({"frame": f.name, "error": str(exc)})
+    if errors or len(hashes) < 2:
+        return GateResult(name="character_consistency", passed=False,
+                          severity="soft",
+                          detail={"reason": "image read errors",
+                                  "errors": errors,
+                                  "readable_count": len(hashes)})
     base = hashes[0]
     distances = [int(h - base) for h in hashes[1:]]
     worst = max(distances) if distances else 0
@@ -177,11 +205,16 @@ def _check_loop_closure(frames: list[Path], dhash_threshold: int,
     if len(frames) < 2:
         return GateResult(name="loop_closure", passed=True, severity="soft",
                           detail={"reason": "need ≥2 frames"})
-    with Image.open(frames[0]) as first_img, Image.open(frames[-1]) as last_img:
-        first_h = imagehash.dhash(first_img)
-        last_h = imagehash.dhash(last_img)
-        first_arr = np.asarray(first_img.convert("L"))
-        last_arr = np.asarray(last_img.convert("L"))
+    try:
+        with Image.open(frames[0]) as first_img, Image.open(frames[-1]) as last_img:
+            first_h = imagehash.dhash(first_img)
+            last_h = imagehash.dhash(last_img)
+            first_arr = np.asarray(first_img.convert("L"))
+            last_arr = np.asarray(last_img.convert("L"))
+    except OSError as exc:
+        return GateResult(name="loop_closure", passed=False, severity="soft",
+                          detail={"reason": "image read error",
+                                  "error": str(exc)})
     if first_arr.shape != last_arr.shape:
         return GateResult(name="loop_closure", passed=False, severity="soft",
                           detail={"reason": "first/last shape mismatch",
@@ -210,21 +243,27 @@ def verify_frames(frames: list[Path], cfg: VerifyConfig) -> VerifyResult:
                                          cfg.ssim_threshold))
 
     fail_reasons: list[str] = []
+    advisories: list[str] = []
     retry_hints: dict = {}
     for g in gates:
         if g.passed:
             continue
-        fail_reasons.append(f"{g.name}: {g.detail}")
-        if g.name == "frame_count":
-            retry_hints["fix_frame_count"] = g.detail
-        elif g.name == "dimension_uniformity":
-            retry_hints["fix_dimensions"] = g.detail.get("reference_size")
-        elif g.name == "palette_quantization":
-            retry_hints["reduce_palette_to"] = cfg.max_palette_size
+        msg = f"{g.name}: {g.detail}"
+        if g.severity == "hard":
+            fail_reasons.append(msg)
+            if g.name == "frame_count":
+                retry_hints["fix_frame_count"] = g.detail
+            elif g.name == "dimension_uniformity":
+                retry_hints["fix_dimensions"] = g.detail.get("reference_size")
+            elif g.name == "palette_quantization":
+                retry_hints["reduce_palette_to"] = cfg.max_palette_size
+        else:
+            advisories.append(msg)
 
     return VerifyResult(
         passed=not fail_reasons,
         gates=gates,
         fail_reasons=fail_reasons,
+        advisories=advisories,
         retry_hints=retry_hints,
     )

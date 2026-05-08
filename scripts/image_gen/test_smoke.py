@@ -129,12 +129,96 @@ def test_pipeline_command_shape() -> None:
     print("PASS test_pipeline_command_shape")
 
 
+def test_soft_gate_advisory() -> None:
+    """Soft-gate fail must NOT flip VerifyResult.passed (Codex High #1)."""
+    try:
+        from PIL import Image
+        import imagehash  # noqa: F401
+    except ImportError:
+        print("SKIP test_soft_gate_advisory (Pillow + imagehash required)")
+        return
+    from scripts.image_gen.verify import VerifyConfig, verify_frames
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        frames: list[Path] = []
+        # 2 frames with very different content -> dHash distance > threshold
+        for i, color in enumerate([(0, 0, 0), (255, 255, 255)]):
+            img = Image.new("RGB", (32, 32), color=color)
+            for y in range(0, 32, 4):
+                for x in range((y % 8) * 2, 32, 8):
+                    img.putpixel((x, y), (i * 200, 100, 200 - i * 100))
+            p = tmp_path / f"f{i}.png"
+            img.save(p)
+            frames.append(p)
+        cfg = VerifyConfig(expected_count=2, max_palette_size=512,
+                           dhash_threshold=0)  # impossibly tight soft threshold
+        result = verify_frames(frames, cfg)
+        assert result.passed, (
+            "soft-gate failure must not block passed; "
+            f"fail_reasons={result.fail_reasons} advisories={result.advisories}"
+        )
+        # advisory should mention character_consistency
+        assert any("character_consistency" in a for a in result.advisories), \
+            f"expected character_consistency advisory, got {result.advisories}"
+    print("PASS test_soft_gate_advisory")
+
+
+def test_palette_union_field() -> None:
+    """Palette gate detail must expose union_size + per_frame_sizes (Codex Medium #1)."""
+    try:
+        from PIL import Image
+    except ImportError:
+        print("SKIP test_palette_union_field (Pillow required)")
+        return
+    from scripts.image_gen.verify import VerifyConfig, verify_frames
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        frames: list[Path] = []
+        for i in range(2):
+            img = Image.new("RGB", (4, 4), color=(i * 80, 0, 0))
+            p = tmp_path / f"f{i}.png"
+            img.save(p)
+            frames.append(p)
+        cfg = VerifyConfig(expected_count=2, max_palette_size=64)
+        result = verify_frames(frames, cfg)
+        palette_gate = next(g for g in result.gates if g.name == "palette_quantization")
+        assert "union_size" in palette_gate.detail, palette_gate.detail
+        assert "per_frame_sizes" in palette_gate.detail, palette_gate.detail
+        assert palette_gate.detail["union_size"] >= 2
+    print("PASS test_palette_union_field")
+
+
+def test_scenes_validation() -> None:
+    """_load_scenes must reject empty list, non-int index, non-str scene (Codex Medium #2)."""
+    from scripts.image_gen.__main__ import _load_scenes
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        for label, payload in [
+            ("empty array", "[]"),
+            ("non-array", '{"index": 0}'),
+            ("non-int index", '[{"index": "0", "scene": "x"}]'),
+            ("non-str scene", '[{"index": 0, "scene": 5}]'),
+            ("empty filename", '[{"index": 0, "scene": "x", "filename": ""}]'),
+        ]:
+            p = tmp_path / "scenes.json"
+            p.write_text(payload, encoding="utf-8")
+            try:
+                _load_scenes(p, tmp_path / "out")
+            except ValueError:
+                continue
+            raise AssertionError(f"{label} should have raised ValueError")
+    print("PASS test_scenes_validation")
+
+
 def main() -> int:
     test_help()
     test_anchor_block_determinism()
     test_dry_run_e2e()
     test_verify_synthetic()
     test_pipeline_command_shape()
+    test_soft_gate_advisory()
+    test_palette_union_field()
+    test_scenes_validation()
     print("ALL SMOKE PASS")
     return 0
 

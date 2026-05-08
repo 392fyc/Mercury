@@ -82,13 +82,30 @@ def _load_scenes(path: Path, out_dir: Path) -> list[FrameSpec]:
     raw = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, list):
         raise ValueError(f"scenes file {path} must be a JSON array")
+    if not raw:
+        raise ValueError(f"scenes file {path} is empty — must list ≥1 frame")
     specs: list[FrameSpec] = []
     for i, item in enumerate(raw):
         if not isinstance(item, dict):
-            raise ValueError(f"scenes[{i}] must be an object, got {type(item).__name__}")
+            raise ValueError(
+                f"scenes[{i}] must be an object, got {type(item).__name__}")
         idx = item.get("index", i)
+        if not isinstance(idx, int) or isinstance(idx, bool):
+            raise ValueError(
+                f"scenes[{i}].index must be int, got {type(idx).__name__}")
         scene = item.get("scene", "")
-        fname = item.get("filename") or f"frame_{idx:02d}.png"
+        if not isinstance(scene, str):
+            raise ValueError(
+                f"scenes[{i}].scene must be str, got {type(scene).__name__}")
+        fname_raw = item.get("filename")
+        if fname_raw is None:
+            fname = f"frame_{idx:02d}.png"
+        elif isinstance(fname_raw, str) and fname_raw:
+            fname = fname_raw
+        else:
+            raise ValueError(
+                f"scenes[{i}].filename must be a non-empty str, "
+                f"got {type(fname_raw).__name__}")
         specs.append(FrameSpec(index=idx, scene=scene, out_path=out_dir / fname))
     return specs
 
