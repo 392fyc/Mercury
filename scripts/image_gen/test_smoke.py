@@ -81,7 +81,7 @@ def test_dry_run_e2e() -> None:
         for scene in SCENES:
             assert scene["scene"] in proc.stdout, f"missing scene {scene['index']}"
         assert proc.stdout.count("Character Consistency:") == len(SCENES)
-        assert out_dir.exists()
+        assert not out_dir.exists(), "dry-run must be side-effect free"
     print("PASS test_dry_run_e2e")
 
 

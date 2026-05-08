@@ -127,7 +127,6 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
 
     bible = CharacterBible.load(args.bible)
-    args.out_dir.mkdir(parents=True, exist_ok=True)
     frames = _load_scenes(args.scenes, args.out_dir)
 
     if args.dry_run:
@@ -137,6 +136,8 @@ def main(argv: list[str] | None = None) -> int:
                 f"{bible.compose_prompt(f.scene)}\n\n"
             )
         return 0
+
+    args.out_dir.mkdir(parents=True, exist_ok=True)
 
     opts = GenerationOptions(
         model=args.model, size=args.size, quality=args.quality,
