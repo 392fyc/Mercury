@@ -22,18 +22,23 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Repo root = three parents up from this file
-# (.claude/skills/animate-frames/invoke.py -> repo root).
-# Argus iter-4: fail-fast when the Slice B target is unreachable from
-# any parent — silent fallback to `parents[3]` would let the subprocess
-# launch with a misconfigured cwd, masking the real layout error
-# behind a confusing ModuleNotFoundError. Prefer a clean assert at
-# import time so the wrapper always points at a valid pipeline root.
+# Slice B target marker — used only when launching the pipeline
+# subprocess. Validation is DEFERRED to that code path (Argus iter-8
+# Minor 可移植性): if a caller cherry-picks just this skill — or only
+# uses `--help` / `--example` / argparse-error paths — we should not
+# refuse to import. Only the pipeline launch needs the marker.
 _PIPELINE_MARKER = Path("scripts") / "image_gen" / "__main__.py"
 
 
-def _resolve_repo_root() -> Path:
-    """Walk parents until the Slice B marker is found. SystemExit if not."""
+def _resolve_pipeline_root() -> Path:
+    """Walk parents looking for the Slice B marker.
+
+    Returns the first parent of this file that contains
+    `scripts/image_gen/__main__.py`. Raises SystemExit if no parent
+    has it — used only on the subprocess launch path so standalone
+    `--help` / `--example` use of this skill remains intact even when
+    cherry-picked outside Mercury.
+    """
     for parent in Path(__file__).resolve().parents:
         if (parent / _PIPELINE_MARKER).is_file():
             return parent
@@ -41,12 +46,10 @@ def _resolve_repo_root() -> Path:
         f"animate-frames: cannot locate Slice B pipeline "
         f"({_PIPELINE_MARKER}) from any parent of this skill — the "
         f"skill must live inside a Mercury checkout that includes "
-        f"`scripts/image_gen/`. Refusing to launch with a misconfigured "
-        f"cwd."
+        f"`scripts/image_gen/` to run the pipeline. (`--help` and "
+        f"`--example` work without it; only `python -m scripts.image_gen` "
+        f"invocation requires the marker.)"
     )
-
-
-REPO_ROOT = _resolve_repo_root()
 
 SCENE_TEMPLATES: dict[str, list[dict]] = {
     "walking-cycle": [
@@ -136,13 +139,17 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         return _emit_example(args[1])
     cmd = [sys.executable, "-m", "scripts.image_gen", *args]
+    # Pipeline launch is the ONLY path that needs the Slice B marker —
+    # `--help` / `--example` / argparse-error paths returned earlier
+    # without touching it (Argus iter-8 portability fix).
+    repo_root = _resolve_pipeline_root()
     # Argus iter-1 Medium: a process-launch failure (interpreter on PATH
-    # misconfigured, permission denied, REPO_ROOT marker missing) raises
-    # OSError before the child runs. Catch at the boundary and surface a
-    # clean stderr + 127 exit so callers get a stable contract instead of
-    # an unhandled traceback.
+    # misconfigured, permission denied, marker missing) raises OSError
+    # before the child runs. Catch at the boundary and surface a clean
+    # stderr + 127 exit so callers get a stable contract instead of an
+    # unhandled traceback.
     try:
-        proc = subprocess.run(cmd, cwd=str(REPO_ROOT))
+        proc = subprocess.run(cmd, cwd=str(repo_root))
     except OSError as exc:
         # Argus iter-4 path leak: previously echoed the absolute
         # REPO_ROOT path, which on shared CI logs would reveal local

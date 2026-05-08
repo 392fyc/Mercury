@@ -173,6 +173,17 @@ def _serialize(report) -> dict:
                         # loss). The retry-feedback path keeps using the
                         # shorter last-line `sanitize_stderr` so model
                         # prompts stay within context budget.
+                        # SCOPE NOTE (Argus iter-8 advisory on info exposure):
+                        # the scrubber redacts CREDENTIALS only. Adapter
+                        # tracebacks may still surface absolute filesystem
+                        # paths, hostnames, third-party library internals.
+                        # Bounding those further would require an
+                        # impossibly broad redaction policy that destroys
+                        # diagnostic utility. The trade-off is intentional:
+                        # this report field is consumed by the same agent
+                        # that ran the pipeline (not arbitrary downstream),
+                        # and the credential redaction handles the only
+                        # category where leakage causes durable harm.
                         "stderr": sanitize_stderr_full(r.stderr) if r.stderr else "",
                         "out_path": str(r.out_path) if r.out_path else None,
                     }
