@@ -493,7 +493,7 @@ LOC 估计：~150-250
 ### Internal Mercury
 
 52. `.mercury/docs/DIRECTION.md` §"适配层规范"
-53. `D:/Mercury/Mercury/CLAUDE.md` MUST §"External-project adapters" + §"Cherry-pick protocol"
+53. `CLAUDE.md` (repo root) MUST §"External-project adapters" + §"Cherry-pick protocol"
 54. `.mercury/state/upstream-manifest.json` (existing format reference)
 
 ---
