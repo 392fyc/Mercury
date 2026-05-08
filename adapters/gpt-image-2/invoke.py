@@ -39,29 +39,37 @@ _ALLOWED_NAMES_UPPER = frozenset({
 _ALLOWED_PREFIXES_UPPER = ("OPENAI_", "LC_")
 
 
-def _resolve_uvx() -> str:
+def _resolve_uvx() -> str | None:
     path = shutil.which("uvx")
     if not path:
         sys.stderr.write(
             "error: 'uvx' not found on PATH. install `uv` "
             "(https://docs.astral.sh/uv/) and ensure `uvx` is reachable.\n"
         )
-        sys.exit(2)
+        return None
     return path
 
 
 def _filtered_env() -> dict[str, str]:
+    """Return a child env dict containing only allowlisted vars.
+
+    Keys are normalized to canonical uppercase so a parent process with
+    non-canonical casing (e.g. POSIX `path=...`) still produces the
+    canonical `PATH=...` that uvx and the openai SDK expect.
+    """
     env: dict[str, str] = {}
     for key, value in os.environ.items():
         upper = key.upper()
         if upper in _ALLOWED_NAMES_UPPER or upper.startswith(_ALLOWED_PREFIXES_UPPER):
-            env[key] = value
+            env[upper] = value
     return env
 
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     uvx = _resolve_uvx()
+    if uvx is None:
+        return 2
     cmd = [uvx, "--from", f"{REPO}@{SHA}", ENTRY, *args]
     try:
         return subprocess.call(cmd, env=_filtered_env())
