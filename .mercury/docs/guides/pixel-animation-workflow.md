@@ -324,7 +324,7 @@ size.
 | `passed=false`, `frame_count` failing across all attempts | Adapter timeouts, API rate limit, auth | Inspect `attempts[*].frame_results[*].stderr` (credentials scrubbed); check `OPENAI_API_KEY` tier |
 | `passed=false`, `palette_quantization` failing | Generated frames have too many unique colors (anti-aliasing, gradients) | Strengthen bible's `style` constraint ("no anti-aliasing", "indexed palette only"); raise `--max-palette` if palette drift is acceptable |
 | `passed=true` but `character_consistency` advisory present | Soft gate flagged drift; not a failure | If drift unacceptable, tighten `--dhash-threshold` and re-run; or add reference images to bible |
-| `gpt-image-2 doesn't currently support transparent backgrounds` | Used `--background transparent` | Use `--background opaque` or `--background auto`; for transparency switch to `--model gpt-image-1.5` per ADR §3.2 |
+| Need transparent background but `gpt-image-2` doesn't support it (per ADR §3.2) | `--background` argparse choices are limited to `auto \| opaque` precisely because `gpt-image-2` rejects `transparent` upstream | Switch model: pass `--model gpt-image-1.5` (which supports transparent BG); the adapter forwards model selection upstream verbatim |
 | Adapter cold start very slow | First `uvx` invocation downloads upstream | Subsequent calls cached; budget ~5–15s on first run |
 
 ## Mercury workflow integration

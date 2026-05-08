@@ -51,7 +51,7 @@ Use this skill when the user wants:
 | `uv` / `uvx` ≥ 0.10 on PATH | Slice A adapter mounts upstream via `uvx --from "git+..."` |
 | Python 3.11+ | `scripts.image_gen` + adapter |
 | `OPENAI_API_KEY` (Tier 1+ verified org) | Real generation; not needed for `--help` / `--dry-run` / `--example` |
-| `pip install Pillow ImageHash scikit-image numpy` | Verify rubric hard gates (skipped-with-warning otherwise; see `--allow-skipped-gates`) |
+| `pip install Pillow ImageHash scikit-image numpy` | Verify rubric hard gates. The pipeline **hard-fails** in non-`--dry-run` mode if any of these are missing (Pillow, ImageHash always; scikit-image only when `--loop-closure`). Pass `--allow-skipped-gates` to opt into running with the affected gates degraded to `severity=skipped, passed=true` — see Failure modes for the false-positive caveat. |
 
 First adapter invocation downloads upstream and builds an isolated venv
 (~5–15s cold start). Subsequent invocations are cached by `uvx`.
@@ -149,7 +149,7 @@ provides 50% discount — see workflow guide §"Cost / rate limits".
 |---|---|---|
 | `error: failed to load bible …` | Malformed JSON or missing `name` | Validate with `jq . bible.json`; check workflow guide schema |
 | `error: scenes[i].filename … resolves outside out-dir` | Path traversal in scene filenames (`../`, absolute) | Use plain filenames (`frame_00.png`); pipeline rejects on path-traversal hardening |
-| `error: verify rubric dependencies missing: ['Pillow', ...]` | Verify deps not installed | `pip install Pillow ImageHash scikit-image numpy` or pass `--allow-skipped-gates` (advisory only) |
+| `error: verify rubric dependencies missing: ['Pillow', ...]` | Verify deps not installed (pipeline hard-fails by default) | `pip install Pillow ImageHash scikit-image numpy` (recommended) **OR** pass `--allow-skipped-gates` to bypass — note this is an explicit safety bypass intended for `--dry-run` / dev scenarios; with skipped gates the run can report `passed=true` without any real frame inspection (false-positive risk). |
 | `passed=false`, `frame_count` failed | Adapter timeout / API rate limit / auth | Check `attempts[*].frame_results[*].stderr` (credentials are scrubbed); raise `--timeout`; check OPENAI tier |
 | `passed=false`, `character_consistency` failing | Identity drift across frames | Add stronger anchor block items; supply more reference images in the bible; lower `--dhash-threshold` for stricter gate |
 
