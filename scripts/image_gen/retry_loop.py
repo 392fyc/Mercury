@@ -43,6 +43,21 @@ _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"AKIA[A-Z0-9]{12,}"), "AKIA***"),
     (re.compile(r"(?i)Bearer\s+[A-Za-z0-9_\-\.=]{8,}"), "Bearer ***"),
     (re.compile(r"(?im)^\s*Authorization\s*:\s*\S+.*$"), "Authorization: ***"),
+    # Argus iter-1 Critical (security): generic key=value / key: value
+    # redaction for adapter-side libraries that dump env or kwargs in
+    # stderr (e.g. `OPENAI_API_KEY=sk-...`, `api_key: 'sk-...'`,
+    # `password=hunter2`). The captured key keeps debuggability ("which
+    # field leaked") while the value is replaced wholesale. We do NOT
+    # anchor with `\b` because `_` is a word character, which would
+    # block matches inside underscore-prefixed names like
+    # `OPENAI_API_KEY`. The required `[=:]` anchor following the key
+    # is itself a strong signal — bare keyword substrings without an
+    # assignment operator (e.g. "secrets are good") will not match.
+    (re.compile(
+        r"(?i)(api[_-]?key|api[_-]?token|access[_-]?token|"
+        r"refresh[_-]?token|client[_-]?secret|password|passwd|"
+        r"secret|token)\s*[=:]\s*['\"]?[^\s'\"&,;]+"
+    ), r"\1=***"),
 )
 _FEEDBACK_TAIL_MAX = 200  # chars per error line forwarded into prompt
 

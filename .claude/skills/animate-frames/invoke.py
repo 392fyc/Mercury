@@ -25,6 +25,21 @@ from pathlib import Path
 # Repo root = three parents up from this file
 # (.claude/skills/animate-frames/invoke.py -> repo root).
 REPO_ROOT = Path(__file__).resolve().parents[3]
+# Argus iter-1 Minor: relax `parents[3]` hard coupling by sanity-checking
+# the resolved root contains the Slice B target. If not, fall back to
+# walking up looking for the marker — defends against future repo
+# reorganization or skill cherry-picks into a different layout. The
+# `parents[3]` happy path stays the fast default; the walk only runs
+# when the assumption breaks.
+_PIPELINE_MARKER = Path("scripts") / "image_gen" / "__main__.py"
+if not (REPO_ROOT / _PIPELINE_MARKER).is_file():
+    for parent in Path(__file__).resolve().parents:
+        if (parent / _PIPELINE_MARKER).is_file():
+            REPO_ROOT = parent
+            break
+    # If the marker is still missing after the walk, leave REPO_ROOT at
+    # parents[3] — the subprocess invocation below will surface a clean
+    # ModuleNotFoundError that points at the real misconfig.
 
 SCENE_TEMPLATES: dict[str, list[dict]] = {
     "walking-cycle": [
@@ -93,17 +108,33 @@ def main(argv: list[str] | None = None) -> int:
         # Reject mixed-mode invocations like `--example idle --out-dir frames`
         # (Codex Slice C audit Low #1): silently ignoring trailing args
         # would hide caller mistakes by exiting 0 after printing JSON.
+        # Argus iter-1 Critical (security): never echo the trailing arg
+        # values themselves — a caller who shell-substituted a token or
+        # key (e.g. `--example $OPENAI_API_KEY`) would otherwise see the
+        # secret reflected into stderr / CI logs. Report only the count.
         if len(args) > 2:
             sys.stderr.write(
                 f"error: --example takes exactly one template name; "
-                f"got extra arguments: {args[2:]}\n"
+                f"got {len(args) - 2} extra argument(s) (values redacted).\n"
                 f"emit a template (`invoke.py --example {args[1]} > scenes.json`) "
                 f"and run the pipeline as a separate invocation.\n"
             )
             return 2
         return _emit_example(args[1])
     cmd = [sys.executable, "-m", "scripts.image_gen", *args]
-    proc = subprocess.run(cmd, cwd=str(REPO_ROOT))
+    # Argus iter-1 Medium: a process-launch failure (interpreter on PATH
+    # misconfigured, permission denied, REPO_ROOT marker missing) raises
+    # OSError before the child runs. Catch at the boundary and surface a
+    # clean stderr + 127 exit so callers get a stable contract instead of
+    # an unhandled traceback.
+    try:
+        proc = subprocess.run(cmd, cwd=str(REPO_ROOT))
+    except OSError as exc:
+        sys.stderr.write(
+            f"error: failed to launch `python -m scripts.image_gen` from "
+            f"{REPO_ROOT}: {exc}\n"
+        )
+        return 127
     return proc.returncode
 
 
