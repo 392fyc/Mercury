@@ -21,7 +21,7 @@ from pathlib import Path
 
 from .character_bible import CharacterBible
 from .pipeline import FrameSpec, GenerationOptions
-from .retry_loop import run_with_retry
+from .retry_loop import run_with_retry, sanitize_stderr_full
 from .verify import VerifyConfig
 
 SIZE_CHOICES_HELP = "e.g. 1024x1024 (forwarded to upstream gpt-image)"
@@ -165,6 +165,26 @@ def _serialize(report) -> dict:
                         "index": r.spec.index,
                         "success": r.success,
                         "returncode": r.returncode,
+                        # stderr is sanitized via `sanitize_stderr_full` so
+                        # credential-shaped tokens (sk-proj-…, ghp_…, Bearer
+                        # …, OPENAI_API_KEY=…) never reach the JSON report,
+                        # but multi-line traceback context is preserved up
+                        # to 2000 chars (Argus iter-2 Minor on information
+                        # loss). The retry-feedback path keeps using the
+                        # shorter last-line `sanitize_stderr` so model
+                        # prompts stay within context budget.
+                        # SCOPE NOTE (Argus iter-8 advisory on info exposure):
+                        # the scrubber redacts CREDENTIALS only. Adapter
+                        # tracebacks may still surface absolute filesystem
+                        # paths, hostnames, third-party library internals.
+                        # Bounding those further would require an
+                        # impossibly broad redaction policy that destroys
+                        # diagnostic utility. The trade-off is intentional:
+                        # this report field is consumed by the same agent
+                        # that ran the pipeline (not arbitrary downstream),
+                        # and the credential redaction handles the only
+                        # category where leakage causes durable harm.
+                        "stderr": sanitize_stderr_full(r.stderr) if r.stderr else "",
                         "out_path": str(r.out_path) if r.out_path else None,
                     }
                     for r in a.frame_results
@@ -172,6 +192,11 @@ def _serialize(report) -> dict:
                 "verify": {
                     "passed": a.verify.passed,
                     "fail_reasons": a.verify.fail_reasons,
+                    # Soft-gate output (character_consistency, loop_closure)
+                    # lands here. Codex Slice C audit Medium #2: the workflow
+                    # guide schema commits to `verify.advisories`, so the
+                    # serializer must emit it even when empty.
+                    "advisories": list(a.verify.advisories),
                     "gates": [asdict(g) for g in a.verify.gates],
                 },
             }

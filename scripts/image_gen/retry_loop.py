@@ -43,18 +43,101 @@ _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"AKIA[A-Z0-9]{12,}"), "AKIA***"),
     (re.compile(r"(?i)Bearer\s+[A-Za-z0-9_\-\.=]{8,}"), "Bearer ***"),
     (re.compile(r"(?im)^\s*Authorization\s*:\s*\S+.*$"), "Authorization: ***"),
+    # Argus iter-1 Critical (security): generic key=value / key: value
+    # redaction for adapter-side libraries that dump env or kwargs in
+    # stderr (e.g. `OPENAI_API_KEY=sk-...`, `api_key: 'sk-...'`,
+    # `password=hunter2`). The captured key keeps debuggability ("which
+    # field leaked") while the value is replaced wholesale. We do NOT
+    # anchor with `\b` because `_` is a word character, which would
+    # block matches inside underscore-prefixed names like
+    # `OPENAI_API_KEY`. The required `[=:]` anchor following the key
+    # is itself a strong signal — bare keyword substrings without an
+    # assignment operator (e.g. "secrets are good") will not match.
+    # Argus iter-3 advisory: also accept JSON-style quoted keys (`"api_key": "..."`)
+    # by allowing an optional matched ['"] pair around the key — common
+    # in dumped payloads / structured logs.
+    (re.compile(
+        r"(?i)['\"]?(api[_-]?key|api[_-]?token|access[_-]?token|"
+        r"refresh[_-]?token|client[_-]?secret|password|passwd|"
+        r"secret|token)['\"]?\s*[=:]\s*['\"]?[^\s'\"&,;]+"
+    ), r"\1=***"),
 )
 _FEEDBACK_TAIL_MAX = 200  # chars per error line forwarded into prompt
+_REPORT_TAIL_MAX = 2000   # chars per stderr blob forwarded into JSON report
 
 
-def _sanitize_stderr(text: str) -> str:
-    """Scrub credential-shaped substrings, truncate, return last non-empty line."""
+def _scrub(text: str) -> str:
+    """Apply every credential pattern to `text` (single source of truth).
+
+    Returns the scrubbed string; layout (last-line vs. multi-line) is
+    chosen by the caller via `sanitize_stderr` or `sanitize_stderr_full`.
+    """
     cleaned = text
     for pattern, replacement in _SECRET_PATTERNS:
         cleaned = pattern.sub(replacement, cleaned)
+    return cleaned
+
+
+def sanitize_stderr(text: str) -> str:
+    """Scrub credentials and return the LAST non-empty line, ≤200 chars.
+
+    Used by the retry-loop prompt feedback path: the next attempt's
+    prompt includes only a short summary of the previous failure so we
+    don't overwhelm model context. Last-line + length cap is an
+    intentional contract for that consumer (Argus iter-2 Minor on
+    information loss: confirmed intentional for the retry path; the
+    JSON report path uses `sanitize_stderr_full` instead).
+    """
+    cleaned = _scrub(text)
     lines = [ln for ln in cleaned.splitlines() if ln.strip()]
     last = lines[-1] if lines else "unknown error"
     return last.strip()[:_FEEDBACK_TAIL_MAX]
+
+
+def sanitize_stderr_full(text: str, *, max_chars: int = _REPORT_TAIL_MAX) -> str:
+    """Scrub credentials and return the multi-line text up to `max_chars`.
+
+    Used by the JSON serializer in `__main__._serialize` so the
+    `frame_results[*].stderr` field preserves enough context to debug
+    multi-line tracebacks / multi-stage adapter errors (Argus iter-2
+    Minor: 200-char last-line truncation was insufficient for report
+    consumers). Tail-truncates rather than head-truncates because real
+    Python tracebacks put the most-actionable line LAST. Empty-line
+    runs are collapsed to single newlines so the cap covers more
+    actual content.
+    """
+    cleaned = _scrub(text)
+    lines = [ln.rstrip() for ln in cleaned.splitlines() if ln.strip()]
+    if not lines:
+        return "unknown error"
+    joined = "\n".join(lines)
+    if len(joined) <= max_chars:
+        return joined
+    # Reserve marker length inside the budget so the returned string is
+    # truly bounded by `max_chars` (Copilot iter-2: marker was prepended
+    # ON TOP of the max_chars-truncated content, blowing past the cap).
+    # Use len(joined) as an upper bound for the dropped-count digit
+    # width — actual n is always ≤ len(joined), so reserve is always
+    # large enough.
+    marker_template = "…[truncated {n} chars]\n"
+    reserve = len(marker_template.format(n=len(joined)))
+    content_budget = max(0, max_chars - reserve)
+    truncated = joined[-content_budget:] if content_budget else ""
+    n_dropped = len(joined) - len(truncated)
+    result = f"…[truncated {n_dropped} chars]\n{truncated}"
+    # Defensive cap (Copilot iter-3 edge case): if `max_chars` is too
+    # small to even fit the marker (e.g. caller passes max_chars=10),
+    # the marker template alone would exceed the budget. Fall back to
+    # a hard tail-slice; the caller asked for ≤max_chars total, so
+    # honor that contract even at the cost of dropping the marker.
+    if len(result) > max_chars:
+        result = joined[-max_chars:]
+    return result
+
+
+# Backward-compat alias for `test_smoke.test_stderr_sanitization` and any
+# other in-tree caller that imported the underscore-prefixed name.
+_sanitize_stderr = sanitize_stderr
 
 
 @dataclass
@@ -79,7 +162,7 @@ def _build_feedback(prev: RetryAttempt | None) -> str:
         return ""
     parts: list[str] = []
     gen_errors = [
-        f"frame {fr.spec.index}: {_sanitize_stderr(fr.stderr)}"
+        f"frame {fr.spec.index}: {sanitize_stderr(fr.stderr)}"
         for fr in prev.frame_results
         if not fr.success
     ]

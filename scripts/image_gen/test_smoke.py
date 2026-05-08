@@ -317,6 +317,44 @@ def test_stderr_sanitization() -> None:
     print("PASS test_stderr_sanitization")
 
 
+def test_sanitize_stderr_full() -> None:
+    """sanitize_stderr_full preserves multi-line, scrubs credentials, tail-truncates within budget (Copilot iter-2 #1+#3)."""
+    from scripts.image_gen.retry_loop import sanitize_stderr_full
+    # Multi-line preservation + extended key=value scrubbing including
+    # Argus iter-3 advisory: JSON-style quoted keys (`"api_key": "..."`)
+    multi = (
+        "Traceback (most recent call last):\n"
+        "  File \"adapter.py\", line 42, in invoke\n"
+        "    raise APIError(\"401 Unauthorized\")\n"
+        "APIError: 401 Unauthorized\n"
+        "ENV: OPENAI_API_KEY=sk-proj-LEAKED_8675309 (debug)\n"
+        "payload={\"api_key\": \"sk-json-LEAKED_value\", \"model\": \"gpt-4\"}\n"
+    )
+    out = sanitize_stderr_full(multi)
+    assert "Traceback" in out, "first line preserved"
+    assert "APIError: 401 Unauthorized" in out, "middle line preserved"
+    assert "sk-proj-LEAKED" not in out, "env-style credential leaked"
+    assert "sk-json-LEAKED" not in out, "JSON-style credential leaked"
+    assert "OPENAI_API_KEY=***" in out, "env-style redaction marker present"
+    assert "api_key=***" in out, "JSON-style redaction marker present"
+
+    # Tail-truncate within budget (Copilot iter-2 #1: marker must be
+    # inside max_chars, not on top of it).
+    big = "PREFIX line\n" + ("filler line\n" * 500) + "TAIL: critical error here"
+    truncated = sanitize_stderr_full(big, max_chars=200)
+    assert "TAIL: critical error" in truncated, "tail must be preserved"
+    assert "[truncated" in truncated, "marker missing"
+    assert len(truncated) <= 200, f"over budget: {len(truncated)} > 200"
+
+    # Empty input
+    assert sanitize_stderr_full("") == "unknown error"
+
+    # Below threshold returns content unchanged (no marker)
+    short = "single short stderr line"
+    assert sanitize_stderr_full(short, max_chars=2000) == short
+    print("PASS test_sanitize_stderr_full")
+
+
 def test_verify_short_circuit_empty() -> None:
     """verify_frames must short-circuit on empty list (Copilot verify cascade)."""
     from scripts.image_gen.verify import VerifyConfig, verify_frames
@@ -416,6 +454,7 @@ def main() -> int:
     test_bible_type_validation()
     test_duplicate_scenes_rejected()
     test_stderr_sanitization()
+    test_sanitize_stderr_full()
     test_verify_short_circuit_empty()
     test_retry_budget_semantics()
     print("ALL SMOKE PASS")
