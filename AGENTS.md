@@ -5,7 +5,7 @@
 Agent: codex-cli
 Your role is injected by the orchestrator at session start via system prompt (`# Role Assignment: {role}`).
 If no role assignment is received, refer to the dispatch prompt or handoff packet.
-Role definitions: `.mercury/roles/{role}.yaml`
+Role definitions: `.claude/agents/{role}.md` (active); legacy YAML archived at `archive/roles/{role}.yaml`
 
 ## Navigation
 
@@ -13,13 +13,14 @@ Read these docs on demand when you need the corresponding information:
 
 | Topic | Path |
 |-------|------|
-| Role definitions & boundaries | `.mercury/roles/{role}.yaml` |
-| SoT task workflow | `.mercury/docs/guides/sot-workflow.md` |
+| Role definitions & boundaries | `.claude/agents/{role}.md` (active); `archive/roles/{role}.yaml` (archived YAML) |
+| SoT task workflow (legacy) | `.mercury/docs/guides/sot-workflow.md` |
 | Git branching rules | `.mercury/docs/guides/git-flow.md` |
 | KB directory structure | `.mercury/docs/guides/kb-structure.md` |
 | Project architecture | `.mercury/docs/guides/architecture.md` |
+| Codex hooks ADR | `.mercury/docs/research/codex-hooks-adoption-2026-05.md` |
+| Codex hook config | `.codex/hooks.json` |
 | Dispatch prompt templates | `.mercury/templates/` |
-| Bundle templates | `Mercury_KB/99-templates/` |
 
 ## MUST
 
@@ -45,4 +46,4 @@ Read these docs on demand when you need the corresponding information:
 ## Agent-Specific Notes
 
 - Codex sandbox may block network access — git push failures are expected, Main Agent handles push.
-- Codex on Windows: hooks are currently disabled, so strong guardrails live in `.codex/config.toml`, `.codex/rules/`, repo skills, and `scripts/codex/*.ps1`.
+- Codex hooks are GA since CLI v0.124 (stable v0.128+). Mercury enables `[features] hooks = true` (canonical name per Codex PR #20522 — `codex_hooks` is the legacy alias) in `.codex/config.toml` and ships hook config at `.codex/hooks.json`. Hook scripts live under `.claude/hooks/` (single source of truth, shared with Claude Code). `.codex/rules/` and `scripts/codex/*.ps1` remain as defense-in-depth fallbacks; `.codex/rules/` also enforces what hooks cannot (e.g. web-research gate — see Issue #20204).

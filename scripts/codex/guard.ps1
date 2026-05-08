@@ -14,10 +14,21 @@ $ErrorActionPreference = "Stop"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path (Join-Path $scriptDir "..\\..")).Path
-$stateDir = Join-Path $repoRoot ".codex\\state"
+# State dir unified with .claude/hooks/pre-commit-guard.sh:52 (which checks
+# "$_PROJECT/.mercury/state/review-passed"). Previously this script wrote to
+# .codex/state/review-passed, which the Bash hook never read — the Codex
+# fallback commit flow was broken on every branch. Mercury Issue #357.
+$stateDir = Join-Path $repoRoot ".mercury\\state"
 $reviewFlag = Join-Path $stateDir "review-passed"
 $protectedBranches = @("develop", "main", "master")
-$featureTaskPattern = "^feature/TASK-[A-Za-z0-9._-]+$"
+# Accept feature/TASK-* (legacy) and the lane branch forms used in practice
+# under Mercury's multi-lane v1 protocol (feedback_lane_protocol Rule 2.1):
+#   - lane/<lane-name>/init               — scaffold branch (e.g. lane/side-bug/init)
+#   - lane/<lane-name>/<n>                — issue-only suffix
+#   - lane/<lane-name>/<n>-<slug>         — typical work branch (e.g. lane/side-bug/357-codex-hooks)
+# The pattern is intentionally precise so the throw-message description
+# below matches what is actually accepted (Argus iter 1 finding).
+$featureTaskPattern = "^(feature/TASK-[A-Za-z0-9._-]+|lane/[A-Za-z0-9._-]+/(init|[0-9]+(-[A-Za-z0-9._-]+)?))$"
 
 function Initialize-StateDir {
   if (-not (Test-Path -LiteralPath $stateDir)) {
@@ -62,11 +73,11 @@ function Assert-TaskBranch {
   param([string]$Branch)
 
   if (Test-ProtectedBranch -Branch $Branch) {
-    throw "Protected branch '$Branch' is not allowed for Codex commits or pushes. Use feature/TASK-*."
+    throw "Protected branch '$Branch' is not allowed for Codex commits or pushes. Use feature/TASK-<id> or lane/<lane>/(init|<n>|<n>-<slug>)."
   }
 
   if ($Branch -notmatch $featureTaskPattern) {
-    throw "Branch '$Branch' does not match feature/TASK-*. Move the work to a task branch before mutating git state."
+    throw "Branch '$Branch' does not match feature/TASK-<id> or lane/<lane>/(init|<n>|<n>-<slug>). Move the work to a task or lane branch before mutating git state."
   }
 }
 

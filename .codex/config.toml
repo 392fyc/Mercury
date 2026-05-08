@@ -13,9 +13,23 @@ MANDATORY: Before writing ANY code that imports an external SDK/API package or r
 4. Include source URLs when reporting technical findings
 5. If web_search fails, mark claims as UNVERIFIED
 6. Never commit or push directly on develop, master, or main
-7. If the current branch is protected or does not match feature/TASK-*, stop and move the work to a task branch before committing
-8. Use `powershell -File scripts/codex/git-safe.ps1 add ...`, `commit -Message "..."`, and `push ...` instead of raw `git add`, `git commit`, or `git push`
-9. Before every commit on a PR branch, run the dual-verify skill (parallel Claude Code deep-review + Codex code-audit); for minor commits auto-verify is acceptable; then run `powershell -File scripts/codex/guard.ps1 mark-review` and use `powershell -File scripts/codex/git-safe.ps1 commit -Message "..."`
-10. Before every push, use `powershell -File scripts/codex/git-safe.ps1 push ...`; do not target develop, master, or main
-11. On Windows, do not assume Codex hooks will run; use `.codex/rules`, `.codex/config.toml`, repo skills, and `scripts/codex/*.ps1` as the enforcement path
+7. If the current branch is protected or does not match feature/TASK-<id> or lane/<lane>/(init|<n>|<n>-<slug>), stop and move the work to a task branch before committing
+8. Codex hooks (.codex/hooks.json) are the primary enforcement layer for Bash + apply_patch tool calls (push-guard / pre-commit-guard / pr-create-guard / pr-merge-guard / scope-guard)
+9. Defense-in-depth: scripts/codex/*.ps1 wrappers (powershell -File scripts/codex/git-safe.ps1 add/commit/push) remain available as fallback when hooks cannot be relied on (e.g. shell invocation in non-Codex contexts)
+10. Before every commit on a PR branch, run the dual-verify skill (parallel Claude Code deep-review + Codex code-audit); for minor commits auto-verify is acceptable; then run `powershell -File scripts/codex/guard.ps1 mark-review`
+11. Web-research enforcement: Codex hooks do NOT cover web_search tool calls (no handler — see Issue #20204). The web-research MUST is enforced at instruction level via clauses #1-5 above and via .codex/rules/. Verify your own compliance before each external SDK/API claim.
 """
+
+# Enable lifecycle hooks (Codex CLI >= v0.124 GA, stable since v0.128).
+# Hook config lives in .codex/hooks.json (preferred over inline [hooks]).
+# Canonical flag name is `hooks` since Codex PR #20522 (alias of legacy
+# `codex_hooks`); empirically verified via `codex features list` against
+# Codex CLI 0.129.0 — flag stage `stable`, default `true`. Explicit setting
+# documents intent + protects against silent regression if the default flips.
+# Section MUST come AFTER all top-level scalars: TOML section scoping captures
+# every subsequent key=value pair until the next section header — placing
+# [features] earlier would silently re-parent later scalars (e.g.
+# developer_instructions) under features.* and break Codex config validation.
+# See .mercury/docs/research/codex-hooks-adoption-2026-05.md for ADR.
+[features]
+hooks = true

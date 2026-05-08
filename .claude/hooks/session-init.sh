@@ -16,7 +16,7 @@ SESSION_ID="${PPID:-$$}"
 FLAG="$STATE_DIR/session-init-${SESSION_ID}"
 [ -f "$FLAG" ] && exit 0
 
-cd "$CLAUDE_PROJECT_DIR" 2>/dev/null || exit 0
+cd "$_PROJECT" 2>/dev/null || exit 0
 
 # Gather session context
 BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
@@ -24,12 +24,16 @@ LAST_COMMIT=$(git log -1 --oneline 2>/dev/null || echo "unknown")
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 GIT_STATUS=$(git status --porcelain 2>/dev/null | head -20)
 # Read vault config via jq (primary) or node (fallback)
-if command -v jq &>/dev/null && [ -f "$CLAUDE_PROJECT_DIR/mercury.config.json" ]; then
-  VAULT_NAME=$(jq -r '.obsidian.vaultName // "Mercury_KB"' "$CLAUDE_PROJECT_DIR/mercury.config.json" 2>/dev/null)
-  KB_VAULT_PATH=$(jq -r '.obsidian.vaultPath // empty' "$CLAUDE_PROJECT_DIR/mercury.config.json" 2>/dev/null)
+if command -v jq &>/dev/null && [ -f "$_PROJECT/mercury.config.json" ]; then
+  VAULT_NAME=$(jq -r '.obsidian.vaultName // "Mercury_KB"' "$_PROJECT/mercury.config.json" 2>/dev/null)
+  KB_VAULT_PATH=$(jq -r '.obsidian.vaultPath // empty' "$_PROJECT/mercury.config.json" 2>/dev/null)
 else
-  VAULT_NAME=$(node -e "try{const c=require('$CLAUDE_PROJECT_DIR/mercury.config.json');console.log(c.obsidian.vaultName||'Mercury_KB')}catch(e){console.log('Mercury_KB')}" 2>/dev/null)
-  KB_VAULT_PATH=$(node -e "try{console.log(require('$CLAUDE_PROJECT_DIR/mercury.config.json').obsidian.vaultPath)}catch(e){}" 2>/dev/null)
+  # Pass the config path via env var rather than interpolating it into the
+  # `node -e` source string. Direct interpolation would break (or in the worst
+  # case execute attacker-controlled JS) on paths containing `'`, `\`, `;`,
+  # ${...}, etc.; piping through process.env keeps the JS literal source clean.
+  VAULT_NAME=$(MCONFIG="$_PROJECT/mercury.config.json" node -e "try{const c=require(process.env.MCONFIG);console.log(c.obsidian.vaultName||'Mercury_KB')}catch(e){console.log('Mercury_KB')}" 2>/dev/null)
+  KB_VAULT_PATH=$(MCONFIG="$_PROJECT/mercury.config.json" node -e "try{console.log(require(process.env.MCONFIG).obsidian.vaultPath)}catch(e){}" 2>/dev/null)
 fi
 # Scan a tasks directory for active task IDs
 scan_active_tasks() {
@@ -53,10 +57,10 @@ fi
 if [ -z "$ACTIVE_TASKS" ]; then
   # Prefer configured vault name; derive from {ProjectName}_KB when using default
   if [ "$VAULT_NAME" = "Mercury_KB" ]; then
-    PROJECT_NAME=$(basename "$CLAUDE_PROJECT_DIR")
-    SIBLING_KB="$(dirname "$CLAUDE_PROJECT_DIR")/${PROJECT_NAME}_KB"
+    PROJECT_NAME=$(basename "$_PROJECT")
+    SIBLING_KB="$(dirname "$_PROJECT")/${PROJECT_NAME}_KB"
   else
-    SIBLING_KB="$(dirname "$CLAUDE_PROJECT_DIR")/${VAULT_NAME}"
+    SIBLING_KB="$(dirname "$_PROJECT")/${VAULT_NAME}"
   fi
   if [ -d "$SIBLING_KB/10-tasks" ]; then
     ACTIVE_TASKS=$(scan_active_tasks "$SIBLING_KB/10-tasks")
@@ -64,8 +68,8 @@ if [ -z "$ACTIVE_TASKS" ]; then
 fi
 
 # Write current-session.md (ensure directory exists)
-mkdir -p "$CLAUDE_PROJECT_DIR/.claude" 2>/dev/null
-SESSION_FILE="$CLAUDE_PROJECT_DIR/.claude/current-session.md"
+mkdir -p "$_PROJECT/.claude" 2>/dev/null
+SESSION_FILE="$_PROJECT/.claude/current-session.md"
 cat > "$SESSION_FILE" <<EOF
 # Current Session
 
