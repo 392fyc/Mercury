@@ -284,13 +284,20 @@ Optional: offer to launch if the user later says so (Step 6).
 After Step 5.1 + 5.2, and Pre-Termination Checklist passed:
 
 **Required launch pattern — use a SHORT reference prompt, never inline the
-full handoff content into the command line.** The SessionStart hook already
-injects the full handoff document as `additionalContext`, so the new session
-receives everything automatically. Inlining multi-line/multi-KB content into
-`wt`/`tmux`/shell commands causes catastrophic failures on Windows
-(multi-line expansion breaks argument parsing → error 0x80070002, multiple
-ghost terminal windows; see `feedback_handoff_short_prompt_only.md` —
-S3-side-multi-lane 2026-04-26 forensic record).
+full handoff content into the command line.** Inlining multi-line/multi-KB
+content into `wt`/`tmux`/shell commands causes catastrophic failures on
+Windows (multi-line expansion breaks argument parsing → error 0x80070002,
+multiple ghost terminal windows; see `feedback_handoff_short_prompt_only.md`
+— S3-side-multi-lane 2026-04-26 forensic record).
+
+The SHORT_PROMPT directs the new session to `Read` the handoff doc
+explicitly as its first action. A SessionStart hook (e.g. the
+`claude-handoff` plugin's `hooks/session-start.py`) MAY additionally inject
+the doc as `additionalContext`, but the prompt MUST NOT assume that
+injection happened — plugin install scope may not cover the new session's
+cwd (Mercury #359 / claude-handoff #12 forensic record), the plugin may
+not be installed, or the runtime may have failed silently. The explicit
+`Read` directive guarantees handoff visibility regardless of hook state.
 
 **SHORT_PROMPT contract (Δ11 — Path C lane assertion)**:
 
@@ -358,7 +365,7 @@ if [ "$WORKTREE_COUNT" -gt 1 ]; then
 fi
 WORKTREE_PATH="$WORKTREE_PATH_RAW"
 
-SHORT_PROMPT="[LANE=${LANE_NAME}] Continue from session handoff. The SessionStart hook injects the full document. Fallback: read ${HANDOFF_PATH}"
+SHORT_PROMPT="[LANE=${LANE_NAME}] Continue from session handoff. Read ${HANDOFF_PATH} as your first action."
 ```
 
 `<encoded_cwd>` for the handoff doc path uses the same `encode_project_path()`
