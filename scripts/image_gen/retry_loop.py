@@ -60,25 +60,58 @@ _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     ), r"\1=***"),
 )
 _FEEDBACK_TAIL_MAX = 200  # chars per error line forwarded into prompt
+_REPORT_TAIL_MAX = 2000   # chars per stderr blob forwarded into JSON report
 
 
-def sanitize_stderr(text: str) -> str:
-    """Scrub credential-shaped substrings, truncate, return last non-empty line.
+def _scrub(text: str) -> str:
+    """Apply every credential pattern to `text` (single source of truth).
 
-    Public so the JSON serializer in `__main__._serialize` can reuse the
-    same scrubbing for `frame_results[*].stderr` — Codex Slice C audit
-    Medium #1 flagged that the documented stderr troubleshooting path is
-    impossible to follow if the field is dropped, but raw stderr cannot
-    be exposed because adapter-side libraries may dump credential-shaped
-    tokens. The underscore-prefixed alias below preserves backward
-    compatibility for in-tree tests that imported the private name.
+    Returns the scrubbed string; layout (last-line vs. multi-line) is
+    chosen by the caller via `sanitize_stderr` or `sanitize_stderr_full`.
     """
     cleaned = text
     for pattern, replacement in _SECRET_PATTERNS:
         cleaned = pattern.sub(replacement, cleaned)
+    return cleaned
+
+
+def sanitize_stderr(text: str) -> str:
+    """Scrub credentials and return the LAST non-empty line, ≤200 chars.
+
+    Used by the retry-loop prompt feedback path: the next attempt's
+    prompt includes only a short summary of the previous failure so we
+    don't overwhelm model context. Last-line + length cap is an
+    intentional contract for that consumer (Argus iter-2 Minor on
+    information loss: confirmed intentional for the retry path; the
+    JSON report path uses `sanitize_stderr_full` instead).
+    """
+    cleaned = _scrub(text)
     lines = [ln for ln in cleaned.splitlines() if ln.strip()]
     last = lines[-1] if lines else "unknown error"
     return last.strip()[:_FEEDBACK_TAIL_MAX]
+
+
+def sanitize_stderr_full(text: str, *, max_chars: int = _REPORT_TAIL_MAX) -> str:
+    """Scrub credentials and return the multi-line text up to `max_chars`.
+
+    Used by the JSON serializer in `__main__._serialize` so the
+    `frame_results[*].stderr` field preserves enough context to debug
+    multi-line tracebacks / multi-stage adapter errors (Argus iter-2
+    Minor: 200-char last-line truncation was insufficient for report
+    consumers). Tail-truncates rather than head-truncates because real
+    Python tracebacks put the most-actionable line LAST. Empty-line
+    runs are collapsed to single newlines so the cap covers more
+    actual content.
+    """
+    cleaned = _scrub(text)
+    lines = [ln.rstrip() for ln in cleaned.splitlines() if ln.strip()]
+    if not lines:
+        return "unknown error"
+    joined = "\n".join(lines)
+    if len(joined) <= max_chars:
+        return joined
+    truncated = joined[-max_chars:]
+    return f"…[truncated {len(joined) - max_chars} chars]\n" + truncated
 
 
 # Backward-compat alias for `test_smoke.test_stderr_sanitization` and any

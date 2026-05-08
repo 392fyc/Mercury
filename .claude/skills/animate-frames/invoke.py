@@ -113,10 +113,17 @@ def main(argv: list[str] | None = None) -> int:
         # key (e.g. `--example $OPENAI_API_KEY`) would otherwise see the
         # secret reflected into stderr / CI logs. Report only the count.
         if len(args) > 2:
+            # Argus iter-2 Minor (密钥回显): the help suggestion line below
+            # uses `<TEMPLATE>` instead of `args[1]`. Even though args[1]
+            # is the *template name* slot (not the value slot), a caller
+            # could shell-substitute a secret variable into that position
+            # by mistake (e.g. `--example $OPENAI_API_KEY ...`); a static
+            # placeholder removes that residual leak window entirely.
             sys.stderr.write(
                 f"error: --example takes exactly one template name; "
                 f"got {len(args) - 2} extra argument(s) (values redacted).\n"
-                f"emit a template (`invoke.py --example {args[1]} > scenes.json`) "
+                f"emit a template (`invoke.py --example <TEMPLATE> > scenes.json`, "
+                f"where <TEMPLATE> is one of {sorted(SCENE_TEMPLATES)}) "
                 f"and run the pipeline as a separate invocation.\n"
             )
             return 2
