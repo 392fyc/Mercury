@@ -9,15 +9,22 @@ the upstream source.
 
 ## How it works
 
-`invoke.py` is a thin pass-through. It validates `uvx` is on PATH and
-`OPENAI_API_KEY` is exported, then runs:
+`invoke.py` is a thin pass-through. It validates `uvx` is on PATH then runs:
 
 ```
 uvx --from "git+https://github.com/wuyoscar/gpt_image_2_skill@<SHA>" gpt-image <args>
 ```
 
 All arguments are forwarded verbatim to the upstream `gpt-image` console
-script. The pinned SHA is encoded in `invoke.py` (see `SHA` constant); the
+script. Authentication is delegated to upstream — `gpt_image_cli` resolves
+`OPENAI_API_KEY` from the environment or via `python-dotenv` (`.env` file).
+
+The forwarded environment is filtered to an allowlist (OS basics,
+`OPENAI_*`, locale `LC_*`, proxy vars) so unrelated parent-process
+credentials (cloud provider tokens, GitHub tokens, etc.) do not leak into
+the upstream process.
+
+The pinned SHA is encoded in `invoke.py` (see `SHA` constant); the
 manifest entry tracks `pyproject.toml` so `scripts/upstream-drift-check.sh`
 flags upstream version bumps (deps, entry points) that may affect the
 adapter contract.
@@ -28,7 +35,7 @@ adapter contract.
 |---|---|
 | `uv` / `uvx` | 0.10+ (see [docs.astral.sh/uv](https://docs.astral.sh/uv/)) |
 | Python | 3.11+ (upstream requirement; `uvx` provisions) |
-| `OPENAI_API_KEY` | required for actual generation; bypassed for `--help`/`--version` |
+| `OPENAI_API_KEY` | required for actual generation; resolved by upstream via env or `.env` |
 
 First invocation downloads upstream + builds an isolated venv (~5–15s cold
 start). Subsequent invocations are cached.

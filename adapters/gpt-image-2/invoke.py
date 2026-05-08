@@ -6,8 +6,15 @@
 # ISSUE:    https://github.com/392fyc/Mercury/issues/351
 """Mercury adapter — invoke wuyoscar/gpt_image_2_skill via uvx-pinned-SHA.
 
-Validates env (`OPENAI_API_KEY`, `uvx` on PATH) then forwards argv to the
-upstream `gpt-image` console script (entry point `gpt_image_cli.cli:main`).
+Validates `uvx` is on PATH then forwards argv to the upstream `gpt-image`
+console script (entry point `gpt_image_cli.cli:main`). Authentication is
+delegated to upstream — `gpt_image_cli` resolves `OPENAI_API_KEY` from env
+or via `python-dotenv` (.env file).
+
+The forwarded environment is filtered to an allowlist (OS basics, locale,
+proxy, OPENAI_*, LC_*) so unrelated parent-process credentials (cloud
+provider tokens, GitHub tokens, etc.) do not leak into the upstream
+process.
 """
 from __future__ import annotations
 
@@ -19,7 +26,17 @@ import sys
 REPO = "git+https://github.com/wuyoscar/gpt_image_2_skill"
 SHA = "6fdd7243dc9605efcf6d66e9394d3d10fc5141f6"
 ENTRY = "gpt-image"
-HELP_FLAGS = frozenset({"--help", "-h", "--version", "-V"})
+
+_ALLOWED_NAMES_UPPER = frozenset({
+    "PATH", "PATHEXT",
+    "HOME", "USERPROFILE", "USERNAME",
+    "TEMP", "TMP", "TMPDIR",
+    "SYSTEMROOT", "WINDIR", "COMSPEC",
+    "LANG", "TZ",
+    "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "ALL_PROXY",
+    "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE",
+})
+_ALLOWED_PREFIXES_UPPER = ("OPENAI_", "LC_")
 
 
 def _resolve_uvx() -> str:
@@ -33,26 +50,26 @@ def _resolve_uvx() -> str:
     return path
 
 
-def _check_api_key(args: list[str]) -> None:
-    if any(a in HELP_FLAGS for a in args):
-        return
-    if not os.environ.get("OPENAI_API_KEY"):
-        sys.stderr.write(
-            "error: OPENAI_API_KEY is not set. export OPENAI_API_KEY=sk-... "
-            "before invoking (or pass --help/--version to bypass).\n"
-        )
-        sys.exit(2)
+def _filtered_env() -> dict[str, str]:
+    env: dict[str, str] = {}
+    for key, value in os.environ.items():
+        upper = key.upper()
+        if upper in _ALLOWED_NAMES_UPPER or upper.startswith(_ALLOWED_PREFIXES_UPPER):
+            env[key] = value
+    return env
 
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    _check_api_key(args)
     uvx = _resolve_uvx()
     cmd = [uvx, "--from", f"{REPO}@{SHA}", ENTRY, *args]
     try:
-        return subprocess.call(cmd)
+        return subprocess.call(cmd, env=_filtered_env())
     except KeyboardInterrupt:
         return 130
+    except OSError as exc:
+        sys.stderr.write(f"error: failed to invoke 'uvx': {exc}\n")
+        return 127
 
 
 if __name__ == "__main__":
