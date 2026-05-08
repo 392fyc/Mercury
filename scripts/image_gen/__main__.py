@@ -108,6 +108,8 @@ def _load_scenes(path: Path, out_dir: Path) -> list[FrameSpec]:
     if not raw:
         raise ValueError(f"scenes file {path} is empty — must list ≥1 frame")
     specs: list[FrameSpec] = []
+    seen_paths: set[Path] = set()
+    seen_indexes: set[int] = set()
     for i, item in enumerate(raw):
         if not isinstance(item, dict):
             raise ValueError(
@@ -116,6 +118,12 @@ def _load_scenes(path: Path, out_dir: Path) -> list[FrameSpec]:
         if not isinstance(idx, int) or isinstance(idx, bool):
             raise ValueError(
                 f"scenes[{i}].index must be int, got {type(idx).__name__}")
+        if idx in seen_indexes:
+            raise ValueError(
+                f"scenes[{i}].index={idx} is a duplicate; each frame "
+                f"must have a unique index"
+            )
+        seen_indexes.add(idx)
         scene = item.get("scene", "")
         if not isinstance(scene, str):
             raise ValueError(
@@ -130,6 +138,14 @@ def _load_scenes(path: Path, out_dir: Path) -> list[FrameSpec]:
                 f"scenes[{i}].filename must be a non-empty str, "
                 f"got {type(fname_raw).__name__}")
         out_path = _resolve_safe_out_path(out_dir, fname, i)
+        if out_path in seen_paths:
+            raise ValueError(
+                f"scenes[{i}].filename {fname!r} resolves to {out_path}, "
+                f"which is already targeted by an earlier frame; each "
+                f"scene must produce a unique output path (overwrite "
+                f"would silently desync frame_count from on-disk artifacts)"
+            )
+        seen_paths.add(out_path)
         specs.append(FrameSpec(index=idx, scene=scene, out_path=out_path))
     return specs
 
@@ -167,8 +183,20 @@ def _serialize(report) -> dict:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
 
-    bible = CharacterBible.load(args.bible)
-    frames = _load_scenes(args.scenes, args.out_dir)
+    # Boundary error handling per Argus iter-2 (possible issue 5/10):
+    # bible JSON decode, scenes JSON decode, OS read errors, and value
+    # validation should surface clean stderr + stable exit codes rather
+    # than raw Python tracebacks at the system boundary.
+    try:
+        bible = CharacterBible.load(args.bible)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        sys.stderr.write(f"error: failed to load bible {args.bible}: {exc}\n")
+        return 2
+    try:
+        frames = _load_scenes(args.scenes, args.out_dir)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        sys.stderr.write(f"error: failed to load scenes {args.scenes}: {exc}\n")
+        return 2
 
     if args.dry_run:
         for f in frames:
@@ -199,7 +227,17 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    args.out_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        args.out_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        sys.stderr.write(f"error: cannot create out-dir {args.out_dir}: {exc}\n")
+        return 2
+
+    try:
+        ref_size = _parse_size(args.reference_size)
+    except ValueError as exc:
+        sys.stderr.write(f"error: --reference-size invalid: {exc}\n")
+        return 2
 
     opts = GenerationOptions(
         model=args.model, size=args.size, quality=args.quality,
@@ -208,7 +246,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     cfg = VerifyConfig(
         expected_count=len(frames),
-        reference_size=_parse_size(args.reference_size),
+        reference_size=ref_size,
         max_palette_size=args.max_palette,
         dhash_threshold=args.dhash_threshold,
         ssim_threshold=args.ssim_threshold,

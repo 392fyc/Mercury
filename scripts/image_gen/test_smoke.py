@@ -244,6 +244,135 @@ def test_path_traversal_rejected() -> None:
     print("PASS test_path_traversal_rejected")
 
 
+def test_bible_type_validation() -> None:
+    """Bible loader must reject non-str list elements (Argus iter-2 类型校验缺失)."""
+    from scripts.image_gen.character_bible import CharacterBible
+    with tempfile.TemporaryDirectory() as tmp:
+        bible_path = Path(tmp) / "bible.json"
+        for label, payload in [
+            ("non-str identity", {"name": "x", "identity": ["ok", 5]}),
+            ("non-str palette", {"name": "x", "color_palette": [None, 7]}),
+            ("non-str constraints", {"name": "x", "constraints": [{"k": "v"}]}),
+            ("non-str style", {"name": "x", "style": 5}),
+            ("non-str lighting", {"name": "x", "lighting": []}),
+        ]:
+            bible_path.write_text(json.dumps(payload), encoding="utf-8")
+            try:
+                CharacterBible.load(bible_path)
+            except ValueError:
+                continue
+            raise AssertionError(f"{label} should have raised ValueError")
+    print("PASS test_bible_type_validation")
+
+
+def test_duplicate_scenes_rejected() -> None:
+    """_load_scenes must reject duplicate index AND duplicate output path (Argus iter-2 文件覆盖)."""
+    from scripts.image_gen.__main__ import _load_scenes
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        scenes_path = tmp_path / "scenes.json"
+        # Duplicate index
+        scenes_path.write_text(json.dumps([
+            {"index": 0, "scene": "a"}, {"index": 0, "scene": "b"},
+        ]), encoding="utf-8")
+        try:
+            _load_scenes(scenes_path, out_dir)
+            raise AssertionError("duplicate index should raise")
+        except ValueError:
+            pass
+        # Duplicate filename (different indexes)
+        scenes_path.write_text(json.dumps([
+            {"index": 0, "scene": "a", "filename": "shared.png"},
+            {"index": 1, "scene": "b", "filename": "shared.png"},
+        ]), encoding="utf-8")
+        try:
+            _load_scenes(scenes_path, out_dir)
+            raise AssertionError("duplicate filename should raise")
+        except ValueError:
+            pass
+    print("PASS test_duplicate_scenes_rejected")
+
+
+def test_stderr_sanitization() -> None:
+    """_sanitize_stderr must scrub credential-shaped substrings (Argus iter-2 prompt injection)."""
+    from scripts.image_gen.retry_loop import _sanitize_stderr
+    samples = [
+        "401 Unauthorized: invalid sk-proj-AbCdEf1234567890XYZ",
+        "Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig",
+        "Authorization: Token ghp_abcdefghij1234567890",
+        "AKIAIOSFODNN7EXAMPLE failed",
+    ]
+    for s in samples:
+        sanitized = _sanitize_stderr(s)
+        assert "sk-proj-AbCdEf" not in sanitized, sanitized
+        assert "eyJhbGciOiJIUzI1" not in sanitized, sanitized
+        assert "ghp_abcdefghij" not in sanitized, sanitized
+        assert "AKIAIOSFODNN7" not in sanitized, sanitized
+    # Truncation
+    long = "error: " + ("X" * 500)
+    truncated = _sanitize_stderr(long)
+    assert len(truncated) <= 200, len(truncated)
+    print("PASS test_stderr_sanitization")
+
+
+def test_verify_short_circuit_empty() -> None:
+    """verify_frames must short-circuit on empty list (Copilot verify cascade)."""
+    from scripts.image_gen.verify import VerifyConfig, verify_frames
+    cfg = VerifyConfig(expected_count=4)
+    result = verify_frames([], cfg)
+    assert not result.passed
+    assert len(result.gates) == 1, f"expected single gate, got {len(result.gates)}"
+    assert result.gates[0].name == "frame_count"
+    assert any("frame_count" in r for r in result.fail_reasons)
+    print("PASS test_verify_short_circuit_empty")
+
+
+def test_retry_budget_semantics() -> None:
+    """run_with_retry must run 1 + max_retries total attempts on failure (ADR §6.4)."""
+    from scripts.image_gen.character_bible import CharacterBible
+    from scripts.image_gen.pipeline import FrameSpec, GenerationOptions
+    from scripts.image_gen.retry_loop import run_with_retry
+    from scripts.image_gen.verify import VerifyConfig
+    import scripts.image_gen.retry_loop as rl
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        bible_path = tmp_path / "bible.json"
+        bible_path.write_text(json.dumps({"name": "x"}), encoding="utf-8")
+        bible = CharacterBible.load(bible_path)
+
+        call_count = [0]
+        def fake_generate(*_args, **_kwargs):
+            call_count[0] += 1
+            from scripts.image_gen.pipeline import FrameResult
+            return [FrameResult(spec=FrameSpec(0, "x", tmp_path / "x.png"),
+                                returncode=1, stderr="mock fail",
+                                prompt="", out_path=None)]
+
+        original = rl.generate_frames
+        rl.generate_frames = fake_generate
+        try:
+            cfg = VerifyConfig(expected_count=1)
+            opts = GenerationOptions()
+            report = run_with_retry(bible, [FrameSpec(0, "x", tmp_path / "x.png")],
+                                    cfg, opts=opts, max_retries=3)
+            assert not report.passed
+            assert call_count[0] == 4, (
+                f"expected 1+3=4 attempts on failure, got {call_count[0]}"
+            )
+            # max_retries=0 → 1 attempt
+            call_count[0] = 0
+            report0 = run_with_retry(bible, [FrameSpec(0, "x", tmp_path / "x.png")],
+                                     cfg, opts=opts, max_retries=0)
+            assert call_count[0] == 1, (
+                f"expected 1 attempt with max_retries=0, got {call_count[0]}"
+            )
+        finally:
+            rl.generate_frames = original
+    print("PASS test_retry_budget_semantics")
+
+
 def test_adapter_path_env_override() -> None:
     """MERCURY_GPT_IMAGE_2_ADAPTER must override DEFAULT_ADAPTER_PATH (Argus iter-1 模块耦合)."""
     import os
@@ -284,6 +413,11 @@ def main() -> int:
     test_scenes_validation()
     test_path_traversal_rejected()
     test_adapter_path_env_override()
+    test_bible_type_validation()
+    test_duplicate_scenes_rejected()
+    test_stderr_sanitization()
+    test_verify_short_circuit_empty()
+    test_retry_budget_semantics()
     print("ALL SMOKE PASS")
     return 0
 

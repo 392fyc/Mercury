@@ -232,8 +232,24 @@ def _check_loop_closure(frames: list[Path], dhash_threshold: int,
 
 
 def verify_frames(frames: list[Path], cfg: VerifyConfig) -> VerifyResult:
+    fc_gate = _check_frame_count(frames, cfg.expected_count)
+    # Short-circuit when frame_count fails AND we have nothing to verify
+    # (typically all generation attempts errored). Running the other
+    # gates over an empty / partial list emits noisy "no frames readable"
+    # cascade that drowns out the real failure (frame_count). Gate the
+    # dependent checks behind frame_count so the retry loop sees a clean
+    # single-reason failure that actually matches what happened.
+    if not fc_gate.passed and not frames:
+        return VerifyResult(
+            passed=False,
+            gates=[fc_gate],
+            fail_reasons=[f"frame_count: {fc_gate.detail}"],
+            advisories=[],
+            retry_hints={"fix_frame_count": fc_gate.detail},
+        )
+
     gates: list[GateResult] = [
-        _check_frame_count(frames, cfg.expected_count),
+        fc_gate,
         _check_dimension(frames, cfg.reference_size),
         _check_palette(frames, cfg.max_palette_size),
         _check_consistency(frames, cfg.dhash_threshold),

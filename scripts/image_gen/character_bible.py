@@ -47,19 +47,26 @@ class CharacterBible:
         name = data.get("name")
         if not name or not isinstance(name, str):
             raise ValueError(f"bible {path} missing required 'name' (string)")
+        for scalar_field in ("style", "lighting", "camera"):
+            value = data.get(scalar_field)
+            if value is not None and not isinstance(value, str):
+                raise ValueError(
+                    f"bible {path}.{scalar_field} must be str, "
+                    f"got {type(value).__name__}"
+                )
         base = Path(path).resolve().parent
         refs = tuple(
             (base / r) if not Path(r).is_absolute() else Path(r)
-            for r in _as_list(data.get("reference_images"))
+            for r in _as_list_of_str(data.get("reference_images"), "reference_images")
         )
         return cls(
             name=name,
-            identity=tuple(_as_list(data.get("identity"))),
-            color_palette=tuple(_as_list(data.get("color_palette"))),
+            identity=tuple(_as_list_of_str(data.get("identity"), "identity")),
+            color_palette=tuple(_as_list_of_str(data.get("color_palette"), "color_palette")),
             style=data.get("style", "") or "",
             lighting=data.get("lighting", "") or "",
             camera=data.get("camera", "") or "",
-            constraints=tuple(_as_list(data.get("constraints"))),
+            constraints=tuple(_as_list_of_str(data.get("constraints"), "constraints")),
             reference_images=refs,
             source_path=Path(path).resolve(),
         )
@@ -104,9 +111,31 @@ class CharacterBible:
         return "\n\n".join(p for p in parts if p)
 
 
-def _as_list(value: object) -> list:
+def _as_list_of_str(value: object, field_name: str) -> list[str]:
+    """Coerce to list[str] with strict element type checking.
+
+    Bible fields like `identity` / `color_palette` / `constraints` are
+    later joined into prompt text via str.join(). A non-string element
+    raises TypeError at join time with a confusing trace; validate at
+    load time instead so the error surfaces at the JSON boundary.
+    """
     if value is None:
         return []
-    if isinstance(value, (list, tuple)):
-        return [v for v in value if v is not None and v != ""]
-    return [value]
+    if isinstance(value, str):
+        # Convenience: scalar string promoted to single-element list
+        return [value] if value else []
+    if not isinstance(value, (list, tuple)):
+        raise ValueError(
+            f"bible.{field_name} must be a list of strings or a single "
+            f"string, got {type(value).__name__}"
+        )
+    out: list[str] = []
+    for i, v in enumerate(value):
+        if v is None or v == "":
+            continue
+        if not isinstance(v, str):
+            raise ValueError(
+                f"bible.{field_name}[{i}] must be str, got {type(v).__name__}"
+            )
+        out.append(v)
+    return out

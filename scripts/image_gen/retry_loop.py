@@ -1,16 +1,22 @@
 """Retry loop with structured feedback into next attempt's prompt.
 
-Per ADR §6.4: max_retries = 3 (hard cap). Each subsequent attempt
-forwards the previous attempt's `verify.fail_reasons` into the bible's
-prompt composition as a `feedback` block — the model conditions on what
-went wrong rather than re-rolling blind.
+Per ADR §6.4: `max_retries = 3` (hard cap) describes the number of
+RETRY attempts that follow an initial failed attempt. Total attempts
+budget therefore = `1 + max_retries` (one initial + up to N retries).
+Each retry forwards the previous attempt's `verify.fail_reasons` into
+the bible's prompt composition as a `feedback` block — the model
+conditions on what went wrong rather than re-rolling blind.
 
-Generation failures (adapter rc != 0) short-circuit the verify call and
-also feed structured `generation_errors` text into the next prompt, so
-network / API errors propagate forward as feedback as well.
+Verify is invoked on whatever frames were successfully generated each
+attempt, even when some frames failed adapter invocation; the partial
+verdict still informs the structured feedback. Generation errors are
+sanitized (secret scrubbing + length cap) before being composed into
+the next prompt to avoid leaking adapter-side credentials or noisy
+internals to the next model call.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -22,6 +28,33 @@ from .pipeline import (
     generate_frames,
 )
 from .verify import VerifyConfig, VerifyResult, verify_frames
+
+# Patterns scrubbed from adapter stderr before it enters the next prompt.
+# Cover common credential shapes that an adapter-side library might dump
+# (OpenAI keys, GitHub PATs, AWS access keys, Bearer tokens, generic
+# `Authorization: ...` lines). New shapes can be added here without
+# touching call sites. Patterns are intentionally permissive on tail
+# length — better to over-scrub than to leak.
+_SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"sk-proj-[A-Za-z0-9_\-]{8,}"), "sk-proj-***"),
+    (re.compile(r"sk-[A-Za-z0-9]{16,}"), "sk-***"),
+    (re.compile(r"github_pat_[A-Za-z0-9_]{16,}"), "github_pat_***"),
+    (re.compile(r"ghp_[A-Za-z0-9]{16,}"), "ghp_***"),
+    (re.compile(r"AKIA[A-Z0-9]{12,}"), "AKIA***"),
+    (re.compile(r"(?i)Bearer\s+[A-Za-z0-9_\-\.=]{8,}"), "Bearer ***"),
+    (re.compile(r"(?im)^\s*Authorization\s*:\s*\S+.*$"), "Authorization: ***"),
+)
+_FEEDBACK_TAIL_MAX = 200  # chars per error line forwarded into prompt
+
+
+def _sanitize_stderr(text: str) -> str:
+    """Scrub credential-shaped substrings, truncate, return last non-empty line."""
+    cleaned = text
+    for pattern, replacement in _SECRET_PATTERNS:
+        cleaned = pattern.sub(replacement, cleaned)
+    lines = [ln for ln in cleaned.splitlines() if ln.strip()]
+    last = lines[-1] if lines else "unknown error"
+    return last.strip()[:_FEEDBACK_TAIL_MAX]
 
 
 @dataclass
@@ -46,7 +79,7 @@ def _build_feedback(prev: RetryAttempt | None) -> str:
         return ""
     parts: list[str] = []
     gen_errors = [
-        f"frame {fr.spec.index}: {fr.stderr.strip().splitlines()[-1] if fr.stderr.strip() else 'unknown error'}"
+        f"frame {fr.spec.index}: {_sanitize_stderr(fr.stderr)}"
         for fr in prev.frame_results
         if not fr.success
     ]
@@ -64,11 +97,19 @@ def run_with_retry(bible: CharacterBible, frames: list[FrameSpec],
                    verify_cfg: VerifyConfig,
                    opts: GenerationOptions | None = None,
                    max_retries: int = 3) -> RetryReport:
+    """Up to `1 + max_retries` total attempts (ADR §6.4 semantics).
+
+    `max_retries` is the count of RETRY attempts after the initial one,
+    so e.g. `max_retries=3` produces at most 4 total invocations of
+    `generate_frames`. Negative values clamp to 0 retries (single
+    initial attempt).
+    """
     opts = opts or GenerationOptions()
     attempts: list[RetryAttempt] = []
     prev: RetryAttempt | None = None
+    total_budget = 1 + max(0, max_retries)
 
-    for attempt_num in range(1, max(1, max_retries) + 1):
+    for attempt_num in range(1, total_budget + 1):
         feedback = _build_feedback(prev)
         results = generate_frames(bible, frames, opts=opts, feedback=feedback)
         good_paths: list[Path] = [r.out_path for r in results if r.success and r.out_path]
