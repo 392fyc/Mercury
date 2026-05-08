@@ -511,7 +511,7 @@ LOC 估计：~150-250
 9. dHash / SSIM 在 pixel art 下的 threshold calibration（本 ADR 取经验值，需 smoke test 验证）
 10. CLIP ViT-B/32 CPU 推理实测延迟（4-12s/16 帧为估算）
 11. wuyoscar/gpt_image_2_skill `.claude-plugin/plugin.json` schema 与 Mercury 兼容性
-12. SeflieLab "Flux 92% vs Midjourney 65% group consistency" 第三方测试（方法论未公开，不应作硬指标）
+12. SelfieLab "Flux 92% vs Midjourney 65% group consistency" 第三方测试（方法论未公开，不应作硬指标）
 
 所有 UNVERIFIED 项不阻塞 Phase 1 verdict — 但 Phase 2 实施前应至少处理 §7.1 前置验证（项 11 + transparent BG fallback + uv 验证 + license 复核）。
 
