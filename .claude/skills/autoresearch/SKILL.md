@@ -112,6 +112,25 @@ Round N:
                 Round N = max_rounds -> go to VERIFICATION with gaps flagged
 ```
 
+## Return Contract
+
+When autoresearch terminates and returns control to the calling agent (Mercury main session, standalone user, or orchestrator), the completion return message MUST contain ONLY:
+
+1. **Report file path** — the absolute or repo-relative path to the final research report (e.g. `Mercury_KB/04-research/RESEARCH-topic-001.md` or `.research/reports/RESEARCH-topic-2026-05-09.md`).
+2. **Verdict + per-metric scores** — the gate metrics from the final round (`question_answer_rate`, `citation_density`, `unverified_rate`) and the verification verdict (PASS / PARTIAL / FAIL / mechanical_only).
+3. **Gap list** — any research questions that remain unanswered or UNVERIFIED after all rounds, or an explicit "None" if none remain.
+4. **Optional one-line topic recap** — a single sentence restating what was researched (omit if the calling context already contains the topic).
+
+**Explicitly forbidden in the return message:**
+- Raw findings text or raw search result snippets
+- Raw round-by-round log entries or per-round source lists
+- Full report body or large excerpts from the report
+- Full verification checklist content (only the final verdict score, not the checklist rows)
+
+All raw research artifacts live in `.research/reports/` (standalone mode) or `Mercury_KB/04-research/` (Mercury mode) and are addressable by file path. The calling agent reads the file directly if it needs detail — the return message is a pointer + verdict, not a data dump.
+
+> Cross-link: the [Search Worker Protocol](#search-worker-protocol) below enforces the same discipline inside each research round (keeping intermediate search I/O out of the autoresearch agent's context). This section extends that discipline to the final completion return to the calling agent.
+
 ## Search Worker Protocol
 
 **Why**: WebSearch/WebFetch return 1-3K tokens per call. A typical research round runs 9-15 searches, injecting 15-45K tokens of raw HTML/snippet text into the autoresearch agent's own context window. Over 4+ rounds this causes context pressure and has triggered session stops (Issue #215, #101 Gap 4).
@@ -152,6 +171,16 @@ Agent(
 ```
 
 The autoresearch agent ingests only the <500 token summary per worker call. Over 4 rounds × 3 questions × 500 tokens = 6K tokens of search state, versus 60-180K tokens under the old inline pattern.
+
+### Explore guardrail
+
+When the autoresearch worker or orchestrator invokes the **Explore subagent** (e.g. for codebase traversal or file discovery), the Explore dispatch prompt MUST include these constraints:
+
+- **Token cap**: cap return at ~5K tokens (caller-stated soft cap). If the response would exceed this, summarize rather than paste.
+- **Path-only preference**: when matches exceed 20 files, return file paths only (one per line) — do not include file contents, snippets, or surrounding context beyond the path.
+- **No raw file contents**: never paste raw file contents into the return. Use `file:line` citations with at most a 1-line context excerpt per citation.
+
+These constraints preserve the main session's context budget. Violation risks are the same as raw-search injection: context pressure and session stops (Issue #215, #101 Gap 4).
 
 **Fallback** (nested subagent mode, Codex mode, or `Agent()` not available): the primary context protection is much weaker in this mode because the nested agent cannot offload search I/O to a worker. Apply this reduced-budget protocol:
 

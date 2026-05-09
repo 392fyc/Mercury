@@ -32,6 +32,9 @@ Before invoking this skill, the following must be true:
 | **Main does not write code** | Main coordinates, reviews receipts, decides next action. Implementation belongs to dev. Verification belongs to acceptance. |
 | **Sub-agents cannot spawn sub-agents** | Per Claude Code documented constraint. Only the Main thread (running this skill) can dispatch dev or acceptance. Dev cannot call acceptance directly. |
 
+### Receipt return-size discipline
+
+Sub-agent return values are the main session's primary context inflation source (typically 5–15K tokens per round). To keep the pipeline sustainable across many iterations, the dev receipt MUST use the structured slim format defined in Phase 2 — no free-form `evidence` or `risks` narrative. The `dodChecklist` array provides structured per-criterion citations that give acceptance everything it needs without prose overhead. See Issue #362 for background and real-world soak targets (<2K tokens avg per receipt).
 
 ## Phase 1: Build TaskBundle
 
@@ -118,17 +121,25 @@ You are operating under the dev agent role (.claude/agents/dev.md). Implement th
 7. Push to current branch.
 8. Output the JSON receipt below as your FINAL message.
 
+## Explore guardrail
+When invoking Explore subagent for codebase traversal or file discovery:
+- Cap return at ~5K tokens (caller-stated soft cap).
+- Prefer path-only summaries when matches exceed 20 files — no file contents, no snippets.
+- Never paste raw file contents; use file:line citations with at most 1-line context per citation.
+
 ## Receipt template
 {
   "taskId": "[copied out of the bundle]",
   "status": "completed|blocked|escalated",
-  "changedFiles": ["path", "..."],
+  "branch": "<current branch name>",
   "commitSha": "sha",
+  "changedFiles": ["path", "..."],
   "verifyResults": [
     {"command": "cmd", "exitCode": 0, "summary": "one line"}
   ],
-  "evidence": "file:line citations supporting definition-of-done",
-  "risks": "known risks or follow-up needed",
+  "dodChecklist": [
+    {"criterion": "<text from definitionOfDone>", "met": true, "citation": "<file:line or test output>"}
+  ],
   "escalationReason": "only if status is not completed"
 }
 
@@ -151,14 +162,14 @@ Checklist:
 - [ ] All changedFiles exist in the diff
 - [ ] commitSha matches latest commit on the branch
 - [ ] All verifyCommands listed in the bundle have a verifyResults entry with exitCode 0
-- [ ] evidence cites at least one file:line per definitionOfDone item
+- [ ] dodChecklist has one entry per definitionOfDone item, each with `met: true` and a non-empty `citation` (file:line or test output)
 - [ ] No file outside allowedWriteScope was touched. Use the **task-start SHA** captured before Phase 2 dispatch as the comparison base (`TASK_START_SHA=$(git rev-parse HEAD)` before dispatch, then `git diff --name-only "$TASK_START_SHA..HEAD"` after). Do NOT use `HEAD~1` — it breaks on first commits, squashed commits, and multi-commit dev runs.
 
 **Gate**: if any check fails, send a correction prompt to dev (still iteration 1) with the specific deficiency. Do not advance to acceptance with an incomplete receipt.
 
 ## Phase 4: Dispatch Acceptance (BLIND)
 
-Build the **blindReceipt** by stripping dev's narrative fields. **Preserve original JSON types** — `changedFiles` and `verifyResults` are arrays in the dev receipt and MUST remain arrays here, not stringified placeholders:
+Build the **blindReceipt** by forwarding the structured fields from the dev receipt. **Preserve original JSON types** — `changedFiles`, `verifyResults`, and `dodChecklist` are arrays in the dev receipt and MUST remain arrays here, not stringified placeholders:
 
 ```json
 {
@@ -168,11 +179,14 @@ Build the **blindReceipt** by stripping dev's narrative fields. **Preserve origi
   "verifyResults": [
     {"command": "pnpm test packages/foo", "exitCode": 0, "summary": "12 passed"},
     {"command": "pnpm lint", "exitCode": 0, "summary": "0 issues"}
+  ],
+  "dodChecklist": [
+    {"criterion": "criterion text from DoD", "met": true, "citation": "file:line or test output"}
   ]
 }
 ```
 
-Note what was REMOVED relative to the dev receipt: `evidence`, `risks`, `escalationReason`. The acceptance agent must form its own conclusions out of code and tests, not out of dev's self-assessment.
+Note what was REMOVED relative to the dev receipt: `escalationReason` (only present when status != completed — not relevant to a completed task's acceptance review). The `dodChecklist` is forwarded because it contains structured per-criterion citations (not dev's narrative reasoning) — acceptance uses it to cross-check each DoD item against actual code. The acceptance agent still forms its own independent conclusions from code and tests; `dodChecklist` citations are starting pointers, not authoritative verdicts.
 
 Build the **AcceptanceBundle** (also preserve original types — `definitionOfDone`, `acceptanceCriteria`, `verifyCommands` are arrays, not strings):
 

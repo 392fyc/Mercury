@@ -18,7 +18,7 @@ Read task description, implement within allowed scope, commit code, report compl
 - Read task description and referenced docs
 - Write/modify files within specified scope
 - Run tests relevant to the task
-- Fill implementation receipt (summary, changed files, evidence, risks)
+- Fill structured implementation receipt (`changedFiles`, `commitSha`, `verifyResults`, `dodChecklist` with per-criterion citations)
 - `git add <specific-files>`, `git commit`, `git push` on current branch
 - `git diff`, `git status`, `git log` (read-only)
 - Create Issues when discovering bugs (report only — do not self-fix)
