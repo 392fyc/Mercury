@@ -37,10 +37,13 @@ Mercury 的部分功能跨仓库运作。以下表格记录外部仓库与 Mercu
 **跨仓库开发注意事项：**
 - `dev-pipeline` 等 skill 假设单仓库工作，跨仓库任务需直接实现
 - 用户级 hooks / scripts 变更不走 Mercury PR 流程。相关路径里 `~/.claude` 等价于 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}`；命令示例可任选一种书写，env 形式在多账户 / CI 下更可移植
-- 新环境验证: 运行 `ls "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/scripts/"` 看到 `pre-compact.py`/`session-end.py`/`flush.py`/`mem0_hooks.py`/`mem0_bridge.py`/`cost_tracker.py` 即为 #361 后状态；`grep AGENTKB "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"` 应返回 0 行
+- 新环境验证: 文件存在性 + 钩子注册 + 库可导入三层检查：
+  1. `ls "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/scripts/"` 看到 `pre-compact.py`/`session-end.py`/`flush.py`/`mem0_hooks.py`/`mem0_bridge.py`/`cost_tracker.py` 即为 #361 后状态
+  2. `grep -c session-end.py "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"` 应返回 ≥1（钩子在 SessionEnd matcher 注册）；`grep AGENTKB "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"` 应返回 0 行
+  3. `python -c "import sys; sys.path.insert(0, r'${CLAUDE_CONFIG_DIR:-$HOME/.claude}/scripts'); import cost_tracker; print(cost_tracker.session_log_path('verify-smoke'))"` 应打印 `cost-tracker/verify-smoke.jsonl` 路径（导入 + 路径解析 OK）
 - 安装依赖: `cd "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" && uv sync` 建立 `.venv/` 并装 mem0ai + qdrant-client
 - 回滚通道: `MERCURY_MEM0_DISABLED=1` / `AGENTKB_MEM0_DISABLED=1` / `MERCURY_COST_TRACKER_DISABLED=1` / `uv remove mem0ai` 任一即可 no-op 对应路径
-- Cost tracker (#361) env vars: `MERCURY_SESSION_COST_CEILING_USD=NN.NN` 触发 statusline 颜色阶梯 (绿 <70% / 黄 70-89% / 红 ≥90%)；`MERCURY_TIER_MISUSE_THRESHOLD` (默认 2000) 控制 opus 小任务 advisory 阈值
+- Cost tracker (#361) env vars (canonical 实现见 `~/.claude/scripts/cost_tracker.py` `PRICING` / `_disabled()` / `ceiling_advisory()` / `detect_tier_misuse()`)：`MERCURY_SESSION_COST_CEILING_USD=NN.NN` 触发 statusline 颜色阶梯 (绿 <70% / 黄 70-89% / 红 ≥90%)；`MERCURY_TIER_MISUSE_THRESHOLD` (默认 2000) 控制 opus 小任务 advisory 阈值；`MERCURY_COST_TRACKER_DISABLED=1` 软关 `write_session_summary()` 写路径（statusline 段落另在 hook 内独立 gate）
 
 **用户级变更治理（避免"仓库外漂移"）：**
 - **变更记录位置**: 每次修改 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/`、`.../scripts/`、`.../settings.json` 时，在 Mercury 内开对应 Issue（类似 #259），在 Issue 下记录"命令清单 + 最终 diff 摘要 + 验证步骤"。Issue 关闭即成为该用户级变更的权威记录
