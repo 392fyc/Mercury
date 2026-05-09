@@ -118,7 +118,7 @@ When autoresearch terminates and returns control to the calling agent (Mercury m
 
 Concretely, the return MUST include at minimum:
 
-1. **Report file path** — the absolute or repo-relative path to the final research report (e.g. `Mercury_KB/04-research/RESEARCH-topic-001.md` or `.research/reports/RESEARCH-topic-2026-05-09.md`).
+1. **Report file path** — a repo-relative path (or `Mercury_KB/04-research/...`-prefixed path under Mercury orchestration) to the final research report. Do NOT return absolute filesystem paths — they leak host info and are not portable across environments. Example: `Mercury_KB/04-research/RESEARCH-topic-001.md` or `.research/reports/RESEARCH-topic-2026-05-09.md`.
 2. **Verdict + per-metric scores** — the gate metrics from the final round (`question_answer_rate`, `citation_density`, `unverified_rate`) and the verification verdict (PASS / PARTIAL / FAIL / mechanical_only).
 3. **Gap list** — any research questions that remain unanswered or UNVERIFIED after all rounds, or an explicit "None" if none remain.
 4. **Optional one-line topic recap** — a single sentence restating what was researched (omit if the calling context already contains the topic).
@@ -184,9 +184,10 @@ The autoresearch agent ingests only the <500 token summary per worker call. Over
 
 When the autoresearch worker or orchestrator invokes the **Explore subagent** (e.g. for codebase traversal or file discovery), the Explore dispatch prompt MUST include these constraints:
 
-- **Token cap**: cap return at ~5K tokens (caller-stated soft cap). If the response would exceed this, summarize rather than paste.
+- **Token cap**: cap return at ~5K tokens (caller-stated soft cap).
 - **Path-only preference**: when matches exceed 20 files, return file paths only (one per line) — do not include file contents, snippets, or surrounding context beyond the path.
 - **No raw file contents**: never paste raw file contents into the return. Use `file:line` citations with at most a 1-line context excerpt per citation.
+- **Overflow behavior (mandatory fallback)**: if any of the above thresholds are exceeded, the return MUST switch to path-only mode AND emit a single explicit fallback line at the top: `[guardrail-fallback: <reason>; matches=<N>; tokens≈<T>; raw output suppressed — caller may re-dispatch with narrower scope]`. Do not silently truncate or arbitrarily summarize — the caller must know fallback was triggered so they can re-dispatch with tighter scope.
 
 These constraints preserve the main session's context budget. Violation risks are the same as raw-search injection: context pressure and session stops (Issue #215, #101 Gap 4).
 

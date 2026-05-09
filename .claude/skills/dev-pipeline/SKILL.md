@@ -286,9 +286,10 @@ On pass:
 
 When Main dispatches Explore for readScope discovery, scope verification, or general codebase exploration, the Explore prompt MUST cap return at the following constraints:
 
-- **Token cap**: cap return at ~5K tokens (caller-stated soft cap). If the response would exceed this, Explore must summarize rather than paste.
+- **Token cap**: cap return at ~5K tokens (caller-stated soft cap).
 - **Path-only preference**: when matches exceed 20 files, return file paths only (one per line) — no file contents, no snippets, no surrounding context beyond the path.
 - **No raw file contents**: never paste raw file contents into the return. Use `file:line` citations with at most a 1-line context excerpt per citation.
+- **Overflow behavior (mandatory fallback)**: if any of the above thresholds are exceeded, the return MUST switch to path-only mode AND emit a single explicit fallback line at the top: `[guardrail-fallback: <reason>; matches=<N>; tokens≈<T>; raw output suppressed — caller may re-dispatch with narrower scope]`. Do not silently truncate or arbitrarily summarize — the caller must know fallback was triggered so they can re-dispatch with tighter scope.
 
 These constraints preserve the main session's context budget when using Explore for discovery. Violation risks are the same as raw-search injection: context pressure and session stops (Issue #215, #101 Gap 4).
 
