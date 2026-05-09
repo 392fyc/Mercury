@@ -78,7 +78,8 @@ function writeStallReport(cwd, session_id, stall_type, stall_reason, state, last
       read_count:       state.read_count       ?? 0,
       np_count:         state.np_count         ?? 0,
       last_activity_ts: state.last_activity_ts ?? null,
-      last_write_ts:    state.last_write_ts    ?? null
+      last_write_ts:    state.last_write_ts    ?? null,
+      last_progress_ts: state.last_progress_ts ?? null
     },
     last_tool: {
       name:       last_tool.name       ?? null,
