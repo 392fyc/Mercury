@@ -7,16 +7,25 @@ Thin HTTP client for hook scripts to send notifications through the channel rout
 Forwards `notify(severity, title, body)` calls to `mercury-channel-router` via HTTP POST.
 Does not hold Telegram credentials or spawn processes. If the router is not running, fails silently.
 
+**Caller scope (per Issue #316)**: emit only **user-actionable events** — events where the user has a meaningful action to take (decide next step, approve permission, acknowledge milestone). Internal agent telemetry (loop-detector stalls, hook failures, autocompact, heartbeat) is **anti-pattern** — see `adapters/mercury-channel-router/README.md` "Acceptable Callers".
+
 ## Usage
 
 ```js
 const { notify } = require('./adapters/mercury-notify/notify.cjs');
-await notify('error', 'Mercury stall: no_progress', 'details here');
+// Example: dev-pipeline announcing pipeline completion (user decides next step)
+await notify('info', 'Dev pipeline complete: 369-notify-wire', 'verdict=pass | files=4 | branch=feat/369-notify-wire');
+```
+
+For shell callers, prefer the `scripts/notify-event.sh` wrapper:
+
+```bash
+bash scripts/notify-event.sh info "Dev pipeline complete: 369" "verdict=pass | files=4 | branch=feat/369-notify-wire"
 ```
 
 ## Startup
 
-No startup needed. `require` directly from any hook or script. The router must be running separately (spawned automatically by `mercury-channel-client` when a Claude Code session starts).
+No startup needed. `require` directly from any skill/hook emitting a user-actionable event. The router must be running separately (spawned automatically by `mercury-channel-client` when a Claude Code session starts).
 
 ## Environment Variables
 
