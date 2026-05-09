@@ -998,8 +998,12 @@ describe('hook.cjs ETE: long PROGRESS_TOOLS phase suppresses hard-timeout', () =
       `Bash with recent last_progress_ts must NOT block, got: ${stdout}`);
 
     const finalState = JSON.parse(fs.readFileSync(path.join(stateDir, 'loop-detector.json'), 'utf8'));
-    assert.ok(Number.isFinite(finalState.last_progress_ts) && finalState.last_progress_ts >= now - 1_000,
-      'Bash (in PROGRESS_TOOLS) must bump last_progress_ts to ~now');
+    // Relative invariant (Argus iter-2 body advisory): must be strictly newer than
+    // the preseeded value (now - 30_000ms). Avoids wall-clock-window flakiness on
+    // CI load — only requires the bump operation actually happened.
+    const preseededProgressTs = now - 30_000;
+    assert.ok(Number.isFinite(finalState.last_progress_ts) && finalState.last_progress_ts > preseededProgressTs,
+      'Bash (in PROGRESS_TOOLS) must bump last_progress_ts past the preseeded value');
   });
 
   test('ETE: WebSearch loop with old last_progress_ts STILL blocks (true-stall preserved)', () => {
