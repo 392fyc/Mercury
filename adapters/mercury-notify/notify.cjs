@@ -2,7 +2,10 @@
 'use strict';
 
 // Mercury Notify — thin HTTP client forwarding notifications to mercury-channel-router.
-// Callers: hook scripts (loop-detector, post-commit, etc.).
+// Callers: skills/hooks emitting USER-ACTIONABLE events only — Dev Pipeline complete,
+// handoff session-switch, permission relay, critical security. Internal agent state
+// (loop-detector stalls, hook failures, autocompact, heartbeat) MUST NOT call this;
+// see adapters/mercury-channel-router/README.md "Acceptable Callers" + Issue #316.
 // Never throws; always returns {ok, ...}.
 
 const fs   = require('fs');
