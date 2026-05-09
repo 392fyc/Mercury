@@ -38,16 +38,23 @@ assert "json-skipped"  "$([[ "$out" == *'"skipped":true'* ]] && echo true || ech
 assert "json-ok-true"  "$([[ "$out" == *'"ok":true'* ]] && echo true || echo false)"
 
 echo "T3 unreachable router (port=1)"
-# Port 1 is reserved/unbound — guarantees ECONNREFUSED.
-# Result depends on token presence: no token → no_token; token present → transport.
+# Port 1 is reserved (tcpmux) and virtually never bound on dev machines, but
+# we tolerate the unlikely case where something IS listening — `router_<status>`
+# is also a valid fail-safe response. The semantic of T3 is "wrapper's response
+# to router-unreachable", and any of {no_token, transport, router_<N>} satisfies
+# that contract (ok=false + non-empty error).
+# Result depends on environment: no token → no_token; token present + nothing
+# bound → transport; token present + something bound → router_<status>.
 out=$(MERCURY_ROUTER_PORT=1 bash "$NOTIFY" info "smoke-t3" "body") ; rc=$?
 assert "exit-code-0"      "$([ "$rc" -eq 0 ] && echo true || echo false)"
 assert "json-ok-false"    "$([[ "$out" == *'"ok":false'* ]] && echo true || echo false)"
-assert "json-no-token-or-transport" "$([[ "$out" == *'"error":"no_token"'* || "$out" == *'"error":"transport"'* ]] && echo true || echo false)"
+assert "json-fail-safe-error" "$([[ "$out" == *'"error":"no_token"'* || "$out" == *'"error":"transport"'* || "$out" == *'"error":"router_'* ]] && echo true || echo false)"
 
 echo "T4 adapter missing (REPO_ROOT detection fallback to bogus)"
 # Run from a non-git tmp dir AND with a dirname that points to non-existent ../adapters
-TMPD=$(mktemp -d 2>/dev/null || echo "${TMPDIR:-/tmp}/notify-test-$$")
+# `-t TEMPLATE` is portable across GNU coreutils and BSD/macOS mktemp; the bare
+# `mktemp -d` form differs between the two and is unreliable.
+TMPD=$(mktemp -d -t notify-event-test.XXXXXX 2>/dev/null || mktemp -d "${TMPDIR:-/tmp}/notify-event-test.XXXXXX" 2>/dev/null || echo "${TMPDIR:-/tmp}/notify-event-test-$$")
 mkdir -p "$TMPD/scripts"
 cp "$NOTIFY" "$TMPD/scripts/notify-event.sh"
 chmod +x "$TMPD/scripts/notify-event.sh"
@@ -61,7 +68,7 @@ echo "T6 synchronous require() failure (broken adapter)"
 # require(NOTIFY_MOD) call raises synchronously. The wrapper's outer try/catch
 # must convert this to ok:false + invoke:* JSON without exiting non-zero —
 # regression coverage for the iter-1 Medium finding.
-TMPD6=$(mktemp -d 2>/dev/null || echo "${TMPDIR:-/tmp}/notify-test-t6-$$")
+TMPD6=$(mktemp -d -t notify-event-test.XXXXXX 2>/dev/null || mktemp -d "${TMPDIR:-/tmp}/notify-event-test.XXXXXX" 2>/dev/null || echo "${TMPDIR:-/tmp}/notify-event-test-t6-$$")
 mkdir -p "$TMPD6/scripts" "$TMPD6/adapters/mercury-notify"
 cp "$NOTIFY" "$TMPD6/scripts/notify-event.sh"
 chmod +x "$TMPD6/scripts/notify-event.sh"
