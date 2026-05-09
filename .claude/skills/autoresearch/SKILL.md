@@ -114,7 +114,9 @@ Round N:
 
 ## Return Contract
 
-When autoresearch terminates and returns control to the calling agent (Mercury main session, standalone user, or orchestrator), the completion return message MUST contain ONLY:
+When autoresearch terminates and returns control to the calling agent (Mercury main session, standalone user, or orchestrator), the completion return message MUST be a **content-kind constraint**, not a literal field list. The constraint is: **no raw findings, no raw search snippets, no full report body** — only summary metadata and pointers.
+
+Concretely, the return MUST include at minimum:
 
 1. **Report file path** — the absolute or repo-relative path to the final research report (e.g. `Mercury_KB/04-research/RESEARCH-topic-001.md` or `.research/reports/RESEARCH-topic-2026-05-09.md`).
 2. **Verdict + per-metric scores** — the gate metrics from the final round (`question_answer_rate`, `citation_density`, `unverified_rate`) and the verification verdict (PASS / PARTIAL / FAIL / mechanical_only).
@@ -126,6 +128,12 @@ When autoresearch terminates and returns control to the calling agent (Mercury m
 - Raw round-by-round log entries or per-round source lists
 - Full report body or large excerpts from the report
 - Full verification checklist content (only the final verdict score, not the checklist rows)
+
+**Permitted summary metadata (conforming to this contract):** The `Rounds: N` line, the per-metric breakdown table, and the orchestrator JSON receipt (Mercury Integration mode) are all allowed — they are summary metadata, not raw findings. The two canonical implementations of this contract are:
+- **`### Final Output` template** (in the Termination & Output section below) — the human-readable summary format used in standalone and interactive invocations.
+- **`## Mercury Integration` JSON receipt** — the machine-readable format used when running under Mercury orchestrator dispatch.
+
+Both satisfy the content-kind constraint. Use whichever matches the invocation context; in Mercury mode, emit both (the human-readable summary for the session transcript and the JSON receipt for the orchestrator `record_receipt` flow).
 
 All raw research artifacts live in `.research/reports/` (standalone mode) or `Mercury_KB/04-research/` (Mercury mode) and are addressable by file path. The calling agent reads the file directly if it needs detail — the return message is a pointer + verdict, not a data dump.
 

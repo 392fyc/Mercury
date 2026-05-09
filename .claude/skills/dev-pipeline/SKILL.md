@@ -27,10 +27,10 @@ Before invoking this skill, the following must be true:
 |---|---|
 | **One task per pipeline run** | Mercury's preset is linear single-task, not parallel multi-task. For parallelism, the user opens multiple sessions. |
 | **TaskBundle is inline JSON, not Obsidian** | This skill is dependency-free. The Memory Layer / Obsidian KB integration ships in Phase 3 — until then, the bundle is constructed inline by Main and passed to the dev subagent in the prompt. |
-| **Acceptance is blind** | The acceptance subagent MUST NOT receive the dev subagent's reasoning, narrative, self-assessment, or risk evaluation. It receives only the AcceptanceBundle (criteria) plus a blindReceipt containing changed-file paths and test results. |
+| **Acceptance is blind** | The acceptance subagent MUST NOT receive the dev subagent's reasoning, narrative, self-assessment, or risk evaluation. It receives only the AcceptanceBundle (criteria) plus a blindReceipt containing changed-file paths, test results, and a structured `dodChecklist` (per-criterion citations — structured pointers, not narrative reasoning). |
 | **Max 3 dev iterations** | If acceptance returns fail 3 times, escalate to user — do not loop forever. |
 | **Main does not write code** | Main coordinates, reviews receipts, decides next action. Implementation belongs to dev. Verification belongs to acceptance. |
-| **Sub-agents cannot spawn sub-agents** | Per Claude Code documented constraint. Only the Main thread (running this skill) can dispatch dev or acceptance. Dev cannot call acceptance directly. |
+| **Sub-agents cannot spawn sub-agents** | Per Claude Code documented constraint. Only the Main thread (running this skill) can dispatch dev or acceptance. Dev cannot call acceptance directly. Note: built-in Claude Code tools (Read, Grep, Glob, Explore) are not custom Mercury subagents — they may be invoked by Main per normal Claude Code semantics. The "no sub-agent spawning" rule applies specifically to Mercury's custom dev/acceptance/critic subagents defined under `.claude/agents/`. |
 
 ### Receipt return-size discipline
 
@@ -120,12 +120,6 @@ You are operating under the dev agent role (.claude/agents/dev.md). Implement th
 6. Commit with format type(scope): summary (Mercury convention).
 7. Push to current branch.
 8. Output the JSON receipt below as your FINAL message.
-
-## Explore guardrail
-When invoking Explore subagent for codebase traversal or file discovery:
-- Cap return at ~5K tokens (caller-stated soft cap).
-- Prefer path-only summaries when matches exceed 20 files — no file contents, no snippets.
-- Never paste raw file contents; use file:line citations with at most 1-line context per citation.
 
 ## Receipt template
 {
@@ -287,6 +281,18 @@ On pass:
 5. After PR merge is confirmed, run the **Phase 5 Cleanup block** as the final action (see Phase 5 above — the retry + `rm -rf` fallback logic is the SoT and is not duplicated here).
 
 **Single source of truth**: the Phase 5 Cleanup block is the only authoritative description of when `$SHA_FILE` is removed. Phase 6 only reaches it via the `pass` branch above. If you find yourself debating "should I clean up here", re-read Phase 5.
+
+## Explore guardrail (Main-side)
+
+When Main dispatches Explore for readScope discovery, scope verification, or general codebase exploration, the Explore prompt MUST cap return at the following constraints:
+
+- **Token cap**: cap return at ~5K tokens (caller-stated soft cap). If the response would exceed this, Explore must summarize rather than paste.
+- **Path-only preference**: when matches exceed 20 files, return file paths only (one per line) — no file contents, no snippets, no surrounding context beyond the path.
+- **No raw file contents**: never paste raw file contents into the return. Use `file:line` citations with at most a 1-line context excerpt per citation.
+
+These constraints preserve the main session's context budget when using Explore for discovery. Violation risks are the same as raw-search injection: context pressure and session stops (Issue #215, #101 Gap 4).
+
+> Note: this section governs Main's use of the built-in Explore tool. Dev subagents operate in isolated worktree contexts and use Read/Grep/Glob directly per their allowed-tools list — they do not dispatch Explore as a subagent.
 
 ## Detachability
 
