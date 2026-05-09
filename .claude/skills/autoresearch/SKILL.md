@@ -369,3 +369,26 @@ When running under Mercury orchestrator (auto-detected via `Mercury_KB/04-resear
 - On completion, output a JSON receipt for the orchestrator record_receipt flow
 
 The skill auto-detects this. No manual configuration needed.
+
+### Mercury JSON receipt schema
+
+When running under Mercury orchestrator, emit a final JSON receipt of this shape (this is one canonical implementation of the Return Contract):
+
+```json
+{
+  "topic": "<research topic>",
+  "rounds": "<int>",
+  "report_path": "<repo-relative path under Mercury_KB/04-research/>",
+  "verdict": "PASS|PARTIAL|FAIL|mechanical_only",
+  "metrics": {
+    "question_answer_rate": "<float>",
+    "citation_density": "<float>",
+    "unverified_rate": "<float>",
+    "iteration_depth": "<int>"
+  },
+  "gaps": ["<gap 1>", "..."],
+  "termination_reason": "gate_passed|max_rounds|interrupted"
+}
+```
+
+The `report_path` field MUST be a repo-relative path (no absolute filesystem paths — see Return Contract for rationale). The receipt content is summary metadata only — no raw findings, no raw search snippets, no full report body.

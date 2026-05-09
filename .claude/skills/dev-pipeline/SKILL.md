@@ -30,7 +30,7 @@ Before invoking this skill, the following must be true:
 | **Acceptance is blind** | The acceptance subagent MUST NOT receive the dev subagent's reasoning, narrative, self-assessment, or risk evaluation. It receives only the AcceptanceBundle (criteria) plus a blindReceipt containing changed-file paths, test results, and a structured `dodChecklist` (per-criterion citations — structured pointers, not narrative reasoning). |
 | **Max 3 dev iterations** | If acceptance returns fail 3 times, escalate to user — do not loop forever. |
 | **Main does not write code** | Main coordinates, reviews receipts, decides next action. Implementation belongs to dev. Verification belongs to acceptance. |
-| **Sub-agents cannot spawn sub-agents** | Per Claude Code documented constraint. Only the Main thread (running this skill) can dispatch dev or acceptance. Dev cannot call acceptance directly. Note: built-in Claude Code tools (Read, Grep, Glob, Explore) are not custom Mercury subagents — they may be invoked by Main per normal Claude Code semantics. The "no sub-agent spawning" rule applies specifically to Mercury's custom dev/acceptance/critic subagents defined under `.claude/agents/`. |
+| **Sub-agents cannot spawn sub-agents** | Per Claude Code documented constraint. Only the Main thread (running this skill) can dispatch dev or acceptance. Dev cannot call acceptance directly. Note: built-in Claude Code search tools (`Read`, `Grep`, `Glob`) and the built-in `Explore` subagent are exempt — they are part of the Claude Code platform, not custom Mercury subagents. Main may dispatch them per normal Claude Code semantics. The "no sub-agent spawning" rule applies specifically to Mercury's custom dev/acceptance/critic subagents defined under `.claude/agents/`. (`Explore` is dispatched via the `Agent` tool with `subagent_type: "Explore"`.) |
 
 ### Receipt return-size discipline
 
@@ -155,6 +155,7 @@ Main checks receipt completeness — NOT correctness (that is acceptance's job).
 Checklist:
 - [ ] All changedFiles exist in the diff
 - [ ] commitSha matches latest commit on the branch
+- [ ] `branch` field is non-empty AND matches the current branch (`git branch --show-current`) — guards against dispatch-time branch confusion or stale receipts.
 - [ ] All verifyCommands listed in the bundle have a verifyResults entry with exitCode 0
 - [ ] dodChecklist has one entry per definitionOfDone item, each with `met: true` and a non-empty `citation` (file:line or test output)
 - [ ] No file outside allowedWriteScope was touched. Use the **task-start SHA** captured before Phase 2 dispatch as the comparison base (`TASK_START_SHA=$(git rev-parse HEAD)` before dispatch, then `git diff --name-only "$TASK_START_SHA..HEAD"` after). Do NOT use `HEAD~1` — it breaks on first commits, squashed commits, and multi-commit dev runs.
@@ -168,6 +169,7 @@ Build the **blindReceipt** by forwarding the structured fields from the dev rece
 ```json
 {
   "taskId": "task-slug",
+  "branch": "<branch name>",
   "changedFiles": ["path/to/file1.ts", "path/to/file2.ts"],
   "commitSha": "abc123def",
   "verifyResults": [
