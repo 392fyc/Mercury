@@ -375,9 +375,21 @@ async function notify(severity, title, body, options = {}) {
 module.exports = { notify };
 ```
 
-### 6.3 Caller wire（不变）
+### 6.3 Caller wire（user-actionable only — corrected per #316）
 
-`adapters/mercury-loop-detector/hook.cjs` 在 stall 触发后调 `notify('error', 'Mercury stall: <type>', stallReason)`，fire-and-forget。
+**正确的 caller pattern**：notify 仅用于 user 在 Telegram 上有 actionable response 的事件。
+
+**示例（user-actionable）**：
+- Dev Pipeline subagent 完成长任务后 `notify('info', 'Dev pipeline complete', '<verdict + next step prompt>')` → 用户决定继续 / cancel / handoff
+- Handoff skill spawn 新 session 时 `notify('info', 'Handoff: new session spawned', '<branch + label>')` → 用户切换到新 tab
+- Permission relay：MCP `permission_request` → router → Telegram inline keyboard
+
+**反例（DO NOT wire — agent self-consumed）**：
+- ❌ loop-detector stall 触发：原 PR #295 wire 已 revert（Issue #316），agent 通过 `writeStallReport()` 自处理
+- ❌ Hook script failure：agent 自恢复，无需 Telegram
+- ❌ Autocompact / heartbeat：内部状态事件
+
+**设计原则**：confusing internal agent telemetry with user-facing notifications floods the channel. Reserve Telegram for events that genuinely require human attention.
 
 ---
 
@@ -530,11 +542,13 @@ tmux new-session -d -s handoff "claude ${MERCURY_CHANNELS_FLAGS:-} -- '$SHORT_PR
 
 ### Phase 5-1: notify.cjs + router skeleton（首 PR）
 
+> **Historical note (Issue #316 correction, 2026-05-09)**: 原 Phase 5-1 plan 提议 wire `mercury-loop-detector/hook.cjs` stall → notify 并以 Telegram stall alert 作 demo。该 wire 已 revert（PR #295 commit `bb8a458` 引入，Issue #316 移除），因为 stall 事件 agent-self-consumed 不属于 user-actionable scope（详见 §6.3）。Phase 5-1 实际 ship 的 demo 改为 user-actionable 事件（如 Dev Pipeline 完成提示）。
+
 - `mercury-notify/notify.cjs` 30 LOC
 - `mercury-channel-router/router.cjs` 仅 outbound 部分（接 `/notify` 转 Telegram，~80 LOC）
-- Wire `mercury-loop-detector/hook.cjs` 卡死后调 notify
+- ~~Wire `mercury-loop-detector/hook.cjs` 卡死后调 notify~~ — **REVERTED per #316**: stall 事件 agent-self-consumed via `writeStallReport()`，不 wire notify
 - 用户在 `~/.claude/settings.json` 设 `MERCURY_TELEGRAM_BOT_TOKEN`
-- **Demo**：触发卡死 → 手机收到 `[#NNN] Mercury stall: no_progress`
+- **Demo (corrected)**：user-actionable 事件触发 → 手机收到 `[#NNN] <severity> <title>`（loop-detector stall 不再作为示例 demo）
 - 关 #293 一半 scope
 
 ### Phase 5-2: router 完整 + channel-client（次 PR）

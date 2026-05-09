@@ -65,8 +65,26 @@ Or set `CLAUDE_HANDOFF_AUTO_LAUNCH_FLAGS` in your environment to propagate this 
 | GET | `/sessions` | List registered sessions |
 | GET | `/inbox/:id` | SSE stream of inbound events for a session |
 
+## Acceptable Callers (notify endpoint)
+
+The `/notify` IPC endpoint is for **user-actionable events only** — events where the user on Telegram has a meaningful action to take (decide next step, approve permission, acknowledge milestone).
+
+**✅ Acceptable**:
+- Dev Pipeline task complete → user decides next step (continue / cancel / handoff)
+- Handoff session-switch → user is aware new tab spawned, can switch focus
+- Permission relay → user approves/denies tool call
+- Critical security event → token leak attempt, unusual sender
+
+**❌ Anti-patterns (never wire to /notify)**:
+- `loop-detector` stall events → agent self-consumes (writeStallReport file is the agent-internal channel) — see Issue #316
+- Hook script failures → agent self-recovers
+- Autocompact / heartbeat / periodic state events
+- Any event where the user has no actionable response on Telegram
+
+Rationale: confusing internal agent telemetry with user-facing notifications floods the channel and trains the user to ignore it. Reserve Telegram for events that genuinely require human attention.
+
 ## Notes
 
-- Bun is optional — Node 18+ works fine.
+- Bun is optional — Node 20+ required (per repo `package.json` engines + Phase 5 ADR §9.1).
 - Lock file at `~/.mercury/router.lock` prevents duplicate instances.
 - Requires `node-telegram-bot-api` (installed via pnpm at project root).
