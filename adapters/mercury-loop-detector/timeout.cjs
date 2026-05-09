@@ -124,7 +124,7 @@ function checkMultiLevel(state, cfg, now) {
     return { level: 'hard', message: msg, should_block: true };
   }
   if (elapsed > idle) {
-    const msg = `${TAG} WARNING: idle timeout: ${elapsed}s since last progress (threshold: ${idle}s) — consider /handoff or resume with a write`;
+    const msg = `${TAG} WARNING: idle timeout: ${elapsed}s since last progress (threshold: ${idle}s) — consider /handoff or resume with progress activity (write or Bash/Agent/Skill/Task call)`;
     return { level: 'idle', message: msg, should_block: false };
   }
   if (elapsed > soft) {
