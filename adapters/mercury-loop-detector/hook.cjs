@@ -174,7 +174,7 @@ function main() {
       const fullReason = `Mercury loop detector: ${tr.message}\n(Buffer reset. If this is a false positive, resume your work.)`;
       writeStallReport(cwd, session_id, 'timeout_hard', fullReason, state,
         { name: tool_name, input_hash: ihash, errored, err_sig });
-      try { const { notify } = require('../mercury-notify/notify.cjs'); notify('error', `Mercury stall: timeout_hard`, tr.message).catch(() => {}); } catch { /* notify load failure non-fatal */ }
+      // stall events are agent-internal — no Telegram wire (#316).
       Object.assign(state, EMPTY_STATE()); state.session_id = session_id; saveState(statePath, state);
       block(fullReason);
     }
@@ -186,7 +186,7 @@ function main() {
     const fullReason = `Mercury loop detector: ${stall.reason}\n(Buffer reset. If this is a false positive, resume your work.)`;
     writeStallReport(cwd, session_id, stall.type, fullReason, state,
       { name: tool_name, input_hash: ihash, errored, err_sig });
-    try { const { notify } = require('../mercury-notify/notify.cjs'); notify('error', `Mercury stall: ${stall.type}`, stall.reason).catch(() => {}); } catch { /* notify load failure non-fatal */ }
+    // stall events are agent-internal — no Telegram wire (#316).
     Object.assign(state, EMPTY_STATE()); state.session_id = session_id; saveState(statePath, state);
     block(fullReason);
   }

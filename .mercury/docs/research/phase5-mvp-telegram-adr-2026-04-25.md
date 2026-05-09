@@ -375,9 +375,21 @@ async function notify(severity, title, body, options = {}) {
 module.exports = { notify };
 ```
 
-### 6.3 Caller wire（不变）
+### 6.3 Caller wire（user-actionable only — corrected per #316）
 
-`adapters/mercury-loop-detector/hook.cjs` 在 stall 触发后调 `notify('error', 'Mercury stall: <type>', stallReason)`，fire-and-forget。
+**正确的 caller pattern**：notify 仅用于 user 在 Telegram 上有 actionable response 的事件。
+
+**示例（user-actionable）**：
+- Dev Pipeline subagent 完成长任务后 `notify('info', 'Dev pipeline complete', '<verdict + next step prompt>')` → 用户决定继续 / cancel / handoff
+- Handoff skill spawn 新 session 时 `notify('info', 'Handoff: new session spawned', '<branch + label>')` → 用户切换到新 tab
+- Permission relay：MCP `permission_request` → router → Telegram inline keyboard
+
+**反例（DO NOT wire — agent self-consumed）**：
+- ❌ loop-detector stall 触发：原 PR #295 wire 已 revert（Issue #316），agent 通过 `writeStallReport()` 自处理
+- ❌ Hook script failure：agent 自恢复，无需 Telegram
+- ❌ Autocompact / heartbeat：内部状态事件
+
+**设计原则**：confusing internal agent telemetry with user-facing notifications floods the channel. Reserve Telegram for events that genuinely require human attention.
 
 ---
 

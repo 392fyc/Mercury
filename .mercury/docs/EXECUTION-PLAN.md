@@ -354,7 +354,8 @@ adapters/         # 适配层
 - ✅ Addresses Issue #91 ("IM Bot Bridge — LINE/Telegram 托管 Main Agent 远程对话") — closed manually post-merge
 
 ### 5-3. 与其他模块集成 — 🟡 Partial
-- ✅ Quality Gate: loop-detector stall → notify wire 已落地 (PR #295)
+- **Scope (user-actionable only)**: Phase 5-3 wire targets are limited to events with meaningful user response — Dev Pipeline complete, handoff session-switch, permission relay, critical security events. Internal agent state (loop-detector, hook failures, autocompact, heartbeat) **never** wires to notify.
+- ❌ Quality Gate: loop-detector stall → notify wire **已 revert** (Issue #316, 2026-05-09) — stall events are agent-self-consumed via `writeStallReport()`. Telegram reserved for user-actionable events only.
 - ⏳ Session Continuity: handoff session 切换时通知 — 待 `CLAUDE_HANDOFF_AUTO_LAUNCH_FLAGS` env var 在 claude-handoff plugin merge 后启用 (跨仓库: [`392fyc/claude-handoff#11`](https://github.com/392fyc/claude-handoff/pull/11))
 - ⏳ Dev Pipeline: dev/acceptance subagent 完成时通知 — 后续接入
 - 🔜 自然语言意图解析（"取消刚才那个"等口语命令）DEFER — MVP 用 deterministic `@<label>` + `/cmd` 已够用；远期 Phase 5-3 加 OpenAI gpt-4o-mini direct intent parser（ADR §11 Phase 5-3 + `router-llm-backend-2026-04-25.md`）
