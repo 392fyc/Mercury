@@ -202,7 +202,7 @@ You are operating under the acceptance agent role (.claude/agents/acceptance.md)
 ## AcceptanceBundle
 [paste AcceptanceBundle JSON]
 
-## Blind Receipt (changed files only — NO dev narrative)
+## Blind Receipt (changed files, test results, structured dodChecklist — NO dev narrative)
 [paste blindReceipt JSON]
 
 ## Instructions
