@@ -6,6 +6,7 @@
 #   T4 adapter gone         → exit 0, JSON ok:false error:adapter_missing
 #   T5 node missing         → exit 0, JSON ok:false error:node_missing
 #   T6 synchronous require  → exit 0, JSON ok:false error:invoke:* (broken adapter)
+#   T7 invalid severity     → exit 1, stderr usage line (severity whitelist)
 #
 # Runs without spawning a real router; uses unreachable port for T3.
 # Run: bash scripts/notify-event.test.sh
@@ -82,6 +83,13 @@ echo "T5 node binary missing (PATH=/nonexistent + absolute bash)"
 out=$(PATH=/nonexistent "${BASH:-bash}" "$NOTIFY" info "smoke-t5" "body") ; rc=$?
 assert "exit-code-0"        "$([ "$rc" -eq 0 ] && echo true || echo false)"
 assert "json-node-missing"  "$([[ "$out" == *'"error":"node_missing"'* ]] && echo true || echo false)"
+
+echo "T7 invalid severity (whitelist boundary)"
+# Anything outside info|warn|error must be treated as a usage error.
+out=$(bash "$NOTIFY" debug "smoke-t7" "body" 2>&1 >/dev/null) ; rc=$?
+assert "exit-code-1"   "$([ "$rc" -eq 1 ] && echo true || echo false)"
+assert "stderr-usage"  "$([[ "$out" == *"usage: notify-event.sh"* ]] && echo true || echo false)"
+assert "stderr-hint"   "$([[ "$out" == *"info|warn|error"* ]] && echo true || echo false)"
 
 echo
 echo "Result: $PASS passed, $FAIL failed"
