@@ -326,7 +326,7 @@ adapters/         # 适配层
 - ✅ sliding window 循环检测已实现并交付 (PR #229, #231, merged)
 - ✅ 增强 A: 多级超时 (soft → idle → hard) — Issue #290 落地
 - ✅ 增强 B: 卡死后诊断报告 → 写文件 (.mercury/state/stall-reports/) — Issue #290 落地
-- ⏳ 增强 C (Phase 5 依赖): 卡死后推送通知给用户（随 Phase 5 Notify Hub 落地）
+- ❌ ~~增强 C (Phase 5 依赖): 卡死后推送通知给用户~~ — **已 revert (Issue #316, 2026-05-09)**: stall 事件 agent-self-consumed via `writeStallReport()`，不属于 user-actionable scope。Phase 5-3 通知 scope 只限 user-actionable 事件（详见 §5-3）
 
 **产出**: agent 可以自动跨 session 继续工作
 **人类干预点**: ~~技术方案选择（已完成，Option D）~~；首次 session 接力时确认状态传递完整性

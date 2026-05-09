@@ -85,6 +85,6 @@ Rationale: confusing internal agent telemetry with user-facing notifications flo
 
 ## Notes
 
-- Bun is optional — Node 18+ works fine.
+- Bun is optional — Node 20+ required (per repo `package.json` engines + Phase 5 ADR §9.1).
 - Lock file at `~/.mercury/router.lock` prevents duplicate instances.
 - Requires `node-telegram-bot-api` (installed via pnpm at project root).
