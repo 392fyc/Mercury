@@ -155,7 +155,7 @@ Main checks receipt completeness — NOT correctness (that is acceptance's job).
 Checklist:
 - [ ] All changedFiles exist in the diff
 - [ ] commitSha matches latest commit on the branch
-- [ ] `branch` field is non-empty AND matches the current branch (`git branch --show-current`) — guards against dispatch-time branch confusion or stale receipts.
+- [ ] `branch` field is non-empty AND matches the `TASK_BRANCH` Main captured in Phase 2 (`echo "$TASK_BRANCH"` if Main saved it, or recover via `git -C "$WORKTREE_PATH" branch --show-current` running in the dev worktree context — NOT `git branch --show-current` from Main's own cwd, which would return Main's parent-branch). Guards against dispatch-time branch confusion or stale receipts.
 - [ ] All verifyCommands listed in the bundle have a verifyResults entry with exitCode 0
 - [ ] dodChecklist has one entry per definitionOfDone item, each with `met: true` and a non-empty `citation` (file:line or test output)
 - [ ] No file outside allowedWriteScope was touched. Use the **task-start SHA** captured before Phase 2 dispatch as the comparison base (`TASK_START_SHA=$(git rev-parse HEAD)` before dispatch, then `git diff --name-only "$TASK_START_SHA..HEAD"` after). Do NOT use `HEAD~1` — it breaks on first commits, squashed commits, and multi-commit dev runs.
