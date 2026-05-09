@@ -82,13 +82,15 @@ function updateTimestamps(state, is_write, is_progress, now) {
   if (is_write || is_progress) {
     state.last_progress_ts = now;
   }
-  // Initialise last_write_ts on first call (no prior write seen this session).
-  // Reject 0/negative timestamps as polluted state per Issue #372 (sister to #325).
-  if (!isPositiveTs(state.last_write_ts)) {
+  // Initialise / heal on first call OR polluted state. Reject 0/negative AND
+  // future-dated timestamps per #372 (Argus iter-3 Copilot finding): without
+  // healing future-ts, a state file with last_write_ts > now+grace would
+  // persist forever — checkMultiLevel would fall through ref selection and
+  // disable timeout until wall clock catches up.
+  if (!isValidPastTs(state.last_write_ts, now)) {
     state.last_write_ts = now;
   }
-  // Initialise last_progress_ts (backward-compat: old state files lack the field).
-  if (!isPositiveTs(state.last_progress_ts)) {
+  if (!isValidPastTs(state.last_progress_ts, now)) {
     state.last_progress_ts = state.last_write_ts;
   }
 }

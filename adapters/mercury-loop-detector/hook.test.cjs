@@ -888,6 +888,24 @@ describe('last_progress_ts: timeout uses progress signal, not just write', () =>
     const result = checkMultiLevel(state, makeCfg(), now);
     assert.equal(result, null, '30s forward grace tolerated; elapsed<0 returns null per pre-existing guard');
   });
+
+  test('updateTimestamps heals future-dated last_progress_ts on init (Argus iter-3 Copilot)', () => {
+    const now   = Date.now();
+    // Polluted: last_progress_ts far in the future. Without healing, it would
+    // persist forever — checkMultiLevel rejects it but state file stays bad.
+    const state = makeState({ last_write_ts: now - 100_000, last_progress_ts: now + 999_999_999 });
+    updateTimestamps(state, false, false, now);
+    assert.equal(state.last_progress_ts, now - 100_000,
+      'future-dated last_progress_ts must be healed to last_write_ts');
+  });
+
+  test('updateTimestamps heals both future-dated timestamps on init', () => {
+    const now   = Date.now();
+    const state = makeState({ last_write_ts: now + 99_999_999, last_progress_ts: now + 999_999_999 });
+    updateTimestamps(state, false, false, now);
+    assert.equal(state.last_write_ts, now, 'future-dated last_write_ts healed to now');
+    assert.equal(state.last_progress_ts, now, 'last_progress_ts inherits healed last_write_ts');
+  });
 });
 
 // ── 16. ETE: long Bash/Skill phase no longer trips hard-timeout (Issue #372) ──
