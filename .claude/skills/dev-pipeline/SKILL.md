@@ -27,11 +27,14 @@ Before invoking this skill, the following must be true:
 |---|---|
 | **One task per pipeline run** | Mercury's preset is linear single-task, not parallel multi-task. For parallelism, the user opens multiple sessions. |
 | **TaskBundle is inline JSON, not Obsidian** | This skill is dependency-free. The Memory Layer / Obsidian KB integration ships in Phase 3 — until then, the bundle is constructed inline by Main and passed to the dev subagent in the prompt. |
-| **Acceptance is blind** | The acceptance subagent MUST NOT receive the dev subagent's reasoning, narrative, self-assessment, or risk evaluation. It receives only the AcceptanceBundle (criteria) plus a blindReceipt containing changed-file paths and test results. |
+| **Acceptance is blind** | The acceptance subagent MUST NOT receive the dev subagent's reasoning, narrative, self-assessment, or risk evaluation. It receives only the AcceptanceBundle (criteria) plus a blindReceipt containing changed-file paths, test results, and a structured `dodChecklist` (per-criterion citations — structured pointers, not narrative reasoning). |
 | **Max 3 dev iterations** | If acceptance returns fail 3 times, escalate to user — do not loop forever. |
 | **Main does not write code** | Main coordinates, reviews receipts, decides next action. Implementation belongs to dev. Verification belongs to acceptance. |
-| **Sub-agents cannot spawn sub-agents** | Per Claude Code documented constraint. Only the Main thread (running this skill) can dispatch dev or acceptance. Dev cannot call acceptance directly. |
+| **Sub-agents cannot spawn sub-agents** | Per Claude Code documented constraint. Only the Main thread (running this skill) can dispatch dev or acceptance. Dev cannot call acceptance directly. Note: built-in Claude Code search tools (`Read`, `Grep`, `Glob`) and the built-in `Explore` subagent are exempt — they are part of the Claude Code platform, not custom Mercury subagents. Main may dispatch them per normal Claude Code semantics. The "no sub-agent spawning" rule applies specifically to Mercury's custom dev/acceptance/critic subagents defined under `.claude/agents/`. (`Explore` is dispatched via the `Agent` tool with `subagent_type: "Explore"`.) |
 
+### Receipt return-size discipline
+
+Sub-agent return values are the main session's primary context inflation source (typically 5–15K tokens per round). To keep the pipeline sustainable across many iterations, the dev receipt MUST use the structured slim format defined in Phase 2 — no free-form `evidence` or `risks` narrative. The `dodChecklist` array provides structured per-criterion citations that give acceptance everything it needs without prose overhead. See Issue #362 for background and real-world soak targets (<2K tokens avg per receipt).
 
 ## Phase 1: Build TaskBundle
 
@@ -122,13 +125,15 @@ You are operating under the dev agent role (.claude/agents/dev.md). Implement th
 {
   "taskId": "[copied out of the bundle]",
   "status": "completed|blocked|escalated",
-  "changedFiles": ["path", "..."],
+  "branch": "<current branch name>",
   "commitSha": "sha",
+  "changedFiles": ["path", "..."],
   "verifyResults": [
     {"command": "cmd", "exitCode": 0, "summary": "one line"}
   ],
-  "evidence": "file:line citations supporting definition-of-done",
-  "risks": "known risks or follow-up needed",
+  "dodChecklist": [
+    {"criterion": "<text from definitionOfDone>", "met": true, "citation": "<file:line or test output>"}
+  ],
   "escalationReason": "only if status is not completed"
 }
 
@@ -150,29 +155,34 @@ Main checks receipt completeness — NOT correctness (that is acceptance's job).
 Checklist:
 - [ ] All changedFiles exist in the diff
 - [ ] commitSha matches latest commit on the branch
+- [ ] `branch` field is non-empty AND matches the `TASK_BRANCH` Main captured in Phase 2 (`echo "$TASK_BRANCH"` if Main saved it, or recover via `git -C "$WORKTREE_PATH" branch --show-current` running in the dev worktree context — NOT `git branch --show-current` from Main's own cwd, which would return Main's parent-branch). Guards against dispatch-time branch confusion or stale receipts.
 - [ ] All verifyCommands listed in the bundle have a verifyResults entry with exitCode 0
-- [ ] evidence cites at least one file:line per definitionOfDone item
+- [ ] dodChecklist has one entry per definitionOfDone item, each with `met: true` and a non-empty `citation` (file:line or test output)
 - [ ] No file outside allowedWriteScope was touched. Use the **task-start SHA** captured before Phase 2 dispatch as the comparison base (`TASK_START_SHA=$(git rev-parse HEAD)` before dispatch, then `git diff --name-only "$TASK_START_SHA..HEAD"` after). Do NOT use `HEAD~1` — it breaks on first commits, squashed commits, and multi-commit dev runs.
 
 **Gate**: if any check fails, send a correction prompt to dev (still iteration 1) with the specific deficiency. Do not advance to acceptance with an incomplete receipt.
 
 ## Phase 4: Dispatch Acceptance (BLIND)
 
-Build the **blindReceipt** by stripping dev's narrative fields. **Preserve original JSON types** — `changedFiles` and `verifyResults` are arrays in the dev receipt and MUST remain arrays here, not stringified placeholders:
+Build the **blindReceipt** by forwarding the structured fields from the dev receipt. **Preserve original JSON types** — `changedFiles`, `verifyResults`, and `dodChecklist` are arrays in the dev receipt and MUST remain arrays here, not stringified placeholders:
 
 ```json
 {
   "taskId": "task-slug",
+  "branch": "<branch name>",
   "changedFiles": ["path/to/file1.ts", "path/to/file2.ts"],
   "commitSha": "abc123def",
   "verifyResults": [
     {"command": "pnpm test packages/foo", "exitCode": 0, "summary": "12 passed"},
     {"command": "pnpm lint", "exitCode": 0, "summary": "0 issues"}
+  ],
+  "dodChecklist": [
+    {"criterion": "criterion text from DoD", "met": true, "citation": "file:line or test output"}
   ]
 }
 ```
 
-Note what was REMOVED relative to the dev receipt: `evidence`, `risks`, `escalationReason`. The acceptance agent must form its own conclusions out of code and tests, not out of dev's self-assessment.
+Note what was REMOVED relative to the dev receipt: `escalationReason` (only present when status != completed — not relevant to a completed task's acceptance review). The `dodChecklist` is forwarded because it contains structured per-criterion citations (not dev's narrative reasoning) — acceptance uses it to cross-check each DoD item against actual code. The acceptance agent still forms its own independent conclusions from code and tests; `dodChecklist` citations are starting pointers, not authoritative verdicts.
 
 Build the **AcceptanceBundle** (also preserve original types — `definitionOfDone`, `acceptanceCriteria`, `verifyCommands` are arrays, not strings):
 
@@ -194,7 +204,7 @@ You are operating under the acceptance agent role (.claude/agents/acceptance.md)
 ## AcceptanceBundle
 [paste AcceptanceBundle JSON]
 
-## Blind Receipt (changed files only — NO dev narrative)
+## Blind Receipt (changed files, test results, structured dodChecklist — NO dev narrative)
 [paste blindReceipt JSON]
 
 ## Instructions
@@ -273,6 +283,19 @@ On pass:
 5. After PR merge is confirmed, run the **Phase 5 Cleanup block** as the final action (see Phase 5 above — the retry + `rm -rf` fallback logic is the SoT and is not duplicated here).
 
 **Single source of truth**: the Phase 5 Cleanup block is the only authoritative description of when `$SHA_FILE` is removed. Phase 6 only reaches it via the `pass` branch above. If you find yourself debating "should I clean up here", re-read Phase 5.
+
+## Explore guardrail (Main-side)
+
+When Main dispatches Explore for readScope discovery, scope verification, or general codebase exploration, the Explore prompt MUST cap return at the following constraints:
+
+- **Token cap**: cap return at ~5K tokens (caller-stated soft cap).
+- **Path-only preference**: when matches exceed 20 files, return file paths only (one per line) — no file contents, no snippets, no surrounding context beyond the path.
+- **No raw file contents**: never paste raw file contents into the return. Use `file:line` citations with at most a 1-line context excerpt per citation.
+- **Overflow behavior (mandatory fallback)**: if any of the above thresholds are exceeded, the return MUST switch to path-only mode AND emit a single explicit fallback line at the top: `[guardrail-fallback: <reason>; matches=<N>; tokens≈<T>; raw output suppressed — caller may re-dispatch with narrower scope]`. Do not silently truncate or arbitrarily summarize — the caller must know fallback was triggered so they can re-dispatch with tighter scope.
+
+These constraints preserve the main session's context budget when using Explore for discovery. Violation risks are the same as raw-search injection: context pressure and session stops (Issue #215, #101 Gap 4).
+
+> Note: this section governs Main's use of the built-in Explore tool. Dev subagents operate in isolated worktree contexts and use Read/Grep/Glob directly per their allowed-tools list — they do not dispatch Explore as a subagent.
 
 ## Detachability
 

@@ -112,6 +112,33 @@ Round N:
                 Round N = max_rounds -> go to VERIFICATION with gaps flagged
 ```
 
+## Return Contract
+
+When autoresearch terminates and returns control to the calling agent (Mercury main session, standalone user, or orchestrator), the completion return message MUST be a **content-kind constraint**, not a literal field list. The constraint is: **no raw findings, no raw search snippets, no full report body** — only summary metadata and pointers.
+
+Concretely, the return MUST include at minimum:
+
+1. **Report file path** — a repo-relative path (or `Mercury_KB/04-research/...`-prefixed path under Mercury orchestration) to the final research report. Do NOT return absolute filesystem paths — they leak host info and are not portable across environments. Example: `Mercury_KB/04-research/RESEARCH-topic-001.md` or `.research/reports/RESEARCH-topic-2026-05-09.md`.
+2. **Verdict + per-metric scores** — the gate metrics from the final round (`question_answer_rate`, `citation_density`, `unverified_rate`) and the verification verdict (PASS / PARTIAL / FAIL / mechanical_only).
+3. **Gap list** — any research questions that remain unanswered or UNVERIFIED after all rounds, or an explicit "None" if none remain.
+4. **Optional one-line topic recap** — a single sentence restating what was researched (omit if the calling context already contains the topic).
+
+**Explicitly forbidden in the return message:**
+- Raw findings text or raw search result snippets
+- Raw round-by-round log entries or per-round source lists
+- Full report body or large excerpts from the report
+- Full verification checklist content (only the final verdict score, not the checklist rows)
+
+**Permitted summary metadata (conforming to this contract):** The `Rounds: N` line, the per-metric breakdown table, and the orchestrator JSON receipt (Mercury Integration mode) are all allowed — they are summary metadata, not raw findings. The two canonical implementations of this contract are:
+- **`### Final Output` template** (in the Termination & Output section below) — the human-readable summary format used in standalone and interactive invocations.
+- **`## Mercury Integration` JSON receipt** — the machine-readable format used when running under Mercury orchestrator dispatch.
+
+Both satisfy the content-kind constraint. Use whichever matches the invocation context; in Mercury mode, emit both (the human-readable summary for the session transcript and the JSON receipt for the orchestrator `record_receipt` flow).
+
+All raw research artifacts live in `.research/reports/` (standalone mode) or `Mercury_KB/04-research/` (Mercury mode) and are addressable by file path. The calling agent reads the file directly if it needs detail — the return message is a pointer + verdict, not a data dump.
+
+> Cross-link: the [Search Worker Protocol](#search-worker-protocol) below enforces the same discipline inside each research round (keeping intermediate search I/O out of the autoresearch agent's context). This section extends that discipline to the final completion return to the calling agent.
+
 ## Search Worker Protocol
 
 **Why**: WebSearch/WebFetch return 1-3K tokens per call. A typical research round runs 9-15 searches, injecting 15-45K tokens of raw HTML/snippet text into the autoresearch agent's own context window. Over 4+ rounds this causes context pressure and has triggered session stops (Issue #215, #101 Gap 4).
@@ -152,6 +179,17 @@ Agent(
 ```
 
 The autoresearch agent ingests only the <500 token summary per worker call. Over 4 rounds × 3 questions × 500 tokens = 6K tokens of search state, versus 60-180K tokens under the old inline pattern.
+
+### Explore guardrail
+
+When the autoresearch worker or orchestrator invokes the **Explore subagent** (e.g. for codebase traversal or file discovery), the Explore dispatch prompt MUST include these constraints:
+
+- **Token cap**: cap return at ~5K tokens (caller-stated soft cap).
+- **Path-only preference**: when matches exceed 20 files, return file paths only (one per line) — do not include file contents, snippets, or surrounding context beyond the path.
+- **No raw file contents**: never paste raw file contents into the return. Use `file:line` citations with at most a 1-line context excerpt per citation.
+- **Overflow behavior (mandatory fallback)**: if any of the above thresholds are exceeded, the return MUST switch to path-only mode AND emit a single explicit fallback line at the top: `[guardrail-fallback: <reason>; matches=<N>; tokens≈<T>; raw output suppressed — caller may re-dispatch with narrower scope]`. Do not silently truncate or arbitrarily summarize — the caller must know fallback was triggered so they can re-dispatch with tighter scope.
+
+These constraints preserve the main session's context budget. Violation risks are the same as raw-search injection: context pressure and session stops (Issue #215, #101 Gap 4).
 
 **Fallback** (nested subagent mode, Codex mode, or `Agent()` not available): the primary context protection is much weaker in this mode because the nested agent cannot offload search I/O to a worker. Apply this reduced-budget protocol:
 
@@ -331,3 +369,26 @@ When running under Mercury orchestrator (auto-detected via `Mercury_KB/04-resear
 - On completion, output a JSON receipt for the orchestrator record_receipt flow
 
 The skill auto-detects this. No manual configuration needed.
+
+### Mercury JSON receipt schema
+
+When running under Mercury orchestrator, emit a final JSON receipt of this shape (this is one canonical implementation of the Return Contract):
+
+```json
+{
+  "topic": "<research topic>",
+  "rounds": "<int>",
+  "report_path": "<repo-relative path under Mercury_KB/04-research/>",
+  "verdict": "PASS|PARTIAL|FAIL|mechanical_only",
+  "metrics": {
+    "question_answer_rate": "<float>",
+    "citation_density": "<float>",
+    "unverified_rate": "<float>",
+    "iteration_depth": "<int>"
+  },
+  "gaps": ["<gap 1>", "..."],
+  "termination_reason": "gate_passed|max_rounds|interrupted"
+}
+```
+
+The `report_path` field MUST be a repo-relative path (no absolute filesystem paths — see Return Contract for rationale). The receipt content is summary metadata only — no raw findings, no raw search snippets, no full report body.
