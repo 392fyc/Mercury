@@ -542,11 +542,13 @@ tmux new-session -d -s handoff "claude ${MERCURY_CHANNELS_FLAGS:-} -- '$SHORT_PR
 
 ### Phase 5-1: notify.cjs + router skeleton（首 PR）
 
+> **Historical note (Issue #316 correction, 2026-05-09)**: 原 Phase 5-1 plan 提议 wire `mercury-loop-detector/hook.cjs` stall → notify 并以 Telegram stall alert 作 demo。该 wire 已 revert（PR #295 commit `bb8a458` 引入，Issue #316 移除），因为 stall 事件 agent-self-consumed 不属于 user-actionable scope（详见 §6.3）。Phase 5-1 实际 ship 的 demo 改为 user-actionable 事件（如 Dev Pipeline 完成提示）。
+
 - `mercury-notify/notify.cjs` 30 LOC
 - `mercury-channel-router/router.cjs` 仅 outbound 部分（接 `/notify` 转 Telegram，~80 LOC）
-- Wire `mercury-loop-detector/hook.cjs` 卡死后调 notify
+- ~~Wire `mercury-loop-detector/hook.cjs` 卡死后调 notify~~ — **REVERTED per #316**: stall 事件 agent-self-consumed via `writeStallReport()`，不 wire notify
 - 用户在 `~/.claude/settings.json` 设 `MERCURY_TELEGRAM_BOT_TOKEN`
-- **Demo**：触发卡死 → 手机收到 `[#NNN] Mercury stall: no_progress`
+- **Demo (corrected)**：user-actionable 事件触发 → 手机收到 `[#NNN] <severity> <title>`（loop-detector stall 不再作为示例 demo）
 - 关 #293 一半 scope
 
 ### Phase 5-2: router 完整 + channel-client（次 PR）
