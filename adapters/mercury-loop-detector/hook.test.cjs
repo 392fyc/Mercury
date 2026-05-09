@@ -861,6 +861,33 @@ describe('last_progress_ts: timeout uses progress signal, not just write', () =>
     assert.equal(state.last_write_ts, now, '0 last_write_ts is healed to now');
     assert.equal(state.last_progress_ts, now, 'last_progress_ts inherits healed last_write_ts');
   });
+
+  test('checkMultiLevel rejects future-dated last_progress_ts (clock skew/pollution) and falls back', () => {
+    const now   = Date.now();
+    // Polluted: last_progress_ts in the future. Without future-ts guard, elapsed<0
+    // returns null → silent permanent bypass. Should fall back to last_write_ts.
+    const state = makeState({ last_write_ts: now - 910_000, last_progress_ts: now + 999_999_999 });
+    const cfg   = makeCfg({ timeout_soft_sec: 60, timeout_idle_sec: 300, timeout_hard_sec: 900 });
+    const result = checkMultiLevel(state, cfg, now);
+    assert.ok(result, 'future-dated last_progress_ts must not bypass timeout — fall back to last_write_ts');
+    assert.equal(result.level, 'hard', 'fallback ref triggers hard-timeout');
+    assert.equal(result.should_block, true);
+  });
+
+  test('checkMultiLevel returns null when both ts are future-dated (no valid ref)', () => {
+    const now   = Date.now();
+    const state = makeState({ last_write_ts: now + 60_000_000, last_progress_ts: now + 999_999_999 });
+    const result = checkMultiLevel(state, makeCfg(), now);
+    assert.equal(result, null, 'no valid past ts → return null, do not block');
+  });
+
+  test('checkMultiLevel tolerates 60s forward grace (Date.now race within hook fire)', () => {
+    const now   = Date.now();
+    // 30s in the future — within FUTURE_TS_GRACE_MS, treat as valid
+    const state = makeState({ last_progress_ts: now + 30_000 });
+    const result = checkMultiLevel(state, makeCfg(), now);
+    assert.equal(result, null, '30s forward grace tolerated; elapsed<0 returns null per pre-existing guard');
+  });
 });
 
 // ── 16. ETE: long Bash/Skill phase no longer trips hard-timeout (Issue #372) ──

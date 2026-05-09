@@ -64,6 +64,16 @@ function isPositiveTs(v) {
   return Number.isFinite(v) && v > 0;
 }
 
+// Defense-in-depth (Argus #373 iter-1 Medium 7/10): reject future-dated timestamps
+// (clock skew / state pollution / test fixture mistakes). Without this, a polluted
+// last_progress_ts > now would yield negative elapsed → silent permanent bypass.
+// Tolerate small forward skew (e.g. Date.now() race within the same hook fire) via
+// a 60-second grace period — anything beyond that is treated as invalid.
+const FUTURE_TS_GRACE_MS = 60_000;
+function isValidPastTs(v, now) {
+  return isPositiveTs(v) && v <= now + FUTURE_TS_GRACE_MS;
+}
+
 function updateTimestamps(state, is_write, is_progress, now) {
   state.last_activity_ts = now;
   if (is_write) {
@@ -95,9 +105,12 @@ function updateTimestamps(state, is_write, is_progress, now) {
  * @returns {null | { level: 'soft'|'idle'|'hard', message: string, should_block: boolean }}
  */
 function checkMultiLevel(state, cfg, now) {
-  // Reject 0/negative ts (polluted state) — fall through fallback chain.
-  const ref = isPositiveTs(state.last_progress_ts) ? state.last_progress_ts
-            : isPositiveTs(state.last_write_ts)    ? state.last_write_ts
+  // Reject 0/negative AND future-dated ts (polluted state, clock skew) —
+  // fall through fallback chain. Without the future-ts guard a polluted
+  // last_progress_ts > now would yield negative elapsed → silent permanent
+  // bypass (Argus #373 iter-1 Medium 7/10).
+  const ref = isValidPastTs(state.last_progress_ts, now) ? state.last_progress_ts
+            : isValidPastTs(state.last_write_ts, now)    ? state.last_write_ts
             : null;
   if (ref === null) return null;
 
