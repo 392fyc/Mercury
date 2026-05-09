@@ -41,7 +41,8 @@ function loadConfig(cwd) {
 // ── State ────────────────────────────────────────────────────────────────────
 const EMPTY_STATE = () => ({ session_id: null,
   dup_count: 0, dup_tool: null, dup_hash: null, err_count: 0, err_last: null,
-  read_count: 0, np_count: 0, last_activity_ts: null, last_write_ts: null });
+  read_count: 0, np_count: 0, last_activity_ts: null, last_write_ts: null,
+  last_progress_ts: null });
 
 function safeInt(v) { return Number.isFinite(v) && v >= 0 ? Math.round(v) : 0; }
 
@@ -57,7 +58,8 @@ function loadState(statePath) {
       err_last:         typeof s.err_last  === 'string' ? s.err_last  : null,
       read_count:       safeInt(s.read_count), np_count: safeInt(s.np_count),
       last_activity_ts: Number.isFinite(s.last_activity_ts) ? s.last_activity_ts : null,
-      last_write_ts:    Number.isFinite(s.last_write_ts)    ? s.last_write_ts    : null
+      last_write_ts:    Number.isFinite(s.last_write_ts)    ? s.last_write_ts    : null,
+      last_progress_ts: Number.isFinite(s.last_progress_ts) ? s.last_progress_ts : null
     };
   } catch { return EMPTY_STATE(); }
 }
@@ -163,7 +165,7 @@ function main() {
   const ihash       = hashInput(tool_input);
 
   update(state, tool_name, ihash, is_write, is_read, is_progress, errored, err_sig);
-  updateTimestamps(state, is_write, now);
+  updateTimestamps(state, is_write, is_progress, now);
   saveState(statePath, state);
 
   // Timeout check (retrospective — evaluated at PostToolUse fire time)

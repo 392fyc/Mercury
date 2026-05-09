@@ -26,7 +26,7 @@ function makeState(overrides = {}) {
     dup_count: 0, dup_tool: null, dup_hash: null,
     err_count: 0, err_last: null,
     read_count: 0, np_count: 0,
-    last_activity_ts: null, last_write_ts: null,
+    last_activity_ts: null, last_write_ts: null, last_progress_ts: null,
     ...overrides
   };
 }
@@ -144,7 +144,7 @@ describe('timeout: soft and idle warn, do not block', () => {
     const state = makeState({ last_write_ts: null });
     const cfg   = makeCfg();
     // updateTimestamps initialises last_write_ts to now on first call
-    updateTimestamps(state, false, now);
+    updateTimestamps(state, false, false, now);
     const result = checkMultiLevel(state, cfg, now);
     assert.equal(result, null);
   });
@@ -756,5 +756,334 @@ describe('hook.cjs end-to-end integration', () => {
       `stall_reason should start with prefix, got: ${report.stall_reason}`);
     assert.ok(report.stall_reason.includes('Buffer reset.'),
       `stall_reason should include "Buffer reset.", got: ${report.stall_reason}`);
+  });
+});
+
+// ── 15. last_progress_ts (Issue #372 sister-fix to #325) ────────────────────
+
+describe('last_progress_ts: timeout uses progress signal, not just write', () => {
+  test('updateTimestamps bumps last_progress_ts on progress (no write)', () => {
+    const now   = 1_700_000_000_000;
+    const state = makeState({ last_write_ts: now - 600_000, last_progress_ts: now - 600_000 });
+    updateTimestamps(state, /*is_write*/ false, /*is_progress*/ true, now);
+    assert.equal(state.last_progress_ts, now, 'progress call must bump last_progress_ts');
+    assert.equal(state.last_write_ts, now - 600_000, 'last_write_ts unchanged on non-write');
+    assert.equal(state.last_activity_ts, now);
+  });
+
+  test('updateTimestamps bumps last_progress_ts on write', () => {
+    const now   = 1_700_000_000_000;
+    const state = makeState({ last_write_ts: now - 600_000, last_progress_ts: now - 600_000 });
+    updateTimestamps(state, /*is_write*/ true, /*is_progress*/ false, now);
+    assert.equal(state.last_progress_ts, now);
+    assert.equal(state.last_write_ts, now);
+  });
+
+  test('updateTimestamps does NOT bump last_progress_ts on read-only/no-progress', () => {
+    const now   = 1_700_000_000_000;
+    const state = makeState({ last_write_ts: now - 600_000, last_progress_ts: now - 600_000 });
+    updateTimestamps(state, /*is_write*/ false, /*is_progress*/ false, now);
+    assert.equal(state.last_progress_ts, now - 600_000, 'non-progress non-write must NOT bump');
+    assert.equal(state.last_activity_ts, now, 'last_activity_ts always bumps');
+  });
+
+  test('updateTimestamps initialises last_progress_ts from last_write_ts on first call (backward-compat)', () => {
+    const now   = 1_700_000_000_000;
+    // Old state file from pre-#372: last_progress_ts absent (null), last_write_ts set
+    const state = makeState({ last_write_ts: now - 100_000, last_progress_ts: null });
+    updateTimestamps(state, false, false, now);
+    assert.equal(state.last_progress_ts, now - 100_000,
+      'last_progress_ts must initialise from last_write_ts when absent');
+  });
+
+  test('checkMultiLevel uses last_progress_ts when present', () => {
+    const now   = Date.now();
+    // last_write_ts very old (would trigger hard), last_progress_ts recent → no timeout
+    const state = makeState({ last_write_ts: now - 5_671_000, last_progress_ts: now - 30_000 });
+    const cfg   = makeCfg({ timeout_soft_sec: 60, timeout_idle_sec: 300, timeout_hard_sec: 900 });
+    const result = checkMultiLevel(state, cfg, now);
+    assert.equal(result, null, 'recent last_progress_ts must override stale last_write_ts');
+  });
+
+  test('checkMultiLevel falls back to last_write_ts when last_progress_ts is null (backward-compat)', () => {
+    const now   = Date.now();
+    const state = makeState({ last_write_ts: now - 910_000, last_progress_ts: null });
+    const cfg   = makeCfg({ timeout_soft_sec: 60, timeout_idle_sec: 300, timeout_hard_sec: 900 });
+    const result = checkMultiLevel(state, cfg, now);
+    assert.ok(result, 'must return result via last_write_ts fallback');
+    assert.equal(result.level, 'hard');
+    assert.equal(result.should_block, true);
+  });
+
+  test('checkMultiLevel returns null when both timestamps are null', () => {
+    const now   = Date.now();
+    const state = makeState({ last_write_ts: null, last_progress_ts: null });
+    const result = checkMultiLevel(state, makeCfg(), now);
+    assert.equal(result, null);
+  });
+
+  test('checkMultiLevel rejects last_progress_ts=0 (polluted state) and falls back to last_write_ts', () => {
+    const now   = Date.now();
+    // Polluted: last_progress_ts=0 would be Number.isFinite=true; without > 0 guard
+    // checkMultiLevel would treat it as ref → elapsed ≈ now → instant hard-timeout.
+    // Use last_write_ts within soft threshold (60s default) so fallback yields null.
+    const state = makeState({ last_write_ts: now - 30_000, last_progress_ts: 0 });
+    const result = checkMultiLevel(state, makeCfg(), now);
+    assert.equal(result, null, '0 must not be treated as valid; fallback to recent last_write_ts');
+  });
+
+  test('checkMultiLevel rejects last_progress_ts=-1 (negative) and falls back', () => {
+    const now   = Date.now();
+    const state = makeState({ last_write_ts: now - 30_000, last_progress_ts: -1 });
+    const result = checkMultiLevel(state, makeCfg(), now);
+    assert.equal(result, null, 'negative ts must not be treated as valid');
+  });
+
+  test('checkMultiLevel returns null when both ts are 0/negative (no fallback target)', () => {
+    const now   = Date.now();
+    const state = makeState({ last_write_ts: 0, last_progress_ts: 0 });
+    const result = checkMultiLevel(state, makeCfg(), now);
+    assert.equal(result, null, 'no positive ts → return null, do not block');
+  });
+
+  test('updateTimestamps heals last_progress_ts=0 polluted state on init', () => {
+    const now   = Date.now();
+    const state = makeState({ last_write_ts: now - 100_000, last_progress_ts: 0 });
+    updateTimestamps(state, false, false, now);
+    assert.equal(state.last_progress_ts, now - 100_000,
+      '0 is rejected, init from last_write_ts');
+  });
+
+  test('updateTimestamps heals last_write_ts=0 polluted state on init', () => {
+    const now   = Date.now();
+    const state = makeState({ last_write_ts: 0, last_progress_ts: 0 });
+    updateTimestamps(state, false, false, now);
+    assert.equal(state.last_write_ts, now, '0 last_write_ts is healed to now');
+    assert.equal(state.last_progress_ts, now, 'last_progress_ts inherits healed last_write_ts');
+  });
+});
+
+// ── 16. ETE: long Bash/Skill phase no longer trips hard-timeout (Issue #372) ──
+
+describe('hook.cjs ETE: long PROGRESS_TOOLS phase suppresses hard-timeout', () => {
+  const { execFileSync } = require('child_process');
+  const HOOK = path.join(__dirname, 'hook.cjs');
+  let counter = 0;
+  let tmpDirs = [];
+
+  function freshEnv(tmpDir) { return { ...process.env, CLAUDE_PROJECT_DIR: tmpDir }; }
+  function uniqueSession()  { return `ete-progts-${process.pid}-${++counter}-${Date.now()}`; }
+
+  afterEach(() => {
+    for (const d of tmpDirs) {
+      try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+    tmpDirs = [];
+  });
+
+  test('ETE: stale last_write_ts (5671s ago) + recent last_progress_ts + Read call does NOT block (persisted-path load-bearing)', () => {
+    const tmpDir = makeTmpDir();
+    tmpDirs.push(tmpDir);
+    const session_id = uniqueSession();
+    const stateDir = path.join(tmpDir, '.mercury', 'state');
+    fs.mkdirSync(stateDir, { recursive: true });
+
+    const now = Date.now();
+    // Reproduces S95 stall report scenario (last_tool=Read, np_count=0, last_write_ts
+    // 5671s old). Read is non-write AND non-progress, so updateTimestamps does NOT
+    // bump last_progress_ts — the preseeded recent value MUST be load-bearing.
+    // A regression in loadState (e.g. dropping last_progress_ts on read) would let
+    // last_write_ts (5671s old) become the ref → hard-timeout → this test fails.
+    fs.writeFileSync(path.join(stateDir, 'loop-detector.json'), JSON.stringify({
+      session_id,
+      dup_count: 0, dup_tool: null, dup_hash: null,
+      err_count: 0, err_last: null,
+      read_count: 0, np_count: 0,
+      last_activity_ts: now - 1_000,
+      last_write_ts:    now - 5_671_000,
+      last_progress_ts: now - 30_000
+    }, null, 2));
+
+    let stdout = '';
+    try {
+      stdout = execFileSync('node', [HOOK], {
+        input: JSON.stringify({
+          tool_name: 'Read',
+          tool_input: { file_path: '/some/file.txt' },
+          tool_response: 'file contents',
+          session_id
+        }),
+        env: freshEnv(tmpDir),
+        timeout: 10000
+      }).toString();
+    } catch (e) {
+      stdout = e.stdout ? e.stdout.toString() : '';
+      if (e.status !== 0) throw e;
+    }
+    assert.ok(!stdout.includes('"block"'),
+      `Read with recent persisted last_progress_ts must NOT block (proves load path), got: ${stdout}`);
+
+    const finalState = JSON.parse(fs.readFileSync(path.join(stateDir, 'loop-detector.json'), 'utf8'));
+    // Read does NOT bump last_progress_ts; persisted value must be unchanged.
+    assert.equal(finalState.last_progress_ts, now - 30_000,
+      'Read must NOT bump last_progress_ts (only PROGRESS_TOOLS or write do)');
+    assert.equal(finalState.last_write_ts, now - 5_671_000,
+      'Read must NOT bump last_write_ts');
+  });
+
+  test('ETE: stale last_write_ts (5671s ago) + recent last_progress_ts + Bash call does NOT block AND bumps last_progress_ts', () => {
+    const tmpDir = makeTmpDir();
+    tmpDirs.push(tmpDir);
+    const session_id = uniqueSession();
+    const stateDir = path.join(tmpDir, '.mercury', 'state');
+    fs.mkdirSync(stateDir, { recursive: true });
+
+    const now = Date.now();
+    // Documents that PROGRESS_TOOLS calls (Bash here) bump last_progress_ts —
+    // complementary to the Read test above which validates the persisted path.
+    fs.writeFileSync(path.join(stateDir, 'loop-detector.json'), JSON.stringify({
+      session_id,
+      dup_count: 0, dup_tool: null, dup_hash: null,
+      err_count: 0, err_last: null,
+      read_count: 0, np_count: 0,
+      last_activity_ts: now - 1_000,
+      last_write_ts:    now - 5_671_000,
+      last_progress_ts: now - 30_000
+    }, null, 2));
+
+    let stdout = '';
+    try {
+      stdout = execFileSync('node', [HOOK], {
+        input: JSON.stringify({
+          tool_name: 'Bash',
+          tool_input: { command: 'gh pr view 999' },
+          tool_response: 'PR data',
+          session_id
+        }),
+        env: freshEnv(tmpDir),
+        timeout: 10000
+      }).toString();
+    } catch (e) {
+      stdout = e.stdout ? e.stdout.toString() : '';
+      if (e.status !== 0) throw e;
+    }
+    assert.ok(!stdout.includes('"block"'),
+      `Bash with recent last_progress_ts must NOT block, got: ${stdout}`);
+
+    const finalState = JSON.parse(fs.readFileSync(path.join(stateDir, 'loop-detector.json'), 'utf8'));
+    assert.ok(Number.isFinite(finalState.last_progress_ts) && finalState.last_progress_ts >= now - 1_000,
+      'Bash (in PROGRESS_TOOLS) must bump last_progress_ts to ~now');
+  });
+
+  test('ETE: WebSearch loop with old last_progress_ts STILL blocks (true-stall preserved)', () => {
+    const tmpDir = makeTmpDir();
+    tmpDirs.push(tmpDir);
+    const session_id = uniqueSession();
+    const stateDir = path.join(tmpDir, '.mercury', 'state');
+    fs.mkdirSync(stateDir, { recursive: true });
+
+    const now = Date.now();
+    fs.writeFileSync(path.join(stateDir, 'loop-detector.json'), JSON.stringify({
+      session_id,
+      dup_count: 0, dup_tool: null, dup_hash: null,
+      err_count: 0, err_last: null,
+      read_count: 0, np_count: 0,
+      last_activity_ts: now - 1_000,
+      last_write_ts:    now - 1_000_000,
+      last_progress_ts: now - 1_000_000  // no PROGRESS_TOOLS for >900s
+    }, null, 2));
+
+    let stdout = '';
+    try {
+      stdout = execFileSync('node', [HOOK], {
+        input: JSON.stringify({
+          tool_name: 'WebSearch',
+          tool_input: { query: 'docs' },
+          tool_response: 'results',
+          session_id
+        }),
+        env: freshEnv(tmpDir),
+        timeout: 10000
+      }).toString();
+    } catch (e) {
+      stdout = e.stdout ? e.stdout.toString() : '';
+      if (e.status !== 0) throw e;
+    }
+    assert.ok(stdout.includes('"block"'),
+      `WebSearch with stale last_progress_ts SHOULD still block (true-stall), got: ${stdout}`);
+    assert.ok(stdout.includes('hard timeout'), 'block reason should mention hard timeout');
+  });
+
+  test('ETE: backward-compat — old state without last_progress_ts uses last_write_ts fallback', () => {
+    const tmpDir = makeTmpDir();
+    tmpDirs.push(tmpDir);
+    const session_id = uniqueSession();
+    const stateDir = path.join(tmpDir, '.mercury', 'state');
+    fs.mkdirSync(stateDir, { recursive: true });
+
+    const now = Date.now();
+    // Old state from pre-#372 deployment: no last_progress_ts field at all
+    fs.writeFileSync(path.join(stateDir, 'loop-detector.json'), JSON.stringify({
+      session_id,
+      dup_count: 0, dup_tool: null, dup_hash: null,
+      err_count: 0, err_last: null,
+      read_count: 0, np_count: 0,
+      last_activity_ts: now - 1_000,
+      last_write_ts:    now - 1_000  // recent → no timeout
+      // last_progress_ts intentionally absent
+    }, null, 2));
+
+    let stdout = '';
+    try {
+      stdout = execFileSync('node', [HOOK], {
+        input: JSON.stringify({
+          tool_name: 'Read',
+          tool_input: { file_path: '/some/file.txt' },
+          tool_response: 'contents',
+          session_id
+        }),
+        env: freshEnv(tmpDir),
+        timeout: 10000
+      }).toString();
+    } catch (e) {
+      stdout = e.stdout ? e.stdout.toString() : '';
+      if (e.status !== 0) throw e;
+    }
+    assert.ok(!stdout.includes('"block"'),
+      `Old state file must not break hook; got: ${stdout}`);
+
+    // Hook must initialise last_progress_ts on save
+    const finalState = JSON.parse(fs.readFileSync(path.join(stateDir, 'loop-detector.json'), 'utf8'));
+    assert.ok(Number.isFinite(finalState.last_progress_ts),
+      'hook must populate last_progress_ts on first save (backward-compat init)');
+  });
+});
+
+// ── 17. report.cjs state_snapshot includes last_progress_ts (Issue #372) ─────
+
+describe('writeStallReport state_snapshot.last_progress_ts', () => {
+  let tmpDir;
+  beforeEach(() => { tmpDir = makeTmpDir(); });
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+  test('report includes last_progress_ts field', () => {
+    const state = makeState({
+      last_write_ts: 900, last_progress_ts: 1000, last_activity_ts: 1100
+    });
+    const fpath = writeStallReport(tmpDir, 'sess-progts', 'timeout_hard', 'reason', state,
+      { name: 'Bash', input_hash: 'aa', errored: false, err_sig: null });
+    const report = JSON.parse(fs.readFileSync(fpath, 'utf8'));
+    assert.equal(report.state_snapshot.last_progress_ts, 1000,
+      'state_snapshot must surface last_progress_ts for forensics');
+    assert.equal(report.state_snapshot.last_write_ts, 900,
+      'last_write_ts retained alongside last_progress_ts');
+  });
+
+  test('report defaults last_progress_ts to null when absent on state', () => {
+    const state = makeState({ last_progress_ts: undefined });
+    const fpath = writeStallReport(tmpDir, 'sess-progts-null', 'timeout_hard', 'reason', state,
+      { name: 'Bash', input_hash: 'aa', errored: false, err_sig: null });
+    const report = JSON.parse(fs.readFileSync(fpath, 'utf8'));
+    assert.equal(report.state_snapshot.last_progress_ts, null);
   });
 });
