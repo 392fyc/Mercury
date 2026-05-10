@@ -424,13 +424,10 @@ forensic record:
 session handoff. Read ...
 ```
 
-**Do NOT** use the literal bash command
-`wt -w 0 nt ... -- claude -- "$SHORT_PROMPT"` directly from agent code —
-even though that pattern works from a properly invoked bash shell, agent
-freeform construction has been observed to introduce escape errors
-(e.g. `[LANE=...]` brackets dropped by PowerShell wildcard expansion,
-title overridden by decorative agent string). The launcher script is the
-single supported entry point.
+**ONLY entry point**: `scripts/handoff-launch.sh`. No exceptions. Do not call
+`wt`, `tmux`, `Start-Process`, or any direct terminal-spawn primitive from
+your agent code under any circumstances. The launcher is the only supported
+mechanism for `/handoff auto` and is dual-verify-tested (Mercury Issue #377).
 
 **SHORT_PROMPT metacharacter rationale** (kept here for human readers — the
 launcher enforces this automatically): SHORT_PROMPT must remain free of

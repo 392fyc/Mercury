@@ -182,22 +182,33 @@ if [ "$DRY_RUN" -eq 1 ]; then
 fi
 
 # ── Spawn ─────────────────────────────────────────────────────────────────
+# Use if-then-else form so the ERR trap (set -e / trap ERR) is suppressed
+# for the wt/tmux call per bash spec: commands in the test position of an
+# if statement are exempt from the ERR trap.  This ensures a real launch
+# failure reaches the EXIT_CODE branch and exits 1 (launch failure) rather
+# than 2 (unhandled error) via the trap.
 if [ "$TARGET" = "windows" ]; then
   # Windows path: invoke wt directly via bash exec — each argument is a
   # separate token, bypassing ShellExecute single-string trap (Issue #377).
   # Do NOT route through PowerShell Start-Process: that receives the full
   # commandline as -FilePath and passes it to ShellExecute as one string,
   # producing 0x80070002 ERROR_FILE_NOT_FOUND.
-  wt -w 0 nt --title "$TITLE_PREFIX $LANE" -d "$WORKTREE" -- claude -- "$SHORT_PROMPT"
-  EXIT_CODE=$?
+  if wt -w 0 nt --title "$TITLE_PREFIX $LANE" -d "$WORKTREE" -- claude -- "$SHORT_PROMPT"; then
+    EXIT_CODE=0
+  else
+    EXIT_CODE=$?
+  fi
 else
   # Unix path (macOS / Linux): use tmux new-window.
   # Route through bash -c so printf %q output is interpreted by bash,
   # not POSIX sh (dash/busybox), which doesn't support $'...' quoting.
   SHORT_PROMPT_QUOTED=$(printf '%q' "$SHORT_PROMPT")
-  tmux new-window -n handoff -c "$WORKTREE" \
-    "bash -c \"claude -- $SHORT_PROMPT_QUOTED\""
-  EXIT_CODE=$?
+  if tmux new-window -n handoff -c "$WORKTREE" \
+       "bash -c \"claude -- $SHORT_PROMPT_QUOTED\""; then
+    EXIT_CODE=0
+  else
+    EXIT_CODE=$?
+  fi
 fi
 
 if [ "$EXIT_CODE" -ne 0 ]; then

@@ -231,6 +231,124 @@ assert_exit_and_contains \
     --handoff-doc "$FAKE_HANDOFF" \
     --dry-run
 
+# ── Metachar guard tests (via --handoff-doc path injection) ───────────────
+# The lane-name regex rejects hostile chars in --lane before they reach the
+# metachar grep. To exercise the metachar guard directly we need a path
+# whose resolved SHORT_PROMPT contains the forbidden character. The guard
+# checks SHORT_PROMPT which embeds the --handoff-doc path literally. So we
+# pass a real file whose PATH itself contains a metachar.
+# NTFS forbids: \ / : * ? " < > |  — so | is NOT creatable on Windows.
+# NTFS allows:  & ; ( ) are fine on NTFS but rejected by some shells.
+# Strategy: try to create fixture files; skip individual sub-test if the
+# filesystem rejects the name (|| true pattern).
+
+# 16. handoff-doc path containing '&' — metachar guard rejects if creatable
+FAKE_HANDOFF_AMP="$TMPDIR_FIXTURE/bad&name.md"
+(echo "fake" > "$FAKE_HANDOFF_AMP") 2>/dev/null || true
+if [ -f "$FAKE_HANDOFF_AMP" ]; then
+  assert_exit_and_contains \
+    "metachar in handoff-doc '&' rejected by metachar guard (exit 2)" \
+    2 "forbidden metacharacters" \
+    bash "$LAUNCH_SCRIPT" \
+      --lane "test" \
+      --worktree "$FAKE_WORKTREE" \
+      --handoff-doc "$FAKE_HANDOFF_AMP" \
+      --dry-run
+else
+  echo "SKIP: test 16 — filesystem rejected '&' in filename (NTFS/platform)"
+fi
+
+# 17. handoff-doc path containing backtick — metachar guard rejects if creatable
+FAKE_HANDOFF_BT="$TMPDIR_FIXTURE/bad\`name.md"
+(echo "fake" > "$FAKE_HANDOFF_BT") 2>/dev/null || true
+if [ -f "$FAKE_HANDOFF_BT" ]; then
+  assert_exit_and_contains \
+    "metachar in handoff-doc backtick rejected by metachar guard (exit 2)" \
+    2 "forbidden metacharacters" \
+    bash "$LAUNCH_SCRIPT" \
+      --lane "test" \
+      --worktree "$FAKE_WORKTREE" \
+      --handoff-doc "$FAKE_HANDOFF_BT" \
+      --dry-run
+else
+  echo "SKIP: test 17 — filesystem rejected backtick in filename (NTFS/platform)"
+fi
+
+# ── Argv-capture stub test ─────────────────────────────────────────────────
+# Verify the launcher invokes wt (Windows) or tmux (Unix) with > 1 separate
+# argv tokens — the regression surface of Mercury Issue #377 (single-string
+# ShellExecute path). We stub the native executable so no real spawn happens.
+
+STUB_DIR="$TMPDIR_FIXTURE/stub-bin"
+ARGV_LOG="$TMPDIR_FIXTURE/wt-argv.log"
+mkdir -p "$STUB_DIR"
+
+# Detect which stub to install based on current platform
+CURRENT_PLATFORM="$(uname -s 2>/dev/null || echo "unknown")"
+case "$CURRENT_PLATFORM" in
+  MINGW*|MSYS*|CYGWIN*)
+    STUB_EXEC="wt"
+    ;;
+  Darwin|Linux)
+    STUB_EXEC="tmux"
+    ;;
+  *)
+    STUB_EXEC=""
+    ;;
+esac
+
+if [ -n "$STUB_EXEC" ]; then
+  ARGV_LOG_PATH_FOR_STUB="$ARGV_LOG"
+  cat > "$STUB_DIR/$STUB_EXEC" <<STUB
+#!/usr/bin/env bash
+echo "argc=\$#" > "\$ARGV_LOG_PATH"
+for i in "\$@"; do
+  echo "argv: \$i" >> "\$ARGV_LOG_PATH"
+done
+exit 0
+STUB
+  chmod +x "$STUB_DIR/$STUB_EXEC"
+
+  # Run launcher with PATH prepended so the stub intercepts the call.
+  # Do NOT pass --dry-run here — we want the spawn path to execute.
+  stub_output=$(ARGV_LOG_PATH="$ARGV_LOG_PATH_FOR_STUB" \
+    PATH="$STUB_DIR:$PATH" \
+    bash "$LAUNCH_SCRIPT" \
+      --lane "test" \
+      --worktree "$FAKE_WORKTREE" \
+      --handoff-doc "$FAKE_HANDOFF" 2>&1)
+  stub_exit=$?
+
+  # 18. Launcher exits 0 when stub wt/tmux succeeds
+  if [ "$stub_exit" -eq 0 ]; then
+    echo "PASS: stub-argv — launcher exits 0 with stub $STUB_EXEC"
+    PASS_COUNT=$((PASS_COUNT + 1))
+  else
+    echo "FAIL: stub-argv — launcher exited $stub_exit (expected 0); output: $stub_output"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILURES+=("stub-argv launcher exit 0")
+  fi
+
+  # 19. Stub captured > 1 argv tokens (separate-token, not single-string form)
+  if [ -f "$ARGV_LOG" ]; then
+    captured_argc=$(grep -E '^argc=' "$ARGV_LOG" | cut -d= -f2)
+    if [ -n "$captured_argc" ] && [ "$captured_argc" -gt 1 ]; then
+      echo "PASS: stub-argv — $STUB_EXEC invoked with $captured_argc separate argv tokens (not single string)"
+      PASS_COUNT=$((PASS_COUNT + 1))
+    else
+      echo "FAIL: stub-argv — $STUB_EXEC argc=$captured_argc (expected > 1); log: $(cat "$ARGV_LOG" 2>/dev/null)"
+      FAIL_COUNT=$((FAIL_COUNT + 1))
+      FAILURES+=("stub-argv argc > 1")
+    fi
+  else
+    echo "FAIL: stub-argv — argv log not created (stub did not run or ARGV_LOG_PATH not honoured)"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILURES+=("stub-argv log created")
+  fi
+else
+  echo "SKIP: tests 18-19 — unsupported platform for stub-argv test"
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────────
 TOTAL=$((PASS_COUNT + FAIL_COUNT))
 echo ""
