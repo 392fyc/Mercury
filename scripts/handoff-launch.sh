@@ -176,7 +176,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
     echo "COMMAND: wt -w 0 nt --title \"$TITLE_PREFIX $LANE\" -d \"$WORKTREE\" -- claude -- \"$SHORT_PROMPT\""
   else
     SHORT_PROMPT_QUOTED=$(printf '%q' "$SHORT_PROMPT")
-    echo "COMMAND: tmux new-window -n handoff -c \"$WORKTREE\" \"bash -c \\\"claude -- $SHORT_PROMPT_QUOTED\\\"\""
+    echo "COMMAND: tmux new-window -n handoff -c \"$WORKTREE\" \"bash -c 'claude -- \\\"\\\$1\\\"' _ $SHORT_PROMPT_QUOTED\""
   fi
   exit 0
 fi
@@ -202,9 +202,20 @@ else
   # Unix path (macOS / Linux): use tmux new-window.
   # Route through bash -c so printf %q output is interpreted by bash,
   # not POSIX sh (dash/busybox), which doesn't support $'...' quoting.
+  # Pass SHORT_PROMPT as a positional arg ($1) to the inner bash invocation
+  # rather than interpolating it into the command string.  Defense-in-depth:
+  # even though the metachar guard above rejects ;/&/|/$(`), routing through
+  # $1 means the prompt never enters the bash -c command-text re-parsing path.
+  #
+  # Parsing layers:
+  #   Layer 1 — tmux dispatches via /bin/sh -c "<outer-string>".
+  #             printf %q escapes SHORT_PROMPT for this sh layer.
+  #   Layer 2 — sh sees: bash -c 'claude -- "$1"' _ <quoted-prompt>
+  #             single-quoted literal is the bash script; prompt is argv[1].
+  #   Layer 3 — bash expands "$1" → prompt value; no re-parsing occurs.
   SHORT_PROMPT_QUOTED=$(printf '%q' "$SHORT_PROMPT")
   if tmux new-window -n handoff -c "$WORKTREE" \
-       "bash -c \"claude -- $SHORT_PROMPT_QUOTED\""; then
+       "bash -c 'claude -- \"\$1\"' _ $SHORT_PROMPT_QUOTED"; then
     EXIT_CODE=0
   else
     EXIT_CODE=$?

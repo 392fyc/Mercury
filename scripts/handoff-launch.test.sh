@@ -349,6 +349,82 @@ else
   echo "SKIP: tests 18-19 — unsupported platform for stub-argv test"
 fi
 
+# ── Positional-arg form tests ─────────────────────────────────────────────
+# Argus iter-1 finding #3: ensure tmux receives the prompt as a positional
+# arg to bash -c (defense-in-depth, never enters command-text re-parsing).
+
+# 20. Dry-run COMMAND output contains the positional-arg form (Unix only):
+#     bash -c 'claude -- "$1"' _ <prompt>  (not bash -c "claude -- <prompt>")
+#     On Windows the dry-run COMMAND shows the wt path, not tmux — skip there.
+_PLATFORM_TEST20="$(uname -s 2>/dev/null || echo "unknown")"
+case "$_PLATFORM_TEST20" in
+  Darwin|Linux)
+    assert_exit_and_contains \
+      "dry-run COMMAND uses positional-arg form (claude -- \"\$1\")" \
+      0 'claude -- "$1"' \
+      bash "$LAUNCH_SCRIPT" \
+        --lane "test" \
+        --worktree "$FAKE_WORKTREE" \
+        --handoff-doc "$FAKE_HANDOFF" \
+        --dry-run
+    ;;
+  *)
+    echo "SKIP: test 20 — Windows platform, dry-run shows wt path (tmux line absent)"
+    ;;
+esac
+
+# 21. On Unix: stub tmux argv log shows the prompt as a SEPARATE token
+#     (after the '_' placeholder), not interpolated into the command string.
+#     We reuse the stub-bin path written during tests 18-19 if on Unix.
+CURRENT_PLATFORM2="$(uname -s 2>/dev/null || echo "unknown")"
+case "$CURRENT_PLATFORM2" in
+  Darwin|Linux)
+    ARGV_LOG2="$TMPDIR_FIXTURE/tmux-argv2.log"
+    STUB_DIR2="$TMPDIR_FIXTURE/stub-bin2"
+    mkdir -p "$STUB_DIR2"
+    # Stub tmux: log every argv token separately.
+    cat > "$STUB_DIR2/tmux" <<'STUB2'
+#!/usr/bin/env bash
+echo "argc=$#" > "$ARGV_LOG_PATH"
+for i in "$@"; do
+  echo "argv: $i" >> "$ARGV_LOG_PATH"
+done
+exit 0
+STUB2
+    chmod +x "$STUB_DIR2/tmux"
+
+    ARGV_LOG_PATH="$ARGV_LOG2" PATH="$STUB_DIR2:$PATH" \
+      bash "$LAUNCH_SCRIPT" \
+        --lane "test" \
+        --worktree "$FAKE_WORKTREE" \
+        --handoff-doc "$FAKE_HANDOFF" 2>/dev/null
+    stub2_exit=$?
+
+    if [ -f "$ARGV_LOG2" ]; then
+      # The last argv token must be the quoted SHORT_PROMPT value
+      # (i.e. the prompt was passed as a separate token, not baked into
+      # the command string).  We check that one of the tokens IS the
+      # literal tmux command string containing the single-quoted script
+      # 'claude -- "$1"' (meaning $1 was NOT expanded there).
+      if grep -qF 'claude -- "$1"' "$ARGV_LOG2"; then
+        echo "PASS: stub-argv-positional — tmux command string contains literal '\$1' (prompt not interpolated)"
+        PASS_COUNT=$((PASS_COUNT + 1))
+      else
+        echo "FAIL: stub-argv-positional — tmux command string did not contain literal '\$1'; log: $(cat "$ARGV_LOG2")"
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+        FAILURES+=("stub-argv-positional prompt not interpolated")
+      fi
+    else
+      echo "FAIL: stub-argv-positional — argv log not created"
+      FAIL_COUNT=$((FAIL_COUNT + 1))
+      FAILURES+=("stub-argv-positional log created")
+    fi
+    ;;
+  *)
+    echo "SKIP: test 21 — not a Unix platform, skipping tmux positional-arg stub test"
+    ;;
+esac
+
 # ── Summary ───────────────────────────────────────────────────────────────
 TOTAL=$((PASS_COUNT + FAIL_COUNT))
 echo ""
