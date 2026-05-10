@@ -17,7 +17,7 @@ Mercury 不仅是一套 harness 框架，更是一组设计哲学与工程实证
 | 语言 | 简体中文（zh-CN） |
 | 长度 | 长文 8000-12000 字；ADR-style 4000-6000 字 |
 | 受众 | 技术开发者；假定 Claude Code / GitHub / git workflow 基础认知 |
-| 引用 | in-repo 路径优先（DIRECTION.md / sessions/ / .mercury/docs/）；外部 URL 仅限官方文档 |
+| 引用 | in-repo 路径优先（DIRECTION.md / .mercury/docs/）；外部 URL 限于官方文档或权威一手来源 |
 | 实证 | 每 section 至少 1 个 Mercury 自身工程案例（PR # / Issue # / commit SHA） |
 | Trade-off | 显性化设计权衡；不只讲"做了什么"，更讲"为什么不做替代方案" |
 

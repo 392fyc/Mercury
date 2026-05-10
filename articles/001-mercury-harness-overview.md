@@ -283,7 +283,7 @@ Mercury 的选择：接受多 iter wall-clock 开销，换取跨 reviewer 的多
 
 ### 可工程化的 readiness 评估：4-gap 框架
 
-2026 年 5 月初，Mercury 主线开发到了一个关键节点——S91 session 进行了 #101 evergreen roadmap 的 re-status，识别出 4 个阻碍生产部署的 gaps（参见 `memory/sessions/S91.md`）。这 4 个 gap 不是大型重构，每个都是 5-30 LOC 的精准修复——但必须全部到位，系统才算生产就绪。
+2026 年 5 月初，Mercury 主线开发到了一个关键节点——通过 [Issue #101](https://github.com/392fyc/Mercury/issues/101) evergreen roadmap 的 re-status，识别出 4 个阻碍生产部署的 gaps。这 4 个 gap 不是大型重构，每个都是 5-30 LOC 的精准修复——但必须全部到位，系统才算生产就绪。
 
 这个"4-gap 框架"本身是一种方法论：**不靠"感觉差不多了"来判断生产就绪，而是枚举可验证的技术 gap，每个 gap 对应一个 Issue，关闭 Issue = gap 消除，全部关闭 = 可进行生产部署决策**。
 
@@ -320,7 +320,7 @@ S95 是 mercury-notify 的**第一个真实 caller**，标志着整个 notify-hu
 
 Mercury 的 loop-detector（`adapters/mercury-loop-detector/`）负责检测 agent 卡死——通过多种信号（连续读操作比、重复 error、重复 input 等）和多级超时（soft → hard）触发缓冲区 reset，防止 agent 无限 spin。
 
-S95 session 触发了 3 次 hard-timeout false positive，forensic 数据如下（`sessions/S96.md` §"Forensic evidence"）：
+S95 session 触发了 3 次 hard-timeout false positive，forensic 数据见 [Issue #372](https://github.com/392fyc/Mercury/issues/372) body：
 
 | 时间 | elapsed | last_tool | np_count | 触发原因 |
 |---|---|---|---|---|
@@ -341,7 +341,7 @@ S96 PR #373 合并后，4 个 gap 全部关闭，production-readiness gate **4/4
 3. ✅ Gap 3 (#369, S95) — Dev-pipeline → notify-hub wire (first user-actionable notify caller)
 4. ✅ Gap 4 (#372, S96) — Loop-detector hard-timeout false-positive reduction
 
-用户选择"推广文章 / 方法论编写"作为 S97 方向——这本文章就是那个决策的产物。
+用户选择"推广文章 / 方法论编写"作为 S97 方向——这篇文章就是那个决策的产物。
 
 ### 工程化渐进 hardening 的方法论价值
 
