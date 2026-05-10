@@ -256,26 +256,33 @@ This is an **extension** of Rule 5.1, not a strict superset: Rule 5.1's
 procedural §"Setup at lane open" / §"Cleanup at lane close" Mercury
 `git worktree add/remove` flows below also do **not** apply (the host
 repo manages its own checkout lifecycle). Only the requirement to declare
-a `Worktree path` field per Rule 6 carries over unchanged.
+a `Worktree path` field per Rule 5.1 (lane workspace isolation) carries
+over unchanged; ownership / per-section editing of LANES.md remains
+governed by Rule 6.
 
 - The worktree path does NOT need to match `<repo-root>/Mercury-<short>` —
   the `Mercury-<short>` convention is a default for Mercury-checkout
   sibling lanes, not a hard constraint. The lane MUST still declare a
-  stable `Worktree path` field in its own LANES.md section (Rule 6 binding).
+  stable `Worktree path` field in its own LANES.md section per Rule 5.1
+  (Worktree path declaration) — and only the owning lane edits its own
+  LANES.md section per Rule 6.
 - The lane's branch convention follows the host repo's git workflow, not
   Mercury's. Rule 2.1 short-prefix (`lane/<short>/<N>-<slug>`) remains
   recommended for in-host work-branches that the operator wants Mercury
   lane-assertion (Δ11) to validate. If host-repo conventions conflict
   AND the operator accepts the trade-off, `MERCURY_LANE_ASSERT_DISABLED=1`
   is the operator's escape valve — but it skips **all** assertion checks
-  (marker, cwd-encoded vs Worktree path, branch convention; see soft-disable
-  table in §"Δ11 — Path C" below), not just branch convention. **Use it
-  only as a one-shot command prefix** (e.g. `MERCURY_LANE_ASSERT_DISABLED=1
-  claude ...`) and `unset MERCURY_LANE_ASSERT_DISABLED` immediately after;
-  do NOT persist in shell profile / `.bashrc` / CI defaults — the assertion
-  bypass is meant for exceptional moments, not steady state. Prefer naming
+  (marker, cwd-encoded vs Worktree path, branch convention; see the
+  soft-disable section in §"Δ11 — Path C" below), not just branch
+  convention. **Use it only as a one-shot command prefix** (e.g.
+  `MERCURY_LANE_ASSERT_DISABLED=1 claude ...`) and
+  `unset MERCURY_LANE_ASSERT_DISABLED` immediately after; do NOT persist
+  in shell profile / `.bashrc` / CI defaults — the assertion bypass is
+  meant for exceptional moments, not steady state. Prefer naming
   branches per Rule 2.1 where compatible.
-- The lane MUST still claim Mercury Issues via the `lane:<short>` label
+- The lane MUST still claim Mercury Issues via the `lane:<name>` label
+  (where `<name>` matches the full lane name in LANES.md, e.g.
+  `lane:side-sot`, `lane:side-bug` — see `.mercury/docs/guides/lane-claim.md`)
   for any Mercury-side work (e.g. cross-repo coordination tickets);
   in-host work tracking lives in the host repo's own ledger (KB, Issues,
   etc.) per host convention and is OPAQUE to Mercury LANES.md.
