@@ -1563,9 +1563,10 @@ describe('Issue #306: read_write_ratio default raised to 12 + research-mode env 
     }
   });
 
-  test('research mode persistence: many reads under research keep state.read_count = 0', () => {
+  test('research mode persistence: many reads under research keep state.read_count = 1 (reset+increment)', () => {
     // Cross-session safety: even with 20 consecutive Reads under research mode,
     // persisted state.read_count must remain bounded (not accumulate forever).
+    // Each invocation: main() resets to 0 → update() increments to 1 → save = 1.
     const { execFileSync } = require('child_process');
     const HOOK = path.join(__dirname, 'hook.cjs');
     const tmpDir = makeTmpDir();

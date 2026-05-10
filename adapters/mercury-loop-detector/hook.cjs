@@ -40,7 +40,15 @@ function loadConfig(cwd) {
       timeout_idle_sec: clampInt(p.timeout_idle_sec, 1, 3600, undefined),
       timeout_hard_sec: clampInt(p.timeout_hard_sec, 1, 3600, undefined)
     };
-  } catch { cfg = Object.assign({}, DEFAULTS); }
+  } catch (err) {
+    // Silent fail-open for missing config file (intentional — projects without
+    // loop-detector.json should get default behavior). Surface parse / IO errors
+    // since those indicate config corruption that ought to be observable.
+    if (err && err.code !== 'ENOENT') {
+      process.stderr.write(`${TAG} WARNING: failed to load loop-detector.json: ${err.message}; using defaults\n`);
+    }
+    cfg = Object.assign({}, DEFAULTS);
+  }
   // MERCURY_LOOP_DETECTOR_MODE=research opts the current session out of the
   // read-ratio heuristic only — duplicate_call/same_error/no_progress and the
   // multi-level timeout still fire. For investigation contexts that legitimately
