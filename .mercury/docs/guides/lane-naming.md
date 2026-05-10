@@ -243,6 +243,54 @@ launched from the lane's session can `cd` to a path that resolves to a
 distinct `~/.claude/projects/<encoded-cwd>/` dir (Mercury team value:
 `~/.claude/projects/D--Mercury-Mercury-<short>/`).
 
+### Cross-repo lane variant (Rule 5.1 extension, Issue [#374](https://github.com/392fyc/Mercury/issues/374))
+
+The default mapping above assumes the lane's worktree is a Mercury checkout
+sibling (`Mercury-<short>`). A **cross-repo lane** points its `Worktree path`
+field at a sibling git repository (a different `.git` root, possibly with
+its own remote / branching convention) and uses Mercury core agents +
+skills + memory mechanics in service of work that lives in that sibling repo.
+
+This is an **extension** of Rule 5.1, not a strict superset: Rule 5.1's
+`Mercury-<short>` SHOULD-recommendation does not apply, and the
+procedural §"Setup at lane open" / §"Cleanup at lane close" Mercury
+`git worktree add/remove` flows below also do **not** apply (the host
+repo manages its own checkout lifecycle). Only the requirement to declare
+a `Worktree path` field per Rule 6 carries over unchanged.
+
+- The worktree path does NOT need to match `<repo-root>/Mercury-<short>` —
+  the `Mercury-<short>` convention is a default for Mercury-checkout
+  sibling lanes, not a hard constraint. The lane MUST still declare a
+  stable `Worktree path` field in its own LANES.md section (Rule 6 binding).
+- The lane's branch convention follows the host repo's git workflow, not
+  Mercury's. Rule 2.1 short-prefix (`lane/<short>/<N>-<slug>`) remains
+  recommended for in-host work-branches that the operator wants Mercury
+  lane-assertion (Δ11) to validate. If host-repo conventions conflict
+  AND the operator accepts the trade-off, `MERCURY_LANE_ASSERT_DISABLED=1`
+  is the operator's escape valve — but it skips **all** assertion checks
+  (marker, cwd-encoded vs Worktree path, branch convention; see soft-disable
+  table in §"Δ11 — Path C" below), not just branch convention. Use
+  sparingly and prefer naming branches per Rule 2.1 where compatible.
+- The lane MUST still claim Mercury Issues via the `lane:<short>` label
+  for any Mercury-side work (e.g. cross-repo coordination tickets);
+  in-host work tracking lives in the host repo's own ledger (KB, Issues,
+  etc.) per host convention and is OPAQUE to Mercury LANES.md.
+- Mercury asset dependency (user-scope agents, skills, hooks) is what
+  makes the cross-repo pattern usable — the lane SHOULD declare a
+  `Mercury asset dependency` field in its own LANES.md section listing
+  the user-scope assets it relies on (e.g. `~/.claude/agents/{main,dev,...}`).
+  This is a documentation-only convention (no schema/tooling enforcement
+  in `scripts/lane-spawn.sh` or fixtures); the field exists so future
+  user-scope asset migrations have a manual audit anchor.
+
+First dogfood: `side-sot` lane (worktree at `D:/ShipOfTheseus/Ship_of_Theseus`,
+opened 2026-05-10 per [#374](https://github.com/392fyc/Mercury/issues/374)).
+The `side-sot` LANES.md section lives in user-memory at
+`~/.claude/projects/D--Mercury-Mercury/memory/LANES.md` (not in the Mercury
+repo), so the dogfood reference cannot be cross-checked against repo
+content from this branch alone — see Issue [#374](https://github.com/392fyc/Mercury/issues/374) for the user-memory LANES.md
+companion edit landed concurrently with this guide change.
+
 ### Setup at lane open
 
 After opening a new lane (LANES.md section added, short name declared):
