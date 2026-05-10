@@ -37,7 +37,8 @@ function makeCfg(overrides = {}) {
     no_progress_threshold: 5,
     same_error_threshold: 5,
     duplicate_call_threshold: 3,
-    read_write_ratio_threshold: 8,
+    read_write_ratio_threshold: 12,  // matches DEFAULTS in hook.cjs (Issue #306)
+    read_write_ratio_disabled: false,
     ...overrides
   };
 }
@@ -90,15 +91,29 @@ describe('existing signals (regression)', () => {
     const stall = detectStall(state, makeCfg());
     assert.equal(stall, null);
   });
+
+  test('read_write_ratio gated by cfg.read_write_ratio_disabled flag (#306 mirror sync)', () => {
+    // Inline mirror MUST honor the flag in lockstep with production hook.cjs.
+    // If a future change drops the gate from the mirror, this test fails.
+    const state = makeState({ read_count: 99 });
+    const cfgEnabled  = makeCfg({ read_write_ratio_disabled: false });
+    const cfgDisabled = makeCfg({ read_write_ratio_disabled: true });
+    assert.equal(detectStall(state, cfgEnabled).type, 'read_write_ratio',
+      'flag=false: read-ratio fires at read_count=99 vs threshold=12');
+    assert.equal(detectStall(state, cfgDisabled), null,
+      'flag=true: read-ratio gate blocks the heuristic regardless of read_count');
+  });
 });
 
-// Inline detectStall mirror (same logic as hook.cjs) so tests are self-contained
+// Inline detectStall mirror — kept in sync with hook.cjs's detectStall().
+// Tests requiring research-mode behavior must set cfg.read_write_ratio_disabled=true
+// (handled by makeCfg() default `false`).
 function detectStall(state, cfg) {
   if (state.dup_count  >= cfg.duplicate_call_threshold)
     return { type: 'duplicate_call',   reason: `duplicate_call: ${state.dup_count} identical ${state.dup_tool} calls (hash:${state.dup_hash})` };
   if (state.err_count  >= cfg.same_error_threshold)
     return { type: 'same_error',       reason: `same_error: ${state.err_count} identical errors — "${state.err_last}"` };
-  if (state.read_count >= cfg.read_write_ratio_threshold)
+  if (!cfg.read_write_ratio_disabled && state.read_count >= cfg.read_write_ratio_threshold)
     return { type: 'read_write_ratio', reason: `read_write_ratio: ${state.read_count} consecutive read-only calls with no writes` };
   if (state.np_count   >= cfg.no_progress_threshold)
     return { type: 'no_progress',      reason: `no_progress: ${state.np_count} consecutive action calls with no file write` };
@@ -1105,6 +1120,544 @@ describe('hook.cjs ETE: long PROGRESS_TOOLS phase suppresses hard-timeout', () =
     const finalState = JSON.parse(fs.readFileSync(path.join(stateDir, 'loop-detector.json'), 'utf8'));
     assert.ok(Number.isFinite(finalState.last_progress_ts),
       'hook must populate last_progress_ts on first save (backward-compat init)');
+  });
+});
+
+// ── 18. read_write_ratio default + research-mode opt-out (Issue #306) ────────
+
+describe('Issue #306: read_write_ratio default raised to 12 + research-mode env var', () => {
+  test('default config shape: read_write_ratio_threshold === 12', () => {
+    // Read DEFAULTS via the source-of-truth: spawn hook with no config + check
+    // a borderline state. read_count=11 (< 12) must NOT trigger; read_count=12 MUST.
+    // This is end-to-end so it covers DEFAULTS + clampInt + detectStall together.
+    const { execFileSync } = require('child_process');
+    const HOOK = path.join(__dirname, 'hook.cjs');
+    const tmpDir = makeTmpDir();
+
+    try {
+      const session_id = `ete-rwt-default-${process.pid}-${Date.now()}`;
+      const stateDir = path.join(tmpDir, '.mercury', 'state');
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.writeFileSync(path.join(stateDir, 'loop-detector.json'), JSON.stringify({
+        session_id,
+        dup_count: 0, dup_tool: null, dup_hash: null,
+        err_count: 0, err_last: null,
+        read_count: 11, np_count: 0,
+        last_activity_ts: Date.now(), last_write_ts: Date.now(),
+        last_progress_ts: Date.now()
+      }, null, 2));
+
+      // 12th Read brings read_count to 12 → must trigger (boundary at threshold)
+      let stdout = '';
+      const env = { ...process.env, CLAUDE_PROJECT_DIR: tmpDir };
+      delete env.MERCURY_LOOP_DETECTOR_MODE;
+      try {
+        stdout = execFileSync('node', [HOOK], {
+          input: JSON.stringify({
+            tool_name: 'Read',
+            tool_input: { file_path: '/x.txt' },
+            tool_response: 'ok',
+            session_id
+          }),
+          env,
+          timeout: 10000
+        }).toString();
+      } catch (e) {
+        stdout = e.stdout ? e.stdout.toString() : '';
+        if (e.status !== 0) throw e;
+      }
+      assert.ok(stdout.includes('"block"'),
+        `12th Read must trigger read_write_ratio at default threshold 12, got: ${stdout}`);
+      assert.ok(stdout.includes('read_write_ratio'),
+        `block reason must be read_write_ratio, got: ${stdout}`);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test('default threshold: read_count=10 → 11th Read does NOT trigger (below 12)', () => {
+    const { execFileSync } = require('child_process');
+    const HOOK = path.join(__dirname, 'hook.cjs');
+    const tmpDir = makeTmpDir();
+
+    try {
+      const session_id = `ete-rwt-below-${process.pid}-${Date.now()}`;
+      const stateDir = path.join(tmpDir, '.mercury', 'state');
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.writeFileSync(path.join(stateDir, 'loop-detector.json'), JSON.stringify({
+        session_id,
+        dup_count: 0, dup_tool: null, dup_hash: null,
+        err_count: 0, err_last: null,
+        read_count: 10, np_count: 0,
+        last_activity_ts: Date.now(), last_write_ts: Date.now(),
+        last_progress_ts: Date.now()
+      }, null, 2));
+
+      let stdout = '';
+      const env = { ...process.env, CLAUDE_PROJECT_DIR: tmpDir };
+      delete env.MERCURY_LOOP_DETECTOR_MODE;
+      try {
+        stdout = execFileSync('node', [HOOK], {
+          input: JSON.stringify({
+            tool_name: 'Read',
+            tool_input: { file_path: '/x.txt' },
+            tool_response: 'ok',
+            session_id
+          }),
+          env,
+          timeout: 10000
+        }).toString();
+      } catch (e) {
+        stdout = e.stdout ? e.stdout.toString() : '';
+        if (e.status !== 0) throw e;
+      }
+      assert.ok(!stdout.includes('"block"'),
+        `11th consecutive Read (read_count=11) must NOT trigger at threshold 12, got: ${stdout}`);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test('MERCURY_LOOP_DETECTOR_MODE=research disables read_write_ratio block (large burst tolerated)', () => {
+    const { execFileSync } = require('child_process');
+    const HOOK = path.join(__dirname, 'hook.cjs');
+    const tmpDir = makeTmpDir();
+
+    try {
+      const session_id = `ete-rwt-research-${process.pid}-${Date.now()}`;
+      const stateDir = path.join(tmpDir, '.mercury', 'state');
+      fs.mkdirSync(stateDir, { recursive: true });
+      // Pre-seed read_count well past default 12 to prove research mode bypasses
+      fs.writeFileSync(path.join(stateDir, 'loop-detector.json'), JSON.stringify({
+        session_id,
+        dup_count: 0, dup_tool: null, dup_hash: null,
+        err_count: 0, err_last: null,
+        read_count: 99, np_count: 0,
+        last_activity_ts: Date.now(), last_write_ts: Date.now(),
+        last_progress_ts: Date.now()
+      }, null, 2));
+
+      let stdout = '';
+      const env = { ...process.env, CLAUDE_PROJECT_DIR: tmpDir, MERCURY_LOOP_DETECTOR_MODE: 'research' };
+      try {
+        stdout = execFileSync('node', [HOOK], {
+          input: JSON.stringify({
+            tool_name: 'Glob',
+            tool_input: { pattern: '**/*.md' },
+            tool_response: 'matches',
+            session_id
+          }),
+          env,
+          timeout: 10000
+        }).toString();
+      } catch (e) {
+        stdout = e.stdout ? e.stdout.toString() : '';
+        if (e.status !== 0) throw e;
+      }
+      assert.ok(!stdout.includes('"block"'),
+        `research mode must suppress read_write_ratio even at read_count=100, got: ${stdout}`);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test('MERCURY_LOOP_DETECTOR_MODE=research does NOT disable duplicate_call heuristic', () => {
+    const { execFileSync } = require('child_process');
+    const HOOK = path.join(__dirname, 'hook.cjs');
+    const tmpDir = makeTmpDir();
+
+    try {
+      const session_id = `ete-rwt-dup-research-${process.pid}-${Date.now()}`;
+      const stateDir = path.join(tmpDir, '.mercury', 'state');
+      fs.mkdirSync(stateDir, { recursive: true });
+      // Pre-seed at duplicate_call boundary; the next identical Bash hits threshold=3
+      fs.writeFileSync(path.join(stateDir, 'loop-detector.json'), JSON.stringify({
+        session_id,
+        dup_count: 2, dup_tool: 'Bash', dup_hash: '5c8b1d3a',
+        err_count: 0, err_last: null,
+        read_count: 0, np_count: 0,
+        last_activity_ts: Date.now(), last_write_ts: Date.now(),
+        last_progress_ts: Date.now()
+      }, null, 2));
+
+      // The hash of the input below must equal '5c8b1d3a' for duplicate to fire.
+      // Compute the actual hash by hashing the same way hook.cjs does.
+      const sameInput = { command: 'gh pr view 999' };
+      const realHash = crypto.createHash('sha256')
+        .update(JSON.stringify(sameInput)).digest('hex').slice(0, 8);
+      // Re-seed with the actual hash so the test is portable
+      fs.writeFileSync(path.join(stateDir, 'loop-detector.json'), JSON.stringify({
+        session_id,
+        dup_count: 2, dup_tool: 'Bash', dup_hash: realHash,
+        err_count: 0, err_last: null,
+        read_count: 0, np_count: 0,
+        last_activity_ts: Date.now(), last_write_ts: Date.now(),
+        last_progress_ts: Date.now()
+      }, null, 2));
+
+      let stdout = '';
+      const env = { ...process.env, CLAUDE_PROJECT_DIR: tmpDir, MERCURY_LOOP_DETECTOR_MODE: 'research' };
+      try {
+        stdout = execFileSync('node', [HOOK], {
+          input: JSON.stringify({
+            tool_name: 'Bash',
+            tool_input: sameInput,
+            tool_response: 'ok',
+            session_id
+          }),
+          env,
+          timeout: 10000
+        }).toString();
+      } catch (e) {
+        stdout = e.stdout ? e.stdout.toString() : '';
+        if (e.status !== 0) throw e;
+      }
+      assert.ok(stdout.includes('"block"'),
+        `research mode must NOT disable duplicate_call heuristic, got: ${stdout}`);
+      assert.ok(stdout.includes('duplicate_call'),
+        `block reason must be duplicate_call, got: ${stdout}`);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test('MERCURY_LOOP_DETECTOR_MODE unset/empty → default threshold (12) still active', () => {
+    const { execFileSync } = require('child_process');
+    const HOOK = path.join(__dirname, 'hook.cjs');
+    const tmpDir = makeTmpDir();
+
+    try {
+      const session_id = `ete-rwt-emptyenv-${process.pid}-${Date.now()}`;
+      const stateDir = path.join(tmpDir, '.mercury', 'state');
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.writeFileSync(path.join(stateDir, 'loop-detector.json'), JSON.stringify({
+        session_id,
+        dup_count: 0, dup_tool: null, dup_hash: null,
+        err_count: 0, err_last: null,
+        read_count: 11, np_count: 0,
+        last_activity_ts: Date.now(), last_write_ts: Date.now(),
+        last_progress_ts: Date.now()
+      }, null, 2));
+
+      let stdout = '';
+      // Pass MERCURY_LOOP_DETECTOR_MODE='' (empty string, NOT 'research')
+      const env = { ...process.env, CLAUDE_PROJECT_DIR: tmpDir, MERCURY_LOOP_DETECTOR_MODE: '' };
+      try {
+        stdout = execFileSync('node', [HOOK], {
+          input: JSON.stringify({
+            tool_name: 'Read',
+            tool_input: { file_path: '/x.txt' },
+            tool_response: 'ok',
+            session_id
+          }),
+          env,
+          timeout: 10000
+        }).toString();
+      } catch (e) {
+        stdout = e.stdout ? e.stdout.toString() : '';
+        if (e.status !== 0) throw e;
+      }
+      assert.ok(stdout.includes('"block"'),
+        `empty env var must NOT enable research mode; default 12 must trigger at read_count=12, got: ${stdout}`);
+      assert.ok(stdout.includes('read_write_ratio'),
+        `block reason must be read_write_ratio, got: ${stdout}`);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test('MERCURY_LOOP_DETECTOR_MODE=other (non-research value) → research mode NOT activated', () => {
+    const { execFileSync } = require('child_process');
+    const HOOK = path.join(__dirname, 'hook.cjs');
+    const tmpDir = makeTmpDir();
+
+    try {
+      const session_id = `ete-rwt-otherval-${process.pid}-${Date.now()}`;
+      const stateDir = path.join(tmpDir, '.mercury', 'state');
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.writeFileSync(path.join(stateDir, 'loop-detector.json'), JSON.stringify({
+        session_id,
+        dup_count: 0, dup_tool: null, dup_hash: null,
+        err_count: 0, err_last: null,
+        read_count: 11, np_count: 0,
+        last_activity_ts: Date.now(), last_write_ts: Date.now(),
+        last_progress_ts: Date.now()
+      }, null, 2));
+
+      let stdout = '';
+      const env = { ...process.env, CLAUDE_PROJECT_DIR: tmpDir, MERCURY_LOOP_DETECTOR_MODE: 'debug' };
+      try {
+        stdout = execFileSync('node', [HOOK], {
+          input: JSON.stringify({
+            tool_name: 'Read',
+            tool_input: { file_path: '/x.txt' },
+            tool_response: 'ok',
+            session_id
+          }),
+          env,
+          timeout: 10000
+        }).toString();
+      } catch (e) {
+        stdout = e.stdout ? e.stdout.toString() : '';
+        if (e.status !== 0) throw e;
+      }
+      assert.ok(stdout.includes('"block"'),
+        `non-'research' mode value must NOT enable opt-out; default 12 still active, got: ${stdout}`);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test('MERCURY_LOOP_DETECTOR_MODE=Research (case mismatch) → strict-eq rejects, default 12 active', () => {
+    // Locks the strict-eq behavior (=== 'research'). Capitalized 'Research' must
+    // NOT activate opt-out — guards against ambiguous casing in user docs/aliases.
+    const { execFileSync } = require('child_process');
+    const HOOK = path.join(__dirname, 'hook.cjs');
+    const tmpDir = makeTmpDir();
+
+    try {
+      const session_id = `ete-rwt-case-${process.pid}-${Date.now()}`;
+      const stateDir = path.join(tmpDir, '.mercury', 'state');
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.writeFileSync(path.join(stateDir, 'loop-detector.json'), JSON.stringify({
+        session_id,
+        dup_count: 0, dup_tool: null, dup_hash: null,
+        err_count: 0, err_last: null,
+        read_count: 11, np_count: 0,
+        last_activity_ts: Date.now(), last_write_ts: Date.now(),
+        last_progress_ts: Date.now()
+      }, null, 2));
+
+      let stdout = '';
+      const env = { ...process.env, CLAUDE_PROJECT_DIR: tmpDir, MERCURY_LOOP_DETECTOR_MODE: 'Research' };
+      try {
+        stdout = execFileSync('node', [HOOK], {
+          input: JSON.stringify({
+            tool_name: 'Read', tool_input: { file_path: '/x.txt' },
+            tool_response: 'ok', session_id
+          }),
+          env, timeout: 10000
+        }).toString();
+      } catch (e) {
+        stdout = e.stdout ? e.stdout.toString() : '';
+        if (e.status !== 0) throw e;
+      }
+      assert.ok(stdout.includes('"block"'),
+        `case-mismatched 'Research' must NOT enable opt-out; default 12 still active, got: ${stdout}`);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test("MERCURY_LOOP_DETECTOR_MODE=' research ' (whitespace) → strict-eq rejects, default 12 active", () => {
+    // Locks no-trim behavior. Users who paste 'research ' with trailing space
+    // must NOT silently enable opt-out — fail-closed guards production sessions
+    // from accidental heuristic disablement.
+    const { execFileSync } = require('child_process');
+    const HOOK = path.join(__dirname, 'hook.cjs');
+    const tmpDir = makeTmpDir();
+
+    try {
+      const session_id = `ete-rwt-ws-${process.pid}-${Date.now()}`;
+      const stateDir = path.join(tmpDir, '.mercury', 'state');
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.writeFileSync(path.join(stateDir, 'loop-detector.json'), JSON.stringify({
+        session_id,
+        dup_count: 0, dup_tool: null, dup_hash: null,
+        err_count: 0, err_last: null,
+        read_count: 11, np_count: 0,
+        last_activity_ts: Date.now(), last_write_ts: Date.now(),
+        last_progress_ts: Date.now()
+      }, null, 2));
+
+      let stdout = '';
+      const env = { ...process.env, CLAUDE_PROJECT_DIR: tmpDir, MERCURY_LOOP_DETECTOR_MODE: ' research ' };
+      try {
+        stdout = execFileSync('node', [HOOK], {
+          input: JSON.stringify({
+            tool_name: 'Read', tool_input: { file_path: '/x.txt' },
+            tool_response: 'ok', session_id
+          }),
+          env, timeout: 10000
+        }).toString();
+      } catch (e) {
+        stdout = e.stdout ? e.stdout.toString() : '';
+        if (e.status !== 0) throw e;
+      }
+      assert.ok(stdout.includes('"block"'),
+        `whitespace-padded ' research ' must NOT enable opt-out; default 12 still active, got: ${stdout}`);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test('research → default mid-session: pre-research read accumulation is reset, no instant block', () => {
+    // Codex dual-verify M finding: env var is per-invocation; if user enables
+    // research mode after read_count already accumulated, OR runs many reads
+    // under research and then disables it, the persisted state.read_count must
+    // not cause an immediate block on the very next default-mode read.
+    // main() resets state.read_count = 0 when research mode is on, so any reads
+    // after disabling start fresh from 0.
+    const { execFileSync } = require('child_process');
+    const HOOK = path.join(__dirname, 'hook.cjs');
+    const tmpDir = makeTmpDir();
+
+    try {
+      const session_id = `ete-rwt-toggle-${process.pid}-${Date.now()}`;
+      const stateDir = path.join(tmpDir, '.mercury', 'state');
+      fs.mkdirSync(stateDir, { recursive: true });
+      // Pre-seed read_count above default threshold (would block if not reset)
+      fs.writeFileSync(path.join(stateDir, 'loop-detector.json'), JSON.stringify({
+        session_id,
+        dup_count: 0, dup_tool: null, dup_hash: null,
+        err_count: 0, err_last: null,
+        read_count: 50, np_count: 0,
+        last_activity_ts: Date.now(), last_write_ts: Date.now(),
+        last_progress_ts: Date.now()
+      }, null, 2));
+
+      // Step 1: invocation under research mode — must NOT block, must reset read_count
+      let stdout = '';
+      const envResearch = { ...process.env, CLAUDE_PROJECT_DIR: tmpDir, MERCURY_LOOP_DETECTOR_MODE: 'research' };
+      try {
+        stdout = execFileSync('node', [HOOK], {
+          input: JSON.stringify({
+            tool_name: 'Read', tool_input: { file_path: '/x.txt' },
+            tool_response: 'ok', session_id
+          }),
+          env: envResearch, timeout: 10000
+        }).toString();
+      } catch (e) {
+        stdout = e.stdout ? e.stdout.toString() : '';
+        if (e.status !== 0) throw e;
+      }
+      assert.ok(!stdout.includes('"block"'),
+        `research-mode invocation must NOT block on pre-seeded read_count=50, got: ${stdout}`);
+      const midState = JSON.parse(fs.readFileSync(path.join(stateDir, 'loop-detector.json'), 'utf8'));
+      assert.equal(midState.read_count, 1,
+        `read_count must be reset to 0 then incremented to 1 by the Read, got ${midState.read_count}`);
+
+      // Step 2: invocation with research mode disabled — must NOT block (read_count was reset)
+      stdout = '';
+      const envDefault = { ...process.env, CLAUDE_PROJECT_DIR: tmpDir };
+      delete envDefault.MERCURY_LOOP_DETECTOR_MODE;
+      try {
+        stdout = execFileSync('node', [HOOK], {
+          input: JSON.stringify({
+            tool_name: 'Read', tool_input: { file_path: '/y.txt' },
+            tool_response: 'ok', session_id
+          }),
+          env: envDefault, timeout: 10000
+        }).toString();
+      } catch (e) {
+        stdout = e.stdout ? e.stdout.toString() : '';
+        if (e.status !== 0) throw e;
+      }
+      assert.ok(!stdout.includes('"block"'),
+        `default-mode invocation after research must NOT instant-block (read_count was reset), got: ${stdout}`);
+      const finalState = JSON.parse(fs.readFileSync(path.join(stateDir, 'loop-detector.json'), 'utf8'));
+      assert.equal(finalState.read_count, 2,
+        `read_count must continue from reset baseline (1 + 1 = 2), got ${finalState.read_count}`);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test('research mode persistence: many reads under research keep state.read_count = 0', () => {
+    // Cross-session safety: even with 20 consecutive Reads under research mode,
+    // persisted state.read_count must remain bounded (not accumulate forever).
+    const { execFileSync } = require('child_process');
+    const HOOK = path.join(__dirname, 'hook.cjs');
+    const tmpDir = makeTmpDir();
+
+    try {
+      const session_id = `ete-rwt-persist-${process.pid}-${Date.now()}`;
+      const stateDir = path.join(tmpDir, '.mercury', 'state');
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.writeFileSync(path.join(stateDir, 'loop-detector.json'), JSON.stringify({
+        session_id,
+        dup_count: 0, dup_tool: null, dup_hash: null,
+        err_count: 0, err_last: null,
+        read_count: 0, np_count: 0,
+        last_activity_ts: Date.now(), last_write_ts: Date.now(),
+        last_progress_ts: Date.now()
+      }, null, 2));
+
+      const envResearch = { ...process.env, CLAUDE_PROJECT_DIR: tmpDir, MERCURY_LOOP_DETECTOR_MODE: 'research' };
+      // 20 consecutive Reads, each with distinct hash to avoid duplicate_call.
+      // After each: read_count is reset to 0 by main(), then incremented to 1 by update().
+      // So persisted value should always be 1.
+      for (let i = 0; i < 20; i++) {
+        let stdout = '';
+        try {
+          stdout = execFileSync('node', [HOOK], {
+            input: JSON.stringify({
+              tool_name: 'Read', tool_input: { file_path: `/path-${i}.txt` },
+              tool_response: 'ok', session_id
+            }),
+            env: envResearch, timeout: 10000
+          }).toString();
+        } catch (e) {
+          stdout = e.stdout ? e.stdout.toString() : '';
+          if (e.status !== 0) throw e;
+        }
+        assert.ok(!stdout.includes('"block"'), `iteration ${i} must NOT block`);
+      }
+
+      const finalState = JSON.parse(fs.readFileSync(path.join(stateDir, 'loop-detector.json'), 'utf8'));
+      assert.equal(finalState.read_count, 1,
+        `under research mode, persisted read_count must remain 1 (reset before each increment), got ${finalState.read_count}`);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test('research mode does NOT bypass timeout heuristics (hard-timeout still fires)', () => {
+    const { execFileSync } = require('child_process');
+    const HOOK = path.join(__dirname, 'hook.cjs');
+    const tmpDir = makeTmpDir();
+
+    try {
+      const session_id = `ete-rwt-research-timeout-${process.pid}-${Date.now()}`;
+      const stateDir = path.join(tmpDir, '.mercury', 'state');
+      fs.mkdirSync(stateDir, { recursive: true });
+      const now = Date.now();
+      // Old last_progress_ts (>900s) should still trigger hard-timeout even
+      // under research mode. Mode only suppresses read_write_ratio, nothing else.
+      fs.writeFileSync(path.join(stateDir, 'loop-detector.json'), JSON.stringify({
+        session_id,
+        dup_count: 0, dup_tool: null, dup_hash: null,
+        err_count: 0, err_last: null,
+        read_count: 0, np_count: 0,
+        last_activity_ts: now - 1_000,
+        last_write_ts:    now - 1_000_000,
+        last_progress_ts: now - 1_000_000
+      }, null, 2));
+
+      let stdout = '';
+      const env = { ...process.env, CLAUDE_PROJECT_DIR: tmpDir, MERCURY_LOOP_DETECTOR_MODE: 'research' };
+      try {
+        stdout = execFileSync('node', [HOOK], {
+          input: JSON.stringify({
+            tool_name: 'WebSearch',
+            tool_input: { query: 'docs' },
+            tool_response: 'ok',
+            session_id
+          }),
+          env,
+          timeout: 10000
+        }).toString();
+      } catch (e) {
+        stdout = e.stdout ? e.stdout.toString() : '';
+        if (e.status !== 0) throw e;
+      }
+      assert.ok(stdout.includes('"block"'),
+        `research mode must NOT bypass hard-timeout, got: ${stdout}`);
+      assert.ok(stdout.includes('hard timeout'),
+        `block reason must be hard timeout (not read_write_ratio), got: ${stdout}`);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });
 
