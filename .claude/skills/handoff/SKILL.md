@@ -397,37 +397,47 @@ fi
 
 (Soft-disable via `MERCURY_LANE_ASSERT_DISABLED=1` if break-glass.)
 
-**Windows** (Windows Terminal, new tab) — `wt`'s `-- ...` passes argv
-directly to `CreateProcess`, so the prompt is one argv element with no
-shell re-parse; no extra quoting needed:
-```bash
-wt -w 0 nt --title "Handoff: $LANE_NAME" -d "$WORKTREE_PATH" -- claude -- "$SHORT_PROMPT"
-```
-
-**macOS / Linux with tmux** (real new window, detached from current TTY) —
-`tmux new-window <cmd>` runs `<cmd>` via `/bin/sh -c`. Bash's `printf %q`
-can emit `$'...'` ANSI-C quoting for some inputs, which is a bash extension
-not recognized by POSIX sh (dash on Debian/Ubuntu, busybox sh) — so we
-explicitly route through `bash -c` to ensure the quoted form is parsed by
-bash regardless of what `/bin/sh` resolves to. The outer `sh` only sees a
-plain `bash -c "..."` invocation, which is POSIX-portable. Closes Copilot
-iter3 finding on PR #346 (printf %q × dash sh portability):
-```bash
-SHORT_PROMPT_QUOTED=$(printf '%q' "$SHORT_PROMPT")
-tmux new-window -n handoff -c "$WORKTREE_PATH" \
-  "bash -c \"claude -- $SHORT_PROMPT_QUOTED\""
-```
-
-**macOS / Linux without tmux** — there is no portable "new terminal"
-primitive. Use `tmux new-session -d` or the terminal emulator's own CLI
-(`osascript -e 'tell app "Terminal" to do script ...'` on macOS,
-`gnome-terminal --` on Linux). Otherwise fall back to manual mode.
+**Required**: Do NOT construct the wt/tmux command inline. Call the
+canonical launcher:
 
 ```bash
-SHORT_PROMPT_QUOTED=$(printf '%q' "$SHORT_PROMPT")
-tmux new-session -d -s handoff -c "$WORKTREE_PATH" \
-  "bash -c \"claude -- $SHORT_PROMPT_QUOTED\""
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+bash "$REPO_ROOT/scripts/handoff-launch.sh" \
+  --lane "$LANE_NAME" \
+  --worktree "$WORKTREE_PATH" \
+  --handoff-doc "$HANDOFF_PATH"
 ```
+
+This script:
+- Constructs SHORT_PROMPT canonically with `[LANE=<name>]` marker preserved
+- Validates no wt/tmux metacharacters (`;` `&` `|` `$(` `` ` ``) in SHORT_PROMPT
+- Invokes wt directly from bash (Windows) or tmux (macOS/Linux) without
+  going through `Start-Process` or `ShellExecute` shim
+
+**Do NOT** invoke wt via PowerShell `Start-Process -FilePath "<concatenated string>"` —
+Windows Shell will treat the entire commandline string as the executable
+path and produce `0x80070002 ERROR_FILE_NOT_FOUND`. Mercury Issue #377
+forensic record:
+```
+[出现错误 2147942402 (0x80070002) (启动"S5 -d D:\Mercury\Mercury-side-bug
+-- C:\Users\392fy\.local\bin\claude.exe -- LANE=side-bug Continue from
+session handoff. Read ...
+```
+
+**ONLY entry point**: `scripts/handoff-launch.sh`. No exceptions. Do not call
+`wt`, `tmux`, `Start-Process`, or any direct terminal-spawn primitive from
+your agent code under any circumstances. The launcher is the only supported
+mechanism for `/handoff auto` and is dual-verify-tested (Mercury Issue #377).
+
+**SHORT_PROMPT metacharacter rationale** (kept here for human readers — the
+launcher enforces this automatically): SHORT_PROMPT must remain free of
+`;` (command separator), `&` (background), `|` (pipe), `$()` (command
+substitution), and `` ` `` (backtick). The launcher does NOT reject `\`:
+on Windows, the canonical handoff-doc path contains backslashes
+(`C:\Users\...\session-handoff.md`), and bash double-quoting preserves
+`\<char>` literally for non-special chars. The `[LANE=<name>]` marker
+only contains `[a-z0-9-]+` per Rule 2.1 + the literal `[`/`]`/`=`
+brackets, none of which are wt/tmux metacharacters.
 
 The positional argument after `--` is the session's first user message —
 documented at <https://code.claude.com/docs/en/cli-reference>. The `--`

@@ -487,9 +487,15 @@ as the new tab's cwd:
 2. `LANES.md` is read for that lane's `Worktree path` bullet (this §
    Worktree path convention table). awk extraction is bounded by the
    `### \`<lane-name>\`` heading scope so cross-lane bleed is impossible.
-3. The path is substituted into the spawn command:
-   - Windows: `wt -w 0 nt --title "Handoff: <lane>" -d "<worktree>" -- claude -- "$SHORT_PROMPT"`
-   - tmux:    `tmux new-window -n handoff -c "<worktree>" "claude -- '$SHORT_PROMPT'"`
+3. The path is passed to the canonical launcher (Mercury Issue #377; do not
+   freeform-construct wt/tmux commands):
+   ```bash
+   REPO_ROOT="$(git rev-parse --show-toplevel)"
+   bash "$REPO_ROOT/scripts/handoff-launch.sh" \
+     --lane <lane> --worktree <worktree> --handoff-doc <doc>
+   ```
+   The launcher handles platform detection (Windows → wt, macOS/Linux → tmux)
+   and constructs SHORT_PROMPT with `[LANE=<name>]` marker preserved.
 4. If the `Worktree path` field is missing → spawn aborts with explicit
    `Rule 5.1` guidance pointing at `LANES.md`.
 
