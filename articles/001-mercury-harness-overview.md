@@ -336,10 +336,10 @@ Sister-fix #372 引入了 `last_progress_ts` 字段——在 write **或** PROGR
 
 S96 PR #373 合并后，4 个 gap 全部关闭，production-readiness gate **4/4 FULL PASS**：
 
-1. ✅ Gap 4 #362（S92）— sub-agent return-size scoping
-2. ✅ Gap 3 #361（S93）— cost-tracker user-level layer
-3. ✅ Phase 5-3 Dev Pipeline wire #369（S95）— first user-actionable notify caller
-4. ✅ Loop-detector false-positive reduction #372（S96）— false-positive rate 降低
+1. ✅ Gap 1 (#361, S93) — Cost tracking user-level layer
+2. ✅ Gap 2 (#362, S92) — Sub-agent return-size scoping
+3. ✅ Gap 3 (#369, S95) — Dev-pipeline → notify-hub wire (first user-actionable notify caller)
+4. ✅ Gap 4 (#372, S96) — Loop-detector hard-timeout false-positive reduction
 
 用户选择"推广文章 / 方法论编写"作为 S97 方向——这本文章就是那个决策的产物。
 
@@ -541,7 +541,7 @@ Mercury 的 96 个 session（截至 S96）构成了一个清晰的演化轨迹�
 | Issue #362 / PR #363 | Gap 4 sub-agent return-size scoping（receipt slim format，dodChecklist schema）|
 | Issue #369 / PR #370 | Phase 5-3 dev-pipeline → notify-hub wire（first mercury-notify caller）|
 | Issue #372 / PR #373 | Gap 1 loop-detector hard-timeout false-positive（last_progress_ts sister-fix to #325）|
-| Issue #348 / PR | CLAUDE.md adapter-size internal-tooling carve-out（scripts/ 豁免）|
+| Issue #348 / PR #350 | CLAUDE.md adapter-size internal-tooling carve-out（scripts/ 豁免）|
 
 ### 外部资源
 
