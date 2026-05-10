@@ -17,15 +17,20 @@ const block = (r) => { process.stdout.write(JSON.stringify({ decision: 'block', 
 const pass  = () => process.exit(0);
 
 // ── Config ───────────────────────────────────────────────────────────────────
+// read_write_ratio_threshold default raised 8 → 12 per Issue #306: research /
+// debug sessions legitimately exceed 8 consecutive Read/Glob/Grep before any
+// Write (e.g. multi-doc KB pull + grep sweep). 12 is a balance — still catches
+// stuck investigation loops but tolerates routine multi-source synthesis.
 const DEFAULTS = { enabled: true, no_progress_threshold: 5, same_error_threshold: 5,
-  duplicate_call_threshold: 3, read_write_ratio_threshold: 8 };
+  duplicate_call_threshold: 3, read_write_ratio_threshold: 12 };
 
 function clampInt(v, min, max, fb) { return Number.isFinite(v) && v >= min && v <= max ? Math.round(v) : fb; }
 
 function loadConfig(cwd) {
+  let cfg;
   try {
     const p = JSON.parse(fs.readFileSync(path.join(cwd, '.mercury', 'config', 'loop-detector.json'), 'utf8'));
-    return {
+    cfg = {
       enabled:                    p.enabled !== false,
       no_progress_threshold:      clampInt(p.no_progress_threshold,      1, 100, DEFAULTS.no_progress_threshold),
       same_error_threshold:       clampInt(p.same_error_threshold,       1, 100, DEFAULTS.same_error_threshold),
@@ -35,7 +40,24 @@ function loadConfig(cwd) {
       timeout_idle_sec: clampInt(p.timeout_idle_sec, 1, 3600, undefined),
       timeout_hard_sec: clampInt(p.timeout_hard_sec, 1, 3600, undefined)
     };
-  } catch { return Object.assign({}, DEFAULTS); }
+  } catch (err) {
+    // Silent fail-open for missing config file (intentional — projects without
+    // loop-detector.json should get default behavior). Surface parse / IO errors
+    // since those indicate config corruption that ought to be observable.
+    if (err && err.code !== 'ENOENT') {
+      process.stderr.write(`${TAG} WARNING: failed to load loop-detector.json: ${err.message}; using defaults\n`);
+    }
+    cfg = Object.assign({}, DEFAULTS);
+  }
+  // MERCURY_LOOP_DETECTOR_MODE=research opts the current session out of the
+  // read-ratio heuristic only — duplicate_call/same_error/no_progress and the
+  // multi-level timeout still fire. For investigation contexts that legitimately
+  // do many reads with no writes (KB sweeps, upstream issue context, source greps).
+  // Implemented as a boolean gate (not a sentinel threshold) so toggling the env
+  // var off mid-session does NOT immediately block on accumulated reads — main()
+  // also resets state.read_count when the gate is on, so persisted state stays clean.
+  cfg.read_write_ratio_disabled = process.env.MERCURY_LOOP_DETECTOR_MODE === 'research';
+  return cfg;
 }
 
 // ── State ────────────────────────────────────────────────────────────────────
@@ -116,7 +138,7 @@ function detectStall(state, cfg) {
     return { type: 'duplicate_call',   reason: `duplicate_call: ${state.dup_count} identical ${state.dup_tool} calls (hash:${state.dup_hash})` };
   if (state.err_count  >= cfg.same_error_threshold)
     return { type: 'same_error',       reason: `same_error: ${state.err_count} identical errors — "${state.err_last}"` };
-  if (state.read_count >= cfg.read_write_ratio_threshold)
+  if (!cfg.read_write_ratio_disabled && state.read_count >= cfg.read_write_ratio_threshold)
     return { type: 'read_write_ratio', reason: `read_write_ratio: ${state.read_count} consecutive read-only calls with no writes` };
   if (state.np_count   >= cfg.no_progress_threshold)
     return { type: 'no_progress',      reason: `no_progress: ${state.np_count} consecutive action calls with no file write` };
@@ -150,6 +172,11 @@ function main() {
   const statePath = path.join(cwd, '.mercury', 'state', 'loop-detector.json');
   const state     = loadState(statePath);
   if (state.session_id !== session_id) { Object.assign(state, EMPTY_STATE()); state.session_id = session_id; }
+
+  // research mode: clear any persisted read_count so reads accumulated during
+  // research don't suddenly trip the heuristic when the env var is removed
+  // mid-session (Issue #306 dual-verify finding).
+  if (cfg.read_write_ratio_disabled) state.read_count = 0;
 
   const errored     = hasError(tool_response);
   const err_sig     = errored ? errorSig(tool_response) : null;
