@@ -303,12 +303,6 @@ alone. To verify the companion edit at audit time:
 - This guide change and the user-memory companion edit MUST land in the
   same Mercury session (atomicity is operator-enforced, not tooling-enforced).
 
-Illustrative team values (one example operator's concrete paths; values
-will differ per operator and platform — trust env resolution at runtime,
-not these literals): `<host-repo-root>/<host-repo>` =
-`D:/ShipOfTheseus/Ship_of_Theseus`, `<canonical>` =
-`~/.claude/projects/D--Mercury-Mercury/memory`.
-
 ### Setup at lane open
 
 After opening a new lane (LANES.md section added, short name declared):
