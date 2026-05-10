@@ -269,8 +269,12 @@ a `Worktree path` field per Rule 6 carries over unchanged.
   AND the operator accepts the trade-off, `MERCURY_LANE_ASSERT_DISABLED=1`
   is the operator's escape valve — but it skips **all** assertion checks
   (marker, cwd-encoded vs Worktree path, branch convention; see soft-disable
-  table in §"Δ11 — Path C" below), not just branch convention. Use
-  sparingly and prefer naming branches per Rule 2.1 where compatible.
+  table in §"Δ11 — Path C" below), not just branch convention. **Use it
+  only as a one-shot command prefix** (e.g. `MERCURY_LANE_ASSERT_DISABLED=1
+  claude ...`) and `unset MERCURY_LANE_ASSERT_DISABLED` immediately after;
+  do NOT persist in shell profile / `.bashrc` / CI defaults — the assertion
+  bypass is meant for exceptional moments, not steady state. Prefer naming
+  branches per Rule 2.1 where compatible.
 - The lane MUST still claim Mercury Issues via the `lane:<short>` label
   for any Mercury-side work (e.g. cross-repo coordination tickets);
   in-host work tracking lives in the host repo's own ledger (KB, Issues,
@@ -283,13 +287,27 @@ a `Worktree path` field per Rule 6 carries over unchanged.
   in `scripts/lane-spawn.sh` or fixtures); the field exists so future
   user-scope asset migrations have a manual audit anchor.
 
-First dogfood: `side-sot` lane (worktree at `D:/ShipOfTheseus/Ship_of_Theseus`,
+First dogfood: `side-sot` lane (worktree at `<host-repo-root>/<host-repo>`,
 opened 2026-05-10 per [#374](https://github.com/392fyc/Mercury/issues/374)).
 The `side-sot` LANES.md section lives in user-memory at
-`~/.claude/projects/D--Mercury-Mercury/memory/LANES.md` (not in the Mercury
-repo), so the dogfood reference cannot be cross-checked against repo
-content from this branch alone — see Issue [#374](https://github.com/392fyc/Mercury/issues/374) for the user-memory LANES.md
-companion edit landed concurrently with this guide change.
+`<canonical>/LANES.md` (where `<canonical>` resolves per the §"Operational
+expectation" rules above — not in the Mercury repo), so the dogfood
+reference cannot be cross-checked against repo content from this branch
+alone. To verify the companion edit at audit time:
+
+- Read the user-memory LANES.md `### \`side-sot\`` section directly (path
+  resolves via `MERCURY_MEMORY_DIR` or its default — see §"Operational
+  expectation" above);
+- Issue [#374](https://github.com/392fyc/Mercury/issues/374) body links the
+  full side-sot section content as a comment for repo-side audit anchor;
+- This guide change and the user-memory companion edit MUST land in the
+  same Mercury session (atomicity is operator-enforced, not tooling-enforced).
+
+Illustrative team values (one example operator's concrete paths; values
+will differ per operator and platform — trust env resolution at runtime,
+not these literals): `<host-repo-root>/<host-repo>` =
+`D:/ShipOfTheseus/Ship_of_Theseus`, `<canonical>` =
+`~/.claude/projects/D--Mercury-Mercury/memory`.
 
 ### Setup at lane open
 
