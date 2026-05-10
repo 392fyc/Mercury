@@ -490,6 +490,7 @@ as the new tab's cwd:
 3. The path is passed to the canonical launcher (Mercury Issue #377; do not
    freeform-construct wt/tmux commands):
    ```bash
+   REPO_ROOT="$(git rev-parse --show-toplevel)"
    bash "$REPO_ROOT/scripts/handoff-launch.sh" \
      --lane <lane> --worktree <worktree> --handoff-doc <doc>
    ```

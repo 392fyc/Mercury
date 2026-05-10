@@ -188,11 +188,12 @@ fi
 # failure reaches the EXIT_CODE branch and exits 1 (launch failure) rather
 # than 2 (unhandled error) via the trap.
 if [ "$TARGET" = "windows" ]; then
-  # Windows path: invoke wt directly via bash exec — each argument is a
-  # separate token, bypassing ShellExecute single-string trap (Issue #377).
-  # Do NOT route through PowerShell Start-Process: that receives the full
-  # commandline as -FilePath and passes it to ShellExecute as one string,
-  # producing 0x80070002 ERROR_FILE_NOT_FOUND.
+  # Windows path: invoke wt as a foreground bash command. Each argument
+  # is a separate token in argv (CreateProcess form), bypassing the
+  # ShellExecute single-string trap (Issue #377). Do NOT route through
+  # PowerShell Start-Process: that receives the full commandline as
+  # -FilePath and passes it to ShellExecute as one string, producing
+  # 0x80070002 ERROR_FILE_NOT_FOUND.
   if wt -w 0 nt --title "$TITLE_PREFIX $LANE" -d "$WORKTREE" -- claude -- "$SHORT_PROMPT"; then
     EXIT_CODE=0
   else

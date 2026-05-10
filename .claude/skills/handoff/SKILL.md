@@ -431,10 +431,13 @@ mechanism for `/handoff auto` and is dual-verify-tested (Mercury Issue #377).
 
 **SHORT_PROMPT metacharacter rationale** (kept here for human readers — the
 launcher enforces this automatically): SHORT_PROMPT must remain free of
-`;` (command separator), `&` (background), `|` (pipe), `\` outside quotes,
-`$()` (command substitution). The `[LANE=<name>]` marker only contains
-`[a-z0-9-]+` per Rule 2.1 + the literal `[`/`]`/`=` brackets, none of
-which are wt/tmux metacharacters.
+`;` (command separator), `&` (background), `|` (pipe), `$()` (command
+substitution), and `` ` `` (backtick). The launcher does NOT reject `\`:
+on Windows, the canonical handoff-doc path contains backslashes
+(`C:\Users\...\session-handoff.md`), and bash double-quoting preserves
+`\<char>` literally for non-special chars. The `[LANE=<name>]` marker
+only contains `[a-z0-9-]+` per Rule 2.1 + the literal `[`/`]`/`=`
+brackets, none of which are wt/tmux metacharacters.
 
 The positional argument after `--` is the session's first user message —
 documented at <https://code.claude.com/docs/en/cli-reference>. The `--`

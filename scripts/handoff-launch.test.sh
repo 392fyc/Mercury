@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # handoff-launch.test.sh — Smoke tests for handoff-launch.sh
 #
-# Uses --dry-run mode exclusively: never spawns wt/tmux.
+# Mostly uses --dry-run mode. Tests 18-21 run the spawn path with a
+# PATH-stubbed wt/tmux to verify argv-token semantics — they never reach
+# real wt/tmux because the stub takes precedence on PATH.
 # Exit 0 if all tests pass, 1 if any fail.
 #
 # Mercury Issue #377
@@ -16,7 +18,7 @@ FAIL_COUNT=0
 FAILURES=()
 
 # ── Fixtures ──────────────────────────────────────────────────────────────
-TMPDIR_FIXTURE="$(mktemp -d)"
+TMPDIR_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/handoff-launch-test.XXXXXX")"
 FAKE_WORKTREE="$TMPDIR_FIXTURE/worktree"
 FAKE_HANDOFF="$TMPDIR_FIXTURE/session-handoff-test.md"
 mkdir -p "$FAKE_WORKTREE"
