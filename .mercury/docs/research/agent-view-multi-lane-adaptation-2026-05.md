@@ -19,9 +19,9 @@ Anthropic 2026-04 在 Claude Code v2.1.139+ 上线 **agent view** (research prev
 
 1. **Path A gate 经 docs CLOSED**：`.claude/agents/<name>.md` frontmatter `isolation` 字段在 Anthropic 官方 sub-agents 文档中**只接受 `worktree` 一个值**（auto-create 临时 worktree），**无 `worktree_path` / `pin_worktree` / `use_existing_worktree` 等 pin-to-existing 字段**。Path A 原假设（每 lane wrap subagent 含 `isolation: worktree` pin existing Mercury worktree）**docs-level 不可行**。
 2. **Unknown #2 auto-worktree 触发条件比初稿研究更窄**：empirical 验证（`claude --bg "echo ..."`）显示 `isolation: "none"` 是 default，cwd 完全保留 `D:\Mercury\Mercury`，**不主动 auto-move 进 `.claude/worktrees/<id>`**。auto-worktree 仅在 (a) subagent frontmatter 声明 `isolation: worktree` (b) `CLAUDE_CODE_FORK_SUBAGENT=1` fork mode (c) docs §"How file edits are isolated" 描述的"before editing files"惰性触发 — 三条路径之一。**bare bg session 不触发 routing-bleed risk**。
-3. **Unknown #3 hook 完整 fire**：empirical transcript (`a06e1416-8d63-4e5a-8168-402d94f62a0d.jsonl`) 含 `SessionStart:startup` hook attachment，user-level `~/.claude/hooks/session-start.py` 与 `session-start.mjs` 两个 entry point **均在 bg session 触发**（durationMs 1713 + 2652），`hookSpecificOutput.additionalContext` 与 interactive session 一致。`sessionKind:"bg"` 字段可供 hook 脚本未来 discriminate。
+3. **Unknown #3 SessionStart hook fire empirical confirmed (其它 lifecycle event 仅 inferred)**：empirical transcript (`a06e1416-8d63-4e5a-8168-402d94f62a0d.jsonl`) 含 `SessionStart:startup` hook attachment，user-level `~/.claude/hooks/session-start.py` 与 `session-start.mjs` 两个 entry point **均在 bg session 触发**（durationMs 1713 + 2652），`hookSpecificOutput.additionalContext` 与 interactive session 一致。`sessionKind:"bg"` 字段可供 hook 脚本未来 discriminate。**PreToolUse / PostToolUse / SessionEnd / PreCompact / SubagentStop 未触发** (echo 无 file write / 无 model call / 无 SubagentStop 触发条件), 仅基于 docs settings-load 机制 inferred — Path B 实际部署前需 Phase 6 empirical verify。
 
-综合 3 path 优劣 + Mercury 实际 hook stack 完整性 + Rule 4 红线评估，**推荐 Path B (零修改 + dispatch convention 文档化)** 作为 primary verdict。Path A 部分 **DEFER 而非 NO-GO**，等 Anthropic 未来引入 worktree pinning 后再 re-eval。Path C **NO-GO** — Rule 4 红线（DIRECTION.md + feedback_lane_protocol.md v1 重写）+ supervisor 1h timeout 与 Mercury 跨周/跨月 lane lifecycle 不匹配，得不偿失。
+综合 3 path 优劣 + Mercury 实际 hook stack 完整性 (partial) + Rule 4 红线评估，**推荐 Path B (零修改 + dispatch convention 文档化)** 作为 primary verdict for **read-only bg workload**; file-editing bg workload + 其它 hook lifecycle event 行为留 Phase 6 sub-Issue (#386-D) empirical verify 后再正式宣称 "zero disruption"。Path A 部分 **DEFER 而非 NO-GO**，等 Anthropic 未来引入 worktree pinning 后再 re-eval。Path C **NO-GO** — Rule 4 红线（DIRECTION.md + feedback_lane_protocol.md v1 重写）+ supervisor 1h timeout 与 Mercury 跨周/跨月 lane lifecycle 不匹配，得不偿失。
 
 ---
 
@@ -213,7 +213,7 @@ Settings inheritance implies hooks fire (hooks are settings)，但 docs 未直�
 2. **`--worktree [name]` flag 公开** — 与 agent view auto worktree 是**两套不同机制**：`--worktree` 用于 interactive session 创建 isolated worktree（需配合 `--tmux`），agent view auto worktree 是 bg session 在 file-write 前的惰性 isolation。
 3. **`.claude/worktrees/` namespace 重叠** — Mercury 早期实验已占用该目录（4-5 月旧 entry 时间戳）。Agent view auto worktree 进入同一目录但用不同子目录名 (`<auto-id>` 8-char hex)。**不会冲突**（不同 subdir 名），但**会造成 git status / cleanup 混淆**。建议 Mercury 在 future cleanup 文档中标注此目录"由 Mercury manual `--worktree` 和 Anthropic agent view 共用，删除前 verify 来源"。
 4. **bare `claude --bg "<cmd>"` `isolation: "none"`** — Mercury main lane cwd 内 bare bg session **不主动创建 auto worktree**，cwd 保持 `D:\Mercury\Mercury`，`linkScanPath` 指向 main lane project memory（`D--Mercury-Mercury`）。无 routing-bleed。
-5. **Hooks fully fire** — `~/.claude/hooks/session-start.py` (Mercury mem0 + agentkb stack) 和 `~/.claude/hooks/session-start.mjs` (deepinit + omc) 双 SessionStart hook entry 完整 fire，attachment.exitCode 均 0。`hookSpecificOutput.additionalContext` 与 interactive session 一致（含 `## Today` + `## Knowledge Base Index` + `## Recent Daily Log` + `<session-restore>` 段）。
+5. **SessionStart hook fully fire (其它 hook 仅 inferred)** — `~/.claude/hooks/session-start.py` (Mercury mem0 + agentkb stack) 和 `~/.claude/hooks/session-start.mjs` (deepinit + omc) 双 SessionStart hook entry 完整 fire，attachment.exitCode 均 0。`hookSpecificOutput.additionalContext` 与 interactive session 一致（含 `## Today` + `## Knowledge Base Index` + `## Recent Daily Log` + `<session-restore>` 段）。**重要**: PreToolUse / PostToolUse / SessionEnd / PreCompact / SubagentStop **未** empirical verified (echo 无 file write 无 model call 无 SubagentStop 触发条件)；这些 lifecycle event 仅基于 docs "settings 加载机制" 推断为 fire — Path B 实际部署前需 Phase 6 empirical verify。
 6. **`sessionKind: "bg"`** transcript 字段可作 hook discriminator — Mercury hook 脚本未来如需区分 bg vs interactive 行为，可读 `$CLAUDE_HOOK_*` env 或 transcript jsonl 内 `sessionKind` 字段。
 7. **`permissionMode: "bypassPermissions"`** — bg session auto-set bypass mode（避免阻塞 prompt）。Mercury 既有 `~/.claude/settings.json` `permissionMode` 若有显式覆盖会被 supervisor honour（per docs §Permission mode and settings）。**对 Mercury push-guard.sh 影响**：bypass 仅指 prompt UI 跳过，hook 仍 fire，push-guard 仍能 block via exit 2 — 安全。
 8. **Supervisor transient** — `[supervisor] idle 5s with no clients — exiting` — daemon 在所有 workers 停止后 5 秒自动退出。Mercury 长 session 模式（人类用户开 interactive Claude Code 数小时）**不会被 supervisor timeout 影响**，因为 supervisor 只管 bg sessions。Interactive session 走独立 path。
@@ -230,7 +230,7 @@ Settings inheritance implies hooks fire (hooks are settings)，但 docs 未直�
 ## Decision Drivers
 
 1. **Rule 4 红线**：`feedback_lane_protocol.md` v1 + `.mercury/docs/DIRECTION.md` 修改需 user 仲裁。激进重构（Path C）触红线。
-2. **Mercury hook 完整性**：Phase 2 verified hooks fire in bg → 任何 Path 都不会 break Mercury 现有 hook stack。
+2. **Mercury hook 完整性 (partial)**：Phase 2 verified **SessionStart** fires in bg；PreToolUse / PostToolUse / SessionEnd / PreCompact / SubagentStop 仅基于 docs settings-load 机制 inferred — 实际部署 Path B 前需 Phase 6 empirical verify。若 inferred 成立, 任何 Path 都不会 break Mercury 现有 hook stack；若 inferred 偏离, 需在该 lifecycle event 修复 hook routing。
 3. **Lane lifecycle 尺度匹配**：Mercury lane 跨周/跨月，agent view session 1h idle 释放、shutdown 杀。**任何方案不能假设 agent view session 是 lane 持久态载体**。
 4. **Adapter ≤ 200 LOC 硬约束** (CLAUDE.md MUST)：Path A wrapper 若超 200 LOC（4 lane × 50 LOC 已逼近上限）需 rethink。但 lane wrapper 不属 `adapters/<vendor-name>/`，是 Mercury internal tooling，scope 在 `.claude/agents/` — **scripts/ + .claude/agents/ 是 internal tooling, 不受 200 LOC adapter cap 约束** (per CLAUDE.md MUST "External-project adapters under `adapters/<vendor-name>/` MUST stay under 200 lines" 后半 carve-out, S84 #348 落地)。
 5. **Upward-compatibility design** (CLAUDE.md MUST "design for upward compatibility")：方案不应假设 agent view feature set 固定，应留 re-eval channel。
@@ -293,14 +293,18 @@ claude agents --cwd D:/Mercury/Mercury-side-bug  # 仅 side-bug lane sessions
 - 零 Rule 4 红线 触碰
 - 利用 agent view 集中监控价值（multiple bg sessions across lanes 在单 UI）
 - 完全 detachable — `CLAUDE_CODE_DISABLE_AGENT_VIEW=1` 即 no-op
-- empirical-verified safe: hooks fire, no routing-bleed, lane-assertion PASS
+- empirical-verified safe **for read-only bg workload**: SessionStart hook fires, no routing-bleed on bare `claude --bg "echo ..."`, lane-assertion PASS at interactive session boot
 
 **Con**:
 - 双 mental model: Mercury lane registry + agent view session list 各管一摊（lane = 长期 scope, session = 短期任务）
 - 未利用 agent view 的 unified UX (如 `a:lane-side-bug` filter — Path A 才能用)
 - `~/.claude/jobs/` 历史 state.json 不自动归类到 lane (但可由 `lane-status.sh` 后置 group via cwd)
+- **未 empirical verify 的关键 scenario** — Path B 实际部署需 Phase 6 后续 verify:
+  1. **file-editing bg workload**: docs §"How file edits are isolated" 描述"Before editing files, Claude moves the session into an isolated git worktree under `.claude/worktrees/`". Phase 2 仅 `echo` 无 file write 未触发 auto-isolation。**实际 Claude bg task 若 edit files, 行为待验证** — auto worktree 在 `<lane-cwd>/.claude/worktrees/<id>` 是否会因 bg session 已在 Mercury worktree (即 Mercury lane worktree 不在 `.claude/worktrees/` skip 条件下) 而触发? 此场景下 bg session cwd 会被 supervisor 自动移动, Mercury 用户级 hooks 中 cwd-derived state 可能与 main lane state space 偏离 — 待 Phase 6 实测 git commits + auto worktree 是否丢失 work / 是否需 manual merge
+  2. **其它 hook lifecycle** (PreToolUse / PostToolUse / SessionEnd / PreCompact / SubagentStop): Phase 2 未触发, 仅 inferred
+  3. **bg session API cost tracking**: bg model invocation 是否计入 Mercury #361 cost-tracker daily ceiling, 待真实 model call 场景 verify
 
-**Verdict**: **PRIMARY RECOMMENDATION**.
+**Verdict**: **PRIMARY RECOMMENDATION (with explicit Phase 6 follow-on verify requirements)** — for read-only bg workload (查询 / 监控 / log inspection), Path B 立即可采纳; 对 file-editing bg workload, Path B dispatch convention 仍然适用但 auto-isolation 副作用需 Phase 6 sub-Issue empirical verify 才能宣称 "zero disruption to Mercury 多 lane v1 protocol"。
 
 ### Path C — Lane = long-lived pinned background session (激进重构, NO-GO)
 
@@ -335,9 +339,9 @@ claude agents --cwd D:/Mercury/Mercury-side-bug  # 仅 side-bug lane sessions
 **Implementation roadmap** (Path B Phase 5 follow-on):
 
 1. **Sub-Issue #386-A** (P2, lane:main, docs): 新增 `.mercury/docs/guides/agent-view-dispatch.md` 含：
-   - Bare bg dispatch convention (`cd <lane-worktree> && claude --bg "..."` pattern)
+   - Bare bg dispatch convention (`cd <lane-worktree> && claude --bg "..."` pattern, **read-only bg workload safe per Phase 2 empirical**)
    - Monitoring 方法 (`claude agents --cwd <lane-worktree>`)
-   - Hook compatibility note (verified Phase 2)
+   - Hook compatibility note (**SessionStart verified Phase 2; 其它 lifecycle inferred — 待 Phase 6 verify**)
    - `.claude/worktrees/` namespace coexistence note (Mercury `--worktree` + agent view auto-iso 共用)
    - Disable channel (`CLAUDE_CODE_DISABLE_AGENT_VIEW=1`)
 2. **Sub-Issue #386-B** (P3, lane:main, enhancement, optional): `scripts/lane-status.sh` POC — read `~/.claude/jobs/*/state.json` + `~/.claude/daemon/roster.json`, group by cwd, 输出 per-lane in-flight bg session table。Schema-tolerant（defensive parse + 容忍 schema 变化）。
@@ -345,6 +349,13 @@ claude agents --cwd D:/Mercury/Mercury-side-bug  # 仅 side-bug lane sessions
    - Anthropic 在 sub-agents.md frontmatter 引入 `worktree_path` 或 pin-to-existing 等效字段
    - Mercury lane 数增至 ≥ 5 (4 lanes 是当前 sweet spot, Path A unified UX 价值随 lane 数线性增长)
    - User 主动请求集中监控功能（当前手动 `claude agents` 已够用）
+4. **Sub-Issue #386-D** (P1, lane:main, research): Phase 6 empirical verify — Path B file-editing bg workload + 其它 hook lifecycle event 实测:
+   - bg session 执行 file-editing task (Edit/Write tool, 实际触发 docs §"before editing files" 条件) 时, supervisor 是否自动 move cwd 到 `.claude/worktrees/<id>`?
+   - 若 move, Mercury 用户级 hooks 中 cwd-derived state (mem0_hooks.py 用 `os.getcwd()` 推导 project memory 路径) 是否会偏离 main lane state space?
+   - file-editing bg session 的 git commits 在 auto worktree 产生, 是否会丢失 / 是否需 manual merge 回 Mercury lane?
+   - PreToolUse / PostToolUse / SessionEnd / PreCompact hook 是否在 bg session 完整 fire (通过 Edit + Bash + close-session 探针验证)?
+   - SubagentStop hook 是否在 `claude --bg --agent <Mercury-subagent>` 场景 fire?
+   - bg session API cost tracking 是否计入 Mercury #361 cost-tracker daily ceiling (实际 model call 后 verify cost_tracker jsonl 存在 + ceiling 累计)?
 
 **Out of scope** (本 ADR 不处理):
 - Mercury `.claude/worktrees/` 旧 entry (session-22-phase1, skill-deep-research) cleanup —— 单独 Issue
@@ -357,9 +368,9 @@ claude agents --cwd D:/Mercury/Mercury-side-bug  # 仅 side-bug lane sessions
 
 ### Positive
 
-- 零 disruption to Mercury 多 lane v1 protocol — 所有现有 workflow + tests + lane-assertion + handoff 流程不变
+- 零 disruption to Mercury 多 lane v1 protocol **for read-only bg workload** (file-editing case 待 Phase 6 verify)
 - Mercury 操作员可选用 agent view 提升监控体验（多 bg session in single UI）但不强制
-- empirical-verified Mercury hook stack 在 bg session 完整 fire — 无 reliability regression
+- empirical-verified Mercury **SessionStart** hook 在 bg session fire — 其它 lifecycle event (PreToolUse / PostToolUse / SessionEnd / PreCompact / SubagentStop) inferred only, 待 Phase 6 verify
 - Path A DEFER 不堵死未来 Anthropic feature roadmap 演进
 - 满足 CLAUDE.md MUST: modular detachable / upward compatibility / no self-research (Mercury 不自建 supervisor)
 
