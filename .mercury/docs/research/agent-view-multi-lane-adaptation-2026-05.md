@@ -67,11 +67,11 @@ Phase 1 surfaced 是 side-bug S7-side-bug (2026-05-12) user-direct question 引�
 | 维度 | Mercury 多 lane | Agent view |
 |------|----------------|------------|
 | 并行单元 | **lane** = 长期 scope（跨多 session, 跨周/跨月） | **session** = 短期任务（1 task / 1 lifecycle） |
-| 隔离 | manual worktree per lane | optional auto worktree per session (only when subagent declares `isolation: worktree`) |
+| 隔离 | manual worktree per lane | optional auto worktree per session — fires under 3 conditions: (a) subagent declares `isolation: worktree`, (b) `CLAUDE_CODE_FORK_SUBAGENT=1` fork mode, (c) docs §"Before editing files" 惰性触发 (Phase 2 echo 无 file write 未触发 #c, file-editing 行为待 Phase 6 verify) |
 | State 持久 | 跨 reboot 永存 (user-memory + canonical files) | 1h idle 杀 process; state.json 留盘; sleep/shutdown 全杀 (state.json 仍在但 process 重启需 `claude respawn --all`) |
 | 标识 | lane short name + branch prefix `lane/<short>/<N>-<slug>` | session short ID (8-char hex e.g. `a06e1416`) + auto-name from prompt |
 | 协调 | Issue-first + Rule 6 cross-lane via Issues + LANES.md registry | sessions 互不通信 (agent-teams 是另一原语); `claude agents` 仅作 UI 集中 |
-| Hook | full Mercury stack (mem0 + cost_tracker + flush + loop-detector + push-guard) | full Mercury stack — empirical confirmed fire (see Phase 2) |
+| Hook | full Mercury stack (mem0 + cost_tracker + flush + loop-detector + push-guard) | **SessionStart fire empirical confirmed Phase 2**; PreToolUse / PostToolUse / SessionEnd / PreCompact / SubagentStop 仅 inferred from settings-load 机制, 待 Phase 6 verify |
 | cwd routing | per-lane worktree → `~/.claude/projects/<encoded-cwd>/` separate | bare bg from `D:/Mercury/Mercury` → linkScanPath 仍指 `D--Mercury-Mercury` (no routing-bleed for default isolation) |
 
 ---
@@ -111,13 +111,15 @@ Phase 1 surfaced 是 side-bug S7-side-bug (2026-05-12) user-direct question 引�
 2. `CLAUDE_CODE_FORK_SUBAGENT=1` fork mode (docs `--agents` 子命令)
 3. docs §"Before editing files" 描述的惰性触发 — 但 empirical 单跑 `echo` 命令时未触发（可能因无 file write）
 
-Mercury bare bg session（`claude --bg "<arbitrary-shell-cmd>"`）不会主动切换 cwd，**lane-assertion.sh 不会因 bg session 本身误报**。但若用户 dispatch 到 subagent declaring `isolation: worktree`，则该 subagent 在 auto worktree 内运行，cwd 切到 `.claude/worktrees/<auto-id>`，该 cwd 不在 LANES.md → lane-assertion.sh exit 2。
+Mercury bare bg session（`claude --bg "<arbitrary-shell-cmd>"` **with no file writes**）不会主动切换 cwd，**lane-assertion.sh 不会因 bg session 本身误报**。但若 (i) 用户 dispatch 到 subagent declaring `isolation: worktree` (Path A假设), 或 (ii) bg session 在执行中触发 docs §"Before editing files" 惰性 auto-isolation (Path B file-editing 工作负载, Phase 2 未 verify), 该 session cwd 切到 `.claude/worktrees/<auto-id>`，该 cwd 不在 LANES.md → 仅当 lane-assertion 在 bg session 内部跑时才命中 exit 2 (Mercury 当前 lane-assertion 只在 interactive session boot 跑, 不在 bg session boot 跑 — 故主 lane interactive session 不受影响, 但 bg session 自身的 user-level hook (e.g. mem0_hooks cwd-derived state) 可能与 main lane state space 偏离)。
 
-**结论**: routing-bleed 风险 **只存在于 isolation-declared subagent dispatch**，bare bg session 安全。
+**结论**: routing-bleed 风险分两层：
+- **interactive session 层**: bare bg dispatch (无论 file-editing 还是 read-only) 不影响 interactive Claude Code session 的 lane-assertion (lane-assertion 不在 bg session boot 跑) — 安全
+- **bg session 自身层**: isolation-declared subagent dispatch (Path A) **必然** routing-bleed; bare bg + file-editing workload (Path B file-editing case) 可能触发 docs §"Before editing files" → cwd-derived hook state 可能偏离 — 待 Phase 6 sub-Issue #386-D empirical verify。bare bg + read-only workload (Phase 2 verified case): 安全。
 
 ### Unknown #3 — Hook 完整触发性
 
-**Verdict**: VERIFIED YES (empirical).
+**Verdict**: **PARTIALLY VERIFIED** — SessionStart empirical YES; PreToolUse / PostToolUse / SessionEnd / PreCompact / SubagentStop 仅 inferred from settings-load 机制, 实际部署 Path B 前需 Phase 6 sub-Issue #386-D empirical verify。
 
 **Phase 1 docs**: silent on bg session hook differences. 最接近 statement (agent-view.md §Permission mode and settings):
 > "A background session reads its settings from the directory it runs in, the same as if you had started claude there."
@@ -269,9 +271,15 @@ Settings inheritance implies hooks fire (hooks are settings)，但 docs 未直�
 # Lane operator 在自己 lane 的 worktree 内 dispatch bg session:
 cd D:/Mercury/Mercury-<short>    # 显式 cd to lane worktree
 claude --bg "<prompt>"           # bg session 继承当前 cwd
-                                 # → linkScanPath 走 lane project memory
-                                 # → hooks fire per lane settings
-                                 # → lane-assertion.sh PASS (cwd matches LANES.md Worktree path)
+                                 # → linkScanPath 走 lane project memory (Phase 2 verified)
+                                 # → SessionStart hook fires per lane settings (Phase 2 verified;
+                                 #   PreToolUse/PostToolUse/SessionEnd/PreCompact/SubagentStop
+                                 #   inferred only — Phase 6 #386-D verify)
+                                 # → lane-assertion.sh PASS at interactive session boot only
+                                 #   (lane-assertion NOT invoked at bg session boot;
+                                 #   file-editing bg workload may still trigger
+                                 #   docs §"Before editing files" auto-isolation —
+                                 #   待 Phase 6 #386-D verify)
 ```
 
 **Monitoring**:
