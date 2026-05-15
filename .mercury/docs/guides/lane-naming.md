@@ -578,6 +578,10 @@ unconditional infrastructure.
   state its `Worktree path` field
 - `.mercury/docs/guides/worktree-workflow.md` covers the orthogonal
   task-level worktree scope
+- `.mercury/docs/guides/agent-view-dispatch.md` covers Path B dispatch
+  convention for Claude Code's agent view UI layer on top of Mercury
+  per-cwd lane isolation (bare bg dispatch, monitoring, hook lifecycle,
+  auto-iso HYBRID mechanism, cost-tracker gap, kill switch)
 - `.claude/skills/handoff/SKILL.md` Step 5 Auto mode for the spawn-side
   contract
 - `scripts/lane-assertion.sh` + `scripts/test-lane-assertion.sh` for the

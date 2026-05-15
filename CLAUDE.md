@@ -22,6 +22,7 @@ Read these docs on demand when you need the corresponding information:
 | KB directory structure | `.mercury/docs/guides/kb-structure.md` |
 | Dispatch prompt templates | `.mercury/templates/` |
 | Architecture research (PR #162) | `.mercury/docs/research/issue-158-architecture-evaluation.md` |
+| Agent view dispatch convention (multi-lane × bg sessions) | `.mercury/docs/guides/agent-view-dispatch.md` |
 
 ## Related Repositories
 
