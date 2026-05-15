@@ -119,7 +119,7 @@ Why explicit `cd` matters:
 | nested-subagent dispatch inside a bg session | UNVERIFIED — defer until Mercury's subagent dispatch model extends to bg | — |
 | Long-running session that triggers `PreCompact` | UNVERIFIED — defer until a real multi-hour bg workload is observed | — |
 
-### Hosted hosting model recap (from docs)
+### Hosted-session model recap (from docs)
 
 Agent view background sessions are hosted by a per-user supervisor
 process. The supervisor enforces a **1h idle timeout** by default; sleep
