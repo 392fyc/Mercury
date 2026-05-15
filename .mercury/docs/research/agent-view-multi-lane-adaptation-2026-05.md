@@ -67,11 +67,11 @@ Active lanes（2026-05-15）：
 | 维度 | Mercury 多 lane | Agent view |
 |------|----------------|------------|
 | 并行单元 | **lane** = 长期 scope（跨多 session, 跨周/跨月） | **session** = 短期任务（1 task / 1 lifecycle） |
-| 隔离 | manual worktree per lane | optional auto worktree per session — fires under 3 conditions: (a) subagent declares `isolation: worktree`, (b) `CLAUDE_CODE_FORK_SUBAGENT=1` fork mode, (c) docs §"Before editing files" 惰性触发 (Phase 2 echo 无 file write 未触发 #c, file-editing 行为待 Phase 6 verify) |
+| 隔离 | manual worktree per lane | optional auto worktree per session — Phase 6 (#391, ADR `agent-view-phase6-empirical-2026-05.md`) 矫正: 是 HYBRID enforce-then-comply mechanism, NOT 纯 supervisor 暗箱 nor 纯 agent autonomy — platform PreToolUse 拒第一次 Edit on shared checkout 返 `tool_use_error`, agent 读 error 后 ToolSearch + 调用 `EnterWorktree` 进 auto-worktree, 重试 Edit in worktree path; state.json mid-flight 增 `worktreePath` + `worktreeBranch` 字段, top-level `cwd` 不变 (logical cwd shift, not OS-level); 退 worktree 走 `ExitWorktree(action:"keep")` 或 `ExitWorktree(action:"discard")` |
 | State 持久 | 跨 reboot 永存 (user-memory + canonical files) | 1h idle 杀 process; state.json 留盘; sleep/shutdown 全杀 (state.json 仍在但 process 重启需 `claude respawn --all`) |
 | 标识 | lane short name + branch prefix `lane/<short>/<N>-<slug>` | session short ID (8-char hex e.g. `a06e1416`) + auto-name from prompt |
 | 协调 | Issue-first + Rule 6 cross-lane via Issues + LANES.md registry | sessions 互不通信 (agent-teams 是另一原语); `claude agents` 仅作 UI 集中 |
-| Hook | full Mercury stack (mem0 + cost_tracker + flush + loop-detector + push-guard) | **SessionStart fire empirical confirmed Phase 2**; PreToolUse / PostToolUse / SessionEnd / PreCompact / SubagentStop 仅 inferred from settings-load 机制, 待 Phase 6 verify |
+| Hook | full Mercury stack (mem0 + cost_tracker + flush + loop-detector + push-guard) | **SessionStart + UserPromptSubmit + PreToolUse + PostToolUse + PostToolUseFailure + Stop empirical confirmed Phase 2+6**; **bg session 终止 fire `Stop` NOT `SessionEnd`** — Mercury settings.json line 58 SessionEnd matcher 注册的 hooks (含 cost_tracker `write_session_summary`) 对 bg 失效; SubagentStop 不 fire for `--bg --agent X` (template selection ≠ nested dispatch); PreCompact 短 session 未触发 (UNVERIFIED, P3) |
 | cwd routing | per-lane worktree → `~/.claude/projects/<encoded-cwd>/` separate | bare bg from `D:/Mercury/Mercury` → linkScanPath 仍指 `D--Mercury-Mercury` (no routing-bleed for default isolation) |
 
 ---
@@ -301,16 +301,16 @@ claude agents --cwd D:/Mercury/Mercury-side-bug  # 仅 side-bug lane sessions
 - 零 Rule 4 红线 触碰
 - 利用 agent view 集中监控价值（multiple bg sessions across lanes 在单 UI）
 - 完全 detachable — `CLAUDE_CODE_DISABLE_AGENT_VIEW=1` 即 no-op
-- empirical-verified safe **for read-only bg workload**: SessionStart hook fires, no routing-bleed on bare `claude --bg "echo ..."`, lane-assertion PASS at interactive session boot
+- empirical-verified safe **for read-only AND file-editing bg workload** (Phase 2 + Phase 6 #391): SessionStart hook fires, no routing-bleed on bare `claude --bg "echo ..."`, lane-assertion PASS at interactive session boot; file-editing bg 走 agent-driven `EnterWorktree` → 隔离 branch + dir, 不污染 main lane state; mem0_hooks + cost_tracker 都 cwd-independent (sessionId-keyed) — 即便 worktree shift 也无 routing-bleed
 
 **Con**:
 - 双 mental model: Mercury lane registry + agent view session list 各管一摊（lane = 长期 scope, session = 短期任务）
 - 未利用 agent view 的 unified UX (如 `a:lane-side-bug` filter — Path A 才能用)
 - `~/.claude/jobs/` 历史 state.json 不自动归类到 lane (但可由 `lane-status.sh` 后置 group via cwd)
-- **未 empirical verify 的关键 scenario** — Path B 实际部署需 Phase 6 后续 verify:
-  1. **file-editing bg workload**: docs §"How file edits are isolated" 描述"Before editing files, Claude moves the session into an isolated git worktree under `.claude/worktrees/`". Phase 2 仅 `echo` 无 file write 未触发 auto-isolation。**实际 Claude bg task 若 edit files, 行为待验证** — auto worktree 在 `<lane-cwd>/.claude/worktrees/<id>` 是否会因 bg session 已在 Mercury worktree (即 Mercury lane worktree 不在 `.claude/worktrees/` skip 条件下) 而触发? 此场景下 bg session cwd 会被 supervisor 自动移动, Mercury 用户级 hooks 中 cwd-derived state 可能与 main lane state space 偏离 — 待 Phase 6 实测 git commits + auto worktree 是否丢失 work / 是否需 manual merge
-  2. **其它 hook lifecycle** (PreToolUse / PostToolUse / SessionEnd / PreCompact / SubagentStop): Phase 2 未触发, 仅 inferred
-  3. **bg session API cost tracking**: bg model invocation 是否计入 Mercury #361 cost-tracker daily ceiling, 待真实 model call 场景 verify
+- **Phase 6 verified scenarios** (#391 ADR `agent-view-phase6-empirical-2026-05.md`):
+  1. **file-editing bg workload**: ✅ agent-driven `EnterWorktree` → 隔离 branch `worktree-<name>` + dir `<lane-cwd>/.claude/worktrees/<name>/`; main lane file 不受影响; `ExitWorktree(action:"keep")` 保留 dir + branch on disk → operator 自决 merge / discard (NO automatic reconciliation, but isolation 清洁)
+  2. **完整 hook lifecycle**: ✅ except SessionEnd-only hooks — bg fires `Stop` not `SessionEnd`; Mercury 任何 SessionEnd-registered hook (cost_tracker, mem0 flush 等) 对 bg SKIP
+  3. **bg session API cost tracking**: ❌ NOT integrated — Mercury #361 cost-tracker daily ceiling 不 protect bg session API spend (sub-Issue #392 follow-on filed for 修复 option A/B/C)
 
 **Verdict**: **PRIMARY RECOMMENDATION (with explicit Phase 6 follow-on verify requirements)** — for read-only bg workload (查询 / 监控 / log inspection), Path B 立即可采纳; 对 file-editing bg workload, Path B dispatch convention 仍然适用但 auto-isolation 副作用需 Phase 6 sub-Issue empirical verify 才能宣称 "zero disruption to Mercury 多 lane v1 protocol"。
 
