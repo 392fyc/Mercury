@@ -45,7 +45,7 @@ Active lanes（2026-05-15）：
 - `side-sot` @ `D:/ShipOfTheseus/Ship_of_Theseus` (cross-repo lane)
 - `side-multi-lane` @ closed via S18-side-multi-lane Phase G 2026-05-04
 
-Phase 1 surfaced 是 side-bug S7-side-bug (2026-05-12) user-direct question 引发的 web 调研，作为 [#381 S6-side-bug tech intel sweep](https://github.com/392fyc/Mercury/issues/381) 的 follow-up Issue。
+本 ADR 评估的 Issue (#386) 由 side-bug S7-side-bug (2026-05-12) user-direct question 引发的 web 调研发起，作为 [#381 S6-side-bug tech intel sweep](https://github.com/392fyc/Mercury/issues/381) 的 follow-up Issue 由 side-bug lane file 提交。
 
 ## Agent view 关键事实 (Phase 1 verified 2026-05-15)
 
@@ -234,7 +234,7 @@ Settings inheritance implies hooks fire (hooks are settings)，但 docs 未直�
 1. **Rule 4 红线**：`feedback_lane_protocol.md` v1 + `.mercury/docs/DIRECTION.md` 修改需 user 仲裁。激进重构（Path C）触红线。
 2. **Mercury hook 完整性 (partial)**：Phase 2 verified **SessionStart** fires in bg；PreToolUse / PostToolUse / SessionEnd / PreCompact / SubagentStop 仅基于 docs settings-load 机制 inferred — 实际部署 Path B 前需 Phase 6 empirical verify。若 inferred 成立, 任何 Path 都不会 break Mercury 现有 hook stack；若 inferred 偏离, 需在该 lifecycle event 修复 hook routing。
 3. **Lane lifecycle 尺度匹配**：Mercury lane 跨周/跨月，agent view session 1h idle 释放、shutdown 杀。**任何方案不能假设 agent view session 是 lane 持久态载体**。
-4. **Adapter ≤ 200 LOC 硬约束** (CLAUDE.md MUST)：Path A wrapper 若超 200 LOC（4 lane × 50 LOC 已逼近上限）需 rethink。但 lane wrapper 不属 `adapters/<vendor-name>/`，是 Mercury internal tooling，scope 在 `.claude/agents/` — **scripts/ + .claude/agents/ 是 internal tooling, 不受 200 LOC adapter cap 约束** (per CLAUDE.md MUST "External-project adapters under `adapters/<vendor-name>/` MUST stay under 200 lines" 后半 carve-out, S84 #348 落地)。
+4. **Adapter ≤ 200 LOC 硬约束** (CLAUDE.md MUST)：Path A wrapper 若超 200 LOC（4 lane × 50 LOC 已逼近上限）需 rethink。但 lane wrapper 文件位于 `.claude/agents/`，不属 `adapters/<vendor-name>/` — CLAUDE.md MUST "External-project adapters under `adapters/<vendor-name>/` MUST stay under 200 lines" + DO NOT 段 explicit carve-out 仅明列 `scripts/` 为 exempt (per S84 #348 落地)。`.claude/agents/` 不在 CLAUDE.md 200-LOC 段明文 scope 内, 严格读为 "non-adapter location, 故 200-LOC adapter cap not applicable"; 但本 ADR 不主张扩展 carve-out 到 `.claude/agents/`, 该决策需独立于本 ADR 评估。
 5. **Upward-compatibility design** (CLAUDE.md MUST "design for upward compatibility")：方案不应假设 agent view feature set 固定，应留 re-eval channel。
 6. **Modular detachability** (CLAUDE.md MUST "every new feature independently detachable")：方案应允许 `CLAUDE_CODE_DISABLE_AGENT_VIEW=1` no-op 即可回滚。
 
@@ -355,7 +355,7 @@ claude agents --cwd D:/Mercury/Mercury-side-bug  # 仅 side-bug lane sessions
 2. **Sub-Issue #386-B** (P3, lane:main, enhancement, optional): `scripts/lane-status.sh` POC — read `~/.claude/jobs/*/state.json` + `~/.claude/daemon/roster.json`, group by cwd, 输出 per-lane in-flight bg session table。Schema-tolerant（defensive parse + 容忍 schema 变化）。
 3. **Sub-Issue #386-C** (P3, lane:main, defer-record): write `memory/project_agent_view_partial_defer.md` 记录 Path A 当前 blocked 状态 + re-eval conditions:
    - Anthropic 在 sub-agents.md frontmatter 引入 `worktree_path` 或 pin-to-existing 等效字段
-   - Mercury lane 数增至 ≥ 5 (4 lanes 是当前 sweet spot, Path A unified UX 价值随 lane 数线性增长)
+   - Mercury lane 数增至 ≥ 5 (3 active lanes — `main` + `side-bug` + `side-sot`; +1 closed `side-multi-lane` — 当前为 sweet spot, Path A unified UX 价值随 lane 数线性增长)
    - User 主动请求集中监控功能（当前手动 `claude agents` 已够用）
 4. **Sub-Issue #386-D** (P1, lane:main, research): Phase 6 empirical verify — Path B file-editing bg workload + 其它 hook lifecycle event 实测:
    - bg session 执行 file-editing task (Edit/Write tool, 实际触发 docs §"before editing files" 条件) 时, supervisor 是否自动 move cwd 到 `.claude/worktrees/<id>`?
