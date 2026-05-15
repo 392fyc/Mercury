@@ -112,7 +112,7 @@ T0 = 05:12:10Z (probe 1 firstTerminalAt, post `ExitWorktree(action:"keep")`):
 - `git worktree list` 显示 `D:/Mercury/Mercury/.claude/worktrees/phase6-probe-1 e892920 [worktree-phase6-probe-1]` (registered ✅)
 
 T1 ≈ 05:14:XX (S99 operator cleanup pre-commit):
-- S99 operator ran `git worktree remove --force .claude/worktrees/phase6-probe-1 && git branch -D worktree-phase6-probe-1 && rm -rf .tmp/phase6-probe` to restore clean repo state for commit
+- S99 operator ran `git worktree remove --force .claude/worktrees/phase6-probe-1 && git branch -D worktree-phase6-probe-1 && rm -rf .tmp/phase6-probe` to restore clean repo state for commit (**audit-trail narrative — DO NOT copy-paste this command in unrelated context: paths are S99-probe-specific; `--force` + `rm -rf` are destructive and operator pre-confirmed only these specific S99 probe artifacts existed at the targets per `git worktree list` snapshot at T0**)
 - Post-T1: dir + branch absent (audit-time inspection by reviewer of this PR will confirm absent — this is operator choice, NOT automatic GC)
 
 **Implication**: Path B 操作员 mental model 调整 — bg file-editing 不污染 main lane 任何 file, 所有 edits 在隔离 branch + 隔离 dir。**这是 feature, 不是 bug** — 完全 align Mercury 多 lane 隔离精神。**Operator responsibility**: ExitWorktree(keep) preserves dir + branch on disk; cleanup (worktree remove + branch -D + tmp prune) 是 operator 主动 step, not automatic — 长期使用需 periodic sweep。
@@ -230,6 +230,9 @@ S98 ADR Phase 2 confirmed gate 4/4 ✅ FULL PASS post-S96。Phase 6 不动 produ
 - `~/.claude/settings.json` line 58 `SessionEnd:[...]` + line 120 `Stop:[]`
 
 ### Empirical evidence files (Phase 6)
+
+**Note on reproducibility**: Empirical evidence below lives on the S99 author's local machine (`~/.claude/projects/...` per-cwd transcript dirs + `~/.claude/jobs/...` supervisor state). These are operational artifacts, not Mercury repo files — they cannot be checked in (size + sensitive session content + cross-machine path encoding). For independent audit / replication, run a fresh Phase 6 probe per the §"Phase 6 scope" section (\\`claude --bg "Edit ..."\\` + \\`claude --bg --agent research "..."\\`) and inspect the equivalent paths under your own \\`~/.claude/\\` tree. Mercury research convention is empirical-replicable via probe steps, not artifact-checked-in. (See `.mercury/docs/research/agent-view-multi-lane-adaptation-2026-05.md` S98 ADR for prior precedent.)
+
 - `~/.claude/jobs/a8c58664/state.json` — probe 1 final state (`worktreePath:null` post-ExitWorktree, output result 显示 Edit applied + worktree preserved)
 - `~/.claude/jobs/40726463/state.json` — probe 2 final state ("answered 2+2=4", 7s elapsed)
 - `~/.claude/projects/D--Mercury-Mercury/a8c58664-1a9d-4781-9a92-172cfae30ed0.jsonl` — probe 1 full transcript (61 hook attachment lines)

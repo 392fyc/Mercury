@@ -301,7 +301,7 @@ claude agents --cwd D:/Mercury/Mercury-side-bug  # 仅 side-bug lane sessions
 - 零 Rule 4 红线 触碰
 - 利用 agent view 集中监控价值（multiple bg sessions across lanes 在单 UI）
 - 完全 detachable — `CLAUDE_CODE_DISABLE_AGENT_VIEW=1` 即 no-op
-- empirical-verified safe **for read-only AND file-editing bg workload** (Phase 2 + Phase 6 #391): SessionStart hook fires, no routing-bleed on bare `claude --bg "echo ..."`, lane-assertion PASS at interactive session boot; file-editing bg 走 agent-driven `EnterWorktree` → 隔离 branch + dir, 不污染 main lane state; mem0_hooks + cost_tracker 都 cwd-independent (sessionId-keyed) — 即便 worktree shift 也无 routing-bleed
+- empirical-verified safe **for read-only AND file-editing bg workload — in the routing-bleed dimension specifically** (Phase 2 + Phase 6 #391): SessionStart hook fires, no routing-bleed on bare `claude --bg "echo ..."`, lane-assertion PASS at interactive session boot; file-editing bg 走 HYBRID enforce-then-comply (platform tool_use_error + agent EnterWorktree) → 隔离 branch + dir, 不污染 main lane state; mem0_hooks + cost_tracker 都 cwd-independent (sessionId-keyed) — 即便 worktree shift 也无 routing-bleed。**注**: cost-tracker integration gap (bg fires Stop not SessionEnd) is a separate concern, addressed via [#392](https://github.com/392fyc/Mercury/issues/392) follow-on; PreCompact 长 session 行为 UNVERIFIED P3 — see Con bullets below for full caveat list
 
 **Con**:
 - 双 mental model: Mercury lane registry + agent view session list 各管一摊（lane = 长期 scope, session = 短期任务）
