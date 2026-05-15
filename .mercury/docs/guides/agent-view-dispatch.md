@@ -73,16 +73,21 @@ the day-to-day usage, this guide is the reference.
 The canonical dispatch pattern is "`cd` first, then `claude --bg`":
 
 ```bash
-# main lane:
-cd D:/Mercury/Mercury
+# Substitute <lane-worktree> with the value from your LANES.md
+# `Worktree path` field per Rule 5.1. Mercury team values shown after
+# each lane comment as illustrative concrete examples — operators on
+# other machines / non-Windows substitute their own <repo-root>.
+
+# main lane (Mercury team value: D:/Mercury/Mercury):
+cd <lane-worktree>
 claude --bg "<prompt>"
 
-# side-bug lane:
-cd D:/Mercury/Mercury-side-bug
+# side-bug lane (Mercury team value: D:/Mercury/Mercury-side-bug):
+cd <lane-worktree>
 claude --bg "<prompt>"
 
-# side-sot (cross-repo):
-cd D:/ShipOfTheseus/Ship_of_Theseus
+# side-sot (cross-repo, Mercury team value: D:/ShipOfTheseus/Ship_of_Theseus):
+cd <lane-worktree>
 claude --bg "<prompt>"
 ```
 
@@ -95,10 +100,11 @@ Why explicit `cd` matters:
   encoding rules and the canonical-vs-per-cwd split.
 - bg sessions inherit the dispatcher's cwd verbatim (Phase 2 empirical
   in S98 ADR §Phase 2; `state.json.cwd` preserved exactly).
-- Dispatching from `D:/Mercury/Mercury` while *intending* side-bug work
-  routes the session transcript jsonl + per-cwd hook scope under the
-  **main** lane's encoded dir — the work content is fine, but lane
-  attribution is wrong. Mercury's user-level memory layer (handoffs,
+- Dispatching from the main lane worktree (Mercury team value
+  `D:/Mercury/Mercury`) while *intending* side-bug work routes the
+  session transcript jsonl + per-cwd hook scope under the **main**
+  lane's encoded dir — the work content is fine, but lane attribution
+  is wrong. Mercury's user-level memory layer (handoffs,
   per-session files) lives at the canonical resolution per
   [`lane-naming.md`](lane-naming.md) §"Operational expectation" and is
   not affected; only the transcripts + cwd-derived hook scope drift.
@@ -126,9 +132,15 @@ know **bg sessions are not durable across reboot the way lanes are**.
 ## 2. Monitoring active bg sessions
 
 ```bash
-claude agents                                    # all lanes (TUI)
-claude agents --cwd D:/Mercury/Mercury           # main lane only
-claude agents --cwd D:/Mercury/Mercury-side-bug  # side-bug lane only
+# Substitute <lane-worktree> with the lane's Worktree path from
+# LANES.md per Rule 5.1; concrete Mercury team values shown as
+# illustrative annotations.
+
+claude agents                              # all lanes (TUI)
+claude agents --cwd <lane-worktree>        # filter to one lane
+                                           # main         → D:/Mercury/Mercury
+                                           # side-bug     → D:/Mercury/Mercury-side-bug
+                                           # side-sot     → D:/ShipOfTheseus/Ship_of_Theseus
 ```
 
 **`claude agents` is a TUI subcommand.** S99 empirical (Phase 6 probe
@@ -352,27 +364,48 @@ multi-lane protocol remains intact.
 ### Dispatch from each Mercury lane (current 4-lane registry)
 
 ```bash
-# main lane
-cd D:/Mercury/Mercury && claude --bg "<prompt>"
+# <lane-worktree> resolves to each lane's `Worktree path` field in
+# LANES.md (canonical user-memory file, NOT in this repo) per Rule 5.1.
+# Mercury team values shown after each lane line as illustrative
+# concrete examples — operators on other machines / non-Windows
+# substitute their own <repo-root>.
 
-# side-bug lane
-cd D:/Mercury/Mercury-side-bug && claude --bg "<prompt>"
+# main lane              → Mercury team value: D:/Mercury/Mercury
+cd <lane-worktree> && claude --bg "<prompt>"
 
-# side-sot lane (cross-repo, host Godot game repo)
-cd D:/ShipOfTheseus/Ship_of_Theseus && claude --bg "<prompt>"
+# side-bug lane          → Mercury team value: D:/Mercury/Mercury-side-bug
+cd <lane-worktree> && claude --bg "<prompt>"
 
-# health lane (conversation-only, no worktree — see LANES.md §`health`)
+# side-sot lane          → Mercury team value: D:/ShipOfTheseus/Ship_of_Theseus
+# (cross-repo, host Godot game repo)
+cd <lane-worktree> && claude --bg "<prompt>"
+
+# health lane — conversation-only, no worktree (see LANES.md §`health`).
 # Bg dispatch from this lane is unusual; if it ever happens, also set:
 #   MERCURY_MEM0_DISABLED=1   # privacy boundary per LANES.md §`health`
 # to keep PHI-adjacent content out of the mem0 Qdrant store.
 ```
 
-Lane worktree paths come from each lane's `Worktree path` field in
-`LANES.md` (canonical user-memory file, not in this repo) per Rule 5.1
-(see [`lane-naming.md`](lane-naming.md) §"Worktree path convention"
-and §"Cross-repo lane variant"). Operators on other machines substitute
-their own `<repo-root>` per CLAUDE.md §MUST install-to-D-drive
-(Windows team policy; non-Windows operators use their convention).
+### LANES.md cross-link (Argus iter-2 nit acknowledgement)
+
+Each lane's `Worktree path` field lives in `LANES.md` — a canonical
+**user-memory file** (resolved per [`lane-naming.md`](lane-naming.md)
+§"Operational expectation"), NOT a file in this repository. The Issue
+#388 acceptance criterion to "cross-link to LANES.md" is therefore
+satisfied by **textual reference** rather than a markdown link target,
+since `LANES.md` is unreachable via repo-relative path. Operators
+locate it via `$MERCURY_MEMORY_DIR/LANES.md` (or the
+`${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory/LANES.md`
+fallback). See lane-naming.md §"Worktree path convention" + §"Cross-repo
+lane variant" for canonical pathing rules.
+
+Operators on machines other than the Mercury team's default substitute
+their own `<repo-root>`; the `D:/...` examples above reflect the
+Mercury team's Windows checkout per `CLAUDE.md` §MUST "install to D
+drive" (a **Windows team-specific policy explicitly scoped to that team
+in CLAUDE.md** — skip on non-Windows). These are illustrative examples
+under a `<lane-worktree>` placeholder, not a hard-coded portability
+constraint.
 
 ### What Mercury does NOT promise
 
