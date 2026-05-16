@@ -118,7 +118,7 @@ client.beta.memory_stores.memory_versions.list(store_id, memory_id)
 | 跨 runtime | ❌ CMA-only (非 Claude Code / 非 Codex CLI / 非 raw API agent) | ✅ Claude Code + Codex + 任何 hook-aware runtime |
 | Vendor lock-in | ✅ Anthropic | ⚠️ mem0ai upstream + Qdrant (但 self-hosted, portable) |
 | Audit trail | ✅ memory_versions + redact API | ⚠️ history.db (本地 SQLite, 无 redact API) |
-| Cost | $0.08/session-hour CMA runtime; storage 暂无单独 charge | OPENAI_API_KEY embedding 费用 + 本地存储 |
+| Cost | $0.08/session-hour CMA runtime (Anthropic 官方 pricing §"Claude Managed Agents pricing" 直接表格); storage 暂无单独 charge | OPENAI_API_KEY embedding 费用 + 本地存储 |
 
 ### 2.2 OpenAI `/responses/compact`
 
@@ -179,7 +179,7 @@ client.beta.memory_stores.memory_versions.list(store_id, memory_id)
 | Hook integration | ❌ model-side, not hook-side | ✅ PreCompact hook 可注入 |
 | Long-term memory | ❌ 无 semantic search | ✅ mem0 multi-signal retrieval |
 
-`/responses/compact` 与 Mercury mem0 解决**正交问题**。重叠很窄 (仅在 "压缩进模型的 token 数" 这一维度, 笔者粗估 < 20% — 此为作者主观推断, 非引用统计数据), 且机制不兼容 (Mercury 跑 Claude / Codex 非 OpenAI Responses)。
+`/responses/compact` 与 Mercury mem0 解决**正交问题**。重叠仅限 "压缩进模型的 token 数" 一个窄维度 — `/responses/compact` 是 intra-conversation token 缩减 (OpenAI Responses API 链内, 输出 opaque encrypted blob), mem0 是 cross-session/cross-vendor/cross-runtime semantic recall (Qdrant 向量索引, human-inspectable markdown summary); 上面 6-dim 比较表中只有第一行 "Scope/单 model call chain" 与 mem0 的 "整个 Claude Code session context" 有交集, 其余 5 维 (Output / Cross-session / 跨 model / 跨 vendor / Hook integration / Long-term memory) 完全互斥。机制层面也不兼容 (Mercury 跑 Claude / Codex 非 OpenAI Responses)。
 
 ---
 
@@ -244,7 +244,8 @@ client.beta.memory_stores.memory_versions.list(store_id, memory_id)
 - [Build agents that remember your users — Claude Cookbook](https://platform.claude.com/cookbook/managed-agents-cma-remember-user-preferences) — §2.1 SDK 代码与"Karpathy 模式" 比较源
 - [Session event stream — Claude API Docs](https://platform.claude.com/docs/en/managed-agents/events-and-streaming) — §2.1 audit trail 源
 - [9to5Mac: Anthropic updates Claude Managed Agents with three new features (2026-05-07)](https://9to5mac.com/2026/05/07/anthropic-updates-claude-managed-agents-with-three-new-features/) — §3.3 dreaming research-preview restricted-access 信号源
-- [WaveSpeed: CMA Pricing and Beta Limits 2026](https://wavespeed.ai/blog/posts/claude-managed-agents-pricing-2026/) — §2.1 表内 "$0.08/session-hour" cost 源
+- [Anthropic Pricing § Claude Managed Agents pricing](https://platform.claude.com/docs/en/about-claude/pricing) — §2.1 表内 "$0.08/session-hour" cost 一手 primary source (Session runtime 章节明确 SKU "$0.08 per session-hour", `running` status duration metering)
+- [WaveSpeed: CMA Pricing and Beta Limits 2026](https://wavespeed.ai/blog/posts/claude-managed-agents-pricing-2026/) — supporting third-party 综述 (与上方 Anthropic 官方一致)
 
 ### Anthropic CMA Memory — Further reading (background, 非 load-bearing)
 - [opentools.ai: Anthropic Managed Agents Add Memory](https://opentools.ai/news/anthropic-managed-agents-add-memory-persistent-state-for-ai-that-actually-ships) — launch context
