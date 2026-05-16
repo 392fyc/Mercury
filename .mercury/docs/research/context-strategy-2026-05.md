@@ -1,8 +1,8 @@
 # Context Strategy Re-baseline vs 1M-ctx Norm — ADR
 
 > 状态: **生效中** | 制定日期: 2026-05-17 | 决策者: 392fyc (main lane S104) | Closes: [Issue #385](https://github.com/392fyc/Mercury/issues/385)
-> Parent context: [Issue #381 tech intel sweep](https://github.com/392fyc/Mercury/issues/381) + `~/.claude/projects/D--Mercury-Mercury/memory/research/tech-intel-sweep-2026-05-12.md` (user-level memory, 不在 Mercury repo)
-> Related: [`feedback_context_protection.md`](../../../../.claude/projects/D--Mercury-Mercury/memory/feedback_context_protection.md) (user-memory, 60 天前 2026-03 起作; this ADR 评估其在 1M ctx norm 下是否仍 valid)
+> Parent context: [Issue #381 tech intel sweep](https://github.com/392fyc/Mercury/issues/381) + `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<workspace>/memory/research/tech-intel-sweep-2026-05-12.md` (user-level memory, 不在 Mercury repo)
+> Related: `feedback_context_protection.md` at `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<workspace>/memory/feedback_context_protection.md` (user-memory, 60 天前 2026-03 起作; this ADR 评估其在 1M ctx norm 下是否仍 valid)
 >
 > **路径约定**: `~/.claude/...` 等价于 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/...`, 沿用 CLAUDE.md §"Related Repositories"。
 
@@ -98,7 +98,7 @@ Cache 折扣 (across family): cache write 5m = 1.25x, write 1h = 2.0x, read = 0.
 
 ### 3.1 数据集
 
-- Source: `~/.claude/scripts/cost-tracker/*.jsonl` (19 sessions, 2026-05 月以来)
+- Source: `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/scripts/cost-tracker/*.jsonl` (19 sessions, 2026-05 月以来)
 - Schema: per-session **end-of-session summary** record (`turn_count` / `total_usd` / `input_tokens` / `output_tokens` / `cache_*` / `models{}` / `transcript_path`)
 - 注意: `input_tokens` field 是 **最后一 turn 的 input** (delta), 不是 session-cumulative input。Cumulative 视角下需通过 `cache_read_tokens` (复用) + `cache_1h_tokens` (新写入) 看真实 prompt 体量。
 
