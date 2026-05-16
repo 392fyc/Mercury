@@ -236,7 +236,7 @@ max = 132,649 tokens (= 13% of 1M Opus/Sonnet budget)
 
 1. **Haiku tier 提升到 ≥1M ctx** (目前 200K) — 单独消除 Axis C 主要约束
 2. **OpenAI 取消 GPT-5.5 >272K surcharge** (变成 flat-rate 全段) — 单独消除 Axis D 主要约束
-3. **Mercury 实测 P99 session cumulative input 持续超 500K** — measurement 定义: session-aggregate 跨 turns `input_tokens + cache_1h_tokens + cache_5m_tokens + cache_read_tokens` sum (cache_read 可加权 0.1x 以反映实际经济成本); 3 session+ rolling 窗口持续超过 → 用量真正逼近上限。**不是** §3.1 的 last-turn delta `input_tokens` 单字段 (该字段不可累加)
+3. **Mercury 实测 P99 session cumulative input 持续超 500K** — measurement 定义 (canonical, 与 §1 TL;DR Monitor 一致): session-aggregate 跨 turns `input_tokens + cache_1h_tokens + cache_5m_tokens + 0.1 × cache_read_tokens` (cache_read 固定按 0.1x 加权, 反映 Anthropic prompt cache 实际经济计费比例, **非可选**); 3 session+ rolling 窗口持续超过 → 用量真正逼近上限。**不是** §3.1 的 last-turn delta `input_tokens` 单字段 (该字段不可累加)
 4. **Anthropic Opus 5.x 撤销 up to 1.35x tokenizer 膨胀** (回归与 4.6 等效) — Axis A 容量边界改善
 5. **Anthropic / OpenAI 公开 prompt cache 经济模型重大变更** (e.g., write 1h premium 取消) — Axis E 动机消失
 
