@@ -112,7 +112,7 @@ Mercury 的核心价值不在代码里，在方法论里。
 - LLM 自维护: agent 全自动写入 + dedup，人类只读 / 查询
 - 失败安全 kill-switch: `AGENTKB_MEM0_DISABLED=1`（或 alias `MERCURY_MEM0_DISABLED=1`）软关；全路径 no-op-safe fail-falsy（mem0 缺失 / API key 缺失 / store 错误均不阻塞主流程）
 
-**技术方向** (当前实装):
+**技术方向** (当前实装；路径约定: `~/.claude/...` 等价于 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/...`，沿用 CLAUDE.md §"Related Repositories" 约定，二者可任选一种书写，env 形式在多账户 / CI 下更可移植):
 - Adapter — [PR #258](https://github.com/392fyc/Mercury/pull/258) `599d313` 2026-04-17（Mercury Issue #252 **Phase A**，in-repo `scripts/`，仅 adapter prototype，hook 接线延后）: `mem0ai.Memory` 包装 + 4 个上游 P1 bug guard（mem0ai [#4099](https://github.com/mem0ai/mem0/issues/4099) empty-payload / [#4799](https://github.com/mem0ai/mem0/issues/4799) list-content / [#4453](https://github.com/mem0ai/mem0/issues/4453) threshold-filter / [#4536](https://github.com/mem0ai/mem0/issues/4536) contradiction-dedup 0.92 cosine fails-closed） + telemetry-off forced
 - Bridge + Hook 触发 + Vector store — user-level cross-repo 落地（post-Phase A，per CLAUDE.md §"用户级变更治理" + #259 governance pattern）: `~/.claude/scripts/mem0_bridge.py` no-op-safe `ingest_session()` / `recall()` + `~/.claude/hooks/{session-start.py,session-end.py,pre-compact.py}` hook 触发 + `~/.claude/scripts/mem0-state/qdrant/` + `history.db`（on-disk Qdrant + SQLite history，user-controlled）
 - Karpathy 模式 (raw → compile → wiki → Q&A → enhance) 映射: `add_safe()` → Qdrant + SQLite → `search_safe()` cosine + entity graph → `dedup_guard` 阈值拒绝矛盾或重复
