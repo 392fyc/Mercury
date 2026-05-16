@@ -103,21 +103,22 @@ Mercury 的核心价值不在代码里，在方法论里。
 
 ### 模块 2: Memory Layer（长期记忆层）
 
-**解决的问题**: Claude Code 内置 memory 容量有限、不可结构化查询、不跨项目。
+**解决的问题**: Claude Code 内置 memory 容量有限、不可结构化查询、不跨 session、不跨项目、不跨 vendor。
 
 **职责**:
-- NAS 上的 Obsidian vault 作为中心化知识库
-- 遵循 Karpathy 模式: raw data → LLM compile → structured wiki → LLM Q&A → incrementally enhance
-- 跨项目共享: 不绑定 Mercury，任何项目均可接入
-- LLM 自维护: agent 负责写入和维护 wiki，人类只读/查询
-- 周期健康检查: LLM lint 检测不一致、缺失、过时内容
+- 跨 session 语义召回: SessionStart 注入相关历史 / SessionEnd flush 总结 / PreCompact 压缩前 snapshot
+- 跨项目共享（§P3 模块可拆卸的体现）: 不绑定 Mercury，用户级 hook 链（`~/.claude/hooks/`）使任何 Claude Code / Codex CLI 项目均可接入
+- 跨 vendor 可移植（§P5 向上兼容的核心收益）: 持久层 user-controlled，不依赖任何 Anthropic / OpenAI runtime；Anthropic Claude Managed Agents Memory / OpenAI `/responses/compact` 评估见 [Issue #384 ADR](research/cma-memory-vs-mem0-2026-05.md)（Verdict (a) status quo + monitor 配 4 个 re-eval trigger）
+- LLM 自维护: agent 全自动写入 + dedup，人类只读 / 查询
+- 失败安全 kill-switch: `AGENTKB_MEM0_DISABLED=1`（或 alias `MERCURY_MEM0_DISABLED=1`）软关；全路径 no-op-safe fail-falsy（mem0 缺失 / API key 缺失 / store 错误均不阻塞主流程）
 
-**技术方向**:
-- MCP server 提供读写接口（需评估当前可用的 Obsidian MCP server 方案）
-- NAS SSH 直接访问底层文件
-- 周期维护 Agent (Issue #92) 作为 health check skill
+**技术方向** (当前实装；路径约定: `~/.claude/...` 等价于 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/...`，沿用 CLAUDE.md §"Related Repositories" 约定，二者可任选一种书写，env 形式在多账户 / CI 下更可移植):
+- Adapter — [PR #258](https://github.com/392fyc/Mercury/pull/258) `599d313` 2026-04-17（Mercury Issue #252 **Phase A**，in-repo `scripts/`，仅 adapter prototype，hook 接线延后）: `mem0ai.Memory` 包装 + 4 个上游 P1 bug guard（mem0ai [#4099](https://github.com/mem0ai/mem0/issues/4099) empty-payload / [#4799](https://github.com/mem0ai/mem0/issues/4799) list-content / [#4453](https://github.com/mem0ai/mem0/issues/4453) threshold-filter / [#4536](https://github.com/mem0ai/mem0/issues/4536) contradiction-dedup 0.92 cosine fails-closed） + telemetry-off forced
+- Bridge + Hook 触发 + Vector store — user-level cross-repo 落地（post-Phase A，per CLAUDE.md §"用户级变更治理" + #259 governance pattern）: `~/.claude/scripts/mem0_bridge.py` no-op-safe `ingest_session()` / `recall()` + `~/.claude/hooks/{session-start.py,session-end.py,pre-compact.py}` hook 触发 + `~/.claude/scripts/mem0-state/qdrant/` + `history.db`（on-disk Qdrant + SQLite history，user-controlled）
+- Karpathy 模式 (raw → compile → wiki → Q&A → enhance) 映射: `add_safe()` → Qdrant + SQLite → `search_safe()` cosine + entity graph → `dedup_guard` 阈值拒绝矛盾或重复
+- 历史演进: Mercury_KB Obsidian vault（早期，已废）→ AgentKB-fork（Karpathy-style file KB，已归档详见 [`agentkb-fork-salvage-audit-2026-04-17.md`](research/agentkb-fork-salvage-audit-2026-04-17.md)）→ mem0 + Qdrant（当前实装）
 
-**自研理由**: 知识库结构、领域模板、编译流程是 Mercury 特有的。底层存储通过 MCP 生态解决。
+**自研理由**: adapter + bridge + 4 P1 bug guard 是 Mercury 特有；底层 vector store + LLM compile loop 通过 mem0ai + Qdrant 上游解决。
 
 ---
 
