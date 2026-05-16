@@ -179,7 +179,7 @@ client.beta.memory_stores.memory_versions.list(store_id, memory_id)
 | Hook integration | ❌ model-side, not hook-side | ✅ PreCompact hook 可注入 |
 | Long-term memory | ❌ 无 semantic search | ✅ mem0 multi-signal retrieval |
 
-`/responses/compact` 与 Mercury mem0 解决**正交问题**。重叠仅限 "压缩进模型的 token 数" 一个窄维度 — `/responses/compact` 是 intra-conversation token 缩减 (OpenAI Responses API 链内, 输出 opaque encrypted blob), mem0 是 cross-session/cross-vendor/cross-runtime semantic recall (Qdrant 向量索引, human-inspectable markdown summary); 上面 6-dim 比较表中只有第一行 "Scope/单 model call chain" 与 mem0 的 "整个 Claude Code session context" 有交集, 其余 5 维 (Output / Cross-session / 跨 model / 跨 vendor / Hook integration / Long-term memory) 完全互斥。机制层面也不兼容 (Mercury 跑 Claude / Codex 非 OpenAI Responses)。
+`/responses/compact` 与 Mercury mem0 解决**正交问题**。重叠仅限 "压缩进模型的 token 数" 一个窄维度 — `/responses/compact` 是 intra-conversation token 缩减 (OpenAI Responses API 链内, 输出 opaque encrypted blob), mem0 是 cross-session/cross-vendor/cross-runtime semantic recall (Qdrant 向量索引, human-inspectable markdown summary); 上面 7-dim 比较表中只有第一行 "Scope/单 model call chain" 与 mem0 的 "整个 Claude Code session context" 有交集, 其余 6 维 (Output / Cross-session / 跨 model / 跨 vendor / Hook integration / Long-term memory) 完全互斥。机制层面也不兼容 (Mercury 跑 Claude / Codex 非 OpenAI Responses)。
 
 ---
 
