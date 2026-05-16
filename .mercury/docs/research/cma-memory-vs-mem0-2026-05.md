@@ -1,8 +1,10 @@
 # CMA Memory + `/responses/compact` vs Mercury mem0 — ADR
 
 > 状态: **生效中** | 制定日期: 2026-05-16 | 决策者: 392fyc (main lane S102) | Closes: [Issue #384](https://github.com/392fyc/Mercury/issues/384)
-> Parent context: [Issue #381 tech intel sweep](https://github.com/392fyc/Mercury/issues/381) + [memory/research/tech-intel-sweep-2026-05-12.md](../../../memory/research/tech-intel-sweep-2026-05-12.md)
-> Predecessor: PR #258 (`scripts/mem0_hooks.py` 引入, Mercury #252 Phase B 2026-04-17)
+> Parent context: [Issue #381 tech intel sweep](https://github.com/392fyc/Mercury/issues/381) + `~/.claude/projects/D--Mercury-Mercury/memory/research/tech-intel-sweep-2026-05-12.md` (user-level memory file, 不在 Mercury repo)
+> Predecessor: PR #258 (`scripts/mem0_hooks.py` 引入, Mercury #252 **Phase A** 2026-04-17 — adapter prototype; Phase B hook 接线后续 user-level 落地 per CLAUDE.md #259 governance pattern)
+>
+> **路径约定**: 本 ADR 涉及的用户级路径形式 `~/.claude/...` 等价于 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/...`, 二者可任选一种书写, env 形式在多账户 / CI 下更可移植 — 沿用 CLAUDE.md §"Related Repositories" 约定。
 
 ---
 
@@ -34,7 +36,7 @@
 - **Anthropic Claude Managed Agents (CMA) Memory** — public beta 2026-04-23
 - **OpenAI Responses API `/responses/compact`** — window release (per Issue #384 body)
 
-两者都晚于 Mercury mem0 swap (PR #258 `599d313bb29f56e2aeb96c678c8198c78c5f2b86` merged 2026-04-17, Mercury Issue #252 Phase B 的"memory-layer rebuild")。AgentKB-fork 已归档 (memory/research/agentkb-fork-salvage-audit-2026-04-17.md), Mercury_KB 早于 AgentKB 已废。
+两者都晚于 Mercury mem0 swap (PR #258 `599d313bb29f56e2aeb96c678c8198c78c5f2b86` merged 2026-04-17, Mercury Issue #252 **Phase A** 的 mem0 adapter prototype — PR head branch `feature/252-mem0-phase-a` + PR title `feat(memory/phase-a)` 确认; Phase B hook 接线为后续 user-level 落地)。AgentKB-fork 已归档 (in-repo: [`./agentkb-fork-salvage-audit-2026-04-17.md`](./agentkb-fork-salvage-audit-2026-04-17.md)), Mercury_KB 早于 AgentKB 已废。
 
 #384 提出 4 个 verdict 选项：
 - (a) Status quo — 保持 mem0 canonical
@@ -258,13 +260,13 @@ client.beta.memory_stores.memory_versions.list(store_id, memory_id)
 - [liteLLM /responses/compact docs](https://docs.litellm.ai/docs/response_api_compact)
 
 ### Mercury internal
-- `~/.claude/scripts/mem0_hooks.py` (user-level cross-repo, 不在 Mercury repo 内) — mem0 adapter (4 P1 bug guards)
+- `~/.claude/scripts/mem0_hooks.py` (user-level cross-repo, 不在 Mercury repo 内 — 路径等价 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/scripts/mem0_hooks.py`) — mem0 adapter (4 P1 bug guards)
 - `~/.claude/scripts/mem0_bridge.py` (user-level cross-repo, 不在 Mercury repo 内) — fail-safe `ingest_session()` + `recall()`
-- [memory/research/tech-intel-sweep-2026-05-12.md](../../../memory/research/tech-intel-sweep-2026-05-12.md) — parent intel sweep
-- [memory/research/agentkb-fork-salvage-audit-2026-04-17.md](../../../memory/research/agentkb-fork-salvage-audit-2026-04-17.md) — predecessor archive audit
-- [Mercury #252 Phase B](https://github.com/392fyc/Mercury/issues/252) + [PR #258](https://github.com/392fyc/Mercury/pull/258) — mem0 swap (`599d313`)
+- `~/.claude/projects/D--Mercury-Mercury/memory/research/tech-intel-sweep-2026-05-12.md` (user-level memory file, 不在 Mercury repo) — parent intel sweep
+- [`./agentkb-fork-salvage-audit-2026-04-17.md`](./agentkb-fork-salvage-audit-2026-04-17.md) — in-repo predecessor archive audit
+- [Mercury Issue #252](https://github.com/392fyc/Mercury/issues/252) (3-phase plan: A 适配器 / B hook 接线 / C 后续) + [PR #258 `feat(memory/phase-a)`](https://github.com/392fyc/Mercury/pull/258) — Phase A 落地的 mem0 adapter prototype (`599d313`)
 - [mem0.ai: State of AI Agent Memory 2026](https://mem0.ai/blog/state-of-ai-agent-memory-2026)
-- DIRECTION.md §模块 2 (line 104-122) — 过时, 需单独 follow-up Issue
+- `.mercury/docs/DIRECTION.md` §模块 2 (line 104-122) — 过时, 需单独 follow-up Issue
 
 ### UNVERIFIED claims
 - 是否 `o1`/`o3`/`gpt-4o` 在 `/responses/compact` 上 produce full compaction items 还是 fallback truncation (model support matrix 在官方 doc 之外未确认)
