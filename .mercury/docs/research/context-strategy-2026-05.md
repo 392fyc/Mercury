@@ -1,8 +1,8 @@
 # Context Strategy Re-baseline vs 1M-ctx Norm — ADR
 
 > 状态: **生效中** | 制定日期: 2026-05-17 | 决策者: 392fyc (main lane S104) | Closes: [Issue #385](https://github.com/392fyc/Mercury/issues/385)
-> Parent context: [Issue #381 tech intel sweep](https://github.com/392fyc/Mercury/issues/381) + `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<workspace>/memory/research/tech-intel-sweep-2026-05-12.md` (user-level memory, 不在 Mercury repo)
-> Related: `feedback_context_protection.md` at `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<workspace>/memory/feedback_context_protection.md` (user-memory, 60 天前 2026-03 起作; this ADR 评估其在 1M ctx norm 下是否仍 valid)
+> Parent context: [Issue #381 tech intel sweep](https://github.com/392fyc/Mercury/issues/381) + `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded_cwd>/memory/research/tech-intel-sweep-2026-05-12.md` (user-level memory, 不在 Mercury repo; `<encoded_cwd>` 约定见 `.mercury/docs/research/multi-lane-protocol-2026-04-25.md` §Path conventions)
+> Related: `feedback_context_protection.md` at `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded_cwd>/memory/feedback_context_protection.md` (user-memory, 60 天前 2026-03 起作; this ADR 评估其在 1M ctx norm 下是否仍 valid)
 >
 > **路径约定**: `~/.claude/...` 等价于 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/...`, 沿用 CLAUDE.md §"Related Repositories"。
 
@@ -122,20 +122,20 @@ max = 132,649 tokens (= 13% of 1M Opus/Sonnet budget)
 | input (last-turn delta) | 4,316 | $0.02 | 0.02% |
 | output (cumulative) | 549,948 | $13.75 | 15.5% |
 | cache_5m | 0 | $0.00 | 0% |
-| cache_1h_writes | 4,520,603 | $45.21 | 50.8% |
-| cache_read | 59,908,474 | $29.95 | 33.7% |
+| cache_1h_tokens (writes) | 4,520,603 | $45.21 | 50.8% |
+| cache_read_tokens | 59,908,474 | $29.95 | 33.7% |
 | **TOTAL** | — | **$88.93** | 100% |
 
-**Cost driver 是 cache_1h_writes (50.8%) + cache_reads (33.7%)** — 二者加总占 cost 的 **84.5%**, raw input + output 仅 15.5%。Cumulative cache_read tokens (59.9M) 相当于 12× cache_1h_writes 体量 — 命中率极高 ($45 写入换 $30 读取节省的 cache 经济相当于免费 5x 重用)。
+**Cost driver 是 cache_1h_tokens-writes (50.8%) + cache_read_tokens (33.7%)** — 二者加总占 cost 的 **84.5%**, raw input + output 仅 15.5%。Cumulative cache_read_tokens (59.9M) 相当于 12× cache_1h_tokens-writes 体量 — 命中率极高 ($45 写入换 $30 读取节省的 cache 经济相当于免费 5x 重用)。
 
 ### 3.4 Bulk injection 对 cost 的二阶影响
 
 若 pre-inject 一个 50K-token KB 文档到 session 起点:
-- 直接成本: 50K × $5/MTok × cache_1h_write 2.0x premium = **$0.50** (写入)
+- 直接成本: 50K × $5/MTok × `cache_1h_tokens` write 2.0x premium = **$0.50** (写入)
 - 命中重用: 假设 30 turns 复用 → 50K × 30 × $5/MTok × 0.10 = **$0.75** (读取)
 - 总计净增 **~$1.25** per session, **若 KB 内容 90% 未被实际用到 → 净浪费**
 
-50K × 30 turns = 1.5M cache_read tokens 单独占据 session cumulative cache_read 的 **2.5%** — 看似小, 但 **被注入文档侵占的 prompt prefix slot 必然推高 cumulative cache 体量, 增加 cache_1h_write 计费基数** ([Anthropic prompt caching docs](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)). 注: 关于"是否会主动 evict 其他 cache slot"的 **LRU 替换语义未在 Anthropic 官方文档明确描述** (官方只说 5m / 1h TTL — UNVERIFIED), 但即便不主动 evict, cumulative size 膨胀直接对应 cache_1h_write 计费翻倍 (§3.3 显示该项是 cost 主导)。这是 `feedback_context_protection.md` rule 的真实经济动机, 而 1M ctx 上限本身从来不是 binding constraint。
+50K × 30 turns = 1.5M `cache_read_tokens` 单独占据 session cumulative cache_read 的 **2.5%** — 看似小, 但 **被注入文档侵占的 prompt prefix slot 必然推高 cumulative cache 体量, 增加 `cache_1h_tokens` write 计费基数** ([Anthropic prompt caching docs](https://platform.claude.com/docs/en/build-with-claude/prompt-caching))。注: 关于"是否会主动 evict 其他 cache slot"的 **LRU 替换语义未在 Anthropic 官方文档明确描述** (官方只说 5m / 1h TTL — UNVERIFIED), 但即便不主动 evict, cumulative size 膨胀直接对应 `cache_1h_tokens` write 计费翻倍 (§3.3 显示该项是 cost 主导)。这是 `feedback_context_protection.md` rule 的真实经济动机, 而 1M ctx 上限本身从来不是 binding constraint。
 
 ### 3.5 Model 混合分布
 
