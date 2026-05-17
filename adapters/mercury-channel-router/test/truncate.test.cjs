@@ -110,6 +110,19 @@ test('zero or sub-ellipsis cap drops the ellipsis (Codex Low finding)', () => {
   assert.ok(!out.includes('...'), 'ellipsis dropped when it cannot fit');
 });
 
+test('non-string ellipsis falls back to default (Argus iter-2 finding)', () => {
+  // Argus iter-2: reading `.length` on a non-string ellipsis would throw or
+  // produce undefined-driven NaN budgets. Helper now coerces back to the
+  // default marker when a non-string is passed.
+  const s = 'a'.repeat(5000);
+  // null / undefined / number ellipsis must not crash.
+  for (const garbage of [null, undefined, 42, {}, []]) {
+    const out = truncateForTelegram(s, 4096, garbage);
+    assert.ok(out.length <= 4096, `garbage ellipsis ${typeof garbage} produced length ${out.length}`);
+    assert.ok(out.endsWith('…'), `garbage ellipsis ${typeof garbage} should fall back to default marker`);
+  }
+});
+
 test('garbage max values normalize to TG_MAX (Argus iter-1 findings)', () => {
   // Argus iter-1: NaN / negative / non-integer max could destabilize the
   // budget arithmetic. The helper now clamps via Math.max(0, Math.floor(...))

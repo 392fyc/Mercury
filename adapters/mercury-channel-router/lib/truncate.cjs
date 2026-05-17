@@ -19,13 +19,16 @@ function truncateForTelegram(text, max = TG_MAX, ellipsis = ELLIPSIS) {
   // make budget arithmetic unstable and could let the result exceed the cap.
   // Fall back to TG_MAX when the caller passes garbage.
   const cap = Number.isFinite(max) ? Math.max(0, Math.floor(max)) : TG_MAX;
+  // Normalize `ellipsis` — reading `.length` on a non-string throws, so
+  // accept only strings and fall back to the default marker otherwise.
+  const marker = typeof ellipsis === 'string' ? ellipsis : ELLIPSIS;
   if (typeof text !== 'string') return text;
   if (text.length <= cap) return text;
   // If the marker is at least as long as the cap, drop it — appending it would
   // itself overflow `cap`. The caller asked for a budget smaller than the
   // marker, so the marker has to go.
-  const useEllipsis = ellipsis.length < cap;
-  const budget = useEllipsis ? cap - ellipsis.length : cap;
+  const useEllipsis = marker.length < cap;
+  const budget = useEllipsis ? cap - marker.length : cap;
   let acc = '';
   let utf16Len = 0;
   for (const cp of text) {
@@ -34,7 +37,7 @@ function truncateForTelegram(text, max = TG_MAX, ellipsis = ELLIPSIS) {
     acc += cp;
     utf16Len += cpLen;
   }
-  return useEllipsis ? acc + ellipsis : acc;
+  return useEllipsis ? acc + marker : acc;
 }
 
 module.exports = { truncateForTelegram, TG_MAX, ELLIPSIS };
