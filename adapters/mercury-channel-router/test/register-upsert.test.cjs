@@ -45,9 +45,27 @@ async function withRouter(maxSess, body) {
   try {
     await body({ PORT, token });
   } finally {
+    // Copilot finding: `child.killed` flips to true the instant kill() is
+    // called, not when the process actually exits — using it as the SIGKILL
+    // gate left a zombie router on test bail. Await the real `exit` event
+    // (or its exitCode/signalCode equivalents) with a short timeout, then
+    // escalate to SIGKILL only if the child has not actually exited.
     child.kill('SIGTERM');
-    await new Promise(r => setTimeout(r, 300));
-    if (!child.killed) child.kill('SIGKILL');
+    const exited = await new Promise(resolve => {
+      if (child.exitCode !== null || child.signalCode !== null) { resolve(true); return; }
+      const t = setTimeout(() => { child.removeListener('exit', onExit); resolve(false); }, 500);
+      const onExit = () => { clearTimeout(t); resolve(true); };
+      child.once('exit', onExit);
+    });
+    if (!exited) {
+      child.kill('SIGKILL');
+      // Best-effort wait so the OS releases the port before the next test.
+      await new Promise(resolve => {
+        if (child.exitCode !== null || child.signalCode !== null) { resolve(); return; }
+        const t = setTimeout(resolve, 500);
+        child.once('exit', () => { clearTimeout(t); resolve(); });
+      });
+    }
     try { fs.rmSync(tmpHome, { recursive: true, force: true }); } catch {}
   }
 }
