@@ -19,7 +19,8 @@ function nextBackoffMs(attempt) {
 }
 
 // The router emits a synthetic `{"type":"connected"}` event immediately on
-// every successful /inbox attach (mercury-channel-router/router.cjs:274), so
+// every successful /inbox attach (mercury-channel-router/router.cjs handler
+// at `if (m==='GET'&&url.startsWith('/inbox/'))` → `res.write('data: {"type":"connected"}\n\n')`), so
 // "first parsed event" alone would reset the backoff on every successful
 // 200 + connected + EOF cycle and turn the reconnect into a hot loop. Only
 // types the consumer actually acts on count as proof of a healthy server.

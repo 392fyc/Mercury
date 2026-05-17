@@ -20,6 +20,13 @@ const PORT       = Number(process.env.MERCURY_ROUTER_PORT) || 8788;
 const ROUTER_CJS = path.join(__dirname, '..', 'mercury-channel-router', 'router.cjs');
 const TOKEN_FILE = path.join(os.homedir(), '.mercury', 'router.token');
 const TAG        = '[mercury-channel-client]';
+
+// Issue #304: extract magic numbers to named constants near top of file.
+const ROUTER_HEALTH_PROBE_TIMEOUT_MS = 500;  // ensureRouter() /health probe AbortSignal
+const ROUTER_START_RETRY_ATTEMPTS    = 20;   // ensureRouter() spawn-then-probe attempts
+const ROUTER_START_RETRY_INTERVAL_MS = 250;  // ensureRouter() inter-probe sleep
+const READ_TOKEN_BOOT_RETRIES        = 10;   // initial readToken() retries from main()
+const READ_TOKEN_BOOT_DELAY_MS       = 300;  // initial readToken() inter-attempt sleep
 const xmlEsc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');
 
 // ── Session identity ──────────────────────────────────────────────────────────
@@ -56,22 +63,25 @@ async function getToken() {
 function invalidateToken() { _token = null; }
 
 // ── Router IPC helpers ────────────────────────────────────────────────────────
-async function routerFetch(path_, opts = {}) {
-  const url = `http://127.0.0.1:${PORT}${path_}`;
+// Issue #304 nit 3: parameter renamed `path_` → `endpoint` so it no longer
+// shadows the `path` module import; callers pass the IPC route segment
+// (e.g. '/register', '/inbox/<id>').
+async function routerFetch(endpoint, opts = {}) {
+  const url = `http://127.0.0.1:${PORT}${endpoint}`;
   return routerFetchWithRetry({ url, opts, getToken, invalidateToken, fetchImpl: fetch });
 }
 
 async function ensureRouter() {
   try {
-    const r = await fetch(`http://127.0.0.1:${PORT}/health`, { signal: AbortSignal.timeout(500) });
+    const r = await fetch(`http://127.0.0.1:${PORT}/health`, { signal: AbortSignal.timeout(ROUTER_HEALTH_PROBE_TIMEOUT_MS) });
     if (r.ok) return;
   } catch {}
   spawn('node', [ROUTER_CJS], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
-  for (let i = 0; i < 20; i++) {
-    await new Promise(r => setTimeout(r, 250));
+  for (let i = 0; i < ROUTER_START_RETRY_ATTEMPTS; i++) {
+    await new Promise(r => setTimeout(r, ROUTER_START_RETRY_INTERVAL_MS));
     try { const r = await fetch(`http://127.0.0.1:${PORT}/health`); if (r.ok) return; } catch {}
   }
-  throw new Error('router did not start within 5s');
+  throw new Error(`router did not start within ${ROUTER_START_RETRY_ATTEMPTS * ROUTER_START_RETRY_INTERVAL_MS}ms`);
 }
 
 async function register() {
@@ -205,9 +215,10 @@ async function connectInbox() {
           try {
             const evt = JSON.parse(line.slice(5).trim());
             // Reset backoff on first substantive event. Excludes the router's
-            // synthetic `{"type":"connected"}` (router.cjs:274) so a
-            // 200 + connected + EOF cycle is treated as a failed reconnect,
-            // not as proof of a healthy server.
+            // synthetic `{"type":"connected"}` (emitted from router.cjs
+            // `/inbox/:id` handler on every attach) so a 200 + connected + EOF
+            // cycle is treated as a failed reconnect, not as proof of a
+            // healthy server.
             if (!receivedEvent && isSubstantiveEvent(evt)) { receivedEvent = true; reconnectAttempt = 0; }
             if (evt.type === 'message') {
               await mcp.notification({
@@ -290,7 +301,7 @@ process.on('beforeExit', async () => { await deregister(); });
   try {
     await ensureRouter();
     // read token after router is up (router writes token file on listen success)
-    _token = await readToken(10, 300);
+    _token = await readToken(READ_TOKEN_BOOT_RETRIES, READ_TOKEN_BOOT_DELAY_MS);
     if (!_token) process.stderr.write(`${TAG} WARNING: could not read router token; IPC calls will be unauthenticated\n`);
     const registered = await register();
     if (registered) startInboxIfNeeded();

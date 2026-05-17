@@ -22,43 +22,85 @@ const MAX_SESS_RAW = Number(process.env.MERCURY_ROUTER_MAX_SESS);
 const MAX_SESS   = Number.isFinite(MAX_SESS_RAW) && MAX_SESS_RAW >= 1 ? Math.floor(MAX_SESS_RAW) : 5;
 const TAG        = '[mercury-channel-router]';
 
+// Issue #304: extract magic numbers to named constants near top of file.
+const SHUTDOWN_GRACE_MS         = 30000; // delay before exit after last session deregisters
+const LOCK_ACQUIRE_RETRIES      = 3;     // attempts to claim ~/.mercury/router.lock
+const TG_SEND_MAX_RETRIES       = 2;     // tgSend retry budget
+const TG_SEND_RETRY_AFTER_MAX_S = 5;     // max seconds to honor Telegram retry_after hint
+
 // IPC auth token — written to TOKEN_FILE after server.listen succeeds
 const TOKEN = crypto.randomBytes(16).toString('hex');
 const writeToken  = () => { try { fs.mkdirSync(path.dirname(TOKEN_FILE),{recursive:true}); fs.writeFileSync(TOKEN_FILE,TOKEN,{mode:0o600}); } catch(e){process.stderr.write(`${TAG} token write error: ${e.message}\n`);} };
 const cleanupToken = () => { try { fs.unlinkSync(TOKEN_FILE); } catch {} };
 
-// Lock file — atomic O_CREAT|O_EXCL; fail-closed on EADDRINUSE (lock not yet held)
+// Lock file — atomic O_CREAT|O_EXCL; fail-closed on EEXIST (lock contention,
+// not socket EADDRINUSE — Copilot iter-1 C2 comment-correctness finding).
+// Issue #304 nit 4: returns true on success, false on non-fatal failure paths
+// (e.g. filesystem error other than EEXIST, or retry exhaustion). Callers
+// MUST gate `writeToken()` / `initBot()` on the boolean — otherwise Telegram
+// polling could start without this process actually owning the singleton
+// lock, which would re-open the 409 race the rest of the PR closes.
+// Other failure paths (live PID owns the lock, EPERM probing) still call
+// `process.exit(1)` directly; this function only returns false on paths
+// that the caller should treat as "abort startup, do not poll".
+// Stale-lock unlinks are guarded by `safeUnlinkLock()` — Copilot iter-1 C1:
+// without the guard a bare `fs.unlinkSync(LOCK_FILE)` could throw on ENOENT
+// (TOCTOU race against another router cleaning the same stale lock) or
+// EPERM/EACCES (Windows file lock from a zombie router), which would
+// propagate out past the new `acquireLock()` boolean contract and crash
+// the listen callback instead of falling through to the boolean-gated
+// startup abort.
+const safeUnlinkLock = () => {
+  try { fs.unlinkSync(LOCK_FILE); }
+  catch (e) {
+    if (e && e.code !== 'ENOENT') {
+      process.stderr.write(`${TAG} stale-lock unlink failed: ${e.message}\n`);
+    }
+  }
+};
 function acquireLock() {
   fs.mkdirSync(path.dirname(LOCK_FILE), { recursive: true });
-  for (let i = 0; i < 3; i++) {
-    try { const fd=fs.openSync(LOCK_FILE,'wx'); fs.writeSync(fd,String(process.pid)); fs.closeSync(fd); return; }
+  for (let i = 0; i < LOCK_ACQUIRE_RETRIES; i++) {
+    try { const fd=fs.openSync(LOCK_FILE,'wx'); fs.writeSync(fd,String(process.pid)); fs.closeSync(fd); return true; }
     catch (e) {
-      if (e.code !== 'EEXIST') { process.stderr.write(`${TAG} lock error: ${e.message}\n`); return; }
+      if (e.code !== 'EEXIST') { process.stderr.write(`${TAG} lock error: ${e.message}\n`); return false; }
       try {
         const pid = parseInt(fs.readFileSync(LOCK_FILE,'utf8').trim(),10);
         if (pid && pid !== process.pid) {
           try { process.kill(pid,0); process.stderr.write(`${TAG} already running (pid ${pid})\n`); process.exit(1); }
-          catch (e2) { if (e2.code === 'EPERM') { process.stderr.write(`${TAG} pid ${pid} exists (no permission); aborting\n`); process.exit(1); } fs.unlinkSync(LOCK_FILE); } // ESRCH/other → stale, retry
-        } else { fs.unlinkSync(LOCK_FILE); }
-      } catch { fs.unlinkSync(LOCK_FILE); }
+          catch (e2) { if (e2.code === 'EPERM') { process.stderr.write(`${TAG} pid ${pid} exists (no permission); aborting\n`); process.exit(1); } safeUnlinkLock(); } // ESRCH/other → stale, retry
+        } else { safeUnlinkLock(); }
+      } catch { safeUnlinkLock(); }
     }
   }
+  process.stderr.write(`${TAG} lock acquisition failed after ${LOCK_ACQUIRE_RETRIES} retries\n`);
+  return false;
 }
 function releaseLock() { try { const pid=parseInt(fs.readFileSync(LOCK_FILE,'utf8').trim(),10); if(pid===process.pid)fs.unlinkSync(LOCK_FILE); } catch {} }
 
-// Telegram bot
+// Telegram bot — instance set by initBot() AFTER acquireLock() succeeds.
 let bot = null;
 const BOT_TOKEN = process.env.MERCURY_TELEGRAM_BOT_TOKEN;
+// Issue #304 nit 4: bot polling is started by initBot() inside the
+// server.listen callback, AFTER acquireLock() establishes that this process
+// owns the singleton lock. Previously the `new TelegramBot({polling:true})`
+// call lived at module load, so a second router started during startup would
+// briefly poll the same getUpdates queue and hit a Telegram 409 conflict in
+// the window between module init and the server.listen EADDRINUSE handler.
 // Issue #298: strict truthy check — '0', 'false', 'no', 'off', '', unset → enabled.
-if (!isEnvTruthy(process.env.MERCURY_NOTIFY_DISABLED) && BOT_TOKEN) {
+function initBot() {
+  if (isEnvTruthy(process.env.MERCURY_NOTIFY_DISABLED)) return;
+  if (!BOT_TOKEN) {
+    process.stderr.write(`${TAG} WARNING: MERCURY_TELEGRAM_BOT_TOKEN not set; Telegram disabled\n`);
+    return;
+  }
   try {
     const TelegramBot = require('node-telegram-bot-api');
     bot = new TelegramBot(BOT_TOKEN, { polling: true });
     bot.on('polling_error', e => process.stderr.write(`${TAG} polling error: ${e.message}\n`));
+    bot.on('message', routeMessage);
     process.stderr.write(`${TAG} Telegram polling started\n`);
   } catch (e) { process.stderr.write(`${TAG} Telegram init failed: ${e.message}\n`); }
-} else if (!BOT_TOKEN) {
-  process.stderr.write(`${TAG} WARNING: MERCURY_TELEGRAM_BOT_TOKEN not set; Telegram disabled\n`);
 }
 
 // Allowlist — fail-closed: empty set blocks all inbound messages
@@ -98,8 +140,8 @@ function sendToInbox(sid, event) {
 function scheduleShutdown() {
   if (sessions.size>0){clearTimeout(shutdownTimer);shutdownTimer=null;return;}
   if (shutdownTimer) return;
-  process.stderr.write(`${TAG} all sessions gone; shutting down in 30s\n`);
-  shutdownTimer=setTimeout(()=>{releaseLock();cleanupToken();process.exit(0);},30000);
+  process.stderr.write(`${TAG} all sessions gone; shutting down in ${SHUTDOWN_GRACE_MS}ms\n`);
+  shutdownTimer=setTimeout(()=>{releaseLock();cleanupToken();process.exit(0);},SHUTDOWN_GRACE_MS);
 }
 
 async function tgSend(chatId, text) {
@@ -109,11 +151,11 @@ async function tgSend(chatId, text) {
   // letting Telegram 400 on them and retrying.
   const payload = truncateForTelegram(String(text ?? ''));
   if (!payload) return;
-  for (let attempt=0; attempt<2; attempt++) {
+  for (let attempt=0; attempt<TG_SEND_MAX_RETRIES; attempt++) {
     try { await bot.sendMessage(chatId, payload, {parse_mode:'HTML'}); return; }
     catch (e) {
       const ra = Number(e?.response?.body?.parameters?.retry_after);
-      if (attempt===0 && Number.isFinite(ra) && ra>0 && ra<=5) { await new Promise(r=>setTimeout(r,ra*1000)); continue; }
+      if (attempt===0 && Number.isFinite(ra) && ra>0 && ra<=TG_SEND_RETRY_AFTER_MAX_S) { await new Promise(r=>setTimeout(r,ra*1000)); continue; }
       process.stderr.write(`${TAG} sendMessage error (attempt ${attempt+1}): ${e.message}\n`); return;
     }
   }
@@ -265,7 +307,8 @@ async function routeMessage(msg) {
   if (!activeId||!sessions.has(activeId)){await tgSend(chatId,'No active session. Use /list.');return;}
   sendToInbox(activeId,{type:'message',content:text,from_chat:chatId});
 }
-if (bot) bot.on('message',routeMessage);
+// Issue #304 nit 4: bot.on('message', routeMessage) moved into initBot() so
+// it stays atomic with the deferred bot creation. No top-level wiring here.
 
 const json   = (res,code,obj)=>{res.writeHead(code,{'Content-Type':'application/json'});res.end(JSON.stringify(obj));};
 const bodyOf = req=>new Promise((ok,fail)=>{let b='';req.on('data',c=>b+=c);req.on('end',()=>{try{ok(JSON.parse(b||'{}'))}catch(e){fail(e)}});req.on('error',fail);});
@@ -352,10 +395,19 @@ const server = http.createServer(async (req,res)=>{
   json(res,404,{error:'not found'});
 });
 
-// Startup: listen first, then acquire lock + write token (avoids holding lock if port busy)
+// Startup: listen first, then acquire lock + write token + start Telegram polling.
+// Issue #304 nit 4: bot init is sequenced AFTER acquireLock() so a second
+// router process never starts polling Telegram (and never wins/loses a 409
+// race against the running instance) — its server.listen EADDRINUSE handler
+// fires first and exits before initBot() runs. AND on this (lock-owning)
+// process we gate writeToken()+initBot() on acquireLock() returning true,
+// so a filesystem-level lock failure aborts startup rather than silently
+// polling Telegram without singleton ownership (Codex sync-audit R2 M1).
 server.listen(PORT,'127.0.0.1',()=>{
   process.stderr.write(`${TAG} IPC server listening on 127.0.0.1:${PORT}\n`);
-  acquireLock(); writeToken();
+  if (!acquireLock()) { process.stderr.write(`${TAG} aborting startup; Telegram polling not started\n`); process.exit(1); }
+  writeToken();
+  initBot();
 });
 server.on('error',e=>{process.stderr.write(`${TAG} server error: ${e.message}\n`);process.exit(1);});
 // do NOT releaseLock on server error — lock may not have been acquired yet
