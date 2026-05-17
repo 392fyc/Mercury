@@ -55,9 +55,11 @@ test('isSubstantiveEvent accepts message/verdict/command', () => {
 });
 
 test('isSubstantiveEvent rejects synthetic connected event', () => {
-  // The exact payload the router sends on /inbox attach
-  // (mercury-channel-router/router.cjs:274). If this assertion regresses,
-  // a 200 + connected + EOF server will hot-loop the reconnect again.
+  // The exact payload the router sends on /inbox attach (emitted from
+  // mercury-channel-router/router.cjs `/inbox/:id` handler via
+  // `res.write('data: {"type":"connected"}\n\n')`). If this assertion
+  // regresses, a 200 + connected + EOF server will hot-loop the reconnect
+  // again.
   assert.equal(isSubstantiveEvent({ type: 'connected' }), false);
 });
 

@@ -8,7 +8,7 @@ Long-running Telegram bot + IPC server. One instance per machine.
 - Exposes a localhost HTTP IPC server for `mercury-channel-client` and `mercury-notify` to communicate with.
 - Routes inbound Telegram messages to the correct Claude Code session.
 - Handles commands: `/status`, `/list`, `/cancel`, `/continue`, `/help`.
-- Enforces sender allowlist and session limit (max 3).
+- Enforces sender allowlist and session limit (default 5 — see `MERCURY_ROUTER_MAX_SESS` override below; lifted from 3 in Phase C #324 to match `feedback_lane_protocol.md` HARD-CAP).
 
 ## Startup
 
@@ -29,6 +29,7 @@ MERCURY_TELEGRAM_BOT_TOKEN=<token> node adapters/mercury-channel-router/router.c
 | `MERCURY_TELEGRAM_CHAT_ID` | No | Default chat_id for `/notify` when no session has chatted yet |
 | `MERCURY_ROUTER_PORT` | No | IPC port (default: 8788) |
 | `MERCURY_NOTIFY_DISABLED` | No | Truthy → disables Telegram polling entirely (IPC still works). Accepted truthy values (case-insensitive, whitespace trimmed): `1`, `true`, `yes`, `on`. Any other value (incl. `0`, `false`, `no`, `off`, empty, unset) leaves Telegram enabled. See Issue #298. |
+| `MERCURY_ROUTER_MAX_SESS` | No | Override the in-router session cap (default 5; Phase C #324). Non-finite or non-positive values fall back to the default. |
 
 ## User Setup
 
@@ -83,10 +84,22 @@ The `/notify` IPC endpoint is for **user-actionable events only** — events whe
 
 Rationale: confusing internal agent telemetry with user-facing notifications floods the channel and trains the user to ignore it. Reserve Telegram for events that genuinely require human attention.
 
+## Verdict Replies (permission requests)
+
+When the router relays a `permission-request` to Telegram, the message shows a **prefixed request id** in the form `<6char-session-prefix>-<5char-request-id>` (e.g. `a1b2c3-defgh`). Verdict replies MUST quote that full prefixed id:
+
+```
+yes a1b2c3-defgh
+no  a1b2c3-defgh
+```
+
+Bare unprefixed verdicts (`yes defgh`) are rejected with a usage hint — the prefix lets the router resolve the verdict back to the correct session when multiple lanes are concurrent. See Issue #304 nit 5.
+
 ## Notes
 
 - Bun is optional — Node 20+ required (per repo `package.json` engines + Phase 5 ADR §9.1).
-- Lock file at `~/.mercury/router.lock` prevents duplicate instances.
+- Lock file at `~/.mercury/router.lock` prevents duplicate instances. Telegram polling does not start until the lock is held (#304 nit 4) — a second router process exits via `EADDRINUSE` before it can race the first one on Telegram's getUpdates queue.
 - Requires `node-telegram-bot-api` (installed via pnpm at project root).
 - Long Telegram messages are truncated via `lib/truncate.cjs` to keep within the 4096-UTF-16-code-unit cap while preserving surrogate pairs (#300).
 - `MERCURY_NOTIFY_DISABLED` env flag is parsed via `lib/env.cjs` strict truthy helper to match the `=== '1'` convention used elsewhere in Mercury (`mercury-loop-detector`, `mercury-test-gate`); see Issue #298.
+- Magic numbers (shutdown grace, lock retries, tgSend retry budget) are named constants near the top of `router.cjs` per Issue #304 nit 1.
