@@ -12,7 +12,7 @@ const crypto = require('crypto');
 const path   = require('path');
 const fs     = require('fs');
 const os     = require('os');
-const { execSync } = require('child_process');
+const { detectBranchSync, detectBranchAsync } = require('./lib/detect-branch.cjs');
 
 const PORT       = Number(process.env.MERCURY_ROUTER_PORT) || 8788;
 const ROUTER_CJS = path.join(__dirname, '..', 'mercury-channel-router', 'router.cjs');
@@ -22,8 +22,11 @@ const xmlEsc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace
 
 // ── Session identity ──────────────────────────────────────────────────────────
 const SESSION_ID = process.env.CLAUDE_SESSION_ID || `cc-${process.pid}-${Date.now().toString(36)}`;
-let   branch     = 'unknown';
-try { branch = execSync('git branch --show-current', { encoding: 'utf8', stdio: ['pipe','pipe','pipe'] }).trim(); } catch {}
+// Issue #297: branch detection deferred to async path so module load is not
+// blocked by `git branch --show-current` (was 50-200ms typical, longer if git
+// hung). Initial value comes from MERCURY_BRANCH_OVERRIDE env var or 'unknown';
+// async git lookup runs after mcp.connect() and re-registers on resolution.
+let   branch     = detectBranchSync();
 
 const PROJECT_PATH  = process.env.CLAUDE_PROJECT_DIR || process.cwd();
 // ADR §7.6: 6-char prefix = first 6 hex chars of sha1(SESSION_ID)
@@ -146,6 +149,17 @@ mcp.fallbackNotificationHandler = async (notification) => {
 
 // ── SSE inbox consumer ────────────────────────────────────────────────────────
 let sseActive = true;
+// Issue #297 R3-M1: track whether connectInbox() has been wired. The initial
+// register() path may fail (429 cap, transient) but the deferred async
+// re-register may later succeed; without this flag the late-success path
+// would leave the session registered at the router with no SSE consumer,
+// silently dropping lane-targeted messages.
+let inboxStarted = false;
+function startInboxIfNeeded() {
+  if (inboxStarted) return;
+  inboxStarted = true;
+  connectInbox().catch(e => process.stderr.write(`${TAG} inbox error: ${e.message}\n`));
+}
 
 async function connectInbox() {
   while (sseActive) {
@@ -216,8 +230,15 @@ async function connectInbox() {
 }
 
 // ── Graceful exit ─────────────────────────────────────────────────────────────
+// Issue #297: track in-flight async re-register so shutdown can await it
+// before firing deregister. Prevents the race where a late /register POST
+// arrives at the router AFTER shutdown's /register DELETE, leaving a stale
+// session with no live process behind it.
+let pendingReregister = null;
+
 async function shutdown() {
   sseActive = false;
+  if (pendingReregister) { try { await pendingReregister; } catch {} }
   await deregister();
   process.exit(0);
 }
@@ -235,10 +256,52 @@ process.on('beforeExit', async () => { await deregister(); });
     _token = await readToken(10, 300);
     if (!_token) process.stderr.write(`${TAG} WARNING: could not read router token; IPC calls will be unauthenticated\n`);
     const registered = await register();
-    if (registered) connectInbox().catch(e => process.stderr.write(`${TAG} inbox error: ${e.message}\n`));
+    if (registered) startInboxIfNeeded();
   } catch (e) {
     process.stderr.write(`${TAG} startup error: ${e.message}\n`);
   }
   const transport = new StdioServerTransport();
   await mcp.connect(transport);
+
+  // Issue #297: async branch detection + initial-register retry deferred to
+  // after mcp.connect() so cold start is not blocked by git. The lifecycle
+  // covers two independent concerns:
+  //   (a) When MERCURY_BRANCH_OVERRIDE is unset, run an async git lookup; if
+  //       a real branch resolves, re-register so the router sees the correct
+  //       branch for label derivation.
+  //   (b) Regardless of override, if the initial register failed
+  //       (inboxStarted=false), fire a retry — without this, an initial 429
+  //       / transient failure leaves the session permanently unregistered
+  //       and lane-targeted messages are silently dropped. (Argus iter-1 +
+  //       iter-2 findings.)
+  // /register at the router is an upsert and preserves sseClients.
+  //
+  // Shutdown-race protection (multi-layer):
+  //   1. sseActive check BEFORE the re-register call — skip if shutdown
+  //      already flipped the flag.
+  //   2. Wrap the ENTIRE async lifecycle (detect + register) in a single
+  //      `pendingReregister` Promise assigned atomically. shutdown() awaits
+  //      it before firing /register DELETE, sequencing the POST before the
+  //      DELETE deterministically regardless of when SIGTERM lands.
+  //   3. sseActive recheck AFTER the block — defense in depth for the
+  //      pathological case where SIGTERM lands after pendingReregister
+  //      cleared but before we exit.
+  pendingReregister = (async () => {
+    try {
+      let branchChanged = false;
+      if (!process.env.MERCURY_BRANCH_OVERRIDE) {
+        const detected = await detectBranchAsync();
+        if (!sseActive) return;
+        if (detected !== branch) { branch = detected; branchChanged = true; }
+      }
+      if (sseActive && (branchChanged || !inboxStarted)) {
+        if (await register()) startInboxIfNeeded();
+      }
+    } catch (e) {
+      process.stderr.write(`${TAG} async re-register failed: ${e.message}\n`);
+    }
+  })();
+  try { await pendingReregister; }
+  finally { pendingReregister = null; }
+  if (!sseActive) await deregister();
 })();
