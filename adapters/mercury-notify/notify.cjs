@@ -11,6 +11,7 @@
 const fs   = require('fs');
 const os   = require('os');
 const path = require('path');
+const { isEnvTruthy } = require('./lib/env.cjs');
 
 const PORT       = process.env.MERCURY_ROUTER_PORT || 8788;
 const TOKEN_FILE = path.join(os.homedir(), '.mercury', 'router.token');
@@ -20,7 +21,8 @@ function readToken() {
 }
 
 async function notify(severity, title, body, options = {}) {
-  if (process.env.MERCURY_NOTIFY_DISABLED) return { ok: true, skipped: true };
+  // Issue #298: strict truthy check — '0', 'false', 'no', 'off', '', unset → enabled.
+  if (isEnvTruthy(process.env.MERCURY_NOTIFY_DISABLED)) return { ok: true, skipped: true };
   const token = readToken();
   if (!token) return { ok: false, error: 'no_token' };
   try {
