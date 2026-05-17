@@ -80,9 +80,16 @@ function deriveLabel({ project_path='', branch='' }) {
 }
 
 function sendToInbox(sid, event) {
-  const s=sessions.get(sid); if(!s) return;
+  const s=sessions.get(sid); if(!s||!s.sseClients) return;
   const data=`data: ${JSON.stringify(event)}\n\n`;
-  s.sseClients=(s.sseClients||[]).filter(r=>{try{r.write(data);return true;}catch{return false;}});
+  // Issue #297: mutate in place (splice) instead of reassigning a filtered
+  // copy. /register upsert preserves the sseClients array reference, and the
+  // /inbox close handler holds a reference to it; reassigning here would
+  // detach Map entry from the array the close handler watches.
+  for (let i = s.sseClients.length - 1; i >= 0; i--) {
+    try { s.sseClients[i].write(data); }
+    catch { s.sseClients.splice(i, 1); }
+  }
 }
 
 function scheduleShutdown() {
@@ -265,19 +272,36 @@ const server = http.createServer(async (req,res)=>{
     const sid=url.slice(7);if(!sessions.has(sid))return json(res,404,{error:'session not found'});
     res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache',Connection:'keep-alive'});
     res.write('data: {"type":"connected"}\n\n');
+    // Issue #297: mutate the underlying array in place (splice) rather than
+    // reassigning a filtered copy, so that the disconnect cleanup survives a
+    // subsequent /register upsert. After upsert, sessions.get(sid).sseClients
+    // is the SAME array reference (preserved from existing). Reassigning
+    // `s.sseClients = ...filter()` would only update the captured (now-stale)
+    // session object's property, leaving the live Map entry holding a dead
+    // ServerResponse forever.
     const s=sessions.get(sid);s.sseClients=s.sseClients||[];s.sseClients.push(res);
-    req.on('close',()=>{s.sseClients=(s.sseClients||[]).filter(r=>r!==res);});return;
+    const sseArr=s.sseClients;
+    req.on('close',()=>{const i=sseArr.indexOf(res);if(i!==-1)sseArr.splice(i,1);});return;
   }
   if (m==='POST'&&url==='/register'){
     let body;try{body=await bodyOf(req)}catch{return json(res,400,{error:'bad json'});}
-    if (sessions.size>=MAX_SESS) return json(res,429,{error:'session limit reached',max:MAX_SESS});
     const {session_id,project_path,branch,pid,short_id}=body;
     if (!session_id) return json(res,400,{error:'session_id required'});
+    // Issue #297: /register is an upsert. Existing session_id → update fields in
+    // place and preserve `sseClients` so the live SSE connection from
+    // connectInbox() is not orphaned. The MAX_SESS cap only applies to NEW
+    // sessions; updating an existing session must not be rejected.
+    const existing = sessions.get(session_id);
+    if (!existing && sessions.size>=MAX_SESS) return json(res,429,{error:'session limit reached',max:MAX_SESS});
     const label=body.label||deriveLabel({project_path,branch});
-    sessions.set(session_id,{id:session_id,label,project_path,branch,pid,shortId:short_id||session_id.slice(0,6),sseClients:[]});
+    sessions.set(session_id,{
+      id:session_id,label,project_path,branch,pid,
+      shortId:short_id||session_id.slice(0,6),
+      sseClients: existing ? existing.sseClients : [],
+    });
     if (!activeId)activeId=session_id;clearTimeout(shutdownTimer);shutdownTimer=null;
-    process.stderr.write(`${TAG} registered ${session_id} [${label}]\n`);
-    return json(res,200,{ok:true,label,active:activeId===session_id});
+    process.stderr.write(`${TAG} ${existing ? 'updated' : 'registered'} ${session_id} [${label}]\n`);
+    return json(res,200,{ok:true,label,active:activeId===session_id,updated:!!existing});
   }
   if (m==='DELETE'&&url.startsWith('/register/')){
     const sid=url.slice(10);sessions.delete(sid);

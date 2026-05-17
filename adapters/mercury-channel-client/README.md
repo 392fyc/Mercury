@@ -28,6 +28,7 @@ claude --dangerously-load-development-channels server:mercury-telegram
 | Variable | Required | Description |
 |---|---|---|
 | `MERCURY_ROUTER_PORT` | No | IPC port (default: 8788) |
+| `MERCURY_BRANCH_OVERRIDE` | No | Skip async `git branch --show-current` and use this value for label derivation. Useful in non-git contexts, CI, or when the caller already knows the branch. When unset, the client defers git detection until after `mcp.connect()` so MCP server initialization is not blocked. (#297) |
 | `CLAUDE_SESSION_ID` | Auto | Set by Claude Code; used as session identity |
 | `CLAUDE_PROJECT_DIR` | Auto | Set by Claude Code; used for label derivation |
 
