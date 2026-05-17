@@ -109,3 +109,21 @@ test('zero or sub-ellipsis cap drops the ellipsis (Codex Low finding)', () => {
   assert.ok(out.length <= 2, `length ${out.length} exceeds max=2`);
   assert.ok(!out.includes('...'), 'ellipsis dropped when it cannot fit');
 });
+
+test('garbage max values normalize to TG_MAX (Argus iter-1 findings)', () => {
+  // Argus iter-1: NaN / negative / non-integer max could destabilize the
+  // budget arithmetic. The helper now clamps via Math.max(0, Math.floor(...))
+  // and falls back to TG_MAX for non-finite input.
+  const s = 'a'.repeat(5000);
+  // NaN → TG_MAX (4096) fallback.
+  let out = truncateForTelegram(s, NaN);
+  assert.ok(out.length <= 4096);
+  assert.ok(out.endsWith('…'));
+  // Negative max → clamped to 0 → returns '' (text > 0 triggers truncate path,
+  // marker drops because ellipsis.length >= 0, budget=0, loop emits nothing).
+  out = truncateForTelegram(s, -10);
+  assert.equal(out, '', 'negative max clamps to 0 → empty result');
+  // Non-integer max → floored.
+  out = truncateForTelegram(s, 100.7);
+  assert.ok(out.length <= 100, `non-integer max ${out.length} exceeds floor(100.7)=100`);
+});

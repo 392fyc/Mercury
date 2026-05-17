@@ -102,7 +102,11 @@ function scheduleShutdown() {
 
 async function tgSend(chatId, text) {
   if (!bot) return;
-  const payload = truncateForTelegram(text);
+  // Coerce at the API boundary so non-string callers (defensive) and
+  // null/undefined become an empty string; skip empty payloads instead of
+  // letting Telegram 400 on them and retrying.
+  const payload = truncateForTelegram(String(text ?? ''));
+  if (!payload) return;
   for (let attempt=0; attempt<2; attempt++) {
     try { await bot.sendMessage(chatId, payload, {parse_mode:'HTML'}); return; }
     catch (e) {

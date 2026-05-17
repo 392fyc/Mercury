@@ -15,13 +15,17 @@ const TG_MAX = 4096;
 const ELLIPSIS = '…';
 
 function truncateForTelegram(text, max = TG_MAX, ellipsis = ELLIPSIS) {
+  // Normalize `max` defensively: a NaN, negative, or non-integer value would
+  // make budget arithmetic unstable and could let the result exceed the cap.
+  // Fall back to TG_MAX when the caller passes garbage.
+  const cap = Number.isFinite(max) ? Math.max(0, Math.floor(max)) : TG_MAX;
   if (typeof text !== 'string') return text;
-  if (text.length <= max) return text;
+  if (text.length <= cap) return text;
   // If the marker is at least as long as the cap, drop it — appending it would
-  // itself overflow `max`. The caller asked for a budget smaller than the
+  // itself overflow `cap`. The caller asked for a budget smaller than the
   // marker, so the marker has to go.
-  const useEllipsis = ellipsis.length < max;
-  const budget = useEllipsis ? max - ellipsis.length : max;
+  const useEllipsis = ellipsis.length < cap;
+  const budget = useEllipsis ? cap - ellipsis.length : cap;
   let acc = '';
   let utf16Len = 0;
   for (const cp of text) {
