@@ -263,12 +263,18 @@ process.on('beforeExit', async () => { await deregister(); });
   const transport = new StdioServerTransport();
   await mcp.connect(transport);
 
-  // Issue #297: async branch detection deferred to after mcp.connect() so cold
-  // start is not blocked by git. If git resolves a real branch (different from
-  // the initial env/'unknown' value), re-register so the router sees the
-  // correct branch for label derivation. /register is an upsert at the router
-  // and preserves sseClients (see router.cjs handler). Skipped entirely when
-  // MERCURY_BRANCH_OVERRIDE is set.
+  // Issue #297: async branch detection + initial-register retry deferred to
+  // after mcp.connect() so cold start is not blocked by git. The lifecycle
+  // covers two independent concerns:
+  //   (a) When MERCURY_BRANCH_OVERRIDE is unset, run an async git lookup; if
+  //       a real branch resolves, re-register so the router sees the correct
+  //       branch for label derivation.
+  //   (b) Regardless of override, if the initial register failed
+  //       (inboxStarted=false), fire a retry — without this, an initial 429
+  //       / transient failure leaves the session permanently unregistered
+  //       and lane-targeted messages are silently dropped. (Argus iter-1 +
+  //       iter-2 findings.)
+  // /register at the router is an upsert and preserves sseClients.
   //
   // Shutdown-race protection (multi-layer):
   //   1. sseActive check BEFORE the re-register call — skip if shutdown
@@ -280,27 +286,22 @@ process.on('beforeExit', async () => { await deregister(); });
   //   3. sseActive recheck AFTER the block — defense in depth for the
   //      pathological case where SIGTERM lands after pendingReregister
   //      cleared but before we exit.
-  if (!process.env.MERCURY_BRANCH_OVERRIDE) {
-    pendingReregister = (async () => {
-      try {
+  pendingReregister = (async () => {
+    try {
+      let branchChanged = false;
+      if (!process.env.MERCURY_BRANCH_OVERRIDE) {
         const detected = await detectBranchAsync();
         if (!sseActive) return;
-        const branchChanged = detected !== branch;
-        // Argus iter-1: also fire a compensating register when the initial
-        // register failed (inboxStarted=false) even if the branch did not
-        // change. Without this, an initial 429 / transient failure followed
-        // by detectBranchAsync resolving to the same value (e.g. 'unknown'
-        // → 'unknown') leaves the session unregistered indefinitely.
-        if (branchChanged) branch = detected;
-        if (branchChanged || !inboxStarted) {
-          if (await register()) startInboxIfNeeded();
-        }
-      } catch (e) {
-        process.stderr.write(`${TAG} async branch detect failed: ${e.message}\n`);
+        if (detected !== branch) { branch = detected; branchChanged = true; }
       }
-    })();
-    try { await pendingReregister; }
-    finally { pendingReregister = null; }
-    if (!sseActive) await deregister();
-  }
+      if (sseActive && (branchChanged || !inboxStarted)) {
+        if (await register()) startInboxIfNeeded();
+      }
+    } catch (e) {
+      process.stderr.write(`${TAG} async re-register failed: ${e.message}\n`);
+    }
+  })();
+  try { await pendingReregister; }
+  finally { pendingReregister = null; }
+  if (!sseActive) await deregister();
 })();
