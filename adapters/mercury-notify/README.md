@@ -32,7 +32,7 @@ No startup needed. `require` directly from any skill/hook emitting a user-action
 | Variable | Required | Description |
 |---|---|---|
 | `MERCURY_ROUTER_PORT` | No | IPC port (default: 8788) |
-| `MERCURY_NOTIFY_DISABLED` | No | Set to any value to skip all notifications silently |
+| `MERCURY_NOTIFY_DISABLED` | No | Truthy → skip all notifications silently. Accepted truthy values (case-insensitive, whitespace trimmed): `1`, `true`, `yes`, `on`. Any other value (incl. `0`, `false`, `no`, `off`, empty, unset) keeps notifications enabled. See Issue #298. |
 
 ## Setup
 
@@ -56,3 +56,4 @@ Logs to stderr only.
 
 - Bun is optional — Node 18+ works fine.
 - This module has no dependencies beyond Node built-ins.
+- `MERCURY_NOTIFY_DISABLED` env flag is parsed via `lib/env.cjs` strict truthy helper to match the `=== '1'` convention used elsewhere in Mercury (`mercury-loop-detector`, `mercury-test-gate`); see Issue #298.

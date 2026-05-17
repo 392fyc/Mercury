@@ -10,6 +10,7 @@ const os     = require('os');
 const path   = require('path');
 const crypto = require('crypto');
 const { truncateForTelegram } = require('./lib/truncate.cjs');
+const { isEnvTruthy } = require('./lib/env.cjs');
 
 const PORT       = Number(process.env.MERCURY_ROUTER_PORT) || 8788;
 const LOCK_FILE  = path.join(os.homedir(), '.mercury', 'router.lock');
@@ -48,7 +49,8 @@ function releaseLock() { try { const pid=parseInt(fs.readFileSync(LOCK_FILE,'utf
 // Telegram bot
 let bot = null;
 const BOT_TOKEN = process.env.MERCURY_TELEGRAM_BOT_TOKEN;
-if (!process.env.MERCURY_NOTIFY_DISABLED && BOT_TOKEN) {
+// Issue #298: strict truthy check — '0', 'false', 'no', 'off', '', unset → enabled.
+if (!isEnvTruthy(process.env.MERCURY_NOTIFY_DISABLED) && BOT_TOKEN) {
   try {
     const TelegramBot = require('node-telegram-bot-api');
     bot = new TelegramBot(BOT_TOKEN, { polling: true });

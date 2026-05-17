@@ -28,7 +28,7 @@ MERCURY_TELEGRAM_BOT_TOKEN=<token> node adapters/mercury-channel-router/router.c
 | `MERCURY_TELEGRAM_ALLOWED_USER_IDS` | **REQUIRED for inbound** | Comma-separated Telegram user IDs (sender allowlist). Empty = all inbound messages dropped (fail-closed). |
 | `MERCURY_TELEGRAM_CHAT_ID` | No | Default chat_id for `/notify` when no session has chatted yet |
 | `MERCURY_ROUTER_PORT` | No | IPC port (default: 8788) |
-| `MERCURY_NOTIFY_DISABLED` | No | Disables Telegram polling entirely; IPC still works |
+| `MERCURY_NOTIFY_DISABLED` | No | Truthy → disables Telegram polling entirely (IPC still works). Accepted truthy values (case-insensitive, whitespace trimmed): `1`, `true`, `yes`, `on`. Any other value (incl. `0`, `false`, `no`, `off`, empty, unset) leaves Telegram enabled. See Issue #298. |
 
 ## User Setup
 
@@ -89,3 +89,4 @@ Rationale: confusing internal agent telemetry with user-facing notifications flo
 - Lock file at `~/.mercury/router.lock` prevents duplicate instances.
 - Requires `node-telegram-bot-api` (installed via pnpm at project root).
 - Long Telegram messages are truncated via `lib/truncate.cjs` to keep within the 4096-UTF-16-code-unit cap while preserving surrogate pairs (#300).
+- `MERCURY_NOTIFY_DISABLED` env flag is parsed via `lib/env.cjs` strict truthy helper to match the `=== '1'` convention used elsewhere in Mercury (`mercury-loop-detector`, `mercury-test-gate`); see Issue #298.
