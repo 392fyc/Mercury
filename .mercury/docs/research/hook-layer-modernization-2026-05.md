@@ -350,6 +350,8 @@ per §7 Re-eval Triggers, **7 defer items 全部条件性** — 仅在 trigger �
 
 §7 P3 observability candidate (operator docs note about `/hooks` TUI) 也不立即 file — wait for actual operator confusion 信号。
 
+> **#382 acceptance criterion compliance check**: Issue #382 acceptance 包含 "If any item is found UNVERIFIED, surface as separate research task"。本 ADR 严格意义上 12 个 item verdict **没有一个标 UNVERIFIED** (所有 verdict ∈ {verified empirical / expected-compatible / not applicable / defer})。文档中 3 个 UNVERIFIED 标记属于 **non-load-bearing secondary detail markers**, 不构成 item-level UNVERIFIED, 详 §8.5。
+
 ### 8.3 #381 intel sweep FU-1/FU-2 status update
 
 `tech-intel-sweep-2026-05-12.md` §"Recommended follow-up Issues" 列出 FU-1 (P2 Claude Code hooks audit) + FU-2 (P2 Codex hooks audit), 后被合并为 Issue #382。S105 本 ADR closure 完成 FU-1 + FU-2 全部 scope。intel sweep 剩余 follow-up status (post-S105):
@@ -360,11 +362,25 @@ per §7 Re-eval Triggers, **7 defer items 全部条件性** — 仅在 trigger �
 - FU-5 ✅ closed via #385 (S104, PR [#398](https://github.com/392fyc/Mercury/pull/398) squash `3e4c2c3` 2026-05-16T21:52:14Z — verifiable via `git log --oneline | grep 3e4c2c3` showing "docs(research): #385 P2 context strategy re-baseline ADR vs 1M ctx norm (Closes #385) (#398)")
 - FU-6 (P3 re-test PreToolUse "allow" in deny-listed env) — **converged into C7** of this ADR (verified Mercury 不用 "allow"/"ask" via `grep -r "permissionDecision\|\"ask\"" .claude/hooks/ adapters/` returns 0 matches → no re-test needed)
 
-**Intel sweep follow-up queue 完全 drained**。
+**Intel sweep follow-up queue 完全 drained for audit-scope items** (FU-1..FU-6 全部闭环; non-load-bearing UNVERIFIED detail markers 见 §8.5 不构成 follow-up tasks)。
 
 ### 8.4 Authority / scope
 
 本 ADR 不修改 DIRECTION.md 或 EXECUTION-PLAN.md。所有结论限于 hook layer 当前 usage profile, 不构成 Mercury 长线 direction 改动。
+
+### 8.5 Notes on UNVERIFIED markers (non-load-bearing)
+
+本 ADR body 含 3 处 UNVERIFIED 标记, 均为 **secondary detail markers**, 不构成 item-level UNVERIFIED verdict:
+
+| Location | UNVERIFIED claim | Verdict-affecting? | Why non-load-bearing |
+|----------|------------------|---------------------|----------------------|
+| §X1 (L234) | "Codex compaction hooks 配置 JSON event 名 exact name" | No | X1 verdict (DEFER) 仅 depend on "Codex 端无 mem0 整合需求" — 与 exact event 名无关。Codex compaction hooks **capability** 已 verified via vendor changelog ([Codex CLI changelog](https://developers.openai.com/codex/changelog?type=codex-cli), §2.2); 仅 JSON event 字段名未 listed in 公开文档。 |
+| §X5 (L290) | "codex-rescue marketplace exact path `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/...`" | No | X5 verdict (DEFER) 仅 depend on "无 sandbox 回归 observed" — 与 plugin 加载路径无关。codex-rescue **作为 available subagent** 已 verified via Claude Code session start agent list (`codex:codex-rescue`); 仅 plugin marketplace 物理路径未直接 read 验证 (可通过 `claude /plugins list` operator-side enum)。 |
+| §6 table (L308) | "Codex session-end 等价 event name" | No | §6 是 cross-reference 非 verdict; 该行明确标 "Out of #382 scope"。Anthropic SessionEnd 已 verified, Codex 等价 event (若存在) 不影响 repo-level audit scope。 |
+
+**结论**: 不需 separate research task — 这些 UNVERIFIED 是 documentation transparency markers (诚实标注哪些 detail 未直接 web/file verify), 不是 verdict-blocking 不确定性。Issue #382 acceptance "UNVERIFIED 需拆分研究任务" 适用于 item verdict (12 项中 0 项 UNVERIFIED), 不适用于 rationale body 内的 secondary annotation。
+
+若用户认为 strict reading 仍需拆分, 可后续 file 3 micro research Issues (P3, low priority); 本 ADR 默认 non-load-bearing 解读。
 
 ---
 
