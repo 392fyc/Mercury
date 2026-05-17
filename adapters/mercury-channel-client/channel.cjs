@@ -14,6 +14,7 @@ const fs     = require('fs');
 const os     = require('os');
 const { detectBranchSync, detectBranchAsync } = require('./lib/detect-branch.cjs');
 const { nextBackoffMs, isSubstantiveEvent } = require('./lib/backoff.cjs');
+const { routerFetchWithRetry } = require('./lib/token-refresh.cjs');
 
 const PORT       = Number(process.env.MERCURY_ROUTER_PORT) || 8788;
 const ROUTER_CJS = path.join(__dirname, '..', 'mercury-channel-router', 'router.cjs');
@@ -42,21 +43,22 @@ async function readToken(retries = 5, delayMs = 200) {
   return null;
 }
 
-// token cache — resolved once after router starts
+// token cache — resolved once after router starts.
+// Issue #301: invalidateToken() clears the cache so routerFetchWithRetry can
+// re-read after a router restart (token-file rewrite). Without this, a router
+// restart would silently 401 every subsequent IPC call.
 let _token = null;
 async function getToken() {
   if (_token) return _token;
   _token = await readToken();
   return _token;
 }
+function invalidateToken() { _token = null; }
 
 // ── Router IPC helpers ────────────────────────────────────────────────────────
 async function routerFetch(path_, opts = {}) {
   const url = `http://127.0.0.1:${PORT}${path_}`;
-  const token = await getToken();
-  const headers = { ...(opts.headers || {}) };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-  return fetch(url, { signal: AbortSignal.timeout(3000), ...opts, headers });
+  return routerFetchWithRetry({ url, opts, getToken, invalidateToken, fetchImpl: fetch });
 }
 
 async function ensureRouter() {
@@ -177,7 +179,17 @@ async function connectInbox() {
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
       // no AbortSignal timeout: SSE is indefinite-lived; reconnect only on real disconnect
       const res = await fetch(`http://127.0.0.1:${PORT}/inbox/${SESSION_ID}`, { headers });
-      if (!res.ok || !res.body) { await new Promise(r => setTimeout(r, nextBackoffMs(reconnectAttempt++))); continue; }
+      if (!res.ok || !res.body) {
+        // Issue #301: SSE goes through a bare fetch, not routerFetchWithRetry,
+        // so 401 here (router restart → stale token) would otherwise loop
+        // forever on the same cached token. Invalidate so the NEXT iteration's
+        // getToken() re-reads ~/.mercury/router.token. The retry-once contract
+        // still holds: caller can only walk the backoff schedule (1s..30s) for
+        // a sustained 401 stream, not amplify it.
+        if (res.status === 401) invalidateToken();
+        await new Promise(r => setTimeout(r, nextBackoffMs(reconnectAttempt++)));
+        continue;
+      }
       const reader = res.body.getReader();
       const dec    = new TextDecoder();
       let   buf    = '';
