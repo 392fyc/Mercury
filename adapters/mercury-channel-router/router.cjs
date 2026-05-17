@@ -285,8 +285,17 @@ const server = http.createServer(async (req,res)=>{
   }
   if (m==='POST'&&url==='/register'){
     let body;try{body=await bodyOf(req)}catch{return json(res,400,{error:'bad json'});}
-    const {session_id,project_path,branch,pid,short_id}=body;
-    if (!session_id) return json(res,400,{error:'session_id required'});
+    // Argus #297 iter-1: session_id is an externally-supplied identifier that
+    // flows into stderr logs and Map keys. Restrict to a controlled charset
+    // and length to defend against log injection and unbounded memory growth
+    // from malformed bodies. Accepts the existing client format
+    // `cc-<pid>-<base36>` plus arbitrary CLAUDE_SESSION_ID values from
+    // upstream — those are dash-separated lowercase hex (uuid-like).
+    const session_id = String(body.session_id || '').trim();
+    if (!/^[A-Za-z0-9._:-]{1,128}$/.test(session_id)) {
+      return json(res,400,{error:'invalid session_id'});
+    }
+    const {project_path,branch,pid,short_id}=body;
     // Issue #297: /register is an upsert. Existing session_id → update fields in
     // place and preserve `sseClients` so the live SSE connection from
     // connectInbox() is not orphaned. The MAX_SESS cap only applies to NEW

@@ -19,7 +19,15 @@ function detectBranchSync() {
 // Async git branch lookup. Returns the override if set; otherwise execs
 // `git branch --show-current` with a 2s timeout and falls back to 'unknown'
 // on any error (non-git cwd, git missing, timeout, etc.).
-function detectBranchAsync({ timeoutMs = 2000 } = {}) {
+//
+// `cwd` is pinned to CLAUDE_PROJECT_DIR (set by Claude Code) when available,
+// falling back to the process cwd. This guards against callers chdir'ing
+// before the deferred branch lookup fires — without the pin, we'd silently
+// read the wrong repo's branch (or get 'unknown' in a non-git tmpdir).
+function detectBranchAsync({
+  timeoutMs = 2000,
+  cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd(),
+} = {}) {
   return new Promise(resolve => {
     if (process.env.MERCURY_BRANCH_OVERRIDE) {
       resolve(process.env.MERCURY_BRANCH_OVERRIDE);
@@ -28,7 +36,7 @@ function detectBranchAsync({ timeoutMs = 2000 } = {}) {
     execFile(
       'git',
       ['branch', '--show-current'],
-      { encoding: 'utf8', timeout: timeoutMs, windowsHide: true },
+      { encoding: 'utf8', timeout: timeoutMs, windowsHide: true, cwd },
       (err, stdout) => {
         if (err) { resolve('unknown'); return; }
         const v = String(stdout || '').trim();

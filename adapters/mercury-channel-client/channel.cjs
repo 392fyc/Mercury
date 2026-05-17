@@ -284,10 +284,15 @@ process.on('beforeExit', async () => { await deregister(); });
     pendingReregister = (async () => {
       try {
         const detected = await detectBranchAsync();
-        if (detected !== branch && sseActive) {
-          branch = detected;
-          // R3-M1: if initial register failed (429 / transient), this
-          // late-success path is the only one that can start the SSE reader.
+        if (!sseActive) return;
+        const branchChanged = detected !== branch;
+        // Argus iter-1: also fire a compensating register when the initial
+        // register failed (inboxStarted=false) even if the branch did not
+        // change. Without this, an initial 429 / transient failure followed
+        // by detectBranchAsync resolving to the same value (e.g. 'unknown'
+        // → 'unknown') leaves the session unregistered indefinitely.
+        if (branchChanged) branch = detected;
+        if (branchChanged || !inboxStarted) {
           if (await register()) startInboxIfNeeded();
         }
       } catch (e) {

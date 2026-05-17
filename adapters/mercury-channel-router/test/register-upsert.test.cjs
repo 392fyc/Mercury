@@ -58,6 +58,23 @@ const post = (PORT, token, sessionBody) => fetch(`http://127.0.0.1:${PORT}/regis
   body: JSON.stringify(sessionBody),
 });
 
+// Drain the SSE reader until we observe the marker substring or hit timeoutMs.
+// HTTP chunk boundaries are not guaranteed to align with SSE event boundaries,
+// so reading just the first chunk can race and produce a flaky assertion
+// (Copilot finding on PR #400). Loop until we have the marker or fail loud.
+async function readUntil(reader, marker, timeoutMs = 2000) {
+  const dec = new TextDecoder();
+  let buf = '';
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    if (buf.includes(marker)) return buf;
+  }
+  throw new Error(`SSE marker ${JSON.stringify(marker)} not seen within ${timeoutMs}ms; got: ${JSON.stringify(buf)}`);
+}
+
 // ─── H1 regression: upsert preserves session, returns updated=true ───────────
 
 test('/register on existing session_id returns updated=true and preserves entry', async () => {
@@ -118,10 +135,9 @@ test('/register upsert preserves the sseClients array (#297 H1)', async () => {
     });
     assert.equal(inboxRes.status, 200);
     const reader = inboxRes.body.getReader();
-    const dec = new TextDecoder();
-    // First chunk should contain the connected event.
-    const first = await reader.read();
-    assert.ok(String(dec.decode(first.value)).includes('"type":"connected"'));
+    // Drain until we see the connected event — HTTP chunk boundaries are not
+    // guaranteed to align with SSE event boundaries.
+    await readUntil(reader, '"type":"connected"');
 
     // Give the server a tick to push res into sseClients.
     await new Promise(r => setTimeout(r, 100));
@@ -157,8 +173,9 @@ test('/inbox close handler cleans sseClients after a prior /register upsert (#29
     });
     assert.equal(inboxRes.status, 200);
     const reader = inboxRes.body.getReader();
-    // Drain the initial 'connected' chunk so the read loop is engaged.
-    await reader.read();
+    // Drain until the connected event so the SSE pipe is fully engaged
+    // before we trigger the upsert race.
+    await readUntil(reader, '"type":"connected"');
     await new Promise(r => setTimeout(r, 100));
 
     // Trigger upsert — captured `s` in the /inbox handler now diverges from
