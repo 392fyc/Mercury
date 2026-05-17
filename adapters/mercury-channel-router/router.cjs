@@ -33,7 +33,8 @@ const TOKEN = crypto.randomBytes(16).toString('hex');
 const writeToken  = () => { try { fs.mkdirSync(path.dirname(TOKEN_FILE),{recursive:true}); fs.writeFileSync(TOKEN_FILE,TOKEN,{mode:0o600}); } catch(e){process.stderr.write(`${TAG} token write error: ${e.message}\n`);} };
 const cleanupToken = () => { try { fs.unlinkSync(TOKEN_FILE); } catch {} };
 
-// Lock file — atomic O_CREAT|O_EXCL; fail-closed on EADDRINUSE (lock not yet held).
+// Lock file — atomic O_CREAT|O_EXCL; fail-closed on EEXIST (lock contention,
+// not socket EADDRINUSE — Copilot iter-1 C2 comment-correctness finding).
 // Issue #304 nit 4: returns true on success, false on non-fatal failure paths
 // (e.g. filesystem error other than EEXIST, or retry exhaustion). Callers
 // MUST gate `writeToken()` / `initBot()` on the boolean — otherwise Telegram
@@ -42,6 +43,21 @@ const cleanupToken = () => { try { fs.unlinkSync(TOKEN_FILE); } catch {} };
 // Other failure paths (live PID owns the lock, EPERM probing) still call
 // `process.exit(1)` directly; this function only returns false on paths
 // that the caller should treat as "abort startup, do not poll".
+// Stale-lock unlinks are guarded by `safeUnlinkLock()` — Copilot iter-1 C1:
+// without the guard a bare `fs.unlinkSync(LOCK_FILE)` could throw on ENOENT
+// (TOCTOU race against another router cleaning the same stale lock) or
+// EPERM/EACCES (Windows file lock from a zombie router), which would
+// propagate out past the new `acquireLock()` boolean contract and crash
+// the listen callback instead of falling through to the boolean-gated
+// startup abort.
+const safeUnlinkLock = () => {
+  try { fs.unlinkSync(LOCK_FILE); }
+  catch (e) {
+    if (e && e.code !== 'ENOENT') {
+      process.stderr.write(`${TAG} stale-lock unlink failed: ${e.message}\n`);
+    }
+  }
+};
 function acquireLock() {
   fs.mkdirSync(path.dirname(LOCK_FILE), { recursive: true });
   for (let i = 0; i < LOCK_ACQUIRE_RETRIES; i++) {
@@ -52,9 +68,9 @@ function acquireLock() {
         const pid = parseInt(fs.readFileSync(LOCK_FILE,'utf8').trim(),10);
         if (pid && pid !== process.pid) {
           try { process.kill(pid,0); process.stderr.write(`${TAG} already running (pid ${pid})\n`); process.exit(1); }
-          catch (e2) { if (e2.code === 'EPERM') { process.stderr.write(`${TAG} pid ${pid} exists (no permission); aborting\n`); process.exit(1); } fs.unlinkSync(LOCK_FILE); } // ESRCH/other → stale, retry
-        } else { fs.unlinkSync(LOCK_FILE); }
-      } catch { fs.unlinkSync(LOCK_FILE); }
+          catch (e2) { if (e2.code === 'EPERM') { process.stderr.write(`${TAG} pid ${pid} exists (no permission); aborting\n`); process.exit(1); } safeUnlinkLock(); } // ESRCH/other → stale, retry
+        } else { safeUnlinkLock(); }
+      } catch { safeUnlinkLock(); }
     }
   }
   process.stderr.write(`${TAG} lock acquisition failed after ${LOCK_ACQUIRE_RETRIES} retries\n`);
