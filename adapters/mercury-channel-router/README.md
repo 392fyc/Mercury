@@ -88,3 +88,4 @@ Rationale: confusing internal agent telemetry with user-facing notifications flo
 - Bun is optional — Node 20+ required (per repo `package.json` engines + Phase 5 ADR §9.1).
 - Lock file at `~/.mercury/router.lock` prevents duplicate instances.
 - Requires `node-telegram-bot-api` (installed via pnpm at project root).
+- Long Telegram messages are truncated via `lib/truncate.cjs` to keep within the 4096-UTF-16-code-unit cap while preserving surrogate pairs (#300).

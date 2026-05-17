@@ -9,6 +9,7 @@ const fs     = require('fs');
 const os     = require('os');
 const path   = require('path');
 const crypto = require('crypto');
+const { truncateForTelegram } = require('./lib/truncate.cjs');
 
 const PORT       = Number(process.env.MERCURY_ROUTER_PORT) || 8788;
 const LOCK_FILE  = path.join(os.homedir(), '.mercury', 'router.lock');
@@ -101,7 +102,11 @@ function scheduleShutdown() {
 
 async function tgSend(chatId, text) {
   if (!bot) return;
-  const payload = text.length>4096?text.slice(0,4090)+'…':text;
+  // Coerce at the API boundary so non-string callers (defensive) and
+  // null/undefined become an empty string; skip empty payloads instead of
+  // letting Telegram 400 on them and retrying.
+  const payload = truncateForTelegram(String(text ?? ''));
+  if (!payload) return;
   for (let attempt=0; attempt<2; attempt++) {
     try { await bot.sendMessage(chatId, payload, {parse_mode:'HTML'}); return; }
     catch (e) {
