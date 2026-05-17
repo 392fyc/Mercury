@@ -13,6 +13,7 @@ const path   = require('path');
 const fs     = require('fs');
 const os     = require('os');
 const { detectBranchSync, detectBranchAsync } = require('./lib/detect-branch.cjs');
+const { nextBackoffMs, isSubstantiveEvent } = require('./lib/backoff.cjs');
 
 const PORT       = Number(process.env.MERCURY_ROUTER_PORT) || 8788;
 const ROUTER_CJS = path.join(__dirname, '..', 'mercury-channel-router', 'router.cjs');
@@ -162,13 +163,21 @@ function startInboxIfNeeded() {
 }
 
 async function connectInbox() {
+  // Issue #299: exponential reconnect backoff (1s → 2s → 5s → 10s → 30s max).
+  // `reconnectAttempt` is the count of consecutive *failed-or-empty*
+  // connections; a connection that delivers at least one **substantive**
+  // event (message/verdict/command, NOT the synthetic `connected` ping the
+  // router sends on every attach) resets it so transient flaps don't
+  // accumulate into a 30s wait.
+  let reconnectAttempt = 0;
   while (sseActive) {
+    let receivedEvent = false;
     try {
       const token = await getToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
       // no AbortSignal timeout: SSE is indefinite-lived; reconnect only on real disconnect
       const res = await fetch(`http://127.0.0.1:${PORT}/inbox/${SESSION_ID}`, { headers });
-      if (!res.ok || !res.body) { await new Promise(r => setTimeout(r, 2000)); continue; }
+      if (!res.ok || !res.body) { await new Promise(r => setTimeout(r, nextBackoffMs(reconnectAttempt++))); continue; }
       const reader = res.body.getReader();
       const dec    = new TextDecoder();
       let   buf    = '';
@@ -183,6 +192,11 @@ async function connectInbox() {
           if (!line) continue;
           try {
             const evt = JSON.parse(line.slice(5).trim());
+            // Reset backoff on first substantive event. Excludes the router's
+            // synthetic `{"type":"connected"}` (router.cjs:274) so a
+            // 200 + connected + EOF cycle is treated as a failed reconnect,
+            // not as proof of a healthy server.
+            if (!receivedEvent && isSubstantiveEvent(evt)) { receivedEvent = true; reconnectAttempt = 0; }
             if (evt.type === 'message') {
               await mcp.notification({
                 method: 'notifications/claude/channel',
@@ -220,11 +234,22 @@ async function connectInbox() {
           } catch {}
         }
       }
+      // Inner loop exited via `done: true` (normal EOF). Issue #299 / Codex
+      // High: without a sleep here, the outer `while` would immediately
+      // re-attach, and the router's synthetic `connected` event combined
+      // with `receivedEvent`-gated reset (now only on substantive events,
+      // not `connected`) would otherwise hot-loop on a 200 + connected + EOF
+      // server. If this connection DID deliver a substantive event,
+      // `reconnectAttempt` is already 0 so the next sleep is 1s — transient
+      // flap. If it did NOT, `reconnectAttempt++` walks toward the 30s cap.
+      if (sseActive) await new Promise(r => setTimeout(r, nextBackoffMs(reconnectAttempt++)));
     } catch {
       if (!sseActive) break;
-      // reconnect: re-ensure router then retry
+      // reconnect: re-ensure router then retry. Backoff schedule per #299:
+      // if this connection delivered events `reconnectAttempt` is already 0
+      // (transient blip → 1s), otherwise it increments toward the 30s clamp.
       try { await ensureRouter(); } catch {}
-      await new Promise(r => setTimeout(r, 2000));
+      await new Promise(r => setTimeout(r, nextBackoffMs(reconnectAttempt++)));
     }
   }
 }
