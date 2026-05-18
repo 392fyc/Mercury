@@ -99,7 +99,7 @@ Bare unprefixed verdicts (`yes defgh`) are rejected with a usage hint — the pr
 
 - Bun is optional — Node 20+ required (per repo `package.json` engines + Phase 5 ADR §9.1).
 - Lock file at `~/.mercury/router.lock` prevents duplicate instances. Telegram polling does not start until the lock is held (#304 nit 4) — a second router process exits via `EADDRINUSE` before it can race the first one on Telegram's getUpdates queue.
-- Requires `node-telegram-bot-api` (installed via pnpm at project root).
+- Requires `grammy` (installed via pnpm at project root). Issue #302 swapped from `node-telegram-bot-api@0.67.0` to drop the deprecated `request@2.88.2` transitive dependency stack.
 - Long Telegram messages are truncated via `lib/truncate.cjs` to keep within the 4096-UTF-16-code-unit cap while preserving surrogate pairs (#300).
 - `MERCURY_NOTIFY_DISABLED` env flag is parsed via `lib/env.cjs` strict truthy helper to match the `=== '1'` convention used elsewhere in Mercury (`mercury-loop-detector`, `mercury-test-gate`); see Issue #298.
 - Magic numbers (shutdown grace, lock retries, tgSend retry budget) are named constants near the top of `router.cjs` per Issue #304 nit 1.

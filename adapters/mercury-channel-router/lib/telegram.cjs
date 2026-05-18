@@ -29,20 +29,18 @@ if (BOT_TOKEN && ALLOWED.size === 0) {
 // HTML escape helper — applied to all user-controlled interpolations in tgSend calls.
 const htmlEsc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-// Issue #304 nit 4: bot polling is started by initBot() inside the
-// server.listen callback, AFTER acquireLock() establishes that this process
-// owns the singleton lock. Previously the `new TelegramBot({polling:true})`
-// call lived at module load, so a second router started during startup would
-// briefly poll the same getUpdates queue and hit a Telegram 409 conflict in
-// the window between module init and the server.listen EADDRINUSE handler.
-// Issue #298: strict truthy check — '0', 'false', 'no', 'off', '', unset → enabled.
-// Caller passes the message handler in via `onMessage` — `initBot` wires it
-// onto `state.bot` here so the handler cannot be installed without an
-// active bot instance. Accepting the handler as a parameter (rather than a
+// Issue #302: switched from node-telegram-bot-api (pulled deprecated
+// request@2.88.2 + har-validator transitive stack) to grammy@1.x (MIT, 4
+// direct deps, drops the entire legacy `request` chain). Same singleton lock
+// gate as #304 nit 4 — `bot.start()` is called from initBot() inside the
+// server.listen callback AFTER acquireLock() establishes ownership. Caller
+// passes the message handler in via `onMessage`; we wrap it as
+// `ctx => onMessage(ctx.update.message)` so the raw Telegram Message object
+// flows through unchanged (routing.cjs::routeMessage expects msg.from /
+// msg.chat / msg.text). Accepting the handler as a parameter (rather than a
 // `require('./routing.cjs')` at module load) avoids a
-// telegram.cjs → routing.cjs → telegram.cjs import cycle, which is why the
-// router.cjs entry passes `routing.routeMessage` instead of letting this
-// module require it directly.
+// telegram.cjs → routing.cjs → telegram.cjs import cycle.
+// Issue #298: strict truthy check — '0', 'false', 'no', 'off', '', unset → enabled.
 function initBot(onMessage) {
   if (isEnvTruthy(process.env.MERCURY_NOTIFY_DISABLED)) return;
   if (!BOT_TOKEN) {
@@ -50,11 +48,31 @@ function initBot(onMessage) {
     return;
   }
   try {
-    const TelegramBot = require('node-telegram-bot-api');
-    state.bot = new TelegramBot(BOT_TOKEN, { polling: true });
-    state.bot.on('polling_error', e => process.stderr.write(`${TAG} polling error: ${e.message}\n`));
-    if (typeof onMessage === 'function') state.bot.on('message', onMessage);
-    process.stderr.write(`${TAG} Telegram polling started\n`);
+    const { Bot } = require('grammy');
+    state.bot = new Bot(BOT_TOKEN);
+    // grammy's bot.catch() handles errors thrown inside middleware. Fatal
+    // startup errors (auth failure, malformed token, immediate getMe failure)
+    // reject the bot.start() Promise — captured by the .catch() below.
+    // Steady-state long-poll fetch retries are handled internally by grammy
+    // and do not surface here; log volume is lower than node-telegram-bot-api's
+    // polling_error firehose by design.
+    state.bot.catch(err => process.stderr.write(`${TAG} bot middleware error: ${err.message}\n`));
+    if (typeof onMessage === 'function') {
+      state.bot.on('message', ctx => onMessage(ctx.update.message));
+    }
+    // bot.start() returns a Promise that resolves on bot.stop(). We do not
+    // await — long-poll runs concurrently with the HTTP server. A rejected
+    // start (network failure) is logged but does not crash the router so
+    // /register + non-Telegram IPC routes stay functional.
+    // Codex sync-audit M1 (Issue #302): grammy default `drop_pending_updates:
+    // false` is intentionally inherited — node-telegram-bot-api initializes
+    // its long-poll offset to 0, which causes updates queued during router
+    // downtime (verdicts, commands, replies) to be replayed after restart.
+    // Setting `drop_pending_updates: true` here would discard those messages
+    // and silently lose user input across restarts.
+    state.bot.start({
+      onStart: () => process.stderr.write(`${TAG} Telegram polling started\n`),
+    }).catch(err => process.stderr.write(`${TAG} bot poll fatal: ${err.message}\n`));
   } catch (e) {
     process.stderr.write(`${TAG} Telegram init failed: ${e.message}\n`);
   }
@@ -69,10 +87,16 @@ async function tgSend(chatId, text) {
   if (!payload) return;
   for (let attempt = 0; attempt < TG_SEND_MAX_RETRIES; attempt++) {
     try {
-      await state.bot.sendMessage(chatId, payload, { parse_mode: 'HTML' });
+      await state.bot.api.sendMessage(chatId, payload, { parse_mode: 'HTML' });
       return;
     } catch (e) {
-      const ra = Number(e?.response?.body?.parameters?.retry_after);
+      // grammy GrammyError exposes Telegram's `parameters.retry_after`
+      // directly on the error object (vs node-telegram-bot-api's nested
+      // `e.response.body.parameters.retry_after`). Narrow on GrammyError so
+      // a non-Telegram-API failure (e.g. HttpError carrying an unrelated
+      // `parameters` field) cannot accidentally honor a retry hint.
+      const { GrammyError } = require('grammy');
+      const ra = e instanceof GrammyError ? Number(e?.parameters?.retry_after) : NaN;
       if (attempt === 0 && Number.isFinite(ra) && ra > 0 && ra <= TG_SEND_RETRY_AFTER_MAX_S) {
         await new Promise(r => setTimeout(r, ra * 1000));
         continue;
@@ -83,9 +107,9 @@ async function tgSend(chatId, text) {
   }
 }
 
-// Copilot iter-4 finding: `BOT_TOKEN` is intentionally NOT exported. It is a
-// secret-bearing env var used internally by initBot(); exporting it (even
-// just for symmetry with ALLOWED) would widen the IPC surface and risk
+// Copilot iter-4 finding (#406): `BOT_TOKEN` is intentionally NOT exported.
+// It is a secret-bearing env var used internally by initBot(); exporting it
+// (even just for symmetry with ALLOWED) would widen the IPC surface and risk
 // accidental serialization in future debug logging. ALLOWED + isAllowed are
 // fine to export because they're already derivable from env.
 module.exports = {

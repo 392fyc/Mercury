@@ -8,7 +8,7 @@
 //   - `initBot()` exists and is invoked from inside server.listen callback
 //   - the legacy top-level `bot.on('message', routeMessage)` wiring is gone
 // Behavioral verification of `initBot` deferral would require mocking
-// `node-telegram-bot-api` + the http listener and produce a brittle, slow
+// `grammy` + the http listener and produce a brittle, slow
 // integration test for a small no-op-on-disabled function. The structural
 // assertions catch the regression we actually care about: that a future
 // edit doesn't accidentally re-introduce the pre-#304 race window.
@@ -74,29 +74,33 @@ test('#304 nit 4: bot init deferred — initBot() exists and runs after acquireL
   // initBot()'s `state.bot.on('message', onMessage)` callback path.
   const allSrc = routerSrc + telegramSrc + ipcSrc + routingSrc;
   assert.doesNotMatch(allSrc, /^if \(bot\) bot\.on\('message',\s*routeMessage\)/m);
-  // Codex sync-audit Low finding: assert that `new TelegramBot(...)` ONLY
-  // appears inside initBot(). A regression that re-introduces a top-level
-  // TelegramBot constructor — while keeping initBot intact — would reopen
-  // the 409 race the rest of this PR closes. After the #303 split,
-  // telegram.cjs is the only file that should reference TelegramBot at all.
+  // Codex sync-audit Low finding: assert that `new Bot(...)` ONLY appears
+  // inside initBot(). A regression that re-introduces a top-level Bot
+  // constructor — while keeping initBot intact — would reopen the 409 race
+  // the rest of this PR closes. After the #303 split, telegram.cjs is the
+  // only file that should reference grammy's Bot constructor at all.
+  // Issue #302: regex matches `new Bot` (grammy) — `\b` word-boundary on the
+  // `B` correctly excludes the prior `new TelegramBot` (no word boundary
+  // between `m` and `B` in `TelegramBot`), so an accidental rollback to
+  // node-telegram-bot-api would also fail this assertion.
   // Strip single-line `//` comments before counting — the explanatory
-  // comments in telegram.cjs legitimately mention TelegramBot, and those
-  // mentions must not be counted against the constructor budget.
+  // comments in telegram.cjs legitimately mention Bot/TelegramBot, and
+  // those mentions must not be counted against the constructor budget.
   // `[^\n]*` instead of `.*` — `.` excludes `\r`, so on Windows CRLF lines
   // the strip would otherwise miss everything after `//` on each line.
   const stripped   = telegramSrc.split('\n').map(l => l.replace(/\/\/[^\n]*$/, '')).join('\n');
-  const tgMatches  = [...stripped.matchAll(/new\s+TelegramBot\b/g)];
-  assert.equal(tgMatches.length, 1, 'expected exactly one executable `new TelegramBot` constructor call (inside initBot)');
+  const tgMatches  = [...stripped.matchAll(/new\s+Bot\b/g)];
+  assert.equal(tgMatches.length, 1, 'expected exactly one executable `new Bot` constructor call (inside initBot)');
   const initBotIdx = stripped.indexOf('function initBot');
   assert.ok(initBotIdx >= 0, 'function initBot declaration must exist in telegram.cjs');
   assert.ok(tgMatches[0].index > initBotIdx,
-    '`new TelegramBot` must appear inside or after `function initBot`, never at module scope above it');
-  // No other submodule should construct a TelegramBot — that would defeat
-  // the lock-gated singleton contract.
+    '`new Bot` must appear inside or after `function initBot`, never at module scope above it');
+  // No other submodule should construct a Bot — that would defeat the
+  // lock-gated singleton contract.
   for (const [name, src] of [['router.cjs', routerSrc], ['lib/ipc.cjs', ipcSrc], ['lib/routing.cjs', routingSrc]]) {
     const stripped2 = src.split('\n').map(l => l.replace(/\/\/[^\n]*$/, '')).join('\n');
-    assert.equal((stripped2.match(/new\s+TelegramBot\b/g) || []).length, 0,
-      `${name} must not construct a TelegramBot`);
+    assert.equal((stripped2.match(/new\s+Bot\b/g) || []).length, 0,
+      `${name} must not construct a Bot`);
   }
 });
 
