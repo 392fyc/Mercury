@@ -93,8 +93,21 @@ async function routeCallback(ctx) {
   // callback fires (the bot can't poll Telegram until acquireLock + initBot
   // run, which is well after every require() finishes).
   const { sendToInbox } = require('./routing.cjs');
-  sendToInbox(t.id, { type: 'verdict', verdict: parsed.verdict, request_id: parsed.requestId });
-  await ack(parsed.verdict === 'yes' ? 'Allowed' : 'Denied');
+  // Argus iter-1 A2 (Medium/6): wrap dispatch in try/finally so the ack
+  // ALWAYS fires. sendToInbox is currently synchronous + safe (it splices
+  // dead SSE clients in catch), but the ack invariant is load-bearing —
+  // Telegram clients spin the tapped button until ack arrives, and any
+  // future change that makes sendToInbox throw would leave the user UI
+  // hung on every callback.
+  let ackText = parsed.verdict === 'yes' ? 'Allowed' : 'Denied';
+  try {
+    sendToInbox(t.id, { type: 'verdict', verdict: parsed.verdict, request_id: parsed.requestId });
+  } catch (e) {
+    process.stderr.write(`${state.TAG} callback dispatch error: ${e.message}\n`);
+    ackText = 'Dispatch failed';
+  } finally {
+    await ack(ackText);
+  }
 }
 
 module.exports = {
