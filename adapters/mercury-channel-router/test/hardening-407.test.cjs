@@ -60,7 +60,16 @@ async function withRouter(extraEnv, body) {
       const onExit = () => { clearTimeout(t); resolve(true); };
       child.once('exit', onExit);
     });
-    if (!exited) child.kill('SIGKILL');
+    if (!exited) {
+      child.kill('SIGKILL');
+      // Copilot iter-1: best-effort wait so the OS releases the port + flushes
+      // the child process before the next test (mirrors register-upsert.test.cjs).
+      await new Promise(resolve => {
+        if (child.exitCode !== null || child.signalCode !== null) { resolve(); return; }
+        const t = setTimeout(resolve, 500);
+        child.once('exit', () => { clearTimeout(t); resolve(); });
+      });
+    }
     try { fs.rmSync(tmpHome, { recursive: true, force: true }); } catch {}
   }
 }

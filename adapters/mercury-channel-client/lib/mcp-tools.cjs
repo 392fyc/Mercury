@@ -56,10 +56,16 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       body: JSON.stringify({ chat_id, text, session_id: SESSION_ID }),
     });
     if (!res.ok) {
+      // Copilot iter-1 hint: drain body even when JSON parse fails so undici
+      // can reuse the connection. `await res.json()` consumes on success.
       let detail = `HTTP ${res.status}`;
-      try { const j = await res.json(); if (j && j.error) detail = `HTTP ${res.status}: ${j.error}`; } catch {}
+      try { const j = await res.json(); if (j && j.error) detail = `HTTP ${res.status}: ${j.error}`; }
+      catch { try { await res.text(); } catch {} }
       return { content: [{ type: 'text', text: `reply rejected by router: ${detail}` }], isError: true };
     }
+    // Drain the success-body so undici releases the keep-alive socket
+    // (Copilot iter-1) — router responds {ok:true} which we don't need to read.
+    try { await res.text(); } catch {}
     routerFetch(`/take-ownership/${SESSION_ID}`, { method: 'POST' }).catch(() => {});
     return { content: [{ type: 'text', text: 'reply sent' }] };
   } catch (e) {
