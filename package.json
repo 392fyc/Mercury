@@ -14,7 +14,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "node-telegram-bot-api": "^0.67.0",
+    "grammy": "^1.43.0",
     "@modelcontextprotocol/sdk": "^1.29.0"
   },
   "pnpm": {
