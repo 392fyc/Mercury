@@ -9,6 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const state = require('./state.cjs');
 const { bodyOf, MAX_BODY_BYTES } = require('./body.cjs');
+const { buildVerdictKeyboard, buildPermissionRequestText, isValidPrefixedRequestId } = require('./callback.cjs');
 
 const { TAG, TOKEN, TOKEN_FILE, LOCK_FILE, MAX_SESS } = state;
 
@@ -16,12 +17,8 @@ const { TAG, TOKEN, TOKEN_FILE, LOCK_FILE, MAX_SESS } = state;
 const LOCK_ACQUIRE_RETRIES = 3;
 
 const writeToken = () => {
-  try {
-    fs.mkdirSync(path.dirname(TOKEN_FILE), { recursive: true });
-    fs.writeFileSync(TOKEN_FILE, TOKEN, { mode: 0o600 });
-  } catch (e) {
-    process.stderr.write(`${TAG} token write error: ${e.message}\n`);
-  }
+  try { fs.mkdirSync(path.dirname(TOKEN_FILE), { recursive: true }); fs.writeFileSync(TOKEN_FILE, TOKEN, { mode: 0o600 }); }
+  catch (e) { process.stderr.write(`${TAG} token write error: ${e.message}\n`); }
 };
 const cleanupToken = () => { try { fs.unlinkSync(TOKEN_FILE); } catch {} };
 
@@ -185,8 +182,10 @@ function createServer({ deriveLabel, scheduleShutdown, tgSend, htmlEsc }) {
     if (m === 'POST' && url === '/permission-request') {
       let body; try { body = await bodyOf(req, res); } catch { if (res.writableEnded) return; return json(res, 400, { error: 'bad json' }); }
       const { tool_name = '', description = '', prefixed_request_id = '' } = body;
+      // Codex audit (Medium): reject malformed prefixed_request_id at the IPC boundary; same shape routing.cjs verdict regex enforces.
+      if (!isValidPrefixedRequestId(prefixed_request_id)) return json(res, 400, { error: 'invalid prefixed_request_id; expected <6char>-<5char> (a-z 0-9 / a-km-z)' });
       const chatId = state.lastChatId || (process.env.MERCURY_TELEGRAM_CHAT_ID ? Number(process.env.MERCURY_TELEGRAM_CHAT_ID) : null);
-      if (chatId) await tgSend(chatId, `Claude wants to run ${htmlEsc(tool_name)}: ${htmlEsc(description)}\n\nReply 'yes ${htmlEsc(prefixed_request_id)}' or 'no ${htmlEsc(prefixed_request_id)}'`);
+      if (chatId) await tgSend(chatId, buildPermissionRequestText(tool_name, description, prefixed_request_id, htmlEsc), { reply_markup: buildVerdictKeyboard(prefixed_request_id) });
       return json(res, 200, { ok: true });
     }
     json(res, 404, { error: 'not found' });

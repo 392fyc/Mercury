@@ -86,7 +86,9 @@ Rationale: confusing internal agent telemetry with user-facing notifications flo
 
 ## Verdict Replies (permission requests)
 
-When the router relays a `permission-request` to Telegram, the message shows a **prefixed request id** in the form `<6char-session-prefix>-<5char-request-id>` (e.g. `a1b2c3-defgh`). Verdict replies MUST quote that full prefixed id:
+Since Issue #307 (CCGram UX borrow), `permission-request` messages ship with two inline-keyboard buttons — **✅ Allow** and **❌ Deny**. Tap either button and the bot dispatches the verdict back to the originating session; no typing required.
+
+The text-reply path stays available as a documented fallback for clients that render inline keyboards poorly. The message body shows the **prefixed request id** in the form `<6char-session-prefix>-<5char-request-id>` (e.g. `a1b2c3-defgh`); typed verdicts MUST quote it in full:
 
 ```
 yes a1b2c3-defgh
@@ -94,6 +96,8 @@ no  a1b2c3-defgh
 ```
 
 Bare unprefixed verdicts (`yes defgh`) are rejected with a usage hint — the prefix lets the router resolve the verdict back to the correct session when multiple lanes are concurrent. See Issue #304 nit 5.
+
+Both paths converge on the same `sendToInbox(sid, { type: 'verdict', verdict, request_id })` event, so client-side handling is unchanged.
 
 ## Notes
 
