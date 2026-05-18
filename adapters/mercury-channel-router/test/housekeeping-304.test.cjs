@@ -30,6 +30,9 @@ const stateSrc    = read('lib/state.cjs');
 const telegramSrc = read('lib/telegram.cjs');
 const ipcSrc      = read('lib/ipc.cjs');
 const routingSrc  = read('lib/routing.cjs');
+// Issue #407 F1: body.cjs split off from ipc.cjs to keep both under the
+// #303 ≤200 LOC contract — same structural cap applies.
+const bodySrc     = read('lib/body.cjs');
 
 test('#304 nit 1: magic numbers extracted to named constants in owning submodules', () => {
   // SHUTDOWN_GRACE_MS lives with scheduleShutdown() in routing.cjs.
@@ -99,7 +102,7 @@ test('#304 nit 4: bot init deferred — initBot() exists and runs after acquireL
     '`new Bot` must appear inside or after `function initBot`, never at module scope above it');
   // No other submodule should construct a Bot — that would defeat the
   // lock-gated singleton contract.
-  for (const [name, src] of [['router.cjs', routerSrc], ['lib/ipc.cjs', ipcSrc], ['lib/routing.cjs', routingSrc]]) {
+  for (const [name, src] of [['router.cjs', routerSrc], ['lib/ipc.cjs', ipcSrc], ['lib/routing.cjs', routingSrc], ['lib/body.cjs', bodySrc]]) {
     const stripped2 = src.split('\n').map(l => l.replace(/\/\/[^\n]*$/, '')).join('\n');
     assert.equal((stripped2.match(/new\s+Bot\b/g) || []).length, 0,
       `${name} must not construct a Bot`);
@@ -121,6 +124,7 @@ test('#303 split: router.cjs is wiring only (≤200 LOC) and all submodules ≤2
     'lib/telegram.cjs': lineCount(telegramSrc),
     'lib/ipc.cjs':      lineCount(ipcSrc),
     'lib/routing.cjs':  lineCount(routingSrc),
+    'lib/body.cjs':     lineCount(bodySrc),
   };
   for (const [name, lines] of Object.entries(limits)) {
     assert.ok(lines <= 200, `${name} is ${lines} LOC; #303 acceptance caps each submodule at ≤200`);

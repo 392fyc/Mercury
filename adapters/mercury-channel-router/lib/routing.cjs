@@ -176,11 +176,11 @@ async function routeMessage(msg) {
     await tgSend(chatId, `Verdict needs prefixed ID. Use 'yes &lt;short&gt;-&lt;id&gt;' from the request.`);
     return;
   }
-  const pM = text.match(/^@([\w-]+)\s+(.+)$/s);
+  // Issue #407 F2: resolveLane (ambiguity-aware) instead of startsWith (silent first-match).
+  const pM = text.match(/^@(#?[\w-]+)\s+(.+)$/s);
   if (pM) {
-    const t = [...state.sessions.values()].find(s => s.label.startsWith(pM[1]));
+    const t = await resolveLane(chatId, pM[1].replace(/^#/, ''));
     if (t) sendToInbox(t.id, { type: 'message', content: pM[2], from_chat: chatId });
-    else await tgSend(chatId, `No session matching @${htmlEsc(pM[1])}`);
     return;
   }
   if (!state.activeId || !state.sessions.has(state.activeId)) {
