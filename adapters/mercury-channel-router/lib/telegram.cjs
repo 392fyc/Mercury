@@ -73,7 +73,16 @@ function initBot(onMessage) {
     // Steady-state long-poll fetch retries are handled internally by grammy
     // and do not surface here; log volume is lower than node-telegram-bot-api's
     // polling_error firehose by design.
-    state.bot.catch(err => process.stderr.write(`${TAG} bot middleware error: ${sanitize(err.message)}\n`));
+    // Copilot iter-1 C5: grammy wraps the original middleware exception as
+    // `BotError`. `BotError.message` contains the cause in parens, but the
+    // raw inner Error gives a cleaner one-line grep target ("TypeError: foo"
+    // vs "Error in middleware while handling an update with ID 42 (TypeError:
+    // foo)"). Prefer the inner cause when available; fall back to the wrapper
+    // message otherwise.
+    state.bot.catch(err => {
+      const msg = err?.error instanceof Error ? err.error.message : err.message;
+      process.stderr.write(`${TAG} bot middleware error: ${sanitize(msg)}\n`);
+    });
     if (typeof onMessage === 'function') {
       state.bot.on('message', ctx => onMessage(ctx.update.message));
     }

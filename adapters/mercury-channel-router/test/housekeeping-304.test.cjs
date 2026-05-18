@@ -79,10 +79,12 @@ test('#304 nit 4: bot init deferred — initBot() exists and runs after acquireL
   // constructor — while keeping initBot intact — would reopen the 409 race
   // the rest of this PR closes. After the #303 split, telegram.cjs is the
   // only file that should reference grammy's Bot constructor at all.
-  // Issue #302: regex matches `new Bot` (grammy) — `\b` word-boundary on the
-  // `B` correctly excludes the prior `new TelegramBot` (no word boundary
-  // between `m` and `B` in `TelegramBot`), so an accidental rollback to
-  // node-telegram-bot-api would also fail this assertion.
+  // Issue #302 + Copilot iter-1 C4: regex matches `new Bot` (grammy). The
+  // `\s+` REQUIRES whitespace immediately before `Bot`, which is what excludes
+  // `new TelegramBot` (no whitespace between `Telegram` and `Bot`). The
+  // trailing `\b` then ensures `Bot` is a whole word (so a hypothetical
+  // `BotImpl` would not match either). An accidental rollback to
+  // node-telegram-bot-api would fail this assertion via the `\s+` exclusion.
   // Strip single-line `//` comments before counting — the explanatory
   // comments in telegram.cjs legitimately mention Bot/TelegramBot, and
   // those mentions must not be counted against the constructor budget.
