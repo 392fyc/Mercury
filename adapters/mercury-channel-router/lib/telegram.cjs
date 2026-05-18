@@ -41,15 +41,15 @@ const sanitize = msg => BOT_TOKEN ? String(msg).replaceAll(BOT_TOKEN, '<REDACTED
 // request@2.88.2 + har-validator transitive stack) to grammy@1.x (MIT, 4
 // direct deps, drops the entire legacy `request` chain). Same singleton lock
 // gate as #304 nit 4 — `bot.start()` is called from initBot() inside the
-// server.listen callback AFTER acquireLock() establishes ownership. Caller
-// passes the message handler in via `onMessage`; we wrap it as
-// `ctx => onMessage(ctx.update.message)` so the raw Telegram Message object
-// flows through unchanged (routing.cjs::routeMessage expects msg.from /
-// msg.chat / msg.text). Accepting the handler as a parameter (rather than a
-// `require('./routing.cjs')` at module load) avoids a
-// telegram.cjs → routing.cjs → telegram.cjs import cycle.
+// server.listen callback AFTER acquireLock() establishes ownership. Callers
+// pass the message handler in via `onMessage` and the inline-keyboard
+// callback handler via `onCallback` (Issue #307); both arrive as
+// `(ctx) => fn(...)` so the raw Telegram Update flows through unchanged.
+// Accepting the handlers as parameters (rather than a `require('./routing')`
+// at module load) avoids the telegram.cjs ↔ routing.cjs import cycle, and
+// also keeps callback.cjs from having to know about grammy directly.
 // Issue #298: strict truthy check — '0', 'false', 'no', 'off', '', unset → enabled.
-function initBot(onMessage) {
+function initBot(onMessage, onCallback) {
   // Argus #408 iter-1 Medium (4): idempotency guard. The expected call path is
   // exactly once from server.listen's callback after acquireLock(), but a
   // future caller could repeat the call (manual restart hook, test harness,
@@ -86,6 +86,14 @@ function initBot(onMessage) {
     if (typeof onMessage === 'function') {
       state.bot.on('message', ctx => onMessage(ctx.update.message));
     }
+    // Issue #307: register callback_query handler in the same place the
+    // message handler is wired so a future grammy-version bump touches one
+    // construction site, not two. Filter on `:data` so non-data callbacks
+    // (game callbacks, inline-mode confirmations) are ignored instead of
+    // surfacing to routeCallback as undefined-data noise.
+    if (typeof onCallback === 'function') {
+      state.bot.on('callback_query:data', ctx => onCallback(ctx));
+    }
     // bot.start() returns a Promise that resolves on bot.stop(). We do not
     // await — long-poll runs concurrently with the HTTP server. A rejected
     // start (network failure) is logged but does not crash the router so
@@ -113,16 +121,22 @@ function initBot(onMessage) {
   }
 }
 
-async function tgSend(chatId, text) {
+async function tgSend(chatId, text, opts) {
   if (!state.bot) return;
   // Coerce at the API boundary so non-string callers (defensive) and
   // null/undefined become an empty string; skip empty payloads instead of
   // letting Telegram 400 on them and retrying.
   const payload = truncateForTelegram(String(text ?? ''));
   if (!payload) return;
+  // Issue #307: thread caller-supplied reply_markup (inline_keyboard for
+  // /permission-request) into the sendMessage options. Only the documented
+  // fields are forwarded — passing the whole opts object would let a future
+  // caller smuggle conflicting parse_mode / disable_notification / etc.
+  const sendOpts = { parse_mode: 'HTML' };
+  if (opts && opts.reply_markup) sendOpts.reply_markup = opts.reply_markup;
   for (let attempt = 0; attempt < TG_SEND_MAX_RETRIES; attempt++) {
     try {
-      await state.bot.api.sendMessage(chatId, payload, { parse_mode: 'HTML' });
+      await state.bot.api.sendMessage(chatId, payload, sendOpts);
       return;
     } catch (e) {
       // grammy GrammyError exposes Telegram's `parameters.retry_after`

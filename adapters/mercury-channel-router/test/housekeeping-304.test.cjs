@@ -33,6 +33,9 @@ const routingSrc  = read('lib/routing.cjs');
 // Issue #407 F1: body.cjs split off from ipc.cjs to keep both under the
 // #303 ≤200 LOC contract — same structural cap applies.
 const bodySrc     = read('lib/body.cjs');
+// Issue #307: callback.cjs hosts inline_keyboard helpers + the callback_query
+// dispatch routine; same ≤200 LOC contract.
+const callbackSrc = read('lib/callback.cjs');
 
 test('#304 nit 1: magic numbers extracted to named constants in owning submodules', () => {
   // SHUTDOWN_GRACE_MS lives with scheduleShutdown() in routing.cjs.
@@ -125,6 +128,7 @@ test('#303 split: router.cjs is wiring only (≤200 LOC) and all submodules ≤2
     'lib/ipc.cjs':      lineCount(ipcSrc),
     'lib/routing.cjs':  lineCount(routingSrc),
     'lib/body.cjs':     lineCount(bodySrc),
+    'lib/callback.cjs': lineCount(callbackSrc),
   };
   for (const [name, lines] of Object.entries(limits)) {
     assert.ok(lines <= 200, `${name} is ${lines} LOC; #303 acceptance caps each submodule at ≤200`);

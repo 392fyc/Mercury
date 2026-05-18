@@ -15,6 +15,7 @@ const state    = require('./lib/state.cjs');
 const telegram = require('./lib/telegram.cjs');
 const ipc      = require('./lib/ipc.cjs');
 const routing  = require('./lib/routing.cjs');
+const callback = require('./lib/callback.cjs');
 
 const { PORT, TAG } = state;
 
@@ -46,7 +47,9 @@ server.listen(PORT, '127.0.0.1', () => {
     process.exit(1);
   }
   ipc.writeToken();
-  telegram.initBot(routing.routeMessage);
+  // Issue #307: pass routeCallback as the 2nd handler so grammy wires
+  // bot.on('callback_query:data', ...) alongside the message handler.
+  telegram.initBot(routing.routeMessage, callback.routeCallback);
 });
 server.on('error', e => { process.stderr.write(`${TAG} server error: ${e.message}\n`); process.exit(1); });
 // do NOT releaseLock on server error — lock may not have been acquired yet
