@@ -105,7 +105,10 @@ test('#303 split: router.cjs is wiring only (≤200 LOC) and all submodules ≤2
   // split. A regression that re-monolithizes router.cjs would push it back
   // over the cap and reintroduce the legibility / review-iteration problems
   // PR #295 surfaced.
-  const lineCount = src => src.split('\n').length;
+  // Strip a single trailing newline (common editor behavior) before counting,
+  // and split on CRLF or LF — Copilot finding on PR #406. Without the strip,
+  // `"a\nb\n".split('\n').length === 3` would over-count a 2-line file as 3.
+  const lineCount = src => src.replace(/\r?\n$/, '').split(/\r?\n/).length;
   const limits = {
     'router.cjs':       lineCount(routerSrc),
     'lib/state.cjs':    lineCount(stateSrc),
