@@ -183,7 +183,7 @@ function createServer({ deriveLabel, scheduleShutdown, tgSend, htmlEsc }) {
       let body; try { body = await bodyOf(req, res); } catch { if (res.writableEnded) return; return json(res, 400, { error: 'bad json' }); }
       const { tool_name = '', description = '', prefixed_request_id = '' } = body;
       // Codex audit (Medium): reject malformed prefixed_request_id at the IPC boundary; same shape routing.cjs verdict regex enforces.
-      if (!isValidPrefixedRequestId(prefixed_request_id)) return json(res, 400, { error: 'invalid prefixed_request_id; expected <6char>-<5char> (a-z 0-9 / a-km-z)' });
+      if (!isValidPrefixedRequestId(prefixed_request_id)) return json(res, 400, { error: 'invalid prefixed_request_id; expected pattern: <6 lowercase alphanumeric>-<5 lowercase letters except "l">' });
       const chatId = state.lastChatId || (process.env.MERCURY_TELEGRAM_CHAT_ID ? Number(process.env.MERCURY_TELEGRAM_CHAT_ID) : null);
       if (chatId) await tgSend(chatId, buildPermissionRequestText(tool_name, description, prefixed_request_id, htmlEsc), { reply_markup: buildVerdictKeyboard(prefixed_request_id) });
       return json(res, 200, { ok: true });

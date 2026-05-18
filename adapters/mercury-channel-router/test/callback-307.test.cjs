@@ -61,9 +61,11 @@ test('parseVerdictCallback rejects malformed shapes (anchored regex)', () => {
   // Wrong shortId charset
   assert.equal(callback.parseVerdictCallback('v:y:ABC123-defgh'), null);
   assert.equal(callback.parseVerdictCallback('v:y:abc-12-defgh'), null);
-  // Wrong requestId charset — `l` excluded per routeMessage's regex
-  assert.equal(callback.parseVerdictCallback('v:y:abc123-deflgh'), null); // 6 chars
-  assert.equal(callback.parseVerdictCallback('v:y:abc123-deflg'),  null); // contains 'l'
+  // Wrong requestId length — must be exactly 5 chars after the dash.
+  assert.equal(callback.parseVerdictCallback('v:y:abc123-deflgh'), null); // 6 chars (too long)
+  assert.equal(callback.parseVerdictCallback('v:y:abc123-defg'),   null); // 4 chars (too short)
+  // Wrong requestId charset — `l` excluded per routeMessage's regex.
+  assert.equal(callback.parseVerdictCallback('v:y:abc123-deflg'),  null); // 5 chars, contains 'l'
   // Padding / smuggled suffix
   assert.equal(callback.parseVerdictCallback('v:y:abc123-defgh extra'), null);
   assert.equal(callback.parseVerdictCallback(' v:y:abc123-defgh'), null);
@@ -89,15 +91,16 @@ test('buildVerdictKeyboard returns a two-button inline_keyboard with v:y / v:n c
   });
 });
 
-test('buildVerdictKeyboard callback_data stays under Telegram\'s 64-byte limit', () => {
+test('buildVerdictKeyboard callback_data stays within Telegram\'s 1-64 byte limit (inclusive)', () => {
   // Real prefixed_request_id shape (12 chars). The format prefix `v:y:` is 4
-  // bytes — total 16 bytes UTF-8, well under 64. Assert with a comfortable
-  // margin so a future format change has room to grow without silently
-  // hitting Telegram's 400 on send.
+  // bytes — total 16 bytes UTF-8, well under 64. Telegram Bot API specifies
+  // callback_data as "1-64 bytes" inclusive (Copilot iter-2 finding: a strict
+  // `< 64` assertion would falsely reject a valid 64-byte payload). Asserts
+  // both upper bound (≤64) and lower bound (≥1) since both are documented.
   const kb = callback.buildVerdictKeyboard('abc123-defgh');
   for (const btn of kb.inline_keyboard[0]) {
     const bytes = Buffer.byteLength(btn.callback_data, 'utf8');
-    assert.ok(bytes < 64, `callback_data ${JSON.stringify(btn.callback_data)} is ${bytes} bytes; Telegram caps at 64`);
+    assert.ok(bytes >= 1 && bytes <= 64, `callback_data ${JSON.stringify(btn.callback_data)} is ${bytes} bytes; Telegram requires 1-64 bytes inclusive`);
   }
 });
 
