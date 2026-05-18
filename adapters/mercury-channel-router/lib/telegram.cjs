@@ -29,6 +29,14 @@ if (BOT_TOKEN && ALLOWED.size === 0) {
 // HTML escape helper — applied to all user-controlled interpolations in tgSend calls.
 const htmlEsc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+// Argus #408 iter-1 Critical: redact BOT_TOKEN from any error message before
+// writing to stderr. grammy's GrammyError.message excludes the request URL,
+// but HttpError wraps fetch errors whose causes may surface the URL (and
+// therefore the path-embedded bot token). Defense-in-depth: strip the literal
+// token from every log line so a future grammy/node-fetch change cannot leak
+// credentials via stderr.
+const sanitize = msg => BOT_TOKEN ? String(msg).replaceAll(BOT_TOKEN, '<REDACTED>') : String(msg);
+
 // Issue #302: switched from node-telegram-bot-api (pulled deprecated
 // request@2.88.2 + har-validator transitive stack) to grammy@1.x (MIT, 4
 // direct deps, drops the entire legacy `request` chain). Same singleton lock
@@ -42,6 +50,15 @@ const htmlEsc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').repl
 // telegram.cjs → routing.cjs → telegram.cjs import cycle.
 // Issue #298: strict truthy check — '0', 'false', 'no', 'off', '', unset → enabled.
 function initBot(onMessage) {
+  // Argus #408 iter-1 Medium (4): idempotency guard. The expected call path is
+  // exactly once from server.listen's callback after acquireLock(), but a
+  // future caller could repeat the call (manual restart hook, test harness,
+  // future hot-reload). Without this guard, a second call would register a
+  // duplicate `message` handler AND start a second long-poll loop, hitting
+  // Telegram's 409 conflict on getUpdates. The structural test in
+  // housekeeping-304.test.cjs:103 still asserts the single-construction
+  // architecture; this guard is defense-in-depth at runtime.
+  if (state.bot) return;
   if (isEnvTruthy(process.env.MERCURY_NOTIFY_DISABLED)) return;
   if (!BOT_TOKEN) {
     process.stderr.write(`${TAG} WARNING: MERCURY_TELEGRAM_BOT_TOKEN not set; Telegram disabled\n`);
@@ -56,7 +73,7 @@ function initBot(onMessage) {
     // Steady-state long-poll fetch retries are handled internally by grammy
     // and do not surface here; log volume is lower than node-telegram-bot-api's
     // polling_error firehose by design.
-    state.bot.catch(err => process.stderr.write(`${TAG} bot middleware error: ${err.message}\n`));
+    state.bot.catch(err => process.stderr.write(`${TAG} bot middleware error: ${sanitize(err.message)}\n`));
     if (typeof onMessage === 'function') {
       state.bot.on('message', ctx => onMessage(ctx.update.message));
     }
@@ -72,9 +89,18 @@ function initBot(onMessage) {
     // and silently lose user input across restarts.
     state.bot.start({
       onStart: () => process.stderr.write(`${TAG} Telegram polling started\n`),
-    }).catch(err => process.stderr.write(`${TAG} bot poll fatal: ${err.message}\n`));
+    }).catch(err => {
+      // Argus #408 iter-1 Medium (3): clear state.bot so subsequent tgSend
+      // calls short-circuit at the `if (!state.bot)` guard instead of firing
+      // doomed requests against a dead instance and writing a fresh stderr
+      // line per attempt. The bot is effectively unusable after a fatal
+      // start failure; making it explicit is cheaper than detecting "is the
+      // poll loop still alive" via a side-channel.
+      process.stderr.write(`${TAG} bot poll fatal: ${sanitize(err.message)}\n`);
+      state.bot = null;
+    });
   } catch (e) {
-    process.stderr.write(`${TAG} Telegram init failed: ${e.message}\n`);
+    process.stderr.write(`${TAG} Telegram init failed: ${sanitize(e.message)}\n`);
   }
 }
 
@@ -101,7 +127,7 @@ async function tgSend(chatId, text) {
         await new Promise(r => setTimeout(r, ra * 1000));
         continue;
       }
-      process.stderr.write(`${TAG} sendMessage error (attempt ${attempt + 1}): ${e.message}\n`);
+      process.stderr.write(`${TAG} sendMessage error (attempt ${attempt + 1}): ${sanitize(e.message)}\n`);
       return;
     }
   }
