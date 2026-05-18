@@ -62,6 +62,9 @@ CLAUDE.md
 # Mercury runtime state
 .mercury/state/test-gate-attempts.json
 .mercury/state/test-gate-*
+
+# pr-flow skill state files (created per PR, cleaned in Phase 7)
+.pr-flow-*
 .mercury/sessions.json
 .mercury/transcripts/
 .mercury/backups/
