@@ -8,6 +8,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const state = require('./state.cjs');
+const { bodyOf, MAX_BODY_BYTES } = require('./body.cjs');
 
 const { TAG, TOKEN, TOKEN_FILE, LOCK_FILE, MAX_SESS } = state;
 
@@ -78,14 +79,8 @@ function releaseLock() {
   } catch {}
 }
 
-// JSON response helper + body parser.
+// JSON response helper. bodyOf lives in body.cjs (#407 F1 split).
 const json = (res, code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
-const bodyOf = req => new Promise((ok, fail) => {
-  let b = '';
-  req.on('data', c => b += c);
-  req.on('end', () => { try { ok(JSON.parse(b || '{}')); } catch (e) { fail(e); } });
-  req.on('error', fail);
-});
 
 // Factory — http.Server with routes wired against caller-supplied behavior
 // callbacks (deriveLabel/scheduleShutdown → routing.cjs, tgSend/htmlEsc →
@@ -123,7 +118,7 @@ function createServer({ deriveLabel, scheduleShutdown, tgSend, htmlEsc }) {
       return;
     }
     if (m === 'POST' && url === '/register') {
-      let body; try { body = await bodyOf(req); } catch { return json(res, 400, { error: 'bad json' }); }
+      let body; try { body = await bodyOf(req, res); } catch { if (res.writableEnded) return; return json(res, 400, { error: 'bad json' }); }
       // Argus #297 iter-1: session_id is an externally-supplied identifier that
       // flows into stderr logs and Map keys. Restrict to a controlled charset
       // and length to defend against log injection and unbounded memory growth
@@ -165,7 +160,7 @@ function createServer({ deriveLabel, scheduleShutdown, tgSend, htmlEsc }) {
       return json(res, 200, { ok: true });
     }
     if (m === 'POST' && url === '/notify') {
-      let body; try { body = await bodyOf(req); } catch { return json(res, 400, { error: 'bad json' }); }
+      let body; try { body = await bodyOf(req, res); } catch { if (res.writableEnded) return; return json(res, 400, { error: 'bad json' }); }
       const { severity = 'info', title = '', body: mb = '', label: fl } = body;
       const lbl = fl || (state.sessions.get(state.activeId)?.label) || 'mercury';
       const chatId = state.lastChatId || (process.env.MERCURY_TELEGRAM_CHAT_ID ? Number(process.env.MERCURY_TELEGRAM_CHAT_ID) : null);
@@ -173,15 +168,22 @@ function createServer({ deriveLabel, scheduleShutdown, tgSend, htmlEsc }) {
       return json(res, 200, { ok: true });
     }
     if (m === 'POST' && url === '/reply') {
-      let body; try { body = await bodyOf(req); } catch { return json(res, 400, { error: 'bad json' }); }
+      let body; try { body = await bodyOf(req, res); } catch { if (res.writableEnded) return; return json(res, 400, { error: 'bad json' }); }
+      // Issue #407 F3: strict typing on external IPC boundary — pre-#407 truthy
+      // check accepted 0/booleans/arrays/whitespace, surfacing opaque tgSend errors.
+      // isSafeInteger (not isInteger) rejects precision-lossy ids above 2^53-1,
+      // belt-and-braces against IPC callers that build chat_id from a string
+      // (Codex Low). Telegram channels use negative ids — both still pass.
       const { chat_id, text, label } = body;
-      if (!chat_id || !text) return json(res, 400, { error: 'chat_id and text required' });
+      if (!Number.isSafeInteger(chat_id) || typeof text !== 'string' || !text.trim()) {
+        return json(res, 400, { error: 'chat_id must be safe integer; text must be non-empty string' });
+      }
       const s = [...state.sessions.values()].find(x => x.id === body.session_id) || state.sessions.get(state.activeId);
       await tgSend(chat_id, `[${htmlEsc(label || (s?.label) || 'mercury')}] ${htmlEsc(text)}`);
       return json(res, 200, { ok: true });
     }
     if (m === 'POST' && url === '/permission-request') {
-      let body; try { body = await bodyOf(req); } catch { return json(res, 400, { error: 'bad json' }); }
+      let body; try { body = await bodyOf(req, res); } catch { if (res.writableEnded) return; return json(res, 400, { error: 'bad json' }); }
       const { tool_name = '', description = '', prefixed_request_id = '' } = body;
       const chatId = state.lastChatId || (process.env.MERCURY_TELEGRAM_CHAT_ID ? Number(process.env.MERCURY_TELEGRAM_CHAT_ID) : null);
       if (chatId) await tgSend(chatId, `Claude wants to run ${htmlEsc(tool_name)}: ${htmlEsc(description)}\n\nReply 'yes ${htmlEsc(prefixed_request_id)}' or 'no ${htmlEsc(prefixed_request_id)}'`);
@@ -193,5 +195,5 @@ function createServer({ deriveLabel, scheduleShutdown, tgSend, htmlEsc }) {
 
 module.exports = {
   writeToken, cleanupToken, safeUnlinkLock, acquireLock, releaseLock,
-  createServer, LOCK_ACQUIRE_RETRIES,
+  createServer, LOCK_ACQUIRE_RETRIES, MAX_BODY_BYTES,
 };
