@@ -36,9 +36,13 @@ const htmlEsc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').repl
 // briefly poll the same getUpdates queue and hit a Telegram 409 conflict in
 // the window between module init and the server.listen EADDRINUSE handler.
 // Issue #298: strict truthy check — '0', 'false', 'no', 'off', '', unset → enabled.
-// Caller (router.cjs entry) is responsible for wiring `state.bot.on('message',
-// routeMessage)` after this returns — that listener cannot live in this
-// module without re-introducing a telegram → routing import cycle.
+// Caller passes the message handler in via `onMessage` — `initBot` wires it
+// onto `state.bot` here so the handler cannot be installed without an
+// active bot instance. Accepting the handler as a parameter (rather than a
+// `require('./routing.cjs')` at module load) avoids a
+// telegram.cjs → routing.cjs → telegram.cjs import cycle, which is why the
+// router.cjs entry passes `routing.routeMessage` instead of letting this
+// module require it directly.
 function initBot(onMessage) {
   if (isEnvTruthy(process.env.MERCURY_NOTIFY_DISABLED)) return;
   if (!BOT_TOKEN) {
@@ -79,7 +83,12 @@ async function tgSend(chatId, text) {
   }
 }
 
+// Copilot iter-4 finding: `BOT_TOKEN` is intentionally NOT exported. It is a
+// secret-bearing env var used internally by initBot(); exporting it (even
+// just for symmetry with ALLOWED) would widen the IPC surface and risk
+// accidental serialization in future debug logging. ALLOWED + isAllowed are
+// fine to export because they're already derivable from env.
 module.exports = {
-  BOT_TOKEN, ALLOWED, isAllowed, htmlEsc, initBot, tgSend,
+  ALLOWED, isAllowed, htmlEsc, initBot, tgSend,
   TG_SEND_MAX_RETRIES, TG_SEND_RETRY_AFTER_MAX_S,
 };
