@@ -250,6 +250,16 @@ Mercury CLAUDE.md MUST: "Install to D drive, not C drive".
 
 ## Mode A Decision Record (user-direction landed 2026-05-20)
 
+**Decision timeline** (audit-clarity per Argus iter-1 finding):
+
+| Phase | Date (local) | Note |
+|-------|--------------|------|
+| Research-front 5 sub-tasks executed | 2026-05-19 | S120 session start, empirical schema inspect + 5 WebSearches |
+| ADR initial drafts written | 2026-05-19 | Both schema + tech-stack ADRs as research-record (Mode A blockers section originally PENDING user) |
+| User Mode A decision via AskUserQuestion | 2026-05-20 | 4-axis response received (form factor + stack + scope + cross-plat) |
+| ADR Decision Record append (this section) | 2026-05-20 | tech-stack ADR section replacement; schema ADR v1/v2+ scope marker |
+| Commit `6c3470e` + PR #412 opened | 2026-05-20 | branch `lane/main/411-phase6-gui-mvp-research` |
+
 S120 完成 5 sub-tasks + surface 4 axes to user via AskUserQuestion. User 选择 (2026-05-20):
 
 | Axis | User decision | Rationale |

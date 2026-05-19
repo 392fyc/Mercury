@@ -29,6 +29,8 @@ Empirical inspection of 4 sample `~/.claude/jobs/<id>/state.json` files + `~/.cl
 
 ### Sample identification
 
+> **PII note**: Raw JSON sample values below preserve `D:\Mercury\Mercury` (project-wide Mercury convention path, not user-specific) but mask Windows user directory `C:\Users\<user>\` (originally `C:\Users\392fy\`) per Mercury PII redaction convention. Mercury GUI implementation should normalize to `${HOME}` / `${CLAUDE_CONFIG_DIR}` / `${USERPROFILE}` env-vars rather than hardcoding any specific user path.
+
 | Sample id | template | intent | cliVersion |
 |-----------|----------|--------|------------|
 | `1baace78` | `bg` (--help respawn) | (empty) | (absent — older session) |
@@ -63,7 +65,7 @@ Empirical inspection of 4 sample `~/.claude/jobs/<id>/state.json` files + `~/.cl
 | Field | Type | Sample value | Notes |
 |-------|------|--------------|-------|
 | `inFlight` | object | `{"tasks": 0, "queued": 0, "kinds": []}` | mid-flight task counter; idle session = all zeros. 3/4 samples 含, 最老 `1baace78` 缺 (pre-2.1.141) |
-| `linkScanPath` | string | `"C:\\Users\\392fy\\.claude\\projects\\D--Mercury-Mercury\\<id>.jsonl"` | transcript file path; linkScanOffset 进该文件 |
+| `linkScanPath` | string | `"C:\\Users\\<user>\\.claude\\projects\\D--Mercury-Mercury\\<id>.jsonl"` | transcript file path; linkScanOffset 进该文件 |
 | `cliVersion` | string | `"2.1.141"` / `"2.1.142"` | CLI version when session created |
 | `name` | string | `"math calculation response"`, `"from-bg-probe-test"`, `"phase6-probe file editing"` | auto-generated display name (LLM-sourced from intent) |
 | `nameSource` | string | `"auto"` (all 3 with name field) | 推断有 `"manual"` token if user supplies via `claude --bg --name <x>` |
