@@ -21,8 +21,8 @@
 | **Tauri** | v2.11.1 (2026-05-06) | ~10-30 MB | Rust + Web | Linux/macOS/Win + Android/iOS | **GA stable** | ★★★★★ (推荐 desktop primary) |
 | **Electron** | v42.1.0 (3 days pre-S120, ~2026-05-16) | ~100-150 MB | JS + Web | Linux/macOS/Win | **GA, hugely mature** | ★★★★ (bundle 大但 zero-friction) |
 | **Wails** | v3.0.0-alpha.93 (2026-05-17), v2 GA | ~20-50 MB | Go + Web | Linux/macOS/Win | **v3 alpha** (v2 GA OK) | ★★★ (Mercury 已 JS-heavy, Go 引入新 lang) |
-| **Textual** | (version UNVERIFIED in search; v3+ inferred from pypi) | n/a (TUI) | Python | Linux/macOS/Win | **GA, Textualize active** | ★★★ (TUI 适合 dev/SSH 场景, 但 GUI 形态弱) |
-| **Pure Web (Next.js localhost)** | Next.js 15-16, chokidar v5 (Nov 2025) | n/a (browser) | JS + Web | 任意 browser | **GA, hugely mature** | ★★★★ (但需用户开 browser, port 占用) |
+| **Textual** | **UNVERIFIED** (v3+ inferred from pypi; search 未给出 2026 specific version) | n/a (TUI) | Python | Linux/macOS/Win | **GA, Textualize active** | ★★★ (TUI 适合 dev/SSH 场景, 但 GUI 形态弱) |
+| **Pure Web (Next.js localhost)** | Next.js 15-16 **UNVERIFIED**, chokidar v5 (Nov 2025) | n/a (browser) | JS + Web | 任意 browser | **GA, hugely mature** | ★★★★ (但需用户开 browser, port 占用) |
 
 **预初步预排** (S120 不决策, 仅供 user Mode A 决策时参考):
 
@@ -59,7 +59,7 @@
 | Mercury existing JS stack reuse | ★★★★ | frontend 是 Web, 可复用 Mercury 已有 JS tooling (notify-hub, dispatch templates) |
 | Windows D-drive 安装 | ★★★★ | .msi 安装器 standard Windows MSI 流程, 用户可选 dest (D-drive OK; 详见 §"Windows D-drive 安装 policy") |
 | Cross-platform (Win/macOS/Linux ship v1) | ★★★★★ | 单 codebase, 三平台 build (Windows-only ship v1 也 OK, future-proof) |
-| 新 lang dep (Rust) | ★★★ | Rust toolchain 引入新依赖; 但 Mercury 已 multi-lang (Node 20+ + Python 3.x + Go via Wails-or-not), Rust 增量 acceptable |
+| 新 lang dep (Rust) | ★★★ | Rust toolchain 引入新依赖; 但 Mercury 已 multi-lang (Node 20+ + Python 3.x), Rust 增量 acceptable |
 | Maturity | ★★★★★ | v2 GA since late 2024, v2.11.x patch-stable |
 
 ### Caveats
@@ -188,7 +188,7 @@
 
 ### Verified facts (2026-05-19)
 
-- **Next.js**: 15-16 (具体 latest version UNVERIFIED; [vercel/next.js](https://github.com/vercel/next.js) active dev)
+- **Next.js**: 15-16 (**UNVERIFIED** — 具体 latest version 未 pin via `npm view next version`; [vercel/next.js](https://github.com/vercel/next.js) active dev. Mode A 已选 Tauri 2, Next.js 仅作 alternative-not-chosen 参考)
 - **chokidar**: **v5** (Nov 2025), ESM-only, Node 20+ min — per [paulmillr/chokidar](https://github.com/paulmillr/chokidar) + [chokidar - npm](https://www.npmjs.com/package/chokidar)
 - **License**: chokidar MIT, Next.js MIT
 - **Languages**: JavaScript / TypeScript
@@ -268,7 +268,7 @@ S120 完成 5 sub-tasks + surface 4 axes to user via AskUserQuestion. User 选�
 | **Tech stack** | **Tauri 2** (v2.11.1) ✅ | bundle 10-30MB (light), cross-plat future-proof, Mercury JS frontend reuse, Rust IPC v1 read-only 简单 |
 | **MVP scope** | **Scenarios 1 + 5** ✅ (NOT 4) | 比 ADR 预选 (1+4+5) 更精简 — cost-tracker trend chart (scenario 4) 推迟 v2+. v1 = 4-lane snapshot + Issue/PR dashboard |
 | **Cross-platform** | **Windows-only v1** ✅ | Mercury daily-driver platform; fastest path; v2 可加 macOS/Linux future |
-| **Data flow** | **chokidar file-watcher** (default) | 与 Tauri 兼容 (Node-side watcher 转发 IPC event to Rust side) OR Rust `notify` crate (Rust-side native). v2 待 implementation 实测选择 |
+| **Data flow** | **chokidar file-watcher (default)** ✅ | 与 Tauri 兼容 (Node-side watcher 转发 IPC event to Rust side). Rust `notify` crate alt **DEFERRED to implementation kickoff** — 不在 Mode A 决策内; 由 #411-B 实现 session 测出 perf/complexity tradeoff 后定 |
 
 ### Implementation derivatives (decided)
 
@@ -300,7 +300,7 @@ S120 完成 5 sub-tasks + surface 4 axes to user via AskUserQuestion. User 选�
 
 ### Hold-the-line constraints (carry into implementation)
 
-- **Mercury LOC budget**: internal tooling (NOT external adapter) — `≤200 LOC adapter cap` 不适用 per S119 CLAUDE.md authority chain reaffirm. Size by need.
+- **Mercury LOC budget**: internal tooling (NOT external adapter) — `≤200 LOC adapter cap` 不适用 per S119 CLAUDE.md authority chain reaffirm (specifically the MUST clause "External-project adapters under `adapters/<vendor-name>/` MUST stay under 200 lines" — scoped to `adapters/<vendor-name>/` only; this GUI is Mercury-internal tooling outside that scope). Size by need.
 - **D-drive install**: Tauri MSI 用户安装到 D 盘 OK (standard MSI dest prompt). VS2022 Build Tools 自己也安到 D 盘 per CLAUDE.md policy
 - **Read-only v1**: 严禁 write/delete to `~/.claude/jobs/` / `~/.claude/daemon/` (Anthropic owned per S119 governance)
 - **Anthropic compat-tolerance**: schema-tolerant parsing per companion schema ADR — missing/added fields don't crash

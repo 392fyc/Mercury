@@ -8,8 +8,7 @@
 
 **Companion ADR**: `phase6-gui-mvp-tech-stack-2026-05.md`
 
-**Prior art**: [`agent-view-multi-lane-adaptation-2026-05.md`](agent-view-multi-lane-adaptation-2026-05.md) (PR #387, Closes #386) Phase 1+2 docs+empirical
-| [`agent-view-phase6-empirical-2026-05.md`](agent-view-phase6-empirical-2026-05.md) (PR #391, Closes #391) Phase 6 empirical
+**Prior art**: [`agent-view-multi-lane-adaptation-2026-05.md`](agent-view-multi-lane-adaptation-2026-05.md) (PR #387, Closes #386) Phase 1+2 docs+empirical; [`agent-view-phase6-empirical-2026-05.md`](agent-view-phase6-empirical-2026-05.md) (PR #391, Closes #391) Phase 6 empirical
 
 ---
 
@@ -96,7 +95,7 @@ Empirical inspection of 4 sample `~/.claude/jobs/<id>/state.json` files + `~/.cl
 |-------|------|-------|
 | `proto` | int | schema version (currently 1) |
 | `supervisorPid` | int | per-user supervisor process pid |
-| `updatedAt` | unix ms | 最后 supervisor heartbeat — staleness 指标 (e.g. >1h → 1h-timeout 已 fire, supervisor process 释放) |
+| `updatedAt` | unix ms | 最后 supervisor heartbeat — staleness 指标 (e.g. >1h → 1h-timeout 已 fire, supervisor process 释放). **Time-format note**: roster.json `updatedAt` uses unix milliseconds (e.g. `1778822198033`), while state.json `createdAt`/`updatedAt`/`firstTerminalAt` use ISO 8601 (`"2026-05-14T16:42:55.110Z"`). GUI parsers MUST dispatch on file source — do NOT assume uniform time format across Mercury read-side data sources. |
 | `workers` | object (map) | active worker process map; key 推断是 daemonShort / sessionId, 当前为空 (no active session at inspection time) |
 
 **关系**: `roster.json.workers[<key>]` ↔ `jobs/<id>/state.json` 1:1 (active sessions); jobs/<id>/state.json 在 supervisor 释放后 persist (1h timeout 后 process die 但 state.json 留盘). Mercury GUI 用 `roster.json.workers` 判断 "live" vs "stopped" sessions。
