@@ -21,8 +21,8 @@
 | **Tauri** | v2.11.1 (2026-05-06) | ~10-30 MB | Rust + Web | Linux/macOS/Win + Android/iOS | **GA stable** | ★★★★★ (推荐 desktop primary) |
 | **Electron** | v42.1.0 (3 days pre-S120, ~2026-05-16) | ~100-150 MB | JS + Web | Linux/macOS/Win | **GA, hugely mature** | ★★★★ (bundle 大但 zero-friction) |
 | **Wails** | v3.0.0-alpha.93 (2026-05-17), v2 GA | ~20-50 MB | Go + Web | Linux/macOS/Win | **v3 alpha** (v2 GA OK) | ★★★ (Mercury 已 JS-heavy, Go 引入新 lang) |
-| **Textual** | **UNVERIFIED** (v3+ inferred from pypi; search 未给出 2026 specific version) | n/a (TUI) | Python | Linux/macOS/Win | **GA, Textualize active** | ★★★ (TUI 适合 dev/SSH 场景, 但 GUI 形态弱) |
-| **Pure Web (Next.js localhost)** | Next.js 15-16 **UNVERIFIED**, chokidar v5 (Nov 2025) | n/a (browser) | JS + Web | 任意 browser | **GA, hugely mature** | ★★★★ (但需用户开 browser, port 占用) |
+| **Textual** | v8.2.7 (2026-05-19) | n/a (TUI) | Python | Linux/macOS/Win | **GA, Textualize active** | ★★★ (TUI 适合 dev/SSH 场景, 但 GUI 形态弱) |
+| **Pure Web (Next.js localhost)** | Next.js 16.2.6 (16.2 release 2026-03-18), chokidar v5 (Nov 2025) | n/a (browser) | JS + Web | 任意 browser | **GA, hugely mature** | ★★★★ (但需用户开 browser, port 占用) |
 
 **预初步预排** (S120 不决策, 仅供 user Mode A 决策时参考):
 
@@ -153,7 +153,7 @@
 
 ### Verified facts (2026-05-19)
 
-- **Latest version**: UNVERIFIED (search 未给出 2026 specific version; [Textualize GitHub](https://github.com/Textualize/textual) 持续 active dev, 当前推断 v3.x — 需 `pip show textual` 验证)
+- **Latest version**: **v8.2.7** (released 2026-05-19) per [textual · PyPI](https://pypi.org/project/textual/) + [textual.textualize.io](https://textual.textualize.io/)
 - **License**: MIT
 - **Language**: Python (3.8+ typical)
 - **Cross-platform**: macOS + Linux + Windows
@@ -188,7 +188,7 @@
 
 ### Verified facts (2026-05-19)
 
-- **Next.js**: 15-16 (**UNVERIFIED** — 具体 latest version 未 pin via `npm view next version`; [vercel/next.js](https://github.com/vercel/next.js) active dev. Mode A 已选 Tauri 2, Next.js 仅作 alternative-not-chosen 参考)
+- **Next.js**: **v16.2.6** (16.2 major release 2026-03-18) per [nextjs.org/blog/next-16-2](https://nextjs.org/blog/next-16-2) + [Releases · vercel/next.js](https://github.com/vercel/next.js/releases). Mode A 已选 Tauri 2, Next.js 仅作 alternative-not-chosen 参考
 - **chokidar**: **v5** (Nov 2025), ESM-only, Node 20+ min — per [paulmillr/chokidar](https://github.com/paulmillr/chokidar) + [chokidar - npm](https://www.npmjs.com/package/chokidar)
 - **License**: chokidar MIT, Next.js MIT
 - **Languages**: JavaScript / TypeScript
@@ -278,20 +278,20 @@ S120 完成 5 sub-tasks + surface 4 axes to user via AskUserQuestion. User 选�
 - **Read-side data sources v1** (per companion schema ADR):
   - `~/.claude/jobs/<id>/state.json` (22 fields, schema-tolerant)
   - `~/.claude/daemon/roster.json` (4 fields)
-  - LANES.md (Mercury lane registry → cwd group key)
+  - `${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}/LANES.md` (Mercury lane registry → cwd group key; canonical path per `scripts/lane-assertion.sh:128-131` — user-memory, NOT repo file. Override env: `MERCURY_MEMORY_DIR`)
   - gh CLI Issue/PR state (scenario 5)
 - **Read-side data sources DEFERRED v2+** (scenarios 2/3/4):
   - `~/.claude/jobs/<id>/timeline.jsonl` (scenario 2 跨 session 时间轴)
   - `~/.claude/scripts/cost-tracker/<id>.jsonl` (scenario 4 cost trend chart)
-- **System tray**: Tauri tray-icon plugin v1 desirable (close-to-tray UX)
-- **Single-instance lock**: Tauri single-instance plugin v1 (avoid multi-launch)
+- **System tray**: Tauri **core feature** `features = ["tray-icon"]` in Cargo.toml (NOT a plugin — renamed from `system-tray` in Tauri 2.0) per [System Tray | Tauri v2](https://v2.tauri.app/learn/system-tray/) — close-to-tray UX
+- **Single-instance lock**: Tauri `single-instance` **plugin** v1 (separate plugin, avoid multi-launch)
 
 ### Implementation Issue chain (filed post-decision)
 
 实施 work 由 dev-pipeline 跟进, 不在 S120 scope。建议 split 为:
 
 - **#411-A** (P2, lane:main, enhancement): Tauri 2 project scaffold + Mercury Windows MSI build + system tray + single-instance — bare app skeleton, no scenarios yet
-- **#411-B** (P2, lane:main, enhancement): Read-side data layer (state.json + roster.json + LANES.md parser; chokidar/notify file-watcher) — IPC commands defined
+- **#411-B** (P2, lane:main, enhancement): Read-side data layer (state.json + roster.json + user-memory `LANES.md` parser at `${MERCURY_MEMORY_DIR:-...}/LANES.md`; chokidar/notify file-watcher) — IPC commands defined
 - **#411-C** (P2, lane:main, enhancement): UI scenario 1 — cross-lane snapshot (4 active lanes + active PR + 5h usage marker)
 - **#411-D** (P2, lane:main, enhancement): UI scenario 5 — Issue/PR dashboard (gh CLI integration + label/lane/Phase filter)
 - **#411 itself**: closes with this ADR PR (research + decision finalized)

@@ -182,7 +182,10 @@ User S120 Mode A 决策 (2026-05-20): v1 scope = scenarios **1 + 5 only** (cross
 ```
 ~/.claude/jobs/<id>/state.json       — per-session 主状态 (22 fields, schema-tolerant 必需) — scenario 1
 ~/.claude/daemon/roster.json          — supervisor heartbeat + active-worker registry — scenario 1
-LANES.md                              — Mercury lane registry (group key = cwd → lane) — scenario 1
+${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}/LANES.md
+                                      — Mercury lane registry (group key = cwd → lane) — scenario 1
+                                        canonical path per `scripts/lane-assertion.sh:128-131` (user-memory, NOT repo file).
+                                        Override env: `MERCURY_MEMORY_DIR`. NO repo-root `LANES.md` exists.
 gh CLI (Issue/PR state)               — scenario 5
 ```
 
@@ -203,7 +206,7 @@ memory/session-handoff(-<lane>)?.md   — handoff doc (跨 session 持久态) �
 - chokidar (npm, ESM-only v5 from Nov 2025, node 20+ min) 是 cross-platform 标准方案
 - Windows recursive watching 已 native support (chokidar README)
 - 备选: 5-15s polling — 简单但 CPU/IO 浪费
-- 推荐预选: chokidar 监听 `~/.claude/jobs/*/state.json` + `~/.claude/jobs/*/timeline.jsonl` + `~/.claude/daemon/roster.json` (3 path glob, debounce 200-500ms)
+- 推荐预选 (**v1 scope only — scenarios 1+5**): chokidar 监听 `~/.claude/jobs/*/state.json` + `~/.claude/daemon/roster.json` + LANES.md (2-3 path glob, debounce 200-500ms). **`timeline.jsonl` NOT watched in v1** — scenario 2 deferred to v2+ per Mode A scope
 
 ---
 
