@@ -1,4 +1,4 @@
-use super::redact_home;
+use super::{redact_home, redact_home_in_json};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -44,6 +44,13 @@ impl JobState {
     /// surfacing to the frontend. Mirrors the same scrubbing that `DataError`
     /// applies to error messages so the GUI never sees `C:\Users\<name>\...`
     /// literals. Idempotent.
+    ///
+    /// Coverage:
+    /// - Typed top-level fields: `cwd`, `link_scan_path`, `worktree_path`
+    /// - Untyped JSON blobs (recursive walk): `output`, `children` — see
+    ///   `redact_home_in_json` for the walker contract. Closes the S125
+    ///   carry-forward gap where LLM-emitted home paths in nested JSON
+    ///   strings could leak past the typed-field scrub.
     pub fn sanitize_paths(&mut self) {
         self.cwd = redact_home(&self.cwd);
         if let Some(s) = self.link_scan_path.as_deref() {
@@ -51,6 +58,12 @@ impl JobState {
         }
         if let Some(s) = self.worktree_path.as_deref() {
             self.worktree_path = Some(redact_home(s));
+        }
+        if let Some(v) = self.output.as_mut() {
+            redact_home_in_json(v);
+        }
+        if let Some(v) = self.children.as_mut() {
+            redact_home_in_json(v);
         }
     }
 }
@@ -226,6 +239,69 @@ mod tests {
         let job: JobState = serde_json::from_str(SAMPLE_NEWER).expect("parse");
         assert!(job.worktree_path.is_none());
         assert!(job.worktree_branch.is_none());
+    }
+
+    #[test]
+    fn sanitize_paths_scrubs_output_recursive() {
+        let Some(home) = dirs::home_dir().and_then(|p| p.to_str().map(String::from)) else {
+            return;
+        };
+        let mut job: JobState = serde_json::from_str(SAMPLE_NEWER).expect("parse");
+        // Inject a nested JSON blob containing home paths into the `output` field.
+        job.output = Some(serde_json::json!({
+            "stdout": format!("wrote {home}/.claude/jobs/abc/state.json"),
+            "files": [format!("{home}/.claude/a"), format!("{home}/.claude/b")]
+        }));
+        job.sanitize_paths();
+        let out_str = serde_json::to_string(&job.output).unwrap();
+        assert!(!out_str.contains(&home), "output home must be scrubbed recursively");
+        assert!(out_str.contains("~/.claude/jobs/"));
+        assert!(out_str.contains("~/.claude/a"));
+        assert!(out_str.contains("~/.claude/b"));
+    }
+
+    #[test]
+    fn sanitize_paths_scrubs_children_recursive() {
+        let Some(home) = dirs::home_dir().and_then(|p| p.to_str().map(String::from)) else {
+            return;
+        };
+        let mut job: JobState = serde_json::from_str(SAMPLE_NEWER).expect("parse");
+        job.children = Some(serde_json::json!({
+            "child_a": { "log_path": format!("{home}/log.txt") },
+            "child_b": { "cwd": format!("{home}/work") }
+        }));
+        job.sanitize_paths();
+        let children_str = serde_json::to_string(&job.children).unwrap();
+        assert!(!children_str.contains(&home), "children home must be scrubbed recursively");
+        assert!(children_str.contains("~/log.txt"));
+        assert!(children_str.contains("~/work"));
+    }
+
+    #[test]
+    fn sanitize_paths_is_idempotent() {
+        // Calling sanitize_paths twice must produce equal output (struct-level contract).
+        let Some(home) = dirs::home_dir().and_then(|p| p.to_str().map(String::from)) else {
+            return;
+        };
+        let mut job: JobState = serde_json::from_str(SAMPLE_NEWER).expect("parse");
+        job.output = Some(serde_json::json!({ "log": format!("{home}/log.txt") }));
+        job.children = Some(serde_json::json!([format!("{home}/child")]));
+        job.sanitize_paths();
+        let after_first = (job.cwd.clone(), job.link_scan_path.clone(), job.worktree_path.clone(), job.output.clone(), job.children.clone());
+        job.sanitize_paths();
+        let after_second = (job.cwd.clone(), job.link_scan_path.clone(), job.worktree_path.clone(), job.output.clone(), job.children.clone());
+        assert_eq!(after_first, after_second, "sanitize_paths must be idempotent");
+    }
+
+    #[test]
+    fn sanitize_paths_noop_when_output_children_none() {
+        // SAMPLE_OLDER has output: null + children: null. Sanitize must not panic.
+        let mut job: JobState = serde_json::from_str(SAMPLE_OLDER).expect("parse");
+        assert!(job.output.is_none() || job.output == Some(serde_json::Value::Null));
+        assert!(job.children.is_none() || job.children == Some(serde_json::Value::Null));
+        job.sanitize_paths(); // no panic
+        // post-sanitize: cwd still scrubbed (was D:\Mercury\Mercury — no home prefix so unchanged)
+        assert_eq!(job.cwd, "D:\\Mercury\\Mercury");
     }
 
     #[test]
