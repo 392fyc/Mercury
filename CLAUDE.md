@@ -84,8 +84,7 @@ Mercury 的部分功能跨仓库运作。以下表格记录外部仓库与 Mercu
 
 When cherry-picking any file from an external project into Mercury, the SAME commit must include:
 
-> See §"Carve-out: CLI-generated scaffolding" below before applying rules 1-6 to files produced by `pnpm dlx shadcn@latest add`, `pnpm create tauri-app`, or `pnpm create vite`.
-
+> See [§Carve-out: CLI-generated scaffolding](#carve-out-cli-generated-scaffolding) below before applying rules 1-6 to files produced by `pnpm dlx shadcn@latest add`, `pnpm create tauri-app`, or `pnpm create vite`.
 
 1. **Manifest entry**: add to `.mercury/state/upstream-manifest.json` — fields: `path`, `scope` (`"project"` for repo files, `"user"` for `~/.claude/` global files), `upstream_repo`, `upstream_path`, `upstream_sha_at_import` (verify via `gh api repos/{owner}/{repo}/commits/{sha}`), `upstream_license`, `import_pr`, `import_date`, `import_rationale`, `last_drift_check` (null).
 2. **SKILL.md frontmatter**: add `upstream_source`, `upstream_sha`, `upstream_license`, `cherry_picked_in`, `cherry_picked_at` fields.

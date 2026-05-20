@@ -104,7 +104,7 @@ Notable sub-agents: `main`, `dev`, `acceptance`, `critic`, `design`, `research`,
 
 Mercury's mount philosophy (DIRECTION.md §四): build the minimum in-house; mount external projects via git submodule under `modules/` with a thin `adapters/<name>/` translation layer (≤200 LOC). Phase 2-1 evaluated four candidates (GSD, Superpowers, OMC, OpenSpace) against a narrow Stop-hook acceptance criterion; all four were REJECT or DEFER on that criterion, so `modules/` is currently empty. Other value from those projects has been cherry-picked individually (see `.mercury/state/upstream-manifest.json` and `scripts/upstream-drift-check.sh`).
 
-When files from an external project are cherry-picked into Mercury, the cherry-pick protocol in [`CLAUDE.md`](CLAUDE.md) is the canonical source for the required attribution / manifest / drift discipline. Two adjacent cases (one-shot CLI scaffolding and registry-based per-item imports) have a narrower carve-out — see CLAUDE.md §"Carve-out: CLI-generated scaffolding" for the authoritative scope. This README does not restate the rules; consult CLAUDE.md for current details.
+When files from an external project are cherry-picked into Mercury, the cherry-pick protocol in [`CLAUDE.md`](CLAUDE.md) is the canonical source for the required attribution / manifest / drift discipline. Two adjacent cases (one-shot CLI scaffolding and registry-based per-item imports) have a narrower carve-out — see [CLAUDE.md §Carve-out: CLI-generated scaffolding](CLAUDE.md#carve-out-cli-generated-scaffolding) for the authoritative scope. This README does not restate the rules; consult CLAUDE.md for current details.
 
 ## Example files
 
