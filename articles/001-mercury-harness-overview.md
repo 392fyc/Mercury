@@ -409,7 +409,7 @@ Adapter 只做接口转换，不包含业务逻辑。如果需要业务逻辑，
 
 这个协议确保了三件事：溯源（知道代码从哪来）、漂移检测（知道上游是否变了）、法律合规（license gate）。
 
-**CLI scaffolding / registry-import carve-out**：上述 6 字段协议适用于"具体上游 commit 路径的 file lift"。两个邻近场景有更窄的 carve-out（详见 CLAUDE.md §"Carve-out: CLI-generated scaffolding"）：Category A（一次性项目脚手架，`pnpm create tauri-app` / `pnpm create vite`，只需 PR body provenance，不需要 manifest）与 Category B（registry 单 item 导入，`pnpm dlx shadcn@latest add` 任何 registry item，需要 PR body provenance + registry 源标识，不需要 manifest）。其他所有 cherry-pick 走完整协议。
+**CLI scaffolding / registry-import carve-out**：CLAUDE.md §"Carve-out: CLI-generated scaffolding" 是该 carve-out 的权威定义源。两个邻近场景（一次性 CLI 脚手架与 registry 单 item 导入）有更窄的处理范围；本文不复述具体规则，避免跨文档漂移——查阅 CLAUDE.md 获取当前细则。
 
 ### 实证案例：5 种挂载模式
 
