@@ -14,6 +14,11 @@ vite.config.d.ts
 packages/gui/src-tauri/target/
 packages/gui/src-tauri/gen/schemas/
 
+# mercury-gui (Phase 6 GUI — standalone Tauri app)
+mercury-gui/node_modules/
+mercury-gui/src-tauri/target/
+mercury-gui/dist/
+
 # Logs
 logs/
 *.log
