@@ -9,9 +9,41 @@ use tauri_plugin_shell::ShellExt;
 use crate::data::redact_home;
 
 const GH_CACHE_TTL_SECS: u64 = 60;
-const GH_REPO: &str = "392fyc/Mercury";
+const GH_REPO_DEFAULT: &str = "392fyc/Mercury";
 const GH_LIMIT: &str = "200";
 const GH_SUBPROCESS_TIMEOUT_SECS: u64 = 30;
+
+/// Resolve the target gh repo. Defaults to 392fyc/Mercury (the #416 DoD repo).
+/// `MERCURY_GH_REPO` env override allows running the GUI against a different
+/// repo (e.g. for development against a fork). Validates `owner/repo` shape
+/// to keep the shell arg surface tight even though the capability already
+/// regex-checks the slot.
+fn resolve_repo() -> Result<String, String> {
+    let raw = std::env::var("MERCURY_GH_REPO")
+        .unwrap_or_else(|_| GH_REPO_DEFAULT.to_string());
+    if is_valid_repo(&raw) {
+        Ok(raw)
+    } else {
+        Err(format!(
+            "invalid MERCURY_GH_REPO {raw:?}, expected owner/repo with [\\w.-] segments"
+        ))
+    }
+}
+
+fn is_valid_repo(s: &str) -> bool {
+    let mut parts = s.split('/');
+    let owner = parts.next().unwrap_or("");
+    let name = parts.next().unwrap_or("");
+    parts.next().is_none()
+        && !owner.is_empty()
+        && !name.is_empty()
+        && owner
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GhLabel {
@@ -124,6 +156,7 @@ pub async fn fetch_gh_dashboard(
         }
     }
 
+    let repo = resolve_repo()?;
     let issue_fields = "number,title,state,labels,assignees,createdAt,updatedAt,url,milestone";
     let pr_fields =
         "number,title,state,labels,assignees,createdAt,updatedAt,url,headRefName,baseRefName,isDraft,reviewDecision";
@@ -135,7 +168,7 @@ pub async fn fetch_gh_dashboard(
             "issue",
             "list",
             "--repo",
-            GH_REPO,
+            repo.as_str(),
             "--json",
             issue_fields,
             "--limit",
@@ -165,7 +198,7 @@ pub async fn fetch_gh_dashboard(
             "pr",
             "list",
             "--repo",
-            GH_REPO,
+            repo.as_str(),
             "--json",
             pr_fields,
             "--limit",
@@ -328,5 +361,23 @@ mod tests {
         let entry: Option<(GhSnapshot, Instant)> = None;
         let hit = check_cache_hit(&entry, false, Instant::now(), Duration::from_secs(60));
         assert!(hit.is_none(), "empty cache must miss");
+    }
+
+    #[test]
+    fn is_valid_repo_accepts_canonical() {
+        assert!(is_valid_repo("392fyc/Mercury"));
+        assert!(is_valid_repo("owner-name/repo.name"));
+        assert!(is_valid_repo("a/b"));
+    }
+
+    #[test]
+    fn is_valid_repo_rejects_malformed() {
+        assert!(!is_valid_repo(""));
+        assert!(!is_valid_repo("nonslash"));
+        assert!(!is_valid_repo("/leading-slash"));
+        assert!(!is_valid_repo("trailing/"));
+        assert!(!is_valid_repo("too/many/slashes"));
+        assert!(!is_valid_repo("owner/repo;rm -rf /"));
+        assert!(!is_valid_repo("owner repo/name"));
     }
 }

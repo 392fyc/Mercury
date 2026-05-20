@@ -19,9 +19,9 @@
             "--repo",
             { "validator": "^[\\w.-]+/[\\w.-]+$" },
             "--json",
-            { "validator": "^[a-zA-Z,]+$" },
+            { "validator": "^(number|title|state|labels|assignees|createdAt|updatedAt|url|milestone|author|body|closedAt|stateReason)(,(number|title|state|labels|assignees|createdAt|updatedAt|url|milestone|author|body|closedAt|stateReason))*$" },
             "--limit",
-            { "validator": "^[0-9]+$" },
+            { "validator": "^([1-9]|[1-9][0-9]|[1-9][0-9]{2}|1000)$" },
             "--state",
             { "validator": "^(open|closed|all)$" }
           ]
@@ -36,9 +36,9 @@
             "--repo",
             { "validator": "^[\\w.-]+/[\\w.-]+$" },
             "--json",
-            { "validator": "^[a-zA-Z,]+$" },
+            { "validator": "^(number|title|state|labels|assignees|createdAt|updatedAt|url|headRefName|baseRefName|isDraft|reviewDecision|author|body|closedAt|mergedAt|mergeable|reviewRequests)(,(number|title|state|labels|assignees|createdAt|updatedAt|url|headRefName|baseRefName|isDraft|reviewDecision|author|body|closedAt|mergedAt|mergeable|reviewRequests))*$" },
             "--limit",
-            { "validator": "^[0-9]+$" },
+            { "validator": "^([1-9]|[1-9][0-9]|[1-9][0-9]{2}|1000)$" },
             "--state",
             { "validator": "^(open|closed|all)$" }
           ]

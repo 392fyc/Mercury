@@ -8,7 +8,8 @@
 //   lane:<value>  — substring match against labels that start with "lane:".
 //                   `lane:main` matches a label named "lane:main".
 //                   `lane:` (empty value) is dropped (consistent with filter.ts).
-//   free text     — substring match on title + number string + author login.
+//   free text     — substring match on title + number string + assignee logins
+//                   (and headRefName for PRs).
 //
 // Empty filter → show all (returns empty token array).
 // AND semantics: item must satisfy every token.

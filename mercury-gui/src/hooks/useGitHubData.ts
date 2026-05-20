@@ -1,6 +1,7 @@
 // useGitHubData — fetches GitHub Issue/PR data via Tauri IPC (#416).
-// Mirrors useSnapshot pattern: monotonic reqId race guard, silent/manual
-// distinction, no auto-refresh (per DoD — rate-limit awareness).
+// Mirrors useSnapshot pattern: monotonic reqId race guard.
+// No auto-refresh and no silent/manual distinction (per DoD — rate-limit
+// awareness); refresh() is always user-initiated.
 // 60s TTL cache lives in Rust; this hook holds no client-side TTL.
 
 import { useState, useCallback, useRef } from "react";

@@ -1,10 +1,10 @@
 // PullRequestRow — single row in the PRs section of the GitHub dashboard (#416).
 // Clickable → opens PR URL in browser via tauri-plugin-opener.
 
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { Badge } from "@/components/ui/badge";
 import { elapsed } from "@/lib/elapsed";
 import type { GhPullRequest } from "@/lib/ghTypes";
+import { safeOpenUrl } from "@/lib/safeOpenUrl";
 
 interface PullRequestRowProps {
   pr: GhPullRequest;
@@ -23,8 +23,8 @@ function reviewDecisionVariant(
 
 export function PullRequestRow({ pr }: PullRequestRowProps) {
   function handleOpen() {
-    openUrl(pr.url).catch(() => {
-      // Non-fatal
+    safeOpenUrl(pr.url).catch(() => {
+      // Non-fatal (URL open failure or whitelist rejection)
     });
   }
 

@@ -1,10 +1,10 @@
 // IssueRow — single row in the Issues section of the GitHub dashboard (#416).
 // Clickable → opens issue URL in browser via tauri-plugin-opener.
 
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { Badge } from "@/components/ui/badge";
 import { elapsed } from "@/lib/elapsed";
 import type { GhIssue } from "@/lib/ghTypes";
+import { safeOpenUrl } from "@/lib/safeOpenUrl";
 
 interface IssueRowProps {
   issue: GhIssue;
@@ -12,8 +12,8 @@ interface IssueRowProps {
 
 export function IssueRow({ issue }: IssueRowProps) {
   function handleOpen() {
-    openUrl(issue.url).catch(() => {
-      // Non-fatal: URL open failure doesn't break the dashboard
+    safeOpenUrl(issue.url).catch(() => {
+      // Non-fatal: URL open failure (or whitelist rejection) doesn't break the dashboard
     });
   }
 
