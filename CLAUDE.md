@@ -151,14 +151,14 @@ CLI tools that fetch named items from a versioned registry. Each `add` invocatio
 
 The local-path arg form is intended for Mercury-internal registry items (e.g., a path under `mercury-gui/` or a sibling Mercury repo path). It is NOT a back door for importing arbitrary external-project files via a local checkout.
 
-A local-path add **falls back to the full cherry-pick protocol (rules 1-6)** when ANY of these conditions hold:
+A local-path add **falls back to the full cherry-pick protocol (rules 1-6)** when ANY of these conditions hold. Resolve the source path with `git rev-parse --show-toplevel` for the Mercury repo root (or `realpath` on the path arg) before applying the test — symlinks, `..` traversal, and absolute paths are all normalized this way:
 
-- The path resolves outside the current Mercury repo working tree
-- The path resolves into a git submodule pointing to a third-party upstream repo
-- The path resolves into a node_modules / vendored directory whose contents originate from an external package
-- The path resolves into a temporary checkout of an external project staged for import
+- The resolved path is **not** under the current Mercury repo working tree (i.e., does not have the `git rev-parse --show-toplevel` output as a prefix)
+- The resolved path is under a git submodule whose upstream points to a third-party repo (check via `git submodule status`)
+- The resolved path is under a `node_modules/`, `vendor/`, or other package-manager-staged directory whose contents originate from an external package
+- The resolved path is under a temporary checkout of an external project staged for import (e.g., a `tmp/`, `scratch/`, or any cloned third-party repo directory)
 
-When in doubt, treat the local-path source as a file-lift cherry-pick (full protocol applies). The carve-out exists to formalize "shadcn-style registry add from a versioned source" — local-path is the narrowest case and the guard above keeps the supply-chain audit surface intact.
+When in doubt, treat the local-path source as a file-lift cherry-pick (full protocol applies). The carve-out exists to formalize "shadcn-style registry add from a versioned source" — local-path is the narrowest case and the guard above (plus the catch-all default-deny) keeps the supply-chain audit surface intact.
 
 **Tighter than Category A** — Category B's PR body line must identify (a) the specific registry-item / URL / local-path arg, (b) the source identifier in the form appropriate to the arg kind (default registry / custom registry URL / local path), and (c) the item type if non-component, because together these determine license + upstream identity.
 
