@@ -1,11 +1,13 @@
 // LaneTable — full cross-lane snapshot table.
 // Renders known lanes first, then the __unassigned__ bucket if non-empty.
-// Applies filter tokens to hide non-matching rows.
+// Applies filter tokens to hide non-matching rows AND to align the row's
+// displayed job with the filter (#432 — most-recent MATCHING job, not most-
+// recent overall job, so the surfaced row never contradicts the active filter).
 
 import { useState } from "react";
 import { LaneRow } from "./LaneRow";
 import { JobDetailDialog } from "./JobDetailDialog";
-import { laneMatchesFilter, parseFilter } from "@/lib/filter";
+import { laneMatchesFilter, matchesJob, parseFilter } from "@/lib/filter";
 import type { JobState, Lane } from "@/lib/types";
 
 // Canonical lane order for v1
@@ -51,6 +53,9 @@ export function LaneTable({
   const [dialogOpen, setDialogOpen] = useState(false);
 
   const tokens = parseFilter(filterRaw);
+  // Job-relevant tokens drive the row's displayed job; `l:` tokens select
+  // lanes only and are filtered out so they don't accidentally exclude jobs.
+  const jobTokens = tokens.filter((t) => t.kind !== "lane");
   const laneList = buildLaneList(lanes);
   const unassigned = jobsByLane["__unassigned__"] ?? [];
 
@@ -58,6 +63,13 @@ export function LaneTable({
     setSelectedLane(laneName);
     setSelectedJob(job);
     setDialogOpen(true);
+  }
+
+  // Display-job picker: matching jobs only, so the row never contradicts the
+  // active filter. Empty `jobTokens` → all jobs match → same list as before.
+  function matchingJobs(laneName: string, jobs: JobState[]): JobState[] {
+    if (jobTokens.length === 0) return jobs;
+    return jobs.filter((job) => matchesJob(job, laneName, jobTokens));
   }
 
   const visibleLanes = laneList.filter((lane) => {
@@ -89,7 +101,7 @@ export function LaneTable({
               <LaneRow
                 key={lane.name}
                 lane={lane}
-                jobs={jobsByLane[lane.name] ?? []}
+                jobs={matchingJobs(lane.name, jobsByLane[lane.name] ?? [])}
                 onSelect={(job) => handleSelect(lane.name, job)}
                 elapsedNonce={elapsedNonce}
               />
@@ -98,7 +110,7 @@ export function LaneTable({
               <LaneRow
                 key="__unassigned__"
                 lane={{ name: "__unassigned__" }}
-                jobs={unassigned}
+                jobs={matchingJobs("__unassigned__", unassigned)}
                 onSelect={(job) => handleSelect("__unassigned__", job)}
                 elapsedNonce={elapsedNonce}
               />
