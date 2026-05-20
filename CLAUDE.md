@@ -132,11 +132,11 @@ CLI tools that fetch named items from a versioned registry. Each `add` invocatio
 **Required for Category B**:
 
 1. **Provenance line in PR body** (stricter than Category A): record (a) exact CLI invocation including the item-name / URL / path arg(s), (b) shadcn CLI version at invocation time, (c) **source identifier — always**, in one of three forms depending on the arg kind:
-   - For a registry item name (default registry): `source = default registry (ui.shadcn.com)`
+   - For a registry item name (default registry): `source = default registry (https://ui.shadcn.com/r)`
    - For a URL arg (custom registry or registry item URL): `source = custom registry URL: <url>`
    - For a local-path arg (file-system import, not registry-fetched): `source = local path: <relative-path>` (note that local-path adds bypass the registry layer entirely — the path IS the upstream identity)
 
-   The source identifier determines license + upstream identity, so the arg kind must be unambiguous on the record. (d) registry item type if non-component (e.g., `registry:hook`, `registry:font`, `registry:lib`, `registry:page`, `registry:file`). Example: "Imported via `pnpm dlx shadcn@latest add tabs`, shadcn CLI vX.Y, source = default registry (ui.shadcn.com), item type = registry:component at 2026-MM-DD".
+   The source identifier determines license + upstream identity, so the arg kind must be unambiguous on the record. (d) registry item type if non-component (e.g., `registry:hook`, `registry:font`, `registry:lib`, `registry:page`, `registry:file`). Example: "Imported via `pnpm dlx shadcn@latest add tabs`, shadcn CLI vX.Y, source = default registry (https://ui.shadcn.com/r), item type = registry:component at 2026-MM-DD".
 2. **License compatibility check**: confirm the license of the actual source you're importing from at invocation time, NOT a fixed assumption. The shadcn default registry is MIT (illustrative); custom registries may use different licenses, and local-path adds inherit the license of the source path's project. Verify per import + record the verified license in PR body.
 3. **Customization is owned by Mercury after add**: shadcn's design philosophy is "copy-paste with full ownership" — once added, the file is Mercury-owned and editable without per-file upstream-tracking attribution.
 
