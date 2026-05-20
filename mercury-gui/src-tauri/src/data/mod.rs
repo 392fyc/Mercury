@@ -59,8 +59,13 @@ fn home_forms() -> Option<&'static (String, String)> {
 /// frontend or stderr never include `C:\Users\<name>\...` literals.
 /// Handles both backslash and forward-slash variants for cross-platform safety.
 ///
-/// Allocates only when the input actually contains a home-shaped substring.
-/// Non-matching strings return a single owned copy of the input (one alloc).
+/// Performance note: the expensive `String::replace` call path (which allocates
+/// a new buffer scanning + replacing) is only taken when the input actually
+/// contains a home-shaped substring. On the non-match common case the function
+/// still allocates a single owned copy of the input (one `s.to_string()`) to
+/// satisfy the `String` return type — there is no zero-alloc path. For true
+/// zero-alloc non-match behavior, callers should use the contains-check pattern
+/// in `redact_home_in_json_at` (see below).
 pub fn redact_home(s: &str) -> String {
     let Some((home_str, alt)) = home_forms() else {
         return s.to_string();
