@@ -5,6 +5,7 @@ use tauri::{
 };
 
 mod data;
+mod gh_dashboard;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -30,12 +31,15 @@ pub fn run() {
 
     builder
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_shell::init())
+        .manage(gh_dashboard::GhCacheState::default())
         .invoke_handler(tauri::generate_handler![
             greet,
             data::commands::read_jobs,
             data::commands::read_roster,
             data::commands::read_lanes,
             data::commands::read_jobs_by_lane,
+            gh_dashboard::fetch_gh_dashboard,
         ])
         .setup(|app| {
             // System tray: "Quit Mercury" menu item.
