@@ -106,6 +106,8 @@ Mercury's mount philosophy (DIRECTION.md §四): build the minimum in-house; mou
 
 When files from an external project are cherry-picked into Mercury, the cherry-pick protocol in [`CLAUDE.md`](CLAUDE.md) applies (manifest entry in `.mercury/state/upstream-manifest.json`, SKILL.md frontmatter, attribution comments, license gate, SHA verification).
 
+Two adjacent cases have a narrower carve-out (see CLAUDE.md §"Carve-out: CLI-generated scaffolding"): one-shot project scaffolding via `pnpm create tauri-app` / `pnpm create vite` (Category A — PR-body provenance only, no manifest), and registry-based per-item imports via `pnpm dlx shadcn@latest add` (Category B — PR-body provenance plus registry-source identification, no manifest). All other cherry-picks follow the full protocol above.
+
 ## Example files
 
 Two `.example` files ship at the repo root. They serve two different tracking models:

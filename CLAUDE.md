@@ -84,6 +84,9 @@ Mercury 的部分功能跨仓库运作。以下表格记录外部仓库与 Mercu
 
 When cherry-picking any file from an external project into Mercury, the SAME commit must include:
 
+> See §"Carve-out: CLI-generated scaffolding" below before applying rules 1-6 to files produced by `pnpm dlx shadcn@latest add`, `pnpm create tauri-app`, or `pnpm create vite`.
+
+
 1. **Manifest entry**: add to `.mercury/state/upstream-manifest.json` — fields: `path`, `scope` (`"project"` for repo files, `"user"` for `~/.claude/` global files), `upstream_repo`, `upstream_path`, `upstream_sha_at_import` (verify via `gh api repos/{owner}/{repo}/commits/{sha}`), `upstream_license`, `import_pr`, `import_date`, `import_rationale`, `last_drift_check` (null).
 2. **SKILL.md frontmatter**: add `upstream_source`, `upstream_sha`, `upstream_license`, `cherry_picked_in`, `cherry_picked_at` fields.
 3. **Script header**: add 5-line comment block after shebang — `UPSTREAM`, `SOURCE`, `SHA`, `DATE`, `ISSUE`.
@@ -92,3 +95,59 @@ When cherry-picking any file from an external project into Mercury, the SAME com
 6. **SHA verification**: `upstream_sha_at_import` must be verified via `gh api` before committing. Never record from memory. Mark `UNKNOWN_VERIFY_MANUALLY` only if API is unreachable; list in PR body.
 
 Drift monitoring: run `bash scripts/upstream-drift-check.sh` periodically to detect upstream changes.
+
+### Carve-out: CLI-generated scaffolding
+
+The cherry-pick protocol above applies to **files lifted from a specific upstream commit** (canonical upstream path + SHA + drift monitoring). It does NOT cleanly fit two adjacent cases that produce files via CLI invocation rather than direct upstream-path import. Split into 2 sub-categories:
+
+#### Category A — Pure scaffolding (one-shot project init)
+
+Generators that produce a one-time project skeleton from templated boilerplate. The templates ship with the CLI itself; no per-file upstream "source path" exists.
+
+| Generator | Invocation | Output scope |
+|---|---|---|
+| **create-tauri-app** | `pnpm create tauri-app` | Tauri 2 project skeleton (Rust workspace + JS frontend templated config) |
+| **create-vite** | `pnpm create vite` | Vite + framework skeleton (TS config + entry + index.html) |
+
+**Required for Category A**:
+
+1. **Provenance line in PR body**: PR creating the scaffold records the exact CLI invocation + version at invocation time (e.g., "Scaffold via `pnpm create tauri-app`, create-tauri-app vX.Y at 2026-MM-DD"). Use the actual version, not a placeholder. Note: `pnpm create` resolves the create-* starter package transiently and does NOT pin the generator into the produced app's `pnpm-lock.yaml` — the PR-body line is the only durable provenance record.
+2. **License compatibility check**: confirm the scaffold output's license is MIT / Apache-2.0 / similarly permissive (Tauri 2 = MIT/Apache-2.0; Vite = MIT). Record in PR body.
+3. **Customization allowed without attribution**: post-scaffold Mercury edits to the generated files do NOT require per-file `Based on` attribution.
+
+**NOT required for Category A**:
+
+- ❌ Manifest entry in `.mercury/state/upstream-manifest.json`
+- ❌ SKILL.md frontmatter `upstream_sha` field
+- ❌ Per-file `# Based on <upstream>` comment
+- ❌ Drift monitoring via `scripts/upstream-drift-check.sh`
+
+#### Category B — Registry-based item import (per-item upstream lift)
+
+CLI tools that fetch named items from a versioned registry. Each `add` invocation imports a concrete registry item that has a canonical upstream identity. Closer to a per-file cherry-pick than to pure scaffolding. **Applies to ALL `shadcn add` invocations regardless of registry item type** — components, hooks, utilities, pages, fonts, themes, config files, rules, libraries, or any other resource a shadcn-compatible registry exposes (per [shadcn CLI docs](https://ui.shadcn.com/docs/cli) — `add` consumes registry items by name, URL, or local path).
+
+| Generator | Invocation | Registry default | Output scope |
+|---|---|---|---|
+| **shadcn (any registry item)** | `pnpm dlx shadcn@latest add <name-or-url-or-path>` | <https://ui.shadcn.com/r> (official shadcn registry) | Any registry-backed resource: UI components, hooks, utilities, pages, themes, fonts, config files, rules, libraries, etc. Resource arg is a registry item name (default registry), a URL (any registry), or a local path. |
+
+**Required for Category B**:
+
+1. **Provenance line in PR body** (stricter than Category A): record (a) exact CLI invocation including the item-name / URL / path arg(s), (b) shadcn CLI version at invocation time, (c) registry source — **always**, explicitly stating "default (ui.shadcn.com)" or the non-default URL / namespace (the registry source determines license + upstream identity, so default-vs-custom must be unambiguous on the record), (d) registry item type if non-component (e.g., `registry:hook`, `registry:font`, `registry:lib`, `registry:page`, `registry:file`). Example: "Imported via `pnpm dlx shadcn@latest add tabs`, shadcn CLI vX.Y, registry = default (ui.shadcn.com), item type = registry:component at 2026-MM-DD".
+2. **License compatibility check**: confirm the registry's license (shadcn = MIT). Record in PR body.
+3. **Customization is owned by Mercury after add**: shadcn's design philosophy is "copy-paste with full ownership" — once added, the file is Mercury-owned and editable without per-file upstream-tracking attribution.
+
+**NOT required for Category B** (registry items are not pinned to upstream SHA; shadcn's contract is "you own the code"):
+
+- ❌ Manifest entry in `.mercury/state/upstream-manifest.json` (registry items are not version-pinned to a specific upstream commit; shadcn's model deliberately decouples from upstream after add)
+- ❌ Per-file `# Based on <upstream>` comment
+- ❌ Drift monitoring via `scripts/upstream-drift-check.sh`
+
+**Tighter than Category A** — Category B's PR body line must identify (a) the specific registry item arg, (b) the registry source explicitly (whether default or custom), and (c) the item type if non-component, because together these determine license + upstream identity.
+
+#### Adding new generators to either category
+
+Extend the appropriate table via a separate PR. The PR must cite (a) generator's package source URL, (b) license, (c) whether it produces one-shot scaffolding (→ Category A) or per-item registry imports (→ Category B), (d) drift-tracking rationale. Any tool not listed should be treated as a regular cherry-pick (full protocol rules 1-6 apply) until categorized here.
+
+#### Authority chain
+
+This carve-out resolves the repeat-DISAGREE-cite pattern observed during Phase 6 GUI MVP chain (PRs #421/#424/#425) where Argus / Copilot review threads flagged CLI-generated files as missing attribution. The Category A / Category B split was added in response to the audit finding that shadcn `add` is materially closer to registry-import than to pure project scaffolding, while create-tauri-app / create-vite genuinely are pure scaffolding.
