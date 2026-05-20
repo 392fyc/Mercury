@@ -42,7 +42,7 @@ function App() {
             <strong>Error loading data:</strong> {String(redactHomePaths(error))}
             <button
               className="ml-4 underline text-red-600 dark:text-red-400 hover:no-underline"
-              onClick={refresh}
+              onClick={() => refresh()}
             >
               Retry
             </button>

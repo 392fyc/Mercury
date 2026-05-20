@@ -30,7 +30,7 @@ export function FilterBar({
       <Button
         variant="outline"
         size="sm"
-        onClick={onRefresh}
+        onClick={() => onRefresh()}
         disabled={loading}
         aria-label="Refresh"
         title="Refresh data"
