@@ -91,6 +91,8 @@ fn try_watch(
     label: &str,
 ) -> Result<(), notify::Error> {
     let display = redact_home(&path.display().to_string());
+    // MVP limitation: late-created paths don't auto-rewatch; restart GUI to
+    // pick them up. Tracked at https://github.com/392fyc/Mercury/issues/423.
     if !path.exists() {
         eprintln!("[mercury-gui] skip watch ({label}): path absent {display}");
         return Ok(());
