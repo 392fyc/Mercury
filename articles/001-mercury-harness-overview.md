@@ -409,6 +409,8 @@ Adapter 只做接口转换，不包含业务逻辑。如果需要业务逻辑，
 
 这个协议确保了三件事：溯源（知道代码从哪来）、漂移检测（知道上游是否变了）、法律合规（license gate）。
 
+**CLI scaffolding / registry-import carve-out**：[CLAUDE.md §Carve-out: CLI-generated scaffolding](../CLAUDE.md#carve-out-cli-generated-scaffolding) 是该 carve-out 的权威定义源。两个邻近场景（一次性 CLI 脚手架与 registry 单 item 导入）有更窄的处理范围；本文不复述具体规则，避免跨文档漂移——查阅 CLAUDE.md 获取当前细则。
+
 ### 实证案例：5 种挂载模式
 
 Mercury 目前落地了多种挂载模式，构成了实践中的"适配层谱系"：
@@ -526,7 +528,7 @@ Mercury 的 96 个 session（截至 S96）构成了一个清晰的演化轨迹�
 | `.claude/skills/pr-flow/SKILL.md` | PR-flow skill（Argus behavior model，escape-hatch protocol，GraphQL resolveReviewThread） |
 | `adapters/gpt-image-2/README.md` | uvx-pinned-SHA mount 案例（MIT upstream，env allowlist，drift-check policy） |
 | `adapters/gpt-image-2/invoke.py` | Slice A adapter（84 LOC，uvx 包装，env 过滤） |
-| `.mercury/state/upstream-manifest.json` | Cherry-pick 治理 manifest（所有外部引用的 SHA + license + PR 记录） |
+| `.mercury/state/upstream-manifest.json` | Cherry-pick 治理 manifest（全协议 cherry-pick 的 SHA + license + PR 记录；CLI scaffolding / registry-import carve-out 不在此 manifest，详见 [CLAUDE.md §Carve-out: CLI-generated scaffolding](../CLAUDE.md#carve-out-cli-generated-scaffolding)）|
 | `scripts/upstream-drift-check.sh` | Drift monitoring 工具 |
 
 ### GitHub Issues / PRs（实证案例）
