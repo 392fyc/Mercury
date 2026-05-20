@@ -38,7 +38,9 @@ export interface JobState {
 export interface RosterSnapshot {
   proto: number;
   supervisorPid: number;
-  updatedAt?: string; // ISO 8601
+  // Unix epoch milliseconds — Rust dispatches via `chrono::serde::ts_milliseconds_option`
+  // (NOT ISO 8601; see src-tauri/src/data/models.rs `RosterSnapshot.updated_at`).
+  updatedAt?: number;
   workers: Record<string, unknown>;
 }
 

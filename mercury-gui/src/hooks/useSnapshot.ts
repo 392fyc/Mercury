@@ -14,7 +14,7 @@ export interface SnapshotState {
   error: string | undefined;
   loading: boolean;
   elapsedNonce: number; // incremented every 60s to force elapsed re-render
-  refresh: () => void;
+  refresh: (silent?: boolean) => void;
 }
 
 export function useSnapshot(): SnapshotState {
@@ -29,8 +29,12 @@ export function useSnapshot(): SnapshotState {
   // state. Each invocation captures its own id and bails if a later one ran.
   const reqIdRef = useRef(0);
 
-  const refresh = useCallback(async () => {
+  // Manual refresh (silent=false, default) flips loading→true so the button
+  // spinner is visible. Watcher-driven refresh passes silent=true so the spinner
+  // doesn't flash on every file-change tick (Argus iter-2 Copilot C4).
+  const refresh = useCallback(async (silent: boolean = false) => {
     const myId = ++reqIdRef.current;
+    if (!silent) setLoading(true);
     try {
       const [jbl, ls, rs] = await Promise.all([
         invoke<Record<string, JobState[]>>("read_jobs_by_lane"),
@@ -54,8 +58,11 @@ export function useSnapshot(): SnapshotState {
     let cancelled = false;
     let unlisten: UnlistenFn | undefined;
 
+    // Auto-refresh stays silent so the watcher tick doesn't flash the spinner;
+    // initial load also runs silent because the page-level "Loading snapshot…"
+    // placeholder already conveys progress.
     const safeRefresh = async () => {
-      if (!cancelled) await refresh();
+      if (!cancelled) await refresh(true);
     };
 
     safeRefresh();
