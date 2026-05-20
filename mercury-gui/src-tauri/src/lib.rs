@@ -4,6 +4,8 @@ use tauri::{
     tray::TrayIconBuilder,
 };
 
+mod data;
+
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
@@ -28,7 +30,13 @@ pub fn run() {
 
     builder
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet])
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            data::commands::read_jobs,
+            data::commands::read_roster,
+            data::commands::read_lanes,
+            data::commands::read_jobs_by_lane,
+        ])
         .setup(|app| {
             // System tray: "Quit Mercury" menu item.
             // Uses the app's default window icon (bundled in src-tauri/icons/).
@@ -51,6 +59,11 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+
+            // Spawn the read-side file-watcher (#414). Watcher init can fail
+            // inside the spawned thread; those failures are logged with
+            // home-redacted paths and the GUI keeps working without live events.
+            data::watcher::start(app.handle().clone());
             Ok(())
         })
         .run(tauri::generate_context!())
