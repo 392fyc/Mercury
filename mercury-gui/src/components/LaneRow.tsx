@@ -13,12 +13,24 @@ interface LaneRowProps {
   elapsedNonce: number;
 }
 
+// Parse an ISO timestamp into a ms epoch; `NaN` for missing/invalid input
+// so the comparator can defensively treat both as "older than anything real".
+function tsMs(iso: string | undefined): number {
+  if (!iso) return NaN;
+  return new Date(iso).getTime();
+}
+
 function mostRecent(jobs: JobState[]): JobState | null {
   if (jobs.length === 0) return null;
   return jobs.reduce((best, cur) => {
-    if (!best.createdAt) return cur;
-    if (!cur.createdAt) return best;
-    return cur.createdAt > best.createdAt ? cur : best;
+    const a = tsMs(best.createdAt);
+    const b = tsMs(cur.createdAt);
+    const aValid = Number.isFinite(a);
+    const bValid = Number.isFinite(b);
+    if (!aValid && !bValid) return best;
+    if (!aValid) return cur;
+    if (!bValid) return best;
+    return b > a ? cur : best;
   });
 }
 
@@ -35,12 +47,17 @@ export function LaneRow({ lane, jobs, onSelect, elapsedNonce: _elapsedNonce }: L
     <tr
       className="border-b border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
       onClick={() => { if (job) onSelect(job); }}
-      role="row"
+      role="button"
       tabIndex={0}
       onKeyDown={(e) => {
-        if ((e.key === "Enter" || e.key === " ") && job) onSelect(job);
+        if ((e.key === "Enter" || e.key === " ") && job) {
+          // preventDefault keeps Space from scrolling the page; aligns with
+          // native <button> activation semantics (Argus iter-1 a11y finding).
+          e.preventDefault();
+          onSelect(job);
+        }
       }}
-      aria-label={`Lane ${lane.name}`}
+      aria-label={`Open details for lane ${lane.name}`}
     >
       {/* Lane name */}
       <td className="px-3 py-2 font-bold text-sm whitespace-nowrap">

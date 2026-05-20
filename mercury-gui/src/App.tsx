@@ -5,6 +5,7 @@ import { useState } from "react";
 import { FilterBar } from "./components/FilterBar";
 import { LaneTable } from "./components/LaneTable";
 import { useSnapshot } from "./hooks/useSnapshot";
+import { redactHomePaths } from "./lib/redact";
 
 function App() {
   const { jobsByLane, lanes, error, loading, elapsedNonce, refresh } =
@@ -35,7 +36,10 @@ function App() {
       <main className="flex-1 px-4 py-4 overflow-auto">
         {error && (
           <div className="mb-4 rounded-md border border-red-200 bg-red-50 dark:bg-red-950 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-300">
-            <strong>Error loading data:</strong> {error}
+            {/* IPC error strings may carry host paths or supervisor details;
+                run them through redactHomePaths defense-in-depth (Argus iter-1
+                Critical/security finding). */}
+            <strong>Error loading data:</strong> {String(redactHomePaths(error))}
             <button
               className="ml-4 underline text-red-600 dark:text-red-400 hover:no-underline"
               onClick={refresh}
