@@ -3,6 +3,11 @@ use super::paths;
 use super::DataError;
 use std::collections::HashMap;
 use std::fs;
+use std::io::ErrorKind;
+
+/// state.json files in the wild are typically 1-10 KB. Cap reads at 2 MB so a
+/// pathological file can't OOM the GUI process (#414 Argus iter-1 Critical 5).
+const MAX_STATE_JSON_BYTES: u64 = 2 * 1024 * 1024;
 
 #[tauri::command]
 pub fn read_jobs() -> Result<Vec<JobState>, DataError> {
@@ -20,10 +25,19 @@ pub fn read_jobs() -> Result<Vec<JobState>, DataError> {
         if !state_path.is_file() {
             continue;
         }
-        // Schema-tolerant: skip unreadable / malformed files rather than failing the whole call.
-        // GUI surfaces "0 jobs" instead of an error if every file is corrupt.
+        // Schema-tolerant: skip unreadable / malformed / oversized files rather
+        // than failing the whole call. GUI surfaces "0 jobs" instead of an error
+        // if every file is corrupt.
+        let Ok(meta) = fs::metadata(&state_path) else { continue };
+        if meta.len() > MAX_STATE_JSON_BYTES {
+            continue;
+        }
         let Ok(bytes) = fs::read(&state_path) else { continue };
-        let Ok(job) = serde_json::from_slice::<JobState>(&bytes) else { continue };
+        let Ok(mut job) = serde_json::from_slice::<JobState>(&bytes) else { continue };
+        // Strip home prefix from path-bearing fields so the JS frontend never
+        // sees `C:\Users\<name>\...` literals (defense in depth — `redact_home`
+        // is also applied to surfaced error strings in DataError).
+        job.sanitize_paths();
         out.push(job);
     }
     Ok(out)
@@ -35,10 +49,17 @@ pub fn read_roster() -> Result<RosterSnapshot, DataError> {
     if !p.exists() {
         return Ok(RosterSnapshot::default());
     }
-    let bytes = fs::read(&p)?;
+    let bytes = match fs::read(&p) {
+        Ok(b) => b,
+        // Transient NotFound (e.g. supervisor file rotation) should not flash
+        // an error to the GUI; degrade to default and resync on the next watcher
+        // tick (matches the lenient pattern of read_jobs).
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(RosterSnapshot::default()),
+        Err(e) => return Err(e.into()),
+    };
     // roster.json is written by an external supervisor process; mid-write reads
     // can yield truncated JSON. Degrade to default rather than surfacing a
-    // transient parse error (matches read_jobs lenient pattern).
+    // transient parse error.
     Ok(serde_json::from_slice(&bytes).unwrap_or_default())
 }
 
@@ -147,7 +168,7 @@ pub(crate) fn group_jobs_by_lane(
             .find(|l| {
                 l.worktree_path
                     .as_ref()
-                    .map(|wp| normalize_path(wp).eq_ignore_ascii_case(&job_norm))
+                    .map(|wp| normalize_path(wp) == job_norm)
                     .unwrap_or(false)
             })
             .map(|l| l.name.clone())

@@ -39,15 +39,15 @@ pub fn lanes_path() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
-    // NB: cargo's default test-threads = num_cpus and env-var mutations are
-    // process-global. Each test below SET-then-READ-then-REMOVE so race windows
-    // between tests are benign (any race results in a temporarily different value,
-    // not a wrong assertion since each test reads after its own set). If new
-    // tests are added that expect env-vars UNSET, switch to `serial_test` crate.
+    // Env-var mutation is process-global; cargo's default test-threads = num_cpus.
+    // Serialize all env-touching tests under a single mutex to prevent interleaving.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn claude_config_dir_respects_env() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("CLAUDE_CONFIG_DIR", "/tmp/fake-claude");
         assert_eq!(claude_config_dir(), PathBuf::from("/tmp/fake-claude"));
         std::env::remove_var("CLAUDE_CONFIG_DIR");
@@ -55,6 +55,7 @@ mod tests {
 
     #[test]
     fn jobs_dir_under_config_dir() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("CLAUDE_CONFIG_DIR", "/tmp/cc-jobs");
         assert_eq!(jobs_dir(), PathBuf::from("/tmp/cc-jobs/jobs"));
         std::env::remove_var("CLAUDE_CONFIG_DIR");
@@ -62,6 +63,7 @@ mod tests {
 
     #[test]
     fn roster_path_under_daemon() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("CLAUDE_CONFIG_DIR", "/tmp/cc-roster");
         assert_eq!(
             roster_path(),
@@ -72,6 +74,7 @@ mod tests {
 
     #[test]
     fn lanes_path_respects_mercury_env() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("MERCURY_MEMORY_DIR", "/tmp/mem");
         assert_eq!(lanes_path(), PathBuf::from("/tmp/mem/LANES.md"));
         std::env::remove_var("MERCURY_MEMORY_DIR");

@@ -17,7 +17,11 @@ pub const DATA_CHANGED_EVENT: &str = "mercury:data-changed";
 /// The thread owns the `notify::Watcher`; dropping the thread (process exit)
 /// stops watching. No explicit shutdown channel for the MVP — follow-up tracked
 /// for clean shutdown on `RunEvent::ExitRequested`.
-pub fn start(app_handle: AppHandle) -> Result<(), notify::Error> {
+///
+/// Returns `()` because all fallible initialization happens inside the spawned
+/// thread (watcher creation + `watch()` calls). Failures are logged via stderr
+/// (`redact_home`-scrubbed). The GUI continues to work without live events.
+pub fn start(app_handle: AppHandle) {
     let jobs = paths::jobs_dir();
     let roster_parent = paths::roster_path().parent().map(|p| p.to_path_buf());
     let lanes_parent = paths::lanes_path().parent().map(|p| p.to_path_buf());
@@ -81,7 +85,6 @@ pub fn start(app_handle: AppHandle) -> Result<(), notify::Error> {
             }
         }
     });
-    Ok(())
 }
 
 fn try_watch(

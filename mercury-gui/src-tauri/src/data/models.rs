@@ -1,3 +1,4 @@
+use super::redact_home;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -36,6 +37,22 @@ pub struct JobState {
 
     pub worktree_path: Option<String>,
     pub worktree_branch: Option<String>,
+}
+
+impl JobState {
+    /// Strip the home directory prefix from path-bearing fields before
+    /// surfacing to the frontend. Mirrors the same scrubbing that `DataError`
+    /// applies to error messages so the GUI never sees `C:\Users\<name>\...`
+    /// literals. Idempotent.
+    pub fn sanitize_paths(&mut self) {
+        self.cwd = redact_home(&self.cwd);
+        if let Some(s) = self.link_scan_path.as_deref() {
+            self.link_scan_path = Some(redact_home(s));
+        }
+        if let Some(s) = self.worktree_path.as_deref() {
+            self.worktree_path = Some(redact_home(s));
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

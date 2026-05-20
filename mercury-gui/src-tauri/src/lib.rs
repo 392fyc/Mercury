@@ -60,14 +60,10 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // Spawn the read-side file-watcher (#414). Non-fatal if it fails —
-            // commands still work, just no live "data-changed" events.
-            if let Err(e) = data::watcher::start(app.handle().clone()) {
-                eprintln!(
-                    "[mercury-gui] data watcher start failed: {}",
-                    data::redact_home(&e.to_string())
-                );
-            }
+            // Spawn the read-side file-watcher (#414). Watcher init can fail
+            // inside the spawned thread; those failures are logged with
+            // home-redacted paths and the GUI keeps working without live events.
+            data::watcher::start(app.handle().clone());
             Ok(())
         })
         .run(tauri::generate_context!())
