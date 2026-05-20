@@ -27,7 +27,7 @@ chrono = { version = "0.4", features = ["serde"] }
 dirs = "5"
 notify = "8"
 thiserror = "2"
-tokio = { version = "1", features = ["sync", "macros", "rt"] }
+tokio = { version = "1", features = ["sync", "macros", "rt", "time"] }
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2.4.2"

@@ -9,7 +9,40 @@
     {
       "identifier": "shell:allow-execute",
       "allow": [
-        { "name": "gh", "cmd": "gh", "args": true, "sidecar": false }
+        {
+          "name": "gh-issue-list",
+          "cmd": "gh",
+          "sidecar": false,
+          "args": [
+            "issue",
+            "list",
+            "--repo",
+            { "validator": "^[\\w.-]+/[\\w.-]+$" },
+            "--json",
+            { "validator": "^[a-zA-Z,]+$" },
+            "--limit",
+            { "validator": "^[0-9]+$" },
+            "--state",
+            { "validator": "^(open|closed|all)$" }
+          ]
+        },
+        {
+          "name": "gh-pr-list",
+          "cmd": "gh",
+          "sidecar": false,
+          "args": [
+            "pr",
+            "list",
+            "--repo",
+            { "validator": "^[\\w.-]+/[\\w.-]+$" },
+            "--json",
+            { "validator": "^[a-zA-Z,]+$" },
+            "--limit",
+            { "validator": "^[0-9]+$" },
+            "--state",
+            { "validator": "^(open|closed|all)$" }
+          ]
+        }
       ]
     }
   ]

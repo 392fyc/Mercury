@@ -1,14 +1,17 @@
 // gh_dashboard — IPC command + in-memory cache for the Issue/PR dashboard (#416).
-// Invokes ambient `gh` CLI via tauri-plugin-shell (NOT std::process::Command).
-// Cache is process-lifetime only; lost on app restart per #416 DoD.
+// Invokes ambient `gh` CLI via tauri-plugin-shell. Cache is process-lifetime
+// only; lost on app restart per #416 DoD.
 
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 use tauri_plugin_shell::ShellExt;
 
+use crate::data::redact_home;
+
 const GH_CACHE_TTL_SECS: u64 = 60;
 const GH_REPO: &str = "392fyc/Mercury";
 const GH_LIMIT: &str = "200";
+const GH_SUBPROCESS_TIMEOUT_SECS: u64 = 30;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GhLabel {
@@ -61,8 +64,9 @@ pub struct GhPullRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GhSnapshot {
     pub issues: Vec<GhIssue>,
+    #[serde(rename = "pullRequests")]
     pub pull_requests: Vec<GhPullRequest>,
-    // Unix epoch milliseconds — consistent with RosterSnapshot.updatedAt
+    // Unix epoch milliseconds — consistent with RosterSnapshot.updatedAt.
     #[serde(rename = "fetchedAt")]
     pub fetched_at: i64,
 }
@@ -79,29 +83,52 @@ impl Default for GhCacheState {
     }
 }
 
+/// Cache-hit predicate. Returns a cloned snapshot when the entry is fresh and
+/// `force` is false; otherwise returns None (caller must refetch).
+/// Extracted so the force-bypass + TTL-expiry branches are directly testable
+/// without an AppHandle.
+fn check_cache_hit(
+    entry: &Option<(GhSnapshot, Instant)>,
+    force: bool,
+    now: Instant,
+    ttl: Duration,
+) -> Option<GhSnapshot> {
+    if force {
+        return None;
+    }
+    let (snapshot, cached_at) = entry.as_ref()?;
+    if now.saturating_duration_since(*cached_at) < ttl {
+        Some(snapshot.clone())
+    } else {
+        None
+    }
+}
+
 #[tauri::command]
 pub async fn fetch_gh_dashboard(
     app: tauri::AppHandle,
     state: tauri::State<'_, GhCacheState>,
     force: bool,
 ) -> Result<GhSnapshot, String> {
-    let mut cache = state.cache.lock().await;
-
-    // Return cached data if within TTL and not forced
-    if !force {
-        if let Some((ref snapshot, ref ts)) = *cache {
-            if ts.elapsed() < Duration::from_secs(GH_CACHE_TTL_SECS) {
-                return Ok(snapshot.clone());
-            }
+    // Acquire the lock only long enough to read the cache, then drop it
+    // before spawning gh. Holding it across the subprocess await would
+    // serialize concurrent IPC calls behind whichever gh invocation is
+    // currently in flight, defeating the cache and risking an indefinite
+    // hang if gh stalls (M1 from dual-verify).
+    let ttl = Duration::from_secs(GH_CACHE_TTL_SECS);
+    let timeout = Duration::from_secs(GH_SUBPROCESS_TIMEOUT_SECS);
+    {
+        let cache = state.cache.lock().await;
+        if let Some(hit) = check_cache_hit(&cache, force, Instant::now(), ttl) {
+            return Ok(hit);
         }
     }
 
-    // Fetch issues and PRs sequentially (simple; gh rate-limit safer)
     let issue_fields = "number,title,state,labels,assignees,createdAt,updatedAt,url,milestone";
     let pr_fields =
         "number,title,state,labels,assignees,createdAt,updatedAt,url,headRefName,baseRefName,isDraft,reviewDecision";
 
-    let issue_out = app
+    let issue_fut = app
         .shell()
         .command("gh")
         .args([
@@ -116,16 +143,22 @@ pub async fn fetch_gh_dashboard(
             "--state",
             "open",
         ])
-        .output()
+        .output();
+    let issue_out = tokio::time::timeout(timeout, issue_fut)
         .await
-        .map_err(|e| format!("gh spawn failed: {e}"))?;
+        .map_err(|_| {
+            format!(
+                "gh issue list timed out after {GH_SUBPROCESS_TIMEOUT_SECS}s — check `gh auth status` and network connectivity"
+            )
+        })?
+        .map_err(|e| redact_home(&format!("gh spawn failed: {e}")))?;
 
     if !issue_out.status.success() {
         let stderr = String::from_utf8_lossy(&issue_out.stderr);
-        return Err(format!("gh issue list failed: {stderr}"));
+        return Err(redact_home(&format!("gh issue list failed: {stderr}")));
     }
 
-    let pr_out = app
+    let pr_fut = app
         .shell()
         .command("gh")
         .args([
@@ -140,20 +173,26 @@ pub async fn fetch_gh_dashboard(
             "--state",
             "open",
         ])
-        .output()
+        .output();
+    let pr_out = tokio::time::timeout(timeout, pr_fut)
         .await
-        .map_err(|e| format!("gh spawn failed: {e}"))?;
+        .map_err(|_| {
+            format!(
+                "gh pr list timed out after {GH_SUBPROCESS_TIMEOUT_SECS}s — check `gh auth status` and network connectivity"
+            )
+        })?
+        .map_err(|e| redact_home(&format!("gh spawn failed: {e}")))?;
 
     if !pr_out.status.success() {
         let stderr = String::from_utf8_lossy(&pr_out.stderr);
-        return Err(format!("gh pr list failed: {stderr}"));
+        return Err(redact_home(&format!("gh pr list failed: {stderr}")));
     }
 
     let issues: Vec<GhIssue> = serde_json::from_slice(&issue_out.stdout)
-        .map_err(|e| format!("parse issues: {e}"))?;
+        .map_err(|e| redact_home(&format!("parse issues: {e}")))?;
 
     let pull_requests: Vec<GhPullRequest> = serde_json::from_slice(&pr_out.stdout)
-        .map_err(|e| format!("parse PRs: {e}"))?;
+        .map_err(|e| redact_home(&format!("parse PRs: {e}")))?;
 
     let snapshot = GhSnapshot {
         issues,
@@ -161,6 +200,7 @@ pub async fn fetch_gh_dashboard(
         fetched_at: chrono::Utc::now().timestamp_millis(),
     };
 
+    let mut cache = state.cache.lock().await;
     *cache = Some((snapshot.clone(), Instant::now()));
     Ok(snapshot)
 }
@@ -208,6 +248,14 @@ mod tests {
         }
     }
 
+    fn make_snapshot() -> GhSnapshot {
+        GhSnapshot {
+            issues: vec![make_issue(1, "first")],
+            pull_requests: vec![make_pr(2, "pr two")],
+            fetched_at: 1_716_000_000_000,
+        }
+    }
+
     #[test]
     fn serde_roundtrip_issue() {
         let issue = make_issue(416, "UI scenario 5");
@@ -216,7 +264,6 @@ mod tests {
         assert_eq!(back.number, 416);
         assert_eq!(back.title, "UI scenario 5");
         assert_eq!(back.labels[0].name, "enhancement");
-        // camelCase fields survive round-trip
         assert_eq!(back.created_at, "2026-05-01T00:00:00Z");
     }
 
@@ -233,90 +280,53 @@ mod tests {
     }
 
     #[test]
-    fn serde_roundtrip_snapshot() {
-        let snapshot = GhSnapshot {
-            issues: vec![make_issue(1, "first")],
-            pull_requests: vec![make_pr(2, "pr two")],
-            fetched_at: 1_716_000_000_000,
-        };
-        let json = serde_json::to_string(&snapshot).expect("serialize");
-        // fetchedAt must appear with camelCase key in JSON
-        assert!(json.contains("fetchedAt"), "fetchedAt key missing: {json}");
+    fn serde_snapshot_uses_camelcase_keys() {
+        let json = serde_json::to_string(&make_snapshot()).expect("serialize");
+        assert!(json.contains("\"pullRequests\""), "pullRequests key missing: {json}");
+        assert!(json.contains("\"fetchedAt\""), "fetchedAt key missing: {json}");
+        assert!(!json.contains("\"pull_requests\""), "snake_case must not appear");
         let back: GhSnapshot = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back.fetched_at, 1_716_000_000_000);
         assert_eq!(back.issues.len(), 1);
         assert_eq!(back.pull_requests.len(), 1);
     }
 
-    #[tokio::test]
-    async fn cache_hit_returns_same_snapshot() {
-        let state = GhCacheState::default();
-        let snapshot = GhSnapshot {
-            issues: vec![make_issue(100, "cached")],
-            pull_requests: vec![],
-            fetched_at: 1_716_000_000_000,
-        };
-        // Pre-populate cache with a fresh entry
-        {
-            let mut guard = state.cache.lock().await;
-            *guard = Some((snapshot.clone(), Instant::now()));
-        }
-        // Verify cache is populated and within TTL
-        let guard = state.cache.lock().await;
-        let (ref cached, ref ts) = guard.as_ref().expect("cache must be populated");
-        assert!(ts.elapsed() < Duration::from_secs(GH_CACHE_TTL_SECS));
-        assert_eq!(cached.issues[0].number, 100);
+    #[test]
+    fn cache_hit_when_fresh_and_not_forced() {
+        let snapshot = make_snapshot();
+        let cached_at = Instant::now();
+        let entry = Some((snapshot.clone(), cached_at));
+        let now = cached_at + Duration::from_secs(30); // within 60s TTL
+        let hit = check_cache_hit(&entry, false, now, Duration::from_secs(60));
+        assert!(hit.is_some(), "fresh non-forced lookup must hit");
+        assert_eq!(hit.unwrap().issues.len(), 1);
     }
 
-    #[tokio::test]
-    async fn cache_miss_on_expired_entry() {
-        let state = GhCacheState::default();
-        let snapshot = GhSnapshot {
-            issues: vec![],
-            pull_requests: vec![],
-            fetched_at: 0,
-        };
-        // Pre-populate cache with an artificially old instant (TTL + 1s ago)
-        let old_instant = Instant::now()
-            .checked_sub(Duration::from_secs(GH_CACHE_TTL_SECS + 1))
-            .expect("subtraction should not underflow on modern systems");
-        {
-            let mut guard = state.cache.lock().await;
-            *guard = Some((snapshot, old_instant));
-        }
-        // Verify the entry is expired
-        let guard = state.cache.lock().await;
-        let (_, ref ts) = guard.as_ref().expect("entry present");
-        assert!(
-            ts.elapsed() >= Duration::from_secs(GH_CACHE_TTL_SECS),
-            "entry should be expired"
-        );
+    #[test]
+    fn cache_miss_when_force_even_if_fresh() {
+        // Real coverage for the previously-vestigial force-bypass branch.
+        let snapshot = make_snapshot();
+        let cached_at = Instant::now();
+        let entry = Some((snapshot, cached_at));
+        let now = cached_at + Duration::from_secs(1); // very fresh
+        let hit = check_cache_hit(&entry, true, now, Duration::from_secs(60));
+        assert!(hit.is_none(), "force=true must bypass fresh cache");
     }
 
-    #[tokio::test]
-    async fn force_refresh_bypasses_fresh_cache() {
-        // Validate the force=true logic path: even a fresh cache entry should
-        // be bypassed. We can't invoke the full command without AppHandle, so
-        // we test the cache-check predicate directly.
-        let state = GhCacheState::default();
-        let snapshot = GhSnapshot {
-            issues: vec![make_issue(1, "stale but fresh ts")],
-            pull_requests: vec![],
-            fetched_at: 1_716_000_000_000,
-        };
-        {
-            let mut guard = state.cache.lock().await;
-            *guard = Some((snapshot.clone(), Instant::now()));
-        }
-        // Simulate force=true: cache is ignored regardless of age
-        let guard = state.cache.lock().await;
-        let within_ttl = guard
-            .as_ref()
-            .map(|(_, ts)| ts.elapsed() < Duration::from_secs(GH_CACHE_TTL_SECS))
-            .unwrap_or(false);
-        // Even though within TTL, force=true means we would skip the early-return
-        assert!(within_ttl, "entry is fresh");
-        // The actual skip happens in the command function — verified by inspecting
-        // the `if !force` guard in fetch_gh_dashboard.
+    #[test]
+    fn cache_miss_when_expired() {
+        let snapshot = make_snapshot();
+        let cached_at = Instant::now();
+        let entry = Some((snapshot, cached_at));
+        let now = cached_at + Duration::from_secs(61); // past 60s TTL
+        let hit = check_cache_hit(&entry, false, now, Duration::from_secs(60));
+        assert!(hit.is_none(), "expired entry must miss");
+    }
+
+    #[test]
+    fn cache_miss_when_empty() {
+        let entry: Option<(GhSnapshot, Instant)> = None;
+        let hit = check_cache_hit(&entry, false, Instant::now(), Duration::from_secs(60));
+        assert!(hit.is_none(), "empty cache must miss");
     }
 }

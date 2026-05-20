@@ -39,7 +39,7 @@ export interface GhPullRequest {
 
 export interface GhSnapshot {
   issues: GhIssue[];
-  pull_requests: GhPullRequest[];
+  pullRequests: GhPullRequest[];
   // Unix epoch milliseconds — consistent with RosterSnapshot.updatedAt
   fetchedAt: number;
 }

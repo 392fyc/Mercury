@@ -34,7 +34,7 @@ export function GitHubDashboard() {
   const tokens = parseGhFilter(filter);
   const issues = snapshot?.issues.filter((i) => matchesIssue(i, tokens)) ?? [];
   const prs =
-    snapshot?.pull_requests.filter((pr) => matchesPR(pr, tokens)) ?? [];
+    snapshot?.pullRequests.filter((pr) => matchesPR(pr, tokens)) ?? [];
 
   const fetchedIso = snapshot ? fetchedAtIso(snapshot.fetchedAt) : "";
 
@@ -145,8 +145,8 @@ export function GitHubDashboard() {
           <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">
             Open Pull Requests ({prs.length}
             {tokens.length > 0 &&
-              snapshot.pull_requests.length !== prs.length &&
-              ` of ${snapshot.pull_requests.length}`}
+              snapshot.pullRequests.length !== prs.length &&
+              ` of ${snapshot.pullRequests.length}`}
             )
           </h2>
           <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
