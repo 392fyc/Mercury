@@ -12,13 +12,14 @@
   "app": {
     "windows": [
       {
-        "title": "mercury-gui",
+        "label": "main",
+        "title": "Mercury",
         "width": 800,
         "height": 600
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; img-src 'self' asset: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://localhost:1420 ws://localhost:1421"
     }
   },
   "bundle": {
