@@ -31,22 +31,28 @@ impl From<serde_json::Error> for DataError {
     }
 }
 
-/// Cached `(home_str, alt_form)` for the current process. Resolved lazily on
-/// first call and reused for every subsequent `redact_home` invocation so
-/// the recursive walker over `output` / `children` does not pay a syscall
-/// per leaf string. `None` means the lookup failed (no home dir / non-UTF-8
-/// path) and every call falls through to a no-op return.
-fn home_forms() -> &'static Option<(String, String)> {
-    static CACHED: std::sync::OnceLock<Option<(String, String)>> = std::sync::OnceLock::new();
-    CACHED.get_or_init(|| {
-        let home = dirs::home_dir()?;
-        let home_str = home.to_str()?.to_string();
-        if home_str.is_empty() {
-            return None;
-        }
-        let alt = home_str.replace('\\', "/");
-        Some((home_str, alt))
-    })
+/// Cached `(home_str, alt_form)` for the current process.
+///
+/// Only **successful** lookups are cached. A transient lookup failure (env
+/// var unavailable, mid-init filesystem state, etc.) returns `None` but does
+/// NOT poison the cache — subsequent calls will retry `dirs::home_dir()`.
+/// This avoids the silent-permanent-disable hazard where one bad early call
+/// would leak home paths for the rest of the process lifetime.
+fn home_forms() -> Option<&'static (String, String)> {
+    static CACHED: std::sync::OnceLock<(String, String)> = std::sync::OnceLock::new();
+    if let Some(v) = CACHED.get() {
+        return Some(v);
+    }
+    // Cache empty → compute and cache only if successful.
+    let home = dirs::home_dir()?;
+    let home_str = home.to_str()?.to_string();
+    if home_str.is_empty() {
+        return None;
+    }
+    let alt = home_str.replace('\\', "/");
+    // Race-tolerant: if a parallel thread populates first, `get_or_init`
+    // returns the existing value; our (home_str, alt) is dropped harmlessly.
+    Some(CACHED.get_or_init(|| (home_str, alt)))
 }
 
 /// Replace the resolved home directory with `~` so paths surfaced to the

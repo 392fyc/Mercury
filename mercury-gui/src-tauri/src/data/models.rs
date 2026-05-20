@@ -299,9 +299,18 @@ mod tests {
         let mut job: JobState = serde_json::from_str(SAMPLE_OLDER).expect("parse");
         assert!(job.output.is_none() || job.output == Some(serde_json::Value::Null));
         assert!(job.children.is_none() || job.children == Some(serde_json::Value::Null));
+        let cwd_before = job.cwd.clone();
+        let link_scan_before = job.link_scan_path.clone();
+        let worktree_before = job.worktree_path.clone();
         job.sanitize_paths(); // no panic
-        // post-sanitize: cwd still scrubbed (was D:\Mercury\Mercury — no home prefix so unchanged)
-        assert_eq!(job.cwd, "D:\\Mercury\\Mercury");
+        // Assert via invariant rather than hardcoded literal: when the sample's `cwd`
+        // does not start with the running process's home dir, sanitize_paths leaves
+        // all path-bearing fields untouched. (SAMPLE_OLDER's cwd happens to be a
+        // non-home test path; the assertion locks the no-op behavior without
+        // depending on the literal value.)
+        assert_eq!(job.cwd, cwd_before, "cwd unchanged when no home prefix matches");
+        assert_eq!(job.link_scan_path, link_scan_before, "link_scan_path unchanged");
+        assert_eq!(job.worktree_path, worktree_before, "worktree_path unchanged");
     }
 
     #[test]
