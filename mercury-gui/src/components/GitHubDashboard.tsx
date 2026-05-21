@@ -19,7 +19,7 @@ function fetchedAtIso(ms: number): string {
 }
 
 export function GitHubDashboard() {
-  const { snapshot, error, loading, refresh } = useGitHubData();
+  const { snapshot, error, authError, loading, refresh } = useGitHubData();
   const [filter, setFilter] = useState("");
   // Load data on first mount (no auto-refresh per DoD)
   const [initialLoaded, setInitialLoaded] = useState(false);
@@ -69,8 +69,41 @@ export function GitHubDashboard() {
         </p>
       )}
 
-      {/* Error state */}
-      {error && (
+      {/* Preflight auth error (#434) — takes precedence over generic fetch
+          errors so the actionable "run gh auth login" message is the first
+          thing the user sees. */}
+      {authError && (
+        <div
+          role="alert"
+          aria-live="polite"
+          className="rounded-md border border-amber-200 bg-amber-50 dark:bg-amber-950 dark:border-amber-800 px-4 py-3 text-sm text-amber-800 dark:text-amber-300"
+        >
+          <strong>GitHub CLI not authenticated.</strong>{" "}
+          Run{" "}
+          <code className="font-mono px-1 py-0.5 rounded bg-amber-100 dark:bg-amber-900">
+            gh auth login
+          </code>{" "}
+          in your terminal to authenticate, then click <em>Re-check</em>.
+          <details className="mt-2 text-xs text-amber-700 dark:text-amber-400">
+            <summary className="cursor-pointer select-none">
+              Show <code>gh auth status</code> output
+            </summary>
+            <pre className="mt-1 whitespace-pre-wrap font-mono text-xs">
+              {String(redactHomePaths(authError))}
+            </pre>
+          </details>
+          <button
+            className="mt-2 underline text-amber-700 dark:text-amber-300 hover:no-underline"
+            onClick={() => refresh(true)}
+          >
+            Re-check authentication
+          </button>
+        </div>
+      )}
+
+      {/* Error state — suppressed when authError is set so the actionable
+          preflight toast is not visually crowded by a stale generic error. */}
+      {error && !authError && (
         <div className="rounded-md border border-red-200 bg-red-50 dark:bg-red-950 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-300">
           <strong>Error fetching GitHub data:</strong>{" "}
           {String(redactHomePaths(error))}
@@ -88,8 +121,9 @@ export function GitHubDashboard() {
         </div>
       )}
 
-      {/* Loading state (initial only) */}
-      {loading && !snapshot && !error && (
+      {/* Loading state (initial only) — also hidden when authError surfaces
+          so the spinner doesn't trail behind the actionable preflight toast. */}
+      {loading && !snapshot && !error && !authError && (
         <div className="flex items-center justify-center py-16 text-slate-400 text-sm">
           Loading GitHub data…
         </div>

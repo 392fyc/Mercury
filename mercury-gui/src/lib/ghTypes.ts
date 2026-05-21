@@ -43,3 +43,13 @@ export interface GhSnapshot {
   // Unix epoch milliseconds — consistent with RosterSnapshot.updatedAt
   fetchedAt: number;
 }
+
+// Preflight result for `gh auth status` (#434). The dashboard hook runs this
+// before the issue/PR fetch so the toast can surface a clear "run `gh auth
+// login`" message instead of the deeper fetch's stderr passthrough.
+export interface GhAuthStatus {
+  authenticated: boolean;
+  hostname: string;
+  account?: string | null;
+  message: string;
+}
