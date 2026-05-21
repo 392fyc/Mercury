@@ -1,8 +1,10 @@
 // GitHubDashboard — Issue/PR dashboard view for Phase 6 slice D (#416).
 // Filter input with label:/state:/lane:/text prefixes (AND semantics).
-// No auto-refresh; manual force-refresh button + 60s TTL cache in Rust backend.
+// Manual force-refresh button + 60s TTL cache in Rust backend. Opt-in
+// auto-refresh toggle (#436) persists via localStorage and skips ticks when
+// auth is failing or a fetch is already in flight.
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { RefreshCw } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -12,6 +14,19 @@ import { useGitHubData } from "@/hooks/useGitHubData";
 import { parseGhFilter, matchesIssue, matchesPR } from "@/lib/ghFilter";
 import { redactHomePaths } from "@/lib/redact";
 import { elapsed } from "@/lib/elapsed";
+import {
+  AUTO_REFRESH_INTERVALS_MS,
+  isValidInterval,
+  loadAutoRefreshPrefs,
+  saveAutoRefreshPrefs,
+  type AutoRefreshIntervalMs,
+  type AutoRefreshPrefs,
+} from "@/lib/dashboardPrefs";
+
+function intervalLabel(ms: AutoRefreshIntervalMs): string {
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
+  return `${Math.round(ms / 60_000)}m`;
+}
 
 function fetchedAtIso(ms: number): string {
   if (!ms) return "";
@@ -21,8 +36,49 @@ function fetchedAtIso(ms: number): string {
 export function GitHubDashboard() {
   const { snapshot, error, authError, loading, refresh } = useGitHubData();
   const [filter, setFilter] = useState("");
-  // Load data on first mount (no auto-refresh per DoD)
   const [initialLoaded, setInitialLoaded] = useState(false);
+
+  // #436 — Opt-in auto-refresh state, hydrated from localStorage exactly once
+  // via a consolidated useState lazy initializer.
+  const [autoRefresh, setAutoRefresh] = useState<AutoRefreshPrefs>(() =>
+    loadAutoRefreshPrefs()
+  );
+  const { enabled: autoRefreshEnabled, intervalMs: autoRefreshIntervalMs } =
+    autoRefresh;
+
+  const setAutoRefreshEnabled = useCallback((v: boolean) => {
+    setAutoRefresh((p) => ({ ...p, enabled: v }));
+  }, []);
+  const setAutoRefreshIntervalMs = useCallback((v: AutoRefreshIntervalMs) => {
+    setAutoRefresh((p) => ({ ...p, intervalMs: v }));
+  }, []);
+
+  // Persist prefs to localStorage when they change (user-driven), skipping
+  // the initial render so we don't write back the just-loaded values. Side
+  // effects (incl. saveAutoRefreshPrefs) stay OUT of the setState updaters
+  // above — pure updaters are the React 19 canonical pattern and avoid the
+  // StrictMode dev double-invoke writing twice (idempotent save would absorb
+  // that, but the smell is real per Argus iter-3 H1).
+  const isInitialPersistRender = useRef(true);
+  useEffect(() => {
+    if (isInitialPersistRender.current) {
+      isInitialPersistRender.current = false;
+      return;
+    }
+    saveAutoRefreshPrefs(autoRefresh);
+  }, [autoRefresh]);
+
+  // Refs mirror authError + loading so the auto-refresh interval handler can
+  // read the latest values without re-creating the timer whenever they change.
+  // Re-creating the timer on every loading toggle would defeat the interval.
+  const authErrorRef = useRef(authError);
+  const loadingRef = useRef(loading);
+  useEffect(() => {
+    authErrorRef.current = authError;
+  }, [authError]);
+  useEffect(() => {
+    loadingRef.current = loading;
+  }, [loading]);
 
   useEffect(() => {
     if (!initialLoaded) {
@@ -30,6 +86,51 @@ export function GitHubDashboard() {
       refresh(false);
     }
   }, [initialLoaded, refresh]);
+
+  // Auto-refresh tick — only when enabled. The tick:
+  //   - Skips when a fetch is already in flight (loadingRef)
+  //   - Skips when the last preflight failed (authErrorRef) — don't hammer
+  //     a known-bad auth state
+  //   - Skips when the window is hidden (document.visibilityState) — avoid
+  //     polling IPC while the user cannot see the results
+  //
+  // The hook's monotonic reqId guard handles overlap defensively; skipping
+  // avoids wasted IPC + log noise.
+  //
+  // We also subscribe to `visibilitychange` and fire an immediate refresh
+  // when the window becomes visible, so the user does not see up to
+  // `intervalMs` of stale data after returning to the dashboard.
+  useEffect(() => {
+    if (!autoRefreshEnabled) return;
+    const tryTick = () => {
+      if (loadingRef.current) return;
+      if (authErrorRef.current) return;
+      if (
+        typeof document !== "undefined" &&
+        document.visibilityState === "hidden"
+      )
+        return;
+      refresh(false);
+    };
+    const onVisibilityChange = () => {
+      if (
+        typeof document !== "undefined" &&
+        document.visibilityState === "visible"
+      ) {
+        tryTick();
+      }
+    };
+    const id = setInterval(tryTick, autoRefreshIntervalMs);
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibilityChange);
+    }
+    return () => {
+      clearInterval(id);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibilityChange);
+      }
+    };
+  }, [autoRefreshEnabled, autoRefreshIntervalMs, refresh]);
 
   const tokens = parseGhFilter(filter);
   const issues = snapshot?.issues.filter((i) => matchesIssue(i, tokens)) ?? [];
@@ -40,7 +141,7 @@ export function GitHubDashboard() {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Toolbar: filter + refresh */}
+      {/* Toolbar: filter + auto-refresh toggle + refresh */}
       <div className="flex gap-2 items-center">
         <Input
           className="flex-1 font-mono text-sm"
@@ -49,6 +150,44 @@ export function GitHubDashboard() {
           onChange={(e) => setFilter(e.target.value)}
           aria-label="Filter issues and pull requests"
         />
+        {/* Auto-refresh opt-in (#436) — checkbox + interval selector */}
+        <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400 select-none cursor-pointer">
+          <input
+            type="checkbox"
+            className="h-3.5 w-3.5 rounded border-slate-300 dark:border-slate-600"
+            checked={autoRefreshEnabled}
+            onChange={(e) => setAutoRefreshEnabled(e.target.checked)}
+            aria-label="Enable auto-refresh"
+          />
+          Auto
+        </label>
+        <select
+          className="text-xs px-1.5 py-1 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 disabled:opacity-50 disabled:cursor-not-allowed"
+          value={autoRefreshIntervalMs}
+          onChange={(e) => {
+            // Runtime whitelist gate — protects against tampered DOM values
+            // (e.g. DevTools-edited <option> emitting 0 or NaN) that would
+            // otherwise feed setInterval and cause high-frequency polling.
+            // Mirrors loadAutoRefreshPrefs's parse + isValidInterval narrow.
+            const parsed = Number.parseInt(e.target.value, 10);
+            if (isValidInterval(parsed)) {
+              setAutoRefreshIntervalMs(parsed);
+            }
+          }}
+          disabled={!autoRefreshEnabled}
+          aria-label="Auto-refresh interval"
+          title={
+            autoRefreshEnabled
+              ? "Auto-refresh interval"
+              : "Enable Auto to choose an interval"
+          }
+        >
+          {AUTO_REFRESH_INTERVALS_MS.map((ms) => (
+            <option key={ms} value={ms}>
+              {intervalLabel(ms)}
+            </option>
+          ))}
+        </select>
         <Button
           variant="outline"
           size="sm"
