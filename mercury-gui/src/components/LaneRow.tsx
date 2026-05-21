@@ -1,5 +1,7 @@
 // LaneRow — one row in the cross-lane snapshot table.
-// Shows the most-recent job per lane plus "+N more" indicator.
+// Shows the most-recent of the jobs passed in, plus "+N more" for siblings.
+// Caller (LaneTable) is responsible for pre-filtering `jobs` so this row's
+// display never contradicts the active filter (#432 — filter-display alignment).
 
 import { StateBadge } from "./StateBadge";
 import { elapsed } from "@/lib/elapsed";
