@@ -39,9 +39,7 @@ export function GitHubDashboard() {
   const [initialLoaded, setInitialLoaded] = useState(false);
 
   // #436 — Opt-in auto-refresh state, hydrated from localStorage exactly once
-  // via a consolidated useState lazy initializer. Persistence happens inline
-  // in the setter callbacks below (NOT in a useEffect) so we never write back
-  // on mount with the just-loaded values; only user toggles trigger a save.
+  // via a consolidated useState lazy initializer.
   const [autoRefresh, setAutoRefresh] = useState<AutoRefreshPrefs>(() =>
     loadAutoRefreshPrefs()
   );
@@ -49,19 +47,26 @@ export function GitHubDashboard() {
     autoRefresh;
 
   const setAutoRefreshEnabled = useCallback((v: boolean) => {
-    setAutoRefresh((p) => {
-      const next: AutoRefreshPrefs = { ...p, enabled: v };
-      saveAutoRefreshPrefs(next);
-      return next;
-    });
+    setAutoRefresh((p) => ({ ...p, enabled: v }));
   }, []);
   const setAutoRefreshIntervalMs = useCallback((v: AutoRefreshIntervalMs) => {
-    setAutoRefresh((p) => {
-      const next: AutoRefreshPrefs = { ...p, intervalMs: v };
-      saveAutoRefreshPrefs(next);
-      return next;
-    });
+    setAutoRefresh((p) => ({ ...p, intervalMs: v }));
   }, []);
+
+  // Persist prefs to localStorage when they change (user-driven), skipping
+  // the initial render so we don't write back the just-loaded values. Side
+  // effects (incl. saveAutoRefreshPrefs) stay OUT of the setState updaters
+  // above — pure updaters are the React 19 canonical pattern and avoid the
+  // StrictMode dev double-invoke writing twice (idempotent save would absorb
+  // that, but the smell is real per Argus iter-3 H1).
+  const isInitialPersistRender = useRef(true);
+  useEffect(() => {
+    if (isInitialPersistRender.current) {
+      isInitialPersistRender.current = false;
+      return;
+    }
+    saveAutoRefreshPrefs(autoRefresh);
+  }, [autoRefresh]);
 
   // Refs mirror authError + loading so the auto-refresh interval handler can
   // read the latest values without re-creating the timer whenever they change.
@@ -83,15 +88,22 @@ export function GitHubDashboard() {
   }, [initialLoaded, refresh]);
 
   // Auto-refresh tick — only when enabled. Skip the tick if a fetch is
-  // already in flight (loadingRef) or if the last preflight failed
-  // (authErrorRef) so we don't hammer a known-bad auth state. The hook's
-  // monotonic reqId guard means an overlapping tick would still be safe,
-  // but skipping avoids wasted IPC + log noise.
+  // already in flight (loadingRef), if the last preflight failed
+  // (authErrorRef), or if the window is hidden (document.visibilityState).
+  // The visibility check honors the user's intent for "see fresh data while
+  // viewing" without polling against IPC when the window is minimized or
+  // covered (Argus iter-3 H2 — 轮询节流边界 advisory). The hook's monotonic
+  // reqId guard handles overlap defensively; skipping avoids wasted IPC.
   useEffect(() => {
     if (!autoRefreshEnabled) return;
     const id = setInterval(() => {
       if (loadingRef.current) return;
       if (authErrorRef.current) return;
+      if (
+        typeof document !== "undefined" &&
+        document.visibilityState === "hidden"
+      )
+        return;
       refresh(false);
     }, autoRefreshIntervalMs);
     return () => clearInterval(id);
