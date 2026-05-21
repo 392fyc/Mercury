@@ -28,7 +28,7 @@ const DEFAULT_PREFS: AutoRefreshPrefs = {
   intervalMs: DEFAULT_AUTO_REFRESH_INTERVAL_MS,
 };
 
-function isValidInterval(n: number): n is AutoRefreshIntervalMs {
+export function isValidInterval(n: number): n is AutoRefreshIntervalMs {
   return (AUTO_REFRESH_INTERVALS_MS as readonly number[]).includes(n);
 }
 

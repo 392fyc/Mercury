@@ -16,6 +16,7 @@ import { redactHomePaths } from "@/lib/redact";
 import { elapsed } from "@/lib/elapsed";
 import {
   AUTO_REFRESH_INTERVALS_MS,
+  isValidInterval,
   loadAutoRefreshPrefs,
   saveAutoRefreshPrefs,
   type AutoRefreshIntervalMs,
@@ -118,11 +119,16 @@ export function GitHubDashboard() {
         <select
           className="text-xs px-1.5 py-1 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 disabled:opacity-50 disabled:cursor-not-allowed"
           value={autoRefreshIntervalMs}
-          onChange={(e) =>
-            setAutoRefreshIntervalMs(
-              Number.parseInt(e.target.value, 10) as AutoRefreshIntervalMs
-            )
-          }
+          onChange={(e) => {
+            // Runtime whitelist gate — protects against tampered DOM values
+            // (e.g. DevTools-edited <option> emitting 0 or NaN) that would
+            // otherwise feed setInterval and cause high-frequency polling.
+            // Mirrors loadAutoRefreshPrefs's parse + isValidInterval narrow.
+            const parsed = Number.parseInt(e.target.value, 10);
+            if (isValidInterval(parsed)) {
+              setAutoRefreshIntervalMs(parsed);
+            }
+          }}
           disabled={!autoRefreshEnabled}
           aria-label="Auto-refresh interval"
           title={
