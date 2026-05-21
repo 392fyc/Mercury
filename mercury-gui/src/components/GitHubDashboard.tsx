@@ -4,7 +4,7 @@
 // auto-refresh toggle (#436) persists via localStorage and skips ticks when
 // auth is failing or a fetch is already in flight.
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { RefreshCw } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,7 @@ import {
   loadAutoRefreshPrefs,
   saveAutoRefreshPrefs,
   type AutoRefreshIntervalMs,
+  type AutoRefreshPrefs,
 } from "@/lib/dashboardPrefs";
 
 function intervalLabel(ms: AutoRefreshIntervalMs): string {
@@ -37,13 +38,30 @@ export function GitHubDashboard() {
   const [filter, setFilter] = useState("");
   const [initialLoaded, setInitialLoaded] = useState(false);
 
-  // #436 — Opt-in auto-refresh state, hydrated from localStorage on first
-  // render. Defaults: enabled=false, intervalMs=60_000. Saved on change.
-  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState<boolean>(
-    () => loadAutoRefreshPrefs().enabled
+  // #436 — Opt-in auto-refresh state, hydrated from localStorage exactly once
+  // via a consolidated useState lazy initializer. Persistence happens inline
+  // in the setter callbacks below (NOT in a useEffect) so we never write back
+  // on mount with the just-loaded values; only user toggles trigger a save.
+  const [autoRefresh, setAutoRefresh] = useState<AutoRefreshPrefs>(() =>
+    loadAutoRefreshPrefs()
   );
-  const [autoRefreshIntervalMs, setAutoRefreshIntervalMs] =
-    useState<AutoRefreshIntervalMs>(() => loadAutoRefreshPrefs().intervalMs);
+  const { enabled: autoRefreshEnabled, intervalMs: autoRefreshIntervalMs } =
+    autoRefresh;
+
+  const setAutoRefreshEnabled = useCallback((v: boolean) => {
+    setAutoRefresh((p) => {
+      const next: AutoRefreshPrefs = { ...p, enabled: v };
+      saveAutoRefreshPrefs(next);
+      return next;
+    });
+  }, []);
+  const setAutoRefreshIntervalMs = useCallback((v: AutoRefreshIntervalMs) => {
+    setAutoRefresh((p) => {
+      const next: AutoRefreshPrefs = { ...p, intervalMs: v };
+      saveAutoRefreshPrefs(next);
+      return next;
+    });
+  }, []);
 
   // Refs mirror authError + loading so the auto-refresh interval handler can
   // read the latest values without re-creating the timer whenever they change.
@@ -63,14 +81,6 @@ export function GitHubDashboard() {
       refresh(false);
     }
   }, [initialLoaded, refresh]);
-
-  // Persist prefs whenever the user toggles them.
-  useEffect(() => {
-    saveAutoRefreshPrefs({
-      enabled: autoRefreshEnabled,
-      intervalMs: autoRefreshIntervalMs,
-    });
-  }, [autoRefreshEnabled, autoRefreshIntervalMs]);
 
   // Auto-refresh tick — only when enabled. Skip the tick if a fetch is
   // already in flight (loadingRef) or if the last preflight failed

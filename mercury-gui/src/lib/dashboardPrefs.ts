@@ -50,9 +50,17 @@ export function loadAutoRefreshPrefs(): AutoRefreshPrefs {
 }
 
 export function saveAutoRefreshPrefs(prefs: AutoRefreshPrefs): void {
+  // Defense-in-depth — validate intervalMs on the save path too, mirroring
+  // loadAutoRefreshPrefs. The TypeScript literal-union already gates compile
+  // time, but `saveAutoRefreshPrefs` is exported and a future caller could
+  // funnel an untyped value through `any` or a structural cast. Persisting a
+  // corrupted intervalMs would survive across sessions; better to coerce.
+  const safeInterval = isValidInterval(prefs.intervalMs)
+    ? prefs.intervalMs
+    : DEFAULT_AUTO_REFRESH_INTERVAL_MS;
   try {
     localStorage.setItem(KEY_ENABLED, prefs.enabled ? "1" : "0");
-    localStorage.setItem(KEY_INTERVAL, String(prefs.intervalMs));
+    localStorage.setItem(KEY_INTERVAL, String(safeInterval));
   } catch {
     // QuotaExceededError or SecurityError — in-memory state still tracks the
     // user's choice for this session; silent no-op is acceptable since these
