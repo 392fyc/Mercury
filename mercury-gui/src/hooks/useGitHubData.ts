@@ -52,6 +52,13 @@ export function useGitHubData(): GitHubDataState {
       setError(undefined);
     } catch (e) {
       if (myId !== reqIdRef.current) return;
+      // Clear authError on the exception path too: if a previous run set it
+      // and the current preflight throws (IPC/capability/spawn failure), the
+      // dashboard would otherwise keep showing the stale "run gh auth login"
+      // toast (which suppresses the generic error panel) — masking the real
+      // cause. The exception is, by definition, a different failure class
+      // than the previous "exit 1 = not authenticated" verdict.
+      setAuthError(undefined);
       setError(String(e));
     } finally {
       if (myId === reqIdRef.current) setLoading(false);

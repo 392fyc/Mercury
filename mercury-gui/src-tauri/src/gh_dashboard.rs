@@ -12,7 +12,24 @@ const GH_CACHE_TTL_SECS: u64 = 60;
 const GH_REPO_DEFAULT: &str = "392fyc/Mercury";
 const GH_LIMIT: &str = "200";
 const GH_SUBPROCESS_TIMEOUT_SECS: u64 = 30;
-const GH_AUTH_HOSTNAME: &str = "github.com";
+const GH_AUTH_HOSTNAME_DEFAULT: &str = "github.com";
+
+/// Resolve the gh-host to preflight against. `MERCURY_GH_HOST` env override
+/// supports GitHub Enterprise / multi-host deployments; falls back to
+/// `github.com` when unset or when the override fails the hostname validator
+/// (which mirrors the capability config's `^[\w.-]+$` slot).
+fn resolve_gh_auth_hostname() -> String {
+    std::env::var("MERCURY_GH_HOST")
+        .ok()
+        .filter(|h| is_valid_hostname(h))
+        .unwrap_or_else(|| GH_AUTH_HOSTNAME_DEFAULT.to_string())
+}
+
+fn is_valid_hostname(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+}
 
 /// Resolve the target gh repo. Defaults to 392fyc/Mercury (the #416 DoD repo).
 /// `MERCURY_GH_REPO` env override allows running the GUI against a different
@@ -285,10 +302,11 @@ fn parse_gh_account(text: &str) -> Option<String> {
 #[tauri::command]
 pub async fn check_gh_auth(app: tauri::AppHandle) -> Result<GhAuthStatus, String> {
     let timeout = Duration::from_secs(GH_SUBPROCESS_TIMEOUT_SECS);
+    let hostname = resolve_gh_auth_hostname();
     let fut = app
         .shell()
         .command("gh")
-        .args(["auth", "status", "--hostname", GH_AUTH_HOSTNAME])
+        .args(["auth", "status", "--hostname", hostname.as_str()])
         .output();
     let out = tokio::time::timeout(timeout, fut)
         .await
@@ -320,7 +338,7 @@ pub async fn check_gh_auth(app: tauri::AppHandle) -> Result<GhAuthStatus, String
 
     Ok(GhAuthStatus {
         authenticated,
-        hostname: GH_AUTH_HOSTNAME.to_string(),
+        hostname,
         account,
         message,
     })
@@ -491,6 +509,35 @@ mod tests {
             Some("configured".to_string()),
             "parser is intentionally permissive; safety relies on success-path gating"
         );
+    }
+
+    #[test]
+    fn is_valid_hostname_accepts_canonical() {
+        assert!(is_valid_hostname("github.com"));
+        assert!(is_valid_hostname("ghe.example.com"));
+        assert!(is_valid_hostname("internal-ghe-01"));
+        assert!(is_valid_hostname("host_with_underscore"));
+    }
+
+    #[test]
+    fn is_valid_hostname_rejects_malformed() {
+        assert!(!is_valid_hostname(""));
+        assert!(!is_valid_hostname("has space"));
+        assert!(!is_valid_hostname("evil;rm -rf /"));
+        assert!(!is_valid_hostname("host/path"));
+        assert!(!is_valid_hostname("host:port"));
+    }
+
+    #[test]
+    fn resolve_gh_auth_hostname_falls_back_when_unset() {
+        // Note: this test reads the live env var. CI / dev shells typically
+        // don't set MERCURY_GH_HOST, so the fallback path is exercised.
+        // If a developer happens to have it set, the test asserts that the
+        // resolver returned a non-empty hostname (the env value, if valid,
+        // or the default).
+        let resolved = resolve_gh_auth_hostname();
+        assert!(!resolved.is_empty());
+        assert!(is_valid_hostname(&resolved));
     }
 
     #[test]
