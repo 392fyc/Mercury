@@ -87,16 +87,22 @@ export function GitHubDashboard() {
     }
   }, [initialLoaded, refresh]);
 
-  // Auto-refresh tick — only when enabled. Skip the tick if a fetch is
-  // already in flight (loadingRef), if the last preflight failed
-  // (authErrorRef), or if the window is hidden (document.visibilityState).
-  // The visibility check honors the user's intent for "see fresh data while
-  // viewing" without polling against IPC when the window is minimized or
-  // covered (Argus iter-3 H2 — 轮询节流边界 advisory). The hook's monotonic
-  // reqId guard handles overlap defensively; skipping avoids wasted IPC.
+  // Auto-refresh tick — only when enabled. The tick:
+  //   - Skips when a fetch is already in flight (loadingRef)
+  //   - Skips when the last preflight failed (authErrorRef) — don't hammer
+  //     a known-bad auth state
+  //   - Skips when the window is hidden (document.visibilityState) — Argus
+  //     iter-3 H2 advisory: don't poll IPC while user can't see results
+  //
+  // The hook's monotonic reqId guard handles overlap defensively; skipping
+  // avoids wasted IPC + log noise.
+  //
+  // Additionally, we listen for `visibilitychange` and fire an immediate
+  // refresh when the window becomes visible (Argus iter-4 I1 — 行为偏差
+  // advisory: avoid the up-to-intervalMs stale window after the user returns).
   useEffect(() => {
     if (!autoRefreshEnabled) return;
-    const id = setInterval(() => {
+    const tryTick = () => {
       if (loadingRef.current) return;
       if (authErrorRef.current) return;
       if (
@@ -105,8 +111,25 @@ export function GitHubDashboard() {
       )
         return;
       refresh(false);
-    }, autoRefreshIntervalMs);
-    return () => clearInterval(id);
+    };
+    const onVisibilityChange = () => {
+      if (
+        typeof document !== "undefined" &&
+        document.visibilityState === "visible"
+      ) {
+        tryTick();
+      }
+    };
+    const id = setInterval(tryTick, autoRefreshIntervalMs);
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibilityChange);
+    }
+    return () => {
+      clearInterval(id);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibilityChange);
+      }
+    };
   }, [autoRefreshEnabled, autoRefreshIntervalMs, refresh]);
 
   const tokens = parseGhFilter(filter);
