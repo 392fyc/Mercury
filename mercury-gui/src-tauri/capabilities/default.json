@@ -42,6 +42,17 @@
             "--state",
             { "validator": "^(open|closed|all)$" }
           ]
+        },
+        {
+          "name": "gh-auth-status",
+          "cmd": "gh",
+          "sidecar": false,
+          "args": [
+            "auth",
+            "status",
+            "--hostname",
+            { "validator": "^[\\w.-]+$" }
+          ]
         }
       ]
     }

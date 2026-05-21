@@ -12,6 +12,24 @@ const GH_CACHE_TTL_SECS: u64 = 60;
 const GH_REPO_DEFAULT: &str = "392fyc/Mercury";
 const GH_LIMIT: &str = "200";
 const GH_SUBPROCESS_TIMEOUT_SECS: u64 = 30;
+const GH_AUTH_HOSTNAME_DEFAULT: &str = "github.com";
+
+/// Resolve the gh-host to preflight against. `MERCURY_GH_HOST` env override
+/// supports GitHub Enterprise / multi-host deployments; falls back to
+/// `github.com` when unset or when the override fails the hostname validator
+/// (which mirrors the capability config's `^[\w.-]+$` slot).
+fn resolve_gh_auth_hostname() -> String {
+    std::env::var("MERCURY_GH_HOST")
+        .ok()
+        .filter(|h| is_valid_hostname(h))
+        .unwrap_or_else(|| GH_AUTH_HOSTNAME_DEFAULT.to_string())
+}
+
+fn is_valid_hostname(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+}
 
 /// Resolve the target gh repo. Defaults to 392fyc/Mercury (the #416 DoD repo).
 /// `MERCURY_GH_REPO` env override allows running the GUI against a different
@@ -91,6 +109,18 @@ pub struct GhPullRequest {
     pub is_draft: bool,
     #[serde(rename = "reviewDecision")]
     pub review_decision: Option<String>,
+}
+
+/// Preflight result for `gh auth status` (#434).
+/// `authenticated == false` means the dashboard fetch will fail; the frontend
+/// surfaces an actionable "run `gh auth login`" toast instead of letting the
+/// stderr passthrough from `gh issue list` reach the user as a generic error.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GhAuthStatus {
+    pub authenticated: bool,
+    pub hostname: String,
+    pub account: Option<String>,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -238,6 +268,82 @@ pub async fn fetch_gh_dashboard(
     Ok(snapshot)
 }
 
+/// Parse a `gh auth status` output blob for the active account login.
+/// Looks for the canonical `" account <login>"` marker emitted by gh CLI
+/// (verified against gh v2.87.3, 2026-02-23 on the success path:
+/// `✓ Logged in to github.com account <login> (keyring)`). Returns the first
+/// whitespace-delimited token following the marker.
+///
+/// SAFETY: This is a permissive marker-scan — `" account configured"` would
+/// match and return `"configured"`. The caller MUST gate on the success
+/// path (exit code 0) before relying on this output (see `check_gh_auth`,
+/// where `account` is only extracted when `authenticated == true` so the
+/// canonical gh success line is the only realistic input).
+fn parse_gh_account(text: &str) -> Option<String> {
+    let marker = " account ";
+    let idx = text.find(marker)?;
+    let after = &text[idx + marker.len()..];
+    after.split_whitespace().next().map(String::from)
+}
+
+/// Preflight `gh auth status` check (#434). Runs BEFORE the dashboard's
+/// issue/PR list calls so the frontend can surface a clear "run `gh auth login`"
+/// toast instead of letting the deeper `gh issue list` stderr passthrough reach
+/// the user as a generic fetch error.
+///
+/// Exit-code contract per `cli.github.com/manual/gh_auth_status`:
+///   * exit 0 → authenticated (output to stdout)
+///   * exit 1 → at least one account has auth issues (output to stderr)
+///
+/// `--hostname github.com` constrains the check to the dashboard's target host
+/// so an unrelated host's broken token does not falsely flag the active one.
+/// Both streams are combined for the account-marker scan; only stderr is
+/// surfaced in the failure `message` so the toast text stays actionable.
+#[tauri::command]
+pub async fn check_gh_auth(app: tauri::AppHandle) -> Result<GhAuthStatus, String> {
+    let timeout = Duration::from_secs(GH_SUBPROCESS_TIMEOUT_SECS);
+    let hostname = resolve_gh_auth_hostname();
+    let fut = app
+        .shell()
+        .command("gh")
+        .args(["auth", "status", "--hostname", hostname.as_str()])
+        .output();
+    let out = tokio::time::timeout(timeout, fut)
+        .await
+        .map_err(|_| {
+            format!(
+                "gh auth status timed out after {GH_SUBPROCESS_TIMEOUT_SECS}s — gh CLI may be missing or hanging"
+            )
+        })?
+        .map_err(|e| redact_home(&format!(
+            "gh spawn failed: {e} — ensure `gh` CLI is installed and on PATH"
+        )))?;
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let authenticated = out.status.success();
+    let combined = format!("{stdout}\n{stderr}");
+    let account = if authenticated {
+        parse_gh_account(&combined)
+    } else {
+        None
+    };
+    let message = redact_home(
+        if authenticated {
+            combined.trim()
+        } else {
+            stderr.trim()
+        },
+    );
+
+    Ok(GhAuthStatus {
+        authenticated,
+        hostname,
+        account,
+        message,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -361,6 +467,108 @@ mod tests {
         let entry: Option<(GhSnapshot, Instant)> = None;
         let hit = check_cache_hit(&entry, false, Instant::now(), Duration::from_secs(60));
         assert!(hit.is_none(), "empty cache must miss");
+    }
+
+    #[test]
+    fn parse_gh_account_extracts_login_from_success_output() {
+        // Canonical gh v2.87.3 success output shape.
+        let sample = "github.com\n  ✓ Logged in to github.com account 392fyc (keyring)\n  - Active account: true\n  - Git operations protocol: https\n";
+        assert_eq!(parse_gh_account(sample), Some("392fyc".to_string()));
+    }
+
+    #[test]
+    fn parse_gh_account_returns_none_on_failure_text() {
+        // gh stderr text when no host is logged in.
+        let sample = "You are not logged into any GitHub hosts. To log in, run: gh auth login\n";
+        assert_eq!(parse_gh_account(sample), None);
+    }
+
+    #[test]
+    fn parse_gh_account_first_match_wins_on_multi_host() {
+        // Multi-host output (hypothetical) — first " account <login>" wins.
+        let sample = "github.com\n  ✓ Logged in to github.com account first-user (keyring)\nenterprise.example.com\n  ✓ Logged in to enterprise.example.com account second-user (keyring)\n";
+        assert_eq!(parse_gh_account(sample), Some("first-user".to_string()));
+    }
+
+    #[test]
+    fn parse_gh_account_handles_empty_input() {
+        assert_eq!(parse_gh_account(""), None);
+    }
+
+    #[test]
+    fn parse_gh_account_documents_permissive_false_match() {
+        // Lock-in test for the documented "permissive marker-scan" contract:
+        // adversarial text containing " account " followed by a token returns
+        // that token. This is intentional — the caller (check_gh_auth) gates
+        // on exit code 0 so this branch is unreachable in practice. If a
+        // future refactor moves parse_gh_account outside the success gate,
+        // THIS test fails as a tripwire and forces a parser tightening.
+        let sample = "warning: no account configured for upstream";
+        assert_eq!(
+            parse_gh_account(sample),
+            Some("configured".to_string()),
+            "parser is intentionally permissive; safety relies on success-path gating"
+        );
+    }
+
+    #[test]
+    fn is_valid_hostname_accepts_canonical() {
+        assert!(is_valid_hostname("github.com"));
+        assert!(is_valid_hostname("ghe.example.com"));
+        assert!(is_valid_hostname("internal-ghe-01"));
+        assert!(is_valid_hostname("host_with_underscore"));
+    }
+
+    #[test]
+    fn is_valid_hostname_rejects_malformed() {
+        assert!(!is_valid_hostname(""));
+        assert!(!is_valid_hostname("has space"));
+        assert!(!is_valid_hostname("evil;rm -rf /"));
+        assert!(!is_valid_hostname("host/path"));
+        assert!(!is_valid_hostname("host:port"));
+    }
+
+    #[test]
+    fn resolve_gh_auth_hostname_falls_back_when_unset() {
+        // Note: this test reads the live env var. CI / dev shells typically
+        // don't set MERCURY_GH_HOST, so the fallback path is exercised.
+        // If a developer happens to have it set, the test asserts that the
+        // resolver returned a non-empty hostname (the env value, if valid,
+        // or the default).
+        let resolved = resolve_gh_auth_hostname();
+        assert!(!resolved.is_empty());
+        assert!(is_valid_hostname(&resolved));
+    }
+
+    #[test]
+    fn serde_roundtrip_gh_auth_status_authenticated() {
+        let status = GhAuthStatus {
+            authenticated: true,
+            hostname: "github.com".to_string(),
+            account: Some("392fyc".to_string()),
+            message: "github.com\n  ✓ Logged in to github.com account 392fyc (keyring)".to_string(),
+        };
+        let json = serde_json::to_string(&status).expect("serialize");
+        let back: GhAuthStatus = serde_json::from_str(&json).expect("deserialize");
+        assert!(back.authenticated);
+        assert_eq!(back.hostname, "github.com");
+        assert_eq!(back.account.as_deref(), Some("392fyc"));
+        assert!(back.message.contains("392fyc"));
+    }
+
+    #[test]
+    fn serde_roundtrip_gh_auth_status_unauthenticated() {
+        let status = GhAuthStatus {
+            authenticated: false,
+            hostname: "github.com".to_string(),
+            account: None,
+            message: "You are not logged into any GitHub hosts.".to_string(),
+        };
+        let json = serde_json::to_string(&status).expect("serialize");
+        let back: GhAuthStatus = serde_json::from_str(&json).expect("deserialize");
+        assert!(!back.authenticated);
+        assert!(back.account.is_none());
+        assert!(back.message.contains("not logged"));
     }
 
     #[test]

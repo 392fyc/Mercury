@@ -40,6 +40,7 @@ pub fn run() {
             data::commands::read_lanes,
             data::commands::read_jobs_by_lane,
             gh_dashboard::fetch_gh_dashboard,
+            gh_dashboard::check_gh_auth,
         ])
         .setup(|app| {
             // System tray: "Quit Mercury" menu item.
