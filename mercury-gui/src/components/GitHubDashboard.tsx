@@ -91,15 +91,15 @@ export function GitHubDashboard() {
   //   - Skips when a fetch is already in flight (loadingRef)
   //   - Skips when the last preflight failed (authErrorRef) — don't hammer
   //     a known-bad auth state
-  //   - Skips when the window is hidden (document.visibilityState) — Argus
-  //     iter-3 H2 advisory: don't poll IPC while user can't see results
+  //   - Skips when the window is hidden (document.visibilityState) — avoid
+  //     polling IPC while the user cannot see the results
   //
   // The hook's monotonic reqId guard handles overlap defensively; skipping
   // avoids wasted IPC + log noise.
   //
-  // Additionally, we listen for `visibilitychange` and fire an immediate
-  // refresh when the window becomes visible (Argus iter-4 I1 — 行为偏差
-  // advisory: avoid the up-to-intervalMs stale window after the user returns).
+  // We also subscribe to `visibilitychange` and fire an immediate refresh
+  // when the window becomes visible, so the user does not see up to
+  // `intervalMs` of stale data after returning to the dashboard.
   useEffect(() => {
     if (!autoRefreshEnabled) return;
     const tryTick = () => {
