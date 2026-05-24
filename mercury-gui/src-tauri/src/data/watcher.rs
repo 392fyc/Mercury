@@ -138,7 +138,8 @@ fn run_watch_loop(
     // inside try_watch_once and silently dropped here (Fix A).
     let mut absent_watches: Vec<WatchTarget> = Vec::new();
     for (path, mode, label) in targets {
-        match try_watch_once(&mut watcher, &path, mode, label) {
+        // log_absent=true: log the initial absence once (startup).
+        match try_watch_once(&mut watcher, &path, mode, label, true) {
             WatchResult::Watched => {}
             WatchResult::Absent => absent_watches.push((path, mode, label)),
             WatchResult::Failed => {} // logged inside; do not retry
@@ -160,14 +161,10 @@ fn run_watch_loop(
 
         // Choose timeout: FS event pending → sub-debounce poll; absent paths
         // present → cap at ABSENT_RETRY_SECS so the time-throttle below fires
-        // even when no FS events arrive; idle → 1 s heartbeat so the stop flag
-        // (checked at the top of each iteration) is honored within ~1 s.
-        //
-        // Idle is 1 s (not sub-second): production `start()` passes a never-set
-        // stop, so sub-second polling would only benefit tests while adding
-        // needless idle wakeups for a hours-long desktop GUI session. 1 s
-        // matches ABSENT_RETRY_SECS (single idle cadence) and is ample for any
-        // future RunEvent::ExitRequested graceful-shutdown budget.
+        // even when no FS events arrive; true idle → the `idle_timeout` param
+        // (production = IDLE_TIMEOUT_SECS = 60 s, restoring the pre-#423 idle
+        // rate; tests pass a short value for fast graceful join). The idle
+        // timeout bounds only the `stop`-flag poll granularity.
         let timeout = if fs_dirty {
             Duration::from_millis(DEBOUNCE_MS / 3)
         } else if !absent_watches.is_empty() {
@@ -210,7 +207,8 @@ fn run_watch_loop(
             last_absent_retry = Instant::now();
             let mut still_absent: Vec<WatchTarget> = Vec::new();
             for (path, mode, label) in absent_watches.drain(..) {
-                match try_watch_once(&mut watcher, &path, mode, label) {
+                // log_absent=false: silent on retry to avoid 1 line/sec stderr spam.
+                match try_watch_once(&mut watcher, &path, mode, label, false) {
                     WatchResult::Watched => {
                         // Newly watched path: emit once so UI loads its data.
                         eprintln!(
@@ -236,15 +234,21 @@ fn run_watch_loop(
 /// - [`WatchResult::Failed`]   — path exists but `watcher.watch()` returned an
 ///   error (permission denied, OS inotify limit, etc.).  Logged here; callers
 ///   should NOT enqueue for retry to avoid infinite stderr noise (Fix A).
+/// `log_absent` controls whether the `Absent` case logs to stderr: `true` on
+/// the initial startup attempt (log once), `false` on every per-second retry so
+/// a never-created path does not spam stderr (one line/sec) on fresh installs.
 fn try_watch_once(
     watcher: &mut notify::RecommendedWatcher,
     path: &std::path::Path,
     mode: RecursiveMode,
     label: &str,
+    log_absent: bool,
 ) -> WatchResult {
     let display = redact_home(&path.display().to_string());
     if !path.exists() {
-        eprintln!("[mercury-gui] skip watch ({label}): path absent {display}");
+        if log_absent {
+            eprintln!("[mercury-gui] skip watch ({label}): path absent {display} — will retry");
+        }
         return WatchResult::Absent;
     }
     if let Err(e) = watcher.watch(path, mode) {
@@ -271,8 +275,9 @@ fn is_meaningful(kind: &EventKind) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Mutex};
-    use std::time::Duration;
+    // `Arc` and `Duration` are already in scope via `use super::*` (re-exported
+    // from the parent module's imports); only `Mutex` is new here.
+    use std::sync::Mutex;
 
     /// Smoke-test: `try_watch_once` returns `Absent` for a non-existent path
     /// and `Watched` after the path is created.
@@ -288,7 +293,7 @@ mod tests {
 
         // Not yet created → Absent.
         assert_eq!(
-            try_watch_once(&mut watcher, &sub, RecursiveMode::NonRecursive, "test"),
+            try_watch_once(&mut watcher, &sub, RecursiveMode::NonRecursive, "test", true),
             WatchResult::Absent,
             "absent path must return Absent"
         );
@@ -298,7 +303,7 @@ mod tests {
 
         // Now exists → Watched.
         assert_eq!(
-            try_watch_once(&mut watcher, &sub, RecursiveMode::NonRecursive, "test"),
+            try_watch_once(&mut watcher, &sub, RecursiveMode::NonRecursive, "test", true),
             WatchResult::Watched,
             "present path must return Watched"
         );
@@ -328,7 +333,7 @@ mod tests {
 
         // First registration → Watched.
         assert_eq!(
-            try_watch_once(&mut watcher, dir.path(), RecursiveMode::NonRecursive, "t1"),
+            try_watch_once(&mut watcher, dir.path(), RecursiveMode::NonRecursive, "t1", true),
             WatchResult::Watched,
             "first watch must succeed"
         );
@@ -336,7 +341,7 @@ mod tests {
         // Second registration on the same path — backend may return Err.
         // Result is either Watched (backend accepts dup) or Failed (backend rejects).
         // Critically it must NOT be Absent (path clearly exists).
-        let second = try_watch_once(&mut watcher, dir.path(), RecursiveMode::NonRecursive, "t2");
+        let second = try_watch_once(&mut watcher, dir.path(), RecursiveMode::NonRecursive, "t2", true);
         assert_ne!(
             second,
             WatchResult::Absent,
