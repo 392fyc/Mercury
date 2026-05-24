@@ -10,7 +10,13 @@ const DEBOUNCE_MS: u64 = 300;
 
 /// Retry interval for absent (not-yet-created) watch targets.
 /// Must be short enough that a newly-created path is picked up quickly
-/// (acceptance: "within 1 s"), but long enough not to spin.
+/// (#423 acceptance: "within 1 s"), but long enough not to spin.
+///
+/// Flat (no backoff) by design: the 1 s acceptance precludes a growing
+/// interval, and a never-created target only costs one cheap `path.exists()`
+/// stat per second across at most 3 targets — negligible, and only while a
+/// data dir is genuinely absent (a fresh-install edge case; once present the
+/// loop reverts to the 60 s idle timeout).
 const ABSENT_RETRY_SECS: u64 = 1;
 
 /// Tauri event name emitted on debounced FS change. JS side listens via
@@ -243,7 +249,10 @@ mod tests {
             "late-test",
         );
 
-        // Run the loop in a background thread.
+        // Run the loop in a background thread. Intentionally detached (never
+        // joined): the loop has no shutdown channel and runs until the test
+        // binary exits — standard for a process-lived watcher seam. Assertions
+        // complete before the test returns, so the leaked thread is benign.
         thread::spawn(move || {
             run_watch_loop(vec![target], move || {
                 let mut c = emit_count_clone.lock().unwrap();
