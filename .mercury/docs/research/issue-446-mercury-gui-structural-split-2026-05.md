@@ -126,6 +126,12 @@ CLAUDE.md 的 200-LOC 硬约束**只 scope 到 `adapters/<vendor-name>/` 外部�
 
 **矩阵读法**: Option 2 的优势集中在**未来扩展性**单一维度，且该维度的前提 (多 app / 大共享 lib) **当前不存在**。Option 1 在成本、风险、build 影响、可逆性上全面占优。nit-silencing 这个原始动机维度上，两者**打平甚至 Option 1 略优** (因为 Option 2 的 nit-silencing 效果本身 UNVERIFIED——Argus 是否真按单 crate 而非目录树总量计数，未经验证)。
 
+> **关键: NO-GO verdict 对该 UNVERIFIED 前提稳健 (两种情形都指向不拆)。** 这个 UNVERIFIED 项 (Argus 计数口径) 只影响"若选择拆分，拆分能否兑现其唯一动机"，**不影响本 ADR 的 NO-GO 结论**:
+> - **情形 A — Argus 按单 crate 计数**: 拆分*可能*消除 nit，但 §5.2 已证拆分成本确定、单 app 收益推断性 → 收益 < 成本，仍 NO-GO。
+> - **情形 B — Argus 按目录树总量计数**: 拆分*连原始动机都无法兑现* (小 crate 不改变目录树总量) → 更明确 NO-GO。
+>
+> 因此**无需先做 spike 验证该前提即可下 NO-GO 结论**——spike 只在 User 推翻 verdict、决定走 Option 2 时才需要 (作为止损 gate，见 §6.4(a) + Appendix)。这消除了"关键前提 UNVERIFIED 影响 ADR 可执行性"的顾虑: 决策已可执行 (NO-GO)，验证负担被正确推迟到"假设要拆"的反事实分支。
+
 ---
 
 ## 4. Research findings (外部技术事实，带 source URL)
@@ -222,7 +228,7 @@ line 70 exemption **不是** workaround，而是对一个**本就该豁免**的�
 ## 6. Recommendation (proposal only)
 
 1. **采纳 Option 1**: 不拆分，保持单包。本 ADR 不触发任何实施 Issue。
-2. **强化 exemption 的 reviewer 可见性 (低成本、可选)**: 既然根因是 Argus 误施 adapter-scoped 规则,建议 (proposal,非本 ADR 实施) 补强 CLAUDE.md 中 `mercury-gui/` 豁免的经验驱动证据。**核实现状**: CLAUDE.md (line 70 邻域) 已给 `mercury-gui/` 与 `scripts/` **同等结构待遇**——同一 MUST bullet、同一 DIRECTION.md §240/§385 authority chain、同一 "no LOC cap (size by need)" 措辞。真正的 delta 很小: 该 bullet 尾部 "Empirical drivers" 子句目前只列 `scripts/` 的 PR #338/#346,**未列 GUI 的 PRs #421/#424/#425**。建议仅把后者补进 empirical-drivers 清单,使未来 reviewer 一次性看到 GUI 也有经验驱动的 carve-out 而非每次触发 nit。**这比拆分代码便宜一个数量级,且直接命中根因。** 此项若 User 认可,可作为一个轻量文档 Issue (改 CLAUDE.md,走用户/项目文档直写通道),与拆分无关。
+2. **强化 exemption 的 reviewer 可见性 (低成本、可选)**: 既然根因是 Argus 误施 adapter-scoped 规则,建议 (proposal,非本 ADR 实施) 补强 CLAUDE.md 中 `mercury-gui/` 豁免的经验驱动证据。**核实现状**: CLAUDE.md (line 70 邻域) 已给 `mercury-gui/` 与 `scripts/` **同等结构待遇**——同一 MUST bullet、同一 DIRECTION.md §240/§385 authority chain、同一 "no LOC cap (size by need)" 措辞。真正的 delta 很小: 该 bullet 尾部 "Empirical drivers" 子句目前只列 `scripts/` 的 PR #338/#346,**未列 GUI 的 PRs #421/#424/#425**。建议仅把后者补进 empirical-drivers 清单,使未来 reviewer 一次性看到 GUI 也有经验驱动的 carve-out 而非每次触发 nit。**这比拆分代码便宜一个数量级,且直接命中根因。** 此项是改 CLAUDE.md 的轻量文档动作 (走用户/项目文档直写通道),与拆分无关,**且 pending User 认可** (CLAUDE.md 是项目治理文件)。**该治理动作已落地为可追踪项 #448** (避免"结论已给出但治理动作未落地"),由 User 拍板后执行——本 ADR 不直接改 CLAUDE.md。
 3. **记录重评触发条件** (§5.5)，使 #446 可在条件成立时被精准重开，而非凭主观重提。
 4. **若 User 推翻本 verdict 选择拆分**: 须另开实施 Issue，并在该 Issue 中要求 (a) 先做 spike 验证 §3 中 "Argus 是否真按单 crate 计数" 的 UNVERIFIED 假设——若 Argus 仍按目录树总量报，则拆分连原始动机都无法兑现，应立即止损；(b) 验证 §4.4 全部迁移坑 + dual-verify `pnpm build` gate 在新布局下通过；(c) 记录 create-tauri-app scaffold 偏离 (Category A provenance 影响，见 §3)。
 
