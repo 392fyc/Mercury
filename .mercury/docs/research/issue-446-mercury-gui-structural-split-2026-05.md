@@ -249,8 +249,9 @@ GUI-exemption **不是** workaround，而是对一个**本就该豁免**的对�
 
 ## Appendix — UNVERIFIED 清单 (供实施前 spike 核实)
 
+> 本清单仅列**仍 UNVERIFIED** 的项。起草中曾列入的 "tauri 精确 patch 版" 已在审阅期经 `mercury-gui/src-tauri/Cargo.lock` (锁定 `2.11.2`) 核实为 VERIFIED,故移出本清单 (见 §4.5)。
+
 | 项 | 状态 | 核实方式 |
 |----|------|---------|
-| tauri 精确 patch 版 (2.11.2) | ✅ VERIFIED (in-repo) | 证据来自 `mercury-gui/src-tauri/Cargo.lock` 锁定 `version = "2.11.2"` (不再需 crates.io 直抓) |
 | Tauri Issue #4232 在 v2 的修复状态 | UNVERIFIED | 实施前查 issue 当前状态 + 在目标 v2 版本本地复现 `tauri info` |
 | Argus 是否按单 crate / 单 package LOC 计数 (而非目录树总量) | UNVERIFIED — **决定 Option 2 nit-silencing 是否成立的关键** | 拆分实施前先做 spike：构造小 crate 看 Argus 是否仍报；若仍按总量报则拆分无法兑现原始动机 |
