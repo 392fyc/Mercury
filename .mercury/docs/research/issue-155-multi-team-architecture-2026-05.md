@@ -35,7 +35,7 @@ research_protocol: "所有外部能力对照官方文档核实 2026-05-24；未�
 | `.claude/agent-memory/<name>/` | `${REPO_ROOT}/.claude/agent-memory/<name>/` (原生 subagent `memory: project` scope) | **默认不在 repo**;启用 `memory: project` 后在此生成,可纳入版本控制(当前仓库 `.claude/` 下只有 `agents/`/`hooks/`/`skills/` 等,**Mercury 未启用**) |
 | `.mercury/docs/research/` | `${REPO_ROOT}/.mercury/docs/research/` | In repo |
 | `.mercury/state/` | `${REPO_ROOT}/.mercury/state/` | In repo |
-| `~/.claude/scripts/mem0_bridge.py` 等 | user-level memory layer | NOT in repo (用户级，见 CLAUDE.md Related Repositories) |
+| `~/.claude/scripts/mem0_bridge.py` 等 | user-level memory layer 运行时 canonical | 运行时 NOT in repo(用户级,见 CLAUDE.md Related Repositories);但 `mem0_hooks.py`/`mem0_migrate.py` 等有 repo 内可审阅副本 `scripts/mem0_*.py`(version-tracked) |
 | `${MERCURY_ROOT}/Mercury-<short>` | per-lane git worktree (Rule 5.1) | repo-local worktree，非 commit 进 main checkout |
 
 in-repo LOC / 文件引用基于 develop tip `fa3e171`(本 ADR 起草时的 git status 记录的 develop HEAD)。
@@ -291,7 +291,7 @@ Manager B = side lane (dept B)     @ ${MERCURY_ROOT}/Mercury-deptB  (lane 3)
 
 | 机制 | 现状 | scope | gap |
 |---|---|---|---|
-| **mem0 层** | `~/.claude/scripts/mem0_bridge.py` + `mem0_hooks.py`;Qdrant 单一 `"mercury"` collection,`user_id` 固定为常量 `_DEFAULT_USER = "mercury"`(`mem0_hooks.py` L36,后续 `add`/`search` 以 `user_id=_DEFAULT_USER` 引用);所有 session/lane 写同一向量空间;dedup cosine≥0.92;metadata 含 session_id/trigger/project_dir 但 **search 不按 metadata 过滤** | **已经跨 lane/department 全局共享** | 无 namespace/scoping → department 数增多后检索噪音 |
+| **mem0 层** | 运行时 canonical = `~/.claude/scripts/mem0_bridge.py` + `mem0_hooks.py`;**repo 内有可审阅副本 `scripts/mem0_hooks.py`**(version-tracked,引用其稳定行号):Qdrant 单一 `"mercury"` collection(`collection_name` `scripts/mem0_hooks.py` L82),`user_id` 固定为常量 `_DEFAULT_USER = "mercury"`(L30,后续 `add`/`search` 以 `user_id=_DEFAULT_USER` 引用);所有 session/lane 写同一向量空间;dedup `_DEDUP_THRESHOLD = 0.92`(L31,cosine≥0.92);metadata 含 session_id/trigger/project_dir 但 **search 不按 metadata 过滤** | **已经跨 lane/department 全局共享** | 无 namespace/scoping → department 数增多后检索噪音 |
 | **OMC `shared_memory` MCP** | session 工具列表存在 `mcp__plugin_oh-my-claudecode_t__shared_memory_{write,read,list,delete,cleanup}`(本 ADR 起草 session 可见)。**scope 待 design 阶段实测**(UNVERIFIED:跨 process / 跨 lane 是否真共享、持久化位置) | 候选机制 | 需 design 阶段实测确认 scope |
 | **OMC `project_memory_*` / `state_*`** | per-project / OMC state 工具,session 列表存在 | per-project / OMC-internal | 非跨 department 通用记忆 |
 | **原生 subagent `memory:` frontmatter** | 对照 sub-agents docs(2026-05-24):`memory: project` = `.claude/agent-memory/<name-of-agent>/`;`user` = `~/.claude/agent-memory/<name>/`;`local` = `.claude/agent-memory-local/<name>/`。enable 后系统注入 `MEMORY.md` 前 200 行 / 25KB,自动开 Read/Write/Edit。**Mercury 未启用** | per-agent-name(跨 department 同名 Employee 共享同一目录) | 既是优势(跨 dept 学习)也是问题(无法区分 dept A vs B 的同角色经验) |
@@ -396,7 +396,7 @@ Manager B = side lane (dept B)     @ ${MERCURY_ROOT}/Mercury-deptB  (lane 3)
 - [#319] `agent-team-orchestration-feasibility-2026-04-26.md` — 两层 Director/DevTeam baseline,CONDITIONAL_GO;Dim1.3 5 missing module(本 ADR 复用,不重复 effort 评分);Dim3.7 over-spawning 警告;Dim2 archive `task-manager.ts` prompt builder 模式(N2 reference): `.mercury/docs/research/agent-team-orchestration-feasibility-2026-04-26.md`
 - [#386] `agent-view-multi-lane-adaptation-2026-05.md` — multi-lane v1 现状(并行 lane / worktree / branch / bg dispatch `isolation:"none"` / SessionStart hook fire / agent view 监控): `.mercury/docs/research/agent-view-multi-lane-adaptation-2026-05.md`
 - [#391] `agent-view-phase6-empirical-2026-05.md` — file-editing bg/sub-agent auto-worktree HYBRID(`tool_use_error`→`EnterWorktree`→branch `worktree-<name>`,`ExitWorktree` 无自动 merge): `.mercury/docs/research/agent-view-phase6-empirical-2026-05.md`(经 #386 引用)
-- [mem0] `~/.claude/scripts/mem0_bridge.py` + `mem0_hooks.py`(L36 `_DEFAULT_USER = "mercury"` 常量,单一 `"mercury"` Qdrant collection,cosine≥0.92 dedup)— 用户级,不在 repo(见 CLAUDE.md Related Repositories);跨 department 记忆共享现状依据
+- [mem0] 运行时 canonical = `~/.claude/scripts/mem0_bridge.py` + `mem0_hooks.py`(用户级,见 CLAUDE.md Related Repositories);**repo 内可审阅副本 = `scripts/mem0_hooks.py`**(version-tracked)— `_DEFAULT_USER = "mercury"`(L30)、`_DEDUP_THRESHOLD = 0.92`(L31,cosine≥0.92 dedup)、`collection_name "mercury"`(L82);引用 repo 副本稳定行号,不依赖会漂移的 user-level 行号。跨 department 记忆共享现状依据
 - [shared_memory MCP] `mcp__plugin_oh-my-claudecode_t__shared_memory_{write,read,list,delete,cleanup}` — 本 ADR 起草 session 工具列表可见;**scope UNVERIFIED**(跨 process/lane 共享 + 持久化位置待 design 阶段实测)
 - DIRECTION.md(最高准则;本 ADR 仅 *建议* 增补,不直接改): `.mercury/docs/DIRECTION.md`
 - multi-lane v1 protocol(authority): `memory/feedback_lane_protocol.md` v1(user-memory,不在 repo)+ `.mercury/docs/guides/lane-naming.md`(in-repo worktree/branch convention)
