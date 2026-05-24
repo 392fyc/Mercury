@@ -93,7 +93,7 @@ Routines 官方文档原文: *"The session can run shell commands, use **skills 
 
 ### Claude Code Routines (Part B)
 
-**结论: 有限度 PoC 可行。下列 3 个约束**塑造 PoC 选型**,而非由单个 PoC 一次性全部实测** (见 §4: 推荐的 B3 只观察 Q3 + 运行成本,Q2/Q4 另开独立探针)。
+**结论: 有限度 PoC 可行。** 下列 3 个约束**塑造 PoC 选型**,而非由单个 PoC 一次性全部实测 (见 §4: 推荐的 B3 只观察 Q3 + 运行成本,Q2/Q4 另开独立探针)。
 
 约束:
 1. **Custom agents 加载未确认** (Q2) — PoC 选型应避开**依赖 `.claude/agents/` subagent** 的场景;custom-agent 加载行为留独立探针实测,不在首个 PoC 内顺带验证。
