@@ -88,7 +88,7 @@ user-level #381 的 taxonomy/模板仅作 **enrichment(锦上添花)**,**非 Pha
 
 | 维度 | GitHub Actions (scheduled) | Claude Code Routines | NAS cron + `schedule` skill | Hybrid (推荐) |
 |---|---|---|---|---|
-| **调度确定性** | 高 — POSIX cron，最短 5min 粒度，UTC/IANA tz [1] | 中 — daily-run quota 限制(具体数值见 routines docs，#289 未独立复核) [#289] | 高 — 本机 cron 完全可控 | 高(GHA 主调度) |
+| **调度确定性** | 高 — POSIX cron，最短 5min 粒度，**仅按 UTC 解释**(GHA schedule 无 timezone 配置,需其它时区须自行换算)[1] | 中 — daily-run quota 限制(具体数值见 routines docs，#289 未独立复核) [#289] | 高 — 本机 cron 完全可控 | 高(GHA 主调度) |
 | **访问 GitHub Issue 写** | 原生 — `GITHUB_TOKEN` / `gh` CLI 内置 | 经 GitHub MCP connector(需配置 + 授权) [#289] | 经 `gh` CLI(需本机已认证) | 原生(GHA) |
 | **访问本机/NAS/`~/.claude` 路径** | 否 — runner 是 GitHub 云 | **否** — Anthropic 云，访问不到本机路径(#289 §3 已确认) | 是 — 本机执行 | #157 不需要本机路径，故非约束 |
 | **LLM 判定能力** | 需在 workflow 内调 Anthropic API(自己付 token) | 原生(就是 Claude Code session) | 需本机调 API 或起 Claude Code | GHA 内调 Anthropic API(B 类只需 1 次/源/周，量极小) |
@@ -138,7 +138,7 @@ Dependabot 支持 30+ ecosystem(npm/pip/Cargo/github-actions/uv 等)，Renovate 
 
 **检测机制要点**(核实状态逐项标注):
 - **npm**(已核实端点,响应大小未核实): 官方 registry API 文档化的是 `GET /{package}` 返回 full packument(含 `dist-tags.latest`),以及经 `Accept: application/vnd.npm.install-v1+json` header 取**精简元数据**[3]。⚠️ 早稿写的 `?fields=dist-tags` query 参数 + "~100 bytes" 大小在所引官方 docs **未找到支持,标 UNVERIFIED** —— Phase 2 实测用哪种取法(full packument 解析 vs abbreviated header)。
-- **PyPI**: `https://pypi.org/pypi/<pkg>/json` 返回 latest + 全 release 列表，PEP 386 排序[8]。
+- **PyPI**: `https://pypi.org/pypi/<pkg>/json` 返回 latest + 全 release 列表，PEP 440 版本规范/排序[8]。
 - **crates.io**: **必须带 User-Agent header**(否则被拒);官方建议用 sparse index `index.crates.io` 做单包/少量包高效查询，或 `https://crates.io/api/openapi.json`(experimental OpenAPI)[5][6]。
 - **GitHub Releases**: `GET /repos/{owner}/{repo}/releases` 免认证可读公开 repo，但**免认证仅 60 req/h**[4][9]。**强烈建议带 token**(GHA 里用 `GITHUB_TOKEN` 即可，额度大幅提升)。注意: 该端点**不含未关联 release 的普通 git tag**[4] —— 若目标 repo 只打 tag 不发 release，改用 `GET /repos/{o}/{r}/tags`(REST,已核实[4])。
 - **Atom feed**(`releases.atom` / `tags.atom` / `commits.atom`): 这些 repo-specific atom URL 在社区广泛使用,但 ⚠️ **所引官方 GitHub feeds API 文档[7][10] 记录的是认证态 `GET /feeds` 端点 + timeline 资源(可经 `Accept` header 返回 Atom),并未文档化 repo-specific `*.atom` 路径** —— 故这些 URL 标 **UNVERIFIED against official docs**(很可能存在但官方未列),Phase 2 须实测目标 repo 的实际 feed 内容。已知社区报告: release atom feed 可能把 tag 当 release 混入、pre-release 过滤行为不一致(亦 UNVERIFIED,PoC 实测)[7]。**保守默认: 优先用已核实的 REST `/releases` + `/tags`,atom feed 仅作 PoC 验证后的可选优化。**
@@ -285,6 +285,17 @@ PoC 验证后扩展:
 5. **状态持久化机制的最终选型** — §5.2 列了 (a) default-branch commit / (b) 侧分支 + 显式 fetch / (c) git-外存储(pinned Issue/repo var)三方案,PoC 默认 (c)。Phase 2 实测确认 (c) 的 `gh api` 读写延迟/配额可接受,并验证 (a) 在 branch protection 下是否真被挡。
 6. **私有 repo 的 GHA 分钟成本** — Mercury repo 若为私有,GHA 有月度分钟额度;weekly 轻量 workflow 消耗极小,但需确认未超额(UNVERIFIED Mercury repo 当前是否 public)。
 
+### Phase 2 入口验收门槛(UNVERIFIED 项固化)
+
+上述 UNVERIFIED 项直接影响采集稳定性与误报率,**进入 Phase 2 实装前必须逐项 web-verify 并作为验收门槛清单**(per MANDATORY RESEARCH PROTOCOL):
+- Q2 Anthropic API/SDK 是否有结构化 changelog feed → 决定 B 类"API 文档变更"用 feed 还是脆弱的页面快照 diff。
+- Q3/Q3b atom feed 行为 + npm 取法 → 决定采集端点,直接影响误报率;**未核实前用保守默认(REST `/releases`+`/tags`、`GET /{package}`)**。
+- Q4 Codex CLI 分发渠道 → 决定 npm vs GitHub Releases。
+- Q5 状态持久化机制 → 实测机制 (c) 的 `gh api` 延迟/配额 + 原子性。
+- Q6 GHA 分钟额度(repo public/private)→ 确认成本不超额。
+
+每项核实结论回填本 §9 + 在 Phase 2 follow-up Issue 的验收清单中逐条勾选,任一未核实项不得进入全量 Phase 3。
+
 ---
 
 ## 10. 给主 agent 的交接要点
@@ -301,7 +312,7 @@ PoC 验证后扩展:
 核实日期均为 2026-05-24。
 
 **执行基座**:
-- [1] GitHub Actions 调度 cron 语法(POSIX, 5min 最短, UTC/IANA tz, 跑 default branch latest commit): <https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions>
+- [1] GitHub Actions 调度 cron 语法(POSIX, 5min 最短, **仅按 UTC 解释(无 timezone 配置)**, 跑 default branch latest commit): <https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions>
 - [#289] Claude Code Routines 约束(research preview / daily quota / custom-agent 加载 UNVERIFIED / 分支推送限制 / 访问不到本机路径): `.mercury/docs/research/issue-289-design-routines-2026-05.md` + <https://code.claude.com/docs/en/routines>
 
 **依赖检测(A 类)**:
@@ -313,7 +324,7 @@ PoC 验证后扩展:
 - [5] crates.io 数据访问(必须带 User-Agent header, sparse index `index.crates.io` 高效查单包, experimental OpenAPI `crates.io/api/openapi.json`): <https://crates.io/data-access>
 - [6] crates.io API 客户端参考: <https://docs.rs/crates_io_api/latest/crates_io_api/>
 - [7] GitHub feeds(官方 docs 记录认证态 `GET /feeds` + timeline 资源,**未文档化 repo-specific `releases.atom`/`tags.atom`/`commits.atom` 路径** → 这些 URL UNVERIFIED against official docs;pre-release/tag 混入行为社区报告不一致): <https://docs.github.com/en/rest/activity/feeds> + <https://github.com/orgs/community/discussions/17052>
-- [8] PyPI JSON API(`https://pypi.org/pypi/<pkg>/json` latest + 全 release, PEP 386 排序): <https://docs.pypi.org/api/json/>
+- [8] PyPI JSON API(`https://pypi.org/pypi/<pkg>/json` latest + 全 release, PEP 440 版本规范/排序): <https://docs.pypi.org/api/json/>
 - [9] GitHub REST API rate limit(免认证 60 req/h, 带 token 大幅提升): <https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api>
 - [10] GitHub feeds REST endpoint(timeline 资源默认 JSON, Accept: application/atom+xml 返回 Atom): <https://docs.github.com/en/rest/activity/feeds>
 
