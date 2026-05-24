@@ -26,7 +26,7 @@ research_protocol: "所有外部能力对照官方文档核实 2026-05-24；未�
   [ "$(printf '%s\n' "$matches" | sed '/^$/d' | wc -l)" -eq 1 ] || { echo "encoded_cwd 匹配不唯一或不存在" >&2; exit 1; }
   ```
 
-- `${MERCURY_ROOT}` 是**文档占位符**(非运行时已注入的 env var),指 Mercury 安装父目录;当前 Windows install 的具体形式 = `D:/Mercury`(per CLAUDE.md "Install to D drive")。main checkout = `${MERCURY_ROOT}/Mercury`;per-lane worktree = `${MERCURY_ROOT}/Mercury-<short>`。本 doc 一律用占位符表达以避免跨环境硬编码;括号内给当前 install 的具体值仅作参考。
+- `${MERCURY_ROOT}` 是**文档占位符**(非运行时已注入的 env var),指 Mercury 安装父目录(具体值由各 install 决定,Windows 团队按 CLAUDE.md "Install to D drive" policy 落在 D 盘)。main checkout = `${MERCURY_ROOT}/Mercury`;per-lane worktree = `${MERCURY_ROOT}/Mercury-<short>`。本 doc 一律用占位符表达,**不在仓库内容中保留具体机器路径**。
 
 | Shorthand | Resolves to | Status |
 |-----------|-------------|--------|
@@ -36,7 +36,7 @@ research_protocol: "所有外部能力对照官方文档核实 2026-05-24；未�
 | `.mercury/docs/research/` | `${REPO_ROOT}/.mercury/docs/research/` | In repo |
 | `.mercury/state/` | `${REPO_ROOT}/.mercury/state/` | In repo |
 | `~/.claude/scripts/mem0_bridge.py` 等 | user-level memory layer | NOT in repo (用户级，见 CLAUDE.md Related Repositories) |
-| `${MERCURY_ROOT}/Mercury-<short>` | per-lane git worktree (Rule 5.1);当前 install 具体形式 = `D:/Mercury/Mercury-<short>` | repo-local worktree，非 commit 进 main checkout |
+| `${MERCURY_ROOT}/Mercury-<short>` | per-lane git worktree (Rule 5.1) | repo-local worktree，非 commit 进 main checkout |
 
 in-repo LOC / 文件引用基于 develop tip `fa3e171`(本 ADR 起草时的 git status 记录的 develop HEAD)。
 
