@@ -82,19 +82,25 @@ verdict: close-as-subsumed
 
 **Verdict: close-as-subsumed** — #86 提案的实质目标已通过 `/pr-flow` + Argus + CronCreate-based polling + 6 个 memory files 完整达成, 但 architecture 与提案不同 (main-agent-driven 而非 sub-agent dispatch)。剩余 gap 低 value 不值得开 follow-up Issue。
 
-**关闭策略**: `gh issue close 86` + 关闭 comment 链接到本 audit doc + pr-flow SKILL.md + 关键 memory files。
+**关闭策略**: PR #441 (Closes #86) merged 后 GitHub 自动 close。无需手动 `gh issue close` 命令; 如运营需要手动关闭则使用显式 repo 限定:
+```bash
+gh issue close 86 --repo 392fyc/Mercury  # 仅在 PR merge 失败的回退场景使用; 先 gh repo view 确认仓库
+```
+关闭 comment 链接到本 audit doc + pr-flow SKILL.md + 关键 memory files。
 
 ## 关键参考
 
+`$MERCURY_MEMORY_DIR` 是 Mercury canonical 占位符 (默认 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory`; 见 `.mercury/docs/guides/lane-naming.md` L126-127 + `lane-spawn.md` L49-57 + `lane-close.md` L35-38 — 三 guide doc 全部统一用此 env var)。
+
 - `.claude/skills/pr-flow/SKILL.md` (~380 行 — Phase 1-7 lifecycle)
-- `~/.claude/projects/D--Mercury-Mercury/memory/feedback_pr_flow_canonical.md` (S103 directive)
-- `~/.claude/projects/D--Mercury-Mercury/memory/feedback_argus_canonical_trigger.md` (S108 canonical 2-token trigger)
-- `~/.claude/projects/D--Mercury-Mercury/memory/feedback_resolve_threads.md` (S21 fix-detection mode)
-- `~/.claude/projects/D--Mercury-Mercury/memory/feedback_argus_nit_loop.md` (iter 3+ escape-hatch)
-- `~/.claude/projects/D--Mercury-Mercury/memory/feedback_review_disagree_strategy.md` (S128 consolidated-comment workaround)
-- `~/.claude/projects/D--Mercury-Mercury/memory/feedback_argus_quiet_autonomous_approve.md` (S131 8min × 3 quiet ticks)
-- `~/.claude/projects/D--Mercury-Mercury/memory/feedback_prflow_after_commit.md` (push 后必须等待 — directly supports Module 3 iterative-fix path)
-- `~/.claude/projects/D--Mercury-Mercury/memory/feedback_cron_safety.md` (cron trigger 上限 — supports Module 2 polling cap claim)
+- `$MERCURY_MEMORY_DIR/feedback_pr_flow_canonical.md` (S103 directive)
+- `$MERCURY_MEMORY_DIR/feedback_argus_canonical_trigger.md` (S108 canonical 2-token trigger)
+- `$MERCURY_MEMORY_DIR/feedback_resolve_threads.md` (S21 fix-detection mode)
+- `$MERCURY_MEMORY_DIR/feedback_argus_nit_loop.md` (iter 3+ escape-hatch)
+- `$MERCURY_MEMORY_DIR/feedback_review_disagree_strategy.md` (S128 consolidated-comment workaround)
+- `$MERCURY_MEMORY_DIR/feedback_argus_quiet_autonomous_approve.md` (S131 8min × 3 quiet ticks)
+- `$MERCURY_MEMORY_DIR/feedback_prflow_after_commit.md` (push 后必须等待 — directly supports Module 3 iterative-fix path)
+- `$MERCURY_MEMORY_DIR/feedback_cron_safety.md` (cron trigger 上限 — supports Module 2 polling cap claim)
 - Phase 6 GUI Issue/PR dashboard #416 → PR #425 (cross-PR visibility, partial "main agent awareness")
 - PR #171 (CodeRabbit → generic review-bot migration — supports "CodeRabbit → Argus" framing)
 - PR #211 (reviewDecision/latestReviews in pr-flow polling — supports Module 2 delta-detection claim)
