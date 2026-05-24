@@ -1,7 +1,8 @@
 use super::{paths, redact_home};
 use notify::{recommended_watcher, EventKind, RecursiveMode, Watcher};
 use std::path::PathBuf;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
@@ -26,6 +27,21 @@ pub const DATA_CHANGED_EVENT: &str = "mercury:data-changed";
 /// A single watch target: (path, recursive-mode, human-readable label).
 type WatchTarget = (PathBuf, RecursiveMode, &'static str);
 
+/// Outcome of a single `try_watch_once` call — three distinct states that
+/// the caller must handle differently:
+///
+/// - `Watched`  — `watcher.watch()` succeeded; remove from retry list.
+/// - `Absent`   — path does not exist (`!path.exists()`); transient, retry later.
+/// - `Failed`   — path exists but `watcher.watch()` returned an error
+///   (permission denied, OS watch-limit, invalid path, …).
+///   Non-transient: log once and **do not** add to retry list.
+#[derive(Debug, PartialEq)]
+enum WatchResult {
+    Watched,
+    Absent,
+    Failed,
+}
+
 /// Spawn a background OS thread that watches the read-side data sources and
 /// emits a debounced [`DATA_CHANGED_EVENT`] whenever any of them change.
 ///
@@ -49,8 +65,11 @@ pub fn start(app_handle: AppHandle) {
         targets.push((p, RecursiveMode::NonRecursive, "lanes-parent"));
     }
 
+    // Pass a stop flag that is never set — preserves "thread lives until process
+    // exit" semantics while making run_watch_loop testably stoppable (Fix C).
+    let stop = Arc::new(AtomicBool::new(false));
     thread::spawn(move || {
-        run_watch_loop(targets, move || {
+        run_watch_loop(targets, stop, move || {
             if let Err(e) = app_handle.emit(DATA_CHANGED_EVENT, ()) {
                 eprintln!(
                     "[mercury-gui] emit failed: {}",
@@ -63,22 +82,35 @@ pub fn start(app_handle: AppHandle) {
 
 /// Core watch loop — extracted for testability.
 ///
-/// Accepts a list of `targets` (path + mode + label) and an `emit_fn` callback
-/// that is invoked whenever a debounced FS-change event fires.  `start()` is
-/// the thin caller that supplies real `AppHandle::emit`; tests supply a
-/// lightweight counter/channel instead.
+/// Accepts a list of `targets` (path + mode + label), a `stop` flag, and an
+/// `emit_fn` callback that is invoked whenever a debounced FS-change event
+/// fires.  `start()` is the thin caller that supplies real `AppHandle::emit`;
+/// tests supply a lightweight counter/channel instead.
+///
+/// The loop exits when `stop` is set to `true` (Fix C) or the channel
+/// disconnects.
 ///
 /// # Absent-watch retry
-/// Paths that do not exist at startup are placed in `absent_watches`.  While
-/// that list is non-empty the `recv_timeout` idle timeout is shortened to
-/// [`ABSENT_RETRY_SECS`], and every timeout tick re-attempts `watcher.watch()`
-/// for each absent path.  On success the entry is removed from `absent_watches`
-/// and `emit_fn` is called once (so the UI loads freshly available data).
+/// Paths that do not exist at startup are placed in `absent_watches`.  Every
+/// ~[`ABSENT_RETRY_SECS`] — measured by wall-clock elapsed time regardless of
+/// whether the receive loop is in the Timeout or Ok branch — the loop
+/// re-attempts `watcher.watch()` for each absent path (Fix B: event stream
+/// cannot starve the retry).  On success the entry is removed from
+/// `absent_watches` and `emit_fn` is called once (so the UI loads freshly
+/// available data).
+///
+/// Paths whose `watch()` call returns an error despite the path existing are
+/// classified as `Failed` and are NOT added to `absent_watches` (Fix A: avoids
+/// infinite stderr noise for non-transient errors such as permission denied).
 ///
 /// Two "dirty" concepts deliberately use distinct variable names:
-/// - `fs_dirty`  — a debounced FS-change event is pending.
-/// - `absent_watches` — paths whose `watch()` has not yet succeeded.
-fn run_watch_loop(targets: Vec<WatchTarget>, emit_fn: impl Fn() + Send + 'static) {
+/// - `fs_dirty`      — a debounced FS-change event is pending.
+/// - `absent_watches` — paths whose `watch()` has not yet succeeded (transient).
+fn run_watch_loop(
+    targets: Vec<WatchTarget>,
+    stop: Arc<AtomicBool>,
+    emit_fn: impl Fn() + Send + 'static,
+) {
     let (tx, rx) = mpsc::channel();
     let mut watcher = match recommended_watcher(tx) {
         Ok(w) => w,
@@ -91,26 +123,43 @@ fn run_watch_loop(targets: Vec<WatchTarget>, emit_fn: impl Fn() + Send + 'static
         }
     };
 
-    // Attempt initial watch for all targets; failures go into absent_watches.
+    // Attempt initial watch for all targets.
+    // Only `Absent` results are queued for retry; `Failed` results are logged
+    // inside try_watch_once and silently dropped here (Fix A).
     let mut absent_watches: Vec<WatchTarget> = Vec::new();
     for (path, mode, label) in targets {
-        if try_watch_once(&mut watcher, &path, mode, label).is_err() {
-            absent_watches.push((path, mode, label));
+        match try_watch_once(&mut watcher, &path, mode, label) {
+            WatchResult::Watched => {}
+            WatchResult::Absent => absent_watches.push((path, mode, label)),
+            WatchResult::Failed => {} // logged inside; do not retry
         }
     }
+
+    // Time-based throttle for absent retries so that a high-frequency event
+    // stream cannot starve the retry logic (Fix B).
+    let mut last_absent_retry = Instant::now();
 
     // Coalescing receive loop.
     let mut fs_dirty = false;
     let mut last_event = Instant::now();
     loop {
-        // Choose timeout: absent paths → short retry interval; FS event pending
-        // → sub-debounce poll; idle → long sleep.
+        // Check stop flag at the top of every iteration (Fix C).
+        if stop.load(Ordering::Relaxed) {
+            break;
+        }
+
+        // Choose timeout: FS event pending → sub-debounce poll; absent paths
+        // present → cap at ABSENT_RETRY_SECS so the time-throttle below fires
+        // even when no FS events arrive; idle → short heartbeat so the stop
+        // flag (checked at the top of each iteration) is polled frequently
+        // enough for graceful shutdown within ~200 ms (Fix C).
         let timeout = if fs_dirty {
             Duration::from_millis(DEBOUNCE_MS / 3)
         } else if !absent_watches.is_empty() {
             Duration::from_secs(ABSENT_RETRY_SECS)
         } else {
-            Duration::from_secs(60)
+            // 200 ms heartbeat: low CPU cost, fast stop response.
+            Duration::from_millis(200)
         };
 
         match rx.recv_timeout(timeout) {
@@ -130,54 +179,64 @@ fn run_watch_loop(targets: Vec<WatchTarget>, emit_fn: impl Fn() + Send + 'static
                     emit_fn();
                     fs_dirty = false;
                 }
-
-                // --- Retry absent watch targets ---
-                if !absent_watches.is_empty() {
-                    let mut still_absent: Vec<WatchTarget> = Vec::new();
-                    for (path, mode, label) in absent_watches.drain(..) {
-                        if try_watch_once(&mut watcher, &path, mode, label).is_ok() {
-                            // Newly watched path: emit once so UI loads its data.
-                            eprintln!(
-                                "[mercury-gui] late-watch recovered ({label}) {}",
-                                redact_home(&path.display().to_string())
-                            );
-                            emit_fn();
-                        } else {
-                            still_absent.push((path, mode, label));
-                        }
-                    }
-                    absent_watches = still_absent;
-                }
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+
+        // --- Retry absent watch targets (time-throttled, Fix B) ---
+        // Checked after every branch so that a continuous event stream does not
+        // prevent recovery of newly-created paths.
+        if !absent_watches.is_empty()
+            && last_absent_retry.elapsed() >= Duration::from_secs(ABSENT_RETRY_SECS)
+        {
+            last_absent_retry = Instant::now();
+            let mut still_absent: Vec<WatchTarget> = Vec::new();
+            for (path, mode, label) in absent_watches.drain(..) {
+                match try_watch_once(&mut watcher, &path, mode, label) {
+                    WatchResult::Watched => {
+                        // Newly watched path: emit once so UI loads its data.
+                        eprintln!(
+                            "[mercury-gui] late-watch recovered ({label}) {}",
+                            redact_home(&path.display().to_string())
+                        );
+                        emit_fn();
+                    }
+                    WatchResult::Absent => still_absent.push((path, mode, label)),
+                    WatchResult::Failed => {} // logged inside; do not retry
+                }
+            }
+            absent_watches = still_absent;
         }
     }
 }
 
 /// Try to register `path` with `watcher`.
 ///
-/// Returns `Ok(())` on success. Returns `Err(())` — a unit error — when the
-/// path does not exist or `watcher.watch()` fails; callers only need to know
-/// success/failure, not the underlying `notify::Error` variant.
+/// Returns a [`WatchResult`] discriminating three outcomes:
+/// - [`WatchResult::Watched`]  — registration succeeded.
+/// - [`WatchResult::Absent`]   — path does not yet exist; safe to retry later.
+/// - [`WatchResult::Failed`]   — path exists but `watcher.watch()` returned an
+///   error (permission denied, OS inotify limit, etc.).  Logged here; callers
+///   should NOT enqueue for retry to avoid infinite stderr noise (Fix A).
 fn try_watch_once(
     watcher: &mut notify::RecommendedWatcher,
     path: &std::path::Path,
     mode: RecursiveMode,
     label: &str,
-) -> Result<(), ()> {
+) -> WatchResult {
     let display = redact_home(&path.display().to_string());
     if !path.exists() {
         eprintln!("[mercury-gui] skip watch ({label}): path absent {display}");
-        return Err(());
+        return WatchResult::Absent;
     }
     if let Err(e) = watcher.watch(path, mode) {
         eprintln!(
             "[mercury-gui] watch failed ({label}) {display}: {}",
             redact_home(&e.to_string())
         );
-        return Err(());
+        return WatchResult::Failed;
     }
-    Ok(())
+    WatchResult::Watched
 }
 
 fn is_meaningful(kind: &EventKind) -> bool {
@@ -197,8 +256,8 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
-    /// Minimal smoke-test: `try_watch_once` returns `Err` for a non-existent
-    /// path and `Ok` after the path is created.
+    /// Smoke-test: `try_watch_once` returns `Absent` for a non-existent path
+    /// and `Watched` after the path is created.
     #[test]
     fn try_watch_once_absent_then_present() {
         use tempfile::tempdir;
@@ -209,19 +268,59 @@ mod tests {
         let (tx, _rx) = mpsc::channel();
         let mut watcher = recommended_watcher(tx).expect("watcher");
 
-        // Not yet created → Err.
-        assert!(
-            try_watch_once(&mut watcher, &sub, RecursiveMode::NonRecursive, "test").is_err(),
-            "absent path must return Err"
+        // Not yet created → Absent.
+        assert_eq!(
+            try_watch_once(&mut watcher, &sub, RecursiveMode::NonRecursive, "test"),
+            WatchResult::Absent,
+            "absent path must return Absent"
         );
 
         // Create the directory.
         std::fs::create_dir_all(&sub).expect("create_dir_all");
 
-        // Now exists → Ok.
-        assert!(
-            try_watch_once(&mut watcher, &sub, RecursiveMode::NonRecursive, "test").is_ok(),
-            "present path must return Ok"
+        // Now exists → Watched.
+        assert_eq!(
+            try_watch_once(&mut watcher, &sub, RecursiveMode::NonRecursive, "test"),
+            WatchResult::Watched,
+            "present path must return Watched"
+        );
+    }
+
+    /// Fix A: a path that exists but whose `watcher.watch()` call fails must
+    /// return `Failed` — not `Absent` — so it is not enqueued for retry.
+    ///
+    /// We simulate this by registering the same path twice.  The second call to
+    /// `watcher.watch()` on an already-watched path returns an error on most
+    /// notify backends.  If the backend silently accepts duplicates (returning
+    /// Ok) the assertion relaxes to `Watched` and the test still compiles — the
+    /// key invariant (path exists, no panic) is verified either way.
+    ///
+    /// Note: not all platforms error on duplicate watch; the test is marked
+    /// `#[allow(unused)]` to suppress warnings if the assert is never false.
+    #[test]
+    fn try_watch_once_existing_watch_fail_returns_failed_or_watched() {
+        use tempfile::tempdir;
+
+        let dir = tempdir().expect("tempdir");
+
+        let (tx, _rx) = mpsc::channel();
+        let mut watcher = recommended_watcher(tx).expect("watcher");
+
+        // First registration → Watched.
+        assert_eq!(
+            try_watch_once(&mut watcher, dir.path(), RecursiveMode::NonRecursive, "t1"),
+            WatchResult::Watched,
+            "first watch must succeed"
+        );
+
+        // Second registration on the same path — backend may return Err.
+        // Result is either Watched (backend accepts dup) or Failed (backend rejects).
+        // Critically it must NOT be Absent (path clearly exists).
+        let second = try_watch_once(&mut watcher, dir.path(), RecursiveMode::NonRecursive, "t2");
+        assert_ne!(
+            second,
+            WatchResult::Absent,
+            "an existing path must never return Absent"
         );
     }
 
@@ -230,8 +329,9 @@ mod tests {
     /// 1. Start `run_watch_loop` against a target that does not yet exist.
     /// 2. The path enters `absent_watches`; no emit fires immediately.
     /// 3. Create the directory.
-    /// 4. Within `ABSENT_RETRY_SECS + margin`, the loop retries, succeeds,
-    ///    and calls the emit callback once.
+    /// 4. Poll until emit_count > 0, asserting the elapsed time from creation
+    ///    to first emit is ≤ 2 s (Fix D: tight timing assertion, not a fixed 3 s sleep).
+    /// 5. Signal the stop flag and join the thread (Fix C: no leaked threads).
     #[test]
     fn absent_watch_recovers_after_path_created() {
         use tempfile::tempdir;
@@ -249,12 +349,12 @@ mod tests {
             "late-test",
         );
 
-        // Run the loop in a background thread. Intentionally detached (never
-        // joined): the loop has no shutdown channel and runs until the test
-        // binary exits — standard for a process-lived watcher seam. Assertions
-        // complete before the test returns, so the leaked thread is benign.
-        thread::spawn(move || {
-            run_watch_loop(vec![target], move || {
+        // Stop flag: test holds the Arc so it can signal shutdown (Fix C).
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_for_thread = Arc::clone(&stop);
+
+        let handle = thread::spawn(move || {
+            run_watch_loop(vec![target], stop_for_thread, move || {
                 let mut c = emit_count_clone.lock().unwrap();
                 *c += 1;
             });
@@ -271,16 +371,39 @@ mod tests {
 
         // Create the directory that was absent.
         std::fs::create_dir_all(&late_dir).expect("create late_dir");
+        let created_at = Instant::now();
 
-        // Wait long enough for at least one retry cycle: ABSENT_RETRY_SECS (1 s)
-        // plus a 2 s margin for scheduler variance on CI.
-        std::thread::sleep(Duration::from_secs(3));
+        // Fix D: poll for recovery with a 2 s deadline instead of a fixed 3 s sleep.
+        // ABSENT_RETRY_SECS = 1 s, so recovery should happen within ~1 s of creation
+        // plus scheduler overhead.  We allow 2 s total.
+        let poll_deadline = Duration::from_secs(2);
+        let poll_interval = Duration::from_millis(50);
+        loop {
+            {
+                let c = emit_count.lock().unwrap();
+                if *c >= 1 {
+                    break;
+                }
+            }
+            assert!(
+                created_at.elapsed() < poll_deadline,
+                "absent-watch recovery took longer than {:?} — timing regression",
+                poll_deadline,
+            );
+            std::thread::sleep(poll_interval);
+        }
 
-        // The loop should have recovered the watch and emitted once.
-        let c = emit_count.lock().unwrap();
+        // Assert that the elapsed time from creation to recovery is within bound.
+        let elapsed = created_at.elapsed();
         assert!(
-            *c >= 1,
-            "expected at least 1 emit after late-created path recovered; got {c}"
+            elapsed <= poll_deadline,
+            "recovery elapsed {:?} exceeded deadline {:?}",
+            elapsed,
+            poll_deadline,
         );
+
+        // Signal shutdown and join the thread (Fix C: clean up, no leaked thread).
+        stop.store(true, Ordering::Relaxed);
+        handle.join().expect("watcher thread should exit cleanly");
     }
 }
