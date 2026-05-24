@@ -20,6 +20,12 @@ const DEBOUNCE_MS: u64 = 300;
 /// loop reverts to the 60 s idle timeout).
 const ABSENT_RETRY_SECS: u64 = 1;
 
+/// Idle heartbeat: how often the loop wakes when there is nothing to do, solely
+/// to poll the `stop` flag (Fix C). Kept at 1 s (= [`ABSENT_RETRY_SECS`]) so a
+/// hours-long idle GUI session does not incur sub-second wakeup pressure; the
+/// production `stop` is never set, so faster polling would benefit only tests.
+const IDLE_HEARTBEAT_SECS: u64 = 1;
+
 /// Tauri event name emitted on debounced FS change. JS side listens via
 /// `import { listen } from '@tauri-apps/api/event'; listen(DATA_CHANGED_EVENT, ...)`.
 pub const DATA_CHANGED_EVENT: &str = "mercury:data-changed";
@@ -150,16 +156,20 @@ fn run_watch_loop(
 
         // Choose timeout: FS event pending → sub-debounce poll; absent paths
         // present → cap at ABSENT_RETRY_SECS so the time-throttle below fires
-        // even when no FS events arrive; idle → short heartbeat so the stop
-        // flag (checked at the top of each iteration) is polled frequently
-        // enough for graceful shutdown within ~200 ms (Fix C).
+        // even when no FS events arrive; idle → 1 s heartbeat so the stop flag
+        // (checked at the top of each iteration) is honored within ~1 s.
+        //
+        // Idle is 1 s (not sub-second): production `start()` passes a never-set
+        // stop, so sub-second polling would only benefit tests while adding
+        // needless idle wakeups for a hours-long desktop GUI session. 1 s
+        // matches ABSENT_RETRY_SECS (single idle cadence) and is ample for any
+        // future RunEvent::ExitRequested graceful-shutdown budget.
         let timeout = if fs_dirty {
             Duration::from_millis(DEBOUNCE_MS / 3)
         } else if !absent_watches.is_empty() {
             Duration::from_secs(ABSENT_RETRY_SECS)
         } else {
-            // 200 ms heartbeat: low CPU cost, fast stop response.
-            Duration::from_millis(200)
+            Duration::from_secs(IDLE_HEARTBEAT_SECS)
         };
 
         match rx.recv_timeout(timeout) {
@@ -295,8 +305,10 @@ mod tests {
     /// Ok) the assertion relaxes to `Watched` and the test still compiles — the
     /// key invariant (path exists, no panic) is verified either way.
     ///
-    /// Note: not all platforms error on duplicate watch; the test is marked
-    /// `#[allow(unused)]` to suppress warnings if the assert is never false.
+    /// Note: not all platforms error on duplicate watch; the assertion accepts
+    /// either `Failed` or `Watched`, so the test holds regardless of backend
+    /// dup-watch behaviour. The key invariant: an existing path is NEVER
+    /// classified `Absent`.
     #[test]
     fn try_watch_once_existing_watch_fail_returns_failed_or_watched() {
         use tempfile::tempdir;
