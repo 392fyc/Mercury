@@ -5,7 +5,7 @@ date: 2026-05-24
 session: design lane
 status: phase-1-design-deliverable
 verdict: "推荐挂载微软官方 @playwright/mcp 作为 MCP server(Apache-2.0 permissive + 官方现成 + 全 Chromium 渲染 + Windows VERIFIED);adapter 在 adapters/playwright-mcp/ 仅做配置封装 wrapper(≤200 LOC)。拒绝 lightpanda(AGPL-3.0 强 copyleft 不过 license gate;其 Windows 原生 + 自带 MCP 现已支持,但 license 是干净 disqualifier)/ puppeteer(无官方 MCP,需自研)/ browser-use(agent-within-agent 重叠,留作未来 re-eval)。Cookie/Session 复用强制用独立 agent 专用 profile + isolated context storageState(scope 靠 context 隔离非内置域过滤),明确反对直读用户真实 Chrome/Edge profile 与 attach-到正在运行浏览器 的模式。"
-relation: "吸收并关闭 #62(Agent 高权限 test);Phase 2 PoC 另开 follow-up Issue 实施,本 session 不实装"
+relation: "设计层吸收 #62(Agent 高权限 test);#62 Close 时机绑定 Phase 2/3 可验证交付,design 阶段保持 OPEN;Phase 2 PoC 另开 follow-up Issue 实施,本 session 不实装"
 research_protocol: "所有外部 SDK/库/服务能力对照官方文档 + registry 核实,核实日期 2026-05-24;Codex dual-verify 抓出前轮 research 在 lightpanda(版本/MCP/Windows)、--caps=storage、storageState 域范围、sessionStorage、puppeteer-core 版本上的错误,已逐条 web-re-verify 纠正;未核实项标 UNVERIFIED + 来源 URL"
 ---
 
@@ -44,7 +44,7 @@ Mercury 需要 Web 自动化能力:无头浏览器驱动 + **Cookie/Session 认�
 
 #62 设想给 agent 更高权限以执行需要真实浏览器 / 真实会话的测试类任务。#154 的"无头浏览器 + 认证复用"是 #62 诉求的**更具体、更可控的落地形态** —— #62 的"高权限"模糊诉求在 #154 被收敛为"受控的、最小权限的浏览器自动化能力"。
 
-**关系结论**:#154 **吸收并取代** #62。本 ADR 落地后,#62 应 **Close**(理由:其诉求已被 #154 以更安全的最小权限设计吸收,见 §7)。本 ADR 的安全边界设计(§4)正是对 #62 "高权限"诉求的安全化回应 —— 不是给 agent 完整用户身份,而是给一个受控的、专用 profile + 域级精控认证态。
+**关系结论**:#154 在设计层 **吸收并取代** #62。**#62 的 Close 时机绑定 Phase 2/3 可验证交付,不在本 design-only ADR 落地时关闭**(Argus iter-1 finding):本 ADR 仅给出设计,#62 的实际诉求(可执行的高权限测试能力)尚无实现与验收;过早关闭会丢失需求 tracking。在 Phase 2/3 实际 web 自动化能力上线 + 验收通过前,**#62 保持 OPEN**,作为"已被 #154 设计吸收、待实现验收"的 tracking。本 ADR 的安全边界设计(§4)正是对 #62 "高权限"诉求的安全化回应 —— 不是给 agent 完整用户身份,而是给一个受控的、专用 profile + 域级精控认证态。
 
 ### 1.3 暴露形态的前置结论(研究 Q6)
 
@@ -178,7 +178,16 @@ Mercury 需要 Web 自动化能力:无头浏览器驱动 + **Cookie/Session 认�
 }
 ```
 
-> 上面的 `args` 是**示意**,Phase 2 PoC 须 web-verify `@playwright/mcp` 当时最新版本的实际 CLI flag 形式(`--isolated` / `--caps` / `--storage-state` 的确切拼写、`--storage-state` 是否支持 `%LOCALAPPDATA%` 这类环境变量展开、默认值)。版本号也以 PoC 时的最新核实为准。**禁止凭训练数据写死 flag。** `--caps=storage` 是已 VERIFIED 的必需项,但其它 flag 形式仍须复核。
+> ⚠️ **上面的 `args` 是示意,不可直接复制到生产 `.mcp.json`。** Phase 2 PoC 须 web-verify `@playwright/mcp` 当时最新版本的实际 CLI flag 形式(`--isolated` / `--caps` / `--storage-state` 的确切拼写、`--storage-state` 是否支持 `%LOCALAPPDATA%` 这类环境变量展开、默认值)。版本号也以 PoC 时的最新核实为准。**禁止凭训练数据写死 flag。** `--caps=storage` 是已 VERIFIED 的必需项,但其它 flag 形式仍须复核。
+>
+> **落地前校验清单**(Phase 2 实装前逐项确认,任一不过不得写入生产配置):
+> 1. ☐ 版本号 = 当时 `registry.npmjs.org/@playwright/mcp/latest` 的 `dist-tags.latest`(非 GitHub release 页、非 alpha prerelease)
+> 2. ☐ 每个 flag 拼写对照官方 README / `--help` 实测(`--isolated` / `--caps=storage` / `--storage-state`)
+> 3. ☐ `--storage-state` 路径在 repo 外 per-user 私有目录,且环境变量展开实测可用(否则用绝对展开后路径)
+> 4. ☐ 无 `--extension` / `--cdp-endpoint` / `--endpoint` 等 attach-类 flag(§4.2(b) 整类红线)
+> 5. ☐ `--caps` 仅含必需项(认证复用一般 `storage` 足够),不开无关能力
+> 6. ☐ §6 验收门槛 V1–V7 全部实测通过
+> 7. ☐ adapter 配置层路径校验(拒绝 repo 内 / 真实 profile 路径)已生效
 
 ### 5.2 `adapters/playwright-mcp/` 职责边界 —— 仅配置封装,主体逻辑用上游
 
@@ -249,11 +258,11 @@ PoC 规避的风险:单站点 + isolated + 人工认证态 + 不碰真实 profil
 
 ---
 
-## 7. #62 关系(吸收并关闭)
+## 7. #62 关系(设计层吸收,关闭时机绑定 Phase 2/3 验收)
 
 - #62("Agent 高权限 test")的诉求 = 让 agent 能执行需要真实浏览器 / 真实会话的任务。
 - #154 以**更安全、更具体**的形态吸收它:不是"给 agent 高权限",而是"给 agent 一个受控的、最小权限的浏览器自动化能力(独立专用 profile + 域级精控认证态 + 默认拒绝 attach/直读真实 profile)"。
-- **建议在本 ADR 落地后 Close #62**,理由注明"诉求已被 #154 以最小权限设计吸收"。本 ADR §4 的安全边界正是对 #62 "高权限"模糊诉求的安全化回应。
+- **#62 的 Close 时机绑定 Phase 2/3 可验证交付,不在本 design-only ADR 落地时关闭**(Argus iter-1 finding):design 阶段 #62 保持 OPEN(作为"已被 #154 设计吸收、待实现验收"tracking),待 Phase 2/3 实际 web 自动化能力上线 + 验收通过后再 close,理由注明"诉求已被 #154 实现并验收"。本 ADR §4 的安全边界正是对 #62 "高权限"模糊诉求的安全化回应。
 - 来源: <https://github.com/392fyc/Mercury/issues/62>
 
 ---
@@ -293,7 +302,7 @@ PoC 规避的风险:单站点 + isolated + 人工认证态 + 不碰真实 profil
 ## 10. 给主 agent 的交接要点
 
 - **#154 保持 OPEN**(设计交付物,非实现)。Phase 2 PoC **另开 follow-up Issue**,本 session 不实装。
-- **本 ADR 落地后建议 Close #62**(诉求已被 #154 以最小权限设计吸收,§7)。
+- **#62 不在本 ADR 落地时关闭**(Argus iter-1 finding):closure 绑定 Phase 2/3 可验证交付;design 阶段 #62 保持 OPEN,待实现 + 验收后再 close(§7)。
 - **推荐方案**:挂载 `@playwright/mcp`(Apache-2.0)作 MCP server,adapter `adapters/playwright-mcp/` 仅做配置封装(≤200 LOC)。
 - **安全红线(两条)**:默认拒绝 (a) 直读用户真实 Chrome/Edge profile;(b) `--extension`/CDP-attach 到用户正在运行的浏览器。强制独立 agent 专用 profile + isolated context storageState(§4)。
 - **关键前提**:storage 工具需 `--caps=storage`(opt-in);storageState = 全量 context 态(无内置域过滤,不含 sessionStorage),单域 scope 靠 context 隔离;认证态文件放 repo 外 per-user 私有路径。
