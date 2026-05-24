@@ -100,6 +100,8 @@ Routines 官方文档原文: *"The session can run shell commands, use **skills 
 2. **research preview 标签未摘** (Q3) — 接受 API 可能变动 (有 2-版本兼容窗口缓冲);不做长期硬依赖。这是任何 routine PoC 都共同承受的操作风险,可在首个 PoC 中观察。
 3. **分支推送限制 + project-level hook 在 cloud 的执行行为未确认** (Q4) — PoC 保持默认 `claude/*` 限制,Routine 只产出 `claude/*` 分支,不开 unrestricted,依赖 GitHub branch protection 作护栏;project-level hook (push-guard) 是否在 cloud 执行留独立探针实测。
 
+> ⚠️ **结论的适用边界 (避免被误用为通用结论)**: 本节 "PoC 可行" 的结论**仅适用于不依赖 Q2 (custom agents) / Q4 (project-level hook) 这两项未实测能力的 routine**。Q2 与 Q4 的 cloud 行为目前是 **UNVERIFIED 待实测状态**,不能据本 doc 推断 "Mercury 的 agents/hooks 在 Routine 中可用"。任何依赖 custom agents 或 project-level hook 的 Routine 用法,必须先经 §4 列出的独立探针验证后才能下结论。
+
 **推荐 PoC 场景 (沿用 #289 body Phase 2 建议): B3 — nightly Issue triage。**
 - 理由: 低风险 (只读 Issue + post comment,不改代码不推分支) / 输出可验证 (列 "30+ days no activity" 清单) / 不触 push-guard (无分支推送) / 不依赖 custom agents (纯对话 + GitHub MCP connector)。
 - B3 **规避 Q2 (custom-agent 加载) + Q4 (分支推送) 两个约束**;Q3 research-preview 约束**仍然适用** (B3 仍是一个 routine,无法消除该约束),但 B3 是该约束下风险最低的首个 PoC。
