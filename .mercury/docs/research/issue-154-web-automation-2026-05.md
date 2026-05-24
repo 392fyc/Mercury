@@ -187,7 +187,7 @@ Mercury 需要 Web 自动化能力:无头浏览器驱动 + **Cookie/Session 认�
 > 4. ☐ 无 `--extension` / `--cdp-endpoint` / `--endpoint` 等 attach-类 flag(§4.2(b) 整类红线)
 > 5. ☐ `--caps` 仅含必需项(认证复用一般 `storage` 足够),不开无关能力
 > 6. ☐ §6 验收门槛 V1–V7 全部实测通过
-> 7. ☐ adapter 配置层路径校验(拒绝 repo 内 / 真实 profile 路径)已生效
+> 7. ☐ adapter 配置层**路径解析(env-var→绝对,不展开则启动期硬失败)+ 拒绝规则校验**(拒绝 repo 内 / 真实 profile 路径 / attach-类 flag)已生效(§5.2)
 
 ### 5.2 `adapters/playwright-mcp/` 职责边界 —— 仅配置封装,主体逻辑用上游
 
@@ -197,11 +197,12 @@ adapter 目录**只做配置封装**,**不实现任何浏览器控制逻辑**(�
 adapters/playwright-mcp/
   README.md      # 挂载说明: 挂了 @playwright/mcp、为什么、配了什么 flag(含 --caps=storage)
   UPSTREAM.md    # 上游版本/license/已知不兼容项(含 #983 CDP+storage-state、storage opt-in)
-  config.*       # (可选)封装安全默认: 强制 --isolated + --caps 最小集 + storage-state 路径校验(拒绝 repo 内 / 真实 profile 路径)
+  config.*       # (可选)封装安全默认: 强制 --isolated + --caps 最小集 + storage-state 路径解析(env-var→绝对)+ 拒绝规则校验(拒绝 repo 内 / 真实 profile 路径,启动期硬失败)
 ```
 
 - adapter 不持有浏览器实例、不写浏览器控制代码 —— 那些是上游 MCP server 的事。
 - adapter 至多封装"安全默认配置"(强制 isolated 或 per-agent 唯一 `--user-data-dir`、限定 storageState 为 repo 外私有路径、**整类拦截**连接预存/外部 endpoint 的 flag(`--extension` / `--cdp-endpoint` / `--endpoint`/remoteEndpoint 及同类,§4.2(b))、拒绝指向真实用户 profile 的路径)。
+- **adapter 强制路径解析 + 拒绝规则校验(硬 config gate,启动 MCP server 前执行)**(Argus iter-2 finding):`.mcp.json` 示例里的 `%LOCALAPPDATA%/...` 是文档可读写法,**不能假设上游或运行环境会展开它**——若 `@playwright/mcp` 不展开环境变量,`--storage-state` 会静默指向字面 `%LOCALAPPDATA%` 路径,导致认证态复用失败或隔离策略不生效。因此 adapter 在拉起 MCP server 前**必须**:(i) 把 storage-state / user-data-dir 路径**解析为绝对路径**(展开环境变量,失败则拒绝启动而非静默降级);(ii) 对解析后的绝对路径跑**拒绝规则校验**——拒绝 repo 工作树内路径(`git rev-parse --show-toplevel` 前缀)、拒绝真实浏览器 profile 路径(`...\Google\Chrome\User Data` / `...\Microsoft\Edge\User Data`)、拒绝 attach-类 flag(§4.2(b));任一校验不过则**拒绝启动并报错**,不把未校验配置透传给上游。这把"环境变量不展开 / 路径误用"从运行时静默失败前移为启动期硬失败。
 
 ### 5.3 adapter ≤200 LOC 硬约束 —— 满足
 
