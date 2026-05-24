@@ -173,17 +173,16 @@ import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { invoke } from "@tauri-apps/api/core";
 
 beforeAll(() => {
-  // jsdom 下 Tauri 内部依赖 crypto.getRandomValues，需 polyfill
-  // configurable: true —— 较新 jsdom 可能已定义 window.crypto，缺此项会在二次 defineProperty 抛错
-  Object.defineProperty(window, "crypto", {
-    configurable: true,
-    value: {
-      getRandomValues: (buf: Uint8Array) => {
-        for (let i = 0; i < buf.length; i++) buf[i] = Math.floor(Math.random() * 256);
-        return buf;
-      },
-    },
-  });
+  // Tauri 内部依赖 crypto.getRandomValues。优先复用 runtime 已有 crypto
+  // (Node 20+/较新 jsdom 提供 webcrypto 全局)——仅在确实缺失时做最小 polyfill,
+  // 不覆盖整个 window.crypto (避免破坏依赖其它 crypto API 的代码)。
+  if (!globalThis.crypto?.getRandomValues) {
+    // 真正缺失时:接入 node:crypto 的 webcrypto (Node 环境),
+    // 或显式抛错让问题尽早暴露,而非用 Math.random 伪造削弱安全语义。
+    throw new Error(
+      "crypto.getRandomValues 不可用 —— 在 setup 中接入 node:crypto webcrypto 或升级 Node/jsdom (见 §5 Gate-1)",
+    );
+  }
 });
 
 afterEach(() => {
@@ -191,9 +190,11 @@ afterEach(() => {
 });
 
 test("read_lanes 返回桩数据", async () => {
-  mockIPC((cmd, _args) => {
+  mockIPC((cmd, args) => {
     if (cmd === "read_lanes") return [{ id: "main", label: "main" }];
-    return undefined;
+    // 未处理命令立即报错,而非 return undefined ——
+    // 否则 IPC 协议变更/cmd 拼写错误会静默绿灯通过 (外部边界 fail-fast)。
+    throw new Error(`unmocked IPC command: ${cmd} (args=${JSON.stringify(args)})`);
   });
   await expect(invoke("read_lanes")).resolves.toEqual([{ id: "main", label: "main" }]);
 });
