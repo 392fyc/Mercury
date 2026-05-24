@@ -20,11 +20,14 @@ const DEBOUNCE_MS: u64 = 300;
 /// loop reverts to the 60 s idle timeout).
 const ABSENT_RETRY_SECS: u64 = 1;
 
-/// Idle heartbeat: how often the loop wakes when there is nothing to do, solely
-/// to poll the `stop` flag (Fix C). Kept at 1 s (= [`ABSENT_RETRY_SECS`]) so a
-/// hours-long idle GUI session does not incur sub-second wakeup pressure; the
-/// production `stop` is never set, so faster polling would benefit only tests.
-const IDLE_HEARTBEAT_SECS: u64 = 1;
+/// Production idle timeout: how long the loop blocks in `recv_timeout` when
+/// there is nothing to do (no FS events, no absent watches). It bounds only the
+/// `stop`-flag poll granularity (Fix C). Kept at the original 60 s so a
+/// hours-long idle GUI keeps a ~1 wake/min idle rate (no idle-power regression
+/// vs the pre-#423 watcher). `run_watch_loop` takes the idle timeout as a
+/// parameter so tests can pass a short value for fast graceful join without
+/// affecting production cadence.
+const IDLE_TIMEOUT_SECS: u64 = 60;
 
 /// Tauri event name emitted on debounced FS change. JS side listens via
 /// `import { listen } from '@tauri-apps/api/event'; listen(DATA_CHANGED_EVENT, ...)`.
@@ -75,7 +78,7 @@ pub fn start(app_handle: AppHandle) {
     // exit" semantics while making run_watch_loop testably stoppable (Fix C).
     let stop = Arc::new(AtomicBool::new(false));
     thread::spawn(move || {
-        run_watch_loop(targets, stop, move || {
+        run_watch_loop(targets, stop, Duration::from_secs(IDLE_TIMEOUT_SECS), move || {
             if let Err(e) = app_handle.emit(DATA_CHANGED_EVENT, ()) {
                 eprintln!(
                     "[mercury-gui] emit failed: {}",
@@ -115,6 +118,7 @@ pub fn start(app_handle: AppHandle) {
 fn run_watch_loop(
     targets: Vec<WatchTarget>,
     stop: Arc<AtomicBool>,
+    idle_timeout: Duration,
     emit_fn: impl Fn() + Send + 'static,
 ) {
     let (tx, rx) = mpsc::channel();
@@ -169,7 +173,11 @@ fn run_watch_loop(
         } else if !absent_watches.is_empty() {
             Duration::from_secs(ABSENT_RETRY_SECS)
         } else {
-            Duration::from_secs(IDLE_HEARTBEAT_SECS)
+            // True idle: wake only to re-poll `stop`. Production passes a long
+            // interval (IDLE_TIMEOUT_SECS) so a hours-long idle GUI keeps the
+            // original low wakeup rate (no idle-power regression); tests pass a
+            // short interval for fast graceful join. Stop latency == this value.
+            idle_timeout
         };
 
         match rx.recv_timeout(timeout) {
@@ -366,7 +374,8 @@ mod tests {
         let stop_for_thread = Arc::clone(&stop);
 
         let handle = thread::spawn(move || {
-            run_watch_loop(vec![target], stop_for_thread, move || {
+            // Short idle timeout so the post-assertion stop+join returns fast.
+            run_watch_loop(vec![target], stop_for_thread, Duration::from_millis(100), move || {
                 let mut c = emit_count_clone.lock().unwrap();
                 *c += 1;
             });
