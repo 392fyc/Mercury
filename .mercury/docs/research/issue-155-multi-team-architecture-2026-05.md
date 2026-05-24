@@ -17,17 +17,26 @@ research_protocol: "所有外部能力对照官方文档核实 2026-05-24；未�
 
 ## Path conventions (read this first)
 
-沿用 #319 (`agent-team-orchestration-feasibility-2026-04-26.md`) 与 #386 (`agent-view-multi-lane-adaptation-2026-05.md`) 已确立的 path convention。`<encoded_cwd>` 是 project working directory 的 path-encoded 形式，由 Claude Code 在 session start 计算，不要 hardcode(discover via `ls "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/" | grep -i mercury`)。
+沿用 #319 (`agent-team-orchestration-feasibility-2026-04-26.md`) 与 #386 (`agent-view-multi-lane-adaptation-2026-05.md`) 已确立的 path convention。
+
+- `<encoded_cwd>` 是 project working directory 的 path-encoded 形式，由 Claude Code 在 session start 计算，**不要 hardcode**。发现时须**唯一命中**校验，避免多项目目录误选(把状态写错项目空间会破坏多 lane 数据隔离):
+
+  ```bash
+  matches=$(ls "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/" | grep -iE '(^|-)mercury(-|$)')
+  [ "$(printf '%s\n' "$matches" | sed '/^$/d' | wc -l)" -eq 1 ] || { echo "encoded_cwd 匹配不唯一或不存在" >&2; exit 1; }
+  ```
+
+- `${MERCURY_ROOT}` 是**文档占位符**(非运行时已注入的 env var),指 Mercury 安装父目录;当前 Windows install 的具体形式 = `D:/Mercury`(per CLAUDE.md "Install to D drive")。main checkout = `${MERCURY_ROOT}/Mercury`;per-lane worktree = `${MERCURY_ROOT}/Mercury-<short>`。本 doc 一律用占位符表达以避免跨环境硬编码;括号内给当前 install 的具体值仅作参考。
 
 | Shorthand | Resolves to | Status |
 |-----------|-------------|--------|
 | `memory/<file>` | `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded_cwd>/memory/<file>` (Claude Code per-project user-memory) | NOT in repo — gitignored by design |
 | `.claude/agents/<name>.md` | `${REPO_ROOT}/.claude/agents/<name>.md` (Mercury 角色定义) | In repo |
-| `.claude/agent-memory/<name>/` | `${REPO_ROOT}/.claude/agent-memory/<name>/` (原生 subagent `memory: project` scope) | In repo (Mercury 未启用) |
+| `.claude/agent-memory/<name>/` | `${REPO_ROOT}/.claude/agent-memory/<name>/` (原生 subagent `memory: project` scope) | **默认不在 repo**;启用 `memory: project` 后在此生成,可纳入版本控制(当前仓库 `.claude/` 下只有 `agents/`/`hooks/`/`skills/` 等,**Mercury 未启用**) |
 | `.mercury/docs/research/` | `${REPO_ROOT}/.mercury/docs/research/` | In repo |
 | `.mercury/state/` | `${REPO_ROOT}/.mercury/state/` | In repo |
 | `~/.claude/scripts/mem0_bridge.py` 等 | user-level memory layer | NOT in repo (用户级，见 CLAUDE.md Related Repositories) |
-| `D:/Mercury/Mercury-<short>` | per-lane git worktree (Rule 5.1) | repo-local worktree，非 commit 进 main checkout |
+| `${MERCURY_ROOT}/Mercury-<short>` | per-lane git worktree (Rule 5.1);当前 install 具体形式 = `D:/Mercury/Mercury-<short>` | repo-local worktree，非 commit 进 main checkout |
 
 in-repo LOC / 文件引用基于 develop tip `fa3e171`(本 ADR 起草时的 git status 记录的 develop HEAD)。
 
@@ -102,7 +111,7 @@ in-repo LOC / 文件引用基于 develop tip `fa3e171`(本 ADR 起草时的 git 
 
 ### 1.3 与 #386 / #391 的关系 — multi-lane v1 现状基线
 
-#386(`agent-view-multi-lane-adaptation-2026-05.md`,2026-05-15)记录 multi-lane v1 现状:并行 lane(main + side-bug + side-sot 3 lane active)、worktree 隔离(`D:/Mercury/Mercury-<short>` per lane,Rule 5.1)、branch `lane/<short>/<N>-<slug>`(Rule 2.1)、bg session dispatch(`claude --bg` in lane cwd,`isolation:"none"`)、hook 继承(SessionStart empirical confirmed fire)、agent view 监控(`claude agents --cwd <lane-worktree>`)。
+#386(`agent-view-multi-lane-adaptation-2026-05.md`,2026-05-15)记录 multi-lane v1 现状:并行 lane(main + side-bug + side-sot 3 lane active)、worktree 隔离(`${MERCURY_ROOT}/Mercury-<short>` per lane,Rule 5.1)、branch `lane/<short>/<N>-<slug>`(Rule 2.1)、bg session dispatch(`claude --bg` in lane cwd,`isolation:"none"`)、hook 继承(SessionStart empirical confirmed fire)、agent view 监控(`claude agents --cwd <lane-worktree>`)。
 
 #391(`agent-view-phase6-empirical-2026-05.md`,经 #386 引用)矫正了 bg session file-edit 的行为:平台 PreToolUse 拒第一次 Edit on shared checkout 返 `tool_use_error`,agent 读 error 后调 `EnterWorktree` 进 auto-worktree(branch `worktree-<name>`),`ExitWorktree(action:"keep"|"discard")` 无自动 merge,operator 手动决定 keep/discard。**对 Employee sub-agent file-edit 场景的含义见 §5.3**。
 
@@ -196,8 +205,8 @@ in-repo LOC / 文件引用基于 develop tip `fa3e171`(本 ADR 起草时的 git 
 
 | #155 层 | lane-as-process 实现 | 隔离 | 标识 | 现状 |
 |---|---|---|---|---|
-| **Director** | main lane interactive session @ `D:/Mercury/Mercury`(canonical default) | main worktree | lane `main` | 已有(convention) |
-| **Manager** | 独立 side lane(独立 Claude Code 进程,平台视角 main session) | per-lane worktree `D:/Mercury/Mercury-<short>`(Rule 5.1) | lane short name + branch `lane/<short>/<N>-<slug>`(Rule 2.1) | 已有(multi-lane v1) |
+| **Director** | main lane interactive session @ `${MERCURY_ROOT}/Mercury`(canonical default) | main worktree | lane `main` | 已有(convention) |
+| **Manager** | 独立 side lane(独立 Claude Code 进程,平台视角 main session) | per-lane worktree `${MERCURY_ROOT}/Mercury-<short>`(Rule 5.1) | lane short name + branch `lane/<short>/<N>-<slug>`(Rule 2.1) | 已有(multi-lane v1) |
 | **Employee** | Manager 这个 side lane dispatch 的 sub-agent(dev/research/acceptance) | sub-agent 默认共享 Manager 的 cwd;file-edit 触发 auto-worktree(§5.3) | `.claude/agents/<name>.md` agent_type | 已有(sub-agent 机制) |
 | **Department** | 1 side lane(Manager)+ N sub-agents(Employees)+ 独立 worktree | 上述组合 | 1 lane section in LANES.md + claimed Issue | 部分(LANES.md 已有 lane registry) |
 
@@ -206,7 +215,7 @@ in-repo LOC / 文件引用基于 develop tip `fa3e171`(本 ADR 起草时的 git 
 复用 #386 现状表 + #319 Dim1.2 可复用模块。已实现:
 
 - **并行 lane**:main + side-bug + side-sot 3 lane active(#386 记录)→ Department 并行的载体已在。
-- **worktree 隔离**:`git worktree add D:/Mercury/Mercury-<short>` per lane(Rule 5.1)→ Department 隔离已在。
+- **worktree 隔离**:`git worktree add ${MERCURY_ROOT}/Mercury-<short>` per lane(Rule 5.1)→ Department 隔离已在。
 - **branch 隔离**:`lane/<short>/<N>-<slug>`(Rule 2.1)→ Department 工作分支已在。
 - **bg session dispatch**:`claude --bg` in lane cwd(#386 Phase 2 verified `isolation:"none"` + SessionStart hook fire)→ Manager 启动机制已在。
 - **sub-agent dispatch**:main lane 已常态用 `.claude/agents/*.md`(develop @ `fa3e171` 的 in-repo 角色:`dev` / `research` / `acceptance` / `design` / `critic` / `main` + game-dev 三件套 `game-analyst`/`game-critic`/`game-researcher`)→ Manager→Employee dispatch 是现成能力(Manager 复制 main lane 的 sub-agent 用法即可)。注:`designer`/`executor`/`explore`/`planner`/`architect` 等是用户级 OMC(oh-my-claudecode)全局 agent(`~/.claude`),非 Mercury in-repo 角色,不要混淆。
@@ -218,10 +227,10 @@ in-repo LOC / 文件引用基于 develop tip `fa3e171`(本 ADR 起草时的 git 
 起步 2-department 并行:
 
 ```
-Director  = main lane              @ D:/Mercury/Mercury           (lane 1)
-Manager A = side lane (dept A)     @ D:/Mercury/Mercury-deptA     (lane 2)
+Director  = main lane              @ ${MERCURY_ROOT}/Mercury        (lane 1)
+Manager A = side lane (dept A)     @ ${MERCURY_ROOT}/Mercury-deptA  (lane 2)
   └─ Employees A = dept A 的 sub-agents (dev/research/acceptance)  ← 不占 lane 名额(sub-agent 不是 lane)
-Manager B = side lane (dept B)     @ D:/Mercury/Mercury-deptB     (lane 3)
+Manager B = side lane (dept B)     @ ${MERCURY_ROOT}/Mercury-deptB  (lane 3)
   └─ Employees B = dept B 的 sub-agents                            ← 不占 lane 名额
 ```
 
