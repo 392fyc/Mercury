@@ -158,7 +158,8 @@ Mercury 需要 Web 自动化能力:无头浏览器驱动 + **Cookie/Session 认�
 `@playwright/mcp` 是作为 **MCP server 进程**被 Claude Code 拉起的运行时依赖(类比现有 `.mcp.json` 里的 `codex` 条目 `command: "codex", args: ["mcp-server"]`),**不是把上游源码 vendored 进 repo**。因此:
 
 - 不触发"cherry-pick 单文件"协议(CLAUDE.md §Cherry-pick protocol 针对的是从上游某 commit lift 具体文件)。
-- 它也不是 CLI scaffolding(Category A)或 shadcn registry add(Category B);它是 **运行时外部包挂载**,与 `adapters/gpt-image-2/` 的 uvx-pinned-SHA 模式同类(运行时引用上游,不 vendoring 源码)。
+- 它也不是 CLI scaffolding(Category A)或 shadcn registry add(Category B);它是 **运行时外部包挂载**,精神上与 `adapters/gpt-image-2/` 的 uvx-pinned-SHA 模式相近(运行时引用上游,不 vendoring 源码)。
+- ⚠️ **但这是一种新的挂载模式,现有 adapter 挂载策略尚未授权**(Copilot finding):`adapters/README.md` §约束 + `.mercury/docs/DIRECTION.md` §四 当前只规定两种挂载方式 —— (1) 默认 git submodule 到 `modules/`;(2) runtime-only 经 `uvx --from git+<repo>@<SHA>` 的**有限例外**(首例 gpt-image-2,git+SHA pin)。**`npx @playwright/mcp@<version>` 是按 npm registry 版本解析 tarball,既非 submodule 也非 git+SHA,属第三种挂载模式**。因此 **Phase 2 实装前必须先**:更新 `adapters/README.md` §约束 + `DIRECTION.md` §四,把"npm-version-pinned MCP server"登记为一类受治理的 runtime-only 例外(明确版本 pin 规则、drift 监控、license gate),**或**为本次挂载记录一条经批准的 sanctioned exception。否则实装路径与现有挂载规则冲突。此为 Phase 2 的前置 gate,见 §6。
 - **provenance 记录方式**:在 `.mercury/state/upstream-manifest.json` 登记一条(见 5.4),并在 `adapters/playwright-mcp/UPSTREAM.md` 记录版本/license/已知不兼容项,与现有 `adapters/gpt-image-2/UPSTREAM.md` 同结构。
 
 `.mcp.json`(repo 根)新增条目示意(Phase 2 验证实际命令形式后定稿):
@@ -184,10 +185,12 @@ Mercury 需要 Web 自动化能力:无头浏览器驱动 + **Cookie/Session 认�
 > 1. ☐ 版本号 = 当时 `registry.npmjs.org/@playwright/mcp/latest` 的 `dist-tags.latest`(非 GitHub release 页、非 alpha prerelease)
 > 2. ☐ 每个 flag 拼写对照官方 README / `--help` 实测(`--isolated` / `--caps=storage` / `--storage-state`)
 > 3. ☐ `--storage-state` 路径在 repo 外 per-user 私有目录,且环境变量展开实测可用(否则用绝对展开后路径)
-> 4. ☐ 无 `--extension` / `--cdp-endpoint` / `--endpoint` 等 attach-类 flag(§4.2(b) 整类红线)
+> 4. ☐ 无**任何** attach/连接预存或外部 endpoint 的 flag —— `--extension` / `--cdp-endpoint` / `--endpoint` / `remoteEndpoint` 及 §4.2(b) 整类红线下的同类(按整类拒绝,非仅枚举这几个)
 > 5. ☐ `--caps` 仅含必需项(认证复用一般 `storage` 足够),不开无关能力
 > 6. ☐ §6 验收门槛 V1–V7 全部实测通过
 > 7. ☐ adapter 配置层**路径解析(env-var→绝对,不展开则启动期硬失败)+ 拒绝规则校验**(拒绝 repo 内 / 真实 profile 路径 / attach-类 flag)已生效(§5.2)
+> 8. ☐ 用**非交互 npx**(`npx --yes` 或预装/pin),干净环境 smoke 不 hang(§6 V8)
+> 9. ☐ 挂载策略已授权:`adapters/README.md` + `DIRECTION.md` 已登记 npm-version-pinned MCP 例外 / sanctioned exception(§6 step 0 / V9)
 
 ### 5.2 `adapters/playwright-mcp/` 职责边界 —— 仅配置封装,主体逻辑用上游
 
@@ -197,12 +200,13 @@ adapter 目录**只做配置封装**,**不实现任何浏览器控制逻辑**(�
 adapters/playwright-mcp/
   README.md      # 挂载说明: 挂了 @playwright/mcp、为什么、配了什么 flag(含 --caps=storage)
   UPSTREAM.md    # 上游版本/license/已知不兼容项(含 #983 CDP+storage-state、storage opt-in)
-  config.*       # (可选)封装安全默认: 强制 --isolated + --caps 最小集 + storage-state 路径解析(env-var→绝对)+ 拒绝规则校验(拒绝 repo 内 / 真实 profile 路径,启动期硬失败)
+  config.*       # 安全默认 + 启动期硬 gate(强制交付,见下): 强制 --isolated + --caps 最小集 + storage-state 路径解析(env-var→绝对)+ 拒绝规则校验(拒绝 repo 内 / 真实 profile 路径,启动期硬失败)
 ```
 
 - adapter 不持有浏览器实例、不写浏览器控制代码 —— 那些是上游 MCP server 的事。
 - adapter 至多封装"安全默认配置"(强制 isolated 或 per-agent 唯一 `--user-data-dir`、限定 storageState 为 repo 外私有路径、**整类拦截**连接预存/外部 endpoint 的 flag(`--extension` / `--cdp-endpoint` / `--endpoint`/remoteEndpoint 及同类,§4.2(b))、拒绝指向真实用户 profile 的路径)。
 - **adapter 强制路径解析 + 拒绝规则校验(硬 config gate,启动 MCP server 前执行)**(Argus iter-2 finding):`.mcp.json` 示例里的 `%LOCALAPPDATA%/...` 是文档可读写法,**不能假设上游或运行环境会展开它**——若 `@playwright/mcp` 不展开环境变量,`--storage-state` 会静默指向字面 `%LOCALAPPDATA%` 路径,导致认证态复用失败或隔离策略不生效。因此 adapter 在拉起 MCP server 前**必须**:(i) 把 storage-state / user-data-dir 路径**解析为绝对路径**(展开环境变量,失败则拒绝启动而非静默降级);(ii) 对解析后的绝对路径跑**拒绝规则校验**——拒绝 repo 工作树内路径(`git rev-parse --show-toplevel` 前缀)、拒绝真实浏览器 profile 路径(`...\Google\Chrome\User Data` / `...\Microsoft\Edge\User Data`)、拒绝 attach-类 flag(§4.2(b));任一校验不过则**拒绝启动并报错**,不把未校验配置透传给上游。这把"环境变量不展开 / 路径误用"从运行时静默失败前移为启动期硬失败。
+  - **此 gate 是 Phase 2 强制交付,不是可选项**(Copilot finding):上面目录树里 `config.*` 标"可选"指的是**文件落点形式**可灵活(可以是独立 config 文件、也可以内联在 adapter 启动脚本里),但**路径解析 + 拒绝规则校验这一 gate 本身必须实现**。若 Phase 2 不以 `config.*` 文件承载,则必须显式指明由哪个组件(如 adapter 启动 wrapper)强制执行这些校验——安全 gate 不得被跳过。
 
 ### 5.3 adapter ≤200 LOC 硬约束 —— 满足
 
@@ -232,7 +236,8 @@ CLAUDE.md / DIRECTION.md §适配层规范(line 241 + line 386 硬约束条目)�
 **范围:单站点 + isolated mode + `--caps=storage` + 人工提供认证态 + 不碰用户真实 profile + 不用 attach 模式。**
 
 具体建议:
-1. **挂载**:`.mcp.json` 加 `playwright` 条目(5.1 示意),Phase 2 先 web-verify `@playwright/mcp` 当时最新版本号 + CLI flag 实际形式(`--caps=storage` 已 VERIFIED 必需,其余 flag 复核)。
+0. **前置 gate(挂载策略授权,Copilot finding)**:在写任何 `.mcp.json` 前,先更新 `adapters/README.md` §约束 + `DIRECTION.md` §四,把"npm-version-pinned MCP server"登记为受治理的第三类 runtime-only 挂载例外(或记录 sanctioned exception),见 §5.1。否则实装与现有挂载策略冲突。
+1. **挂载**:`.mcp.json` 加 `playwright` 条目(5.1 示意),Phase 2 先 web-verify `@playwright/mcp` 当时最新版本号 + CLI flag 实际形式(`--caps=storage` 已 VERIFIED 必需,其余 flag 复核)。**用非交互 npx**(`npx --yes @playwright/mcp@<pinned>`,或预装 / pin 到 lockfile)——裸 `npx` 在包未缓存时可能弹安装确认,会 hang 住 stdio MCP server 启动(Copilot finding);并从干净环境 smoke-test 启动。
 2. **认证复用路径**:用 **isolated mode + `--caps=storage` + `--storage-state`**,认证态文件由人工准备(在只访问目标站的 isolated context 手工登录 → `browser_storage_state` 导出 → 确认仅含目标域、识别是否依赖 sessionStorage)。**不走 CDP-connect / attach 路径**(规避 #983 + §4.2 红线)。
 3. **安全默认**:强制 isolated、`--caps` 最小集、storageState 放 repo 外 per-user 私有目录,**配置层硬拒绝**指向 repo 内路径、真实 profile 路径(`...\Google\Chrome\User Data` / `...\Microsoft\Edge\User Data`),以及 `--extension`/`--cdp-endpoint` attach flag。
 4. **adapter**:建 `adapters/playwright-mcp/`(README + UPSTREAM.md + 可选薄 config),登记 manifest(执行契约 = pinned npm 版本;`upstream_sha_at_import` = 对应 git tag,审计元数据)+ 验证 upstream SHA。
@@ -249,6 +254,8 @@ PoC 规避的风险:单站点 + isolated + 人工认证态 + 不碰真实 profil
 - **V5**:核实当时 `@playwright/mcp` 最新版本号 + CLI flag 形式(pre-1.0,API 可能已变);确认 persistent profile 的 Windows 确切子路径(本 ADR 仅 VERIFIED base 为 `%LOCALAPPDATA%`,子路径 UNVERIFIED)。
 - **V6**:确认在 isolated context 导出的 storageState 确实只含目标域(安全断言)、并识别目标站是否依赖 sessionStorage(storageState 不覆盖)。
 - **V7**:确认 `--allowed-origins`/`--blocked-origins` 实际行为(官方称非安全边界,验证其约束范围,确保不被误当主防线)。
+- **V8**:从**干净环境**(包未预缓存)非交互启动 smoke —— 确认 `npx --yes`(或预装/pin)不弹交互安装确认、不 hang stdio MCP server 启动(Copilot finding)。
+- **V9**:确认 §6 step 0 的挂载策略授权已落地(`adapters/README.md` + `DIRECTION.md` 已登记 npm-version-pinned 例外 / sanctioned exception),否则不得进入 Phase 3。
 
 ### Phase 3 — 扩展(PoC 验证后)
 
@@ -305,7 +312,7 @@ PoC 规避的风险:单站点 + isolated + 人工认证态 + 不碰真实 profil
 - **#154 保持 OPEN**(设计交付物,非实现)。Phase 2 PoC **另开 follow-up Issue**,本 session 不实装。
 - **#62 不在本 ADR 落地时关闭**(Argus iter-1 finding):closure 绑定 Phase 2/3 可验证交付;design 阶段 #62 保持 OPEN,待实现 + 验收后再 close(§7)。
 - **推荐方案**:挂载 `@playwright/mcp`(Apache-2.0)作 MCP server,adapter `adapters/playwright-mcp/` 仅做配置封装(≤200 LOC)。
-- **安全红线(两条)**:默认拒绝 (a) 直读用户真实 Chrome/Edge profile;(b) `--extension`/CDP-attach 到用户正在运行的浏览器。强制独立 agent 专用 profile + isolated context storageState(§4)。
+- **安全红线(两条)**:默认拒绝 (a) 直读用户真实 Chrome/Edge profile;(b) **整类** attach/连接到任何预先存在或外部启动的浏览器/automation endpoint —— 含 `--extension`、CDP-attach(`--cdp-endpoint`)、`--endpoint`/`remoteEndpoint` 及同类(完整定义见 §4.2(b),勿在 handoff/Phase 2 issue 里窄化为仅 `--extension`/CDP)。强制独立 agent 专用 profile + isolated context storageState(§4)。
 - **关键前提**:storage 工具需 `--caps=storage`(opt-in);storageState = 全量 context 态(无内置域过滤,不含 sessionStorage),单域 scope 靠 context 隔离;认证态文件放 repo 外 per-user 私有路径。
 - **Phase 2 前置**:web-verify 当时版本号 + CLI flag;实测 #983 是否影响所选路径;实测 Windows 下 `--caps=storage` + isolated + storageState 复用;确认多 session 并发用 isolated 而非共享 persistent profile(§6 验收门槛)。
 - 路径写法在本 repo 文档中统一用环境变量形式;Windows persistent profile base 的 canonical 形式是 `%LOCALAPPDATA%`(≡ `%USERPROFILE%\AppData\Local`),不硬编码本机绝对路径。
