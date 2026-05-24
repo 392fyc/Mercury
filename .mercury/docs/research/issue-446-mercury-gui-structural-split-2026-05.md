@@ -182,7 +182,7 @@ pnpm workspace 与 Tauri 组合是 idiomatic 的 (Tauri 官方仓库自身用 `p
 - tauri 2.x — 精确 patch 版 **VERIFIED 为 2.11.2** (in-repo evidence: `mercury-gui/src-tauri/Cargo.lock` 锁定 `name = "tauri"` / `version = "2.11.2"`;`Cargo.toml` 声明的是 caret `tauri = { version = "2" }`,lockfile 给出实锁 patch 版)。
 - `pnpm-workspace.yaml` 用 `packages:` glob 语法。
 - Cargo workspace 用 `[workspace] members = [...]`。
-- Source: crates.io (精确 patch 版 **UNVERIFIED**)
+- Source (tauri 2.11.2 = VERIFIED): in-repo `mercury-gui/src-tauri/Cargo.lock`;crates.io 包页 <https://crates.io/crates/tauri>。(全节版本/语法事实口径统一为 VERIFIED,无 UNVERIFIED 项。)
 
 ### 4.6 中立 evidence (规模判断)
 
@@ -228,7 +228,7 @@ GUI-exemption **不是** workaround，而是对一个**本就该豁免**的对�
 ## 6. Recommendation (proposal only)
 
 1. **采纳 Option 1**: 不拆分，保持单包。本 ADR 不触发任何实施 Issue。
-2. **强化 exemption 的 reviewer 可见性 (低成本、可选)**: 既然根因是 Argus 误施 adapter-scoped 规则,建议 (proposal,非本 ADR 实施) 补强 CLAUDE.md 中 `mercury-gui/` 豁免的经验驱动证据。**核实现状**: CLAUDE.md 的 200-LOC MUST bullet (§1.2 定义的 GUI-exemption 所在 bullet) 已给 `mercury-gui/` 与 `scripts/` **同等结构待遇**——同一 MUST bullet、同一 DIRECTION.md §240/§385 authority chain、同一 "no LOC cap (size by need)" 措辞。真正的 delta 很小: 该 bullet 尾部 "Empirical drivers" 子句目前只列 `scripts/` 的 PR #338/#346,**未列 GUI 的 PRs #421/#424/#425**。建议仅把后者补进 empirical-drivers 清单,使未来 reviewer 一次性看到 GUI 也有经验驱动的 carve-out 而非每次触发 nit。**这比拆分代码便宜一个数量级,且直接命中根因。** 此项是改 CLAUDE.md 的轻量文档动作 (走用户/项目文档直写通道),与拆分无关,**且 pending User 认可** (CLAUDE.md 是项目治理文件)。**该治理动作已落地为可追踪项 #448** (状态 OPEN,本 session 创建;避免"结论已给出但治理动作未落地"),由 User 拍板后执行——本 ADR 不直接改 CLAUDE.md。
+2. **强化 exemption 的 reviewer 可见性 (低成本、可选)**: 既然根因是 Argus 误施 adapter-scoped 规则,建议 (proposal,非本 ADR 实施) 补强 CLAUDE.md 中 `mercury-gui/` 豁免的经验驱动证据。**核实现状**: CLAUDE.md 的 200-LOC MUST bullet (§1.2 定义的 GUI-exemption 所在 bullet) 已给 `mercury-gui/` 与 `scripts/` **同等结构待遇**——同一 MUST bullet、同一 DIRECTION.md §240/§385 authority chain、同一 "no LOC cap (size by need)" 措辞。真正的 delta 很小: 该 bullet 尾部 "Empirical drivers" 子句目前只列 `scripts/` 的 PR #338/#346,**未列 GUI 的 PRs #421/#424/#425**。建议仅把后者补进 empirical-drivers 清单,使未来 reviewer 一次性看到 GUI 也有经验驱动的 carve-out 而非每次触发 nit。**这比拆分代码便宜一个数量级,且直接命中根因。** 此项是改 CLAUDE.md 的轻量文档动作 (走用户/项目文档直写通道),与拆分无关,**且 pending User 认可** (CLAUDE.md 是项目治理文件)。**该治理动作已落地为可追踪项 #448**(避免"结论已给出但治理动作未落地";该 Issue 的实时状态以 GitHub 为准,本 ADR 不冗余复制状态以防过时),由 User 拍板后执行——本 ADR 不直接改 CLAUDE.md。
 3. **记录重评触发条件** (§5.5)，使 #446 可在条件成立时被精准重开，而非凭主观重提。
 4. **若 User 推翻本 verdict 选择拆分**: 须另开实施 Issue，并在该 Issue 中要求 (a) 先做 spike 验证 §3 中 "Argus 是否真按单 crate 计数" 的 UNVERIFIED 假设——若 Argus 仍按目录树总量报，则拆分连原始动机都无法兑现，应立即止损；(b) 验证 §4.4 全部迁移坑 + dual-verify `pnpm build` gate 在新布局下通过；(c) 记录 create-tauri-app scaffold 偏离 (Category A provenance 影响，见 §3)。
 
