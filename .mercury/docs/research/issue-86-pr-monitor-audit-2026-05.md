@@ -16,7 +16,7 @@ verdict: close-as-subsumed
 提案后约两个月里 Mercury 发生了三个材料变化:
 1. **Review bot 切换**: CodeRabbit → Argus (Mercury-internal, fix-detection + LLM reply classification + 2-token canonical trigger)
 2. **`/pr-flow` skill** 上线 (`.claude/skills/pr-flow/SKILL.md` ~380 行 + Phase 1-7 lifecycle, CronCreate-based polling)
-3. **6 个 memory files 文档化最佳实践**: `feedback_pr_flow_canonical.md` / `feedback_argus_canonical_trigger.md` / `feedback_resolve_threads.md` / `feedback_argus_nit_loop.md` / `feedback_review_disagree_strategy.md` / `feedback_argus_quiet_autonomous_approve.md`
+3. **8 个 memory files 文档化最佳实践** (完整清单见下方 §"关键参考"): `feedback_pr_flow_canonical.md` / `feedback_argus_canonical_trigger.md` / `feedback_resolve_threads.md` / `feedback_argus_nit_loop.md` / `feedback_review_disagree_strategy.md` / `feedback_argus_quiet_autonomous_approve.md` / `feedback_prflow_after_commit.md` / `feedback_cron_safety.md`
 
 #86 提案因此过时, 但其底层"主 agent 不被 review cycles 阻塞"这个目标 **已达成**, 只是通过不同机制。本 audit 系统性比对提案 vs 已有能力。
 
@@ -80,11 +80,11 @@ verdict: close-as-subsumed
 | 3: Dedicated Sub-Agent | **DESIGN DIVERGENT** | 但底层目标 (autorun 不阻塞 + iterative fix + escalation) 100% 达成, 通过 main-agent + CronCreate 而非 sub-agent dispatch |
 | Dependencies | **3/3 resolved** | (1 N/A, 2 implemented, 3 subsumed) |
 
-**Verdict: close-as-subsumed** — #86 提案的实质目标已通过 `/pr-flow` + Argus + CronCreate-based polling + 6 个 memory files 完整达成, 但 architecture 与提案不同 (main-agent-driven 而非 sub-agent dispatch)。剩余 gap 低 value 不值得开 follow-up Issue。
+**Verdict: close-as-subsumed** — #86 提案的实质目标已通过 `/pr-flow` + Argus + CronCreate-based polling + 8 个 memory files 完整达成, 但 architecture 与提案不同 (main-agent-driven 而非 sub-agent dispatch)。剩余 gap 低 value 不值得开 follow-up Issue。
 
-**关闭策略**: PR #441 (Closes #86) merged 后 GitHub 自动 close。无需手动 `gh issue close` 命令; 如运营需要手动关闭则使用显式 repo 限定:
+**关闭策略**: 本 audit doc 所在的 PR 携带 `Closes #86` tag, merge 后 GitHub 自动 close — 这是 canonical path。如该 PR 因故未能 merge (e.g. 实际操作中 audit doc 被合并到其他 PR), 则回退到显式手动关闭:
 ```bash
-gh issue close 86 --repo 392fyc/Mercury  # 仅在 PR merge 失败的回退场景使用; 先 gh repo view 确认仓库
+gh issue close 86 --repo <owner>/<repo>  # 仅在 PR Closes-tag 路径失效时使用; 先 gh repo view 确认仓库
 ```
 关闭 comment 链接到本 audit doc + pr-flow SKILL.md + 关键 memory files。
 
