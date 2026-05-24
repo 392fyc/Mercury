@@ -52,7 +52,7 @@ verdict: close-as-subsumed
 | **Scope**: Read review comments → apply fixes → commit → push → wait for re-review → repeat | pr-flow Phases 3 → 4 → 5 → 5b (iteration 循环 + cap 5) | **IMPLEMENTED** (in pr-flow, 不是 sub-agent) |
 | **Isolation**: Runs in its own session/worktree, does not block Main Agent's primary task | CronCreate-based polling 实现 "doesn't block" 目标 — cron fires while main agent does prep work (`feedback_pr_flow_canonical.md` 第 6 条 "Use cron wait windows productively")。 不是 separate session。 | **DESIGN DIVERGENT** (目标达成机制不同; #86 主诉求实质满足) |
 | **Escalation policy** by severity (Trivial → auto-handle; Minor → auto-fix; Major → fix+flag; Architectural → escalate) | pr-flow 禁止手动 resolve thread (Argus 做); agent 只做 code-fix 或 DISAGREE-reply。Severity 分级用 pr-flow Step 3d。Architectural / out-of-scope = `feedback_review_disagree_strategy.md` DISAGREE-cite + PR body 明 "Out of scope" (S130 lesson "Scope-creep flag pattern"); iter 3+ all-Minor 触发 `feedback_argus_nit_loop.md` escape-hatch | **PARTIALLY + RE-ARCHITECTED** (escalation 由 DISAGREE-cite path 而非 separate flag-to-main-agent message) |
-| **Completion**: Returns summary to Main Agent when PR is approved + merged, or when blocked | pr-flow Phase 6 GATE 6 + Phase 7 cleanup; MAX_ITERATIONS=5 触发 `gh pr comment "Max review iterations reached. Requesting human guidance."` | **IMPLEMENTED** |
+| **Completion**: Returns summary to Main Agent when PR is approved + merged, or when blocked | pr-flow Phase 6 GATE 6 + Phase 7 cleanup; MAX_ITERATIONS=5 触发 `gh pr comment "$PR_NUMBER" --body "Max review iterations ($MAX_ITERATIONS) reached. Requesting human guidance."` (canonical 完整形式 per pr-flow SKILL.md L296) | **IMPLEMENTED** |
 | **Communication**: Via Mercury RPC or structured handoff JSON | N/A (main-agent-driven design 不需要) | **N/A** (design divergent) |
 
 **结论 (模块 3)**: 设计有意分歧 — Mercury 选 main-agent-driven + CronCreate, 而非 separate sub-agent dispatch + RPC。但 **底层用户目标 (autorun 不被 review cycles 阻塞 + iterative fix + escalation 路径) 通过不同机制完整达成**。
@@ -82,7 +82,7 @@ verdict: close-as-subsumed
 
 **Verdict: close-as-subsumed** — #86 提案的实质目标已通过 `/pr-flow` + Argus + CronCreate-based polling + 8 个 memory files 完整达成, 但 architecture 与提案不同 (main-agent-driven 而非 sub-agent dispatch)。剩余 gap 低 value 不值得开 follow-up Issue。
 
-**关闭策略**: 本 audit doc 所在的 PR 携带 `Closes #86` tag, merge 后 GitHub 自动 close — 这是 canonical path。如该 PR 因故未能 merge (e.g. 实际操作中 audit doc 被合并到其他 PR), 则回退到显式手动关闭:
+**关闭策略**: 本 audit doc 所在的 PR 携带 `Closes #86` tag (合并前应 `gh pr view <N> --json body --jq '.body | test("Closes #86"; "i")'` 验证返回 `true`), merge 后 GitHub 自动 close — 这是 canonical path。如该 PR 因故未能 merge (e.g. 实际操作中 audit doc 被合并到其他 PR), 则回退到显式手动关闭:
 ```bash
 gh issue close 86 --repo <owner>/<repo>  # 仅在 PR Closes-tag 路径失效时使用; 先 gh repo view 确认仓库
 ```
@@ -90,7 +90,7 @@ gh issue close 86 --repo <owner>/<repo>  # 仅在 PR Closes-tag 路径失效时�
 
 ## 关键参考
 
-`$MERCURY_MEMORY_DIR` 是 Mercury canonical 占位符 (默认 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory`; 见 `.mercury/docs/guides/lane-naming.md` L126-127 + `lane-spawn.md` L49-57 + `lane-close.md` L35-38 — 三 guide doc 全部统一用此 env var)。
+`$MERCURY_MEMORY_DIR` 是 Mercury canonical 占位符 (默认 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory`; 见 `.mercury/docs/guides/lane-naming.md` L126-127 + `.mercury/docs/guides/lane-spawn.md` L49-57 + `.mercury/docs/guides/lane-close.md` L35-38 — 三 guide doc 全部统一用此 env var)。
 
 - `.claude/skills/pr-flow/SKILL.md` (~380 行 — Phase 1-7 lifecycle)
 - `$MERCURY_MEMORY_DIR/feedback_pr_flow_canonical.md` (S103 directive)
