@@ -43,13 +43,13 @@ research_protocol: "所有外部 SDK/服务能力对照官方文档核实，核�
 
 #157 body 说"与 #92(Internal Cron Agent)共享 cron-scheduling 基础设施，职责独立"。但核实发现 **#92 已 Closed as not planned**(来源: <https://github.com/392fyc/Mercury/issues/92>)。
 
-#92 设想的执行模型(独立 role slot + 用 RPC `list_sessions`/`list_tasks` 自检 + Haiku 跑 ~5min)绑定的是 **Phase 4 之前的 session/task/RPC 架构**，那套已随 S75 orchestration reframe(main=部长 / side=开发小组 / Telegram=总裁窗口，见 MEMORY.md `project_orchestration_reframe.md`)和 mem0 取代 RPC-KB 而过时。
+#92 设想的执行模型(独立 role slot + 用 RPC `list_sessions`/`list_tasks` 自检 + Haiku 跑 ~5min)绑定的是 **Phase 4 之前的 session/task/RPC 架构**，那套已随 S75 orchestration reframe(main=部长 / side=开发小组 / Telegram=总裁窗口,见 **user-level memory** 的 `project_orchestration_reframe.md` —— 该文件在 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded_cwd>/memory/`,**不在本 repo**)和 mem0 取代 RPC-KB 而过时。
 
 **结论**: #157 **不应**把"复用 #92 的 cron 基础设施"当作设计前提。#92 已死，其内网 RPC 自检模型对 #157(纯外部信息 + 纯 GitHub 输出)也不适用。#157 的自然基座是 **GitHub-native 调度(GHA)**，不是 #92 设想的 NAS-internal RPC cron。本 ADR 据此独立选型。
 
 ### 1.3 #381 tech-intel-sweep — 手工先例
 
-任务交代要提取 `.mercury/docs/research/tech-intel-sweep-2026-05-12.md` 的 categories/sources/output-format。**核实: 该文件不在 Mercury repo 内**(`Glob **/tech-intel-sweep*` 无结果)。MEMORY.md 的索引条目指向的是 **user-level memory 路径** (`~/.claude/projects/.../research/`)，属用户私有记忆层，不在本 repo，本 design lane 无法读取。
+早稿曾以为该 doc 在 `.mercury/docs/research/tech-intel-sweep-2026-05-12.md`。**核实: 该文件不在 Mercury repo 内**(`Glob **/tech-intel-sweep*` 无结果)。MEMORY.md 的索引条目指向的是 **user-level memory 路径**,按 CLAUDE.md 约定为 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded_cwd>/memory/research/tech-intel-sweep-2026-05-12.md`(注意含 `/memory/` 层),属用户私有记忆层,**不在本 repo**,本 design lane 无法读取。
 
 可确认的事实(来自 MEMORY.md 索引行): #381 是一次 **手工的 3-周 Anthropic + OpenAI + GitHub 情报扫描**，产出 4 个 follow-up Issue(#382/#383/#384/#385)+ 2 个 defer note。**这正是 #157 要自动化的东西的人工先例** —— 即"周期性扫外部源 → 判定显著性 → 落成可执行 Issue / defer note"。
 
@@ -154,6 +154,7 @@ LLM 判定输出落成 Issue，带结构化标签:
 - **impact**: 新建标签维度，建议 `impact/blocking`(冲突/破坏现有功能) / `impact/capability`(新能力可采纳) / `impact/maintenance`(常规 bump) / `impact/fyi`(知悉即可)。
 - **来源标签**: `intel/sdk`(A/B 类 SDK) / `intel/oss`(参考项目) / `intel/api-docs`。
 - **triage 标签**: `intel/needs-triage` —— 所有自动建的 Issue 默认带此标签，**人工 review 前不进正常 backlog**，避免污染开发队列。
+- **⚠️ 标签来源安全约束**: 上述 priority / impact / 来源标签全部是**固定枚举白名单**,实现时 label 值只能从该白名单查表取得,**禁止**用 LLM 输出或 release-note 文本动态拼接 label —— 否则有命令注入 + label 污染风险(详见 §7 step 5 的转义约束)。
 
 ### 5.2 dedup —— 防 Issue spam 的核心
 
@@ -165,7 +166,9 @@ LLM 判定输出落成 Issue，带结构化标签:
    - **(b) 侧分支 + 显式 fetch**: 状态存 `claude/intel-state` 分支,但 workflow **起始步骤必须显式 `git fetch origin claude/intel-state` 并读取该分支的文件**(不依赖 checkout 的 default-branch 树),结束时 commit 回该分支。这是侧分支方案能 work 的唯一前提。
    - **(c) git-外状态存储**: 用 GitHub repo/environment **variable**(`gh variable set`)或一个 pinned tracking Issue 的 body 作状态存储,经 `gh api` 读写 —— 完全绕开分支可见性问题,推荐作为 PoC 最简路径。
    - GHA `actions/cache` **不可靠**(best-effort,可被驱逐),不作 dedup 状态用。
-2. **开放 Issue 查重**(确定性，建 Issue 前): `gh issue list --label intel/* --state open --search "<源名> <版本>"`,若已有覆盖同一 source+version 的 open Issue 则跳过(或 append comment 而非新建)。
+
+   **PoC 须固定单一 state 源 + 原子更新**: 上述 (a)/(b)/(c) 只选一个作权威 state(PoC 用 (c)),不并存多源以免分叉。并发约束: scheduled run 可能与手动 `workflow_dispatch` 重叠 —— 用 GHA `concurrency:` group(同 group 串行/取消在途)防两个 run 同时读改 state;state 写入用"读-改-写一次性提交"(repo variable 的 `gh variable set` 是整体覆盖,pinned Issue body 用 `gh issue edit --body` 整体替换),避免部分更新。
+2. **开放 Issue 查重**(确定性，建 Issue 前): `gh issue list --label intel/needs-triage --state open --search "<源名> <版本>"` —— **注意 `gh --label` 不支持通配符**(必须传精确 label 名),因所有自动建的 Issue 都带 `intel/needs-triage`,用该精确 label 过滤即可;若已有覆盖同一 source+version 的 open Issue 则跳过(或 append comment 而非新建)。
 3. **LLM significance gate**(判定层): LLM 判 `significant: false` 的 delta(如纯 patch bump 无 changelog 实质)**不建 Issue**，只更新 last-seen 状态(§5.2 的持久化机制)+ 可选写一行到 digest。
 
 ### 5.3 输出节流: digest 优先于逐条 Issue
@@ -210,9 +213,9 @@ LLM 判定输出落成 Issue，带结构化标签:
 1. **基座**: 一个 GitHub Actions scheduled workflow(`cron: '0 9 * * 1'` 每周一 09:00 UTC[1])。
 2. **源**: 只接 **Claude Code SDK + Anthropic API 文档**两个最相关的源(B 类),用 npm 包元数据(`GET /{package}` 解析 `dist-tags.latest`[3])+ docs 页面快照对比。**不接 A 类**(A 类另起一个独立的 Renovate 配置 PR,与 PoC 解耦并行)。
 3. **状态**: 记 last-seen 版本/feed-id。**PoC 默认用 §5.2 机制 (c)** —— 存到一个 pinned tracking Issue 的 body 或 GitHub repo variable,经 `gh api` 读写,绕开 scheduled-run 的分支可见性问题(机制 a/b 留 Phase 3 视 branch-protection 实测)。这是 dedup 第一闸能跨 run 工作的前提。
-4. **LLM 判定**: workflow 内调 Anthropic API 一次(仅当有 delta),输出 significance + priority + impact + summary。**调 API 前 web-verify message 端点签名**(MANDATORY RESEARCH PROTOCOL)。
-5. **输出**: significant 时 `gh issue create --label <source-label>,intel/needs-triage`,其中 `<source-label>` 按源取 `intel/sdk`(Claude Code SDK)或 `intel/api-docs`(Anthropic API 文档,见 §5.1);非 significant 只更新 last-seen 状态(§5.2 机制 c)。
-6. **护栏**: 单次 ≤1 Issue(PoC 阶段更严);全部带 `needs-triage`,人工 review;不改任何业务代码、不推非 `claude/*`/状态分支。
+4. **LLM 判定**: workflow 内调 Anthropic API 一次(仅当有 delta),输出 significance + priority + impact + summary。**调 API 前 web-verify message 端点签名**(MANDATORY RESEARCH PROTOCOL)。**外部边界错误处理(必须显式设计)**: API 超时/限流/5xx → 有限次重试(指数退避)后**降级**(把本轮 delta 写入 digest + 仍持久化 last-seen 状态,**绝不**因 API 失败而丢弃 delta 或重复整批);workflow step 设 timeout;`gh issue create` 失败时同样回退到 digest 并保留 state,避免告警风暴或 delta 漏报。
+5. **输出**: significant 时 `gh issue create --label <source-label>,intel/needs-triage`,其中 `<source-label>` **必须从固定白名单映射取值**(`intel/sdk` = Claude Code SDK / `intel/api-docs` = Anthropic API 文档 / `intel/oss` = 参考项目,见 §5.1)—— **禁止把 LLM 输出或外部 release-note 文本直接拼进 `gh` 命令参数**(命令注入 + label 污染风险);所有传给 `gh` 的参数(title/body/label)须严格引用/转义,body 经 `--body-file` 传入而非内联拼接。非 significant 只更新 last-seen 状态(§5.2 机制 c)。
+6. **护栏**: 单次 ≤1 Issue(PoC 阶段更严);全部带 `needs-triage`,人工 review;不改任何业务代码、不推非 `claude/*`/状态分支;label 仅取固定白名单;`gh` 参数严格转义。
 7. **跑 4 周**,评估: 误报率(建了不该建的 Issue)/ 漏报率 / token 成本 / Issue 噪音感受。**先从 user-level memory 或 #381 Issue 提取 #381 的 source 清单 + taxonomy 作为判定 prompt 的种子**(补 §1.3 的 UNVERIFIED gap)。
 
 PoC 规避的风险: 不依赖 Routines(无 research-preview 风险) / 不依赖 custom agents / 不推受保护分支 / 双源 + 单次 ≤1 Issue 上限把 spam 风险降到最低。
@@ -267,12 +270,12 @@ PoC 验证后扩展:
 
 ## 9. Open questions / UNVERIFIED
 
-1. **#381 的具体 source 清单 / taxonomy / Issue 模板** — UNVERIFIED。原文在 user-level memory(`~/.claude/projects/.../research/tech-intel-sweep-2026-05-12.md`),本 design lane 读不到。Phase 2 实装前需从该路径或 #381 Issue 本体提取,作为 LLM 判定 prompt 与 Issue 模板的种子。这是 Phase 2 的首个前置动作。
+1. **#381 的具体 source 清单 / taxonomy / Issue 模板** — UNVERIFIED。原文在 user-level memory,按 CLAUDE.md 约定为 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded_cwd>/memory/research/tech-intel-sweep-2026-05-12.md`(含 `/memory/` 层,不在本 repo),本 design lane 读不到。Phase 2 实装前需从该路径或 #381 Issue 本体提取,作为 LLM 判定 prompt 与 Issue 模板的种子。这是 Phase 2 的首个前置动作。
 2. **Anthropic API / Claude Code SDK 是否有官方结构化 changelog feed** — UNVERIFIED。若无,B 类对"API 文档变更"只能做页面内容快照 diff(脆弱、易误报)。需核实 platform.claude.com 是否提供 changelog RSS/JSON。
 3. **GitHub repo-specific atom feed (`releases.atom`/`tags.atom`)** — 双重 UNVERIFIED: (a) 这些 URL 在社区广泛使用但**未被官方 GitHub feeds API docs 记录**[7](官方只文档化认证态 `GET /feeds` + timeline 资源);(b) pre-release/tag 混入行为社区报告不一致。**保守默认用已核实的 REST `/releases` + `/tags`**;atom feed 仅作 Phase 2 实测后的可选优化。
 3b. **npm `?fields=dist-tags` query + 响应大小** — UNVERIFIED:官方 npm registry docs 未记录该 query 参数;改用文档化的 `GET /{package}` packument 或 abbreviated `Accept` header,Phase 2 实测取法。
 4. **Codex CLI 的分发渠道** — UNVERIFIED 是 npm 还是仅 GitHub release。决定用 npm dist-tags 还是 GitHub Releases API。
-5. **workflow 写回状态文件的分支策略** — 若 commit 回 develop 受 branch protection(require PR)阻挡,需走 `claude/intel-state` 分支或独立机制。Phase 2 实测。
+5. **状态持久化机制的最终选型** — §5.2 列了 (a) default-branch commit / (b) 侧分支 + 显式 fetch / (c) git-外存储(pinned Issue/repo var)三方案,PoC 默认 (c)。Phase 2 实测确认 (c) 的 `gh api` 读写延迟/配额可接受,并验证 (a) 在 branch protection 下是否真被挡。
 6. **私有 repo 的 GHA 分钟成本** — Mercury repo 若为私有,GHA 有月度分钟额度;weekly 轻量 workflow 消耗极小,但需确认未超额(UNVERIFIED Mercury repo 当前是否 public)。
 
 ---
