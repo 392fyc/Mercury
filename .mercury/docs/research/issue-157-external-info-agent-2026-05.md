@@ -56,7 +56,14 @@ research_protocol: "所有外部 SDK/服务能力对照官方文档核实，核�
 **对设计的启示**(从可确认的先例结构推导，未读到原文细节标 UNVERIFIED):
 - 输出形态已被先例验证为可行: 显著发现 → 开 follow-up Issue；不值得跟进 → defer note(带 re-eval 条件)。#157 自动版应复刻这个二分输出(Issue vs defer note)，而非只会建 Issue。
 - 扫描源涵盖 Anthropic + OpenAI + GitHub 三大类，与 #157 的 SDK + OSS 两类高度重合。
-- **UNVERIFIED**: #381 用的具体 source 清单、categorization taxonomy、Issue body 模板 —— 需后续从 user-level memory 或 #381 Issue 本体提取，作为 #157 输出模板的种子。Phase 2 实装前应补这一步。
+- **UNVERIFIED**: #381 用的具体 source 清单、categorization taxonomy、Issue body 模板 —— 后续从 user-level memory 或 #381 Issue 本体提取,可**丰富** taxonomy/模板。
+
+**repo 内可追溯的最小基线(不依赖 user-level memory,团队/CI 均可访问)**: Phase 2 **不被** user-level memory 阻塞 —— 启动所需的最小源清单已自包含在本 repo:
+- **B 类源清单**: 见 §4.2 表(Claude Code SDK / Anthropic API 文档 / Tauri / Codex CLI / 参考 OSS: autoresearch、everything-claude-code、superpowers、openclaw)—— 直接取自 #157 Issue body(repo-tracked GitHub Issue)。
+- **categorization 基线**: 见 §5.1 的固定 label 白名单(priority P1/P2/P3 + `impact/*` + `intel/*`)。
+- **输出形态基线**: 见 §5.3 的 Issue-vs-digest 二分。
+
+user-level #381 的 taxonomy/模板仅作 **enrichment(锦上添花)**,**非 Phase 2 前置阻塞项**。若该 memory 在实装时不可访问,以上 repo-内基线即足以启动 PoC。
 
 ---
 
@@ -216,7 +223,7 @@ LLM 判定输出落成 Issue，带结构化标签:
 4. **LLM 判定**: workflow 内调 Anthropic API 一次(仅当有 delta),输出 significance + priority + impact + summary。**调 API 前 web-verify message 端点签名**(MANDATORY RESEARCH PROTOCOL)。**外部边界错误处理(必须显式设计)**: API 超时/限流/5xx → 有限次重试(指数退避)后**降级**(把本轮 delta 写入 digest + 仍持久化 last-seen 状态,**绝不**因 API 失败而丢弃 delta 或重复整批);workflow step 设 timeout;`gh issue create` 失败时同样回退到 digest 并保留 state,避免告警风暴或 delta 漏报。
 5. **输出**: significant 时 `gh issue create --label <source-label>,intel/needs-triage`,其中 `<source-label>` **必须从固定白名单映射取值**(`intel/sdk` = Claude Code SDK / `intel/api-docs` = Anthropic API 文档 / `intel/oss` = 参考项目,见 §5.1)—— **禁止把 LLM 输出或外部 release-note 文本直接拼进 `gh` 命令参数**(命令注入 + label 污染风险);所有传给 `gh` 的参数(title/body/label)须严格引用/转义,body 经 `--body-file` 传入而非内联拼接。非 significant 只更新 last-seen 状态(§5.2 机制 c)。
 6. **护栏**: 单次 ≤1 Issue(PoC 阶段更严);全部带 `needs-triage`,人工 review;不改任何业务代码、不推非 `claude/*`/状态分支;label 仅取固定白名单;`gh` 参数严格转义。
-7. **跑 4 周**,评估: 误报率(建了不该建的 Issue)/ 漏报率 / token 成本 / Issue 噪音感受。**先从 user-level memory 或 #381 Issue 提取 #381 的 source 清单 + taxonomy 作为判定 prompt 的种子**(补 §1.3 的 UNVERIFIED gap)。
+7. **跑 4 周**,评估: 误报率(建了不该建的 Issue)/ 漏报率 / token 成本 / Issue 噪音感受。判定 prompt 以 §1.3 的 repo-内基线启动(源清单 §4.2 + label §5.1 + 输出形态 §5.3);user-level #381 的 taxonomy/模板作可选 enrichment(可访问时补,不可访问不阻塞)。
 
 PoC 规避的风险: 不依赖 Routines(无 research-preview 风险) / 不依赖 custom agents / 不推受保护分支 / 双源 + 单次 ≤1 Issue 上限把 spam 风险降到最低。
 
@@ -270,7 +277,7 @@ PoC 验证后扩展:
 
 ## 9. Open questions / UNVERIFIED
 
-1. **#381 的具体 source 清单 / taxonomy / Issue 模板** — UNVERIFIED。原文在 user-level memory,按 CLAUDE.md 约定为 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded_cwd>/memory/research/tech-intel-sweep-2026-05-12.md`(含 `/memory/` 层,不在本 repo),本 design lane 读不到。Phase 2 实装前需从该路径或 #381 Issue 本体提取,作为 LLM 判定 prompt 与 Issue 模板的种子。这是 Phase 2 的首个前置动作。
+1. **#381 的具体 source 清单 / taxonomy / Issue 模板** — UNVERIFIED。原文在 user-level memory,按 CLAUDE.md 约定为 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded_cwd>/memory/research/tech-intel-sweep-2026-05-12.md`(含 `/memory/` 层,不在本 repo),本 design lane 读不到。**非 Phase 2 阻塞项** —— §1.3 已给出 repo-内自包含最小基线(源清单 §4.2 / label §5.1 / 输出形态 §5.3),足以启动 PoC;从该路径或 #381 Issue 提取仅作 taxonomy/模板的 enrichment。
 2. **Anthropic API / Claude Code SDK 是否有官方结构化 changelog feed** — UNVERIFIED。若无,B 类对"API 文档变更"只能做页面内容快照 diff(脆弱、易误报)。需核实 platform.claude.com 是否提供 changelog RSS/JSON。
 3. **GitHub repo-specific atom feed (`releases.atom`/`tags.atom`)** — 双重 UNVERIFIED: (a) 这些 URL 在社区广泛使用但**未被官方 GitHub feeds API docs 记录**[7](官方只文档化认证态 `GET /feeds` + timeline 资源);(b) pre-release/tag 混入行为社区报告不一致。**保守默认用已核实的 REST `/releases` + `/tags`**;atom feed 仅作 Phase 2 实测后的可选优化。
 3b. **npm `?fields=dist-tags` query + 响应大小** — UNVERIFIED:官方 npm registry docs 未记录该 query 参数;改用文档化的 `GET /{package}` packument 或 abbreviated `Accept` header,Phase 2 实测取法。
@@ -284,7 +291,7 @@ PoC 验证后扩展:
 
 - **#157 保持 OPEN**(设计交付物,非实现)。
 - **不要把"复用 #92 cron"当前提** —— #92 已 Closed as not planned,其 RPC/session 模型对 #157 不适用(§1.2)。
-- Phase 2 PoC 实装前的**首个前置动作**: 从 user-level memory 提取 #381 的 source/taxonomy/模板(§9 Q1)。
+- Phase 2 PoC **不被 user-level memory 阻塞**: §1.3 已给 repo-内自包含最小基线(源清单/label/输出形态);从 user-level memory 提取 #381 taxonomy/模板仅作可选 enrichment(§9 Q1)。
 - A 类(Renovate/Dependabot)与 B 类(intel agent)**应作为两个独立 PR / Issue 推进**,解耦。
 
 ---
