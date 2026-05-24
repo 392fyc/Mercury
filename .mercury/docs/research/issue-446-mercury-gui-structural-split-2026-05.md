@@ -45,14 +45,14 @@ research_protocol: "所有外部技术事实对照官方文档核实 2026-05-24�
 
 | 层 | LOC | 关键文件分布 (路径相对 `mercury-gui/`) |
 |----|-----|-------------|
-| Rust `src-tauri/` | 1878 | `src-tauri/src/gh_dashboard.rs` 591 / `src-tauri/src/data/models.rs` 342 / `src-tauri/src/data/mod.rs` 332 / `src-tauri/src/data/commands.rs` 328 / `src-tauri/src/data/watcher.rs` 118 / `src-tauri/src/data/paths.rs` 82 / `src-tauri/src/lib.rs` 76 / `src-tauri/src/main.rs` 6 / `src-tauri/build.rs` 3 |
-| 前端 `src/` | 2052¹ | `src/components/GitHubDashboard.tsx` 358 / `src/components/LaneTable.tsx` 140 / `src/lib/ghFilter.ts` 119 / `src/components/ui/dialog.tsx` 116 / `src/lib/filter.ts` 113 / `src/components/LaneRow.tsx` 111 / `src/hooks/useSnapshot.ts` 101 / ... |
+| Rust `src-tauri/` | ~1880 | `src-tauri/src/gh_dashboard.rs` ~590 / `src-tauri/src/data/models.rs` ~340 / `src-tauri/src/data/mod.rs` ~330 / `src-tauri/src/data/commands.rs` ~330 / `src-tauri/src/data/watcher.rs` ~120 / `src-tauri/src/data/paths.rs` ~80 / `src-tauri/src/lib.rs` ~75 / `src-tauri/src/main.rs` 数行 (thin binary) / `src-tauri/build.rs` 数行 |
+| 前端 `src/` | ~2050¹ | `src/components/GitHubDashboard.tsx` ~360 / `src/components/LaneTable.tsx` ~140 / `src/lib/ghFilter.ts` ~120 / `src/components/ui/dialog.tsx` ~115 / `src/lib/filter.ts` ~115 / `src/components/LaneRow.tsx` ~110 / `src/hooks/useSnapshot.ts` ~100 / ... |
 
-> ¹ **计数口径**: 所有 LOC 为 develop tip 起草时 `wc -l` 快照 (统计换行符数)。无尾换行的文件其"内容行数"比 `wc -l` 多 1,故个别工具 (如按内容行计数的 reviewer) 可能报 +1 (例如 `gh_dashboard.rs` `wc -l` 591 / 内容 592),属口径差非错误;数字随 tip 增删漂移,**以量级与目录结构为准,非逐行精确承诺**。前端 2052 = 全部非 Rust 代码文件 (ts+tsx+js+jsx) 合计 = 总计 3930 − Rust 1878;若仅计 ts+tsx 约 2008 (差额为少量 js/jsx + 口径)。前端文件分布于 `src/components/`、`src/lib/`、`src/hooks/`、`src/components/ui/` 子目录——这正是 §1.1 事实 2 "目录边界已整齐" 的依据。
+> ¹ **计数口径 (表中数字均为约数 `~`)**: LOC 为 develop tip 起草时 `wc -l` 快照取整,**故意以 `~` 约数呈现** —— 不同工具计数口径有 ±1 差异 (`wc -l` 数换行符;按"内容行"计数则无尾换行文件 +1),且数字随 tip 增删漂移,本 ADR **以量级与目录结构为准,不作逐行精确承诺**。前端 ~2050 ≈ 全部非 Rust 代码文件 (ts+tsx+js+jsx) 合计 ≈ 总计 ~3930 − Rust ~1880。前端文件分布于 `src/components/`、`src/lib/`、`src/hooks/`、`src/components/ui/` 子目录——这正是 §1.1 事实 2 "目录边界已整齐" 的依据。
 
 **两个关键 in-repo 事实 (起草时核实)，直接影响 verdict:**
 
-1. **已是 thin-binary + lib crate 形态。** `src-tauri/src/main.rs` 仅 6 行——`fn main() { mercury_gui_lib::run() }`；`Cargo.toml` 已声明 `[lib] name = "mercury_gui_lib"` + `crate-type = ["staticlib", "cdylib", "rlib"]`。这正是 Tauri 2 官方默认模式 (见 §4.1)，**main→lib 的拆分早已完成**，不是 Option 2 才能带来的收益。
+1. **已是 thin-binary + lib crate 形态。** `src-tauri/src/main.rs` 仅数行——`fn main() { mercury_gui_lib::run() }` (加 Windows console 抑制 attr)；`Cargo.toml` 已声明 `[lib] name = "mercury_gui_lib"` + `crate-type = ["staticlib", "cdylib", "rlib"]`。这正是 Tauri 2 官方默认模式 (见 §4.1)，**main→lib 的拆分早已完成**，不是 Option 2 才能带来的收益。
 2. **模块边界已整齐。** Rust 侧已有 `data/` 子模块 (`mod.rs`/`models.rs`/`commands.rs`/`watcher.rs`/`paths.rs`)；前端侧已分 `components/`/`lib/`/`hooks/`/`ui/` 目录。"代码混在一起难维护"这个常见拆分动机在此**不成立**。
 
 ### 1.2 Motivation (为什么会有 #446)
@@ -143,7 +143,7 @@ CLAUDE.md 的 200-LOC 硬约束**只 scope 到 `adapters/<vendor-name>/` 外部�
 Tauri 2 项目默认是单包结构 (root + `src-tauri/`)。官方承认 Rust workspace 是 supported scenario，但**不主动推荐**，且**无 pnpm workspace 专项迁移指南**。`main.rs` → `lib.rs` 的 `run()` thin-binary + lib 模式已是 create-tauri-app 默认生成模式 (本仓库 `main.rs` 6 行 + `Cargo.toml [lib]` 印证)。`tauri.conf.json` 的 `frontendDist` 接受相对路径。
 
 - Source: <https://v2.tauri.app/start/project-structure/>
-- Source: <https://tauri.app/reference/config/> (`frontendDist` 相对路径)
+- Source: <https://v2.tauri.app/reference/config/> (`frontendDist` 相对路径)
 
 **推论**: Option 2 想从 main→lib 拆分中获得的"thin binary"收益**已经存在**——这部分不是拆分的增量价值。
 
@@ -228,7 +228,7 @@ GUI-exemption **不是** workaround，而是对一个**本就该豁免**的对�
 ## 6. Recommendation (proposal only)
 
 1. **采纳 Option 1**: 不拆分，保持单包。本 ADR 不触发任何实施 Issue。
-2. **强化 exemption 的 reviewer 可见性 (低成本、可选)**: 既然根因是 Argus 误施 adapter-scoped 规则,建议 (proposal,非本 ADR 实施) 补强 CLAUDE.md 中 `mercury-gui/` 豁免的经验驱动证据。**核实现状**: CLAUDE.md 的 200-LOC MUST bullet (§1.2 定义的 GUI-exemption 所在 bullet) 已给 `mercury-gui/` 与 `scripts/` **同等结构待遇**——同一 MUST bullet、同一 DIRECTION.md §240/§385 authority chain、同一 "no LOC cap (size by need)" 措辞。真正的 delta 很小: 该 bullet 尾部 "Empirical drivers" 子句目前只列 `scripts/` 的 PR #338/#346,**未列 GUI 的 PRs #421/#424/#425**。建议仅把后者补进 empirical-drivers 清单,使未来 reviewer 一次性看到 GUI 也有经验驱动的 carve-out 而非每次触发 nit。**这比拆分代码便宜一个数量级,且直接命中根因。** 此项是改 CLAUDE.md 的轻量文档动作 (走用户/项目文档直写通道),与拆分无关,**且 pending User 认可** (CLAUDE.md 是项目治理文件)。**该治理动作已落地为可追踪项 #448**(避免"结论已给出但治理动作未落地";该 Issue 的实时状态以 GitHub 为准,本 ADR 不冗余复制状态以防过时),由 User 拍板后执行——本 ADR 不直接改 CLAUDE.md。
+2. **强化 exemption 的 reviewer 可见性 (低成本、可选)**: 既然根因是 Argus 误施 adapter-scoped 规则,建议 (proposal,非本 ADR 实施) 补强 CLAUDE.md 中 `mercury-gui/` 豁免的经验驱动证据。**核实现状**: CLAUDE.md 的 200-LOC MUST bullet (§1.2 定义的 GUI-exemption 所在 bullet) 已给 `mercury-gui/` 与 `scripts/` **同等结构待遇**——同一 MUST bullet、同一 DIRECTION.md §240/§385 authority chain、同一 "no LOC cap (size by need)" 措辞。真正的 delta 很小: 该 bullet 尾部 "Empirical drivers" 子句目前只列 `scripts/` 的 PR #338/#346,**未列 GUI 的 PRs #421/#424/#425**。建议仅把后者补进 empirical-drivers 清单,使未来 reviewer 一次性看到 GUI 也有经验驱动的 carve-out 而非每次触发 nit。**这比拆分代码便宜一个数量级,且直接命中根因。** 此项是改 CLAUDE.md 的轻量文档动作 (走用户/项目文档直写通道),与拆分无关,**且 pending User 认可** (CLAUDE.md 是项目治理文件)。**该治理动作已落地为可追踪 follow-up Issue [#448](https://github.com/392fyc/Mercury/issues/448)**(避免"结论已给出但治理动作未落地";实时状态以 GitHub 为准,本 ADR 不冗余复制状态以防过时),由 User 拍板后执行——本 ADR 不直接改 CLAUDE.md。
 3. **记录重评触发条件** (§5.5)，使 #446 可在条件成立时被精准重开，而非凭主观重提。
 4. **若 User 推翻本 verdict 选择拆分**: 须另开实施 Issue，并在该 Issue 中要求 (a) 先做 spike 验证 §3 中 "Argus 是否真按单 crate 计数" 的 UNVERIFIED 假设——若 Argus 仍按目录树总量报，则拆分连原始动机都无法兑现，应立即止损；(b) 验证 §4.4 全部迁移坑 + dual-verify `pnpm build` gate 在新布局下通过；(c) 记录 create-tauri-app scaffold 偏离 (Category A provenance 影响，见 §3)。
 
@@ -237,7 +237,7 @@ GUI-exemption **不是** workaround，而是对一个**本就该豁免**的对�
 ## 7. Sources
 
 - Tauri 2 项目结构 (默认单包 / thin-binary+lib): <https://v2.tauri.app/start/project-structure/>
-- Tauri config (`frontendDist` 相对路径): <https://tauri.app/reference/config/>
+- Tauri config (`frontendDist` 相对路径): <https://v2.tauri.app/reference/config/>
 - Rust Book — Cargo workspaces (as it grows larger): <https://doc.rust-lang.org/book/ch14-03-cargo-workspaces.html>
 - Cargo reference — workspaces (`[workspace] members`): <https://doc.rust-lang.org/cargo/reference/workspaces.html>
 - pnpm workspaces (`packages:` glob): <https://pnpm.io/workspaces>
