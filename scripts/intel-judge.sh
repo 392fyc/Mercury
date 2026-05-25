@@ -82,6 +82,7 @@ ANTHROPIC_API_URL="${INTEL_ANTHROPIC_API_URL:-$DEFAULT_ANTHROPIC_API_URL}"
 MAX_RETRIES="${INTEL_JUDGE_MAX_RETRIES:-3}"
 RETRY_BASE_DELAY="${INTEL_JUDGE_RETRY_BASE_DELAY:-2}"  # seconds; tests set 0 for speed
 API_TIMEOUT="${INTEL_JUDGE_API_TIMEOUT:-60}"          # per-attempt curl --max-time
+DEDUP_LIST_LIMIT="${INTEL_JUDGE_DEDUP_LIST_LIMIT:-100}"  # max open Issues scanned for dedup
 
 # ── Fixed whitelists (label-injection guard) — the ONLY label values that can
 #    ever reach `gh`. Parsed/LLM-derived values are validated against these. ──
@@ -125,12 +126,13 @@ done
 # Numeric env config must be valid integers — they feed arithmetic / sleep /
 # curl --max-time, so a non-integer would crash mid-run and bypass the degrade /
 # exit-code contract. Validate up front as a startup error (exit 2).
-for _vn in MAX_RETRIES RETRY_BASE_DELAY API_TIMEOUT; do
+for _vn in MAX_RETRIES RETRY_BASE_DELAY API_TIMEOUT DEDUP_LIST_LIMIT; do
   _vv="${!_vn}"
   [[ "$_vv" =~ ^[0-9]+$ ]] || die "$_vn must be a non-negative integer (got: '$_vv')"
 done
 [[ "$MAX_RETRIES" -ge 1 ]] || die "INTEL_JUDGE_MAX_RETRIES must be >= 1 (got: $MAX_RETRIES)"
 [[ "$API_TIMEOUT" -ge 1 ]] || die "INTEL_JUDGE_API_TIMEOUT must be >= 1 (got: $API_TIMEOUT)"
+[[ "$DEDUP_LIST_LIMIT" -ge 1 ]] || die "INTEL_JUDGE_DEDUP_LIST_LIMIT must be >= 1 (got: $DEDUP_LIST_LIMIT)"
 
 jq -n null >/dev/null 2>&1 || die "jq is required and must be runnable"
 # --dedup derives a delta signature via a sha256 helper (mirrors intel-watch.sh);
@@ -358,10 +360,13 @@ in_set() {
 #   * Including `old` avoids a collision Codex flagged: a source that later RETURNS to
 #     a previously-seen `new` value (e.g. B→C then C→B) has a different `old`, so the
 #     return is a distinct key and is NOT wrongly skipped against the earlier Issue.
-# Built only from intel-watch.sh's own structured output (no LLM text).
+# Each triple is emitted as a compact JSON array (jq -c) rather than tab-joined: JSON
+# string-escapes any embedded tab/newline, so a delimiter inside a field value can no
+# longer create sequence ambiguity or a forged-collision (Argus finding). Built only
+# from intel-watch.sh's own structured output (no LLM text).
 dedup_key() {
   local deltas="$1" pairs hex
-  pairs="$(jq -r '.[] | "\(.source)\t\(.old)\t\(.new)"' <<<"$deltas" | LC_ALL=C sort)" || return 1
+  pairs="$(jq -c '.[] | [.source, .old, .new]' <<<"$deltas" | LC_ALL=C sort)" || return 1
   if command -v sha256sum >/dev/null 2>&1; then
     hex="$(printf '%s' "$pairs" | sha256sum | cut -d' ' -f1)"
   elif command -v shasum >/dev/null 2>&1; then
@@ -572,9 +577,9 @@ main() {
   # match the marker locally — more reliable than gh's fuzzy `--search`. --limit 100
   # is ample since the cap is ≤1 new Issue/run and triaged Issues get closed.
   if [[ "$DEDUP" -eq 1 ]]; then
-    local existing_bodies list_rc=0
-    existing_bodies="$(gh issue list "${repo_args[@]}" --label "$TRIAGE_LABEL" --state open \
-                         --limit 100 --json body --jq '.[].body' 2>/dev/null)" || list_rc=$?
+    local existing_json list_rc=0 n_open
+    existing_json="$(gh issue list "${repo_args[@]}" --label "$TRIAGE_LABEL" --state open \
+                       --limit "$DEDUP_LIST_LIMIT" --json body 2>/dev/null)" || list_rc=$?
     if [[ "$list_rc" -ne 0 ]]; then
       # The dedup query itself failed (network / auth / rate-limit). We cannot tell
       # whether an open Issue already covers this batch, so creating now could file a
@@ -588,9 +593,20 @@ main() {
       rm -f "$body_tmp"
       exit 3
     fi
+    n_open="$(jq 'length' <<<"$existing_json" 2>/dev/null)" || n_open=0
+    if [[ "$n_open" -ge "$DEDUP_LIST_LIMIT" ]]; then
+      # The listing hit the page cap, so a matching marker beyond the cap could be
+      # silently missed → we cannot confirm dedup. DEFER (exit 3) rather than risk a
+      # duplicate, same as a query failure (Argus finding). ≥limit open needs-triage
+      # Issues is itself a triage-backlog signal that needs human attention.
+      printf 'intel-judge: open %s Issues hit the --limit %s cap — cannot confirm dedup, deferring (state NOT persisted)\n' \
+        "$TRIAGE_LABEL" "$DEDUP_LIST_LIMIT" >&2
+      rm -f "$body_tmp"
+      exit 3
+    fi
     # Match the full marker incl. the trailing ` -->` (defensive: keys are fixed-width
     # 16-hex so none is a prefix of another, but the closing token removes all doubt).
-    if [[ "$existing_bodies" == *"intel-dedup-key: $dkey -->"* ]]; then
+    if [[ "$(jq -r '.[].body' <<<"$existing_json")" == *"intel-dedup-key: $dkey -->"* ]]; then
       printf 'dedup: an open %s Issue already covers delta-key %s — skipping create (treated as landed)\n' \
         "$TRIAGE_LABEL" "$dkey"
       rm -f "$body_tmp"

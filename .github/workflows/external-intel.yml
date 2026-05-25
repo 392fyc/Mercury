@@ -5,7 +5,7 @@ name: external-intel
 # Orchestrates the two Mercury-internal scripts into a scheduled GitHub Actions job:
 #   1. scripts/intel-watch.sh  — deterministic collector: fetches the watched
 #      sources (2 npm dist-tags + Claude Code CHANGELOG hash), diffs against the
-#      pinned state Issue, emits a delta report (Slice 1).
+#      tracking state Issue, emits a delta report (Slice 1).
 #   2. scripts/intel-judge.sh  — one Anthropic API call judges significance, then
 #      behind guardrails files exactly one `intel/needs-triage` Issue or degrades
 #      to a digest; --dedup skips re-filing a batch already covered by an open
@@ -21,7 +21,7 @@ name: external-intel
 # One-time operator setup (environment config, intentionally NOT in the repo):
 #   * Repo secret ANTHROPIC_API_KEY (a real key). If unset, the judge step degrades
 #     every delta into the digest (no Issue filed) — safe, just no triage Issues.
-#   * Nothing else. The pinned state Issue is auto-created on first run (found by the
+#   * Nothing else. The tracking state Issue is auto-created on first run (found by the
 #     intel/state label thereafter); the intel/* + impact/* labels are ensured
 #     idempotently at the top of every run.
 
@@ -81,11 +81,11 @@ jobs:
           ensure "impact/maintenance" "c5def5" "Intel impact: routine bump / maintenance"
           ensure "impact/fyi"         "ededed" "Intel impact: informational only"
 
-      - name: Find or create the pinned state Issue
+      - name: Find or create the tracking state Issue
         id: state
         run: |
           set -euo pipefail
-          # find-or-create the pinned state Issue. The workflow `concurrency` group
+          # find-or-create the tracking state Issue. The workflow `concurrency` group
           # (no ref → all scheduled + dispatch runs serialize; cancel-in-progress:false
           # → queue) means two runs never reach this step at once, so they can't both
           # create one. As defense-in-depth against a stray duplicate (e.g. a manually
@@ -154,10 +154,15 @@ jobs:
               --create-issue --dedup --repo "$REPO" --digest-file intel-digest.md || rc=$?
           fi
           echo "judge_rc=$rc" >> "$GITHUB_OUTPUT"
-          # 0 = batch landed (Issue created / deduped / digested / non-significant) →
-          #     state may be persisted; 2 = usage error → abort; 3 = batch did NOT
-          #     land (e.g. digest write failed) → do NOT persist, retry whole batch.
-          if [ "$rc" = "2" ]; then echo "::error::intel-judge usage error"; exit 2; fi
+          # Contract: 0 = batch landed (Issue created / deduped / digested /
+          #   non-significant) → state may be persisted; 3 = batch did NOT land (digest
+          #   write failed, or dedup deferred) → do NOT persist, retry whole batch next
+          #   run. ANY other code (2 = usage; or an unexpected 1 / 127 / … from a bug,
+          #   missing script, or interpreter fault) is fatal → fail the run so the
+          #   anomaly surfaces rather than silently skipping persist.
+          if [ "$rc" != "0" ] && [ "$rc" != "3" ]; then
+            echo "::error::intel-judge exited with unexpected/contract-fatal code $rc"; exit "$rc"
+          fi
           echo "judge rc=$rc"
 
       - name: Persist intel-watch state (unless a delta failed to land)
