@@ -12,9 +12,16 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WATCH="$SCRIPT_DIR/intel-watch.sh"
 [[ -x "$WATCH" ]] || { printf 'intel-watch.sh not executable: %s\n' "$WATCH" >&2; exit 1; }
 
-for cmd in jq curl sha256sum; do
+for cmd in jq curl; do
   command -v "$cmd" >/dev/null 2>&1 || { printf 'SKIP-ALL: %s unavailable\n' "$cmd"; exit 0; }
 done
+# sha256 backend family (matches intel-watch.sh's sha256_hex fallback chain) —
+# stay portable on macOS/BSD where GNU sha256sum may be absent.
+if ! command -v sha256sum >/dev/null 2>&1 \
+   && ! command -v shasum   >/dev/null 2>&1 \
+   && ! command -v openssl  >/dev/null 2>&1; then
+  printf 'SKIP-ALL: no sha256 backend (sha256sum/shasum/openssl)\n'; exit 0
+fi
 
 PASS=0; FAIL=0
 declare -a FAILURES=()
@@ -67,6 +74,9 @@ to_file_url() {
 }
 export INTEL_NPM_REGISTRY; INTEL_NPM_REGISTRY="$(to_file_url "$REG")"
 export INTEL_CHANGELOG_URL; INTEL_CHANGELOG_URL="$(to_file_url "$CHANGELOG")"
+# The collector default-denies non-https source URLs; opt in for the file://
+# fixtures. Scenario 16 exercises the guard itself with this flag unset.
+export INTEL_ALLOW_INSECURE_SOURCE_URLS=1
 
 run_watch() { bash "$WATCH" "$@"; }
 
@@ -273,6 +283,19 @@ if command -v openssl >/dev/null 2>&1; then
   if [[ -n "$ref" ]]; then assert_eq "openssl == ref" "$ref" "$alt"; fi
 fi
 if [[ -z "$ref" ]]; then printf '  (no sha256 backend present to cross-check)\n'; fi
+
+# ── Scenario 15: value-bearing flag missing its value → exit 2 (no shift overrun) ──
+printf '\n[15] flag missing value → exit 2\n'
+out="$(run_watch --state-file 2>&1)"; rc=$?
+assert_eq "exit 2 on missing value" "2" "$rc"
+assert_contains "explains requirement" "requires a non-empty value" "$out"
+
+# ── Scenario 16: non-https source URL without opt-in → default-denied (exit 2) ──
+printf '\n[16] non-https source URL default-denied\n'
+out="$(INTEL_ALLOW_INSECURE_SOURCE_URLS=0 INTEL_NPM_REGISTRY="http://evil.example/r" \
+       bash "$WATCH" --state-file "$WORK_DIR/s16.json" 2>&1)"; rc=$?
+assert_eq "exit 2 on non-https" "2" "$rc"
+assert_contains "names the guard" "must be https" "$out"
 
 # ── Summary ──
 printf '\n=== intel-watch tests: %s passed, %s failed ===\n' "$PASS" "$FAIL"

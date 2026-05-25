@@ -40,12 +40,20 @@ CHANGELOG_URL="${INTEL_CHANGELOG_URL:-https://raw.githubusercontent.com/anthropi
 
 # ── Fixed source whitelist. Keys are stable identifiers; nothing here is ever
 #    built from external/LLM input (injection + label-pollution guard, ADR §5.1). ──
-#    Format per entry: "<key>|<kind>|<arg>|<label>"
+#    Format per entry: "<key>|<kind>|<arg>|<label>". The arg is a stable literal
+#    (package name / logical id) and never an env-derived URL — keeping a possibly
+#    `|`-containing URL out of this delimited record preserves the field parse and
+#    the whitelist guard. The changelog URL lives only in $CHANGELOG_URL and is
+#    consumed directly by collect_source.
 SOURCES=(
   "npm:@anthropic-ai/claude-code|npm|@anthropic-ai/claude-code|intel/sdk"
   "npm:@anthropic-ai/claude-agent-sdk|npm|@anthropic-ai/claude-agent-sdk|intel/sdk"
-  "changelog:claude-code|changelog|${CHANGELOG_URL}|intel/sdk"
+  "changelog:claude-code|changelog|claude-code|intel/sdk"
 )
+
+# Allowed source labels — parsed labels are validated against this set so a
+# malformed SOURCES entry can never inject an off-whitelist label downstream.
+ALLOWED_LABELS=" intel/sdk intel/api-docs intel/oss "
 
 STATE_FILE=""
 STATE_ISSUE=""
@@ -58,12 +66,13 @@ usage() {
 
 die() { printf 'intel-watch: %s\n' "$1" >&2; exit 2; }
 
+need_val() { [[ $# -ge 2 && -n "${2:-}" ]] || die "$1 requires a non-empty value"; }
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --state-file)  STATE_FILE="${2:-}"; shift 2 ;;
-    --state-issue) STATE_ISSUE="${2:-}"; shift 2 ;;
+    --state-file)  need_val "$@"; STATE_FILE="$2"; shift 2 ;;
+    --state-issue) need_val "$@"; STATE_ISSUE="$2"; shift 2 ;;
     --commit)      COMMIT=1; shift ;;
-    --json-out)    JSON_OUT="${2:-}"; shift 2 ;;
+    --json-out)    need_val "$@"; JSON_OUT="$2"; shift 2 ;;
     -h|--help)     usage; exit 0 ;;
     *)             die "unknown argument: $1" ;;
   esac
@@ -72,6 +81,14 @@ done
 for cmd in jq curl; do
   command -v "$cmd" >/dev/null 2>&1 || die "$cmd is required"
 done
+# Default-deny non-https source URLs (SSRF / local-file-read guard). The env
+# overrides are operator-controlled, but enforce https:// unless a test opts in
+# explicitly so a tainted environment can't redirect fetches to file:// or an
+# internal host. Tests with file:// fixtures set INTEL_ALLOW_INSECURE_SOURCE_URLS=1.
+if [[ "${INTEL_ALLOW_INSECURE_SOURCE_URLS:-0}" != "1" ]]; then
+  [[ "$NPM_REGISTRY"  == https://* ]] || die "INTEL_NPM_REGISTRY must be https:// (set INTEL_ALLOW_INSECURE_SOURCE_URLS=1 for file:// test fixtures)"
+  [[ "$CHANGELOG_URL" == https://* ]] || die "INTEL_CHANGELOG_URL must be https:// (set INTEL_ALLOW_INSECURE_SOURCE_URLS=1 for file:// test fixtures)"
+fi
 if ! command -v sha256sum >/dev/null 2>&1 \
    && ! command -v shasum   >/dev/null 2>&1 \
    && ! command -v openssl  >/dev/null 2>&1; then
@@ -130,10 +147,13 @@ fetch_changelog() {
 }
 
 collect_source() {
-  # $1=kind $2=arg → fingerprint on stdout, non-zero on failure
+  # $1=kind $2=arg → fingerprint on stdout, non-zero on failure.
+  # The changelog kind ignores the (literal) arg and reads the URL from the
+  # global $CHANGELOG_URL, so no env-derived URL ever passes through the
+  # |-delimited SOURCES record.
   case "$1" in
     npm)       fetch_npm "$2" ;;
-    changelog) fetch_changelog "$2" ;;
+    changelog) fetch_changelog "$CHANGELOG_URL" ;;
     *)         return 1 ;;
   esac
 }
@@ -196,7 +216,9 @@ state_write() {
     mv -f "$tmp" "$STATE_FILE" \
       || { rm -f "$tmp"; printf 'intel-watch: failed to move state into place\n' >&2; return 1; }
   elif [[ -n "$STATE_ISSUE" ]]; then
-    local tmp; tmp="$(mktemp)"
+    # Explicit template: BSD/macOS mktemp requires one (bare `mktemp` errors).
+    local tmp; tmp="$(mktemp "${TMPDIR:-/tmp}/intel-watch-issue.XXXXXX")" \
+      || { printf 'intel-watch: cannot create temp for Issue body\n' >&2; return 1; }
     {
       printf '# 🛰️ Intel-Watch State (auto-managed — do not edit manually)\n\n'
       printf 'Authoritative state store for the external-intel agent (#157 / #453).\n'
@@ -225,6 +247,8 @@ main() {
   local entry key kind arg label cur old
   for entry in "${SOURCES[@]}"; do
     IFS='|' read -r key kind arg label <<<"$entry"
+    [[ "$ALLOWED_LABELS" == *" $label "* ]] \
+      || die "internal: source '$key' has non-whitelisted label '$label'"
     old="$(printf '%s' "$state" | jq -r --arg k "$key" '.sources[$k] // empty')"
 
     if ! cur="$(collect_source "$kind" "$arg")"; then
@@ -257,7 +281,15 @@ main() {
     '{checked_at:$checked_at, deltas:$deltas, seeded:$seeded, unchanged:$unchanged, errors:$errors}')"
 
   if [[ -n "$JSON_OUT" ]]; then
-    printf '%s\n' "$report" > "$JSON_OUT"
+    # Atomic write + explicit failure surfacing: a full disk / missing dir /
+    # permission error must not be swallowed (caller would misjudge success).
+    local out_tmp
+    out_tmp="$(mktemp "${JSON_OUT}.tmp.XXXXXX")" \
+      || { printf 'intel-watch: cannot create temp for --json-out\n' >&2; exit 3; }
+    printf '%s\n' "$report" > "$out_tmp" \
+      || { rm -f "$out_tmp"; printf 'intel-watch: failed to write --json-out temp\n' >&2; exit 3; }
+    mv -f "$out_tmp" "$JSON_OUT" \
+      || { rm -f "$out_tmp"; printf 'intel-watch: failed to move --json-out into place\n' >&2; exit 3; }
   fi
 
   local n_delta n_seed n_err
