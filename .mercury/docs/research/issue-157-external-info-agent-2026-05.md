@@ -214,11 +214,11 @@ LLM 判定输出落成 Issue，带结构化标签:
 
 ### Phase 2 — 最小 PoC(推荐,低风险)
 
-**范围: 双源(2 sources)+ 不改业务代码 + 人工审 Issue。**
+**范围: 双源类型(npm dist-tags + CHANGELOG hash-diff,详见 step 2 计数口径)+ 不改业务代码 + 人工审 Issue。**
 
 具体建议:
 1. **基座**: 一个 GitHub Actions scheduled workflow(`cron: '0 9 * * 1'` 每周一 09:00 UTC[1])。
-2. **源**: 接 B 类最相关源(实装见 #453,门槛已 verify 见 §9 回填块)—— `@anthropic-ai/claude-code` + `@anthropic-ai/claude-agent-sdk` 的 npm `dist-tags.latest`(经 `GET /{package}` + `Accept: application/vnd.npm.install-v1+json` abbreviated packument[3])+ Claude Code raw `CHANGELOG.md` hash-diff(`raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md`,比 HTML API-docs 页干净)。Anthropic API HTML docs 快照为可选 stretch(脆弱,可延 Phase 3)。**不接 A 类**(A 类另起一个独立的 Renovate 配置 PR,与 PoC 解耦并行)。
+2. **源**: 接 B 类最相关源(实装见 #453,门槛已 verify 见 §9 回填块)。**"双源"指 2 类源**(非 2 个监控目标): (i) **npm 包 dist-tags 源** —— `@anthropic-ai/claude-code` + `@anthropic-ai/claude-agent-sdk` 两个包的 `dist-tags.latest`(经 `GET /{package}` + `Accept: application/vnd.npm.install-v1+json` abbreviated packument[3]);(ii) **CHANGELOG hash-diff 源** —— Claude Code raw `CHANGELOG.md`(`https://raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md`,比 HTML API-docs 页干净)。Anthropic API HTML docs 快照为可选 stretch(脆弱,可延 Phase 3)。**不接 A 类**(A 类另起一个独立的 Renovate 配置 PR,与 PoC 解耦并行)。
 3. **状态**: 记 last-seen 版本/CHANGELOG hash。**PoC 选定 §5.2 机制 (c) 的 pinned Issue body 变体**(§9 回填: GITHUB_TOKEN `issues: write` 可靠无需 PAT;Variables 写权限 UNVERIFIED 故弃用),经 `gh api` 读写 + `gh issue edit --body-file` 整体替换,绕开 scheduled-run 的分支可见性问题(机制 a/b 留 Phase 3 视 branch-protection 实测)。这是 dedup 第一闸能跨 run 工作的前提。
 4. **LLM 判定**: workflow 内调 Anthropic API 一次(仅当有 delta),输出 significance + priority + impact + summary。**调 API 前 web-verify message 端点签名**(MANDATORY RESEARCH PROTOCOL)。**外部边界错误处理(必须显式设计)**: API 超时/限流/5xx → 有限次重试(指数退避)后**降级**(把本轮 delta 写入 digest + 仍持久化 last-seen 状态,**绝不**因 API 失败而丢弃 delta 或重复整批);workflow step 设 timeout;`gh issue create` 失败时同样回退到 digest 并保留 state,避免告警风暴或 delta 漏报。
 5. **输出**: significant 时 `gh issue create --label <source-label>,intel/needs-triage`,其中 `<source-label>` **必须从固定白名单映射取值**(`intel/sdk` = Claude Code SDK / `intel/api-docs` = Anthropic API 文档 / `intel/oss` = 参考项目,见 §5.1)—— **禁止把 LLM 输出或外部 release-note 文本直接拼进 `gh` 命令参数**(命令注入 + label 污染风险);所有传给 `gh` 的参数(title/body/label)须严格引用/转义,body 经 `--body-file` 传入而非内联拼接。非 significant 只更新 last-seen 状态(§5.2 机制 c)。
@@ -321,7 +321,7 @@ PoC 门槛已 discharge(Q2/Q3b/Q5/Q6 ✅);Q3/Q4 为 Phase 3 扩源门槛,任一�
 
 ## 参考来源
 
-核实日期均为 2026-05-24。
+核实日期: §1–§8 原始条目为 2026-05-24；§9"验证结果回填"块(Phase 2 入口门槛)为 2026-05-25 (S137)。
 
 **执行基座**:
 - [1] GitHub Actions 调度 cron 语法(POSIX, 5min 最短, **仅按 UTC 解释(无 timezone 配置)**, 跑 default branch latest commit): <https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions>
