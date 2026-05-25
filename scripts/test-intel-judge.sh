@@ -295,6 +295,8 @@ cat > "$CURLBIN/curl" <<'STUB'
 # The startup probe (`curl --version`) must NOT count as an API attempt.
 if [[ "$1" == "--version" ]]; then echo "curl 8.0.0 (stub)"; exit 0; fi
 printf 'x\n' >> "$CURL_CALLS"
+# Capture argv (NUL-delimited) so a test can assert the API key never appears.
+[[ -n "${CURL_ARGV_LOG:-}" ]] && printf '%s\0' "$@" >> "$CURL_ARGV_LOG"
 printf '%s\n%s' "$CURL_STUB_BODY" "$CURL_STUB_CODE"
 exit 0
 STUB
@@ -335,9 +337,44 @@ if [[ "$CURL_STUB_OK" -eq 1 ]]; then
   assert_eq "exit 0 (degraded)" "0" "$rc"
   assert_eq "429 retried exactly MAX_RETRIES=3 times" "3" "$(wc -l < "$CURL_CALLS" | tr -d ' ')"
   assert_contains "digest notes API unavailable" "anthropic-api-unavailable" "$(cat "$DIG21")"
+
+  printf '\n[22] secret guard: API key never appears in curl argv (-H @file)\n'
+  : > "$CURL_CALLS"
+  ARGV22="$WORK_DIR/curl_argv22"; : > "$ARGV22"
+  DIG22="$WORK_DIR/digest22.md"
+  # 200 with a non-significant judgment → exercises the full live curl path then
+  # degrades to digest (no Issue). The key value is a sentinel we grep argv for.
+  out="$(ANTHROPIC_API_KEY="sk-secret-sentinel-DO-NOT-LEAK" \
+        CURL_STUB_BODY="$(mk_resp "$(mk_judgment false P3 maintenance "x" "y")")" CURL_STUB_CODE=200 \
+        CURL_CALLS="$CURL_CALLS" CURL_ARGV_LOG="$ARGV22" INTEL_JUDGE_RETRY_BASE_DELAY=0 \
+        PATH="$CURLBIN:$PATH" bash "$JUDGE" --deltas-file "$DELTAS" --digest-file "$DIG22" 2>&1)"; rc=$?
+  assert_eq "exit 0 (degraded, non-significant)" "0" "$rc"
+  argv22="$(tr '\0' ' ' < "$ARGV22")"
+  assert_not_contains "key value absent from curl argv" "sk-secret-sentinel-DO-NOT-LEAK" "$argv22"
+  assert_not_contains "x-api-key header absent from curl argv" "x-api-key" "$argv22"
+  assert_contains "curl reads headers from @file" "-H @" "$argv22"
 else
-  printf '\n[17-18,21] SKIP: curl stub not picked up on PATH (platform shim)\n'
+  printf '\n[17-18,21-22] SKIP: curl stub not picked up on PATH (platform shim)\n'
 fi
+
+# ── Scenarios 23-25: startup security guards (no curl/gh stub needed) ──
+printf '\n[23] SSRF guard: non-official API URL in live mode → exit 2\n'
+out="$(INTEL_ANTHROPIC_API_URL="https://evil.example/v1/messages" \
+      bash "$JUDGE" --deltas-file "$DELTAS" 2>&1)"; rc=$?
+assert_eq "exit 2 on custom live URL" "2" "$rc"
+assert_contains "names SSRF guard" "SSRF guard" "$out"
+
+printf '\n[24] non-integer numeric env → exit 2 (startup, not mid-run)\n'
+out="$(INTEL_JUDGE_MAX_RETRIES="abc" bash "$JUDGE" --deltas-file "$DELTAS" --llm-response-file "$R2" 2>&1)"; rc=$?
+assert_eq "exit 2 on bad MAX_RETRIES" "2" "$rc"
+assert_contains "names the var" "MAX_RETRIES" "$out"
+
+printf '\n[25] context-file outside the working tree → exit 2 (data-exfil guard)\n'
+OUTCTX="$(mktemp "${TMPDIR:-/tmp}/intel-outside-tree.XXXXXX")"; printf 'ctx\n' > "$OUTCTX"
+out="$(bash "$JUDGE" --deltas-file "$DELTAS" --llm-response-file "$R2" --context-file "$OUTCTX" 2>&1)"; rc=$?
+assert_eq "exit 2 on out-of-tree context" "2" "$rc"
+assert_contains "names the working-tree guard" "working tree" "$out"
+rm -f "$OUTCTX"
 
 # ── Summary ──
 printf '\n=== intel-judge tests: %s passed, %s failed ===\n' "$PASS" "$FAIL"

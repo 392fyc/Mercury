@@ -73,7 +73,8 @@ LLM_RESPONSE_FILE=""            # TEST HOOK: raw API response JSON, bypasses cur
 MODEL="${INTEL_JUDGE_MODEL:-claude-haiku-4-5}"
 API_KEY_ENV="${INTEL_JUDGE_API_KEY_ENV:-ANTHROPIC_API_KEY}"  # NAME of the env var
                                 #   holding the key — the key value is never an argv
-ANTHROPIC_API_URL="${INTEL_ANTHROPIC_API_URL:-https://api.anthropic.com/v1/messages}"
+DEFAULT_ANTHROPIC_API_URL="https://api.anthropic.com/v1/messages"
+ANTHROPIC_API_URL="${INTEL_ANTHROPIC_API_URL:-$DEFAULT_ANTHROPIC_API_URL}"
 MAX_RETRIES="${INTEL_JUDGE_MAX_RETRIES:-3}"
 RETRY_BASE_DELAY="${INTEL_JUDGE_RETRY_BASE_DELAY:-2}"  # seconds; tests set 0 for speed
 API_TIMEOUT="${INTEL_JUDGE_API_TIMEOUT:-60}"          # per-attempt curl --max-time
@@ -113,15 +114,45 @@ done
 # that each tool actually RUNS, so a broken interpreter fails fast here as a
 # startup error (exit 2) rather than mid-run, where a `jq` failure would otherwise
 # muddy the exit-code contract (a runtime fault must degrade, not look like usage).
+# Numeric env config must be valid integers — they feed arithmetic / sleep /
+# curl --max-time, so a non-integer would crash mid-run and bypass the degrade /
+# exit-code contract. Validate up front as a startup error (exit 2).
+for _vn in MAX_RETRIES RETRY_BASE_DELAY API_TIMEOUT; do
+  _vv="${!_vn}"
+  [[ "$_vv" =~ ^[0-9]+$ ]] || die "$_vn must be a non-negative integer (got: '$_vv')"
+done
+[[ "$MAX_RETRIES" -ge 1 ]] || die "INTEL_JUDGE_MAX_RETRIES must be >= 1 (got: $MAX_RETRIES)"
+[[ "$API_TIMEOUT" -ge 1 ]] || die "INTEL_JUDGE_API_TIMEOUT must be >= 1 (got: $API_TIMEOUT)"
+
 jq -n null >/dev/null 2>&1 || die "jq is required and must be runnable"
 if [[ -z "$LLM_RESPONSE_FILE" ]]; then
+  # SSRF / credential-exfil guard: in live mode the API key is sent to
+  # $ANTHROPIC_API_URL, so refuse any non-official override. Tests bypass the
+  # network entirely via --llm-response-file, so this only gates real calls.
+  [[ "$ANTHROPIC_API_URL" == "$DEFAULT_ANTHROPIC_API_URL" ]] \
+    || die "custom Anthropic API URL not allowed in live mode (SSRF guard): $ANTHROPIC_API_URL"
   curl --version >/dev/null 2>&1 || die "curl is required and must be runnable (unless --llm-response-file)"
+else
+  # The mock-response file is config, not LLM output: an unreadable file is a
+  # startup error (exit 2), not an LLM failure that should degrade to digest.
+  [[ -f "$LLM_RESPONSE_FILE" ]] || die "llm-response file not found: $LLM_RESPONSE_FILE"
+  [[ -r "$LLM_RESPONSE_FILE" ]] || die "llm-response file not readable: $LLM_RESPONSE_FILE"
 fi
 if [[ "$CREATE_ISSUE" -eq 1 ]]; then
   gh --version >/dev/null 2>&1 || die "gh is required and must be runnable for --create-issue"
 fi
-if [[ -n "$CONTEXT_FILE" && ! -f "$CONTEXT_FILE" ]]; then
-  die "context file not found: $CONTEXT_FILE"
+# --context-file is read verbatim into the API request body, so harden the path:
+# reject missing/unreadable, reject a symlink (data-exfil via a link to a
+# sensitive file), and require it to resolve inside the working tree. Size is
+# capped at read time in build_request_body. An unreadable context file is a
+# startup config error (exit 2), not a runtime degrade.
+if [[ -n "$CONTEXT_FILE" ]]; then
+  [[ -f "$CONTEXT_FILE" ]] || die "context file not found: $CONTEXT_FILE"
+  [[ -r "$CONTEXT_FILE" ]] || die "context file not readable: $CONTEXT_FILE"
+  [[ ! -L "$CONTEXT_FILE" ]] || die "context file must not be a symlink (data-exfil guard): $CONTEXT_FILE"
+  _ctx_real="$(realpath "$CONTEXT_FILE" 2>/dev/null)" || die "cannot resolve context file path: $CONTEXT_FILE"
+  [[ "$_ctx_real" == "$(pwd -P)/"* ]] \
+    || die "context file must resolve inside the working tree (data-exfil guard): $CONTEXT_FILE"
 fi
 
 # ── Mercury context fed to the LLM so it can judge relevance, not just novelty.
@@ -179,7 +210,9 @@ build_request_body() {
   # Deterministic, structured delta summary — never raw LLM/command text.
   delta_lines="$(jq -r '.[] | "- \(.source) (\(.kind)): \(.old) -> \(.new)"' <<<"$deltas")"
   if [[ -n "$CONTEXT_FILE" ]]; then
-    context="$(cat "$CONTEXT_FILE")"
+    # Path/symlink/readability already validated at startup; cap the size here so
+    # an oversized context can't bloat the request or exfil a huge file.
+    context="$(head -c 20000 "$CONTEXT_FILE")" || return 1
   fi
   local user_prompt
   user_prompt="$(printf 'Mercury context:\n%s\n\nDetected deltas:\n%s\n' \
@@ -205,33 +238,52 @@ call_anthropic() {
   local body_file="$1" attempt=1 delay="$RETRY_BASE_DELAY" key
   key="${!API_KEY_ENV:-}"
   [[ -n "$key" ]] || { printf 'intel-judge: env %s is empty (no API key)\n' "$API_KEY_ENV" >&2; return 1; }
+  # Put ALL request headers (incl. the API key) in a 0600 temp file read via
+  # `-H @file` (curl >= 7.55), so the key never appears in argv / process list
+  # (/proc/<pid>/cmdline, `ps`). Mirrors the repo convention in
+  # scripts/lane-auto-report.sh:84-99 — `umask 077` for the perms + EXPLICIT
+  # rc-capture cleanup, deliberately NOT `trap RETURN` (which persists across
+  # reinvocations and re-fires on later returns — prior Argus finding 3144785807).
+  local hdr_file rc=1 out=""
+  hdr_file="$(umask 077 && mktemp "${TMPDIR:-/tmp}/intel-judge-hdr.XXXXXX")" || return 1
+  if ! {
+        printf 'x-api-key: %s\n' "$key"
+        printf 'anthropic-version: 2023-06-01\n'
+        printf 'content-type: application/json\n'
+      } > "$hdr_file"; then
+    rm -f "$hdr_file"; return 1
+  fi
   while (( attempt <= MAX_RETRIES )); do
-    local resp http payload
+    local resp http payload curl_rc
     # -w appends the HTTP status on its own trailing line; --data @file keeps the
-    # (already jq-escaped) body off the command line.
+    # (already jq-escaped) body and -H @file keep the key off the command line.
     resp="$(curl -sS --max-time "$API_TIMEOUT" -X POST "$ANTHROPIC_API_URL" \
-              -H "x-api-key: $key" \
-              -H "anthropic-version: 2023-06-01" \
-              -H "content-type: application/json" \
+              -H @"$hdr_file" \
               --data @"$body_file" \
               -w $'\n%{http_code}' 2>/dev/null)"
-    local curl_rc=$?
+    curl_rc=$?
     http="${resp##*$'\n'}"
     payload="${resp%$'\n'*}"
     if [[ $curl_rc -eq 0 && "$http" == 2* ]]; then
-      printf '%s' "$payload"; return 0
+      out="$payload"; rc=0; break
     fi
     if [[ $curl_rc -eq 0 && "$http" == 4* && "$http" != "429" ]]; then
       printf 'intel-judge: Anthropic API client error HTTP %s (not retried)\n' "$http" >&2
-      return 1
+      rc=1; break
     fi
     printf 'intel-judge: API attempt %s/%s failed (curl_rc=%s http=%s); retrying\n' \
       "$attempt" "$MAX_RETRIES" "$curl_rc" "${http:-none}" >&2
     (( attempt < MAX_RETRIES )) && [[ "$delay" != "0" ]] && sleep "$delay"
     delay=$(( delay * 2 )); attempt=$(( attempt + 1 ))
   done
-  printf 'intel-judge: Anthropic API exhausted %s attempts\n' "$MAX_RETRIES" >&2
-  return 1
+  rm -f "$hdr_file"
+  # Only the genuine retry-exhaustion path logs "exhausted" (a 4xx break leaves
+  # attempt <= MAX_RETRIES, so it won't double-log).
+  if [[ $rc -ne 0 && $attempt -gt $MAX_RETRIES ]]; then
+    printf 'intel-judge: Anthropic API exhausted %s attempts\n' "$MAX_RETRIES" >&2
+  fi
+  [[ $rc -eq 0 ]] && printf '%s' "$out"
+  return $rc
 }
 
 # ── extract + validate the judgment JSON from an API response ──
