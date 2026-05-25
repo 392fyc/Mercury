@@ -212,7 +212,9 @@ Mercury 的核心价值不在代码里，在方法论里。
 - 不作为 agent 的控制面板
 - 不包含业务逻辑
 
-**技术方向**: 暂缓开发。优先用 CLI + IM bot 覆盖通知需求，GUI 在核心模块稳定后按需启动。
+**技术方向**: v1 已交付（Phase 6 MVP，2026-05）。`mercury-gui/` 是基于 Tauri 2 的桌面壳，提供 Snapshot 与 Issues/PRs 两个标签页（多 lane 状态总览 + Issue/PR 看板），打包为 Windows MSI + NSIS。实现链：Issues #413–#416 → PRs #421/#422/#424/#425（scaffold → 读侧数据层 → snapshot 视图 → Issue/PR 看板）。
+
+v2 增强按需推进，不主动排期：v2 backlog（#427，仍 OPEN 作为跟踪）已逐项 disposition；结构性拆分评估为 NO-GO（#446 ADR，保持单包 + 前端测试基建见 #438 ADR）；进一步开发仅在多 session 并行管理出现真实需求时启动。GUI 仍为非核心模块（见本节定位/职责/不做），CLI + IM bot 继续覆盖通知与远程介入需求。
 
 ---
 
