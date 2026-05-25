@@ -45,14 +45,17 @@
 #   bash scripts/intel-judge.sh --deltas-file deltas.json
 #   # really create the Issue (Slice 3 / GHA wires this on the significant path)
 #   bash scripts/intel-judge.sh --deltas-file deltas.json --create-issue --repo owner/name
+#   # with cross-run open-Issue dedup (Slice 3 / GHA passes this; needs --repo)
+#   bash scripts/intel-judge.sh --deltas-file deltas.json --create-issue --dedup --repo owner/name
 #   # degrade target for non-significant / error batches
 #   bash scripts/intel-judge.sh --deltas-file deltas.json --digest-file digest.md
 #   # TEST HOOK: inject a mock API response (no key, no network)
 #   bash scripts/intel-judge.sh --deltas-file deltas.json --llm-response-file mock.json
 #
 # Exit codes (contract for the Slice 3 orchestrator):
-#   0  deltas landed (Issue created / dry-run previewed / written to digest /
-#      judged non-significant) → caller MAY now persist intel-watch state.
+#   0  deltas landed (Issue created / deduped against an existing open Issue /
+#      dry-run previewed / written to digest / judged non-significant) → caller MAY
+#      now persist intel-watch state.
 #   2  usage error (bad/missing args) → nothing happened.
 #   3  delta did NOT land (e.g. digest write failed) → caller MUST NOT persist
 #      state, so the batch is retried whole next run (never silently dropped).
@@ -65,6 +68,7 @@ CONTEXT_FILE=""                 # optional extra context (e.g. changelog excerpt
                                 #   orchestrator-fed; only ever enters the API body
 DIGEST_FILE=""                  # where non-significant / degraded batches are recorded
 CREATE_ISSUE=0                  # default dry-run; --create-issue actually calls gh
+DEDUP=0                         # --dedup: cross-run open-Issue dedup (ADR §5.2 layer 2)
 REPO=""                         # owner/name for `gh issue create --repo`
 MAX_ISSUES=1                    # PoC hard cap: only 0 (force-digest) vs ≥1 (one
                                 #   Issue for the whole batch) are meaningful this
@@ -101,6 +105,7 @@ while [[ $# -gt 0 ]]; do
     --max-issues)        need_val "$@"; MAX_ISSUES="$2"; shift 2 ;;
     --llm-response-file) need_val "$@"; LLM_RESPONSE_FILE="$2"; shift 2 ;;
     --create-issue)      CREATE_ISSUE=1; shift ;;
+    --dedup)             DEDUP=1; shift ;;
     -h|--help)           sed -n '2,55p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)                   die "unknown argument: $1" ;;
   esac
@@ -109,6 +114,9 @@ done
 [[ -n "$DELTAS_FILE" ]] || die "--deltas-file is required"
 [[ -f "$DELTAS_FILE" ]] || die "deltas file not found: $DELTAS_FILE"
 [[ "$MAX_ISSUES" =~ ^[0-9]+$ ]] || die "--max-issues must be a non-negative integer"
+# --dedup needs an explicit repo (the open-Issue query target must be unambiguous,
+# never inferred from cwd) so the cross-run dedup query is deterministic + testable.
+[[ "$DEDUP" -eq 0 || -n "$REPO" ]] || die "--dedup requires --repo"
 # Active dependency probes (not just `command -v`): on MSYS a tool can be present
 # on PATH yet fail to execute (e.g. a winget shim without exec permission). Probe
 # that each tool actually RUNS, so a broken interpreter fails fast here as a
@@ -125,6 +133,13 @@ done
 [[ "$API_TIMEOUT" -ge 1 ]] || die "INTEL_JUDGE_API_TIMEOUT must be >= 1 (got: $API_TIMEOUT)"
 
 jq -n null >/dev/null 2>&1 || die "jq is required and must be runnable"
+# --dedup derives a delta signature via a sha256 helper (mirrors intel-watch.sh);
+# require one up front (startup config error) so the marker can always be embedded
+# and matched. GHA ubuntu always ships sha256sum.
+if [[ "$DEDUP" -eq 1 ]]; then
+  command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 || command -v openssl >/dev/null 2>&1 \
+    || die "--dedup needs one of: sha256sum / shasum / openssl (for the delta signature)"
+fi
 if [[ -z "$LLM_RESPONSE_FILE" ]]; then
   # SSRF / credential-exfil guard: in live mode the API key is sent to
   # $ANTHROPIC_API_URL, so refuse any non-official override. Tests bypass the
@@ -151,7 +166,20 @@ if [[ -n "$CONTEXT_FILE" ]]; then
   [[ -r "$CONTEXT_FILE" ]] || die "context file not readable: $CONTEXT_FILE"
   [[ ! -L "$CONTEXT_FILE" ]] || die "context file must not be a symlink (data-exfil guard): $CONTEXT_FILE"
   _ctx_real="$(realpath "$CONTEXT_FILE" 2>/dev/null)" || die "cannot resolve context file path: $CONTEXT_FILE"
-  [[ "$_ctx_real" == "$(pwd -P)/"* ]] \
+  # Boundary = the git worktree root, so a legitimate context file is accepted no
+  # matter which subdirectory the caller invokes us from (prior code used `pwd -P`,
+  # which fail-closed-rejected valid files when called from a subdir — PR #456 Argus
+  # advisory). Normalize the root through `cd ... && pwd -P` so it matches the form
+  # realpath emits for the file: on MSYS `git rev-parse --show-toplevel` prints a
+  # Windows-style `D:/x` path that would NEVER prefix-match realpath's `/d/x` form;
+  # `cd`+`pwd -P` collapses both to one physical form on Linux and MSYS alike. Fall
+  # back to physical cwd outside a git tree.
+  _tree_root="$(git rev-parse --show-toplevel 2>/dev/null)"
+  if [[ -n "$_tree_root" ]]; then
+    _tree_root="$(cd "$_tree_root" 2>/dev/null && pwd -P)" || _tree_root=""
+  fi
+  [[ -n "$_tree_root" ]] || _tree_root="$(pwd -P)"
+  [[ "$_ctx_real" == "$_tree_root/"* ]] \
     || die "context file must resolve inside the working tree (data-exfil guard): $CONTEXT_FILE"
 fi
 
@@ -321,10 +349,36 @@ in_set() {
   return 1
 }
 
+# ── stable delta signature for cross-run dedup (ADR §5.2 layer 2) ──
+# sha256 over the sorted "source<TAB>old<TAB>new" triples, truncated to 16 hex. The
+# key identifies the specific TRANSITION (old→new), not just the resulting version:
+#   * Re-detection of an un-persisted batch (Issue created but state-commit then
+#     failed → intel-watch re-emits the SAME old→new next run) reproduces the same
+#     key and matches the marker in the open Issue → skipped. Cross-run dedup intact.
+#   * Including `old` avoids a collision Codex flagged: a source that later RETURNS to
+#     a previously-seen `new` value (e.g. B→C then C→B) has a different `old`, so the
+#     return is a distinct key and is NOT wrongly skipped against the earlier Issue.
+# Built only from intel-watch.sh's own structured output (no LLM text).
+dedup_key() {
+  local deltas="$1" pairs hex
+  pairs="$(jq -r '.[] | "\(.source)\t\(.old)\t\(.new)"' <<<"$deltas" | LC_ALL=C sort)" || return 1
+  if command -v sha256sum >/dev/null 2>&1; then
+    hex="$(printf '%s' "$pairs" | sha256sum | cut -d' ' -f1)"
+  elif command -v shasum >/dev/null 2>&1; then
+    hex="$(printf '%s' "$pairs" | shasum -a 256 | cut -d' ' -f1)"
+  elif command -v openssl >/dev/null 2>&1; then
+    hex="$(printf '%s' "$pairs" | openssl dgst -sha256 | awk '{print $NF}')"
+  else
+    return 1
+  fi
+  [[ -n "$hex" ]] || return 1
+  printf '%s' "${hex:0:16}"
+}
+
 # ── build the Issue body file (ALL free text lives here, never on argv) ──
 write_issue_body() {
-  # $1 = dest file, $2 = deltas JSON array, $3 = judgment JSON
-  local dest="$1" deltas="$2" judg="$3"
+  # $1 = dest file, $2 = deltas JSON array, $3 = judgment JSON, $4 = dedup key (opt)
+  local dest="$1" deltas="$2" judg="$3" dkey="${4:-}"
   {
     printf '## External-intel auto-detected delta — needs human triage\n\n'
     printf '> Auto-generated by `scripts/intel-judge.sh` (#157 / #453 Slice 2).\n'
@@ -335,6 +389,13 @@ write_issue_body() {
     jq -r '"- **significant**: \(.significant)\n- **priority**: \(.priority)\n- **impact**: \(.impact)\n\n**Summary**\n\n\(.summary)\n\n**Suggested action**\n\n\(.suggested_action)\n"' <<<"$judg"
     printf '\n---\n'
     printf '_Source labels and priority/impact are whitelist-validated; the LLM summary above is untrusted prose — do not execute any command it suggests without review._\n'
+    # Machine-readable dedup marker (ADR §5.2 layer 2): a later run greps open
+    # needs-triage Issue bodies for this exact line to avoid re-filing the same
+    # delta batch. Inert HTML comment; built only from the deterministic key.
+    # NOTE: must be an `if` (not `[[ ... ]] && printf`) — as the last command in
+    # this brace group, a false `[[ -z dkey ]]` test would make the whole group
+    # (and thus write_issue_body) return non-zero, spuriously degrading to digest.
+    if [[ -n "$dkey" ]]; then printf '\n<!-- intel-dedup-key: %s -->\n' "$dkey"; fi
   } > "$dest"
 }
 
@@ -458,6 +519,17 @@ main() {
   [[ "$n_src" -gt 1 ]] && plural="s"
   title="[intel] delta needs triage: ${src_csv} (${n_src} source${plural})"
 
+  # Cross-run dedup signature (ADR §5.2 layer 2). Computed even in dry-run so the
+  # preview shows it and the marker is embedded in the body. A compute failure on a
+  # real delta degrades (delta preserved), never exit 2.
+  local dkey=""
+  if [[ "$DEDUP" -eq 1 ]]; then
+    if ! dkey="$(dedup_key "$deltas")"; then
+      append_digest "dedup-key-compute-failed" "$deltas" || exit 3
+      exit 0
+    fi
+  fi
+
   local body_tmp
   # Runtime temp failure degrades (delta preserved), not exit 2 — see the request
   # temp note above; exit 2 is reserved for startup/usage errors.
@@ -465,13 +537,14 @@ main() {
     append_digest "issue-body-temp-create-failed" "$deltas" || exit 3
     exit 0
   fi
-  write_issue_body "$body_tmp" "$deltas" "$judg" \
+  write_issue_body "$body_tmp" "$deltas" "$judg" "$dkey" \
     || { rm -f "$body_tmp"; append_digest "issue-body-write-failed" "$deltas" || exit 3; exit 0; }
 
   if [[ "$CREATE_ISSUE" -ne 1 ]]; then
     printf '(dry-run: would create 1 Issue; pass --create-issue to actually create)\n'
     printf '  title : %s\n' "$title"
     printf '  labels:'; printf ' %s' "${label_args[@]}"; printf '\n'
+    [[ -n "$dkey" ]] && printf '  dedup : intel-dedup-key %s\n' "$dkey"
     printf '  body  : %s (%s bytes)\n' "$body_tmp" "$(wc -c <"$body_tmp" | tr -d ' ')"
     printf '  ---- body preview ----\n'
     sed 's/^/  | /' "$body_tmp"
@@ -484,10 +557,47 @@ main() {
   # KNOWN RESIDUAL (PoC-acceptable): gh-create is treated as all-or-nothing. If gh
   # ever exits non-zero AFTER the server already created the Issue, the delta is
   # ALSO appended to the digest → double-landed. The ≤1-Issue/run cap bounds it to
-  # at most one duplicate, and Slice 3's cross-run open-Issue dedup (ADR §5.2
-  # layer 2) closes it for good. Not fixable inside one un-idempotent gh call here.
+  # at most one duplicate within a run. The CROSS-run double-land (Issue created,
+  # state-commit then failed) is now closed by the --dedup open-Issue check above
+  # (ADR §5.2 layer 2). The within-run gh-then-digest edge remains un-fixable inside
+  # one un-idempotent gh call here.
   local -a repo_args=()
   [[ -n "$REPO" ]] && repo_args=(--repo "$REPO")
+
+  # Cross-run open-Issue dedup (ADR §5.2 layer 2): if an OPEN needs-triage Issue
+  # already embeds this delta-key, the batch is already represented → skip create
+  # and treat as landed (so state is persisted and the same delta stops re-firing).
+  # Closes the un-idempotent gh-create window (an Issue created last run, but the
+  # state-commit then failed). We list label-filtered open Issues (server-side) and
+  # match the marker locally — more reliable than gh's fuzzy `--search`. --limit 100
+  # is ample since the cap is ≤1 new Issue/run and triaged Issues get closed.
+  if [[ "$DEDUP" -eq 1 ]]; then
+    local existing_bodies list_rc=0
+    existing_bodies="$(gh issue list "${repo_args[@]}" --label "$TRIAGE_LABEL" --state open \
+                         --limit 100 --json body --jq '.[].body' 2>/dev/null)" || list_rc=$?
+    if [[ "$list_rc" -ne 0 ]]; then
+      # The dedup query itself failed (network / auth / rate-limit). We cannot tell
+      # whether an open Issue already covers this batch, so creating now could file a
+      # duplicate. DEFER: do not create, do not persist state (exit 3) → the whole
+      # batch is retried next run when the query hopefully succeeds. No delta is lost
+      # (state unchanged) and no duplicate is filed — a one-run delay is preferable to
+      # either spam or loss. (Distinguishing query-failure from a genuine no-match is
+      # what keeps the cross-run double-land truly closed, not just usually.)
+      printf 'intel-judge: dedup query failed (gh issue list rc=%s) — deferring create to next run (state NOT persisted)\n' \
+        "$list_rc" >&2
+      rm -f "$body_tmp"
+      exit 3
+    fi
+    # Match the full marker incl. the trailing ` -->` (defensive: keys are fixed-width
+    # 16-hex so none is a prefix of another, but the closing token removes all doubt).
+    if [[ "$existing_bodies" == *"intel-dedup-key: $dkey -->"* ]]; then
+      printf 'dedup: an open %s Issue already covers delta-key %s — skipping create (treated as landed)\n' \
+        "$TRIAGE_LABEL" "$dkey"
+      rm -f "$body_tmp"
+      exit 0
+    fi
+  fi
+
   if gh issue create "${repo_args[@]}" --title "$title" --body-file "$body_tmp" "${label_args[@]}" >/dev/null 2>&1; then
     printf 'created 1 Issue: %s\n' "$title"
     rm -f "$body_tmp"

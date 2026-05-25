@@ -1,0 +1,197 @@
+name: external-intel
+
+# Weekly external-intelligence watch (Issue #157 / #453 — Phase 2 PoC, Slice 3).
+#
+# Orchestrates the two Mercury-internal scripts into a scheduled GitHub Actions job:
+#   1. scripts/intel-watch.sh  — deterministic collector: fetches the watched
+#      sources (2 npm dist-tags + Claude Code CHANGELOG hash), diffs against the
+#      pinned state Issue, emits a delta report (Slice 1).
+#   2. scripts/intel-judge.sh  — one Anthropic API call judges significance, then
+#      behind guardrails files exactly one `intel/needs-triage` Issue or degrades
+#      to a digest; --dedup skips re-filing a batch already covered by an open
+#      Issue (Slice 2 + the Slice 3 cross-run dedup).
+#
+# Design authority: .mercury/docs/research/issue-157-external-info-agent-2026-05.md
+#   §5.2 (state mechanism c + dedup), §7 Phase 2 step 1-6.
+#
+# Fully detachable (DIRECTION.md modular design): delete this file + the two scripts
+# and the feature is gone. The auto-created state Issue and the intel/* + impact/*
+# labels are then harmless orphans (close / delete by hand if desired).
+#
+# One-time operator setup (environment config, intentionally NOT in the repo):
+#   * Repo secret ANTHROPIC_API_KEY (a real key). If unset, the judge step degrades
+#     every delta into the digest (no Issue filed) — safe, just no triage Issues.
+#   * Nothing else. The pinned state Issue is auto-created on first run (found by the
+#     intel/state label thereafter); the intel/* + impact/* labels are ensured
+#     idempotently at the top of every run.
+
+on:
+  schedule:
+    # Weekly, Monday 09:23 UTC. cron is always UTC. The off-the-hour minute (:23,
+    # not :00) follows GitHub's guidance that jobs scheduled on the hour are the
+    # most delayed/dropped under high load.
+    - cron: '23 9 * * 1'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Detect + judge but do NOT create an Issue or persist state'
+        required: false
+        type: boolean
+        default: false
+
+# Minimal GITHUB_TOKEN scopes: create/edit/list Issues (issues:write) + checkout
+# the scripts (contents:read). No PAT required.
+permissions:
+  contents: read
+  issues: write
+
+# Serialize scheduled vs manual runs so two runs never read-modify-write the shared
+# state Issue at once. cancel-in-progress:false → a new trigger queues behind an
+# in-flight run rather than cancelling it mid-state-write.
+concurrency:
+  group: external-intel
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # gh CLI (preinstalled on ubuntu-latest) authenticates from GH_TOKEN.
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Checkout (intel scripts must be on disk)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Ensure intel/* + impact/* labels exist (idempotent)
+        run: |
+          set -euo pipefail
+          # gh label create --force is an idempotent upsert (creates, or updates
+          # color/description if the label already exists). Keeps the module
+          # self-bootstrapping on a fresh clone without an out-of-band setup step.
+          ensure() { gh label create "$1" --repo "$REPO" --color "$2" --description "$3" --force >/dev/null; }
+          ensure "intel/sdk"          "1d76db" "External intel: SDK/CLI change (Claude Code, Agent SDK)"
+          ensure "intel/api-docs"     "1d76db" "External intel: Anthropic API / docs change"
+          ensure "intel/oss"          "1d76db" "External intel: referenced OSS project change"
+          ensure "intel/needs-triage" "fbca04" "Auto-created intel Issue awaiting human triage (kept out of normal backlog)"
+          ensure "intel/state"        "ededed" "Auto-managed intel-watch state tracking Issue (do not triage)"
+          ensure "impact/blocking"    "b60205" "Intel impact: conflicts with / breaks existing Mercury functionality"
+          ensure "impact/capability"  "0e8a16" "Intel impact: new capability worth adopting"
+          ensure "impact/maintenance" "c5def5" "Intel impact: routine bump / maintenance"
+          ensure "impact/fyi"         "ededed" "Intel impact: informational only"
+
+      - name: Find or create the pinned state Issue
+        id: state
+        run: |
+          set -euo pipefail
+          # KNOWN RESIDUAL: find-or-create is not atomic. The workflow-level
+          # `concurrency` group (no ref → all scheduled + dispatch runs serialize,
+          # cancel-in-progress:false → queue) is the guard: two runs never reach this
+          # step at once, so they can't both create a state Issue. If a stray second
+          # intel/state Issue ever appears, runs deterministically pick `.[0]` (oldest
+          # open) — close the extra by hand. Do NOT close the state Issue during
+          # triage: a fresh one would re-seed (all SEEDED, zero deltas) → one blind run.
+          num="$(gh issue list --repo "$REPO" --label intel/state --state open --limit 1 \
+                   --json number --jq '.[0].number // empty')"
+          if [ -z "$num" ]; then
+            url="$(gh issue create --repo "$REPO" --label intel/state \
+                     --title '🛰️ Intel-Watch State (auto-managed — do not edit)' \
+                     --body 'Auto-managed state store for the external-intel agent (#157 / #453). The body below is rewritten atomically each run by scripts/intel-watch.sh — manual edits are overwritten.')"
+            num="${url##*/}"
+            echo "Created state Issue #$num"
+          else
+            echo "Reusing state Issue #$num"
+          fi
+          echo "issue=$num" >> "$GITHUB_OUTPUT"
+
+      - name: Detect deltas
+        id: detect
+        run: |
+          # GHA's default shell is `bash -eo pipefail` (set -e IS active). We capture
+          # intel-watch's exit code with `|| rc=$?` so its non-zero exits drive the
+          # orchestration below instead of aborting the step. The later bare `jq` is
+          # intentionally left under -e: a malformed deltas.json should fail the run.
+          rc=0
+          bash scripts/intel-watch.sh --state-issue "${{ steps.state.outputs.issue }}" \
+            --json-out deltas.json || rc=$?
+          echo "watch_rc=$rc" >> "$GITHUB_OUTPUT"
+          # rc 0 = clean; rc 1 = a source fetch errored (errored sources keep their
+          # prior fingerprint — safe, just judge whatever else changed); rc 2 = usage,
+          # rc 3 = state-read / json-out write failure → abort (don't judge a bogus batch).
+          if [ "$rc" -ge 2 ]; then
+            echo "::error::intel-watch failed (rc=$rc)"; exit "$rc"
+          fi
+          n="$(jq '.deltas | length' deltas.json)"
+          echo "n_delta=$n" >> "$GITHUB_OUTPUT"
+          echo "Detected $n delta(s) (watch rc=$rc)"
+
+      - name: Judge significance + guarded issue-create
+        id: judge
+        # Explicit success gate: detect aborts the job on rc>=2 anyway (no
+        # continue-on-error), but the outcome check documents the dependency and is
+        # robust if a future edit makes detect tolerant.
+        if: steps.detect.outcome == 'success' && steps.detect.outputs.n_delta != '0'
+        timeout-minutes: 10
+        env:
+          # Injected as an env var (never an argv); auto-masked in logs. Empty when
+          # the secret is unset → intel-judge degrades the batch to the digest.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          rc=0
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            # Dry run: judge + preview only, no Issue, no dedup query, no state change.
+            bash scripts/intel-judge.sh --deltas-file deltas.json \
+              --repo "$REPO" --digest-file intel-digest.md || rc=$?
+          else
+            bash scripts/intel-judge.sh --deltas-file deltas.json \
+              --create-issue --dedup --repo "$REPO" --digest-file intel-digest.md || rc=$?
+          fi
+          echo "judge_rc=$rc" >> "$GITHUB_OUTPUT"
+          # 0 = batch landed (Issue created / deduped / digested / non-significant) →
+          #     state may be persisted; 2 = usage error → abort; 3 = batch did NOT
+          #     land (e.g. digest write failed) → do NOT persist, retry whole batch.
+          if [ "$rc" = "2" ]; then echo "::error::intel-judge usage error"; exit 2; fi
+          echo "judge rc=$rc"
+
+      - name: Persist intel-watch state (unless a delta failed to land)
+        # Commit when not a dry run AND detect was clean (watch_rc == 0) AND either
+        # there were no deltas (persist the seed / steady state so the dedup gate stays
+        # warm) or the judge landed the batch (rc 0). Skip when a delta did NOT land
+        # (judge rc 3) so it is retried whole next run.
+        #
+        # The watch_rc == 0 requirement is load-bearing: if detect had a fetch error
+        # (rc 1), the errored source was NOT judged, yet `--commit` here RE-FETCHES and
+        # could now succeed for it and write its new fingerprint into state — silently
+        # absorbing an unjudged delta. So when any source errored on detect, defer the
+        # whole persist to a future run with a clean fetch (the already-judged deltas
+        # are re-detected then, and --dedup stops them re-filing). NOTE: even on a clean
+        # detect, --commit re-fetches; a version that moves again in the seconds between
+        # detect and commit is absorbed un-judged — negligible at weekly cadence.
+        if: >-
+          inputs.dry_run != true &&
+          steps.detect.outputs.watch_rc == '0' &&
+          (steps.detect.outputs.n_delta == '0' || steps.judge.outputs.judge_rc == '0')
+        run: |
+          rc=0
+          bash scripts/intel-watch.sh --state-issue "${{ steps.state.outputs.issue }}" \
+            --commit || rc=$?
+          # rc 1 = a source errored on the commit re-fetch (errored sources retain
+          # their prior fingerprint and state was still written) → tolerate. rc >= 2
+          # = the state write genuinely failed → fail so next run retries.
+          if [ "$rc" -ge 2 ]; then echo "::error::state commit failed (rc=$rc)"; exit "$rc"; fi
+          echo "state committed (rc=$rc)"
+
+      - name: Surface digest in the run summary (if any deltas degraded)
+        if: always()
+        run: |
+          if [ -s intel-digest.md ]; then
+            {
+              echo "## external-intel digest (degraded / non-significant deltas)"
+              echo
+              cat intel-digest.md
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "digest surfaced to run summary"
+          else
+            echo "no digest this run"
+          fi
