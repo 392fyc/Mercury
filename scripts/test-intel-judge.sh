@@ -376,6 +376,125 @@ assert_eq "exit 2 on out-of-tree context" "2" "$rc"
 assert_contains "names the working-tree guard" "working tree" "$out"
 rm -f "$OUTCTX"
 
+# ── Scenarios 26-29 + 31-33: cross-run open-Issue dedup (--dedup, ADR §5.2 layer 2).
+#    (Scenario 30, defined after this block, covers the unrelated --context-file
+#    boundary.) Fresh gh stub answers `issue list --json body` with the JSON array in
+#    $GH_DEDUP_EXISTING and records whether `issue create` was invoked. ──
+R26="$WORK_DIR/r26.json"; mk_resp "$(mk_judgment true P2 capability "dedup" "act")" > "$R26"
+
+printf '\n[26] --dedup without --repo → exit 2 (config error, before any API call)\n'
+out="$(bash "$JUDGE" --deltas-file "$DELTAS" --llm-response-file "$R26" --create-issue --dedup 2>&1)"; rc=$?
+assert_eq "exit 2" "2" "$rc"
+assert_contains "names --dedup/--repo requirement" "--dedup requires --repo" "$out"
+
+DDBIN="$WORK_DIR/ddbin"; mkdir -p "$DDBIN"
+cat > "$DDBIN/gh" <<'STUB'
+#!/usr/bin/env bash
+if [[ "$1" == "--version" ]]; then echo "gh 2.0.0 (stub)"; exit 0; fi
+if [[ "$1" == "issue" && "$2" == "list" ]]; then
+  if [[ "${GH_LIST_FAIL:-0}" == "1" ]]; then echo "simulated gh list failure" >&2; exit 1; fi
+  # Emulate `gh issue list --json body`: print the configured JSON array (default []).
+  printf '%s\n' "${GH_DEDUP_EXISTING:-[]}"; exit 0
+fi
+if [[ "$1" == "issue" && "$2" == "create" ]]; then
+  : > "$GH_CREATE_CALLED"   # record that create was invoked
+  while [[ $# -gt 0 ]]; do [[ "$1" == "--body-file" ]] && cp "$2" "$GH_BODY_COPY"; shift; done
+  echo "https://github.com/owner/repo/issues/77"; exit 0
+fi
+echo "ddstub: unsupported: $*" >&2; exit 1
+STUB
+chmod +x "$DDBIN/gh"
+
+if [[ "$GH_STUB_OK" -eq 1 ]]; then
+  printf '\n[27] --dedup: no matching open Issue → creates + body carries dedup marker\n'
+  CR27="$WORK_DIR/created27"; rm -f "$CR27"; BODY27="$WORK_DIR/body27.md"
+  out="$(GH_DEDUP_EXISTING='[{"body":"unrelated open issue without any key"}]' GH_CREATE_CALLED="$CR27" GH_BODY_COPY="$BODY27" \
+        PATH="$DDBIN:$PATH" bash "$JUDGE" --deltas-file "$DELTAS" --llm-response-file "$R26" \
+        --create-issue --dedup --repo owner/repo 2>&1)"; rc=$?
+  assert_eq "exit 0" "0" "$rc"
+  assert_eq "create WAS called" "yes" "$([[ -f "$CR27" ]] && echo yes || echo no)"
+  assert_contains "body carries dedup marker" "intel-dedup-key:" "$(cat "$BODY27")"
+  DKEY="$(grep -oE 'intel-dedup-key: [0-9a-f]+' "$BODY27" | head -n1 | awk '{print $2}')"
+
+  printf '\n[28] --dedup: open Issue already embeds same key → skip create (treated as landed)\n'
+  CR28="$WORK_DIR/created28"; rm -f "$CR28"
+  EXISTING_BODY="prior open triage issue
+<!-- intel-dedup-key: $DKEY -->"
+  EXISTING_JSON="$(jq -nc --arg b "$EXISTING_BODY" '[{body:$b}]')" || fixture_fail "existing_json 28"
+  out="$(GH_DEDUP_EXISTING="$EXISTING_JSON" GH_CREATE_CALLED="$CR28" GH_BODY_COPY="$WORK_DIR/body28.md" \
+        PATH="$DDBIN:$PATH" bash "$JUDGE" --deltas-file "$DELTAS" --llm-response-file "$R26" \
+        --create-issue --dedup --repo owner/repo 2>&1)"; rc=$?
+  assert_eq "exit 0 (skipped, landed)" "0" "$rc"
+  assert_contains "reports dedup skip" "skipping create" "$out"
+  assert_eq "create NOT called" "no" "$([[ -f "$CR28" ]] && echo yes || echo no)"
+
+  printf '\n[29] --dedup: gh issue list failure → defer (exit 3, create NOT called)\n'
+  CR29="$WORK_DIR/created29"; rm -f "$CR29"
+  out="$(GH_LIST_FAIL=1 GH_DEDUP_EXISTING="ignored" GH_CREATE_CALLED="$CR29" GH_BODY_COPY="$WORK_DIR/body29.md" \
+        PATH="$DDBIN:$PATH" bash "$JUDGE" --deltas-file "$DELTAS" --llm-response-file "$R26" \
+        --create-issue --dedup --repo owner/repo 2>&1)"; rc=$?
+  assert_eq "exit 3 (deferred, not landed)" "3" "$rc"
+  assert_contains "reports dedup query failure" "dedup query failed" "$out"
+  assert_eq "create NOT called on query failure" "no" "$([[ -f "$CR29" ]] && echo yes || echo no)"
+
+  printf '\n[31] --dedup: same new but different old → distinct key, NOT deduped (Codex collision fix)\n'
+  DALT="$WORK_DIR/deltas_altold.json"
+  jq -n '{checked_at:"2026-05-26T00:00:00Z",
+    deltas:[{source:"npm:@anthropic-ai/claude-code", kind:"npm", label:"intel/sdk", old:"2.1.0", new:"2.2.0"}],
+    seeded:[], unchanged:[], errors:[]}' > "$DALT" || fixture_fail "deltas_altold"
+  CR31="$WORK_DIR/created31"; rm -f "$CR31"
+  # Existing open Issue carries DKEY (from [27], old=2.1.150→2.2.0). This batch is
+  # old=2.1.0→2.2.0 (same new, different old) → different key → must NOT be skipped.
+  EXISTING_BODY31="prior issue
+<!-- intel-dedup-key: $DKEY -->"
+  EXISTING_JSON31="$(jq -nc --arg b "$EXISTING_BODY31" '[{body:$b}]')" || fixture_fail "existing_json 31"
+  out="$(GH_DEDUP_EXISTING="$EXISTING_JSON31" GH_CREATE_CALLED="$CR31" GH_BODY_COPY="$WORK_DIR/body31.md" \
+        PATH="$DDBIN:$PATH" bash "$JUDGE" --deltas-file "$DALT" --llm-response-file "$R26" \
+        --create-issue --dedup --repo owner/repo 2>&1)"; rc=$?
+  assert_eq "exit 0" "0" "$rc"
+  assert_eq "create WAS called (distinct transition, not deduped)" "yes" "$([[ -f "$CR31" ]] && echo yes || echo no)"
+
+  printf '\n[32] --dedup: open Issues EXCEED the scan cap → defer (exit 3, create NOT called)\n'
+  CR32="$WORK_DIR/created32"; rm -f "$CR32"
+  # LIMIT=1 + a 2-element list (no marker) → the code fetches limit+1=2 and gets 2,
+  # so n_open(2) > limit(1) → listing may be truncated → cannot confirm dedup → defer.
+  out="$(INTEL_JUDGE_DEDUP_LIST_LIMIT=1 GH_DEDUP_EXISTING='[{"body":"open issue a"},{"body":"open issue b"}]' \
+        GH_CREATE_CALLED="$CR32" GH_BODY_COPY="$WORK_DIR/body32.md" \
+        PATH="$DDBIN:$PATH" bash "$JUDGE" --deltas-file "$DELTAS" --llm-response-file "$R26" \
+        --create-issue --dedup --repo owner/repo 2>&1)"; rc=$?
+  assert_eq "exit 3 (exceeds cap, deferred)" "3" "$rc"
+  assert_contains "reports cap defer" "exceed the --limit" "$out"
+  assert_eq "create NOT called at cap" "no" "$([[ -f "$CR32" ]] && echo yes || echo no)"
+
+  printf '\n[33] --dedup: open Issues EXACTLY at the cap → complete listing, creates (no false defer)\n'
+  CR33="$WORK_DIR/created33"; rm -f "$CR33"
+  # LIMIT=2 + a 2-element list (no marker) → fetch limit+1=3 returns 2, so n_open(2)
+  # is NOT > limit(2): the listing is complete, no marker → create (Argus minor fix:
+  # exactly `limit` open Issues must not be a false-positive defer).
+  out="$(INTEL_JUDGE_DEDUP_LIST_LIMIT=2 GH_DEDUP_EXISTING='[{"body":"open issue a"},{"body":"open issue b"}]' \
+        GH_CREATE_CALLED="$CR33" GH_BODY_COPY="$WORK_DIR/body33.md" \
+        PATH="$DDBIN:$PATH" bash "$JUDGE" --deltas-file "$DELTAS" --llm-response-file "$R26" \
+        --create-issue --dedup --repo owner/repo 2>&1)"; rc=$?
+  assert_eq "exit 0 (complete listing at cap)" "0" "$rc"
+  assert_eq "create WAS called (no false defer at exactly cap)" "yes" "$([[ -f "$CR33" ]] && echo yes || echo no)"
+else
+  printf '\n[27-29,31-33] SKIP: gh stub not picked up on PATH (platform shim)\n'
+fi
+
+# ── Scenario 30: the --context-file boundary is the git worktree root, so a context
+#    file in the repo ROOT is accepted even when invoked from a SUBDIR (the PR #456
+#    Argus advisory; old code used `pwd -P` and would fail-closed-reject it). No gh
+#    needed. The startup path-validation accepts it; --llm-response-file then bypasses
+#    the (unused) body build, so a clean dry-run preview exit 0 means "accepted". ──
+printf '\n[30] context-file in repo root accepted when invoked from a subdir (boundary widening)\n'
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+POSCTX="$REPO_ROOT/.intel-ctx-positive-$$.tmp"; printf 'ctx-positive\n' > "$POSCTX"
+out="$(cd "$SCRIPT_DIR" && bash "$JUDGE" --deltas-file "$DELTAS" --llm-response-file "$R26" \
+      --context-file "$POSCTX" 2>&1)"; rc=$?
+rm -f "$POSCTX"
+assert_eq "exit 0 (context in repo root accepted from subdir)" "0" "$rc"
+assert_not_contains "no working-tree rejection" "working tree" "$out"
+
 # ── Summary ──
 printf '\n=== intel-judge tests: %s passed, %s failed ===\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then
