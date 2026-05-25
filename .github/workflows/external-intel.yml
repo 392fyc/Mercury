@@ -85,15 +85,21 @@ jobs:
         id: state
         run: |
           set -euo pipefail
-          # KNOWN RESIDUAL: find-or-create is not atomic. The workflow-level
-          # `concurrency` group (no ref → all scheduled + dispatch runs serialize,
-          # cancel-in-progress:false → queue) is the guard: two runs never reach this
-          # step at once, so they can't both create a state Issue. If a stray second
-          # intel/state Issue ever appears, runs deterministically pick `.[0]` (oldest
-          # open) — close the extra by hand. Do NOT close the state Issue during
-          # triage: a fresh one would re-seed (all SEEDED, zero deltas) → one blind run.
-          num="$(gh issue list --repo "$REPO" --label intel/state --state open --limit 1 \
-                   --json number --jq '.[0].number // empty')"
+          # find-or-create the pinned state Issue. The workflow `concurrency` group
+          # (no ref → all scheduled + dispatch runs serialize; cancel-in-progress:false
+          # → queue) means two runs never reach this step at once, so they can't both
+          # create one. As defense-in-depth against a stray duplicate (e.g. a manually
+          # created intel/state Issue), select DETERMINISTICALLY by lowest issue number
+          # and warn if more than one open intel/state Issue exists — do not rely on
+          # gh's default ordering. Do NOT close the state Issue during triage: a fresh
+          # one would re-seed (all SEEDED, zero deltas) → one blind run.
+          state_json="$(gh issue list --repo "$REPO" --label intel/state --state open \
+                          --limit 100 --json number)"
+          count="$(printf '%s' "$state_json" | jq 'length')"
+          if [ "$count" -gt 1 ]; then
+            echo "::warning::multiple open intel/state Issues ($(printf '%s' "$state_json" | jq -c '[.[].number]')); using the lowest-numbered. Close the extras to keep state single-sourced."
+          fi
+          num="$(printf '%s' "$state_json" | jq -r 'sort_by(.number) | .[0].number // empty')"
           if [ -z "$num" ]; then
             url="$(gh issue create --repo "$REPO" --label intel/state \
                      --title '🛰️ Intel-Watch State (auto-managed — do not edit)' \
@@ -101,7 +107,7 @@ jobs:
             num="${url##*/}"
             echo "Created state Issue #$num"
           else
-            echo "Reusing state Issue #$num"
+            echo "Reusing state Issue #$num (lowest of $count open)"
           fi
           echo "issue=$num" >> "$GITHUB_OUTPUT"
 
