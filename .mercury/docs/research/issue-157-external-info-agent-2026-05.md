@@ -218,8 +218,8 @@ LLM 判定输出落成 Issue，带结构化标签:
 
 具体建议:
 1. **基座**: 一个 GitHub Actions scheduled workflow(`cron: '0 9 * * 1'` 每周一 09:00 UTC[1])。
-2. **源**: 只接 **Claude Code SDK + Anthropic API 文档**两个最相关的源(B 类),用 npm 包元数据(`GET /{package}` 解析 `dist-tags.latest`[3])+ docs 页面快照对比。**不接 A 类**(A 类另起一个独立的 Renovate 配置 PR,与 PoC 解耦并行)。
-3. **状态**: 记 last-seen 版本/feed-id。**PoC 默认用 §5.2 机制 (c)** —— 存到一个 pinned tracking Issue 的 body 或 GitHub repo variable,经 `gh api` 读写,绕开 scheduled-run 的分支可见性问题(机制 a/b 留 Phase 3 视 branch-protection 实测)。这是 dedup 第一闸能跨 run 工作的前提。
+2. **源**: 接 B 类最相关源(实装见 #453,门槛已 verify 见 §9 回填块)—— `@anthropic-ai/claude-code` + `@anthropic-ai/claude-agent-sdk` 的 npm `dist-tags.latest`(经 `GET /{package}` + `Accept: application/vnd.npm.install-v1+json` abbreviated packument[3])+ Claude Code raw `CHANGELOG.md` hash-diff(`raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md`,比 HTML API-docs 页干净)。Anthropic API HTML docs 快照为可选 stretch(脆弱,可延 Phase 3)。**不接 A 类**(A 类另起一个独立的 Renovate 配置 PR,与 PoC 解耦并行)。
+3. **状态**: 记 last-seen 版本/CHANGELOG hash。**PoC 选定 §5.2 机制 (c) 的 pinned Issue body 变体**(§9 回填: GITHUB_TOKEN `issues: write` 可靠无需 PAT;Variables 写权限 UNVERIFIED 故弃用),经 `gh api` 读写 + `gh issue edit --body-file` 整体替换,绕开 scheduled-run 的分支可见性问题(机制 a/b 留 Phase 3 视 branch-protection 实测)。这是 dedup 第一闸能跨 run 工作的前提。
 4. **LLM 判定**: workflow 内调 Anthropic API 一次(仅当有 delta),输出 significance + priority + impact + summary。**调 API 前 web-verify message 端点签名**(MANDATORY RESEARCH PROTOCOL)。**外部边界错误处理(必须显式设计)**: API 超时/限流/5xx → 有限次重试(指数退避)后**降级**(把本轮 delta 写入 digest + 仍持久化 last-seen 状态,**绝不**因 API 失败而丢弃 delta 或重复整批);workflow step 设 timeout;`gh issue create` 失败时同样回退到 digest 并保留 state,避免告警风暴或 delta 漏报。
 5. **输出**: significant 时 `gh issue create --label <source-label>,intel/needs-triage`,其中 `<source-label>` **必须从固定白名单映射取值**(`intel/sdk` = Claude Code SDK / `intel/api-docs` = Anthropic API 文档 / `intel/oss` = 参考项目,见 §5.1)—— **禁止把 LLM 输出或外部 release-note 文本直接拼进 `gh` 命令参数**(命令注入 + label 污染风险);所有传给 `gh` 的参数(title/body/label)须严格引用/转义,body 经 `--body-file` 传入而非内联拼接。非 significant 只更新 last-seen 状态(§5.2 机制 c)。
 6. **护栏**: 单次 ≤1 Issue(PoC 阶段更严);全部带 `needs-triage`,人工 review;不改任何业务代码、不推非 `claude/*`/状态分支;label 仅取固定白名单;`gh` 参数严格转义。
@@ -277,6 +277,18 @@ PoC 验证后扩展:
 
 ## 9. Open questions / UNVERIFIED
 
+> ### 验证结果回填 — Phase 2 入口门槛 (核实日期 2026-05-25, S137, per MANDATORY RESEARCH PROTOCOL)
+>
+> Phase 2 PoC 实装 Issue: **#453**。下列 PoC 相关门槛项已对照官方文档逐项核实，结论回填如下；residual UNVERIFIED 见各项末尾(均非 PoC 阻塞)。
+>
+> - **Q-PKG 包名 (新增核实)** — VERIFIED:"Claude Code SDK" 已改名 **Claude Agent SDK**。当前 npm 包: CLI=`@anthropic-ai/claude-code`(v2.1.150)、SDK=`@anthropic-ai/claude-agent-sdk`(v0.3.150)、核心 API SDK=`@anthropic-ai/sdk`(v0.98.0);`@anthropic-ai/claude-code-sdk` **不存在**(registry 404)。来源: `https://registry.npmjs.org/@anthropic-ai/claude-code/latest` 等。PoC "Claude Code SDK" 源 → 应监控 `@anthropic-ai/claude-code` + `@anthropic-ai/claude-agent-sdk`。residual UNVERIFIED: 改名确切日期 + claude-agent-sdk 官方 docs 页 URL(非 PoC 阻塞)。
+> - **Q2 Anthropic changelog feed** — VERIFIED:API/platform changelog (`https://platform.claude.com/docs/en/release-notes/overview`, `docs.anthropic.com`/`docs.claude.com` 均 301 至此) 为 **HTML-only,无 RSS/Atom/JSON feed** → 脆弱快照 diff。**但 Claude Code 有官方 `CHANGELOG.md`**(`https://raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md`,raw 纯文本,适合 hash-diff)。**决策: 首选 raw CHANGELOG.md 作干净监控目标;HTML API-docs 页作脆弱 fallback。**
+> - **Q3b npm 取法** — VERIFIED:用 `GET https://registry.npmjs.org/{package}` + `Accept: application/vnd.npm.install-v1+json`(abbreviated packument) 读 `dist-tags.latest`(官方文档化,响应小)。`?fields=dist-tags` query 与 `/-/package/{pkg}/dist-tags` 端点 **均不在官方文档** → 不用。来源: `https://github.com/npm/registry/blob/main/docs/responses/package-metadata.md`。
+> - **Q5 状态持久化** — VERIFIED(选型敲定):repo Variables 单条 48 KB / 500 条 / run 256 KB,但 **GITHUB_TOKEN 写 Variables API 权限 UNVERIFIED(可能需 PAT)**;而 GITHUB_TOKEN 的 `issues: write` 官方文档化且可靠 → **PoC 用 pinned tracking Issue body 作 state 存储(机制 c 变体),无需 PAT**。来源: `https://docs.github.com/en/rest/issues/issues`、`https://docs.github.com/en/actions/reference/workflows-and-actions/variables`。residual UNVERIFIED: Issue body ~64 KB 上限为社区经验值(官方 REST docs 未标注;PoC 存的是极短版本串,远低于上限)。
+> - **Q6 GHA 分钟成本** — VERIFIED:Mercury repo = **PUBLIC**(`gh repo view`) → GHA 免费,无分钟额度顾虑。
+>
+> **未纳入 PoC 的门槛项(Phase 3)**: Q3 atom feed 行为、Q4 Codex CLI 分发渠道 —— PoC 双源(npm + CHANGELOG.md)不依赖二者,留 Phase 3 扩源前核实。Q1(#381 taxonomy enrichment)仍非阻塞。
+
 1. **#381 的具体 source 清单 / taxonomy / Issue 模板** — UNVERIFIED。原文在 user-level memory,按 CLAUDE.md 约定为 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded_cwd>/memory/research/tech-intel-sweep-2026-05-12.md`(含 `/memory/` 层,不在本 repo),本 design lane 读不到。**非 Phase 2 阻塞项** —— §1.3 已给出 repo-内自包含最小基线(源清单 §4.2 / label §5.1 / 输出形态 §5.3),足以启动 PoC;从该路径或 #381 Issue 提取仅作 taxonomy/模板的 enrichment。
 2. **Anthropic API / Claude Code SDK 是否有官方结构化 changelog feed** — UNVERIFIED。若无,B 类对"API 文档变更"只能做页面内容快照 diff(脆弱、易误报)。需核实 platform.claude.com 是否提供 changelog RSS/JSON。
 3. **GitHub repo-specific atom feed (`releases.atom`/`tags.atom`)** — 双重 UNVERIFIED: (a) 这些 URL 在社区广泛使用但**未被官方 GitHub feeds API docs 记录**[7](官方只文档化认证态 `GET /feeds` + timeline 资源);(b) pre-release/tag 混入行为社区报告不一致。**保守默认用已核实的 REST `/releases` + `/tags`**;atom feed 仅作 Phase 2 实测后的可选优化。
@@ -287,14 +299,14 @@ PoC 验证后扩展:
 
 ### Phase 2 入口验收门槛(UNVERIFIED 项固化)
 
-上述 UNVERIFIED 项直接影响采集稳定性与误报率,**进入 Phase 2 实装前必须逐项 web-verify 并作为验收门槛清单**(per MANDATORY RESEARCH PROTOCOL):
-- Q2 Anthropic API/SDK 是否有结构化 changelog feed → 决定 B 类"API 文档变更"用 feed 还是脆弱的页面快照 diff。
-- Q3/Q3b atom feed 行为 + npm 取法 → 决定采集端点,直接影响误报率;**未核实前用保守默认(REST `/releases`+`/tags`、`GET /{package}`)**。
-- Q4 Codex CLI 分发渠道 → 决定 npm vs GitHub Releases。
-- Q5 状态持久化机制 → 实测机制 (c) 的 `gh api` 延迟/配额 + 原子性。
-- Q6 GHA 分钟额度(repo public/private)→ 确认成本不超额。
+上述 UNVERIFIED 项直接影响采集稳定性与误报率,**进入 Phase 2 实装前必须逐项 web-verify 并作为验收门槛清单**(per MANDATORY RESEARCH PROTOCOL)。核实于 2026-05-25 (S137) 完成,结论见上方"验证结果回填"块:
+- ✅ Q2 Anthropic API/SDK changelog feed → 无 feed;首选 Claude Code raw `CHANGELOG.md` hash-diff,HTML API-docs 页作 fallback。
+- ✅ Q3b npm 取法 → `GET /{package}` + `Accept: application/vnd.npm.install-v1+json` 读 `dist-tags.latest`;`?fields` / `/-/package/.../dist-tags` 非官方,不用。
+- ✅ Q5 状态持久化 → 选定 pinned Issue body(机制 c 变体),GITHUB_TOKEN `issues: write` 可靠无需 PAT;Variables 写权限 UNVERIFIED 故弃用。
+- ✅ Q6 GHA 分钟额度 → repo PUBLIC,免费无额度顾虑。
+- 🔜 Q3 atom feed 行为 / Q4 Codex CLI 分发渠道 → **Phase 3 扩源前**核实(PoC 双源不依赖,见回填块"未纳入 PoC 的门槛项")。
 
-每项核实结论回填本 §9 + 在 Phase 2 follow-up Issue 的验收清单中逐条勾选,任一未核实项不得进入全量 Phase 3。
+PoC 门槛已 discharge(Q2/Q3b/Q5/Q6 ✅);Q3/Q4 为 Phase 3 扩源门槛,任一未核实不得进入对应源的全量 Phase 3。
 
 ---
 
