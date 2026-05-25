@@ -257,6 +257,23 @@ else
   printf '\n[11-13] SKIP: gh stub not picked up on PATH (platform shim) — Issue-path covered by contract test [10]\n'
 fi
 
+# ── Scenario 14: portable sha256 backends agree (covers sha256_hex fallbacks) ──
+# Mirrors the three extraction expressions in sha256_hex: sha256sum/shasum use
+# `cut -d' ' -f1`, openssl ("SHA2-256(stdin)= <hash>") uses `awk '{print $NF}'`.
+printf '\n[14] portable sha256 backends agree\n'
+sample="intel-watch portability probe"
+ref=""
+if command -v sha256sum >/dev/null 2>&1; then ref="$(printf '%s' "$sample" | sha256sum | cut -d' ' -f1)"; fi
+if command -v shasum >/dev/null 2>&1; then
+  alt="$(printf '%s' "$sample" | shasum -a 256 | cut -d' ' -f1)"
+  if [[ -n "$ref" ]]; then assert_eq "shasum == sha256sum" "$ref" "$alt"; else ref="$alt"; fi
+fi
+if command -v openssl >/dev/null 2>&1; then
+  alt="$(printf '%s' "$sample" | openssl dgst -sha256 | awk '{print $NF}')"
+  if [[ -n "$ref" ]]; then assert_eq "openssl == ref" "$ref" "$alt"; fi
+fi
+if [[ -z "$ref" ]]; then printf '  (no sha256 backend present to cross-check)\n'; fi
+
 # ── Summary ──
 printf '\n=== intel-watch tests: %s passed, %s failed ===\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then

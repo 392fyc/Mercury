@@ -72,6 +72,11 @@ done
 for cmd in jq curl; do
   command -v "$cmd" >/dev/null 2>&1 || die "$cmd is required"
 done
+if ! command -v sha256sum >/dev/null 2>&1 \
+   && ! command -v shasum   >/dev/null 2>&1 \
+   && ! command -v openssl  >/dev/null 2>&1; then
+  die "need one of: sha256sum / shasum / openssl (for CHANGELOG fingerprint)"
+fi
 if [[ -n "$STATE_FILE" && -n "$STATE_ISSUE" ]]; then
   die "choose at most one state backend (--state-file XOR --state-issue)"
 fi
@@ -99,12 +104,28 @@ fetch_npm() {
   printf '%s' "$latest"
 }
 
+# Portable sha256 of stdin → bare hex digest. Prefers sha256sum (Linux/GHA),
+# falls back to shasum -a 256 (macOS default) then openssl dgst -sha256 (broad
+# fallback). openssl prints "SHA2-256(stdin)= <hash>", so take the last field.
+sha256_hex() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 | cut -d' ' -f1
+  elif command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 | awk '{print $NF}'
+  else
+    return 1
+  fi
+}
+
 fetch_changelog() {
   local url="$1" body
   body="$(curl -sS --retry 3 --retry-delay 2 --max-time 30 "$url" 2>/dev/null)" || return 1
   [[ -n "$body" ]] || return 1
   local h
-  h="$(printf '%s' "$body" | sha256sum | cut -d' ' -f1)" || return 1
+  h="$(printf '%s' "$body" | sha256_hex)" || return 1
+  [[ -n "$h" ]] || return 1
   printf 'sha256:%s' "$h"
 }
 
