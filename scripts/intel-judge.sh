@@ -352,8 +352,9 @@ in_set() {
 }
 
 # ── stable delta signature for cross-run dedup (ADR §5.2 layer 2) ──
-# sha256 over the sorted "source<TAB>old<TAB>new" triples, truncated to 16 hex. The
-# key identifies the specific TRANSITION (old→new), not just the resulting version:
+# sha256 over the sorted, compact-JSON-encoded [source, old, new] triples (one
+# JSON array per delta), truncated to 16 hex. The key identifies the specific
+# TRANSITION (old→new), not just the resulting version:
 #   * Re-detection of an un-persisted batch (Issue created but state-commit then
 #     failed → intel-watch re-emits the SAME old→new next run) reproduces the same
 #     key and matches the marker in the open Issue → skipped. Cross-run dedup intact.

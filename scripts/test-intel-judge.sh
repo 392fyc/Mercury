@@ -376,8 +376,9 @@ assert_eq "exit 2 on out-of-tree context" "2" "$rc"
 assert_contains "names the working-tree guard" "working tree" "$out"
 rm -f "$OUTCTX"
 
-# ── Scenarios 26-32: cross-run open-Issue dedup (--dedup, ADR §5.2 layer 2).
-#    Fresh gh stub answers `issue list --json body` with the JSON array in
+# ── Scenarios 26-29 + 31-33: cross-run open-Issue dedup (--dedup, ADR §5.2 layer 2).
+#    (Scenario 30, defined after this block, covers the unrelated --context-file
+#    boundary.) Fresh gh stub answers `issue list --json body` with the JSON array in
 #    $GH_DEDUP_EXISTING and records whether `issue create` was invoked. ──
 R26="$WORK_DIR/r26.json"; mk_resp "$(mk_judgment true P2 capability "dedup" "act")" > "$R26"
 
