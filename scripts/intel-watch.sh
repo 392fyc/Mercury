@@ -212,7 +212,8 @@ state_write() {
     # mid-write thus leaves the prior state intact rather than a truncated file.
     local tmp; tmp="$(mktemp "${STATE_FILE}.tmp.XXXXXX")" \
       || { printf 'intel-watch: cannot create temp for state write\n' >&2; return 1; }
-    printf '%s\n' "$new_state" > "$tmp"
+    printf '%s\n' "$new_state" > "$tmp" \
+      || { rm -f "$tmp"; printf 'intel-watch: failed to write state temp\n' >&2; return 1; }
     mv -f "$tmp" "$STATE_FILE" \
       || { rm -f "$tmp"; printf 'intel-watch: failed to move state into place\n' >&2; return 1; }
   elif [[ -n "$STATE_ISSUE" ]]; then
@@ -227,7 +228,8 @@ state_write() {
       printf '%s\n' "$STATE_BEGIN"
       printf '```json\n%s\n```\n' "$new_state"
       printf '%s\n' "$STATE_END"
-    } > "$tmp"
+    } > "$tmp" \
+      || { rm -f "$tmp"; printf 'intel-watch: failed to write Issue body temp\n' >&2; return 1; }
     gh issue edit "$STATE_ISSUE" --body-file "$tmp" >/dev/null \
       || { rm -f "$tmp"; printf 'intel-watch: failed to write state Issue #%s\n' "$STATE_ISSUE" >&2; return 1; }
     rm -f "$tmp"
