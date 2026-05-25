@@ -453,19 +453,31 @@ if [[ "$GH_STUB_OK" -eq 1 ]]; then
   assert_eq "exit 0" "0" "$rc"
   assert_eq "create WAS called (distinct transition, not deduped)" "yes" "$([[ -f "$CR31" ]] && echo yes || echo no)"
 
-  printf '\n[32] --dedup: open Issues hit the list cap → defer (exit 3, create NOT called)\n'
+  printf '\n[32] --dedup: open Issues EXCEED the scan cap → defer (exit 3, create NOT called)\n'
   CR32="$WORK_DIR/created32"; rm -f "$CR32"
-  # INTEL_JUDGE_DEDUP_LIST_LIMIT=1 + a 1-element list → n_open >= limit → cannot
-  # confirm dedup (listing may be truncated) → defer rather than risk a duplicate.
-  out="$(INTEL_JUDGE_DEDUP_LIST_LIMIT=1 GH_DEDUP_EXISTING='[{"body":"some open triage issue"}]' \
+  # LIMIT=1 + a 2-element list (no marker) → the code fetches limit+1=2 and gets 2,
+  # so n_open(2) > limit(1) → listing may be truncated → cannot confirm dedup → defer.
+  out="$(INTEL_JUDGE_DEDUP_LIST_LIMIT=1 GH_DEDUP_EXISTING='[{"body":"open issue a"},{"body":"open issue b"}]' \
         GH_CREATE_CALLED="$CR32" GH_BODY_COPY="$WORK_DIR/body32.md" \
         PATH="$DDBIN:$PATH" bash "$JUDGE" --deltas-file "$DELTAS" --llm-response-file "$R26" \
         --create-issue --dedup --repo owner/repo 2>&1)"; rc=$?
-  assert_eq "exit 3 (cap hit, deferred)" "3" "$rc"
-  assert_contains "reports cap defer" "hit the --limit" "$out"
+  assert_eq "exit 3 (exceeds cap, deferred)" "3" "$rc"
+  assert_contains "reports cap defer" "exceed the --limit" "$out"
   assert_eq "create NOT called at cap" "no" "$([[ -f "$CR32" ]] && echo yes || echo no)"
+
+  printf '\n[33] --dedup: open Issues EXACTLY at the cap → complete listing, creates (no false defer)\n'
+  CR33="$WORK_DIR/created33"; rm -f "$CR33"
+  # LIMIT=2 + a 2-element list (no marker) → fetch limit+1=3 returns 2, so n_open(2)
+  # is NOT > limit(2): the listing is complete, no marker → create (Argus minor fix:
+  # exactly `limit` open Issues must not be a false-positive defer).
+  out="$(INTEL_JUDGE_DEDUP_LIST_LIMIT=2 GH_DEDUP_EXISTING='[{"body":"open issue a"},{"body":"open issue b"}]' \
+        GH_CREATE_CALLED="$CR33" GH_BODY_COPY="$WORK_DIR/body33.md" \
+        PATH="$DDBIN:$PATH" bash "$JUDGE" --deltas-file "$DELTAS" --llm-response-file "$R26" \
+        --create-issue --dedup --repo owner/repo 2>&1)"; rc=$?
+  assert_eq "exit 0 (complete listing at cap)" "0" "$rc"
+  assert_eq "create WAS called (no false defer at exactly cap)" "yes" "$([[ -f "$CR33" ]] && echo yes || echo no)"
 else
-  printf '\n[27-29,31-32] SKIP: gh stub not picked up on PATH (platform shim)\n'
+  printf '\n[27-29,31-33] SKIP: gh stub not picked up on PATH (platform shim)\n'
 fi
 
 # ── Scenario 30: the --context-file boundary is the git worktree root, so a context

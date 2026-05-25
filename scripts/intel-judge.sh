@@ -578,8 +578,12 @@ main() {
   # is ample since the cap is ≤1 new Issue/run and triaged Issues get closed.
   if [[ "$DEDUP" -eq 1 ]]; then
     local existing_json list_rc=0 n_open
+    # Fetch DEDUP_LIST_LIMIT+1 so we can DISTINGUISH "exactly limit Issues, complete
+    # listing" (safe) from "more than limit, possibly truncated" (unsafe) — fetching
+    # exactly the limit makes count==limit ambiguous and would false-defer at steady
+    # state (Argus minor). gh paginates internally up to --limit.
     existing_json="$(gh issue list "${repo_args[@]}" --label "$TRIAGE_LABEL" --state open \
-                       --limit "$DEDUP_LIST_LIMIT" --json body 2>/dev/null)" || list_rc=$?
+                       --limit "$(( DEDUP_LIST_LIMIT + 1 ))" --json body 2>/dev/null)" || list_rc=$?
     if [[ "$list_rc" -ne 0 ]]; then
       # The dedup query itself failed (network / auth / rate-limit). We cannot tell
       # whether an open Issue already covers this batch, so creating now could file a
@@ -593,17 +597,7 @@ main() {
       rm -f "$body_tmp"
       exit 3
     fi
-    n_open="$(jq 'length' <<<"$existing_json" 2>/dev/null)" || n_open=0
-    if [[ "$n_open" -ge "$DEDUP_LIST_LIMIT" ]]; then
-      # The listing hit the page cap, so a matching marker beyond the cap could be
-      # silently missed → we cannot confirm dedup. DEFER (exit 3) rather than risk a
-      # duplicate, same as a query failure (Argus finding). ≥limit open needs-triage
-      # Issues is itself a triage-backlog signal that needs human attention.
-      printf 'intel-judge: open %s Issues hit the --limit %s cap — cannot confirm dedup, deferring (state NOT persisted)\n' \
-        "$TRIAGE_LABEL" "$DEDUP_LIST_LIMIT" >&2
-      rm -f "$body_tmp"
-      exit 3
-    fi
+    # A FOUND marker is conclusive even if the listing is truncated → check it first.
     # Match the full marker incl. the trailing ` -->` (defensive: keys are fixed-width
     # 16-hex so none is a prefix of another, but the closing token removes all doubt).
     if [[ "$(jq -r '.[].body' <<<"$existing_json")" == *"intel-dedup-key: $dkey -->"* ]]; then
@@ -611,6 +605,19 @@ main() {
         "$TRIAGE_LABEL" "$dkey"
       rm -f "$body_tmp"
       exit 0
+    fi
+    # Marker absent. Only NOW does truncation matter: if we got back MORE than the
+    # scan limit, the listing was truncated and a matching marker could lie beyond it
+    # → we cannot confirm dedup. DEFER (exit 3) rather than risk a duplicate, same as
+    # a query failure. `> limit` (not `>= limit`) — fetching limit+1 means exactly
+    # `limit` open Issues is a COMPLETE listing and must NOT defer. >limit open
+    # needs-triage Issues is itself a triage-backlog signal needing human attention.
+    n_open="$(jq 'length' <<<"$existing_json" 2>/dev/null)" || n_open=0
+    if [[ "$n_open" -gt "$DEDUP_LIST_LIMIT" ]]; then
+      printf 'intel-judge: open %s Issues exceed the --limit %s scan cap — cannot confirm dedup, deferring (state NOT persisted)\n' \
+        "$TRIAGE_LABEL" "$DEDUP_LIST_LIMIT" >&2
+      rm -f "$body_tmp"
+      exit 3
     fi
   fi
 
