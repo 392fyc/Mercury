@@ -239,5 +239,17 @@
     "import_date": "2026-05-08",
     "import_rationale": "Phase 2 Slice A — wuyoscar/gpt_image_2_skill MIT mount via uvx-pinned-SHA per ADR pixel-animation-workflow §7.2.1 + S87 refinement (Issue #351). No upstream source vendored. upstream_path=pyproject.toml tracks the canonical version contract (deps, entry points) so scripts/upstream-drift-check.sh can detect upstream version bumps that affect this adapter's pinned SHA.",
     "last_drift_check": null
+  },
+  {
+    "path": "adapters/playwright-mcp/UPSTREAM.md",
+    "scope": "project",
+    "upstream_repo": "microsoft/playwright-mcp",
+    "upstream_path": "package.json",
+    "upstream_sha_at_import": "8116437ffcfee1309cebc07dd30cee37720d2d19",
+    "upstream_license": "Apache-2.0",
+    "import_pr": 459,
+    "import_date": "2026-05-26",
+    "import_rationale": "Phase 2 Slice A (Issue #458, ADR issue-154-web-automation) — npm-version-pinned MCP server runtime mount (third mount mode, alongside git submodule and uvx git+SHA). Execution contract = pinned npm version @playwright/mcp@0.0.75; upstream_sha_at_import = the git tag v0.0.75 commit (audit metadata mapping the pinned npm version back to an upstream git tag, NOT the execution contract). upstream_path=package.json tracks the canonical version/deps/bin contract so scripts/upstream-drift-check.sh can detect upstream version bumps that may require re-pinning this adapter. No upstream source vendored; adapters/playwright-mcp/launch.cjs is a Mercury config-gate wrapper only.",
+    "last_drift_check": null
   }
 ]
