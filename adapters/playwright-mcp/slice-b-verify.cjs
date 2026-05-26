@@ -238,7 +238,12 @@ async function stepB() {
       // Prevents a malicious server response from directing reads/deletes outside
       // the designated .playwright-mcp/ directory.
       const sandboxDir = path.resolve(repoRoot, '.playwright-mcp') + path.sep;
-      if (!resolved.startsWith(sandboxDir) || path.extname(resolved) !== '.json') {
+      // Windows paths are case-insensitive — compare case-folded there so a
+      // case-variant prefix cannot slip past the sandbox guard.
+      const inSandbox = process.platform === 'win32'
+        ? resolved.toLowerCase().startsWith(sandboxDir.toLowerCase())
+        : resolved.startsWith(sandboxDir);
+      if (!inSandbox || path.extname(resolved) !== '.json') {
         throw new Error(`Invalid exported storageState path: ${captured}`);
       }
       stateFilePath = resolved;
@@ -387,7 +392,7 @@ async function main() {
         // + explicit warning on failure (do not silently swallow a leak).
         try {
           fs.rmSync(sandboxDir, { recursive: true, force: true });
-          console.log(`  Removed ${remaining.length} entr(ies) from .playwright-mcp/ (recursive)`);
+          console.log(`  Removed ${remaining.length} entries from .playwright-mcp/ (recursive)`);
         } catch (e) {
           console.log(`  WARN: could not fully clean .playwright-mcp/ — sensitive artifacts may remain: ${e.message}`);
         }

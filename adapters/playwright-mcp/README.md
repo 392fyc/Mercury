@@ -302,7 +302,7 @@ This step is required because:
 The server always exports storageState to `<cwd>/.playwright-mcp/` (output
 sandbox), but `launch.cjs` requires the load path (`--storage-state`) to be
 outside the repo. This means a manual move is needed after every export. See
-§UPSTREAM Known incompatibilities for the upstream tracking note.
+`UPSTREAM.md` → "Known incompatibilities / caveats" for the upstream tracking note.
 
 ## Provenance / license
 
