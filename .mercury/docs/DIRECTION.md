@@ -225,6 +225,21 @@ Mercury 的核心价值不在代码里，在方法论里。
 
 ## 四、外部项目挂载策略
 
+### 挂载方式（三类并列）
+
+外部项目按以下三类受治理的挂载模式之一接入，**默认首选 git submodule**：
+
+1. **git submodule（默认）** — 每个外部项目作为 git submodule 挂载到 `modules/` 目录下（详见下方"挂载方式: Git Submodule"）。
+2. **uvx git+SHA runtime-only** — runtime-only 依赖经 `uvx --from git+<repo>@<SHA>` 引用（首例 `adapters/gpt-image-2/`），不 vendoring 源码，按 git commit SHA pin。
+3. **npm-version-pinned MCP server（runtime-only）** — runtime-only 的 MCP server 经 npm 按版本解析挂载（如 `npx @playwright/mcp@<pinned-version>` 或等价的 `npm install --prefix <repo 外 cache>`），首例 `adapters/playwright-mcp/`（playwright-mcp / Issue #154）。
+
+模式 2、3 同为 runtime-only 例外，均须满足：
+- **license gate**：仅 permissive（MIT / Apache-2.0 等）。
+- **provenance**：在 `.mercury/state/upstream-manifest.json` 登记 + 对应 `adapters/<vendor>/UPSTREAM.md` 记录版本/license/已知不兼容项。
+- **drift 监控**：`scripts/upstream-drift-check.sh` 跟踪上游版本契约文件。
+
+**版本 pin 规则（模式 3）**：`.mcp.json` / wrapper 必须 pin 确切 npm 版本号（**禁止浮动 `@latest`**）。执行契约 = pinned npm 版本；manifest 的 `upstream_sha_at_import` = 对应 git tag commit（审计元数据，非执行契约）。依据见 `research/issue-154-web-automation-2026-05.md` §5.1 + Issue #458。
+
 ### 挂载方式: Git Submodule
 
 每个外部项目作为 git submodule 挂载到 modules/ 目录下。

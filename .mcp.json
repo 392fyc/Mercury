@@ -13,6 +13,16 @@
     "mercury-telegram": {
       "command": "node",
       "args": ["./adapters/mercury-channel-client/channel.cjs"]
+    },
+    "playwright": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "./adapters/playwright-mcp/launch.cjs",
+        "--isolated",
+        "--caps=storage",
+        "--storage-state=%LOCALAPPDATA%/mercury/playwright-mcp/auth-state.json"
+      ]
     }
   }
 }
