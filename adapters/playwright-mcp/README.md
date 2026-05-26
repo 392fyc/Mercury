@@ -201,13 +201,100 @@ flags, repo-internal / real-profile path reject, unresolved-env reject, legal
 config pass + `--isolated` injection, slash/case robustness). Tests never
 spawn a real browser.
 
-## Out of scope (Slice B)
+## Slice B verification
 
-The following need an MCP client session + manual login to a target site and
-are **not** part of Slice A: live navigate + screenshot (ADR V1), auth reuse
-via storageState (V2), and storageState domain-scope / sessionStorage
-identification (V6). They are deferred to Slice B (requires session restart +
-human login).
+### Results
+
+Live verification run on 2026-05-26 (Windows dev host, `@playwright/mcp@0.0.75`, Chromium):
+
+| ADR check | Scenario | Result |
+|---|---|---|
+| V1 | `browser_navigate` + `browser_take_screenshot` — PNG returned, non-empty data | **PASS** |
+| V2 | storageState round-trip — localStorage + cookie restored in new isolated session | **PASS** |
+| V6 | `browser_storage_state` exports localStorage + cookies but **not** sessionStorage | **PASS** |
+
+### How to run the verify script
+
+```
+node adapters/playwright-mcp/slice-b-verify.cjs
+```
+
+Requires: package provisioned (§Setup) + network access to `example.com`. NOT
+run by `node --test` or CI — the script spawns a real browser and makes network
+requests.
+
+The script performs Step A (V1 + caps handshake) and Step B (V2/V6 storageState
+round-trip) against live `example.com`, then self-cleans all produced artifacts
+(`.playwright-mcp/` sandbox files + tmpdir state).
+
+### Real-auth runbook
+
+Use this flow to capture and reuse real-site login credentials via storageState.
+
+**① One-time provision** (already done if §Setup is complete):
+
+```sh
+npm install --no-save --no-fund --no-audit \
+  --prefix "~/.cache/mercury/playwright-mcp/0.0.75" \
+  @playwright/mcp@0.0.75
+```
+
+**② Export the storage-state env var** pointing at a repo-external private path:
+
+```sh
+# PowerShell (Windows)
+$env:MERCURY_PLAYWRIGHT_STORAGE_STATE = "$env:LOCALAPPDATA\mercury\playwright-mcp\auth-state.json"
+
+# POSIX shell
+export MERCURY_PLAYWRIGHT_STORAGE_STATE="$HOME/.local/mercury/playwright-mcp/auth-state.json"
+```
+
+This path must be **outside the repo working tree** — `launch.cjs` hard-rejects
+any `--storage-state` path that resolves inside the repo (ADR §5.2 path rules).
+
+**③ Human login + export in isolated session**:
+
+Start an MCP session with `--caps=storage --headed` (no `--storage-state` yet):
+
+```jsonc
+// temporary .mcp.json override for capture run:
+"args": ["./adapters/playwright-mcp/launch.cjs", "--caps=storage", "--headed"]
+```
+
+Navigate to the target site, complete the login flow manually, then call:
+
+```
+browser_storage_state {}
+```
+
+The server exports the state to `<repo>/.playwright-mcp/storage-state-<ts>.json`
+(the server's output sandbox is anchored to `cwd`, which is the repo root).
+
+**④ Move the exported file to the repo-external path**:
+
+```sh
+# PowerShell
+Move-Item ".playwright-mcp\storage-state-*.json" "$env:MERCURY_PLAYWRIGHT_STORAGE_STATE"
+
+# POSIX shell
+mv .playwright-mcp/storage-state-*.json "$MERCURY_PLAYWRIGHT_STORAGE_STATE"
+```
+
+This step is required because:
+- The server's output sandbox writes to `<cwd>/.playwright-mcp/` (cannot be
+  redirected via flag — `--output-dir` was removed from the allowlist)
+- `launch.cjs` requires the `--storage-state` load path to be **outside the
+  repo** (path rule §5.2), so the file must be moved before use
+
+**⑤ Subsequent sessions** — auth state is picked up automatically via
+`$MERCURY_PLAYWRIGHT_STORAGE_STATE` in the `.mcp.json` args.
+
+### Known asymmetry: export vs. load paths
+
+The server always exports storageState to `<cwd>/.playwright-mcp/` (output
+sandbox), but `launch.cjs` requires the load path (`--storage-state`) to be
+outside the repo. This means a manual move is needed after every export. See
+§UPSTREAM Known incompatibilities for the upstream tracking note.
 
 ## Provenance / license
 
