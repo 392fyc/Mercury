@@ -101,3 +101,6 @@ Mercury_KB/
 
 # OMC plugin runtime state (per-user, populated after /plugin install oh-my-claudecode)
 .omc/
+
+# playwright-mcp server output sandbox (console logs, storageState exports w/ live cookies) — never commit
+.playwright-mcp/

@@ -58,7 +58,20 @@ re-pinning this adapter.
 - **storageState scope** — `browser_storage_state` exports the *whole current
   context* (cookies + localStorage, **no** sessionStorage, **no** built-in
   domain filter). Single-domain scope comes from context isolation, not from
-  the file format (ADR §4.1). Slice B work.
+  the file format (ADR §4.1). Verified in Slice B (V6 PASS).
+- **storageState export/load path asymmetry** — the server's output sandbox
+  defaults to `<cwd>/.playwright-mcp/` (contains storageState exports with
+  live cookies as well as console logs). This directory is gitignored
+  (`.playwright-mcp/` in repo root `.gitignore`) to prevent credential
+  leakage. The export location is controlled by the server's sandboxing and
+  cannot be redirected via a CLI flag (`--output-dir` is removed from the
+  adapter's flag allowlist). However, `launch.cjs` requires the `--storage-state`
+  load path to be **outside the repo working tree** (ADR §5.2 path rule). This
+  creates a one-step manual asymmetry: export lands in `<repo>/.playwright-mcp/`,
+  must be moved to a repo-external path before the next session can load it.
+  See adapter README §Slice B verification → Real-auth runbook for the exact
+  move command. Tracked as a known operational note; `--output-dir` removal and
+  the path asymmetry are not expected to be resolved without upstream API changes.
 
 ## Spawn-form note (Windows dev host)
 
