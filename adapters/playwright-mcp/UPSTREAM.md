@@ -62,7 +62,7 @@ re-pinning this adapter.
 - **storageState export/load path asymmetry** — the server's output sandbox
   defaults to `<cwd>/.playwright-mcp/` (contains storageState exports with
   live cookies as well as console logs). This directory is gitignored
-  (`/.playwright-mcp/` in repo root `.gitignore`) to prevent credential
+  (`.playwright-mcp/` in repo root `.gitignore`) to prevent credential
   leakage. The export location is controlled by the server's sandboxing and
   cannot be redirected via a CLI flag (`--output-dir` is removed from the
   adapter's flag allowlist). However, `launch.cjs` requires the `--storage-state`

@@ -131,9 +131,13 @@ actual browser spawning (Slice B).
 Cross-platform form (matches the path `launch.cjs` resolves via `os.homedir()`):
 
 ```
+# POSIX shell — use $HOME ('~' does NOT expand inside quotes)
 npm install --no-save --no-fund --no-audit \
-  --prefix "~/.cache/mercury/playwright-mcp/0.0.75" \
+  --prefix "$HOME/.cache/mercury/playwright-mcp/0.0.75" \
   @playwright/mcp@0.0.75
+
+# Windows PowerShell
+npm install --no-save --no-fund --no-audit --prefix "$env:USERPROFILE\.cache\mercury\playwright-mcp\0.0.75" '@playwright/mcp@0.0.75'
 ```
 
 If the cache is absent at launch time, the adapter exits 3 and prints the
@@ -234,9 +238,13 @@ Use this flow to capture and reuse real-site login credentials via storageState.
 **① One-time provision** (already done if §Setup is complete):
 
 ```sh
+# POSIX shell — use $HOME ('~' does NOT expand inside quotes)
 npm install --no-save --no-fund --no-audit \
-  --prefix "~/.cache/mercury/playwright-mcp/0.0.75" \
+  --prefix "$HOME/.cache/mercury/playwright-mcp/0.0.75" \
   @playwright/mcp@0.0.75
+
+# Windows PowerShell
+npm install --no-save --no-fund --no-audit --prefix "$env:USERPROFILE\.cache\mercury\playwright-mcp\0.0.75" '@playwright/mcp@0.0.75'
 ```
 
 **② Export the storage-state env var** pointing at a repo-external private path:

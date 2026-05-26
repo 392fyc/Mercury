@@ -13,7 +13,12 @@ const readline = require('node:readline');
 // Paths — no hard-coding
 const repoRoot = path.resolve(__dirname, '..', '..');
 const launchCjs = path.join(__dirname, 'launch.cjs');
-const tmpState = path.join(os.tmpdir(), 'mercury-pw-state.json');
+
+// Use a unique temporary directory per run to avoid filename collisions,
+// prevent concurrent runs from clobbering each other, and eliminate
+// predictable paths for credential-containing state files.
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mercury-pw-'));
+const tmpState = path.join(tmpDir, 'state.json');
 
 // Tracking exported file path for cleanup
 let exportedRepoFile = null;
@@ -26,6 +31,11 @@ function spawnMcpServer(extraArgs) {
     cwd: repoRoot,
     stdio: ['pipe', 'pipe', 'pipe'],
     shell: false,
+    // POSIX: detached=true puts the child in its own process group so that
+    // killTree can send SIGKILL to the whole group (-pid), killing the
+    // Chromium sub-tree. On Windows detached is false; taskkill /T covers
+    // the tree. stdio remains 'pipe' (not unref'd) so we can read stdout/stderr.
+    detached: process.platform !== 'win32',
   });
   return child;
 }
@@ -138,8 +148,9 @@ function cleanup() {
     try { fs.unlinkSync(exportedRepoFile); } catch (_) {}
     exportedRepoFile = null;
   }
-  // Remove tmpdir state copy
-  try { fs.unlinkSync(tmpState); } catch (_) {}
+  // Remove unique tmpdir (contains state.json with auth cookies); rmSync
+  // with recursive+force handles both the file and directory in one call.
+  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
 }
 
 // ─── Step A: V1 + handshake + caps ───────────────────────────────────────────
@@ -220,7 +231,17 @@ async function stepB() {
 
     if (match) {
       const captured = match[1];
-      stateFilePath = path.isAbsolute(captured) ? captured : path.resolve(repoRoot, captured);
+      const resolved = path.isAbsolute(captured)
+        ? path.normalize(captured)
+        : path.resolve(repoRoot, captured);
+      // Path-traversal guard: constrain to repo sandbox + require .json extension.
+      // Prevents a malicious server response from directing reads/deletes outside
+      // the designated .playwright-mcp/ directory.
+      const sandboxDir = path.resolve(repoRoot, '.playwright-mcp') + path.sep;
+      if (!resolved.startsWith(sandboxDir) || path.extname(resolved) !== '.json') {
+        throw new Error(`Invalid exported storageState path: ${captured}`);
+      }
+      stateFilePath = resolved;
       exportedRepoFile = stateFilePath; // track for cleanup
       console.log(`  exported to: ${stateFilePath}`);
     }
@@ -267,8 +288,10 @@ async function stepB() {
   );
   assert(!hasEphemeral, 'V6 storageState does NOT contain sessionStorage ephemeral key');
 
-  // Copy to tmpdir (repo-external path — gate allows loading from here)
+  // Copy to tmpdir (repo-external path — gate allows loading from here).
+  // chmod 0o600 restricts read to owner only (auth cookies in file).
   fs.copyFileSync(stateFilePath, tmpState);
+  try { fs.chmodSync(tmpState, 0o600); } catch (_) { /* best effort on Windows */ }
   assert(fs.existsSync(tmpState), 'V6 state copied to tmpdir for S2 load');
 
   // S2: load state from tmpState, verify restoration
@@ -305,14 +328,21 @@ async function stepB() {
 
 // Force-kill a child AND its descendants. The MCP server spawns a Chromium tree;
 // killing only the node process would orphan the browser. On Windows use
-// `taskkill /T` (tree); on POSIX send SIGKILL to the process group.
+// `taskkill /T` (tree); on POSIX the child was spawned with detached=true
+// (own process group), so send SIGKILL to -pid (the whole process group).
 function killTree(child) {
   if (!child || child.exitCode !== null) return;
   try {
     if (process.platform === 'win32') {
       spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
     } else {
-      child.kill('SIGKILL');
+      // -child.pid targets the process group (all descendants including Chromium).
+      // Fallback to single-process kill if the group signal fails.
+      try {
+        process.kill(-child.pid, 'SIGKILL');
+      } catch (_) {
+        try { child.kill('SIGKILL'); } catch (_) {}
+      }
     }
   } catch (_) { /* best effort */ }
 }
@@ -333,7 +363,7 @@ function waitForExit(child) {
 async function main() {
   console.log('Mercury playwright-mcp Slice B verification');
   console.log(`repo root: ${repoRoot}`);
-  console.log(`tmpState:  ${tmpState}`);
+  console.log(`tmpDir:    ${tmpDir}`);
 
   try {
     await stepA();
@@ -360,8 +390,8 @@ async function main() {
     } else {
       console.log('  .playwright-mcp/ not present (clean)');
     }
-    const tmpGone = !fs.existsSync(tmpState);
-    console.log(`  tmpdir state removed: ${tmpGone}`);
+    const tmpGone = !fs.existsSync(tmpDir);
+    console.log(`  tmpdir removed: ${tmpGone}`);
   }
 
   console.log(`\n${'='.repeat(50)}`);
