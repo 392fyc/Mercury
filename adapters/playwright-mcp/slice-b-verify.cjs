@@ -381,11 +381,16 @@ async function main() {
       if (remaining.length === 0) {
         console.log('  .playwright-mcp/ is empty (clean)');
       } else {
-        // Remove remaining files (server may have written new ones during this run)
-        for (const f of remaining) {
-          try { fs.unlinkSync(path.join(sandboxDir, f)); } catch (_) {}
+        // Remove remaining artifacts recursively — the server may write nested
+        // dirs (e.g. traces/), and unlinkSync cannot remove subdirectories, so
+        // any sensitive nested artifact would otherwise survive. rmSync recursive
+        // + explicit warning on failure (do not silently swallow a leak).
+        try {
+          fs.rmSync(sandboxDir, { recursive: true, force: true });
+          console.log(`  Removed ${remaining.length} entr(ies) from .playwright-mcp/ (recursive)`);
+        } catch (e) {
+          console.log(`  WARN: could not fully clean .playwright-mcp/ — sensitive artifacts may remain: ${e.message}`);
         }
-        console.log(`  Removed ${remaining.length} file(s) from .playwright-mcp/`);
       }
     } else {
       console.log('  .playwright-mcp/ not present (clean)');
