@@ -7,6 +7,7 @@ status: phase-1-design-proposal
 verdict: "CONDITIONAL_GO (phased, P2 实现优先级低) — 推荐 lane-as-process 路径实现三层 (Director=main lane / Manager=side lane / Employee=Manager dispatch 的 sub-agents)，绕开 Agent Teams 的 no-nested-teams 与原生 sub-agent depth=1 两个硬限制；不引入 Agent Teams、不引入 Managed Agents API。三层在现有 multi-lane v1 + 5-lane cap 内技术可行，2-department bootstrap = main + 2 side lanes = 3 lanes。复用 #319 的 Dim1.3 5 个 missing module，三层新增 3 项需求。跨 department 记忆 mem0 层已全局共享，缺 per-department 检索隔离 (schema 问题非可行性问题)。"
 relation: "build-on #319 (agent-team-orchestration-feasibility-2026-04-26.md, CONDITIONAL_GO, 两层 Director/DevTeam)；引用 #386 (agent-view-multi-lane-adaptation-2026-05.md, multi-lane v1 现状)；引用 #391 (agent-view-phase6-empirical, file-editing bg worktree HYBRID)"
 research_protocol: "所有外部能力对照官方文档核实 2026-05-24；未核实项标 UNVERIFIED + 来源 URL。in-repo LOC/path 引用基于 develop @ fa3e171。"
+web_verify: "S143 (2026-05-26, develop @ af7953c) web-verify pass — 起草时 3 个 UNVERIFIED 项全部 resolved (详见 §11): ① mem0ai metadata filter VERIFIED-YES (装机版 mem0ai 1.0.11); ② shared_memory MCP scope VERIFIED (OMC v4.13.2 源码: 文件锁跨进程安全 + 默认 per-worktree + TTL≤7d); ③ bg-spawn-subagent VERIFIED-YES (agent-view docs 平台能力层, empirical PoC 仍属 Phase 2)。Verdict (§9 CONDITIONAL_GO) 不变。"
 ---
 
 # Issue #155 — Director-Manager-Employee 多团队并行架构: Phase 1 设计 ADR
@@ -292,7 +293,7 @@ Manager B = side lane (dept B)     @ ${MERCURY_ROOT}/Mercury-deptB  (lane 3)
 | 机制 | 现状 | scope | gap |
 |---|---|---|---|
 | **mem0 层** | 运行时 canonical = `~/.claude/scripts/mem0_bridge.py` + `mem0_hooks.py`;**repo 内有可审阅副本 `scripts/mem0_hooks.py`**(version-tracked,引用其稳定行号):Qdrant 单一 `"mercury"` collection(`collection_name` `scripts/mem0_hooks.py` L82),`user_id` 固定为常量 `_DEFAULT_USER = "mercury"`(L30,后续 `add`/`search` 以 `user_id=_DEFAULT_USER` 引用);所有 session/lane 写同一向量空间;dedup `_DEDUP_THRESHOLD = 0.92`(L31,cosine≥0.92);metadata 含 session_id/trigger/project_dir 但 **search 不按 metadata 过滤** | **已经跨 lane/department 全局共享** | 无 namespace/scoping → department 数增多后检索噪音 |
-| **OMC `shared_memory` MCP** | session 工具列表存在 `mcp__plugin_oh-my-claudecode_t__shared_memory_{write,read,list,delete,cleanup}`(本 ADR 起草 session 可见)。**scope 待 design 阶段实测**(UNVERIFIED:跨 process / 跨 lane 是否真共享、持久化位置) | 候选机制 | 需 design 阶段实测确认 scope |
+| **OMC `shared_memory` MCP** | `mcp__plugin_oh-my-claudecode_t__shared_memory_{write,read,list,delete,cleanup}`。**scope 已源码核实(§11.2,OMC v4.13.2)**:文件型 KV(`<root>/.omc/state/shared-memory/`),文件锁跨进程安全,namespace + TTL ≤ 7 天,config gate 默认 enabled | 候选机制(临时显式通道) | **默认 per-worktree → 不自动跨 lane**;跨 dept 需传同一 `workingDirectory` 或设 `OMC_STATE_DIR`。TTL ≤ 7 天 = 临时协调非持久记忆(持久层仍是 mem0) |
 | **OMC `project_memory_*` / `state_*`** | per-project / OMC state 工具,session 列表存在 | per-project / OMC-internal | 非跨 department 通用记忆 |
 | **原生 subagent `memory:` frontmatter** | 对照 sub-agents docs(2026-05-24):`memory: project` = `.claude/agent-memory/<name-of-agent>/`;`user` = `~/.claude/agent-memory/<name>/`;`local` = `.claude/agent-memory-local/<name>/`。enable 后系统注入 `MEMORY.md` 前 200 行 / 25KB,自动开 Read/Write/Edit。**Mercury 未启用** | per-agent-name(跨 department 同名 Employee 共享同一目录) | 既是优势(跨 dept 学习)也是问题(无法区分 dept A vs B 的同角色经验) |
 
@@ -302,11 +303,11 @@ Manager B = side lane (dept B)     @ ${MERCURY_ROOT}/Mercury-deptB  (lane 3)
 
 | 选项 | 机制 | Pro | Con |
 |---|---|---|---|
-| **(O1) metadata filter(推荐)** | mem0 写入时 metadata 加 `department_id`;检索时按 `department_id` filter(或 OR 多个 dept 做跨 dept 检索) | 单 collection 不变;向后兼容(现有 entry 无 `department_id` 视为 global);检索可选 scope-to-dept 或 cross-dept;最小改动 | 需 `mem0_hooks.py` 改 search filter(用户级变更,走 #259 式 Issue 治理);mem0 search 当前不按 metadata 过滤(需确认 mem0ai API 支持 filter,**UNVERIFIED — design 阶段 web-verify mem0 search filter API**) |
+| **(O1) metadata filter(推荐)** | mem0 写入时 metadata 加 `department_id`;检索时按 `department_id` filter(或 OR 多个 dept 做跨 dept 检索) | 单 collection 不变;向后兼容(现有 entry 无 `department_id` 视为 global);检索可选 scope-to-dept 或 cross-dept;最小改动 | 需 `mem0_hooks.py` 改 search filter(用户级变更,走 #259 式 Issue 治理);**mem0ai filter API 已 web-verify 支持(§11.1,装机版 1.0.11)** —— `search(filters={"AND":[{"user_id":"mercury"},{"metadata":{"department_id":...}}]})`;metadata 算子限 `eq`/`contains`/`ne`(多值用 `OR` 替 `in`) |
 | **(O2) 多 collection** | per-department 一个 Qdrant collection(`mercury-deptA` 等)+ 一个 global collection | 物理隔离最干净 | collection 生命周期管理复杂;跨 dept 检索需多 collection query 合并;department 是动态的(spawn/teardown)→ collection 也要动态建删,运维面大 |
 | **(O3) 原生 subagent `memory:`** | Employee sub-agent 用 `memory: project`(`.claude/agent-memory/<name>/`)持久化 per-role 经验 | 原生支持,零自建;version control 可共享(`project` scope) | 按 **agent-name** 隔离不是按 **department** 隔离 → dept A 的 dev Employee 与 dept B 的 dev Employee 共享同一 `.claude/agent-memory/dev/`,无法区分 → 不满足 #155 "跨 team 记忆共享但脱离特定任务" 的 per-team 语义;且与 mem0 层并存形成双记忆栈 |
 
-**推荐**:**O1(metadata filter)**。理由:单 collection 不动、向后兼容、检索可选 scope、最小改动面。**取舍**:依赖 mem0ai search 是否支持 metadata filter(design 阶段必须 web-verify mem0ai 官方 API,标 UNVERIFIED until verified)。若 mem0ai 不支持 filter,fallback 到 O2(多 collection)或在检索后做 client-side filter。**作为提案不强制实施** —— 仅当 §5.4 Phase 4 触发条件满足(检索噪音可观测)才落地。
+**推荐**:**O1(metadata filter)**。理由:单 collection 不动、向后兼容、检索可选 scope、最小改动面。**取舍**:O1 依赖的 mem0ai metadata filter API **已 web-verify 支持**(§11.1,装机版 `mem0ai 1.0.11`;算子限 `eq`/`contains`/`ne`)—— R5 风险消解。若未来解除 `<2.0.0` pin 升 2.x,需把现行顶层 `user_id=` kwarg 迁进 `filters=`(§11.1 注)。若某装机版本不支持 filter,fallback 到 O2(多 collection)或检索后 client-side filter。**作为提案不强制实施** —— 仅当 §5.4 Phase 4 触发条件满足(检索噪音可观测)才落地。
 
 > **建议(非强制)**:`shared_memory` MCP 的 scope 在 design 阶段实测;若证实跨 lane/process 共享且持久,可作为 mem0 之外的轻量跨 department 显式记忆通道(agent 主动 write/read,区别于 mem0 的被动 hook 注入)。本 ADR 标为候选,不下结论。
 
@@ -346,9 +347,9 @@ Manager B = side lane (dept B)     @ ${MERCURY_ROOT}/Mercury-deptB  (lane 3)
 | R2 | over-spawning:简单任务也开三层 → token/quota 浪费 | HIGH | MEDIUM | §7.3 决策规则:默认两层,仅可并行子工作 ≥2 才开 Employee 层;沿用 #319 quota pause marker |
 | R3 | Employee file-edit 的 auto-worktree branch 失管(无自动 merge)→ 产物丢失或污染 | MEDIUM | MEDIUM | N3(§5.3)标准化 Manager 的 reconciliation 步骤;read-only Employee 不触发;commit before exit |
 | R4 | department 数增多 → mem0 检索噪音上升(无 per-dept scope) | MEDIUM | MEDIUM(随 dept 数) | §6.2 O1 metadata filter(Phase 4 条件触发);department 少时(2-4)噪音可接受,不急 |
-| R5 | mem0ai search 不支持 metadata filter → O1 不可行 | MEDIUM | LOW | design 阶段 web-verify mem0ai API(标 UNVERIFIED);fallback O2 多 collection / client-side filter |
+| R5 | mem0ai search 不支持 metadata filter → O1 不可行 | MEDIUM→**消解** | LOW | **已 web-verify(§11.1):装机版 `mem0ai 1.0.11` 的 `search()`/`get_all()` 支持 `filters=` metadata 过滤,O1 前提成立。** 残留风险仅"未来解除 `<2.0.0` pin 升 2.x 时 `user_id=` kwarg 需迁移进 `filters=`";fallback O2 多 collection / client-side filter 仍备选 |
 | R6 | 5-lane cap 限制 department 并行数(>4 dept 无法并行) | LOW | LOW | 单用户尺度 4 dept 已足;若需更多,先评估是否真有 4+ 可并行目标(over-spawning 反模式) |
-| R7 | `shared_memory` MCP scope 与假设不符(非跨 process 共享) | LOW | MEDIUM | §6.1 标 UNVERIFIED;design 阶段实测;不作硬依赖,mem0 是主记忆栈 |
+| R7 | `shared_memory` MCP scope 与假设不符 | LOW→**澄清** | MEDIUM | **已源码核实(§11.2,OMC v4.13.2)**:文件锁**跨进程安全**(原"非跨 process"假设系误判),但默认 **per-worktree** → 不自动跨 lane;跨 department 共享需各 lane 传同一 `workingDirectory` 或设 `OMC_STATE_DIR`。TTL ≤ 7 天 = 临时协调非持久记忆。不作硬依赖结论不变,mem0 仍是主记忆栈 |
 | R8 | 三层 depth=1 sub-agent 限制误读 → 试图让 Employee 再 spawn | LOW | LOW | §3.3 官方原文 "subagents cannot spawn other subagents";Employee 是天花板,不能成 sub-Manager |
 | R9 | Manager(side lane)被误降格为 subagent(失去 dispatch 能力) | MEDIUM | LOW | Manager 必须是 independent Claude Code 进程(`claude` / `claude --bg` 启的 main session),不能用 `Agent` tool 从 main lane spawn 成 subagent |
 
@@ -362,7 +363,7 @@ Manager B = side lane (dept B)     @ ${MERCURY_ROOT}/Mercury-deptB  (lane 3)
 
 **GO-promotion 条件(若推进 Phase 2 PoC)**:
 1. 2 side lane 作 2 Department 手动开通,落在 3-lane(≤5 cap)。
-2. ≥1 个 Manager(side lane)成功 dispatch ≥1 个 Employee sub-agent(三层 depth-3 跑通,empirical 验证 side lane 作 main session 能 spawn subagent)。
+2. ≥1 个 Manager(side lane)成功 dispatch ≥1 个 Employee sub-agent(三层 depth-3 跑通)。**注:平台能力已 doc-confirmed(§11.3 —— agent-view docs "the session can start new subagents",bg session = 完整 main session),本条降级为"在真实 Mercury side lane 实跑确认",非"能力存疑"。**
 3. Employee file-edit 经 N3 worktree 流程产出可 merge 的 diff(或 read-only Employee 验证无 worktree 触发)。
 4. mem0 跨 department 记忆可检索(O1 metadata 设计前先验证全局共享现状)。
 
@@ -372,7 +373,7 @@ Manager B = side lane (dept B)     @ ${MERCURY_ROOT}/Mercury-deptB  (lane 3)
 - **#155 保持 OPEN**(设计提案,非实现);P2 实现优先级不高,调研可优先。
 - **不改 DIRECTION.md / EXECUTION-PLAN.md** —— 本 ADR 的 DIRECTION 增补均为 *建议*(§2 / §6 标注),需用户独立决策。
 - Phase 2 PoC **不需先建任何协调脚本** —— 纯手动跑 2 department 验证三层结构本身;协调自动化(Dim1.3 + N1/N2/N3)留 Phase 3 条件触发。
-- design 阶段必做 web-verify:(a) mem0ai search 是否支持 metadata filter(O1 前置);(b) `shared_memory` MCP 真实 scope(R7)。
+- ~~design 阶段必做 web-verify~~ **已于 S143 完成(2026-05-26,§11)**:(a) mem0ai metadata filter VERIFIED-YES(装机版 1.0.11,§11.1);(b) `shared_memory` MCP scope 已源码核实(§11.2)。Phase 2 起不再有"待 web-verify"门槛,仅余 Mercury 场景 empirical 实跑(GO 条件 2-4,§11.3 降级说明)。
 - 三层是 **per-department 可选升级**,默认两层;仅可并行子工作 ≥2 才开 Employee 层(§7.3 决策规则,防 over-spawning)。
 
 > **建议未来 DIRECTION 增补(非强制)**:若用户决定常态化多 department 并行,DIRECTION.md 可考虑新增 "多团队并行(Department)" 章节,记录 lane-as-process 三层映射 + per-department 同构原子单元 + over-spawning 决策规则。**这是建议,不在本 ADR 范围内实施。**
@@ -389,6 +390,8 @@ Manager B = side lane (dept B)     @ ${MERCURY_ROOT}/Mercury-deptB  (lane 3)
 - [2] Subagents — "Subagents cannot spawn other subagents"(嵌套深度硬限制=1)/ "This restriction only applies to agents running as the main thread with `claude --agent`. ... `Agent(agent_type)` has no effect in subagent definitions" / `memory:` frontmatter(`project`=`.claude/agent-memory/<name>/`,`user`=`~/.claude/agent-memory/<name>/`,`local`=`.claude/agent-memory-local/<name>/`,注入 MEMORY.md 前 200 行/25KB): <https://code.claude.com/docs/en/sub-agents>(fetched 2026-05-24)
 - [3] Managed Agents API(平台层)— coordinator+worker,"coordinator can only delegate to one level of agents; depth > 1 is ignored",最多 20 unique agents / 25 并发 threads(cited 页支撑 depth 限制 + roster/thread caps;**该页本身不规定 auth 方式**,auth 以官方 auth docs 为准 —— 走平台 API 路径而非 Claude Code CLI subscription 路径): <https://platform.claude.com/docs/en/managed-agents/multi-agent>(#319 Dim3.1 引用,fetched 2026-05-24)
 - [4] Git worktrees(`isolation: worktree` 行为参考): <https://code.claude.com/docs/en/worktrees>(fetched 2026-05-24)
+- [5] Agent view / background agents(§11.3 web-verify 新增)— "Each background session is a full Claude Code conversation" / "the session can start new subagents" / bg session 自动进 `.claude/worktrees/` 隔离 + `worktree.bgIsolation:"none"`(CLI v2.1.143+): <https://code.claude.com/docs/en/agent-view>(fetched 2026-05-26)
+- [6] mem0 metadata filter(§11.1 web-verify 新增)— OSS `Memory` `search()`/`get_all()` `filters=` 支持 metadata 等值过滤;算子限 `eq`/`contains`/`ne`: <https://docs.mem0.ai/core-concepts/memory-operations/search> + <https://docs.mem0.ai/platform/features/v2-memory-filters> + <https://docs.mem0.ai/migration/api-changes>(fetched 2026-05-26);装机版 `mem0ai 1.0.11`(pin `~/.claude/pyproject.toml` `>=1.0.11,<2.0.0`,PyPI <https://pypi.org/project/mem0ai/>)
 
 ### Mercury-内部引用(非外部 vendor 源)
 
@@ -397,13 +400,112 @@ Manager B = side lane (dept B)     @ ${MERCURY_ROOT}/Mercury-deptB  (lane 3)
 - [#386] `agent-view-multi-lane-adaptation-2026-05.md` — multi-lane v1 现状(并行 lane / worktree / branch / bg dispatch `isolation:"none"` / SessionStart hook fire / agent view 监控): `.mercury/docs/research/agent-view-multi-lane-adaptation-2026-05.md`
 - [#391] `agent-view-phase6-empirical-2026-05.md` — file-editing bg/sub-agent auto-worktree HYBRID(`tool_use_error`→`EnterWorktree`→branch `worktree-<name>`,`ExitWorktree` 无自动 merge): `.mercury/docs/research/agent-view-phase6-empirical-2026-05.md`(经 #386 引用)
 - [mem0] 运行时 canonical = `~/.claude/scripts/mem0_bridge.py` + `mem0_hooks.py`(用户级,见 CLAUDE.md Related Repositories);**repo 内可审阅副本 = `scripts/mem0_hooks.py`**(version-tracked)— `_DEFAULT_USER = "mercury"`(L30)、`_DEDUP_THRESHOLD = 0.92`(L31,cosine≥0.92 dedup)、`collection_name "mercury"`(L82);引用 repo 副本稳定行号,不依赖会漂移的 user-level 行号。跨 department 记忆共享现状依据
-- [shared_memory MCP] `mcp__plugin_oh-my-claudecode_t__shared_memory_{write,read,list,delete,cleanup}` — 本 ADR 起草 session 工具列表可见;**scope UNVERIFIED**(跨 process/lane 共享 + 持久化位置待 design 阶段实测)
+- [shared_memory MCP] `mcp__plugin_oh-my-claudecode_t__shared_memory_{write,read,list,delete,cleanup}` — **scope 已源码核实(§11.2,OMC v4.13.2)**:文件型 KV `<root>/.omc/state/shared-memory/`,文件锁跨进程安全,默认 per-worktree(不自动跨 lane),TTL ≤ 7 天,config gate 默认 enabled。源码 `~/.claude/plugins/marketplaces/omc/src/lib/shared-memory.ts` 等
 - DIRECTION.md(最高准则;本 ADR 仅 *建议* 增补,不直接改): `.mercury/docs/DIRECTION.md`
 - multi-lane v1 protocol(authority): `memory/feedback_lane_protocol.md` v1(user-memory,不在 repo)+ `.mercury/docs/guides/lane-naming.md`(in-repo worktree/branch convention)
 - CLAUDE.md: MANDATORY RESEARCH PROTOCOL / modular design / Issue-first / 5-lane cap context
 
-### UNVERIFIED 项(design 阶段须 web-verify,作为 Phase 2/3 验收门槛)
+### 已核实项(2026-05-26 S143 web-verify pass — 原 UNVERIFIED 三项全部 resolved,详见 §11)
 
-1. **mem0ai search 是否支持 metadata filter**(O1 前置)— 决定 per-department namespace 方案;UNVERIFIED until verified against mem0ai 官方 API docs。
-2. **`shared_memory` MCP 真实 scope**(R7)— 跨 process/lane 是否共享、持久化位置;UNVERIFIED,design 阶段实测,不作硬依赖。
-3. **side lane(bg session)作 main session dispatch sub-agent 的 empirical 确认**(GO 条件 2)— #386 已证 bg session `isolation:"none"` 是独立 session + SessionStart hook fire;但 "bg session 内部成功 spawn sub-agent" 本身需 Phase 2 empirical 跑通(理论上 main session 可 spawn sub-agent,但 bg session 场景下 sub-agent dispatch 行为未在 #386/#391 直接 verify)。
+起草时(2026-05-24 S135)标的 3 个 UNVERIFIED 项已于 2026-05-26(S143,develop @ `af7953c`)全部 web-verify / 源码核实。结论摘要如下,完整证据 + 来源 URL 见 **§11**:
+
+1. **mem0ai search 是否支持 metadata filter**(O1 前置)— **VERIFIED-YES**(对 Mercury 实际安装版本 `mem0ai 1.0.11`):OSS `Memory` 类 `search()`/`get_all()` 接受 `filters=` 参数,支持按自定义 metadata(如 `department_id`)等值过滤;算子受限(`eq`/`contains`/`ne`,不支持 `in`/`gt`/`lt`)。O1 方案前提成立。详见 §11.1。
+2. **`shared_memory` MCP 真实 scope**(R7)— **VERIFIED(源码核实 OMC v4.13.2)**:文件型 KV store(`<root>/.omc/state/shared-memory/{ns}/{key}.json`,`root` 默认按 worktree/cwd),文件锁跨进程安全,TTL ≤ 7 天(临时协调,非持久记忆),config gate `agents.sharedMemory.enabled` 默认 enabled。**默认 per-worktree → 不自动跨 lane**;跨 department 共享需各 lane 传同一 `workingDirectory` 或设 `OMC_STATE_DIR`。详见 §11.2。
+3. **bg session 作 main session dispatch sub-agent**(GO 条件 2)— **VERIFIED-YES(平台能力层,官方文档)**:agent-view docs 明确 "the session can start new subagents";bg session = 完整独立 main session(非 subagent)。平台能力已 doc-confirmed;Mercury 场景的 empirical 跑通仍属 Phase 2 PoC(GO 条件 2 现降级为"实跑确认",非"能力存疑")。详见 §11.3。
+
+---
+
+## 11. Web-verify 结论(2026-05-26,S143)— 3 个 UNVERIFIED 项核实记录
+
+> 本节是 §10 末尾原 3 个 UNVERIFIED 项的权威核实记录。核实在 develop @ `af7953c`(S143 web-verify pass,Issue #155 research 收尾)进行。外部 SDK/API 对照官方文档(MANDATORY RESEARCH PROTOCOL);OMC 内部机制对照 plugin 源码(OMC v4.13.2)。本节不改 verdict(§9 CONDITIONAL_GO 不变),仅把"待验证门槛"转为"已验证事实",并据此微调 R5/R7 与 GO 条件 2。
+
+### 11.1 mem0ai metadata filter —— VERIFIED-YES(对 `mem0ai 1.0.11`)
+
+**问题**:O1 方案(per-department namespace = 写入 `metadata={"department_id": ...}` + 检索按其过滤)是否被 mem0ai 检索 API 支持。
+
+**核实版本前提(重要)**:Mercury mem0 层实际安装 **`mem0ai 1.0.11`**(`~/.claude/pyproject.toml` pin `mem0ai>=1.0.11,<2.0.0`;`~/.claude/uv.lock` 锁 1.0.11,sdist upload 2026-04-06)。**不是** PyPI 当前最新的 2.0.2。下述结论针对 1.0.x 线核实。
+
+**结论**:**VERIFIED-YES**。OSS 自托管 `Memory` 类(Mercury 经 `scripts/mem0_hooks.py` 用的就是它,配本地 Qdrant)的 `search()` / `get_all()` 接受 `filters=` 参数,可按自定义 metadata 字段(如 `department_id`)做等值过滤:
+
+```python
+# 写入(add 时附 metadata)
+m.add(messages, user_id="mercury", metadata={"department_id": "deptA"})
+
+# 检索(filters 组合 user_id + metadata)
+m.search(query, filters={"AND": [
+    {"user_id": "mercury"},
+    {"metadata": {"department_id": "deptA"}},
+]})
+```
+
+**算子限制(落地注意)**:metadata 字段算子比实体 ID(`user_id`/`agent_id` 等)窄 —— 支持等值 / `contains` / `ne`,**不支持** `in` / `gt` / `lt` 等(否则触发 `FilterValidationError`);多值匹配须用 `OR` 包多个等值条件替代 `in`。`filters=` 在 `search`/`get_all`/导出/删除通用。
+
+**版本-增量含义**:1.0.0 Beta migration 文档记录 `search()` 从"基础键值过滤"升级到"算子 + 逻辑组合过滤",1.0.11 在此线内 → metadata filter 可用。**O1 是对现有 `mem0_hooks.py` 的增量改动**(add 加一个 metadata key + search 加 `filters`),现行 `user_id=_DEFAULT_USER` 调用不受影响(1.0.x 仍接受顶层 `user_id` kwarg;2.x/3.x 才要求全部进 `filters={}` —— Mercury pin `<2.0.0` 故不受该 break 影响,但**未来若解除 pin 升 2.x,`mem0_hooks.py` 的 `user_id=` 调用需迁移进 `filters=`**,此为 O1 落地前的版本依赖注意点)。
+
+**对 ADR 的影响**:R5("mem0ai 不支持 filter → O1 不可行")**风险消解**(filter 在装机版本可用);O1 维持为 §6.2 推荐方案,落地仅需 Phase 4 触发条件满足 + 按装机版本 pin filter 语法。
+
+**来源**(fetch 2026-05-26):
+- mem0 v2 Memory Filters:<https://docs.mem0.ai/platform/features/v2-memory-filters>
+- mem0 Search Memory:<https://docs.mem0.ai/core-concepts/memory-operations/search>
+- mem0 API changes (v0.x → v1.0.0):<https://docs.mem0.ai/migration/api-changes>
+- mem0ai PyPI(当前 2.0.2;Mercury pin 1.0.11):<https://pypi.org/project/mem0ai/>
+- 装机版本实测:`~/.claude/.venv` `importlib.metadata.version("mem0ai")` → `1.0.11`;pin 见 `~/.claude/pyproject.toml` + `~/.claude/uv.lock`
+
+### 11.2 `shared_memory` MCP scope —— VERIFIED(源码核实 OMC v4.13.2)
+
+**问题**:OMC `shared_memory` MCP(`mcp__plugin_oh-my-claudecode_t__shared_memory_*`)的真实 scope —— 跨 process/lane 是否共享、持久化位置;能否作 mem0 之外的显式跨 department 记忆通道(R7)。
+
+**核实方法**:读 OMC plugin 源码 `~/.claude/plugins/marketplaces/omc/src/lib/shared-memory.ts` + `.../tools/shared-memory-tools.ts` + `.../lib/worktree-paths.ts`(`getOmcRoot`),交叉 `docs/TOOLS.md`。
+
+**结论**(以下 scope 事实全部源码可证;唯下方来源行的 OMC issue-URL 系源码注释转录、未 web-fetch,单独标 UNVERIFIED):
+
+| 维度 | 事实 | 来源(OMC v4.13.2 源码) |
+|---|---|---|
+| **存储** | 文件型 JSON KV:`<root>/.omc/state/shared-memory/{namespace}/{key}.json` | `shared-memory.ts` `SHARED_MEMORY_DIR='state/shared-memory'` + `getNamespaceDir` |
+| **root 解析** | `getOmcRoot(worktreeRoot)`:无 `OMC_STATE_DIR` 时 = `join(worktreeRoot ?? getWorktreeRoot() ?? cwd, '.omc')`;设 `OMC_STATE_DIR` 时 = `join(OMC_STATE_DIR, getProjectIdentifier(root))`(集中化,projectId 同项目稳定) | `worktree-paths.ts` `getOmcRoot` L193-215 |
+| **跨进程安全** | 写走 `withFileLockSync(timeoutMs:500, retryDelayMs:25)`+ tmp-write→`renameSync` 原子替换,锁失败 best-effort 回退无锁写;有 concurrency + lock-timeout 单测 | `shared-memory.ts` `writeEntry` L199-203 |
+| **namespace + TTL** | namespace/key 校验(alphanumeric + `.-_`,禁 `..` 路径穿越,≤128 char);TTL 可选 ≤ 604800s(7 天),过期 entry 读时自动删 | `validateNamespace`/`validateKey`/`isExpired` |
+| **config gate** | `agents.sharedMemory.enabled` ∈ `~/.claude/.omc-config.json`;**key/文件缺失默认 enabled**(opt-out)。当前 Mercury 环境 `.omc-config.json` 无该 key → 默认启用 | `isSharedMemoryEnabled` L63-74;实测 `.omc-config.json` 无 sharedMemory key |
+| **设计用途** | 源码 docstring:"cross-session memory sync between agents in /team and /pipeline workflows" | `shared-memory.ts` 头注释 + `shared-memory-tools.ts` 头注释 |
+
+**对 #155 的 scope 判定**:
+- **是**跨进程 / 跨 session 安全的协调通道(文件锁),专为 `/team`、`/pipeline` 多 agent 协调设计 —— **修正 R7 原假设**("非跨 process 共享"是误判:它跨进程安全)。
+- **但**默认 scope = **per-worktree-root**(`getWorktreeRoot()`)。Mercury 每 lane 独立 worktree(`${MERCURY_ROOT}/Mercury-<short>`)→ 各 lane 的 `.omc/state/shared-memory/` **互不相通**,**不自动跨 lane/department 共享**。
+- **跨 department 显式共享的两条落地路径**:(a) 各 lane 调 `shared_memory_*` 时传同一 `workingDirectory`(指向共享 root,如 main checkout);(b) 设 `OMC_STATE_DIR` env → 集中化 store 按 `getProjectIdentifier` 聚合(同项目各 worktree 映射同一 store)。再配一个 `department-shared` namespace 即成显式跨 dept 通道。
+- **关键取舍 vs mem0**:shared_memory **TTL ≤ 7 天 = 临时协调**(handoff / 进行中状态),**非持久记忆**;mem0 仍是 §6 的**持久**跨 department 记忆层。两者互补:mem0 = 任务后沉淀的长期经验池;shared_memory = 任务中的短时显式 handoff 通道(若启用 + 配共享 root)。
+
+**对 ADR 的影响**:R7 由"scope 与假设不符(可能非跨 process)"更新为"scope 已核实:跨进程安全但默认 per-worktree,跨 lane 需共享 root/`OMC_STATE_DIR`";§6.1 表 `shared_memory` 行去 UNVERIFIED。**不作硬依赖**结论不变(mem0 仍是主记忆栈;shared_memory 是可选显式通道)。
+
+**来源**:OMC plugin 源码 `~/.claude/plugins/marketplaces/omc/src/lib/shared-memory.ts` / `tools/shared-memory-tools.ts` / `lib/worktree-paths.ts` / `docs/TOOLS.md`(OMC v4.13.2,cache 路径 `~/.claude/plugins/cache/omc/oh-my-claudecode/4.13.2/`);OMC issue ref 见源码头注释 <https://github.com/anthropics/oh-my-claudecode/issues/1119>(注:该 GitHub repo path 为源码注释原文转录,**UNVERIFIED — 未 web-fetch 该 URL**)。
+
+### 11.3 bg session dispatch sub-agent —— VERIFIED-YES(平台能力层,官方文档)
+
+**问题**:side lane(`claude --bg` 启的 bg session,平台视角 main session)能否 dispatch 自己的 sub-agent(Employee)—— 三层 lane-as-process 的 GO 条件 2 / §3.3 的关键能力假设。
+
+**结论**:**VERIFIED-YES(平台能力层)**。官方 agent-view 文档明确(逐字):
+
+- "Each background session is a full Claude Code conversation that keeps running without a terminal attached" —— bg session = 完整 main session。
+- "Once in the background, **the session can start new subagents**, monitors, and background commands, and those keep running across later detach and reattach." —— bg session **可** spawn subagent。
+- Troubleshooting "Cannot open agents because background tasks are running":列举 bg session 的 in-flight work 含 "a subagent" —— 进一步佐证 bg session 内有 subagent 运行。
+- sub-agents 文档 Note:"Subagents work within a single session. To run many independent sessions in parallel ... see background agents" —— bg session 是**独立 session**(非某 main 的 subagent),故不受 "subagents cannot spawn other subagents" 的 depth=1 限制。
+- 启动方式佐证三层:`claude --bg "<prompt>"` 起 bg main session;`claude --agent <name> --bg "..."` 可让一个 named subagent 定义作为 bg session 的 **main agent** 运行(此时它是 main thread,能 spawn subagent),区别于把它作为 subagent spawn。
+
+**降级说明(诚实标注)**:平台**能力**已 doc-confirmed(不再是"理论上")。但"Mercury 真实 side lane 场景下端到端跑通 bg-session→spawn-Employee→产出可 merge diff" 仍是 **empirical PoC**,属 §5.4 Phase 2 范畴。故 GO 条件 2 的措辞由"能力存疑待验证"降级为"实跑确认"(能力已确证,只差一次真实 dogfood)。
+
+**附带更新(N3 / Employee file-edit worktree)**:agent-view 文档给出比 #391 更新的隔离细节,可用于 §5.3 N3 落地:bg session "**Before editing files, Claude moves the session into an isolated git worktree under `.claude/worktrees/`**";若已在 linked worktree 内 / 非 git repo / 写在 cwd 外则跳过;`worktree.bgIsolation: "none"`(settings,需 CLI v2.1.143+)可整体关闭隔离。这与 #391 的 sub-agent `EnterWorktree` HYBRID 一致,且明确了 Manager 这一层(bg session 本体)也会自动进 worktree —— N3 reconciliation 同时覆盖 Manager 本体 + Employee sub-agent 两级 file-edit 产物。
+
+**来源**(fetch 2026-05-26):
+- Claude Code Agent view(background agents):<https://code.claude.com/docs/en/agent-view>
+- Claude Code Subagents("Subagents cannot spawn other subagents" + main-thread spawn + bg session Note):<https://code.claude.com/docs/en/sub-agents>
+
+### 11.4 核实对 verdict / risk / GO 条件的净影响(汇总)
+
+| 项 | 起草时(S135) | 核实后(S143) |
+|---|---|---|
+| **§9 Verdict** | CONDITIONAL_GO | **不变**(三项均朝有利方向,无新 blocker) |
+| **R5**(mem0ai 不支持 filter) | MEDIUM / LOW likelihood | **消解** —— 1.0.11 支持 filter;残留风险仅"未来升 2.x 需迁移 `user_id` 进 `filters=`" |
+| **R7**(shared_memory scope 不符) | LOW / MEDIUM likelihood | **澄清** —— 跨进程安全但默认 per-worktree;跨 lane 需共享 root/`OMC_STATE_DIR`;非硬依赖结论不变 |
+| **GO 条件 2**(bg spawn subagent) | 能力待 empirical 验证 | **能力 doc-confirmed**;仅余 Phase 2 一次真实 dogfood(措辞降级为"实跑确认") |
+| **O1 可行性**(§6.2) | 依赖 UNVERIFIED filter API | **前提成立**;Phase 4 触发条件满足即可落地(按装机版本 pin 语法) |
+
+**仍属 Phase 2/3 的 empirical(非本次能 web-verify)**:三层 depth-3 在真实 Mercury side lane 的端到端跑通(GO 条件 2-4)依然需要 Phase 2 PoC 手动 dogfood —— 本次只清掉了"平台能力 / API 是否支持"层面的不确定性,把 Phase 2 的风险从"结构是否可行"收窄到"Mercury 场景实跑是否顺畅"。
