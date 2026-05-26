@@ -35,8 +35,8 @@ The recommended `.mcp.json` args (passed *through* this wrapper) are:
   / `browser_storage_state` tools required for auth reuse (ADR §4.4). Without
   it those tools do not exist.
 - `--storage-state=<path>` — storageState file for an isolated session, kept
-  at a **repo-external per-user private path** (e.g.
-  `%LOCALAPPDATA%/mercury/playwright-mcp/auth-state.json`).
+  at a **repo-external per-user private path** supplied via
+  `$MERCURY_PLAYWRIGHT_STORAGE_STATE` (see §Setup).
 
 ## Security red lines (enforced by `launch.cjs`)
 
@@ -52,7 +52,6 @@ Only these flags are permitted (default-deny — any unknown flag is rejected):
 | `--isolated` | Enforces fresh in-memory profile (injected if omitted) |
 | `--caps` | Opt-in capabilities (e.g. `storage` for auth reuse) |
 | `--storage-state` | StorageState file path (repo-external, validated) |
-| `--user-data-dir` | Custom profile dir (repo-external, validated) |
 | `--allowed-origins` | Origin allowlist for network requests |
 | `--blocked-origins` | Origin blocklist |
 | `--headless` / `--headed` | Headless mode toggle |
@@ -85,43 +84,49 @@ Removed from allowlist (vs. Slice A first draft) and why:
    (Playwright engine names). Real-browser channel names (`chrome`, `msedge`,
    `chrome-beta`, `msedge-*`, `cdp`, …) are rejected — they attach to real
    installed browsers that hold the user's cookies.
-4. **Flag value attach-token scan.** For all non-path flags, the value is also
-   scanned for attach/connect tokens — prevents `--allowed-origins=cdp://x`
-   style value-smuggling.
-5. **Path resolution (env-var → absolute, hard-fail).** Values of
-   `--storage-state` / `--user-data-dir` are env-expanded (Windows `%VAR%`,
-   POSIX `$VAR` / `${VAR}`) and resolved to an absolute path. Unresolved tokens
-   → launch rejected (not silently passed through).
-6. **Reject repo-internal and real-profile paths.** The resolved path is
+4. **Flag value attach-token scan.** For all non-path, non-origin flags, the
+   value is scanned for attach/connect tokens — prevents `--caps=connect` style
+   value-smuggling. `--allowed-origins` / `--blocked-origins` are excluded from
+   this scan: their values are origin lists that legitimately contain substrings
+   like `remote` or `endpoint`; the real attach vector for those flags is
+   flag-name-based and already covered by rule 2.
+5. **Positional arguments rejected.** Any argument that does not start with `-`
+   is rejected (exit 2). All flag values must use `--flag=value` equals form
+   (not `--flag value` space form) except `--browser` and `--storage-state`
+   which also accept space form internally.
+6. **Path resolution (env-var → absolute, hard-fail).** Values of
+   `--storage-state` are env-expanded (`$VAR` / `${VAR}`) and resolved to an
+   absolute path. Unresolved tokens → launch rejected (not silently passed
+   through).
+7. **Reject repo-internal and real-profile paths.** The resolved path is
    canonicalized via `fs.realpathSync.native()` (resolves symlinks, Windows 8.3
    short names, junctions) before comparison. Rejected if inside the repo
    working tree (repo root resolved from `__dirname` — deterministic, no
    `git`/cwd dependency) or matching a real browser profile fragment
    (`Google/Chrome/User Data`, `Microsoft/Edge/User Data`, …; case- and
    slash-insensitive).
-7. **Repo-root fail-closed.** If the adapter cannot determine the repo root
+8. **Repo-root fail-closed.** If the adapter cannot determine the repo root
    (unusual deployment), path-type flags are rejected rather than silently
    allowed.
 
 Any violation → stderr error + exit `2` (config gate reject) or `3`
 (CLI cache absent — see §Setup). The MCP server never starts with an unsafe config.
 
-> The `.mcp.json` entry uses `%LOCALAPPDATA%/...` as the storage-state path.
-> That env var is expanded **by this wrapper at launch time** (rule 3). If the
-> runtime environment does not define it, the wrapper hard-fails rather than
-> pointing at a literal `%LOCALAPPDATA%` directory.
+> The `.mcp.json` entry uses `$MERCURY_PLAYWRIGHT_STORAGE_STATE` as the
+> storage-state path. Export this env var to point at your repo-external private
+> auth-state file before starting Slice B live sessions. If the variable is
+> unset, the wrapper hard-fails at launch (fail-closed — never silently
+> passes an unresolved path).
+>
+> **Value form requirement:** all flag values (except `--browser` and
+> `--storage-state`) must use `--flag=value` equals form. Space-separated
+> positional values are rejected by the config gate (exit 2).
 
 ## Setup (one-time provision)
 
 Before first use, provision the pinned package into the per-user cache. This
 is a **one-time step** — Slice A does not need it for gate tests, only for
 actual browser spawning (Slice B).
-
-```
-npm install --no-save --no-fund --no-audit \
-  --prefix "%LOCALAPPDATA%\..\..\.cache\mercury\playwright-mcp\0.0.75" \
-  @playwright/mcp@0.0.75
-```
 
 Cross-platform form (matches the path `launch.cjs` resolves via `os.homedir()`):
 
@@ -133,6 +138,17 @@ npm install --no-save --no-fund --no-audit \
 
 If the cache is absent at launch time, the adapter exits 3 and prints the
 exact command to run (fail-closed — it never auto-installs at runtime).
+
+Before Slice B live sessions, also export the storage-state env var pointing
+at a **repo-external** private path:
+
+```sh
+# PowerShell (Windows)
+$env:MERCURY_PLAYWRIGHT_STORAGE_STATE = "$env:LOCALAPPDATA\mercury\playwright-mcp\auth-state.json"
+
+# POSIX shell
+export MERCURY_PLAYWRIGHT_STORAGE_STATE="$HOME/.local/mercury/playwright-mcp/auth-state.json"
+```
 
 ## How it runs (spawn form)
 
@@ -167,7 +183,7 @@ The server is registered in the repo-root `.mcp.json` under `playwright`:
     "args": [
       "./adapters/playwright-mcp/launch.cjs",
       "--isolated", "--caps=storage",
-      "--storage-state=%LOCALAPPDATA%/mercury/playwright-mcp/auth-state.json"
+      "--storage-state=$MERCURY_PLAYWRIGHT_STORAGE_STATE"
     ]
   }
 }

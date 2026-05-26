@@ -25,6 +25,7 @@ to `modules/` and (2) `uvx git+<repo>@<SHA>` runtime-only (gpt-image-2). See
 | Pinned date | 2026-05-26 |
 | bin | `{ "playwright-mcp": "cli.js" }` |
 | License | Apache-2.0 |
+| import_pr | 459 |
 
 ### npm-version ↔ git-tag mapping (important)
 

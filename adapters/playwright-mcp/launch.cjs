@@ -101,7 +101,7 @@ function buildSafeArgs(rawArgs, opts = {}) {
   let hasIsolated = false;
   for (let i = 0; i < rawArgs.length; i++) {
     const arg = rawArgs[i];
-    if (typeof arg !== 'string' || !arg.startsWith('-')) { out.push(arg); continue; }
+    if (typeof arg !== 'string' || !arg.startsWith('-')) throw new Error('positional arguments are not allowed by config gate (use --flag=value): ' + String(arg));
     const eq = arg.indexOf('=');
     const flag = eq >= 0 ? arg.slice(0, eq) : arg;
     let value = eq >= 0 ? arg.slice(eq + 1) : undefined;
@@ -120,14 +120,14 @@ function buildSafeArgs(rawArgs, opts = {}) {
       if (eq < 0) out.push(value);
       continue;
     }
-    // Value-smuggling guard: scan non-path flag values for attach tokens.
-    if (!PATH_VALUE_FLAGS.has(flag) && value !== undefined && isAttachValue(value))
+    // Value-smuggling guard: scan non-path, non-origin flag values for attach tokens.
+    // --allowed-origins/--blocked-origins are excluded: their values are origin lists that
+    // legitimately contain substrings like "remote" or "endpoint" (ADR §4.3; the real
+    // attach vector is flag-name-based and already covered by the whole-class reject above).
+    // Note: space-form values for these flags are now rejected as positional args (see above).
+    if (!PATH_VALUE_FLAGS.has(flag) && flag !== '--allowed-origins' && flag !== '--blocked-origins'
+        && value !== undefined && isAttachValue(value))
       throw new Error(`flag value contains attach/connect token (rejected): ${flag}=${value}`);
-    if (!PATH_VALUE_FLAGS.has(flag) && value === undefined && i + 1 < rawArgs.length) {
-      const next = rawArgs[i + 1];
-      if (typeof next === 'string' && !next.startsWith('-') && isAttachValue(next))
-        throw new Error(`flag value contains attach/connect token (rejected): ${flag} ${next}`);
-    }
     if (PATH_VALUE_FLAGS.has(flag)) {
       if (value === undefined) value = rawArgs[++i];
       if (value === undefined) throw new Error(`${flag} requires a value`);

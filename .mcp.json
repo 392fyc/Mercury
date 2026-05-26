@@ -21,7 +21,7 @@
         "./adapters/playwright-mcp/launch.cjs",
         "--isolated",
         "--caps=storage",
-        "--storage-state=%LOCALAPPDATA%/mercury/playwright-mcp/auth-state.json"
+        "--storage-state=$MERCURY_PLAYWRIGHT_STORAGE_STATE"
       ]
     }
   }

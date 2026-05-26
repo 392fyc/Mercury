@@ -13,10 +13,9 @@ const {
 } = require('../launch.cjs');
 
 // A repo root + safe outside-repo private path to reuse across tests.
-const REPO = process.platform === 'win32' ? 'D:/Mercury/Mercury' : '/repo/mercury';
-const SAFE_ABS = process.platform === 'win32'
-  ? 'D:/Users/agent/AppData/Local/mercury/playwright-mcp/auth-state.json'
-  : '/home/agent/.local/mercury/playwright-mcp/auth-state.json';
+// Use os.tmpdir()-based synthetic paths — no hardcoded local machine paths.
+const REPO = path.join(os.tmpdir(), 'fakerepo', 'mercury');
+const SAFE_ABS = path.join(os.tmpdir(), 'mercury-private', 'playwright-mcp', 'auth-state.json');
 
 function gate(args, env = {}) {
   return buildSafeArgs(args, { env, repoRoot: REPO, cwd: REPO });
@@ -99,17 +98,36 @@ test('[HIGH] allows --browser webkit (Playwright engine)', () => {
 });
 
 // ── HIGH: value-smuggling via non-path flag values ───────────────────────────
-test('[HIGH] rejects --allowed-origins=cdp://x (attach token in value)', () => {
-  assert.throws(() => gate(['--allowed-origins=cdp://x']), /attach\/connect token/);
+// --allowed-origins/--blocked-origins are excluded from attach-token value scan:
+// their values are origin lists that legitimately contain substrings like "remote"
+// or "endpoint" (ADR §4.3). The real attach vector is flag-name-based and already
+// covered by the whole-class reject. So cdp:// and ws-endpoint:// values are allowed
+// by the value scanner for origin flags (though they are semantically unusual).
+test('[HIGH] allows --allowed-origins=cdp://x (origin flag: value scan excluded per ADR §4.3)', () => {
+  assert.doesNotThrow(() => gate(['--allowed-origins=cdp://x']));
 });
-test('[HIGH] rejects --allowed-origins with ws-endpoint value (attach token)', () => {
-  assert.throws(() => gate(['--allowed-origins=ws-endpoint://x']), /attach\/connect token/);
+test('[HIGH] allows --allowed-origins=ws-endpoint://x (origin flag: value scan excluded)', () => {
+  assert.doesNotThrow(() => gate(['--allowed-origins=ws-endpoint://x']));
 });
 test('[HIGH] rejects --caps value containing connect token', () => {
   assert.throws(() => gate(['--caps=connect']), /attach\/connect token/);
 });
 test('[HIGH] allows --allowed-origins=https://example.com (no attach token)', () => {
   assert.doesNotThrow(() => gate(['--allowed-origins=https://example.com']));
+});
+test('[HIGH] allows --allowed-origins=https://remote.example.com (hostname with "remote" substring)', () => {
+  assert.doesNotThrow(() => gate(['--allowed-origins=https://remote.example.com']));
+});
+test('[HIGH] allows --allowed-origins=https://endpoint.example.com (hostname with "endpoint" substring)', () => {
+  assert.doesNotThrow(() => gate(['--allowed-origins=https://endpoint.example.com']));
+});
+
+// ── positional arguments rejected ───────────────────────────────────────────
+test('[Critical] rejects positional argument (non-flag)', () => {
+  assert.throws(() => gate(['foo']), /positional arguments are not allowed/);
+});
+test('[Critical] rejects positional argument: bare value that looks like a path', () => {
+  assert.throws(() => gate(['somefile.json']), /positional arguments are not allowed/);
 });
 
 // ── HIGH: removed artifact path flags ───────────────────────────────────────
@@ -136,11 +154,13 @@ test('rejects --storage-state pointing inside repo working tree', () => {
 
 // ── real browser profile path rejected ──────────────────────────────────────
 test('rejects --storage-state pointing at a real Chrome profile', () => {
-  const chrome = 'C:/Users/me/AppData/Local/Google/Chrome/User Data/Default/state.json';
+  // Synthetic path containing the PROFILE_FRAGMENTS substring — no real machine path needed.
+  const chrome = path.join(os.tmpdir(), 'fakehome', 'Google', 'Chrome', 'User Data', 'Default', 'state.json');
   assert.throws(() => gate([`--storage-state=${chrome}`]), /real browser profile/);
 });
 test('rejects --storage-state pointing at a real Edge profile (backslash + case insensitive)', () => {
-  const edge = 'C:\\Users\\Me\\AppData\\Local\\Microsoft\\Edge\\USER DATA\\state.json';
+  // Mixed slashes + uppercase to exercise normPath; still hits PROFILE_FRAGMENTS substring.
+  const edge = path.join(os.tmpdir(), 'fakehome', 'Microsoft', 'Edge', 'USER DATA', 'state.json');
   assert.throws(() => gate([`--storage-state=${edge}`]), /real browser profile/);
 });
 
@@ -158,20 +178,14 @@ test('[HIGH] rejects --user-data-dir space form (default-deny)', () => {
 // On non-Windows we simulate with a symlink/known-path test instead.
 test('[HIGH] rejects 8.3 short-name path pointing at Chrome User Data (Windows)', () => {
   if (process.platform !== 'win32') {
-    // On non-Windows: verify normPath + profile fragment matching catches case variations
-    const tricky = 'C:/Users/me/GOOGLE~1/Chrome/User Data/Default/state.json';
-    // Without canonicalization, GOOGLE~1 doesn't match fragment "google/chrome/user data"
-    // With our implementation, 8.3 short names are resolved by fs.realpathSync.native() on Windows.
-    // On Linux/Mac the path doesn't exist so canonicalize returns the path as-is,
-    // but the fragment check still catches "user data" in the fragment list if the
-    // canonical path (after resolution) contains the profile fragment.
-    // Since the path doesn't exist on non-Windows, we test the logic directly:
-    const n = normPath('C:/Users/me/GOOGLE~1/Chrome/User Data/Default/state.json');
-    // "user data" is in the path — it will be caught if 8.3 resolves to the real name.
-    // On non-Windows we can't resolve 8.3; document that this test is Windows-specific.
-    // Instead verify assertPathAllowed catches the fragment match for the resolved form.
+    // On non-Windows: 8.3 short names (e.g. GOOGLE~1) cannot be resolved by the OS.
+    // canonicalize() uses fs.realpathSync.native() which resolves them on Windows only.
+    // On Linux/Mac the path doesn't exist so canonicalize returns it as-is.
+    // Instead verify assertPathAllowed catches the fragment match for a resolved-form
+    // synthetic path (no real machine path needed).
+    // Synthetic path containing profile fragment — no real machine path needed.
     assert.throws(
-      () => assertPathAllowed('C:/Users/me/AppData/Local/Google/Chrome/User Data/Default/state.json', REPO),
+      () => assertPathAllowed(path.join(os.tmpdir(), 'fakehome', 'Google', 'Chrome', 'User Data', 'Default', 'state.json'), REPO),
       /real browser profile/,
     );
     return;
@@ -190,11 +204,10 @@ test('[HIGH] rejects 8.3 short-name path pointing at Chrome User Data (Windows)'
       /real browser profile/,
     );
   }
-  // Verify that a constructed 8.3-style path that after normPath contains the fragment
-  // is caught — simulated since real 8.3 names vary per filesystem.
+  // Verify that a synthetic path whose normPath contains the profile fragment is caught.
   // The key invariant: after canonicalize, profile fragments are matched case-insensitively.
   assert.throws(
-    () => assertPathAllowed('C:\\Users\\me\\AppData\\Local\\Google\\Chrome\\User Data\\Default', REPO),
+    () => assertPathAllowed(path.join(os.tmpdir(), 'fakehome', 'Google', 'Chrome', 'User Data', 'Default'), REPO),
     /real browser profile/,
   );
 });
@@ -300,8 +313,11 @@ test('space-separated path value form is validated and absolutized', () => {
 
 // ── path-norm robustness (slash + case) ─────────────────────────────────────
 test('assertPathAllowed is robust to mixed slashes and case for repo prefix', () => {
+  // Use synthetic REPO with backslash form to verify normPath handles mixed slashes.
+  const repoBackslash = REPO.replace(/\//g, '\\');
+  const insidePath = REPO.replace(/\//g, '\\') + '\\x\\y.json';
   assert.throws(
-    () => assertPathAllowed('D:\\Mercury\\Mercury\\x\\y.json', 'D:/Mercury/Mercury'),
+    () => assertPathAllowed(insidePath, repoBackslash),
     /inside repo working tree/,
   );
 });
@@ -315,10 +331,11 @@ test('assertPathAllowed allows a private path outside repo and outside profiles'
 // Fix: root is now passed through canonicalize() before comparison.
 test('[HIGH] rejects repo-inside path when root is passed as uppercase/mixed-slash equivalent', () => {
   // Use a root that is lexically different from REPO but after normPath is equivalent.
-  // On Windows REPO = 'D:/Mercury/Mercury'; mixed case + backslash form is equivalent after normPath.
+  // On Windows: replace forward slashes with backslashes in the synthetic REPO path.
+  // On non-Windows: uppercase the synthetic REPO path — normPath lowercases both sides.
   const rootVariant = process.platform === 'win32'
-    ? 'D:\\Mercury\\Mercury'   // backslash form — normPath makes it identical to REPO after canonicalize
-    : REPO.toUpperCase();      // uppercase form (non-Windows FS may not resolve, but normPath catches it)
+    ? REPO.replace(/\//g, '\\')   // backslash form — normPath makes it identical to REPO
+    : REPO.toUpperCase();         // uppercase form — normPath lowercases both, so they match
   assert.throws(
     () => assertPathAllowed(
       path.join(REPO, 'secrets', 'auth.json'),

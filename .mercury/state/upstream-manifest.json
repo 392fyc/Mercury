@@ -247,7 +247,7 @@
     "upstream_path": "package.json",
     "upstream_sha_at_import": "8116437ffcfee1309cebc07dd30cee37720d2d19",
     "upstream_license": "Apache-2.0",
-    "import_pr": null,
+    "import_pr": 459,
     "import_date": "2026-05-26",
     "import_rationale": "Phase 2 Slice A (Issue #458, ADR issue-154-web-automation) — npm-version-pinned MCP server runtime mount (third mount mode, alongside git submodule and uvx git+SHA). Execution contract = pinned npm version @playwright/mcp@0.0.75; upstream_sha_at_import = the git tag v0.0.75 commit (audit metadata mapping the pinned npm version back to an upstream git tag, NOT the execution contract). upstream_path=package.json tracks the canonical version/deps/bin contract so scripts/upstream-drift-check.sh can detect upstream version bumps that may require re-pinning this adapter. No upstream source vendored; adapters/playwright-mcp/launch.cjs is a Mercury config-gate wrapper only.",
     "last_drift_check": null
