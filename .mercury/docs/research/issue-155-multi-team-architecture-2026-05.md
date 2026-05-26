@@ -407,7 +407,9 @@ Manager B = side lane (dept B)     @ ${MERCURY_ROOT}/Mercury-deptB  (lane 3)
 
 ### 已核实项(2026-05-26 S143 web-verify pass — 原 UNVERIFIED 三项全部 resolved,详见 §11)
 
-起草时(2026-05-24 S135)标的 3 个 UNVERIFIED 项已于 2026-05-26(S143,develop @ `af7953c`)全部 web-verify / 源码核实。结论摘要如下,完整证据 + 来源 URL 见 **§11**:
+起草时(2026-05-24 S135)标的 **3 个核心 UNVERIFIED 门槛项**已于 2026-05-26(S143,develop @ `af7953c`)全部 web-verify / 源码核实。结论摘要如下,完整证据 + 来源 URL 见 **§11**。
+
+> **关于"全部 resolved"的范围澄清**:本句指**原 3 个核心门槛项**(mem0ai filter / shared_memory scope / bg-spawn-subagent)全部 resolved。§11.2 来源行另有一条 **非门槛的附带 UNVERIFIED 链接**(OMC 源码注释里转录的 GitHub issue-URL `#1119`,未单独 web-fetch)—— 它不是 3 个核心门槛之一,不影响任何 scope 事实或 verdict,仅为 provenance footnote 保留 UNVERIFIED 标注以示诚实。读者不应将其误解为"仍有核心门槛未关闭"。
 
 1. **mem0ai search 是否支持 metadata filter**(O1 前置)— **VERIFIED-YES**(对 Mercury 实际安装版本 `mem0ai 1.0.11`):OSS `Memory` 类 `search()`/`get_all()` 接受 `filters=` 参数,支持按自定义 metadata(如 `department_id`)等值过滤;算子受限(`eq`/`contains`/`ne`,不支持 `in`/`gt`/`lt`)。O1 方案前提成立。详见 §11.1。
 2. **`shared_memory` MCP 真实 scope**(R7)— **VERIFIED(源码核实 OMC v4.13.2)**:文件型 KV store(`<root>/.omc/state/shared-memory/{ns}/{key}.json`,`root` 默认按 worktree/cwd),文件锁跨进程安全,TTL ≤ 7 天(临时协调,非持久记忆),config gate `agents.sharedMemory.enabled` 默认 enabled。**默认 per-worktree → 不自动跨 lane**;跨 department 共享需各 lane 传同一 `workingDirectory` 或设 `OMC_STATE_DIR`。详见 §11.2。
@@ -418,6 +420,8 @@ Manager B = side lane (dept B)     @ ${MERCURY_ROOT}/Mercury-deptB  (lane 3)
 ## 11. Web-verify 结论(2026-05-26,S143)— 3 个 UNVERIFIED 项核实记录
 
 > 本节是 §10 末尾原 3 个 UNVERIFIED 项的权威核实记录。核实在 develop @ `af7953c`(S143 web-verify pass,Issue #155 research 收尾)进行。外部 SDK/API 对照官方文档(MANDATORY RESEARCH PROTOCOL);OMC 内部机制对照 plugin 源码(OMC v4.13.2)。本节不改 verdict(§9 CONDITIONAL_GO 不变),仅把"待验证门槛"转为"已验证事实",并据此微调 R5/R7 与 GO 条件 2。
+>
+> **路径约定**:本节出现的 `~/.claude/...` 一律是**用户级安装的源码 / 配置引用(evidence pointer:核实时实际读取的文件位置)**,**非可执行配置**,沿用本 doc 顶部 §"Path conventions" 的约定 —— `~/.claude` ≡ `${CLAUDE_CONFIG_DIR:-$HOME/.claude}`(具体值因 install / 多账户而异)。与既有 §6.1 / §10 来源行的 `~/.claude/scripts/mem0_*.py` 引用风格一致;读者不应将这些证据路径当作 Mercury 仓库内的可运行配置。
 
 ### 11.1 mem0ai metadata filter —— VERIFIED-YES(对 `mem0ai 1.0.11`)
 
