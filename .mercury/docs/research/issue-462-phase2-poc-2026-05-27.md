@@ -82,6 +82,8 @@ ADR #155 用 web-verify 证明了"平台能力可行"(bg session 能 spawn subag
 
 **live recall — UNVERIFIED(环境限制)**:`mem0_bridge.recall()` 需 `OPENAI_API_KEY` 做 embedding;当前 bash/PowerShell shell 均未注入该 key(`~/.claude/.env` 不存在;key 经 hook-only 机制注入运行时),故本 session 未能跑通一次 live cross-session recall query。**这不影响 GO 4 结论** —— 全局共享是"单 collection + 固定 user_id"的磁盘+代码事实,recall 必然命中同一空间;live query 仅是加强项,标 UNVERIFIED 以诚实记录。
 
+> **生产/多 department caveat(勿照搬 PoC 配置)**:固定 `user_id="mercury"` + 单 `collection_name="mercury"` 是当前**单租户 PoC 现状**,其"全局共享"对当前单用户场景是 feature(跨 lane 记忆共享)。但若未来常态化多 department 并对记忆做隔离要求,**不应直接照搬此固定标识到需隔离的场景** —— 否则多 department 共享同一向量空间会有检索串读(ADR #155 R4)。per-department 隔离方案见 ADR §6.2 O1(metadata `department_id` filter,已 web-verify 支持)/ Phase 4 条件触发。本 PoC 范围仅验现状全局共享(#462 GO 4 明确 per-dept namespace 留 Phase 4),不实施隔离。
+
 ---
 
 ## 3. ADR-altering finding — Employee(sub-agent)file-edit 默认 NOT 触发 worktree 隔离
@@ -161,7 +163,7 @@ ADR §5.3 N3 原假设(引 #391):"Employee(sub-agent)在 Manager 的 side lane w
 
 ## 7. Teardown 记录
 
-- bg session:`poc462-probe`(probe 后即 stop+rm)/ `deptA-mgr` `adb153ff`(rm)/ `deptB-mgr` `449eff98`(rm)/ `poc462-selfedit` `87dcd189`(stop+rm,job state 残留 cosmetic,已不在 live roster)。
+- bg session(short ID 已脱敏 — 均为 ephemeral 本地 supervisor job ID,session 全部 stop+rm 后无再用价值):`poc462-probe`(probe 后即 stop+rm)/ `deptA-mgr`(rm)/ `deptB-mgr`(rm)/ `poc462-selfedit`(stop+rm;1 个 job state 残留 cosmetic,已不在 live roster)。
 - worktree:`.claude/worktrees/poc462-self-edit`(`git worktree remove --force` + `prune`)→ `.claude/worktrees/` 空,`git worktree list` 仅 main + side-bug。
 - scratch:`poc462-scratch/`(throwaway,内容已记录于 §2 GO 3,`rm -rf` 删除)。
 - main checkout:`git status` 回 clean(仅 `.codex/prompts/` benign untracked,与 session 起点一致)。
