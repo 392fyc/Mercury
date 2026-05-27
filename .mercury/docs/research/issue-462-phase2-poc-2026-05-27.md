@@ -35,7 +35,9 @@ ADR #155 用 web-verify 证明了"平台能力可行"(bg session 能 spawn subag
 
 ## 1. PoC 方法(增量去风险,先小后大)
 
-**实证环境**:Claude Code CLI **v2.1.150**(≥ v2.1.143,支持 agent-view + `worktree.bgIsolation`);模型 Opus 4.7(1M context);user-level `~/.claude/settings.json` `permissions.defaultMode = "bypassPermissions"`(全局,bg session 继承);**无** `worktree.bgIsolation` 设置(默认隔离行为);2 个 Department bg session 起在 main worktree `D:/Mercury/Mercury`(用户决策:纯 synthetic scratch + 2 个并行 bg session,不正式注册 LANES.md lane)。
+**路径约定(沿用 ADR #155 §Path conventions)**:`${MERCURY_ROOT}` = Mercury main checkout(本机按 CLAUDE.md "Install to D drive" policy 落 D 盘,不在仓库内容固化具体机器路径);`~/.claude` ≡ `${CLAUDE_CONFIG_DIR:-$HOME/.claude}`,出现处均为用户级 evidence pointer。下文实证报告里 Manager/Employee 转述的绝对路径已统一占位符化(原始 dogfood 落点 = `${MERCURY_ROOT}` 解析后的真实路径)。
+
+**实证环境**:Claude Code CLI **v2.1.150**(≥ v2.1.143,支持 agent-view + `worktree.bgIsolation`);模型 Opus 4.7(1M context);user-level `~/.claude/settings.json` `permissions.defaultMode = "bypassPermissions"`(全局,bg session 继承);**无** `worktree.bgIsolation` 设置(默认隔离行为);2 个 Department bg session 起在 main worktree `${MERCURY_ROOT}`(用户决策:纯 synthetic scratch + 2 个并行 bg session,不正式注册 LANES.md lane)。
 
 **Step 0 — GO 条件 2 最小 probe(keystone,先做)**:在 main lane 起 1 个 throwaway bg session(`poc462-probe`,`claude --bg`),让它 dispatch 1 个 read-only `Explore` sub-agent 读 `CLAUDE.md` 首个 heading 并报告。用最小代价证掉最大未知(bg session 内能否 spawn subagent)。结果:`DEPTH3-PROBE-RESULT subagent=Explore spawned=YES heading=# Mercury — Claude Code`,`Worked for 15s`。**PASS** → depth-3 第二跳跑通。throwaway,完成即 stop+rm。
 
@@ -89,7 +91,7 @@ ADR #155 用 web-verify 证明了"平台能力可行"(bg session 能 spawn subag
 | file-edit 主体 | `entered_worktree` | 落点 | worktree branch |
 |---|---|---|---|
 | **bg session 本体**(Manager 层,`poc462-selfedit`,不经 subagent) | **YES** | `.claude/worktrees/poc462-self-edit/poc462-scratch/probe-self-edit.md` | `worktree-poc462-self-edit`(git worktree list 实测新建,logs `● Creating worktree(poc462-self-edit)` → `Switched to worktree on branch worktree-poc462-self-edit`) |
-| **Employee sub-agent**(`deptA-mgr`/`deptB-mgr` dispatch 的 general-purpose) | **NO** | Manager 的 main checkout `D:/Mercury/Mercury/poc462-scratch/` | NONE |
+| **Employee sub-agent**(`deptA-mgr`/`deptB-mgr` dispatch 的 general-purpose) | **NO** | Manager 的 main checkout `${MERCURY_ROOT}/poc462-scratch/` | NONE |
 
 同一环境(CLI v2.1.150 + bypassPermissions + main worktree)下,唯一变量是 file-edit 主体是 **bg session 本体** 还是 **它 spawn 的 subagent**。本体隔离、subagent 不隔离 → **根因是 sub-agent 路径,不是 bypassPermissions**(本体在 bypassPermissions 下仍隔离)。
 
@@ -164,5 +166,3 @@ ADR §5.3 N3 原假设(引 #391):"Employee(sub-agent)在 Manager 的 side lane w
 - scratch:`poc462-scratch/`(throwaway,内容已记录于 §2 GO 3,`rm -rf` 删除)。
 - main checkout:`git status` 回 clean(仅 `.codex/prompts/` benign untracked,与 session 起点一致)。
 - LANES.md:未改(用户决策"不正式注册 lane",PoC 用临时 bg session 形态)。
-</content>
-</invoke>
