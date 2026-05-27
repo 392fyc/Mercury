@@ -25,7 +25,7 @@ ADR #155 用 web-verify 证明了"平台能力可行"(bg session 能 spawn subag
 | **(1)** 2 Department 并行 ≤ 5-lane cap | ✅ **PASS** | main(Director)+ 2 bg session(Manager A/B)= 3 并行 process,Employee sub-agent 不占 lane 名额 |
 | **(2)** Manager(side lane)spawn Employee sub-agent(depth-3) | ✅ **PASS** | 3 次独立 spawn 全成功(probe Explore + Manager A/B 各 1 general-purpose Employee) |
 | **(3)** Employee file-edit 产出可 merge diff(经 N3 worktree 流程) | ⚠️ **CONDITIONAL PASS** | 可 merge diff 产出 ✅;但 **Employee file-edit 默认 NOT 触发 worktree 隔离** → 见 §3 finding |
-| **(4)** mem0 跨 department 记忆全局共享 | ✅ **PASS**(结构+物理) | 磁盘单一 `collection/mercury` + 代码固定 `user_id="mercury"`;无 per-lane/dept collection。live recall 受 shell 无 key 限制(标 UNVERIFIED) |
+| **(4)** mem0 跨 department 记忆全局共享 | ✅ **PASS**(结构性 + 物理;非 live-recall 端到端) | 磁盘单一 `collection/mercury` + 代码固定 `user_id="mercury"`;无 per-lane/dept collection。live recall 受 shell 无 key 限制(标 UNVERIFIED,不计入 PASS 依据) |
 
 **核心 finding(§3)**:对照 probe 决定性证明 —— bg session **本体**(Manager 层)file-edit **自动进** `.claude/worktrees/`(隔离 YES);但 Employee(Agent tool spawn 的 sub-agent)file-edit **不触发**隔离,直接落 Manager 的 working checkout(隔离 NO)。这是**官方设计行为**(sub-agents docs:subagent 默认在 parent cwd,需显式 `isolation: worktree` frontmatter 才隔离),**非 bug**,但**推翻 ADR #155 §5.3 N3** 的"Employee file-edit 触发 #391 auto-worktree HYBRID"假设。
 
@@ -73,7 +73,9 @@ ADR #155 用 web-verify 证明了"平台能力可行"(bg session 能 spawn subag
 
 **但 worktree 隔离 NOT 触发**(见 §3 finding)：两个 Employee 均报 `entered_worktree=NO` / `worktree_branch=NONE`,文件直接写 Manager 的 main checkout 而非 `.claude/worktrees/`。因此 GO 3 是 **CONDITIONAL PASS**:diff 可 merge 这一目标达成,但"经 N3 worktree 流程"的路径假设被实证推翻。
 
-### GO 4 — mem0 跨 department 记忆全局共享 ✅ PASS(结构+物理)
+### GO 4 — mem0 跨 department 记忆全局共享 ✅ PASS(结构性 + 物理;**非 live-recall 端到端**)
+
+> **验收边界(严谨性声明)**:本条 PASS 的依据是**结构性 + 物理**两类证据(单 collection + 固定 user_id + 磁盘单一 collection 目录),**不含** live-recall 运行时查询验证(后者 UNVERIFIED,见本节末)。读者不应将 GO 4 PASS 理解为"端到端记忆检索已完整验证";它验的是"全局共享是结构/物理现状"这一 #462 GO 4 明确的范围,live cross-session recall 是受环境限制未跑的加强项。
 
 验证目标(ADR + #462):仅验"现状全局共享",per-dept namespace 留 Phase 4。两类证据:
 
