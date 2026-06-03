@@ -60,11 +60,9 @@ bin dirs are prepended to PATH as well.
 """
 import os
 import sys
-import site
 import time
 import queue
 import threading
-from pathlib import Path
 
 sys.stdout.reconfigure(encoding="utf-8")
 
@@ -108,39 +106,14 @@ CONT_BEEP = os.environ.get("VOICE_ZH_CONT_BEEP", "0") == "1"  # continuous-mode 
 # hallucination / non-speech gating (whisper confidence-based)
 NO_SPEECH_MAX = _env_num("VOICE_ZH_NOSPEECH_MAX", 0.6, float)  # drop seg if no_speech_prob >=
 LOGPROB_MIN = _env_num("VOICE_ZH_LOGPROB_MIN", -1.0, float)  # drop seg if avg_logprob <=
-# signature phrases Whisper emits on silence/noise — never legitimate dictation here
-HALLUCINATION_MARKERS = (
-    "字幕志愿者", "字幕由", "amara.org", "明镜与点点", "点点栏目",
-    "请不吝点赞", "点赞订阅", "订阅转发", "谢谢观看", "谢谢大家观看",
-)
+# HALLUCINATION_MARKERS now live in scripts/voice/stt.py (shared with the #468 MCP server)
 
 
-def _register_cuda_dll_dirs():
-    """Make the bundled NVIDIA CUDA/cuDNN DLLs loadable by ctranslate2 on Windows."""
-    if os.name != "nt":
-        return  # Windows-only workaround; never mutate PATH elsewhere
-    bins = []
-    for base in site.getsitepackages():
-        base_real = os.path.realpath(base)
-        for sub in ("cublas", "cudnn", "cuda_nvrtc", "cuda_runtime"):
-            p = Path(base) / "nvidia" / sub / "bin"
-            if not p.is_dir():
-                continue
-            real = os.path.realpath(str(p))
-            # only accept real dirs that stay under the site-packages root, and dedupe,
-            # to avoid widening the DLL search path via stray symlinks / repeats
-            if not real.startswith(base_real) or real in bins:
-                continue
-            try:
-                os.add_dll_directory(real)
-            except (OSError, AttributeError):
-                pass
-            bins.append(real)
-    if bins:
-        os.environ["PATH"] = os.pathsep.join(bins) + os.pathsep + os.environ.get("PATH", "")
-
-
-_register_cuda_dll_dirs()
+# Shared STT primitives live in scripts/voice/stt.py (#468). Importing it runs the
+# Windows CUDA/cuDNN DLL-dir registration (must happen before faster_whisper loads),
+# so this single import replaces the daemon's former inline _register_cuda_dll_dirs().
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from voice.stt import resample_to_16k, is_hallucination  # noqa: E402
 
 import numpy as np
 import sounddevice as sd
@@ -180,22 +153,7 @@ def _capture_samplerate():
         return SAMPLERATE
 
 
-def _resample_to_16k(audio, src_sr):
-    """Linear resample mono float32 audio to 16kHz (good enough for STT)."""
-    if src_sr == SAMPLERATE or len(audio) == 0:
-        return audio
-    n = int(round(len(audio) * SAMPLERATE / src_sr))
-    if n <= 0:
-        return audio
-    x_old = np.linspace(0.0, 1.0, num=len(audio), endpoint=False)
-    x_new = np.linspace(0.0, 1.0, num=n, endpoint=False)
-    return np.interp(x_new, x_old, audio).astype(np.float32)
-
-
-def _is_hallucination(text):
-    """True if text matches a known Whisper-on-silence hallucination signature."""
-    t = "".join(text.lower().split())
-    return any(m in t for m in HALLUCINATION_MARKERS)
+# resample_to_16k / is_hallucination are imported from voice.stt (shared with #468).
 
 
 def transcribe_segment(model, audio_native, capture_sr):
@@ -208,7 +166,7 @@ def transcribe_segment(model, audio_native, capture_sr):
     near-silent input.
     """
     peak = float(np.max(np.abs(audio_native))) if len(audio_native) else 0.0
-    audio = _resample_to_16k(audio_native, capture_sr)
+    audio = resample_to_16k(audio_native, capture_sr)
     if NORMALIZE and peak > 1e-4:
         audio = (audio / peak * 0.3).astype(np.float32)  # rescue low-gain mics
     segments, _ = model.transcribe(
@@ -230,7 +188,7 @@ def transcribe_segment(model, audio_native, capture_sr):
             continue
         kept.append(s.text)
     text = "".join(kept).strip()
-    if _is_hallucination(text):
+    if is_hallucination(text):
         return "", peak
     return text, peak
 

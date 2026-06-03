@@ -1,0 +1,18 @@
+# voice-agent dependencies (Mercury #468) — the in-session MCP layer on top of #465.
+# Verified on Windows 11 + Python 3.14.3 + RTX 4060 (2026-06-03).
+#
+# Install into the shared #465 venv:
+#   uv pip install --python .venv-voice/Scripts/python.exe -r scripts/voice/requirements-voice-agent.txt
+#
+# This pulls in the STT/injection stack from #465 too (-r below). The MCP SDK adds
+# pydantic / starlette / pywin32 (Windows). edge-tts is the OPTIONAL online fallback
+# (off by default; enable with VOICE_TTS_FALLBACK=edge).
+#
+# TTS primary backend (Kokoro-FastAPI) is a SEPARATE local service, NOT a pip dep —
+# see README.md §TTS setup. It runs in its own Python env (sidesteps Kokoro's
+# Requires-Python <3.13 pin), exposing an OpenAI-compatible endpoint on :8880.
+
+-r ../../requirements-voice-zh.txt   # #465 STT + clipboard injection stack
+
+mcp==1.27.2            # Python MCP SDK / FastMCP; verified import+stdio on Python 3.14
+# edge-tts>=7.2.8      # OPTIONAL online TTS fallback (LGPLv3). Uncomment to enable.
