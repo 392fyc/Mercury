@@ -82,6 +82,16 @@ class _CrossProcLock:
     def acquired(self):
         return self.fd is not None
 
+    def touch(self):
+        """Refresh the lockfile mtime — call right before playback so the stale clock
+        measures playback time (not synth/download), preventing a long synth from
+        pushing total hold time past _LOCK_STALE and triggering a false steal."""
+        if self.fd is not None:
+            try:
+                os.utime(self.path, None)
+            except OSError:
+                pass
+
     def __enter__(self):
         deadline = time.time() + self.wait
         while True:
@@ -251,6 +261,7 @@ def speak(text, blocking=True):
                 # primary: Kokoro-FastAPI (local, offline)
                 try:
                     data = _kokoro_synthesize(text, response_format="wav")
+                    cpl.touch()  # reset stale clock to playback start (synth time already spent)
                     _play_wav_bytes(data)
                     return {"ok": True, "backend": "kokoro", "error": None}
                 except Exception as e:
@@ -264,6 +275,7 @@ def speak(text, blocking=True):
                         os.close(fd)
                         with open(path, "wb") as f:
                             f.write(mp3)
+                        cpl.touch()  # reset stale clock to playback start
                         try:
                             _play_mp3_file(path)
                         finally:

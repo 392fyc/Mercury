@@ -57,12 +57,15 @@ def _engine_for_mode(mode):
         model = default_model
     if model not in _engines:
         device = os.environ.get("VOICE_ZH_DEVICE", "auto")
-        idx = os.environ.get("VOICE_ZH_DEVICE_INDEX")
-        engine = _stt.SttEngine(
-            model=model,
-            device=device,
-            device_index=int(idx) if idx not in (None, "") else None,
-        )
+        idx_raw = os.environ.get("VOICE_ZH_DEVICE_INDEX")
+        try:
+            device_index = int(idx_raw) if idx_raw not in (None, "") else None
+        except (TypeError, ValueError):
+            # an invalid index must not take the whole voice chain down — warn + fall back
+            print(f"[voice-mcp] invalid VOICE_ZH_DEVICE_INDEX={idx_raw!r}, using default input device",
+                  file=sys.stderr, flush=True)
+            device_index = None
+        engine = _stt.SttEngine(model=model, device=device, device_index=device_index)
         engine.load()
         _engines[model] = engine
     return _engines[model]
@@ -93,6 +96,11 @@ def announce(text: str) -> str:
     优先用本地 Kokoro-FastAPI（离线、隐私），不可达时按 VOICE_TTS_FALLBACK 回退。
     返回播报结果状态（不会因 TTS 失败而抛错）。
     """
+    # keep spoken length bounded so playback stays well under the TTS cross-process lock's
+    # stale window (a check-in prompt should be short anyway); long detail belongs on screen
+    cap = int(os.environ.get("VOICE_TTS_MAX_CHARS", "600") or "600")
+    if len(text) > cap:
+        text = text[:cap] + "……（详情见屏幕）"
     result = _tts.speak(text, blocking=True)
     if result["ok"]:
         return f"已播报（{result['backend']}）"

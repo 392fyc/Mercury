@@ -61,10 +61,11 @@ Kokoro 的 pip 包锁 Python `<3.13`,与本 venv 的 3.14 冲突,因此 TTS 作�
 ### 3. 注册 MCP server
 
 ```bash
-claude mcp add voice -- D:/Mercury/Mercury/.venv-voice/Scripts/python.exe D:/Mercury/Mercury/scripts/voice/mcp_server.py
+# 从仓库根运行;$CLAUDE_PROJECT_DIR 在 Claude Code 内即仓库根(也可换成你的仓库绝对路径)
+claude mcp add voice -- "$CLAUDE_PROJECT_DIR/.venv-voice/Scripts/python.exe" "$CLAUDE_PROJECT_DIR/scripts/voice/mcp_server.py"
 ```
 
-(stdio 为默认传输;真实 PATH `python` 二进制在原生 Windows 上无需 `cmd /c` 包裹。)
+(stdio 为默认传输;真实 PATH `python` 二进制在原生 Windows 上无需 `cmd /c` 包裹。`claude mcp add` 会把命令按当前工作目录解析,故在仓库根执行;若你的 venv 在别处,替换为对应绝对路径。)
 注册后在会话内即可让模型调用 `listen` / `announce` / `set_mode` / `record_note` / `get_status`。
 
 ### 4. (可选)Stop hook 双向兜底

@@ -124,6 +124,17 @@ def record_note(text, kind="note"):
         return None
     state = get_state()
     notes_path = state.get("notes_path")
+    # security: notes_path comes from the (potentially tampered) state file — confine it
+    # under the voice-notes dir before appending, so a doctored path can't traverse out
+    # and write/overwrite arbitrary files. A path outside the root is rejected (re-created).
+    notes_root = (_state_dir() / "voice-notes").resolve()
+    if notes_path:
+        try:
+            p = Path(notes_path).resolve()
+            if p != notes_root and not str(p).startswith(str(notes_root) + os.sep):
+                notes_path = None
+        except OSError:
+            notes_path = None
     if not notes_path or not Path(notes_path).exists():
         notes_path = str(_new_notes_file())
         state["notes_path"] = notes_path
