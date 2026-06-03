@@ -82,7 +82,7 @@ $env:VOICE_ZH_MODE="toggle"; .venv-voice/Scripts/python.exe scripts/voice-zh-inp
 | `VOICE_ZH_MAX_SEC`| `120` | 单次录音内存上限秒数,超出丢弃多余音频并告警(防 RAM 无界) |
 | `VOICE_ZH_VAD`    | `0` | `1` 开启 Silero VAD 静音裁剪;默认关(VAD 对低增益麦克风会过度裁剪成空) |
 | `VOICE_ZH_NORMALIZE` | `1` | `1` 对录音做峰值归一化(救低增益麦克风);`0` 关闭 |
-| `VOICE_ZH_DEVICE_INDEX` | *(空)* | 强制指定输入设备序号(默认用系统默认输入)。用 `tmp/scan_devices2.py` 找出有信号的序号 |
+| `VOICE_ZH_DEVICE_INDEX` | *(空)* | 强制指定输入设备序号(默认用系统默认输入)。跑 `python scripts/voice-zh-input.py --list-devices` 列出设备序号 |
 
 > **粘贴安全**:`VOICE_ZH_PASTE=1` 时,转写完成(可能数秒后)会把文本 Ctrl+V 进**当时聚焦的任意窗口**。
 > 保持目标输入框聚焦,或设 `VOICE_ZH_PASTE=0` 走仅复制模式(手动粘贴),避免误粘到无关窗口/终端/管理员工具。
@@ -110,6 +110,6 @@ $env:VOICE_ZH_MODE="toggle"; .venv-voice/Scripts/python.exe scripts/voice-zh-inp
 - **`cublas64_12.dll not found / cannot be loaded`**:GPU 库没装全。需要
   cublas + cudnn(9.x) + cuda-runtime + cuda-nvrtc 四件套;或设 `VOICE_ZH_DEVICE=cpu` 走 CPU。
 - **转写为空 `''` / `peak=0.0000` 静音**:① 先确认麦克风在 Windows 没被静音、电平拉高(设置 → 声音 →
-  输入);② 跑 `tmp/scan_devices2.py`(边说边扫)找出标 `<-- SIGNAL` 的输入设备序号,设
+  输入);② 跑 `python scripts/voice-zh-input.py --list-devices` 列出输入设备,挑对的麦克风序号设
   `VOICE_ZH_DEVICE_INDEX=<序号>` 重启 daemon;③ 注意脚本已按原生采样率录音 + 归一化,无需手动改。
 - **粘贴落错窗口**:停止录音后转写需 ~2s,期间别切换焦点 —— 保持目标输入框聚焦,或用 `VOICE_ZH_PASTE=0`。

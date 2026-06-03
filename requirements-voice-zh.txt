@@ -11,7 +11,7 @@
 #   (ctranslate2 >=4.5 requires CUDA 12 + cuDNN 9; the script auto-registers the
 #    bundled DLL dirs on PATH. CPU fallback is automatic if CUDA is unavailable.)
 
-faster-whisper==1.2.1   # pulls ctranslate2==4.7.2 (cp314 wheel), tokenizers, onnxruntime
+faster-whisper==1.2.1   # pulls ctranslate2 (>=4,<5; verified 4.7.2 cp314 wheel), tokenizers, onnxruntime
 sounddevice==0.5.5      # PortAudio bindings for mic capture
 pyperclip==1.11.0       # Unicode-safe clipboard write
 keyboard==0.13.5        # global hotkey + simulated Ctrl+V

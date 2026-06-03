@@ -117,16 +117,25 @@ HALLUCINATION_MARKERS = (
 
 def _register_cuda_dll_dirs():
     """Make the bundled NVIDIA CUDA/cuDNN DLLs loadable by ctranslate2 on Windows."""
+    if os.name != "nt":
+        return  # Windows-only workaround; never mutate PATH elsewhere
     bins = []
     for base in site.getsitepackages():
+        base_real = os.path.realpath(base)
         for sub in ("cublas", "cudnn", "cuda_nvrtc", "cuda_runtime"):
             p = Path(base) / "nvidia" / sub / "bin"
-            if p.is_dir():
-                try:
-                    os.add_dll_directory(str(p))
-                except (OSError, AttributeError):
-                    pass
-                bins.append(str(p))
+            if not p.is_dir():
+                continue
+            real = os.path.realpath(str(p))
+            # only accept real dirs that stay under the site-packages root, and dedupe,
+            # to avoid widening the DLL search path via stray symlinks / repeats
+            if not real.startswith(base_real) or real in bins:
+                continue
+            try:
+                os.add_dll_directory(real)
+            except (OSError, AttributeError):
+                pass
+            bins.append(real)
     if bins:
         os.environ["PATH"] = os.pathsep.join(bins) + os.pathsep + os.environ.get("PATH", "")
 
@@ -374,7 +383,7 @@ class Recorder:
             if peak < 1e-3:
                 print(
                     "[voice-zh] WARNING: near-silent capture — raise mic level or set "
-                    "VOICE_ZH_DEVICE_INDEX (run tmp/scan_devices2.py to find the right index)",
+                    "VOICE_ZH_DEVICE_INDEX (run this script with --list-devices to find the index)",
                     flush=True,
                 )
             if text:
@@ -441,11 +450,21 @@ class ContinuousListener:
                     flush=True,
                 )
         print("[voice-zh] calibrating ambient noise ~1s — stay quiet ...", flush=True)
-        n = int(1.0 * self.capture_sr)
-        a = sd.rec(n, samplerate=self.capture_sr, channels=1, dtype="float32", device=DEVICE_INDEX)
-        sd.wait()
-        noise = float(np.sqrt(np.mean(a.flatten() ** 2)))
-        thr = max(noise * 4.0, 1.5e-3)  # well above the noise floor to avoid false triggers
+        fallback = 1.5e-3
+        try:
+            n = int(1.0 * self.capture_sr)
+            a = sd.rec(n, samplerate=self.capture_sr, channels=1, dtype="float32", device=DEVICE_INDEX)
+            sd.wait()
+            noise = float(np.sqrt(np.mean(a.flatten() ** 2)))
+        except Exception as e:
+            # mic busy / device unavailable: don't block startup, use a conservative default
+            print(
+                f"[voice-zh] WARNING: calibration failed ({type(e).__name__}: {e}); "
+                f"using default vad_threshold={fallback} (set VOICE_ZH_VAD_THRESH to override)",
+                flush=True,
+            )
+            return fallback
+        thr = max(noise * 4.0, fallback)  # well above the noise floor to avoid false triggers
         print(
             f"[voice-zh] noise_rms={noise:.5f} -> vad_threshold={thr:.5f} "
             "(raise mic level / set VOICE_ZH_VAD_THRESH if it mis-triggers)",
@@ -623,9 +642,30 @@ class ContinuousListener:
             self.worker = None
 
 
+def _list_devices():
+    """Print input-capable devices so the user can pick VOICE_ZH_DEVICE_INDEX."""
+    print("=== input devices (use the index as VOICE_ZH_DEVICE_INDEX) ===", flush=True)
+    hostapis = sd.query_hostapis()
+    for i, d in enumerate(sd.query_devices()):
+        if d["max_input_channels"] >= 1:
+            api = hostapis[d["hostapi"]]["name"]
+            print(f"  [{i}] {api} {int(d['default_samplerate'])}Hz {d['name']}", flush=True)
+
+
 def main():
+    if "--list-devices" in sys.argv:
+        _list_devices()
+        return
+    mode = MODE
+    if mode not in ("continuous", "toggle"):
+        print(
+            f"[voice-zh] WARNING: unknown VOICE_ZH_MODE={MODE!r}, using 'continuous' "
+            "(valid: continuous, toggle)",
+            flush=True,
+        )
+        mode = "continuous"
     model = _load_model()
-    if MODE == "toggle":
+    if mode == "toggle":
         rec = Recorder(model)
         keyboard.add_hotkey(HOTKEY, rec.toggle)
         print(f"[voice-zh] toggle mode | {HOTKEY} = record | {QUIT} = quit", flush=True)
