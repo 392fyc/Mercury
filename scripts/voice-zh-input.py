@@ -68,6 +68,20 @@ from pathlib import Path
 
 sys.stdout.reconfigure(encoding="utf-8")
 
+
+def _env_num(name, default, cast):
+    """Parse a numeric env var; on an invalid value warn and fall back to default,
+    so a typo in config never crashes the daemon at module load."""
+    v = os.environ.get(name)
+    if v in (None, ""):
+        return default
+    try:
+        return cast(v)
+    except (ValueError, TypeError):
+        print(f"[voice-zh] WARNING: invalid {name}={v!r}, using default {default}", flush=True)
+        return default
+
+
 MODE = os.environ.get("VOICE_ZH_MODE", "continuous")  # "continuous" (VAD) | "toggle" (push-key)
 HOTKEY = os.environ.get("VOICE_ZH_HOTKEY", "ctrl+alt+space")  # toggle-mode record key
 QUIT = os.environ.get("VOICE_ZH_QUIT", "ctrl+alt+q")
@@ -78,23 +92,22 @@ BEEP = os.environ.get("VOICE_ZH_BEEP", "1") == "1"
 PASTE = os.environ.get("VOICE_ZH_PASTE", "1") == "1"  # 0 = copy-only (no auto Ctrl+V)
 VAD = os.environ.get("VOICE_ZH_VAD", "0") == "1"  # default off: VAD over-trims quiet mics -> empty
 NORMALIZE = os.environ.get("VOICE_ZH_NORMALIZE", "1") == "1"  # peak-normalize low-gain capture
-_DEV_IDX = os.environ.get("VOICE_ZH_DEVICE_INDEX")  # optional explicit input device index
-DEVICE_INDEX = int(_DEV_IDX) if _DEV_IDX not in (None, "") else None
+DEVICE_INDEX = _env_num("VOICE_ZH_DEVICE_INDEX", None, int)  # optional explicit input device index
 SAMPLERATE = 16000  # whisper target rate; capture happens at the device's NATIVE rate
-MAX_SEC = int(os.environ.get("VOICE_ZH_MAX_SEC", "120"))  # cap in-memory recording length
+MAX_SEC = _env_num("VOICE_ZH_MAX_SEC", 120, int)  # cap in-memory recording length
 
 # continuous-mode (VAD) tuning
 AUTO_ENTER = os.environ.get("VOICE_ZH_AUTO_ENTER", "1") == "1"  # press Enter after grace
-GRACE_SEC = float(os.environ.get("VOICE_ZH_GRACE_SEC", "2.0"))  # confirm window before Enter
-SILENCE_SEC = float(os.environ.get("VOICE_ZH_SILENCE_SEC", "0.8"))  # trailing silence ends utterance
-MIN_UTT_SEC = float(os.environ.get("VOICE_ZH_MIN_SEC", "0.4"))  # ignore shorter blips
+GRACE_SEC = _env_num("VOICE_ZH_GRACE_SEC", 2.0, float)  # confirm window before Enter
+SILENCE_SEC = _env_num("VOICE_ZH_SILENCE_SEC", 0.8, float)  # trailing silence ends utterance
+MIN_UTT_SEC = _env_num("VOICE_ZH_MIN_SEC", 0.4, float)  # ignore shorter blips
 _VAD_THRESH = os.environ.get("VOICE_ZH_VAD_THRESH", "auto")  # "auto" calibrates ambient noise
-ONSET_BLOCKS = int(os.environ.get("VOICE_ZH_ONSET_BLOCKS", "3"))  # consec. voiced blocks to start
+ONSET_BLOCKS = _env_num("VOICE_ZH_ONSET_BLOCKS", 3, int)  # consec. voiced blocks to start
 CONT_BEEP = os.environ.get("VOICE_ZH_CONT_BEEP", "0") == "1"  # continuous-mode onset/end beeps (off)
 
 # hallucination / non-speech gating (whisper confidence-based)
-NO_SPEECH_MAX = float(os.environ.get("VOICE_ZH_NOSPEECH_MAX", "0.6"))  # drop seg if no_speech_prob >=
-LOGPROB_MIN = float(os.environ.get("VOICE_ZH_LOGPROB_MIN", "-1.0"))  # drop seg if avg_logprob <=
+NO_SPEECH_MAX = _env_num("VOICE_ZH_NOSPEECH_MAX", 0.6, float)  # drop seg if no_speech_prob >=
+LOGPROB_MIN = _env_num("VOICE_ZH_LOGPROB_MIN", -1.0, float)  # drop seg if avg_logprob <=
 # signature phrases Whisper emits on silence/noise — never legitimate dictation here
 HALLUCINATION_MARKERS = (
     "字幕志愿者", "字幕由", "amara.org", "明镜与点点", "点点栏目",
@@ -419,7 +432,14 @@ class ContinuousListener:
 
     def _calibrate(self):
         if _VAD_THRESH != "auto":
-            return float(_VAD_THRESH)
+            try:
+                return float(_VAD_THRESH)
+            except (ValueError, TypeError):
+                print(
+                    f"[voice-zh] WARNING: invalid VOICE_ZH_VAD_THRESH={_VAD_THRESH!r}, "
+                    "falling back to auto-calibration",
+                    flush=True,
+                )
         print("[voice-zh] calibrating ambient noise ~1s — stay quiet ...", flush=True)
         n = int(1.0 * self.capture_sr)
         a = sd.rec(n, samplerate=self.capture_sr, channels=1, dtype="float32", device=DEVICE_INDEX)
