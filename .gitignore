@@ -86,6 +86,9 @@ mercury.config.json
 # mem0 test venv (Phase A)
 .venv-mem0/
 
+# voice-zh-input venv (#465)
+.venv-voice/
+
 # Python build artifacts
 __pycache__/
 *.py[cod]
