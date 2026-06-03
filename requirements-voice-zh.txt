@@ -1,0 +1,18 @@
+# voice-zh-input dependencies (Mercury #465)
+# Verified on Windows 11 + Python 3.14.3 (2026-06-02).
+#
+# Install (CPU-only works out of the box):
+#   uv venv .venv-voice --python 3.14
+#   uv pip install --python .venv-voice -r requirements-voice-zh.txt
+#
+# GPU (optional, ~7x faster: 1.8s vs 13.7s per utterance on RTX 4060):
+#   uv pip install --python .venv-voice nvidia-cublas-cu12 "nvidia-cudnn-cu12==9.*" \
+#       nvidia-cuda-runtime-cu12 nvidia-cuda-nvrtc-cu12
+#   (ctranslate2 >=4.5 requires CUDA 12 + cuDNN 9; the script auto-registers the
+#    bundled DLL dirs on PATH. CPU fallback is automatic if CUDA is unavailable.)
+
+faster-whisper==1.2.1   # pulls ctranslate2==4.7.2 (cp314 wheel), tokenizers, onnxruntime
+sounddevice==0.5.5      # PortAudio bindings for mic capture
+pyperclip==1.11.0       # Unicode-safe clipboard write
+keyboard==0.13.5        # global hotkey + simulated Ctrl+V
+numpy>=1.26             # in-memory audio buffer (also a transitive dep; declared because imported directly)
