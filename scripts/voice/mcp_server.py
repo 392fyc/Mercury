@@ -96,11 +96,7 @@ def announce(text: str) -> str:
     优先用本地 Kokoro-FastAPI（离线、隐私），不可达时按 VOICE_TTS_FALLBACK 回退。
     返回播报结果状态（不会因 TTS 失败而抛错）。
     """
-    # keep spoken length bounded so playback stays well under the TTS cross-process lock's
-    # stale window (a check-in prompt should be short anyway); long detail belongs on screen
-    cap = int(os.environ.get("VOICE_TTS_MAX_CHARS", "600") or "600")
-    if len(text) > cap:
-        text = text[:cap] + "……（详情见屏幕）"
+    # length is bounded inside tts.speak() (VOICE_TTS_MAX_CHARS) for all callers
     result = _tts.speak(text, blocking=True)
     if result["ok"]:
         return f"已播报（{result['backend']}）"

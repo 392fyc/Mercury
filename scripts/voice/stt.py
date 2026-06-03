@@ -51,8 +51,11 @@ def _register_cuda_dll_dirs():
                 continue
             real = os.path.realpath(str(p))
             # only accept real dirs that stay under the site-packages root, and dedupe,
-            # to avoid widening the DLL search path via stray symlinks / repeats
-            if not real.startswith(base_real) or real in bins:
+            # to avoid widening the DLL search path via stray symlinks / repeats.
+            # normcase both sides: on Windows the prefix compare must be case-insensitive
+            # (and drive-letter/sep normalized) or a legitimate CUDA dir gets wrongly
+            # rejected (→ GPU load fails, needless CPU fallback).
+            if not os.path.normcase(real).startswith(os.path.normcase(base_real)) or real in bins:
                 continue
             try:
                 os.add_dll_directory(real)

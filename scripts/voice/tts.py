@@ -62,6 +62,31 @@ def _lock_path():
     return d / "voice-tts.lock"
 
 
+def _pid_alive(pid):
+    """True if process `pid` is still running. Used to avoid stealing a lock from a
+    LIVE holder that is merely mid-long-playback (a stale mtime alone must not trigger
+    a steal while the holder is alive — that would cause the overlap we're preventing).
+    Returns False on any uncertainty so a genuinely-dead holder's lock can still be stolen."""
+    if not pid or pid <= 0:
+        return False
+    try:
+        if os.name == "nt":
+            import ctypes
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            STILL_ACTIVE = 259
+            h = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if not h:
+                return False  # no such process (or access denied → treat as dead/steal-able)
+            code = ctypes.c_ulong()
+            ok = ctypes.windll.kernel32.GetExitCodeProcess(h, ctypes.byref(code))
+            ctypes.windll.kernel32.CloseHandle(h)
+            return bool(ok) and code.value == STILL_ACTIVE
+        os.kill(pid, 0)
+        return True
+    except (OSError, ValueError, OverflowError):
+        return False
+
+
 class _CrossProcLock:
     """Cross-process exclusive lock for audio playback (a lockfile created O_EXCL).
 
@@ -102,8 +127,16 @@ class _CrossProcLock:
             except FileExistsError:
                 try:
                     if time.time() - os.path.getmtime(self.path) > _LOCK_STALE:
-                        os.remove(self.path)  # steal an abandoned lock
-                        continue
+                        # only steal if the holder is actually dead — a live holder
+                        # mid-long-playback keeps its lock no matter how old the mtime,
+                        # so a slow synth/long utterance never triggers a false steal
+                        try:
+                            holder = int(open(self.path, encoding="utf-8").read().strip() or "0")
+                        except (OSError, ValueError):
+                            holder = 0
+                        if not _pid_alive(holder):
+                            os.remove(self.path)  # steal an abandoned (dead-holder) lock
+                            continue
                 except OSError:
                     pass  # lock vanished between checks — retry the open
                 if time.time() >= deadline:
@@ -210,12 +243,14 @@ def _mci(command):
 
 
 def _play_mp3_file(path):
-    """Play an MP3 file via the Windows winmm MCI interface (no extra deps)."""
+    """Play an MP3 file via the Windows winmm MCI interface (no extra deps), BLOCKING
+    until playback finishes (so the cross-process lock is held for the real duration)."""
     if os.name != "nt":
-        # non-Windows best-effort: let the OS open it (rarely hit; edge fallback is dev-only)
-        import subprocess
-        subprocess.Popen(["xdg-open", path])
-        return
+        # Mercury target is native Windows. A detached `xdg-open` would return immediately
+        # and release the playback lock while audio is still playing (breaking the
+        # no-overlap guarantee), and macOS has no xdg-open anyway. Fail loudly instead of
+        # a misleading "spoken" result — speak() catches this and reports ok=False.
+        raise NotImplementedError("mp3 fallback playback is unsupported on non-Windows")
     import time
     alias = "voicetts"
     _mci(f'open "{path}" type mpegvideo alias {alias}')
@@ -250,6 +285,12 @@ def speak(text, blocking=True):
     text = (text or "").strip()
     if not text:
         return {"ok": False, "backend": None, "error": "empty text"}
+    # Bound spoken length at the speak() layer so EVERY caller (announce, stop_notify, …)
+    # produces playback short enough to stay well under the cross-process lock's stale
+    # window — long detail belongs on screen, not read aloud.
+    cap = int(os.environ.get("VOICE_TTS_MAX_CHARS", "600") or "600")
+    if len(text) > cap:
+        text = text[:cap] + "……（详情见屏幕）"
 
     def _do():
         with _play_lock:                       # in-process exclusion

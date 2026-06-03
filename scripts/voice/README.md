@@ -70,13 +70,26 @@ claude mcp add voice -- "$CLAUDE_PROJECT_DIR/.venv-voice/Scripts/python.exe" "$C
 
 ### 4. (可选)Stop hook 双向兜底
 
-默认**不注册**(避免给全团队每回合 spawn 进程)。要启用,在 `.claude/settings.json` 的
-`hooks.Stop` 数组追加:
+默认**不注册**(避免给全团队每回合 spawn 进程)。要启用,**往现有 `hooks.Stop[0].hooks`
+数组里追加一条 command hook**(与现有 `stop-guard.sh` 并列,不要替换整个 `Stop`,否则会
+破坏现有 hook)。本仓库当前结构是:
 
 ```json
-{ "hooks": [ { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/voice-stop-notify.sh\"", "timeout": 10 } ] }
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/stop-guard.sh\"", "timeout": 10 },
+          { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/voice-stop-notify.sh\"", "timeout": 10 }
+        ]
+      }
+    ]
+  }
+}
 ```
 
+(上面只新增了 `voice-stop-notify.sh` 那一行,`stop-guard.sh` 原样保留。)
 worker 自守卫:仅当语音模式 active(mode ≠ idle)时才播报,非语音会话静默 no-op。
 
 ---
