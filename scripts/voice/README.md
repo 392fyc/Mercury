@@ -110,5 +110,13 @@ worker 自守卫:仅当语音模式 active(mode ≠ idle)时才播报,非语音�
 ## 已知限制(实测项,见 ADR §6)
 
 - `last_assistant_message` 字段官方 hooks 文档未列(社区先例),stop_notify 兜底解析 transcript。
+- **stop_notify 兜底 fail-open**:`last_assistant_message` 缺失且 transcript 被 `/clear` 损坏/截断时,
+  解析可能读出较旧的回复(而非保持静默)。优先用 `last_assistant_message` 字段已规避主路径。
+- **TTS 防重叠**:announce(MCP server 进程)与 stop_notify(Stop hook 进程)经状态目录下的
+  `voice-tts.lock` 跨进程文件锁串行播放;抢不到锁(`VOICE_TTS_LOCK_WAIT` 秒内)则跳过本次播报。
+- **状态写非全局加锁**:`set_mode`/`record_note` 为 read-modify-write,JSON 写本身原子(读者不会读到半包),
+  但实际写者只有单进程单线程的 MCP server,跨进程并发写概率极低;如未来多写者需加锁。
 - Kokoro-FastAPI GPU 在原生 Windows 经 Docker 需 WSL2 后端;纯原生走 uv/uvicorn 路线。
 - 秘书模式"快响应"可按需把 `VOICE_ZH_MODEL_SECRETARY` 降到更小模型。
+- MCP `listen` 阻塞:等待开口的 onset 窗口由 `VOICE_LISTEN_ONSET_GRACE`(默认 10s)控制,
+  静默时最长阻塞 ≈ `max_seconds + onset_grace`,留意 Claude Code 工具调用超时预算。

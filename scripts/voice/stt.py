@@ -217,7 +217,11 @@ class SttEngine:
         seg, seg_samples, silence_run = [], 0, 0.0
         pending, pending_samples, voiced_run = [], 0, 0
         in_speech = False
-        deadline = time.time() + max_seconds + 30.0  # absolute wall cap incl. wait-for-onset
+        # absolute wall cap = recording cap + a wait-for-onset grace. The grace bounds how
+        # long we block waiting for the user to START speaking; keep it modest so a silent
+        # listen() returns well within Claude Code's tool-call timeout (ADR §6 risk).
+        onset_grace = float(os.environ.get("VOICE_LISTEN_ONSET_GRACE", "10") or "10")
+        deadline = time.time() + max_seconds + onset_grace
         cap = int(max_seconds * capture_sr)
 
         with sd.InputStream(samplerate=capture_sr, channels=1, dtype="float32",

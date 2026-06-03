@@ -85,9 +85,10 @@ scripts/voice-zh-input.py           # #465 daemon:重构为 import scripts.voice
 | `last_assistant_message` 官方 hooks doc 未列(仅二手源+社区先例),version/condition-specific | 兜底解析 `transcript_path` JSONL;实测确认字段存在性 |
 | Stop hook 用户中断/取消是否触发 = UNVERIFIED | 实现期实测;`stop_hook_active` 防死循环 |
 | Kokoro `<3.13` 锁绕过运行行为无实测 | Kokoro-FastAPI 独立服务/venv 隔离(已成立) |
-| `/clear` 损坏 transcript 破坏解析 | 优先用 `last_assistant_message` 字段规避 |
-| 快速连续响应音频重叠 | TTS 播放前 kill 前一进程 |
-| MCP `listen()` 阻塞与 Claude Code 工具超时 | 设合理 `listen_duration_max`;实测工具调用超时边界 |
+| `/clear` 损坏 transcript 破坏解析(fail-open 读旧回复) | 优先用 `last_assistant_message` 字段规避主路径;残留经 README 文档化 |
+| 音频重叠 —— announce(MCP server 进程)与 stop_notify(Stop hook 进程)**跨进程** | 已实现:状态目录 `voice-tts.lock` 跨进程文件锁(O_EXCL + 90s 过期窃取 + `VOICE_TTS_LOCK_WAIT` 等待/跳过);in-process 另有 `_play_lock`(dual-verify Codex High 修复) |
+| 状态 read-modify-write 跨进程竞争 | 实际单写者(单线程 MCP server),概率极低;JSON 写原子;经 README 文档化为已知限制 |
+| MCP `listen()` 阻塞与 Claude Code 工具超时 | onset 窗口 `VOICE_LISTEN_ONSET_GRACE`(默认 10s);最长阻塞 ≈ `max_seconds + onset_grace`;实测工具超时边界 |
 
 ## 7. 验收标准
 

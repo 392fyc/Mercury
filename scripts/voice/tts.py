@@ -12,8 +12,10 @@ ONLINE — disabled by default; opt in with VOICE_TTS_FALLBACK=edge. Use only fo
 dev / when the local Kokoro service is unavailable.
 
 Playback (no heavy deps): WAV/PCM via sounddevice; MP3 via the Windows winmm MCI
-interface (ctypes). A new speak() stops any in-flight playback first, so rapid
-successive agent turns never overlap audio.
+interface (ctypes). Overlap is prevented BOTH in-process (a threading lock) AND
+across processes (a file lock in the state dir): announce() runs in the long-lived
+MCP-server process while the Stop hook's stop_notify.py runs in a separate per-turn
+process, so an in-process lock alone would let the two speak over each other.
 
 Config (env):
     VOICE_TTS_BASE_URL   Kokoro-FastAPI base   (default http://127.0.0.1:8880/v1)
@@ -23,16 +25,20 @@ Config (env):
     VOICE_TTS_FALLBACK   "edge" enables edge-tts fallback (default "" = off)
     VOICE_TTS_EDGE_VOICE edge-tts voice        (default zh-CN-XiaoxiaoNeural)
     VOICE_TTS_TIMEOUT    Kokoro HTTP timeout s (default 30)
+    VOICE_TTS_LOCK_WAIT  cross-proc lock wait s (default 8; 0 = skip if busy)
+    VOICE_STATE_DIR      dir holding the cross-process playback lock (default <repo>/.mercury/state)
 """
 import io
 import os
 import sys
 import json
+import time
 import wave
 import tempfile
 import threading
 import urllib.request
 import urllib.error
+from pathlib import Path
 
 _BASE_URL = os.environ.get("VOICE_TTS_BASE_URL", "http://127.0.0.1:8880/v1").rstrip("/")
 _VOICE = os.environ.get("VOICE_TTS_VOICE", "zf_xiaobei")
@@ -41,10 +47,70 @@ _SPEED = float(os.environ.get("VOICE_TTS_SPEED", "1.0") or "1.0")
 _FALLBACK = os.environ.get("VOICE_TTS_FALLBACK", "").strip().lower()
 _EDGE_VOICE = os.environ.get("VOICE_TTS_EDGE_VOICE", "zh-CN-XiaoxiaoNeural")
 _TIMEOUT = float(os.environ.get("VOICE_TTS_TIMEOUT", "30") or "30")
+_LOCK_WAIT = float(os.environ.get("VOICE_TTS_LOCK_WAIT", "8") or "8")
+_LOCK_STALE = 90.0  # a lockfile older than this is considered abandoned and stolen
 
 # serialize playback + track the in-flight player so a new utterance can stop it
-_play_lock = threading.Lock()
+_play_lock = threading.Lock()  # in-process
 _current = {"stream": None, "mci_alias": None}
+
+
+def _lock_path():
+    override = os.environ.get("VOICE_STATE_DIR")
+    d = Path(override) if override else Path(__file__).resolve().parents[2] / ".mercury" / "state"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / "voice-tts.lock"
+
+
+class _CrossProcLock:
+    """Cross-process exclusive lock for audio playback (a lockfile created O_EXCL).
+
+    announce() (MCP-server process) and stop_notify.py (per-turn Stop-hook process)
+    are separate processes, so the in-process _play_lock cannot keep them from
+    speaking simultaneously — this file lock does. Waits up to `wait` seconds for the
+    holder to release; on timeout `acquired` is False and the caller skips playback
+    (sequential-not-simultaneous: no garbled overlap). A lockfile older than
+    _LOCK_STALE is treated as abandoned (crashed holder) and stolen.
+    """
+
+    def __init__(self, wait):
+        self.wait = wait
+        self.fd = None
+        self.path = _lock_path()
+
+    @property
+    def acquired(self):
+        return self.fd is not None
+
+    def __enter__(self):
+        deadline = time.time() + self.wait
+        while True:
+            try:
+                self.fd = os.open(str(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.write(self.fd, str(os.getpid()).encode())
+                return self
+            except FileExistsError:
+                try:
+                    if time.time() - os.path.getmtime(self.path) > _LOCK_STALE:
+                        os.remove(self.path)  # steal an abandoned lock
+                        continue
+                except OSError:
+                    pass  # lock vanished between checks — retry the open
+                if time.time() >= deadline:
+                    return self  # acquired == False
+                time.sleep(0.1)
+
+    def __exit__(self, *exc):
+        if self.fd is not None:
+            try:
+                os.close(self.fd)
+            except OSError:
+                pass
+            try:
+                os.remove(self.path)
+            except OSError:
+                pass
+            self.fd = None
 
 
 # ----------------------------------------------------------------------------- synth
@@ -117,9 +183,12 @@ def _play_wav_bytes(data):
     if ch > 1:
         audio = audio.reshape(-1, ch)
     _current["stream"] = True
-    sd.play(audio, sr)
-    sd.wait()
-    _current["stream"] = None
+    try:
+        sd.play(audio, sr)
+        sd.wait()
+    finally:
+        # reset even if play/wait raises, so a later _stop_current() won't sd.stop() spuriously
+        _current["stream"] = None
 
 
 def _mci(command):
@@ -160,44 +229,52 @@ def _play_mp3_file(path):
 def speak(text, blocking=True):
     """Speak `text` in Chinese. Tries Kokoro-FastAPI, then edge-tts (if enabled).
 
-    Stops any in-flight playback first (no overlap on rapid agent turns). Returns a
-    dict {ok, backend, error} describing the outcome (never raises on a TTS failure —
-    a missing voice service must not crash the agent loop).
+    No-overlap guarantee: serialized by an in-process lock (`_play_lock`) AND a
+    cross-process file lock (`_CrossProcLock`), because announce() and the Stop hook's
+    stop_notify.py run in different processes. If another process is already speaking
+    and the lock can't be acquired within VOICE_TTS_LOCK_WAIT seconds, this call skips
+    playback (returns ok=False, error="busy") rather than overlap. Returns a dict
+    {ok, backend, error}; never raises on a TTS failure — a missing voice service must
+    not crash the agent loop.
     """
     text = (text or "").strip()
     if not text:
         return {"ok": False, "backend": None, "error": "empty text"}
 
     def _do():
-        with _play_lock:
-            _stop_current()
-            # primary: Kokoro-FastAPI (local, offline)
-            try:
-                data = _kokoro_synthesize(text, response_format="wav")
-                _play_wav_bytes(data)
-                return {"ok": True, "backend": "kokoro", "error": None}
-            except Exception as e:
-                kokoro_err = f"{type(e).__name__}: {e}"
-                print(f"[voice-tts] kokoro unavailable: {kokoro_err}", file=sys.stderr, flush=True)
-            # fallback: edge-tts (online), only if opted in
-            if _FALLBACK == "edge":
+        with _play_lock:                       # in-process exclusion
+            with _CrossProcLock(_LOCK_WAIT) as cpl:  # cross-process exclusion
+                if not cpl.acquired:
+                    return {"ok": False, "backend": None,
+                            "error": "busy (another voice process is speaking)"}
+                _stop_current()
+                # primary: Kokoro-FastAPI (local, offline)
                 try:
-                    mp3 = _edge_synthesize(text)
-                    fd, path = tempfile.mkstemp(suffix=".mp3", prefix="voicetts_")
-                    os.close(fd)
-                    with open(path, "wb") as f:
-                        f.write(mp3)
-                    try:
-                        _play_mp3_file(path)
-                    finally:
-                        try:
-                            os.remove(path)
-                        except OSError:
-                            pass
-                    return {"ok": True, "backend": "edge", "error": None}
+                    data = _kokoro_synthesize(text, response_format="wav")
+                    _play_wav_bytes(data)
+                    return {"ok": True, "backend": "kokoro", "error": None}
                 except Exception as e:
-                    return {"ok": False, "backend": "edge", "error": f"{type(e).__name__}: {e}"}
-            return {"ok": False, "backend": "kokoro", "error": kokoro_err}
+                    kokoro_err = f"{type(e).__name__}: {e}"
+                    print(f"[voice-tts] kokoro unavailable: {kokoro_err}", file=sys.stderr, flush=True)
+                # fallback: edge-tts (online), only if opted in
+                if _FALLBACK == "edge":
+                    try:
+                        mp3 = _edge_synthesize(text)
+                        fd, path = tempfile.mkstemp(suffix=".mp3", prefix="voicetts_")
+                        os.close(fd)
+                        with open(path, "wb") as f:
+                            f.write(mp3)
+                        try:
+                            _play_mp3_file(path)
+                        finally:
+                            try:
+                                os.remove(path)
+                            except OSError:
+                                pass
+                        return {"ok": True, "backend": "edge", "error": None}
+                    except Exception as e:
+                        return {"ok": False, "backend": "edge", "error": f"{type(e).__name__}: {e}"}
+                return {"ok": False, "backend": "kokoro", "error": kokoro_err}
 
     if blocking:
         return _do()

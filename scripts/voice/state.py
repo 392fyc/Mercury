@@ -86,11 +86,15 @@ def set_mode(mode, task_context=None):
     if mode not in MODES:
         raise ValueError(f"invalid mode {mode!r} (allowed: {', '.join(MODES)})")
     state = get_state()
+    prev_mode = state.get("mode", "idle")
     state["mode"] = mode
     state["updated_at"] = _now_iso()
     if task_context is not None:
         state["task_context"] = task_context
-    if mode == "secretary" and not state.get("notes_path"):
+    # Open a fresh notes file when ENTERING secretary from a non-secretary mode (a new
+    # intake session). Re-entering secretary from work (secretary->work->secretary,
+    # same task) keeps the existing notes file so the task's intake stays in one place.
+    if mode == "secretary" and (prev_mode not in ("secretary", "work") or not state.get("notes_path")):
         state["notes_path"] = str(_new_notes_file())
     _atomic_write(_state_path(), json.dumps(state, ensure_ascii=False, indent=2))
     return state
@@ -100,7 +104,9 @@ def _new_notes_file():
     """Create a fresh timestamped secretary-notes markdown file and return its path."""
     notes_dir = _state_dir() / "voice-notes"
     notes_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    # microsecond stamp so two sessions created within the same second never collide
+    # onto one file (second-resolution names would reuse the prior session's notes)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     p = notes_dir / f"secretary-{stamp}.md"
     if not p.exists():
         p.write_text(f"# 秘书模式记录 — {_now_iso()}\n\n", encoding="utf-8")
