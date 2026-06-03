@@ -131,7 +131,8 @@ class _CrossProcLock:
                         # mid-long-playback keeps its lock no matter how old the mtime,
                         # so a slow synth/long utterance never triggers a false steal
                         try:
-                            holder = int(open(self.path, encoding="utf-8").read().strip() or "0")
+                            with open(self.path, encoding="utf-8") as lf:  # close before remove (Windows)
+                                holder = int(lf.read().strip() or "0")
                         except (OSError, ValueError):
                             holder = 0
                         if not _pid_alive(holder):

@@ -114,9 +114,15 @@ worker 自守卫:仅当语音模式 active(mode ≠ idle)时才播报,非语音�
 | `VOICE_ZH_DEVICE_INDEX` | 系统默认 | 显式输入设备序号(`voice-zh-input.py --list-devices` 查看) |
 | `VOICE_TTS_BASE_URL` | `http://127.0.0.1:8880/v1` | Kokoro-FastAPI 基址 |
 | `VOICE_TTS_VOICE` | `zf_xiaobei` | 普通话音色(`zf_*` 女 / `zm_*` 男) |
+| `VOICE_TTS_MODEL` | `kokoro` | Kokoro 模型 id |
+| `VOICE_TTS_SPEED` | `1.0` | 语速 |
 | `VOICE_TTS_FALLBACK` | (空=关) | 设 `edge` 启用 edge-tts 在线回退 |
 | `VOICE_TTS_EDGE_VOICE` | `zh-CN-XiaoxiaoNeural` | edge-tts 音色 |
-| `VOICE_STATE_DIR` | `<repo>/.mercury/state` | 状态/笔记目录 |
+| `VOICE_TTS_TIMEOUT` | `30` | Kokoro HTTP 超时(秒) |
+| `VOICE_TTS_LOCK_WAIT` | `8` | 跨进程播放锁等待秒数(超时则跳过本次播报) |
+| `VOICE_TTS_MAX_CHARS` | `600` | `speak()` 播报文本截断长度(所有调用方) |
+| `VOICE_LISTEN_ONSET_GRACE` | `10` | `listen` 等待用户开口的 onset 窗口(秒) |
+| `VOICE_STATE_DIR` | `<repo>/.mercury/state` | 状态/笔记目录(也存跨进程播放锁) |
 | `VOICE_STOP_MAX_CHARS` | `400` | Stop hook 播报截断长度 |
 
 ---

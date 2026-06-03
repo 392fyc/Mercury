@@ -131,11 +131,14 @@ def record_note(text, kind="note"):
     if notes_path:
         try:
             p = Path(notes_path).resolve()
-            if p != notes_root and not str(p).startswith(str(notes_root) + os.sep):
+            # must be strictly UNDER the root (reject the root dir itself) and be a regular
+            # file — a tampered state pointing at a directory (e.g. the notes root) would
+            # otherwise make open(..,"a") fail; reject → re-create a fresh notes file
+            if not str(p).startswith(str(notes_root) + os.sep) or (p.exists() and not p.is_file()):
                 notes_path = None
         except OSError:
             notes_path = None
-    if not notes_path or not Path(notes_path).exists():
+    if not notes_path or not Path(notes_path).is_file():
         notes_path = str(_new_notes_file())
         state["notes_path"] = notes_path
         state["updated_at"] = _now_iso()
