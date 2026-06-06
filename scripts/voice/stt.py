@@ -266,12 +266,51 @@ class SttEngine:
         return text
 
     def _calibrate(self, capture_sr, vad_thresh):
-        """Energy-VAD threshold: explicit float, or ~1s ambient-noise auto-calibration."""
+        """Energy-VAD threshold: explicit float, env override, or ~1s ambient-noise
+        auto-calibration (`noise * VOICE_VAD_FACTOR`).
+
+        Resolution order: `vad_thresh` argument → `VOICE_VAD_THRESH` env (absolute)
+        → auto-calibration. The default factor is 2.5: low-gain laptop mic arrays
+        (e.g. Realtek at max +30dB boost) produce normal-speech block RMS only
+        ~3.5x the noise floor, so the previous 4.0 sat ABOVE real speech and listen()
+        silently dropped utterances (#472). 2.5 keeps headroom against the floor
+        while admitting quiet-but-real speech.
+        """
         if vad_thresh != "auto":
             try:
-                return float(vad_thresh)
+                v = float(vad_thresh)
+                if np.isfinite(v) and v > 0:
+                    return v
             except (ValueError, TypeError):
                 pass
+            print(f"[voice-stt] invalid vad_thresh={vad_thresh!r} (need finite > 0), "
+                  "falling back to env/auto", file=sys.stderr, flush=True)
+        # env overrides must be finite AND positive: 0/negative makes every block voiced
+        # (listen self-triggers on room noise), nan/inf makes `rms > threshold` never
+        # succeed (listen silently drops ALL speech — the exact failure mode #472 fixes).
+        # A mistyped env var must warn + fall back, never silently break the chain.
+        env_thresh = os.environ.get("VOICE_VAD_THRESH")
+        if env_thresh:
+            try:
+                v = float(env_thresh)
+                if np.isfinite(v) and v > 0:
+                    return v
+            except ValueError:
+                pass
+            print(f"[voice-stt] invalid VOICE_VAD_THRESH={env_thresh!r} (need finite > 0), "
+                  "falling back to auto", file=sys.stderr, flush=True)
+        factor = 2.5
+        env_factor = os.environ.get("VOICE_VAD_FACTOR")
+        if env_factor:
+            try:
+                f = float(env_factor)
+                if np.isfinite(f) and f > 0:
+                    factor = f
+                else:
+                    raise ValueError(env_factor)
+            except ValueError:
+                print(f"[voice-stt] invalid VOICE_VAD_FACTOR={env_factor!r} (need finite > 0), "
+                      f"using default {factor}", file=sys.stderr, flush=True)
         fallback = 1.5e-3
         try:
             n = int(1.0 * capture_sr)
@@ -280,4 +319,4 @@ class SttEngine:
             noise = float(np.sqrt(np.mean(a.flatten() ** 2)))
         except Exception:
             return fallback
-        return max(noise * 4.0, fallback)  # well above the noise floor to avoid false triggers
+        return max(noise * factor, fallback)  # above the noise floor to avoid false triggers

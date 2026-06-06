@@ -19,7 +19,8 @@ process, so an in-process lock alone would let the two speak over each other.
 
 Config (env):
     VOICE_TTS_BASE_URL   Kokoro-FastAPI base   (default http://127.0.0.1:8880/v1)
-    VOICE_TTS_VOICE      Mandarin voice        (default zf_xiaobei)
+    VOICE_TTS_VOICE      Mandarin voice        (default zf_xiaoyi; zf_xiaobei has a
+                         regional northern accent — user-rejected in #472)
     VOICE_TTS_MODEL      Kokoro model id       (default kokoro)
     VOICE_TTS_SPEED      speech speed          (default 1.0)
     VOICE_TTS_FALLBACK   "edge" enables edge-tts fallback (default "" = off)
@@ -41,7 +42,7 @@ import urllib.error
 from pathlib import Path
 
 _BASE_URL = os.environ.get("VOICE_TTS_BASE_URL", "http://127.0.0.1:8880/v1").rstrip("/")
-_VOICE = os.environ.get("VOICE_TTS_VOICE", "zf_xiaobei")
+_VOICE = os.environ.get("VOICE_TTS_VOICE", "zf_xiaoyi")
 _MODEL = os.environ.get("VOICE_TTS_MODEL", "kokoro")
 _SPEED = float(os.environ.get("VOICE_TTS_SPEED", "1.0") or "1.0")
 _FALLBACK = os.environ.get("VOICE_TTS_FALLBACK", "").strip().lower()
