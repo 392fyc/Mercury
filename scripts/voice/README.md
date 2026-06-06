@@ -53,10 +53,10 @@ Kokoro 的 pip 包锁 Python `<3.13`,与本 venv 的 3.14 冲突,因此 TTS 作�
 - **本地 uv/uvicorn(原生 Windows)**:克隆 `github.com/remsky/Kokoro-FastAPI`,装 astral-uv +
   espeak-ng,运行其 GPU 启动脚本(见该 repo README;启动后监听 :8880)。
 
-验证:`curl http://localhost:8880/v1/audio/voices` 应返回音色列表(含 `zf_xiaobei` 等普通话音色)。
+验证:`curl http://localhost:8880/v1/audio/voices` 应返回音色列表(含 `zf_xiaoyi` 等普通话音色)。
 
 > 来源:<https://github.com/remsky/Kokoro-FastAPI>(Apache-2.0)。OpenAI 兼容端点
-> `POST /v1/audio/speech`,请求 `{"model":"kokoro","input":...,"voice":"zf_xiaobei","response_format":"wav"}`。
+> `POST /v1/audio/speech`,请求 `{"model":"kokoro","input":...,"voice":"zf_xiaoyi","response_format":"wav"}`。
 
 ### 3. 注册 MCP server
 
@@ -113,7 +113,7 @@ worker 自守卫:仅当语音模式 active(mode ≠ idle)时才播报,非语音�
 | `VOICE_ZH_DEVICE` | `auto` | `auto` / `cuda` / `cpu` |
 | `VOICE_ZH_DEVICE_INDEX` | 系统默认 | 显式输入设备序号(`voice-zh-input.py --list-devices` 查看) |
 | `VOICE_TTS_BASE_URL` | `http://127.0.0.1:8880/v1` | Kokoro-FastAPI 基址 |
-| `VOICE_TTS_VOICE` | `zf_xiaobei` | 普通话音色(`zf_*` 女 / `zm_*` 男) |
+| `VOICE_TTS_VOICE` | `zf_xiaoyi` | 普通话音色(`zf_*` 女 / `zm_*` 男;`zf_xiaobei` 带北方口音,#472 实测弃用) |
 | `VOICE_TTS_MODEL` | `kokoro` | Kokoro 模型 id |
 | `VOICE_TTS_SPEED` | `1.0` | 语速 |
 | `VOICE_TTS_FALLBACK` | (空=关) | 设 `edge` 启用 edge-tts 在线回退 |
@@ -122,6 +122,8 @@ worker 自守卫:仅当语音模式 active(mode ≠ idle)时才播报,非语音�
 | `VOICE_TTS_LOCK_WAIT` | `8` | 跨进程播放锁等待秒数(超时则跳过本次播报) |
 | `VOICE_TTS_MAX_CHARS` | `600` | `speak()` 播报文本截断长度(所有调用方) |
 | `VOICE_LISTEN_ONSET_GRACE` | `10` | `listen` 等待用户开口的 onset 窗口(秒) |
+| `VOICE_VAD_FACTOR` | `2.5` | 能量 VAD 阈值=噪声地板×该倍率(低增益麦克风语音仅 ~3.5× 噪声,故默认 2.5;#472) |
+| `VOICE_VAD_THRESH` | (空=自动校准) | 能量 VAD 绝对阈值覆盖(RMS,设置后跳过自动校准) |
 | `VOICE_STATE_DIR` | `<repo>/.mercury/state` | 状态/笔记目录(也存跨进程播放锁) |
 | `VOICE_STOP_MAX_CHARS` | `400` | Stop hook 播报截断长度 |
 
