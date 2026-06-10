@@ -11,6 +11,28 @@ allowed-tools: Read, Write, Bash, Glob, Grep
 You are executing the handoff skill. This is the **only** entry point for
 handoff — nothing triggers automatically. Follow these steps precisely.
 
+> ## ⚠️ #1 RECURRING FAILURE MODE — READ BEFORE ANYTHING ELSE
+>
+> In **auto mode** (`/handoff auto`, or any autorun/ralph/ultrawork run that the
+> user told to auto-handoff at the end), the single most common bug is: the agent
+> **writes the handoff doc + prints the Starting Prompt, then STOPS** — without
+> ever invoking the launcher. **That is a FAILED handoff, not a completed one.**
+>
+> In auto mode, outputting the prompt text is necessary but NOT sufficient. The
+> deliverable is a **spawned new session**. Auto mode is NOT complete until you
+> have actually run `bash scripts/handoff-launch.sh ...` (Step 5 Auto mode; a
+> bash script — on Windows it runs via Git Bash / the Bash tool) and seen it
+> **exit 0 with its success report** (currently `spawned new tab`). Printing
+> text and ending the turn = the bug the user keeps hitting. No hook invokes the
+> launcher for you (the registered Stop hook, `stop-guard.sh`, does not
+> auto-handoff) — the launcher call is YOUR responsibility and MUST be the final
+> substantive action of the turn (trivial state writes/cleanup may follow, but
+> no further task work). This behavioral rule is the stopgap for Issue #469; the
+> permanent mechanical fix (armed Stop-hook) is tracked there.
+>
+> Self-check before you end an auto-mode turn: "Did I run handoff-launch.sh and
+> see it succeed?" If no → you are not done; run it now.
+
 ## Invocation modes
 
 Parse `$ARGUMENTS`:
@@ -281,6 +303,14 @@ Optional: offer to launch if the user later says so (Step 6).
 
 ### Auto mode (`/handoff auto`)
 
+**MANDATORY**: auto mode is only complete once `scripts/handoff-launch.sh` has
+actually run and succeeded — exit code 0 plus its success report (currently
+`spawned new tab`). Do NOT end the turn after merely printing the prompt —
+running the launcher is the whole point of auto mode (see the ⚠️ banner at the
+top of this skill). This applies equally to an autorun/ralph/ultrawork run that
+was told to auto-handoff on completion: the loop's final substantive act MUST
+be the launcher call, not a printed prompt.
+
 After Step 5.1 + 5.2, and Pre-Termination Checklist passed:
 
 **Required launch pattern — use a SHORT reference prompt, never inline the
@@ -464,9 +494,18 @@ the auto path from Step 5 (auto mode).
   new session.
 - Include specific file paths, line numbers, commands.
 - Never include secrets, API keys, credentials.
-- The chat-output prompt is the PRIMARY deliverable — never skip it.
+- The chat-output prompt is required in BOTH modes — never skip it. Completion
+  is mode-scoped: in **manual mode** the prompt IS the primary deliverable; in
+  **auto mode** the prompt is necessary but completion additionally requires
+  the launcher to have run.
+- **Auto mode is NOT done until the launcher ran.** `scripts/handoff-launch.sh`
+  MUST run and succeed (exit 0 + success report, currently `spawned new tab`)
+  as the final substantive action. Ending the turn after only printing text is
+  the #1 recurring auto-handoff bug (see top-of-skill banner).
 - Do NOT add automatic hooks for SessionEnd or PreCompact — handoff is
-  **explicit only**.
+  **explicit only**. (The reliable mechanical fix — an armed Stop-hook — is
+  tracked in Mercury Issue #469; until it lands, the behavioral rule above is
+  the stopgap.)
 - **Mode-scoped termination**: auto mode treats handoff as a terminal
   event for the old session (spawn new → /exit old). Manual mode does
   NOT terminate; the user decides. Never apply auto-mode termination to
