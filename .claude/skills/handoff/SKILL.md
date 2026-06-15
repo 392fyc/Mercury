@@ -23,12 +23,13 @@ handoff — nothing triggers automatically. Follow these steps precisely.
 > have actually run `bash scripts/handoff-launch.sh ...` (Step 5 Auto mode; a
 > bash script — on Windows it runs via Git Bash / the Bash tool) and seen it
 > **exit 0 with its success report** (currently `spawned new tab`). Printing
-> text and ending the turn = the bug the user keeps hitting. No hook invokes the
-> launcher for you (the registered Stop hook, `stop-guard.sh`, does not
-> auto-handoff) — the launcher call is YOUR responsibility and MUST be the final
-> substantive action of the turn (trivial state writes/cleanup may follow, but
-> no further task work). This behavioral rule is the stopgap for Issue #469; the
-> permanent mechanical fix (armed Stop-hook) is tracked there.
+> text and ending the turn = the bug the user keeps hitting. A mechanical safety
+> net now exists (`.claude/hooks/auto-handoff-stop.sh`, Issue #469): if you ARM
+> it first (Step 5-auto.0) and then stop while still armed, it runs the launcher
+> for you. But the net only catches you if you armed BEFORE printing the prompt,
+> and it does not replace your duty — the launcher call is still YOUR
+> responsibility and MUST be the final substantive action of the turn (trivial
+> state writes/cleanup may follow, but no further task work).
 >
 > Self-check before you end an auto-mode turn: "Did I run handoff-launch.sh and
 > see it succeed?" If no → you are not done; run it now.
@@ -82,14 +83,19 @@ You have the full conversation in context. Synthesize:
 
 ### Layer 2: Memory search (agentic)
 
-Search the project's auto-memory directory:
-```
-~/.claude/projects/<encoded_cwd>/memory/
-```
-Where `<encoded_cwd>` is the cwd with `:` `\` `/` replaced by `-`, leading
-`-` stripped.
+Two sources:
 
-Glob for `*.md`. Read previous handoffs, checkpoints, project memories.
+1. **Durable memory** — the auto-memory directory holds `MEMORY.md`,
+   `LANES.md`, and checkpoints:
+   ```
+   ~/.claude/projects/<encoded_cwd>/memory/
+   ```
+   Where `<encoded_cwd>` is the cwd with `:` `\` `/` replaced by `-`, leading
+   `-` stripped. Glob for `*.md`. Read checkpoints + project memories.
+2. **Previous handoff doc** — resolve via Step 2.0 (`<workspace>/.handoff/` or
+   `<kb_dir>/handoff/`) and read the prior `session-handoff*.md` there. Legacy
+   sessions may still have it under the memory dir above — read whichever
+   exists (prefer the Step 2.0 location).
 
 ### Layer 3: Project documentation (if present)
 
@@ -157,10 +163,51 @@ Pick **one** primary task + one secondary fallback. Never produce a menu.
 
 ## Step 2: Generate Handoff Document
 
-Write to:
+### Step 2.0: Resolve handoff storage location (run once; reused by Step 5)
+
+The handoff doc is **transient working state**, so it lives **with the
+workspace/KB — never** under the global `~/.claude/projects/<encoded>/memory/`
+dir (that path holds only durable memory: `MEMORY.md`, `LANES.md`, checkpoints).
+Resolve the storage dir in this order and reuse `$HANDOFF_PATH` everywhere:
+
+```bash
+# Order:
+#   1. <workspace>/.handoff-config (gitignored marker) with `kb_dir=<path>`
+#      pointing at an existing dir  → HANDOFF_DIR=<kb_dir>/handoff
+#   2. otherwise                    → HANDOFF_DIR=<workspace>/.handoff
+# Both dirs + .handoff-config itself are gitignored. Never committed.
+WORKSPACE="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+KB_DIR=""
+if [ -f "$WORKSPACE/.handoff-config" ]; then
+  KB_DIR=$(sed -n 's/^[[:space:]]*kb_dir[[:space:]]*=[[:space:]]*//p' \
+            "$WORKSPACE/.handoff-config" | head -1)
+  # Cleanup order matters: trailing whitespace FIRST, then quotes, then slashes
+  # (a trailing space after a closing quote would otherwise defeat quote-strip).
+  KB_DIR="${KB_DIR%"${KB_DIR##*[![:space:]]}"}"       # 1) strip trailing whitespace
+  KB_DIR="${KB_DIR%\"}"; KB_DIR="${KB_DIR#\"}"        # 2) strip wrapping quotes
+  KB_DIR=$(printf '%s' "$KB_DIR" | tr '\134' '/')     # 3) backslash → forward slash (octal \134; bash ${//\\} is unreliable)
+fi
+if [ -n "$KB_DIR" ] && [ -d "$KB_DIR" ]; then
+  HANDOFF_DIR="$KB_DIR/handoff"
+else
+  HANDOFF_DIR="$WORKSPACE/.handoff"
+fi
+mkdir -p "$HANDOFF_DIR"
+
+# Filename: main lane = session-handoff.md; named lane = session-handoff-<lane>.md
+HANDOFF_PATH="$HANDOFF_DIR/session-handoff.md"   # multi-lane: append -<lane> before .md
 ```
-~/.claude/projects/<encoded_cwd>/memory/session-handoff.md
+
+`.handoff-config` format (one `kb_dir=` line; use **forward slashes** so Git
+Bash resolves it; absolute path):
 ```
+kb_dir=D:/ShipOfTheseus/ShipOfTheseus-KB
+```
+No marker file ⇒ no KB ⇒ handoff falls back to `<workspace>/.handoff/`.
+
+### Step 2.1: Write the document
+
+Write to `$HANDOFF_PATH` (resolved above):
 
 ```markdown
 ---
@@ -270,7 +317,8 @@ old session — once the new session is spawned, the old session should
 itself a terminal event; the output is a stable snapshot that the next
 session (or the current session continuing) can pick up from. In either
 mode, nothing carries over automatically to the next session unless it
-goes through the written handoff document + auto-memory path.
+goes through the written handoff document (read via the SHORT_PROMPT's
+explicit `Read` directive in auto mode, or pasted by the user in manual mode).
 
 Confirm each:
 
@@ -290,8 +338,10 @@ Always do **both** of these — never skip either:
 
 1. **Output the Starting Prompt section directly in chat** — PRIMARY
    artifact. User pastes it verbatim as the first message of a new session.
-2. **Save the full handoff document** to the memory path above. The auto-
-   memory system will load it at next session start.
+2. **Save the full handoff document** to `$HANDOFF_PATH` (resolved in Step 2.0
+   — `<workspace>/.handoff/` or `<kb_dir>/handoff/`). The next session loads it
+   via the explicit `Read` directive in the SHORT_PROMPT (auto mode) or by the
+   user pasting the prompt (manual mode) — NOT via auto-memory injection.
 
 ### Manual mode (`/handoff` default)
 
@@ -310,6 +360,36 @@ running the launcher is the whole point of auto mode (see the ⚠️ banner at t
 top of this skill). This applies equally to an autorun/ralph/ultrawork run that
 was told to auto-handoff on completion: the loop's final substantive act MUST
 be the launcher call, not a printed prompt.
+
+#### Step 5-auto.0: ARM the mechanical safety net FIRST (Mercury #469)
+
+There is a Stop hook (`.claude/hooks/auto-handoff-stop.sh`) that mechanically
+runs the launcher if you stop while a handoff is *armed*. It is a safety net for
+exactly the recurring bug above — but it can only catch you if you **arm it
+before you print the prompt**. So, the moment you enter auto mode (right after
+Step 2 wrote the doc):
+
+1. Resolve `LANE_NAME`, `WORKTREE_PATH`, `HANDOFF_PATH` — run the resolution
+   block in the launch pattern below **now** (it needs no spawn).
+2. Write the arm flag (key=value; consumed + deleted by the Stop hook). This
+   snippet defines `REPO_ROOT` itself — do NOT rely on it being set by the later
+   launch snippet, which runs after this point:
+
+```bash
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+mkdir -p "$REPO_ROOT/.mercury/state"
+{
+  printf 'lane=%s\n' "$LANE_NAME"
+  printf 'handoff_doc=%s\n' "$HANDOFF_PATH"
+  printf 'worktree=%s\n' "$WORKTREE_PATH"
+} > "$REPO_ROOT/.mercury/state/auto-handoff-armed"
+```
+
+Now even if you stop early, the new session still spawns. The arm flag lives in
+`.mercury/state/` (already gitignored) and is cleared on launch. This is the
+permanent mechanical fix for Issue #469 — but it does NOT excuse you from
+running the launcher yourself: arming is the net, the launcher call below is
+still your job (and it disarms atomically on success).
 
 After Step 5.1 + 5.2, and Pre-Termination Checklist passed:
 
@@ -398,8 +478,11 @@ WORKTREE_PATH="$WORKTREE_PATH_RAW"
 SHORT_PROMPT="[LANE=${LANE_NAME}] Continue from session handoff. Read ${HANDOFF_PATH} as your first action."
 ```
 
-`<encoded_cwd>` for the handoff doc path uses the same `encode_project_path()`
-logic referenced earlier (`:` `\` `/` → `-`, strip leading `-`).
+`$HANDOFF_PATH` is the location resolved in **Step 2.0** (`<workspace>/.handoff/`
+or `<kb_dir>/handoff/`, never the global memory dir). Shell variables do NOT
+persist across separate Bash tool calls — if Step 5 runs in a fresh shell,
+re-run the Step 2.0 resolution block first so `$HANDOFF_PATH` is set, or inline
+the concrete resolved path into the `--handoff-doc` argument below.
 
 **SHORT_PROMPT must remain free of `wt`/`tmux` metacharacters** —
 `;` (command separator), `&` (background), `|` (pipe), `\` outside quotes,
@@ -435,8 +518,14 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 bash "$REPO_ROOT/scripts/handoff-launch.sh" \
   --lane "$LANE_NAME" \
   --worktree "$WORKTREE_PATH" \
-  --handoff-doc "$HANDOFF_PATH"
+  --handoff-doc "$HANDOFF_PATH" \
+  && rm -f "$REPO_ROOT/.mercury/state/auto-handoff-armed"
 ```
+
+The `&& rm -f ...auto-handoff-armed` disarms the Step 5-auto.0 safety net
+**atomically** in the same command — on launcher success the flag is gone before
+you can yield, so the Stop hook sees no flag and does not double-spawn. If the
+launcher fails, the flag stays armed and the Stop hook handles the retry.
 
 This script:
 - Constructs SHORT_PROMPT canonically with `[LANE=<name>]` marker preserved
@@ -503,9 +592,10 @@ the auto path from Step 5 (auto mode).
   as the final substantive action. Ending the turn after only printing text is
   the #1 recurring auto-handoff bug (see top-of-skill banner).
 - Do NOT add automatic hooks for SessionEnd or PreCompact — handoff is
-  **explicit only**. (The reliable mechanical fix — an armed Stop-hook — is
-  tracked in Mercury Issue #469; until it lands, the behavioral rule above is
-  the stopgap.)
+  **explicit only**. The mechanical reliability fix is a *Stop* hook
+  (`.claude/hooks/auto-handoff-stop.sh`, Issue #469) that fires ONLY when auto
+  mode has explicitly armed it (Step 5-auto.0) — it never auto-handoffs an
+  un-armed session, so "explicit only" is preserved.
 - **Mode-scoped termination**: auto mode treats handoff as a terminal
   event for the old session (spawn new → /exit old). Manual mode does
   NOT terminate; the user decides. Never apply auto-mode termination to
