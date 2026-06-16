@@ -91,10 +91,20 @@ LANE=$(_get lane)
 HANDOFF_DOC=$(_get handoff_doc)
 WORKTREE=$(_get worktree)
 
+# Reject unsafe content in the writable flag file before it reaches the launcher:
+# path traversal (`..`) or embedded newline/CR (which could split the launcher
+# invocation). Disarm + allow stop (Argus audit: untrusted state input).
+case "${LANE}:${HANDOFF_DOC}:${WORKTREE}" in
+  *..*|*$'\n'*|*$'\r'*)
+    rm -f "$FLAG" "$RETRY"
+    echo "WARNING: auto-handoff flag contains unsafe content (.. or newline/CR) — disarmed, not launching." >&2
+    exit 0 ;;
+esac
+
 # Incomplete arm, missing doc, or non-existent worktree → cannot safely launch;
 # disarm + allow stop. Validating WORKTREE is a real directory (not just
-# non-empty) also defangs a corrupted/traversal value in the writable flag file
-# before it reaches handoff-launch.sh (Argus audit: untrusted state input).
+# non-empty) also defangs a corrupted value in the writable flag file before it
+# reaches handoff-launch.sh.
 if [ -z "$LANE" ] || [ -z "$HANDOFF_DOC" ] || [ -z "$WORKTREE" ] \
    || [ ! -f "$HANDOFF_DOC" ] || [ ! -d "$WORKTREE" ]; then
   rm -f "$FLAG" "$RETRY"
