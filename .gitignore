@@ -28,6 +28,11 @@ pnpm-debug.log*
 # Scratch / per-session ephemera (skill prompt files, audit outputs, etc.)
 .tmp/
 
+# handoff skill — transient session-handoff docs + local KB-pointer marker (#474)
+# handoff docs live with the workspace/KB, never in global ~/.claude; always gitignored.
+.handoff/
+.handoff-config
+
 # Environment / Secrets
 .env
 .env.*
