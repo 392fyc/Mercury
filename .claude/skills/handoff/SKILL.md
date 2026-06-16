@@ -199,9 +199,9 @@ HANDOFF_PATH="$HANDOFF_DIR/session-handoff.md"   # multi-lane: append -<lane> be
 ```
 
 `.handoff-config` format (one `kb_dir=` line; use **forward slashes** so Git
-Bash resolves it; absolute path):
+Bash resolves it; absolute path — substitute your own KB location):
 ```
-kb_dir=D:/ShipOfTheseus/ShipOfTheseus-KB
+kb_dir=/absolute/path/to/your-project-KB
 ```
 No marker file ⇒ no KB ⇒ handoff falls back to `<workspace>/.handoff/`.
 
