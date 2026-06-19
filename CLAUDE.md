@@ -23,6 +23,28 @@ Read these docs on demand when you need the corresponding information:
 | Dispatch prompt templates | `.mercury/templates/` |
 | Architecture research (PR #162) | `.mercury/docs/research/issue-158-architecture-evaluation.md` |
 | Agent view dispatch convention (multi-lane × bg sessions) | `.mercury/docs/guides/agent-view-dispatch.md` |
+| **Dynamic Workflow 模板库 + 触发/保存/复用约定** | `.claude/workflows/README.md` |
+| 四原语选型矩阵 + budget-scaling 规则 | `.claude/agents/main.md` §编排升级 |
+
+## Ultracode 与 Dynamic Workflows
+
+Mercury 用 Claude Code 原生 **Dynamic Workflow**(确定性多 agent 编排,JS 脚本,后台跑数十到数百 subagent,中间结果留脚本变量)处理「一个会话 context 装不下」或「编排值得沉淀成可重跑脚本」的任务。模板库宿主在 `.claude/workflows/`(随 repo 分发),约定与护栏见该目录 README。环境要求 Claude Code v2.1.154+。
+
+**何时触发 Workflow(升级判据)**:
+- **应触发**:repo 级审计/扫描(多文件 fan-out)、大规模迁移/codemod(数十+站点)、需多源交叉核查的研究(≥3 源对照)、需多角度起草再裁决的硬计划、需对抗式验证以滤除「看似对实则错」结论的审查。
+- **不必触发**(用线性 dev-pipeline / 单 subagent / skill):单文件改动、1-2 源快速查证、机械单步操作、已 well-scoped 的单任务实现。
+- 选型矩阵(Subagents vs Skills vs Agent Teams vs Workflows)+ budget-scaling 量化规则见 `.claude/agents/main.md` §编排升级。
+
+**触发方式**:① prompt 含关键词 `ultracode`(单任务 opt-in;v2.1.160 前为 `workflow`)或自然语言「用 workflow 跑」;② `/effort ultracode`(会话持久 = xhigh + 每个实质任务自动编排,新会话重置,`/effort high` 退回);③ `/<name>` 复用已存模板。
+
+> **持久 ultracode 仅 `/effort ultracode` 内置命令可设** —— handoff `--startup-keyword ultracode` 只触发单轮 opt-in,不激活持久模式(见记忆 `reference_ultracode_launch_activation`)。
+
+**硬护栏(对齐 [#385](https://github.com/392fyc/Mercury/issues/385) context 经济学,所有 Workflow 模板必须遵守)**:
+- 不 pre-inject 全量文档进 subagent context —— 传**路径 + 任务**,agent 自己 Read(bulk injection 永久抢占 cache slot)。
+- fan-out 设显式上限 + 被丢弃工作量必 `log()`(禁静默截断)。
+- Haiku 路径注入切片 ≤50K token(200K ctx 硬 cliff);Codex/GPT-5.5 路径 272K cliff 越线整 session 翻倍。
+- runtime 兜底 ≤16 并发 / 1000 agent per run。
+- **dual-verify 仍是合并门**:Workflow 产出代码改动照样跑 `/dual-verify` + PR 到 develop,不绕过任何 hook 回归。
 
 ## Related Repositories
 

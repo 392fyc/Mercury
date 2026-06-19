@@ -45,3 +45,48 @@ User requests, dev receipts, acceptance verdicts, research summaries, design pro
 ## Output
 
 Task descriptions, review decisions, session summaries
+
+---
+
+## 编排升级:四原语选型矩阵 + budget-scaling
+
+> 立项 [#480](https://github.com/392fyc/Mercury/issues/480)(umbrella [#478](https://github.com/392fyc/Mercury/issues/478) harness 现代化 P0)· 护栏 [#385](https://github.com/392fyc/Mercury/issues/385) · 模板库 `.claude/workflows/README.md`
+>
+> Main 默认走线性 dev-pipeline(Main→Dev→Acceptance)。下表是**何时升级到更重编排**的判据 —— 不要因为「能并行」就盲目 fan-out,也不要因为默认线性就把该并行的大任务串起来跑。
+
+### 四原语选型矩阵
+
+| 原语 | 谁持有计划 | 中间结果在哪 | 规模 | Mercury 何时用 |
+|---|---|---|---|---|
+| **Subagents**(dev/acceptance/critic/research/design) | Main 逐轮决定 | Main context | 每轮几个 | 默认:well-scoped 任务、receipt 审查、acceptance flow |
+| **Skills**(autoresearch/dual-verify/pr-flow…) | Claude 跟提示 | Main context | 同 subagent | 已固化的重复流程,有触发词 |
+| **Agent Teams** | lead agent 逐轮 | 共享任务列表 | 少量长跑 peer | peer-to-peer 协作 PoC(承接 [#319](https://github.com/392fyc/Mercury/issues/319) CLOSED 可行性 + [#155](https://github.com/392fyc/Mercury/issues/155);需 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`) |
+| **Workflows**(`.claude/workflows/*.js`) | **脚本本身** | **脚本变量** | **几十到几百 agent/run** | context 装不下 / 编排值得沉淀成可重跑脚本(见下「升级判据」) |
+
+**升级到 Workflow 的判据**:repo 级审计扫描、大规模迁移(数十+站点)、≥3 源交叉核查研究、多角度起草再裁决的硬计划、需对抗式验证滤除「看似对实则错」结论的审查。反之单文件改、1-2 源查证、机械单步 → 不升级,走 subagent/skill。完整触发方式 + 硬护栏见 CLAUDE.md §Ultracode 与 Dynamic Workflows。
+
+### budget-scaling 量化规则(agent 数 × call 数随任务复杂度伸缩)
+
+| 任务类型 | 配置 | 说明 |
+|---|---|---|
+| **事实核查 / 单点查证** | 1 agent × 3-10 calls | 单 research/document-specialist agent 多次 web 调用;不 fan-out |
+| **直接比较 / 选型** | 2-4 agent | 每个候选/视角一个 agent 并行,再 Main 综合 |
+| **复杂研究 / repo 级审计** | 10+ agent(Workflow) | fan-out + adversarial-verify;对齐 #385 fan-out 上限,被丢工作量必 log |
+
+预算可由 budget directive(`+500k` 等)动态伸缩:`const FLEET = budget.total ? Math.floor(budget.total / 100_000) : 5`。Workflow runtime 兜底 ≤16 并发 / 1000 agent per run。
+
+### 六大编排模式 — 一句话索引
+
+- **fan-out**:把工作切片,每片一个 agent 并行扫(repo 审计)。
+- **adversarial-verify**:每条 finding 派 N 个独立 skeptic 试图 refute,多数 refute 即杀(滤除 plausible-but-wrong)。
+- **tournament / judge-panel**:N 个独立方案 → 评审团打分 → 综合优胜 + 嫁接亚军亮点(硬计划)。
+- **generate-and-filter**:先广撒生成候选,再逐条过滤/投票存活(研究 claim 交叉核查)。
+- **classify-and-act**:先分类再按类分派不同处理(混合工作流)。
+- **loop-until-done**:未知规模发现类,循环派 finder 直到 K 轮无新增(大迁移收敛)。
+
+模式 ↔ 模板映射见 `.claude/workflows/README.md`。
+
+### 与 multi-lane / agent view 共存
+
+- Workflow 是**单 lane 内**的编排原语(main lane 跑 Workflow 不动 side-multi-lane #292 soak);Workflow 后台 run 与 lane-as-process 多 session 并行是两层正交机制。
+- 跨 lane / 后台 session 的 dispatch + 监控约定见 `.mercury/docs/guides/agent-view-dispatch.md`(Path B primary,Closes [#386](https://github.com/392fyc/Mercury/issues/386));Workflow 的 `/workflows` 进度视图与 agent view 的 background session 监控并行使用,互不替代。
