@@ -62,7 +62,7 @@ fan-out(`codebase-audit`)· adversarial-verify(`codebase-audit` 的 Verify / `ad
 2. **fan-out 设上限 + 不静默截断**:每个模板有显式 cap(`FAN_OUT_CAP`/`ANGLE_CAP`/`BATCH_CAP`/`MAX_ROUNDS`),被丢弃的工作量一律 `log()` 出来(静默截断会被误读成「全覆盖」)。
 3. **Haiku 路径 50K 硬顶**:若某 stage 路由到 haiku-tier(`game-researcher` 等),注入切片必须 ≤50K token(Haiku 4.5 是 200K ctx 硬 cliff)。模板默认继承会话 model 且只传路径,远低于此线。
 4. **Codex/GPT-5.5 路径 272K cliff**:越线一次整 session 计费翻倍 —— Workflow agent 跑 Claude 不直接受此约束,但若模板被改造去调 Codex 路径需重新评估。
-5. runtime 硬上限:≤16 并发 / 1000 agent per run(runaway 兜底)。
+5. runtime 硬上限:≤16 并发 / 1000 agent per run(runaway 兜底)。模板自身额外做**总量自限**:`codebase-audit` 与 `large-migration` 按 cap 组合算最坏 agent 数并钳制(`AGENT_BUDGET=800` 留余量),即使 operator 把 cap 调到上限也不会撞 1000 而被中途截断(migration 钳 `MAX_ROUNDS`、audit 钳 `MAX_FINDINGS`,触发时 `log()`)。
 
 ## Mercury 治理约束
 

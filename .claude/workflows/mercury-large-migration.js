@@ -32,7 +32,14 @@ if (!rule) {
 // fan-out guardrail under an oversized override; the lower bound stops a negative/zero value
 // from silently no-op'ing the stage (a negative slice arg would behave nonsensically).
 const BATCH_CAP = Math.max(1, Math.min((args && args.batchCap) || 12, 50))   // files transformed per round
-const MAX_ROUNDS = Math.max(1, Math.min((args && args.maxRounds) || 5, 20))  // loop-until-dry safety bound
+// Each file spends 2 agents (migrate + verify), so the whole-run worst case is
+// BATCH_CAP * MAX_ROUNDS * 2. Clamp MAX_ROUNDS so that stays under the runtime's 1000-agent
+// hard cap (AGENT_BUDGET margin) — otherwise a max-configured run would be cut off mid-way
+// instead of returning a clean resumable state. The loop is resumable: rerun to continue.
+const AGENT_BUDGET = 800
+const _maxRounds = Math.max(1, Math.min((args && args.maxRounds) || 5, 20))  // loop-until-dry safety bound
+const MAX_ROUNDS = Math.max(1, Math.min(_maxRounds, Math.floor(AGENT_BUDGET / (BATCH_CAP * 2))))
+if (MAX_ROUNDS < _maxRounds) log(`MAX_ROUNDS clamped ${_maxRounds}->${MAX_ROUNDS} to keep BATCH_CAP*MAX_ROUNDS*2 under the ${AGENT_BUDGET}-agent budget (rerun to continue)`)
 
 // The script has no filesystem access, so this is a string-level guard: keep migration
 // inside the repo by rejecting absolute paths (POSIX `/`, Windows drive/UNC) and any `..`

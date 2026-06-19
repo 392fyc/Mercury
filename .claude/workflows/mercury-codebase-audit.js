@@ -36,7 +36,14 @@ if (requestedDimensions.length > DIMENSIONS.length) log(`Dropped ${requestedDime
 // flow into the (more expensive) verify stage. Clamped to [1, ceiling] and enforced in code
 // (not just requested of the agent); dropped overflow is log()'d.
 const MODULE_CAP = Math.max(1, Math.min((args && args.moduleCap) || 60, 200))
-const MAX_FINDINGS = Math.max(1, Math.min((args && args.maxFindings) || 40, 100))
+// Worst-case agents ≈ 1 (Discover) + D (Audit) + D*MAX_FINDINGS (Verify). Clamp MAX_FINDINGS
+// so that total stays under the runtime's 1000-agent hard cap (AGENT_BUDGET margin), keeping
+// the documented "≤1000 agents" guardrail self-consistent even at the max cap combination.
+const AGENT_BUDGET = 800
+const _verifyPerDim = Math.max(1, Math.floor((AGENT_BUDGET - 1 - DIMENSIONS.length) / DIMENSIONS.length))
+const _maxFindings = Math.max(1, Math.min((args && args.maxFindings) || 40, 100))
+const MAX_FINDINGS = Math.min(_maxFindings, _verifyPerDim)
+if (MAX_FINDINGS < _maxFindings) log(`MAX_FINDINGS clamped ${_maxFindings}->${MAX_FINDINGS} to keep total agents under the ${AGENT_BUDGET}-agent budget`)
 
 const FINDINGS_SCHEMA = {
   type: 'object',
@@ -122,12 +129,14 @@ const verified = await pipeline(
 )
 
 phase('Report')
-// Dedup by file+title so the same issue surfaced by two dimensions is reported once
-// (matches the Report phase's "dedup survivors" contract), then sort by severity.
+// Dedup so the same issue surfaced by two dimensions is reported once (matches the Report
+// phase's "dedup survivors" contract), then sort by severity. The key includes an evidence
+// snippet so two DIFFERENT issues that share a file+title (e.g., same check missing at two
+// locations) are NOT merged — `file` is path:line, but evidence disambiguates further.
 const seen = new Set()
 const confirmed = verified.flat().filter(Boolean)
   .filter(f => f.verdict && f.verdict.isReal)
-  .filter(f => { const k = `${f.file}::${f.title}`; if (seen.has(k)) return false; seen.add(k); return true })
+  .filter(f => { const k = `${f.file}::${f.title}::${(f.evidence || '').slice(0, 60)}`; if (seen.has(k)) return false; seen.add(k); return true })
 const order = { high: 0, medium: 1, low: 2 }
 confirmed.sort((a, b) => (order[a.severity] ?? 3) - (order[b.severity] ?? 3))
 log(`${confirmed.length} confirmed findings after adversarial verification + dedup`)
