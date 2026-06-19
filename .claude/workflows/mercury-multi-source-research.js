@@ -102,13 +102,15 @@ log(`Cross-checking ${claims.length} of ${allClaims.length} distinct claims acro
 phase('CrossCheck')
 // Each claim is independently re-verified against fresh sources (not the ones that
 // produced it) so a single angle cannot self-confirm.
-const voted = await parallel(claims.map(c => () =>
+const voted = await parallel(claims.map((c, i) => () =>
   agent(
     `Independently cross-check this claim against fresh authoritative sources (do NOT just trust the cited ones):\n` +
     `Claim: "${c.claim}"\nOriginally cited: ${(c.sources || []).join(', ') || '(none)'}\n` +
     `Use WebSearch/WebFetch. Return verified only if an official/primary source confirms it; contradicted if a source refutes it; ` +
     `unverified if you cannot confirm against a primary source.`,
-    { label: 'crosscheck', phase: 'CrossCheck', schema: VOTE_SCHEMA, agentType: 'research' }
+    // Unique per-claim label (index + slug) so concurrent cross-checks are distinguishable
+    // in the /workflows panel and logs — a shared label makes per-claim triage impossible.
+    { label: `crosscheck:${i + 1}:${(c.claim || '').slice(0, 20)}`, phase: 'CrossCheck', schema: VOTE_SCHEMA, agentType: 'research' }
   ).then(v => ({ ...c, vote: v }))
 ))
 

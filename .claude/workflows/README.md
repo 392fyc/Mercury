@@ -32,7 +32,7 @@ Dynamic Workflow 是 Claude Code 原生的「**确定性多 agent 编排**」原
 - **手写模板**(如本目录 4 个):文件名 = `meta.name`,放 `.claude/workflows/<name>.js` → 直接 `/<name>` 调用。
 - **从运行保存**:跑出满意的一次后 `/workflows` → 选中 → 按 `s` → Tab 切换保存位置(`.claude/workflows/` 项目级随 repo / `~/.claude/workflows/` 个人级)→ Enter。
 - **同名优先级**:项目级 > 个人级。
-- **传参**:`/<name>` 后跟参数,脚本里读全局 `args`(字符串/数组/对象原样传入,无需解析)。每个 Mercury 模板都对 `args` 缺省做了优雅降级。
+- **传参**:`/<name>` 后跟参数,脚本里读全局 `args`(运行时把字符串/数组/对象**原样**传入,无需解析)。**注意**:`args` 的具体**形状是每个模板自定义的**(见各脚本顶部常量),不是每个模板都接受三种形状 —— 例如 research/plan-review/migration 接受「字符串 或 `{字段…}` 对象」,audit 接受对象;传入不符合该模板契约的形状(如给只认字符串/对象的模板传顶层数组)会落入缺参分支并打印用法提示。每个模板都对缺省/不符做了优雅降级(返回 error + hint,不抛错)。
 - **后台 + 监控**:Workflow 默认后台跑,会话不阻塞;`/workflows` 看每 phase 的 agent 数 / token / 耗时,可暂停(`p`)/停止(`x`)/重启 agent(`r`);同会话内可 resume(已完成 agent 返缓存结果),退出 Claude Code 则下次重跑。
 
 ---
