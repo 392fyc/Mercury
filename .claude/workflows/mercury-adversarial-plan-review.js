@@ -26,9 +26,9 @@ if (!task) {
 const contextPaths = [].concat((args && args.contextPaths) || [])
 const ctxLine = contextPaths.length ? `\nRead these for context (do not assume their contents): ${contextPaths.join(', ')}` : ''
 
-// Clamped to a hard ceiling so the #385 fan-out cap holds even under an oversized override
-// (also bounded by the ANGLES array length below).
-const ANGLE_CAP = Math.min((args && args.maxAngles) || 4, 6)
+// Clamped to [1, ceiling] so the #385 fan-out cap holds under an oversized override AND a
+// negative/zero value can't silently no-op the stage (also bounded by ANGLES length below).
+const ANGLE_CAP = Math.max(1, Math.min((args && args.maxAngles) || 4, 6))
 const ANGLES = [
   { key: 'mvp-first', lens: 'ship the smallest correct thing first; defer everything deferrable' },
   { key: 'risk-first', lens: 'minimize blast radius and irreversibility; prioritize rollback and guardrails' },

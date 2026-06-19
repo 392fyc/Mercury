@@ -23,12 +23,13 @@ if (!question) {
   return { error: 'missing question', hint: 'pass args as a string or { question }' }
 }
 
-// Caps are operator-overridable but clamped to a hard ceiling, so the #385 fan-out bound
-// holds even under an oversized override (ANGLE_CAP is also bounded by the ANGLES array).
-const ANGLE_CAP = Math.min((args && args.maxAngles) || 5, 8)
+// Caps are operator-overridable but clamped to [1, ceiling]: upper bound keeps the #385
+// fan-out guardrail under an oversized override; lower bound stops a negative/zero value
+// from silently no-op'ing a stage (ANGLE_CAP is also bounded by the ANGLES array).
+const ANGLE_CAP = Math.max(1, Math.min((args && args.maxAngles) || 5, 8))
 // Bound the SECOND fan-out too: a noisy question can surface dozens of claims, and
 // cross-checking each spawns an agent. Cap + log dropped (#385: every fan-out is bounded).
-const CLAIM_CAP = Math.min((args && args.maxClaims) || 24, 100)
+const CLAIM_CAP = Math.max(1, Math.min((args && args.maxClaims) || 24, 100))
 const ANGLES = [
   'official vendor documentation and API reference',
   'package registry (npm/PyPI) version + publish status + changelog',
@@ -78,14 +79,25 @@ const swept = await parallel(ANGLES.map(angle => () =>
     { label: `sweep:${angle.slice(0, 24)}`, phase: 'Sweep', schema: CLAIMS_SCHEMA, agentType: 'research' }
   )
 ))
-const allClaims = swept.filter(Boolean).flatMap(r => (r && r.claims) || [])
+// Dedup the same claim emitted by multiple angles BEFORE the cap, so duplicates don't
+// consume CLAIM_CAP budget or reappear across verified/contradicted/unverified buckets.
+const sweptClaims = swept.filter(Boolean).flatMap(r => (r && r.claims) || [])
+const seenClaims = new Set()
+const allClaims = []
+for (const c of sweptClaims) {
+  const k = (c && c.claim || '').trim().toLowerCase().replace(/\s+/g, ' ')
+  if (!k || seenClaims.has(k)) continue
+  seenClaims.add(k)
+  allClaims.push(c)
+}
+if (sweptClaims.length > allClaims.length) log(`Deduped ${sweptClaims.length - allClaims.length} duplicate claims across angles`)
 // Prefer higher-confidence claims when the cap bites, so the cross-check budget is
 // spent on the most load-bearing claims rather than an arbitrary prefix.
 const rank = { high: 0, medium: 1, low: 2 }
 allClaims.sort((a, b) => (rank[a.confidence] ?? 1) - (rank[b.confidence] ?? 1))
 const claims = allClaims.slice(0, CLAIM_CAP)
 if (allClaims.length > claims.length) log(`${allClaims.length - claims.length} lower-confidence claims dropped at CLAIM_CAP=${CLAIM_CAP} (rerun narrower to cross-check them)`)
-log(`Cross-checking ${claims.length} of ${allClaims.length} candidate claims across ${ANGLES.length} angles`)
+log(`Cross-checking ${claims.length} of ${allClaims.length} distinct claims across ${ANGLES.length} angles`)
 
 phase('CrossCheck')
 // Each claim is independently re-verified against fresh sources (not the ones that

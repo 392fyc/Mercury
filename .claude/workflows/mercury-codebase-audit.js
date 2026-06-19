@@ -20,18 +20,23 @@ export const meta = {
 //    model and pass only paths, so they stay well under that.
 
 const target = (args && args.target) || '.'
-const DIMENSIONS = (args && args.dimensions) || [
+const DEFAULT_DIMENSIONS = [
   { key: 'security', prompt: 'injection, authz/authn gaps, unsafe deserialization, secrets in code, SSRF, path traversal' },
   { key: 'correctness', prompt: 'logic defects, off-by-one, null/undefined handling, race conditions, error-swallowing' },
   { key: 'resource', prompt: 'unbounded loops/allocations, leaked handles, N+1 queries, missing timeouts/back-pressure' },
 ]
-// Cap how many modules Discover may feed downstream, and how many findings per
-// dimension flow into the (more expensive) verify stage. Both are enforced in code
-// below (not just requested of the agent) and dropped overflow is log()'d.
-// Operator-overridable but clamped to a hard ceiling so the #385 fan-out cap holds even
-// under an oversized override.
-const MODULE_CAP = Math.min((args && args.moduleCap) || 60, 200)
-const MAX_FINDINGS = Math.min((args && args.maxFindings) || 40, 100)
+// The dimensions list is itself the OUTER fan-out, so a caller-supplied `args.dimensions`
+// must be capped too (not just the inner module/finding fan-outs) or an oversized override
+// spawns arbitrary audit lanes. Cap + log dropped (#385: every fan-out is bounded).
+const DIMENSION_CAP = Math.max(1, Math.min((args && args.dimensionCap) || 8, 12))
+const requestedDimensions = (args && Array.isArray(args.dimensions) && args.dimensions.length) ? args.dimensions : DEFAULT_DIMENSIONS
+const DIMENSIONS = requestedDimensions.slice(0, DIMENSION_CAP)
+if (requestedDimensions.length > DIMENSIONS.length) log(`Dropped ${requestedDimensions.length - DIMENSIONS.length} dimensions beyond DIMENSION_CAP=${DIMENSION_CAP}`)
+// Cap how many modules Discover may feed downstream, and how many findings per dimension
+// flow into the (more expensive) verify stage. Clamped to [1, ceiling] and enforced in code
+// (not just requested of the agent); dropped overflow is log()'d.
+const MODULE_CAP = Math.max(1, Math.min((args && args.moduleCap) || 60, 200))
+const MAX_FINDINGS = Math.max(1, Math.min((args && args.maxFindings) || 40, 100))
 
 const FINDINGS_SCHEMA = {
   type: 'object',
@@ -82,6 +87,12 @@ const rawModules = (inventory && inventory.modules) || []
 const modules = rawModules.slice(0, MODULE_CAP)
 const overflow = rawModules.length - modules.length + ((inventory && inventory.droppedCount) || 0)
 if (overflow > 0) log(`Discover capped at ${MODULE_CAP} modules — ${overflow} lower-signal modules dropped (fan-out cap)`)
+// Short-circuit on an empty work-list: otherwise every dimension fans out with an empty
+// scope and an agent could ignore it and scan the whole repo, bypassing the module cap.
+if (!modules.length) {
+  log(`Discover found no auditable modules for \`${target}\` — skipping audit`)
+  return { target, dimensions: DIMENSIONS.map(d => d.key), modulesAudited: 0, confirmedCount: 0, findings: [] }
+}
 log(`Auditing ${modules.length} modules across ${DIMENSIONS.length} dimensions`)
 const moduleList = modules.map(m => `- ${m.path} (${m.role})`).join('\n')
 

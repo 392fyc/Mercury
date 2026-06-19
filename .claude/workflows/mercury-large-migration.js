@@ -28,10 +28,11 @@ if (!rule) {
   return { error: 'missing migration rule' }
 }
 
-// Caps are operator-overridable via args but clamped to a hard ceiling, so the #385
-// "explicit upper bound" guardrail holds even when a caller passes an oversized value.
-const BATCH_CAP = Math.min((args && args.batchCap) || 12, 50)   // files transformed per round
-const MAX_ROUNDS = Math.min((args && args.maxRounds) || 5, 20)  // loop-until-dry safety bound
+// Caps are operator-overridable but clamped to [1, ceiling]: the upper bound keeps the #385
+// fan-out guardrail under an oversized override; the lower bound stops a negative/zero value
+// from silently no-op'ing the stage (a negative slice arg would behave nonsensically).
+const BATCH_CAP = Math.max(1, Math.min((args && args.batchCap) || 12, 50))   // files transformed per round
+const MAX_ROUNDS = Math.max(1, Math.min((args && args.maxRounds) || 5, 20))  // loop-until-dry safety bound
 
 // The script has no filesystem access, so this is a string-level guard: keep migration
 // inside the repo by rejecting absolute paths (POSIX `/`, Windows drive/UNC) and any `..`
@@ -72,8 +73,10 @@ const completed = []
 const completedSet = new Set()   // dedup discovered files against ones already handled
 const skipped = []               // verified no-ops / already-migrated — not failures
 const failures = []
+const unsafeSeen = new Set()      // out-of-repo / traversal paths we refuse to touch
 let round = 0
 let remaining = 0
+let stoppedEarly = false          // broke because a round had no actionable files (not converged)
 
 while (round < MAX_ROUNDS) {
   round++
@@ -85,23 +88,39 @@ while (round < MAX_ROUNDS) {
     { label: `discover:r${round}`, phase: 'Discover', schema: FILES_SCHEMA }
   )
   const rawFiles = (found && found.files) || []
-  // Drop unsafe paths and already-migrated files BEFORE the per-round cap, so the cap
-  // budgets real remaining work rather than duplicates or out-of-repo paths. Without the
-  // dedup, a Discover that re-returns a completed file could re-migrate it and burn rounds.
-  const candidates = rawFiles.filter(x => x && isSafeRelPath(x.file) && !completedSet.has(x.file))
+  // True convergence is ONLY when Discover returns nothing at all. (A non-empty batch that
+  // filters down to nothing is handled separately below — it is NOT clean convergence.)
+  if (!rawFiles.length) { remaining = 0; log(`Round ${round}: Discover found no files — migration converged`); break }
+  // Build the actionable set: drop unsafe/out-of-repo paths, files already handled in a
+  // prior round, AND duplicates within THIS round. The within-round dedup is essential —
+  // if Discover returns the same file twice, two agents would edit it in parallel and
+  // clobber each other, breaking the one-agent-per-file ownership the design relies on.
+  const roundSeen = new Set()
+  const candidates = []
+  for (const x of rawFiles) {
+    if (!x || typeof x.file !== 'string' || !x.file) continue
+    if (!isSafeRelPath(x.file)) { unsafeSeen.add(x.file); continue }
+    if (completedSet.has(x.file) || roundSeen.has(x.file)) continue
+    roundSeen.add(x.file)
+    candidates.push(x)
+  }
   const droppedBad = rawFiles.length - candidates.length
-  if (droppedBad > 0) log(`Round ${round}: dropped ${droppedBad} discovered entries (unsafe path or already-migrated)`)
+  if (droppedBad > 0) log(`Round ${round}: dropped ${droppedBad} discovered entries (unsafe path, duplicate, or already-migrated)`)
   const files = candidates.slice(0, BATCH_CAP)
-  // If valid candidates exceed BATCH_CAP, the extras are NOT lost: they go un-migrated
-  // this round and the loop re-discovers them next round. Log it so the cap is never a
-  // silent drop (consistent with the audit template's overflow accounting).
+  // Valid candidates beyond BATCH_CAP are NOT lost: they go un-migrated this round and the
+  // loop re-discovers them. Fold them into `remaining` so the round cap can't exit clean
+  // while files are still pending (consistent with the audit template's overflow accounting).
   const overReturned = candidates.length - files.length
-  if (overReturned > 0) log(`Round ${round}: Discover over-returned — ${overReturned} files beyond BATCH_CAP=${BATCH_CAP} deferred (counted in remaining; loop re-discovers them)`)
-  // Fold over-returned files into `remaining` so the round-cap boundary cannot exit with
-  // "Converged / remainingEstimate: 0" while sliced-off files are still un-migrated. The
-  // loop re-discovers them on the next round; at the round cap they surface in the return.
+  if (overReturned > 0) log(`Round ${round}: ${overReturned} valid files beyond BATCH_CAP=${BATCH_CAP} deferred to next round (counted in remaining)`)
   remaining = ((found && found.remainingEstimate) || 0) + overReturned
-  if (!files.length) { log(`Round ${round}: no files left — migration converged`); break }
+  if (!files.length) {
+    // rawFiles was non-empty but nothing is actionable (all already-done, duplicates, or
+    // unsafe). Stop to avoid an infinite loop, but do NOT claim clean convergence — the
+    // residual (remainingEstimate + unsafe paths) surfaces in the return below.
+    stoppedEarly = true
+    log(`Round ${round}: no actionable files (all already-migrated, duplicate, or unsafe) — stopping`)
+    break
+  }
   log(`Round ${round}: migrating ${files.length} files (${remaining} estimated beyond this batch)`)
 
   // One agent owns each file (distinct files → no concurrent same-file clobber), edits in
@@ -134,20 +153,37 @@ while (round < MAX_ROUNDS) {
   }
 }
 
+// Honest residual: `remaining` carries the last round's estimate+overflow only when we hit
+// the round cap or stopped early on a non-actionable batch; a clean break (Discover empty)
+// reset it to 0. `converged` is true ONLY when nothing is left by any measure.
+const unsafeSkipped = [...unsafeSeen]
 const hitRoundCap = round >= MAX_ROUNDS && remaining > 0
-if (hitRoundCap) log(`Stopped at MAX_ROUNDS=${MAX_ROUNDS} with ~${remaining} files still estimated remaining (not dropped — rerun to continue)`)
+const estRemaining = (hitRoundCap || stoppedEarly) ? remaining : 0
+const converged = !stoppedEarly && !hitRoundCap && estRemaining === 0 && failures.length === 0 && unsafeSkipped.length === 0
+if (hitRoundCap) log(`Stopped at MAX_ROUNDS=${MAX_ROUNDS} with ~${remaining} files still estimated remaining (rerun to continue)`)
+if (unsafeSkipped.length) log(`${unsafeSkipped.length} discovered paths refused as unsafe/out-of-repo — never migrated (need manual handling)`)
 
 const consolidateNote = 'Edits are in the working tree, uncommitted — review the diff and commit (Main manages git).'
+let note
+if (converged) {
+  note = `Converged. ${consolidateNote}`
+} else {
+  const parts = []
+  if (estRemaining > 0) parts.push(`~${estRemaining} files still estimated remaining`)
+  if (failures.length) parts.push(`${failures.length} failed`)
+  if (unsafeSkipped.length) parts.push(`${unsafeSkipped.length} unsafe paths refused`)
+  note = `NOT fully converged (${parts.join('; ') || 'no actionable files this round'}) — rerun for retriable files; unsafe paths need manual handling. ${consolidateNote}`
+}
 return {
   rule,
   pattern,
   rounds: round,
+  converged,
   migratedCount: completed.length,
   migratedFiles: completed,
   skippedFiles: skipped,
   failures,
-  remainingEstimate: hitRoundCap ? remaining : 0,
-  note: hitRoundCap
-    ? `Round cap reached — rerun the workflow to migrate the rest. ${consolidateNote}`
-    : `Converged. ${consolidateNote}`,
+  unsafeSkipped,
+  remainingEstimate: estRemaining,
+  note,
 }
