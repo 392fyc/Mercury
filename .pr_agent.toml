@@ -6,8 +6,10 @@
 extra_instructions = """
 Mercury project review rules (MUST check every PR):
 
-1. **Issue reference**: PR description must contain Closes/Fixes/Resolves/Refs #N.
-   Flag as blocker if missing. Exception: pure chore/doc PRs with no functional code
+1. **Issue reference**: PR description must contain Closes/Fixes/Resolves/Refs #N,
+   preferably near the TOP of the body (a leading `## Issue` block) so the reference
+   survives any head-first token-clip of long descriptions. Flag as blocker if missing.
+   Exception: pure chore/doc PRs with no functional code
    changes (e.g., typo fixes, README updates) may omit the issue reference.
 
 2. **Modular design**: Every new feature must be independently detachable.

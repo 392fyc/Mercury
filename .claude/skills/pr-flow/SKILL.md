@@ -83,6 +83,14 @@ PR_ARGS=(
   --base "$BASE_BRANCH"
   --title "<type>(<scope>): description (#issue)"
   --body "$(cat <<'BODY'
+## Issue
+Closes #<issue>
+<!-- Issue reference FIRST so it survives any future token-clip in the kept HEAD
+     (Argus/pr-agent clips long PR bodies head-first; trailing refs get dropped).
+     Use "Refs #<issue>" instead of "Closes" when the issue should stay open after
+     merge. Pure chore/doc PRs with no functional change may omit this block
+     (see .pr_agent.toml rule 1). -->
+
 ## Summary
 - bullet points
 
