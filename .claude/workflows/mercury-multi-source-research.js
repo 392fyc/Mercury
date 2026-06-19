@@ -58,11 +58,14 @@ const CLAIMS_SCHEMA = {
 
 const VOTE_SCHEMA = {
   type: 'object',
-  required: ['status', 'reason'],
+  required: ['status', 'reason', 'bestSource'],
   properties: {
     status: { type: 'string', enum: ['verified', 'contradicted', 'unverified'] },
     reason: { type: 'string' },
-    bestSource: { type: 'string' },
+    // Required so a verified claim always carries the authoritative URL the verdict rests
+    // on (not the originally-cited, possibly non-primary source). For unverified, give the
+    // best source checked or "none".
+    bestSource: { type: 'string', description: 'authoritative URL the verdict rests on, or "none"' },
   },
 }
 

@@ -69,7 +69,8 @@ const VERIFY_SCHEMA = {
 
 const patternHint = pattern ? ` within \`${pattern}\`` : ''
 const completed = []
-const completedSet = new Set()   // dedup discovered files against ones already migrated
+const completedSet = new Set()   // dedup discovered files against ones already handled
+const skipped = []               // verified no-ops / already-migrated — not failures
 const failures = []
 let round = 0
 let remaining = 0
@@ -123,7 +124,12 @@ while (round < MAX_ROUNDS) {
   )
 
   for (const r of results.filter(Boolean)) {
-    if (r.verify && r.verify.ok && r.migrate && r.migrate.status === 'migrated') { completed.push(r.site); completedSet.add(r.site) }
+    const okVerify = r.verify && r.verify.ok
+    const st = r.migrate && r.migrate.status
+    // Verification is the correctness gate. A verified 'skipped' (already-migrated / no-op)
+    // is NOT a failure — bucket it separately and dedup it so it isn't re-discovered.
+    if (okVerify && st === 'migrated') { completed.push(r.site); completedSet.add(r.site) }
+    else if (okVerify && st === 'skipped') { skipped.push(r.site); completedSet.add(r.site) }
     else failures.push({ site: r.site, reason: (r.verify && r.verify.reason) || (r.migrate && r.migrate.detail) || 'unknown' })
   }
 }
@@ -138,6 +144,7 @@ return {
   rounds: round,
   migratedCount: completed.length,
   migratedFiles: completed,
+  skippedFiles: skipped,
   failures,
   remainingEstimate: hitRoundCap ? remaining : 0,
   note: hitRoundCap

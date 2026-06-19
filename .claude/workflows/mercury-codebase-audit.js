@@ -111,10 +111,15 @@ const verified = await pipeline(
 )
 
 phase('Report')
-const confirmed = verified.flat().filter(Boolean).filter(f => f.verdict && f.verdict.isReal)
+// Dedup by file+title so the same issue surfaced by two dimensions is reported once
+// (matches the Report phase's "dedup survivors" contract), then sort by severity.
+const seen = new Set()
+const confirmed = verified.flat().filter(Boolean)
+  .filter(f => f.verdict && f.verdict.isReal)
+  .filter(f => { const k = `${f.file}::${f.title}`; if (seen.has(k)) return false; seen.add(k); return true })
 const order = { high: 0, medium: 1, low: 2 }
 confirmed.sort((a, b) => (order[a.severity] ?? 3) - (order[b.severity] ?? 3))
-log(`${confirmed.length} confirmed findings after adversarial verification`)
+log(`${confirmed.length} confirmed findings after adversarial verification + dedup`)
 
 return {
   target,

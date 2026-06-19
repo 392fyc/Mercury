@@ -49,7 +49,9 @@ const PLAN_SCHEMA = {
 
 const SCORE_SCHEMA = {
   type: 'object',
-  required: ['scores', 'overall', 'killer'],
+  // bestIdea is required: the synthesis grafts it from runners-up, so a missing value would
+  // inject `undefined` into the synthesis prompt and degrade output.
+  required: ['scores', 'overall', 'killer', 'bestIdea'],
   properties: {
     scores: {
       type: 'object',

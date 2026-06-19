@@ -37,7 +37,7 @@ Mercury 用 Claude Code 原生 **Dynamic Workflow**(确定性多 agent 编排,JS
 
 **触发方式**:① prompt 含关键词 `ultracode`(单任务 opt-in;v2.1.160 前为 `workflow`)或自然语言「用 workflow 跑」;② `/effort ultracode`(会话持久 = xhigh + 每个实质任务自动编排,新会话重置,`/effort high` 退回);③ `/<name>` 复用已存模板。
 
-> **持久 ultracode 仅 `/effort ultracode` 内置命令可设** —— handoff `--startup-keyword ultracode` 只触发单轮 opt-in,不激活持久模式(见记忆 `reference_ultracode_launch_activation`)。
+> **持久 ultracode 仅 `/effort ultracode` 内置命令可设**(官方文档:ultracode 是会话级 effort 设置,新会话重置)。handoff `--startup-keyword ultracode` 等关键词注入只触发**单轮** opt-in,不激活持久模式。触发方式全表见 `.claude/workflows/README.md` §触发方式。
 
 **硬护栏(对齐 [#385](https://github.com/392fyc/Mercury/issues/385) context 经济学,所有 Workflow 模板必须遵守)**:
 - 不 pre-inject 全量文档进 subagent context —— 传**路径 + 任务**,agent 自己 Read(bulk injection 永久抢占 cache slot)。
