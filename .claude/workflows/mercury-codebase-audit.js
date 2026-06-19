@@ -29,7 +29,18 @@ const DEFAULT_DIMENSIONS = [
 // must be capped too (not just the inner module/finding fan-outs) or an oversized override
 // spawns arbitrary audit lanes. Cap + log dropped (#385: every fan-out is bounded).
 const DIMENSION_CAP = Math.max(1, Math.min((args && args.dimensionCap) || 8, 12))
-const requestedDimensions = (args && Array.isArray(args.dimensions) && args.dimensions.length) ? args.dimensions : DEFAULT_DIMENSIONS
+// Normalize caller-supplied dimensions: accept a non-empty string (coerced to {key, prompt})
+// or an object with string key+prompt; drop anything malformed so a bad override can't
+// inject `undefined` into audit prompts. Fall back to defaults if nothing valid remains.
+function normDimension(d) {
+  if (typeof d === 'string' && d.trim()) return { key: d.trim().slice(0, 40), prompt: d.trim() }
+  if (d && typeof d.key === 'string' && d.key.trim() && typeof d.prompt === 'string' && d.prompt.trim()) return { key: d.key.trim(), prompt: d.prompt.trim() }
+  return null
+}
+const suppliedDimensions = (args && Array.isArray(args.dimensions)) ? args.dimensions : []
+const normalizedDimensions = suppliedDimensions.map(normDimension).filter(Boolean)
+if (suppliedDimensions.length > normalizedDimensions.length) log(`Dropped ${suppliedDimensions.length - normalizedDimensions.length} malformed dimension entries (need a non-empty string or {key, prompt})`)
+const requestedDimensions = normalizedDimensions.length ? normalizedDimensions : DEFAULT_DIMENSIONS
 const DIMENSIONS = requestedDimensions.slice(0, DIMENSION_CAP)
 if (requestedDimensions.length > DIMENSIONS.length) log(`Dropped ${requestedDimensions.length - DIMENSIONS.length} dimensions beyond DIMENSION_CAP=${DIMENSION_CAP}`)
 // Cap how many modules Discover may feed downstream, and how many findings per dimension
@@ -37,8 +48,8 @@ if (requestedDimensions.length > DIMENSIONS.length) log(`Dropped ${requestedDime
 // (not just requested of the agent); dropped overflow is log()'d.
 const MODULE_CAP = Math.max(1, Math.min((args && args.moduleCap) || 60, 200))
 // Worst-case agents ≈ 1 (Discover) + D (Audit) + D*MAX_FINDINGS (Verify). Clamp MAX_FINDINGS
-// so that total stays under the runtime's 1000-agent hard cap (AGENT_BUDGET margin), keeping
-// the documented "≤1000 agents" guardrail self-consistent even at the max cap combination.
+// so that worst case is <= AGENT_BUDGET (800), leaving a ~200 margin under the runtime's
+// 1000-agent hard cap, keeping the documented guardrail self-consistent at the max override.
 const AGENT_BUDGET = 800
 const _verifyPerDim = Math.max(1, Math.floor((AGENT_BUDGET - 1 - DIMENSIONS.length) / DIMENSIONS.length))
 const _maxFindings = Math.max(1, Math.min((args && args.maxFindings) || 40, 100))
