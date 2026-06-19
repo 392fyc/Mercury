@@ -23,10 +23,12 @@ if (!question) {
   return { error: 'missing question', hint: 'pass args as a string or { question }' }
 }
 
-const ANGLE_CAP = (args && args.maxAngles) || 5
+// Caps are operator-overridable but clamped to a hard ceiling, so the #385 fan-out bound
+// holds even under an oversized override (ANGLE_CAP is also bounded by the ANGLES array).
+const ANGLE_CAP = Math.min((args && args.maxAngles) || 5, 8)
 // Bound the SECOND fan-out too: a noisy question can surface dozens of claims, and
 // cross-checking each spawns an agent. Cap + log dropped (#385: every fan-out is bounded).
-const CLAIM_CAP = (args && args.maxClaims) || 24
+const CLAIM_CAP = Math.min((args && args.maxClaims) || 24, 100)
 const ANGLES = [
   'official vendor documentation and API reference',
   'package registry (npm/PyPI) version + publish status + changelog',

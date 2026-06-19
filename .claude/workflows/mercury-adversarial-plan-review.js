@@ -22,10 +22,13 @@ if (!task) {
   return { error: 'missing task' }
 }
 // Optional: paths the drafters should read for context (lean — paths only, not contents).
-const contextPaths = (args && args.contextPaths) || []
+// Normalize to an array so a string or single value doesn't throw on .join below.
+const contextPaths = [].concat((args && args.contextPaths) || [])
 const ctxLine = contextPaths.length ? `\nRead these for context (do not assume their contents): ${contextPaths.join(', ')}` : ''
 
-const ANGLE_CAP = (args && args.maxAngles) || 4
+// Clamped to a hard ceiling so the #385 fan-out cap holds even under an oversized override
+// (also bounded by the ANGLES array length below).
+const ANGLE_CAP = Math.min((args && args.maxAngles) || 4, 6)
 const ANGLES = [
   { key: 'mvp-first', lens: 'ship the smallest correct thing first; defer everything deferrable' },
   { key: 'risk-first', lens: 'minimize blast radius and irreversibility; prioritize rollback and guardrails' },

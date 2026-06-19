@@ -28,8 +28,20 @@ if (!rule) {
   return { error: 'missing migration rule' }
 }
 
-const BATCH_CAP = (args && args.batchCap) || 12      // files transformed per round
-const MAX_ROUNDS = (args && args.maxRounds) || 5     // loop-until-dry safety bound
+// Caps are operator-overridable via args but clamped to a hard ceiling, so the #385
+// "explicit upper bound" guardrail holds even when a caller passes an oversized value.
+const BATCH_CAP = Math.min((args && args.batchCap) || 12, 50)   // files transformed per round
+const MAX_ROUNDS = Math.min((args && args.maxRounds) || 5, 20)  // loop-until-dry safety bound
+
+// The script has no filesystem access, so this is a string-level guard: keep migration
+// inside the repo by rejecting absolute paths (POSIX `/`, Windows drive/UNC) and any `..`
+// traversal segment in a discovered path. Defense-in-depth — the agent's own tool
+// allowlist is the real boundary, but a copyable template should not blindly trust paths.
+function isSafeRelPath(p) {
+  if (typeof p !== 'string' || !p) return false
+  if (p.startsWith('/') || p.startsWith('\\') || /^[A-Za-z]:/.test(p)) return false
+  return !p.replace(/\\/g, '/').split('/').some(seg => seg === '..')
+}
 
 const FILES_SCHEMA = {
   type: 'object',
@@ -57,6 +69,7 @@ const VERIFY_SCHEMA = {
 
 const patternHint = pattern ? ` within \`${pattern}\`` : ''
 const completed = []
+const completedSet = new Set()   // dedup discovered files against ones already migrated
 const failures = []
 let round = 0
 let remaining = 0
@@ -71,11 +84,17 @@ while (round < MAX_ROUNDS) {
     { label: `discover:r${round}`, phase: 'Discover', schema: FILES_SCHEMA }
   )
   const rawFiles = (found && found.files) || []
-  const files = rawFiles.slice(0, BATCH_CAP)
-  // If Discover over-returns past BATCH_CAP, the extras are NOT lost: they go un-migrated
+  // Drop unsafe paths and already-migrated files BEFORE the per-round cap, so the cap
+  // budgets real remaining work rather than duplicates or out-of-repo paths. Without the
+  // dedup, a Discover that re-returns a completed file could re-migrate it and burn rounds.
+  const candidates = rawFiles.filter(x => x && isSafeRelPath(x.file) && !completedSet.has(x.file))
+  const droppedBad = rawFiles.length - candidates.length
+  if (droppedBad > 0) log(`Round ${round}: dropped ${droppedBad} discovered entries (unsafe path or already-migrated)`)
+  const files = candidates.slice(0, BATCH_CAP)
+  // If valid candidates exceed BATCH_CAP, the extras are NOT lost: they go un-migrated
   // this round and the loop re-discovers them next round. Log it so the cap is never a
   // silent drop (consistent with the audit template's overflow accounting).
-  const overReturned = rawFiles.length - files.length
+  const overReturned = candidates.length - files.length
   if (overReturned > 0) log(`Round ${round}: Discover over-returned — ${overReturned} files beyond BATCH_CAP=${BATCH_CAP} deferred (counted in remaining; loop re-discovers them)`)
   // Fold over-returned files into `remaining` so the round-cap boundary cannot exit with
   // "Converged / remainingEstimate: 0" while sliced-off files are still un-migrated. The
@@ -104,7 +123,7 @@ while (round < MAX_ROUNDS) {
   )
 
   for (const r of results.filter(Boolean)) {
-    if (r.verify && r.verify.ok && r.migrate && r.migrate.status === 'migrated') completed.push(r.site)
+    if (r.verify && r.verify.ok && r.migrate && r.migrate.status === 'migrated') { completed.push(r.site); completedSet.add(r.site) }
     else failures.push({ site: r.site, reason: (r.verify && r.verify.reason) || (r.migrate && r.migrate.detail) || 'unknown' })
   }
 }

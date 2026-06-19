@@ -28,8 +28,10 @@ const DIMENSIONS = (args && args.dimensions) || [
 // Cap how many modules Discover may feed downstream, and how many findings per
 // dimension flow into the (more expensive) verify stage. Both are enforced in code
 // below (not just requested of the agent) and dropped overflow is log()'d.
-const MODULE_CAP = (args && args.moduleCap) || 60
-const MAX_FINDINGS = (args && args.maxFindings) || 40
+// Operator-overridable but clamped to a hard ceiling so the #385 fan-out cap holds even
+// under an oversized override.
+const MODULE_CAP = Math.min((args && args.moduleCap) || 60, 200)
+const MAX_FINDINGS = Math.min((args && args.maxFindings) || 40, 100)
 
 const FINDINGS_SCHEMA = {
   type: 'object',
