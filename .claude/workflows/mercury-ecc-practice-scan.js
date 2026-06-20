@@ -23,7 +23,7 @@ const focus = (args && (args.focus || args.q)) || (typeof args === 'string' ? ar
   'newly-added or recently-shared Claude Code orchestration practices, hooks, subagent/skill patterns, and workflow techniques in everything-claude-code over roughly the last 1-3 months'
 
 // Mercury repo paths the MapToMercury stage consults (lean: paths, not contents).
-const MERCURY_CTX_PATHS = (args && args.mercuryPaths) || [
+const DEFAULT_MERCURY_CTX_PATHS = [
   'CLAUDE.md',
   '.claude/workflows/README.md',
   '.claude/agents/main.md',
@@ -33,6 +33,19 @@ const MERCURY_CTX_PATHS = (args && args.mercuryPaths) || [
   '.mercury/docs/research/context-strategy-2026-05.md (#385 context guardrails ADR)',
   '.mercury/docs/DIRECTION.md (supreme reference)',
 ]
+// Defense-in-depth: this is a committed reusable template — operator-supplied `args.mercuryPaths`
+// is interpolated into the MapToMercury agent prompt as "consult these paths", so constrain it to
+// repo-relative paths. Reject absolute (`/`,`\`), home (`~`), Windows-drive (`C:`), and `..`
+// traversal entries to prevent out-of-repo / sensitive-file reads; #385: log anything dropped;
+// fall back to defaults if the operator override yields nothing usable.
+const _isSafeCtxPath = (p) => typeof p === 'string' && p.trim() !== '' &&
+  !/^[~/\\]/.test(p) && !/^[A-Za-z]:/.test(p) && !/(^|[/\\])\.\.(?=[/\\]|$)/.test(p)
+const _rawCtxPaths = (args && Array.isArray(args.mercuryPaths) && args.mercuryPaths.length)
+  ? args.mercuryPaths : DEFAULT_MERCURY_CTX_PATHS
+const _safeCtxPaths = _rawCtxPaths.filter(_isSafeCtxPath)
+if (_rawCtxPaths.length > _safeCtxPaths.length) log(`Dropped ${_rawCtxPaths.length - _safeCtxPaths.length} unsafe mercuryPaths entries (absolute/home/drive/.. traversal not allowed)`)
+const MERCURY_CTX_PATHS = _safeCtxPaths.length ? _safeCtxPaths : DEFAULT_MERCURY_CTX_PATHS
+if (!_safeCtxPaths.length && (args && args.mercuryPaths)) log('All operator mercuryPaths rejected as unsafe; fell back to default repo-relative paths')
 
 // Caps (operator-overridable, clamped). #385: bound every fan-out, log the remainder.
 const RECON_CAP = Math.max(1, Math.min((args && args.maxAngles) || 5, 8))
