@@ -39,7 +39,7 @@
 
 - **实践**(ECC v1.9.0): 新增 9 个语言专用 subagent(`typescript-reviewer`/`rust-reviewer`/`rust-build-resolver`/`java-*`/`kotlin-*`/`pytorch-build-resolver`/`docs-lookup`),各为单个 `.claude/agents/<name>.md`。来源(verified): <https://github.com/affaan-m/everything-claude-code/releases/tag/v1.9.0>
 - **Mercury 影响 = 部分缺口**: Mercury 9 个 `.claude/agents/*.md` 全是通用角色(main/dev/acceptance/critic/research/design/game-*),零语言专用;语言适配检查(`tsc --noEmit`)仅作为注记藏在 `dual-verify/SKILL.md`。**9 个里仅 4 个匹配 Mercury 栈**:`typescript-reviewer`(GUI 前端)、`rust-reviewer` + `rust-build-resolver`(Tauri 后端)、`docs-lookup`(栈无关);Java/Kotlin/PyTorch 不适用本 repo。
-- **cherry-pick 形态**(absorbCost=small): 4 个 `.md` 文件,各 <200 行、独立可拆卸。**须走完整 cherry-pick 协议**(manifest entry + `gh api` SHA 核验 + 5 行文件头 + MIT license gate),非 Category A/B CLI 脚手架。建议作为独立小 cherry-pick PR(待用户决策),或并入 Phase 6 GUI(TS/Rust 栈)工具链批次。
+- **cherry-pick 形态**(absorbCost=small): 4 个 `.md` 文件,各 <200 行、独立可拆卸。**须走完整 cherry-pick 协议(CLAUDE.md §Cherry-pick protocol rules 1-6,非 Category A/B CLI 脚手架)**,每个文件具体须:(1) `.mercury/state/upstream-manifest.json` 加 entry(`path`/`scope="project"`/`upstream_repo`/`upstream_path`/`upstream_sha_at_import`/`upstream_license`/`import_pr`/`import_date`/`import_rationale`/`last_drift_check=null`);(2) 文件 frontmatter 加 `upstream_source`/`upstream_sha`/`upstream_license`/`cherry_picked_in`/`cherry_picked_at`;(3) `upstream_sha_at_import` 经 `gh api repos/affaan-m/everything-claude-code/commits/{sha}` 核验后才提交;(4) MIT license gate(ECC = MIT,记入 manifest)。建议作为独立小 cherry-pick PR(待用户决策),或并入 Phase 6 GUI(TS/Rust 栈)工具链批次。
 
 ---
 
@@ -48,7 +48,7 @@
 | ECC 实践(版本) | Mercury 等价 | 核验 |
 |---|---|---|
 | Harness Commands `/harness-audit` `/loop-start` `/loop-status` `/model-route` `/quality-gate`(v1.8.0) | `mercury-codebase-audit` Workflow + `mercury-large-migration`(loop-until-done)+ main.md §选型矩阵(model 路由)+ `/dual-verify`(更强的并行双审门) | verified |
-| Orchestrator skill family `orch-*` + `/multi-*`(v2.0.0) | Dynamic Workflow DSL(`.claude/workflows/`,六大模式,JS 持计划)+ 四原语选型矩阵;触发 `ultracode`/`/effort ultracode`/`/<name>` 语义等价且有 #385 护栏 | `[UNVERIFIED]`(且 `orch-*` 目录经核查 repo 实际不存在,见 contradicted) |
+| Orchestrator skill family `orch-*` + `/multi-*`(v2.0.0) | Dynamic Workflow DSL(`.claude/workflows/`,六大模式,JS 持计划)+ 四原语选型矩阵;触发 `ultracode`/`/effort ultracode`/`/<name>` 语义等价且有 #385 护栏 | `[UNVERIFIED]` —— **口径**:`orch-*` 具体目录已被**证伪不存在**(以 contradicted §为准);此行结论独立成立 = **即便该能力存在,其能力域 Mercury 已用原生 Workflow DSL 覆盖**。两者不矛盾(证伪的是 ECC 工件存在性,本行讲的是能力域已覆盖) → 净结论:**无需吸收** |
 | Cross-Harness Plugin Surface(`.claude-plugin`/`.cursor`/`.codex`,v2.0.0) | 双 harness:`.codex/config.toml`+`hooks.json`(Codex)+ `.claude/settings.json`(Claude Code),共享 `.claude/hooks/`;Cursor/OpenCode/Gemini/Zed 明确 out-of-scope(DIRECTION §Mercury 不是什么) | verified |
 | Worktree-lifecycle service(v2.0.0) | dev-pipeline 中央 worktree 分配 + `cleanup-worktree-branch.sh` + `worktree-reaper.sh`(orphan GC)+ lane 物理隔离(#342) | verified |
 | Session adapters for Codex-worktree / OpenCode(v2.0.0) | `.codex/hooks.json` 用 `git rev-parse --show-toplevel` 锚定接入全 Mercury hook 集到 Codex sandbox;OpenCode 不在 active toolchain(按需挂载非预置) | `[UNVERIFIED]` |
@@ -106,7 +106,7 @@
 1. **两个 worth-absorbing 候选 → 待用户决策**,不在本文内立项:
    - **Hook Profile Control**(`[UNVERIFIED]`,需逐 env var 二次核验)→ 建议**并入 #484/#486 hook 批次**评估(同域:hook 分档 gate 与 SubagentStop 强化 / settings permissions 试点天然协同),而非独立 Issue。
    - **4 个语言专用 agent**(verified)→ 建议作**独立小 cherry-pick PR**(走完整协议:manifest+SHA+文件头),或并入 Phase 6 GUI(TS/Rust 栈)工具链;由用户定优先级。
-2. **#233 tracker 更新**: 本审计结论作为 comment 挂 #233(ECC v2.0 selective cherry-pick audit 已执行),不新开 ECC-audit Issue。
+2. **#233 tracker 更新(合并后执行 — 待办,非本 PR diff 内)**: 本 PR 合并后,把本审计结论摘要作为 comment 挂 #233(ECC v2.0 selective cherry-pick audit 已执行 + 链接本文),不新开 ECC-audit Issue。comment 链接合并后回填 PR / 本节。
 3. **survey 对齐**: `harness-modernization-survey-2026-06.md` §第四梯队「ECC v2.0 modular → selective cherry-pick 审计」即本文,缺口已从「未审计」收敛为「2 候选待决策 + 余皆 covered/n-a」。
 4. **整体挂载 DEFER 维持不变**: 本次未发现推翻 `project_ecc_defer` wholesale-mount DEFER 的理由;ECC v2.0 仍是 monolithic harness,只做模块化 cherry-pick。
 
