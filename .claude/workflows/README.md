@@ -29,7 +29,7 @@ Dynamic Workflow 是 Claude Code 原生的「**确定性多 agent 编排**」原
 
 ## 保存与复用约定
 
-- **手写模板**(如本目录 4 个):文件名 = `meta.name`,放 `.claude/workflows/<name>.js` → 直接 `/<name>` 调用。
+- **手写模板**(如本目录 5 个):文件名 = `meta.name`,放 `.claude/workflows/<name>.js` → 直接 `/<name>` 调用。
 - **从运行保存**:跑出满意的一次后 `/workflows` → 选中 → 按 `s` → Tab 切换保存位置(`.claude/workflows/` 项目级随 repo / `~/.claude/workflows/` 个人级)→ Enter。
 - **同名优先级**:项目级 > 个人级。
 - **传参**:`/<name>` 后跟参数,脚本里读全局 `args`(运行时把字符串/数组/对象**原样**传入,无需解析)。**注意**:`args` 的具体**形状是每个模板自定义的**(见各脚本顶部常量),不是每个模板都接受三种形状 —— 例如 research/plan-review/migration 接受「字符串 或 `{字段…}` 对象」,audit 接受对象;传入不符合该模板契约的形状(如给只认字符串/对象的模板传顶层数组)会落入缺参分支并打印用法提示。每个模板都对缺省/不符做了优雅降级(返回 error + hint,不抛错)。
@@ -45,12 +45,13 @@ Dynamic Workflow 是 Claude Code 原生的「**确定性多 agent 编排**」原
 | `/mercury-multi-source-research` | multi-modal sweep + cross-check | 多角度 web 研究 + 逐条 claim 独立交叉核查 + 引用合成,替代 autoresearch 串行单 context;UNVERIFIED 显式标注 |
 | `/mercury-adversarial-plan-review` | judge-panel | N 个独立角度起草计划 → 对抗评审团打分 → 综合优胜方案 + 嫁接亚军亮点;只产计划,实现仍回 Main→dev |
 | `/mercury-large-migration` | loop-until-done | 数十到数百文件机械迁移,按文件归属并行改造(每 agent 独占一文件,工作树原地编辑)+ 逐文件验证 + 循环至收敛;edits 不 commit,由 operator 合并提交 |
+| `/mercury-ecc-practice-scan` | fan-out + adversarial-verify + classify | **周期性复审** everything-claude-code(ECC)新实践:recon 扇出 → 逐条对抗式交叉核查(UNVERIFIED 标注)→ 映射到 Mercury(already-covered / worth-absorbing / not-applicable)。对齐 [#233](https://github.com/392fyc/Mercury/issues/233) ECC 审计,**只产报告不立项**。ECC-specific(非通用),见 `.mercury/docs/research/ecc-practice-scan-2026-06.md`(2026-06 首跑) |
 
-各模板的 `args` 入参见脚本顶部常量(如 `maxAngles` / `batchCap` / `contextPaths`)。
+各模板的 `args` 入参见脚本顶部常量(如 `maxAngles` / `maxPractices` / `mercuryPaths` / `batchCap` / `contextPaths`)。
 
 ### 六大编排模式 ↔ 模板
 
-fan-out(`codebase-audit`)· adversarial-verify(`codebase-audit` 的 Verify / `adversarial-plan-review` 的 Judge)· judge-panel/tournament(`adversarial-plan-review`)· generate-and-filter(`multi-source-research` 的 sweep→crosscheck)· classify-and-act(可组合)· loop-until-done(`large-migration`)。
+fan-out(`codebase-audit`/`ecc-practice-scan` 的 Recon)· adversarial-verify(`codebase-audit` 的 Verify / `adversarial-plan-review` 的 Judge / `ecc-practice-scan` 的 cross-check)· judge-panel/tournament(`adversarial-plan-review`)· generate-and-filter(`multi-source-research` 的 sweep→crosscheck)· classify-and-act(`ecc-practice-scan` 的 MapToMercury)· loop-until-done(`large-migration`)。
 
 ---
 
