@@ -85,7 +85,7 @@ def test_drain_takes_oldest_and_moves_to_consumed():
         assert [it["text"] for it in drained] == ["a", "b"], drained  # oldest first
         assert drained[0]["consumed"] is True  # returned dict reflects consumption
         assert [it["text"] for it in vq.peek_all(session=s)] == ["c"]  # third remains
-        # the two claimed files were os.replace'd into consumed/, not left in the queue dir
+        # the two claimed files left consumed-markers (O_EXCL) and were removed from the queue dir
         assert len(list(vq._consumed_dir(s).glob("utt-*.json"))) == 2
         assert len(list(vq._queue_dir(s).glob("utt-*.json"))) == 1
 
@@ -130,6 +130,38 @@ def test_corrupt_utt_skipped_batch_survives():
         assert (qd / "utt-99999999-0-999999.json").exists()  # left for a later pass
 
 
+def test_malformed_text_skipped():
+    # C1: an item with a ts but no usable string "text" is malformed and must be skipped —
+    # never listed/drained/counted — while a valid item alongside it is still delivered.
+    with _temp_state():
+        s = "notext"
+        vq.enqueue("ok", ts="2026-06-21T11:00:00+08:00", session=s)
+        qd = vq._queue_dir(s)
+        for nm, payload in (
+            ("utt-bad1-0-000000.json", {"ts": "2026-06-21T10:00:00+08:00", "consumed": False}),
+            ("utt-bad2-0-000000.json", {"ts": "2026-06-21T10:00:00+08:00", "text": 123}),
+            ("utt-bad3-0-000000.json", {"ts": "2026-06-21T10:00:00+08:00", "text": "   "}),
+        ):
+            (qd / nm).write_text(json.dumps(payload), encoding="utf-8")
+        assert [it["text"] for it in vq.peek_all(session=s)] == ["ok"]
+        assert [it["text"] for it in vq.drain(10, session=s)] == ["ok"]
+        assert vq.is_empty(session=s)  # the malformed orphans don't keep is_empty False
+
+
+def test_drain_coerces_max_items():
+    # A1: max_items is a boundary input (env var). A non-int / non-positive value must be a
+    # no-op (never a TypeError that aborts consumption); a float is truncated via int().
+    with _temp_state():
+        s = "coerce"
+        vq.enqueue("a", ts="2026-06-21T10:00:00+08:00", session=s)
+        vq.enqueue("b", ts="2026-06-21T11:00:00+08:00", session=s)
+        vq.enqueue("c", ts="2026-06-21T12:00:00+08:00", session=s)
+        assert vq.drain("not-an-int", session=s) == []  # bad str -> no-op, no crash
+        assert vq.drain(None, session=s) == []           # None -> no-op
+        assert vq.drain(-1, session=s) == []             # non-positive -> no-op
+        assert [it["text"] for it in vq.drain(2.9, session=s)] == ["a", "b"]  # int(2.9)=2
+
+
 def test_atomic_enqueue_leaves_no_tmp():
     with _temp_state():
         s = "atomic"
@@ -169,10 +201,16 @@ def test_session_resolution_and_injectivity():
         # distinct raw ids that sanitise to the SAME slug must NOT share a queue dir (F2:
         # per-session isolation is a safety property — a collision = cross-session leak)
         assert vq._queue_dir("a/b").name != vq._queue_dir("a:b").name
-        # an omitted session (None) -> default bucket; an explicit falsy "" -> default too,
-        # NOT silently rerouted to the env var's session (F1)
+        # an OMITTED session (None) -> shared default bucket
         assert vq._queue_dir(None).name == "default"
-        assert vq._queue_dir("").name == "default"
+        # an EXPLICIT falsy value (0 / "") is honoured as its own bucket, NEVER merged into
+        # default or another session — two distinct explicit values never collide (F1/A3)
+        assert vq._queue_dir("").name != "default"
+        assert vq._queue_dir(0).name != "default"
+        assert vq._queue_dir("").name != vq._queue_dir(0).name
+        assert vq._queue_dir("").name != vq._queue_dir(None).name
+        # length-bounded: an unbounded session id must not blow the OS filename limit (A2)
+        assert len(vq._queue_dir("x" * 5000).name) <= 61
 
 
 # --- exactly-once under concurrency (§8 test 7) ------------------------------------
@@ -189,7 +227,7 @@ def test_concurrent_drain_consumes_each_once():
         barrier = threading.Barrier(n)
 
         def worker():
-            barrier.wait()  # release all threads together to maximise os.replace contention
+            barrier.wait()  # release all threads together to maximise O_EXCL claim contention
             got = vq.drain(100, session=s)
             with lock:
                 results.extend(it["text"] for it in got)

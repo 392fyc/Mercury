@@ -61,32 +61,35 @@ _MIN_DT = datetime.min.replace(tzinfo=timezone.utc)
 
 
 def _safe_session(raw):
-    """Map a (semi-trusted) session id to a safe, collision-free single path component.
+    """Map a (semi-trusted) session id to a safe, bounded, collision-free path component.
 
-    The id may arrive from a Stop-hook stdin payload or an env var, so two goals:
-      - traversal containment: replace anything outside [A-Za-z0-9._-] with `_` and strip
-        leading/trailing dots/underscores, so `../../etc` cannot escape the voice-queue dir.
-      - injective mapping: the sanitiser is lossy (distinct raw ids can fold to one slug),
-        and per-session isolation is a SAFETY property (§8 — a shared dir is cross-session
-        contamination), so a short hash of the RAW id is appended whenever sanitisation
-        changed anything. An already-safe id (e.g. a UUID session id) maps to itself
-        verbatim, keeping dir names readable; only mangled inputs grow the hash suffix.
+    The id may arrive from a Stop-hook stdin payload or an env var. Three properties:
+      - traversal containment: chars outside [A-Za-z0-9._-] -> `_`, leading/trailing
+        dots/underscores stripped, so `../../etc` cannot escape the voice-queue dir.
+      - bounded length: the readable slug is capped at 48 chars — an unbounded id would
+        otherwise blow the OS filename-length limit on mkdir/open into a controllable DoS
+        (Argus security finding).
+      - injective mapping: sanitising/capping is lossy, and per-session isolation is a
+        SAFETY property (§8 — a shared dir is cross-session contamination), so a short hash
+        of the RAW id is appended whenever anything changed. An already-safe, short id
+        (e.g. a UUID) maps to itself verbatim, keeping dir names readable.
     """
     raw = str(raw)
-    slug = _SESSION_SANITIZE.sub("_", raw).strip("._")
+    slug = _SESSION_SANITIZE.sub("_", raw).strip("._")[:48].strip("._")
     if slug == raw and slug:
-        return slug  # already a safe, non-empty single component (e.g. a UUID) — verbatim
+        return slug  # already a safe, short single component (e.g. a UUID) — verbatim
     digest = hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()[:12]
     return f"{slug}-{digest}" if slug else f"s-{digest}"
 
 
 def _resolve_session(session=None):
-    # Only an OMITTED session (None) falls back to env/default. An explicitly-passed value —
-    # even a falsy one like "" — is honoured rather than silently rerouted to the env var's
-    # session, so a caller can never accidentally cross into another session's queue (F1).
-    if session is None:
-        session = os.environ.get("VOICE_QUEUE_SESSION")
-    return _safe_session(session) if session else "default"
+    # Only an OMITTED session (None) falls back to env/default. ANY explicitly-passed value
+    # — even a falsy one like "" / 0 — goes through _safe_session, so two distinct explicit
+    # sessions can never be silently merged into one queue dir (cross-session safety; F1).
+    if session is not None:
+        return _safe_session(session)
+    env = os.environ.get("VOICE_QUEUE_SESSION")
+    return _safe_session(env) if env else "default"
 
 
 def _queue_dir(session=None):
@@ -165,8 +168,11 @@ def _list_entries(session=None):
             data = json.loads(p.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError, ValueError):
             continue  # partial / corrupt / vanished -> leave for a later pass, skip this one
-        if not isinstance(data, dict) or "ts" not in data:
+        if not isinstance(data, dict):
             continue
+        text = data.get("text")
+        if "ts" not in data or not isinstance(text, str) or not text.strip():
+            continue  # malformed: missing ts or no usable string text -> skip, never list (C1)
         entries.append((p, data, _parse_ts(data.get("ts"))))
     # primary: ts (aware); secondary: filename (zero-padded seq) so same-ts items keep
     # insertion order. Unparseable ts sorts oldest via the aware _MIN_DT sentinel.
@@ -253,10 +259,17 @@ def _claim(path, session=None):
 def drain(max_items, session=None):
     """Consume up to `max_items` oldest utterances; return the claimed dicts, oldest first.
 
-    Each item is atomically moved to consumed/; an item lost to a concurrent consumer is
-    skipped (never double-consumed, never aborting the batch).
+    Each item is claimed via an exclusive consumed-marker (O_CREAT|O_EXCL) then best-effort
+    removed from the live queue — NOT an os.replace move; an item lost to a concurrent
+    consumer is skipped (never double-consumed, never aborting the batch). `max_items` is a
+    boundary input (e.g. an env var), so it is coerced to int and a non-int / non-positive
+    value is a no-op rather than a TypeError that would abort consumption.
     """
-    if not max_items or max_items <= 0:
+    try:
+        max_items = int(max_items)
+    except (TypeError, ValueError):
+        return []
+    if max_items <= 0:
         return []
     claimed = []
     for p, data, _ in _list_entries(session):
