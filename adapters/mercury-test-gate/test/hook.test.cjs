@@ -271,6 +271,29 @@ test('research-stop-nudge.sh: MERCURY_RESEARCH_STOP_NUDGE=1 → additionalContex
     assert.ok(parsed.hookSpecificOutput.additionalContext.length > 0);
   });
 
+// ─── Test 14: research-stop-nudge.sh boundary — value contains "research" string but agent_type is not "research" ───
+test('research-stop-nudge.sh: agent_type=dev with "research" in transcript value → silent (no false positive)',
+  { skip: bashAvailable ? false : 'bash unavailable' },
+  () => {
+    const nudgeScript = path.resolve(__dirname, '..', '..', '..', '.claude', 'hooks', 'research-stop-nudge.sh');
+    // agent_type is "dev"; the transcript string value contains "agent_type: research" text
+    const input = JSON.stringify({
+      hook_event_name: 'SubagentStop',
+      agent_type: 'dev',
+      session_id: 'rn-boundary',
+      agent_id: 'ra-boundary',
+      transcript: 'subagent finished; note: agent_type: research was used internally',
+    });
+    const result = spawnSync('bash', [nudgeScript], {
+      input,
+      env: { ...process.env, MERCURY_RESEARCH_STOP_NUDGE: '1' },
+      encoding: 'utf8',
+      timeout: 10000,
+    });
+    assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+    assert.equal((result.stdout || '').trim(), '', 'must produce no output — dev agent_type must not match even when value contains "research"');
+  });
+
 // ─── Test 13: research-stop-nudge.sh without env → silent exit 0 ─────────────
 test('research-stop-nudge.sh: MERCURY_RESEARCH_STOP_NUDGE unset → silent exit 0',
   { skip: bashAvailable ? false : 'bash unavailable' },
