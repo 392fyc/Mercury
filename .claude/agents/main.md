@@ -90,3 +90,7 @@ Task descriptions, review decisions, session summaries
 
 - Workflow 是**单 lane 内**的编排原语(main lane 跑 Workflow 不动 side-multi-lane #292 soak);Workflow 后台 run 与 lane-as-process 多 session 并行是两层正交机制。
 - 跨 lane / 后台 session 的 dispatch + 监控约定见 `.mercury/docs/guides/agent-view-dispatch.md`(Path B primary,Closes [#386](https://github.com/392fyc/Mercury/issues/386));Workflow 的 `/workflows` 进度视图与 agent view 的 background session 监控并行使用,互不替代。
+
+### 升级前的护栏 + skill 迁移基线
+
+升级到任何大规模 fan-out **之前**(Workflow / Teams / 手工多 subagent 并行,规模超几个 agent),先过 [`.mercury/docs/guides/fanout-and-skill-migration-guardrails.md`](../../.mercury/docs/guides/fanout-and-skill-migration-guardrails.md)([#485](https://github.com/392fyc/Mercury/issues/485)):§2 context 经济学检查清单(per-model cliff / cache 拓扑)· §3 fan-out 规模上限(1000 兜底 ≠ 目标)· §4-5 skill 迁移决策框架 + 回归基线(防 P0 模板库无序侵蚀稳定 skill)。上表 budget-scaling 给「该 fan 多大」,该 guide 给「fan 之前过哪些 + 某 skill 要不要迁」。
