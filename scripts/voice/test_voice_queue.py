@@ -318,6 +318,20 @@ def test_pop_latest_bad_watermark_fails_closed():
         assert vq.pop_latest(watermark_ts="2026-06-21T09:00:00+08:00", session=s) == "hi"
 
 
+def test_parse_ts_accepts_z_suffix():
+    # CP: ISO8601 with a UTC "Z" suffix must parse for BOTH the enqueue ts and the watermark
+    # anchor — never fail-closed on a valid timestamp (Z is normalised to +00:00).
+    with _temp_state():
+        s = "zsuffix"
+        vq.enqueue("zulu", ts="2026-06-21T10:00:00Z", session=s)
+        assert [it["text"] for it in vq.peek_all(session=s)] == ["zulu"]  # Z ts parsed + listed
+        # a Z-suffixed watermark BEFORE the utterance -> returned (not fail-closed)
+        assert vq.pop_latest(watermark_ts="2026-06-21T09:00:00Z", session=s) == "zulu"
+        # a Z-suffixed watermark AFTER the next utterance excludes it (comparison still works)
+        vq.enqueue("later", ts="2026-06-21T12:00:00Z", session=s)
+        assert vq.pop_latest(watermark_ts="2026-06-21T13:00:00Z", session=s) is None
+
+
 def test_pop_latest_no_watermark_returns_newest():
     with _temp_state():
         s = "no-wm"

@@ -42,7 +42,6 @@ import sys
 import json
 import hashlib
 import itertools
-from pathlib import Path
 from datetime import datetime, timezone
 
 # this file is scripts/voice/voice_queue.py — import flat siblings (sys.path[0] == voice/),
@@ -53,7 +52,11 @@ import state as _state  # noqa: E402  (reuse _atomic_write + _state_dir — desi
 # per-process monotonic counter: disambiguates two enqueues that land in the same clock
 # tick. Windows datetime.now() can be coarse (~1ms), so a microsecond stamp alone is NOT
 # collision-free; the zero-padded seq makes the filename unique AND preserves insertion
-# order as a same-ts tiebreak when sorting lexicographically.
+# order as a same-ts tiebreak when sorting lexicographically. This gives strict FIFO within
+# ONE producer process — model A runs a SINGLE daemon per session as the sole producer, so
+# cross-process global FIFO is out of scope; were multiple producer processes ever to share
+# a session, same-microsecond items would order by filename (an accepted boundary, not a
+# regression) (Argus FIFO-boundary finding).
 _SEQ = itertools.count()
 _SESSION_SANITIZE = re.compile(r"[^A-Za-z0-9._-]")
 # aware sentinel so entries with an unparseable ts still sort (as oldest) without raising
@@ -99,7 +102,8 @@ def _queue_dir(session=None):
 
 
 def _consumed_dir_path(session=None):
-    """The consumed/ archive path WITHOUT creating it (safe for read-only listing checks)."""
+    """Return the consumed/ archive path. Does NOT create consumed/ itself, so the read-only
+    listing marker-check has no side effect (the parent queue dir is ensured by _queue_dir)."""
     return _queue_dir(session) / "consumed"
 
 
@@ -131,8 +135,11 @@ def _parse_ts(value):
             return datetime.fromtimestamp(value, tz=timezone.utc)
         except (OverflowError, OSError, ValueError):
             return None
+    s = str(value).strip()
+    if s[-1:] in ("Z", "z"):
+        s = s[:-1] + "+00:00"  # normalise UTC 'Z' suffix (fromisoformat rejects it pre-3.11)
     try:
-        dt = datetime.fromisoformat(str(value))
+        dt = datetime.fromisoformat(s)
     except (ValueError, TypeError):
         return None
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
@@ -241,7 +248,13 @@ def _claim(path, session=None):
     # here and abort the rest of the batch.
     try:
         try:
-            os.write(fd, path.read_bytes())  # archive the consumed payload (best-effort)
+            data = path.read_bytes()  # archive the consumed payload (best-effort)
+            off = 0  # os.write may write fewer bytes than requested -> loop until all written
+            while off < len(data):
+                written = os.write(fd, data[off:])
+                if not written:
+                    break  # defensive: don't spin if the fd refuses further progress
+                off += written
         except OSError:
             pass
     finally:
