@@ -42,6 +42,8 @@ fan-out 前**逐条**过,任一不满足即调整方案(降规模 / 换 model �
 
 **tokenizer 膨胀**(影响所有 Claude 路径的 token 预算):Opus **4.7→4.8 共用 tokenizer**,官方表述 4.8 token 计数与 4.7「roughly unchanged」、Fable 5 与 4.8 亦同 tokenizer([whats-new-claude-4-8](https://platform.claude.com/docs/en/about-claude/models/whats-new-claude-4-8))。故 #385 记录的「同文本最坏 ~1.35x 膨胀(1.0x–1.35x range,4.7 引入)」**沿用至 4.8**:估算注入预算时按最坏 1.35x 留余量,1M ctx worst-case 等效 ~750K 4.6-时代 token(worst-case 非 baseline)。
 
+> **数字失效条件(防过期)**:本表的供应商阈值(Haiku 200K / GPT-5.5 272K / tokenizer 1.35x / cache multiplier)是 vendor-policy-sensitive 的快照(web-verified 2026-05~06)。**canonical 数据源是 [#385 ADR](../research/context-strategy-2026-05.md) §2 vendor 表 + §9 来源**,本表是其操作化镜像 —— 二者出现分歧以 #385 为准。失效/复核触发:**[#385 §7 re-eval triggers](../research/context-strategy-2026-05.md#7-re-eval-triggers) 任一命中即重核本表**(Haiku 升 1M / OpenAI 取消 272K surcharge / Opus 5.x 撤销 tokenizer 膨胀 / cache 经济模型变更);无 trigger 命中时,随 #385 ADR 的周期性 re-eval 一并复核(勿在本文独立追踪阈值,避免双源漂移)。
+
 ### 2.3 cache 拓扑污染(cross-axis,cost 主导项)
 
 - cache 折扣:write 5m = 1.25x / write 1h = 2.0x / read = 0.10x(#385 §2.1)。
@@ -137,6 +139,8 @@ fan-out 前**逐条**过,任一不满足即调整方案(降规模 / 换 model �
 2. **迁移留痕**:任何把 `.claude/skills/<name>/` 改写为 `.claude/workflows/<name>.js`(或为模板掏空一个 NL-skill)的 PR,必须:(a) PR body 答完 §4.3 五问;(b) 保留原 NL-skill ≥1 release 周期;(c) 走 dual-verify;(d) 在本表 §5.1/§5.2 记录迁移(基线随之更新)。
 3. **模板不夺触发词**:新增 Workflow 模板的 `meta.name` / 触发词不得遮蔽既有 skill 触发词(`dual-verify`/`pr-flow`/`autoresearch` 等),避免用户调用被静默改路由。
 4. **基线更新**:每次新增/迁移/删除 skill 或模板,**同一 PR** 内更新本节快照 + 日期,使本基线始终反映 ground truth。
+
+> **可执行校验 vs 人工约束**:§5.3-1 的两条命令**就是**该 invariant 的可执行检查 —— 复制即可跑(operator 手动 / pre-migration / CI step 均可),返回 <13 即触发审查。当前为**人工/按需执行**(docs 基线 deliverable 的设计边界):规则 #2/#3/#4 是 PR review 人工 gate,#1 是机械可核命令。把 #1 接进 CI / `.claude/hooks/`(如 PR 时自动 assert ≥13 并比对 §5.1 清单)是**已识别的未来增强**,留待 #486(settings.json/hook 试点)批次评估 —— 本文不在 docs PR 内引入 CI 代码以免 scope 蔓延。届时 invariant 数字与命令已 ready,接线零返工。
 
 ---
 
