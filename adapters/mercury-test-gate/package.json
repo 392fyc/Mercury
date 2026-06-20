@@ -5,7 +5,7 @@
   "type": "commonjs",
   "main": "hook.cjs",
   "scripts": {
-    "test": "node --test \"test/hook.test.cjs\""
+    "test": "node --test \"test/*.cjs\""
   },
   "engines": {
     "node": ">=18.0.0"

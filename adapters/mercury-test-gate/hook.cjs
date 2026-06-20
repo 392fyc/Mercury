@@ -14,7 +14,7 @@ const TAG = '[mercury-test-gate]';
 // block: dev-only mechanical test gate — emits decision:block to prevent subagent stop.
 // passWithContext: pass path now surfaces positive signal to main via additionalContext,
 //   so main knows tests were confirmed green (not just "no opinion from hook").
-// passQuiet: used for no-test-command fail-open (avoid noise when hook has no opinion).
+// pass: silent exit 0 for non-dev / fail-open / re-entry-exhausted paths (hook has no opinion → no noise).
 const block = (reason) => { process.stdout.write(JSON.stringify({ decision: 'block', reason }) + '\n'); process.exit(0); };
 const passWithContext = (testCmd) => {
   process.stdout.write(JSON.stringify({
