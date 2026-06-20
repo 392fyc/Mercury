@@ -50,8 +50,8 @@ test('non-dev agent type exits 0 with no stdout', () => {
   assert.equal(r.stdout.trim(), '');
 });
 
-// ─── Test 2: dev agent, tests pass → no-op exit 0 ────────────────────────────
-test('dev agent, tests pass → no stdout, exit 0', () => {
+// ─── Test 2: dev agent, tests pass → additionalContext JSON, exit 0 ──────────
+test('dev agent, tests pass → additionalContext JSON, exit 0', () => {
   const isWin = process.platform === 'win32';
   const passCmd = isWin ? 'exit 0' : 'true';
   const dir = makeTmpDir({
@@ -59,7 +59,9 @@ test('dev agent, tests pass → no stdout, exit 0', () => {
   });
   const r = invokeHook({ hook_event_name: 'SubagentStop', agent_type: 'dev', session_id: 's2', agent_id: 'a2', cwd: dir });
   assert.equal(r.status, 0, `stderr: ${r.stderr}`);
-  assert.equal(r.stdout.trim(), '');
+  const parsed = JSON.parse(r.stdout.trim());
+  assert.equal(parsed.hookSpecificOutput.hookEventName, 'SubagentStop');
+  assert.ok(parsed.hookSpecificOutput.additionalContext.includes('passed'), `additionalContext: ${parsed.hookSpecificOutput.additionalContext}`);
 });
 
 // ─── Test 3: dev agent, tests fail → block decision JSON ─────────────────────
@@ -213,9 +215,62 @@ test('successful test run clears stale retry counter from prior blocks', () => {
   // Invoke with stop_hook_active=false (first-time stop attempt) + green tests
   const r = invokeHook({ hook_event_name: 'SubagentStop', agent_type: 'dev', stop_hook_active: false, session_id: sessionId, agent_id: agentId, cwd: dir });
   assert.equal(r.status, 0);
-  assert.equal(r.stdout.trim(), ''); // no block — tests pass
+  // pass path now emits additionalContext (not block) — confirm no block decision
+  const parsed = JSON.parse(r.stdout.trim());
+  assert.ok(!parsed.decision, 'should not have decision:block on green run');
+  assert.ok(parsed.hookSpecificOutput.additionalContext.includes('passed'));
 
   // The stale counter should be cleared
   const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
   assert.equal(state[`${sessionId}:${agentId}`], undefined, 'stale retry state should be cleared on green test run');
+});
+
+// ─── Test 11: pass-path additionalContext JSON shape ─────────────────────────
+test('pass path emits hookSpecificOutput with hookEventName=SubagentStop and additionalContext containing "passed"', () => {
+  const isWin = process.platform === 'win32';
+  const passCmd = isWin ? 'exit 0' : 'true';
+  const dir = makeTmpDir({
+    '.mercury/config/test-gate.yaml': `test_command: ${passCmd}\n`,
+  });
+  const r = invokeHook({ hook_event_name: 'SubagentStop', agent_type: 'dev', session_id: 's11', agent_id: 'a11', cwd: dir });
+  assert.equal(r.status, 0, `stderr: ${r.stderr}`);
+  const parsed = JSON.parse(r.stdout.trim());
+  assert.ok(parsed.hookSpecificOutput, 'must have hookSpecificOutput');
+  assert.equal(parsed.hookSpecificOutput.hookEventName, 'SubagentStop');
+  assert.ok(typeof parsed.hookSpecificOutput.additionalContext === 'string', 'additionalContext must be string');
+  assert.ok(parsed.hookSpecificOutput.additionalContext.includes('passed'), `must contain "passed": ${parsed.hookSpecificOutput.additionalContext}`);
+  assert.ok(!parsed.decision, 'must not have decision field on pass path');
+});
+
+// ─── Test 12: research-stop-nudge.sh with env=1 → additionalContext ───────────
+test('research-stop-nudge.sh: MERCURY_RESEARCH_STOP_NUDGE=1 → additionalContext JSON', () => {
+  const nudgeScript = path.resolve(__dirname, '..', '..', '..', '.claude', 'hooks', 'research-stop-nudge.sh');
+  const input = JSON.stringify({ hook_event_name: 'SubagentStop', agent_type: 'research', session_id: 'rn1', agent_id: 'ra1' });
+  const result = spawnSync('bash', [nudgeScript], {
+    input,
+    env: { ...process.env, MERCURY_RESEARCH_STOP_NUDGE: '1' },
+    encoding: 'utf8',
+    timeout: 10000,
+  });
+  assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+  const parsed = JSON.parse((result.stdout || '').trim());
+  assert.equal(parsed.hookSpecificOutput.hookEventName, 'SubagentStop');
+  assert.ok(typeof parsed.hookSpecificOutput.additionalContext === 'string');
+  assert.ok(parsed.hookSpecificOutput.additionalContext.length > 0);
+});
+
+// ─── Test 13: research-stop-nudge.sh without env → silent exit 0 ─────────────
+test('research-stop-nudge.sh: MERCURY_RESEARCH_STOP_NUDGE unset → silent exit 0', () => {
+  const nudgeScript = path.resolve(__dirname, '..', '..', '..', '.claude', 'hooks', 'research-stop-nudge.sh');
+  const input = JSON.stringify({ hook_event_name: 'SubagentStop', agent_type: 'research', session_id: 'rn2', agent_id: 'ra2' });
+  const envWithout = { ...process.env };
+  delete envWithout.MERCURY_RESEARCH_STOP_NUDGE;
+  const result = spawnSync('bash', [nudgeScript], {
+    input,
+    env: envWithout,
+    encoding: 'utf8',
+    timeout: 10000,
+  });
+  assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+  assert.equal((result.stdout || '').trim(), '', 'should produce no stdout when env unset');
 });
