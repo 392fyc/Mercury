@@ -5,7 +5,7 @@ export const meta = {
   phases: [
     { title: 'Recon', detail: 'locate ECC repo + sweep recent practices from repo + community write-ups' },
     { title: 'Verify', detail: 'independently cross-check each practice against fresh sources, UNVERIFIED-tag' },
-    { title: 'MapToMercury', detail: 'classify each verified practice vs the Mercury codebase' },
+    { title: 'MapToMercury', detail: 'classify each non-contradicted practice (verified + unverified, unverified flagged) vs the Mercury codebase' },
   ],
 }
 
@@ -58,7 +58,7 @@ const PRACTICES_SCHEMA = {
         properties: {
           name: { type: 'string', description: 'short practice name' },
           summary: { type: 'string', description: 'what the practice is + the concrete artifact (file/hook/skill/command) it maps to' },
-          sources: { type: 'array', items: { type: 'string', description: 'source URL' } },
+          sources: { type: 'array', minItems: 1, items: { type: 'string', description: 'source URL' }, description: 'at least one source URL (guardrail §3: every practice carries a source; unverifiable ones are caught at the Verify stage)' },
           recency: { type: 'string', enum: ['new', 'updated', 'established', 'unknown'], description: 'is this newly added/updated in ECC or a long-standing pattern' },
         },
       },
