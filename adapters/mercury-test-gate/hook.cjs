@@ -11,7 +11,22 @@ const GATED = ['dev'];
 const TIMEOUT = (() => { const n = parseInt(process.env.MERCURY_TEST_GATE_TIMEOUT_SEC, 10); return Number.isFinite(n) && n > 0 ? n : 300; })();
 const STRICT = process.env.MERCURY_TEST_GATE_STRICT === '1';
 const TAG = '[mercury-test-gate]';
+// block: dev-only mechanical test gate — emits decision:block to prevent subagent stop.
+// passWithContext: pass path surfaces a fixed positive signal to main via additionalContext,
+//   so main knows tests were confirmed green (not just "no opinion from hook").
+//   Fixed text only — testCmd is intentionally NOT interpolated to avoid prompt injection
+//   and sensitive command leakage from repo-controlled config files.
+// pass: silent exit 0 for non-dev / fail-open / re-entry-exhausted paths (hook has no opinion → no noise).
 const block = (reason) => { process.stdout.write(JSON.stringify({ decision: 'block', reason }) + '\n'); process.exit(0); };
+const passWithContext = () => {
+  process.stdout.write(JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: 'SubagentStop',
+      additionalContext: '✓ Mercury test gate: tests passed (exit 0)',
+    },
+  }) + '\n');
+  process.exit(0);
+};
 const pass = () => process.exit(0);
 
 async function main() {
@@ -59,7 +74,7 @@ async function main() {
 
   // Tests passed — clear any stale retry counters from prior blocked attempts.
   clearAttempts(path.join(cwd, '.mercury', 'state'), session_id, agent_id);
-  pass();
+  passWithContext();
 }
 
 main().catch((e) => { process.stderr.write(`${TAG} Unexpected error: ${e.message}\n`); process.exit(0); });

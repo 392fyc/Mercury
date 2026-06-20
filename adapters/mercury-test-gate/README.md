@@ -11,7 +11,12 @@ When a `dev` sub-agent tries to stop, Claude Code fires the `SubagentStop` event
 3. Resolves the test command — convention file first, then auto-detect.
 4. Runs the test command with a configurable timeout.
 5. If tests fail or time out — emits `{"decision":"block","reason":"..."}` on stdout + exit 0.
-6. If tests pass — exits 0 with no output (spec-safe "no opinion").
+6. If tests pass — emits the following on stdout + exit 0, surfacing a fixed positive signal to main (non-blocking; never combined with `decision`; `testCmd` is intentionally not interpolated to prevent prompt injection):
+
+```json
+{"hookSpecificOutput":{"hookEventName":"SubagentStop","additionalContext":"✓ Mercury test gate: tests passed (exit 0)"}}
+```
+7. If no test command resolves (fail-open) — exits 0 with no output (spec-safe "no opinion"); strict mode (`MERCURY_TEST_GATE_STRICT=1`) blocks instead.
 
 ## Setup
 
@@ -61,6 +66,14 @@ Set this in your shell environment or in a project-level `.env` (loaded before C
 ## Disable
 
 Remove or comment out the `SubagentStop` entry in `.claude/settings.json`.
+
+## 为何只 gate dev（设计判定）
+
+`mercury-test-gate` 仅对 `dev` agent 生效，不对 `acceptance`、`critic`、`research` 等角色加阻塞门，原因如下：
+
+- **acceptance / critic**：产出结构化 verdict（APPROVED / NEEDS-REVISION 等），由 Main 直接 dispatch 并以最终消息作为产出。对它们执行 `decision:block` 会阻止 Main 收到 verdict，属于错误行为。其停止行为本身即正确——无需外部检查可运行。
+- **research**：产出 research summary，同样由 Main 消费。是否携带 source URL / `[UNVERIFIED]` 标签属于内容质量问题，不能用阻塞门强制（会造成 research agent 无法正常退出）。对应的提醒做成 opt-in nudge（见 `.claude/hooks/research-stop-nudge.sh`，`MERCURY_RESEARCH_STOP_NUDGE=1` 启用），默认关闭以避免噪音。
+- **机械门的边界**：`SubagentStop` 阻塞门适合「有外部可执行检查（测试套件）且失败必须阻止停止」的场景。dev agent 满足此条件；其他角色不满足，故不加门。
 
 ## Layer model
 
