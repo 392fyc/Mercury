@@ -242,35 +242,49 @@ test('pass path emits hookSpecificOutput with hookEventName=SubagentStop and add
   assert.ok(!parsed.decision, 'must not have decision field on pass path');
 });
 
+// ─── bash availability probe (used by Tests 12-13) ───────────────────────────
+const bashAvailable = (() => {
+  try {
+    const probe = spawnSync('bash', ['-c', 'exit 0'], { encoding: 'utf8', timeout: 5000 });
+    return probe.status === 0;
+  } catch (_) {
+    return false;
+  }
+})();
+
 // ─── Test 12: research-stop-nudge.sh with env=1 → additionalContext ───────────
-test('research-stop-nudge.sh: MERCURY_RESEARCH_STOP_NUDGE=1 → additionalContext JSON', () => {
-  const nudgeScript = path.resolve(__dirname, '..', '..', '..', '.claude', 'hooks', 'research-stop-nudge.sh');
-  const input = JSON.stringify({ hook_event_name: 'SubagentStop', agent_type: 'research', session_id: 'rn1', agent_id: 'ra1' });
-  const result = spawnSync('bash', [nudgeScript], {
-    input,
-    env: { ...process.env, MERCURY_RESEARCH_STOP_NUDGE: '1' },
-    encoding: 'utf8',
-    timeout: 10000,
+test('research-stop-nudge.sh: MERCURY_RESEARCH_STOP_NUDGE=1 → additionalContext JSON',
+  { skip: bashAvailable ? false : 'bash unavailable' },
+  () => {
+    const nudgeScript = path.resolve(__dirname, '..', '..', '..', '.claude', 'hooks', 'research-stop-nudge.sh');
+    const input = JSON.stringify({ hook_event_name: 'SubagentStop', agent_type: 'research', session_id: 'rn1', agent_id: 'ra1' });
+    const result = spawnSync('bash', [nudgeScript], {
+      input,
+      env: { ...process.env, MERCURY_RESEARCH_STOP_NUDGE: '1' },
+      encoding: 'utf8',
+      timeout: 10000,
+    });
+    assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+    const parsed = JSON.parse((result.stdout || '').trim());
+    assert.equal(parsed.hookSpecificOutput.hookEventName, 'SubagentStop');
+    assert.ok(typeof parsed.hookSpecificOutput.additionalContext === 'string');
+    assert.ok(parsed.hookSpecificOutput.additionalContext.length > 0);
   });
-  assert.equal(result.status, 0, `stderr: ${result.stderr}`);
-  const parsed = JSON.parse((result.stdout || '').trim());
-  assert.equal(parsed.hookSpecificOutput.hookEventName, 'SubagentStop');
-  assert.ok(typeof parsed.hookSpecificOutput.additionalContext === 'string');
-  assert.ok(parsed.hookSpecificOutput.additionalContext.length > 0);
-});
 
 // ─── Test 13: research-stop-nudge.sh without env → silent exit 0 ─────────────
-test('research-stop-nudge.sh: MERCURY_RESEARCH_STOP_NUDGE unset → silent exit 0', () => {
-  const nudgeScript = path.resolve(__dirname, '..', '..', '..', '.claude', 'hooks', 'research-stop-nudge.sh');
-  const input = JSON.stringify({ hook_event_name: 'SubagentStop', agent_type: 'research', session_id: 'rn2', agent_id: 'ra2' });
-  const envWithout = { ...process.env };
-  delete envWithout.MERCURY_RESEARCH_STOP_NUDGE;
-  const result = spawnSync('bash', [nudgeScript], {
-    input,
-    env: envWithout,
-    encoding: 'utf8',
-    timeout: 10000,
+test('research-stop-nudge.sh: MERCURY_RESEARCH_STOP_NUDGE unset → silent exit 0',
+  { skip: bashAvailable ? false : 'bash unavailable' },
+  () => {
+    const nudgeScript = path.resolve(__dirname, '..', '..', '..', '.claude', 'hooks', 'research-stop-nudge.sh');
+    const input = JSON.stringify({ hook_event_name: 'SubagentStop', agent_type: 'research', session_id: 'rn2', agent_id: 'ra2' });
+    const envWithout = { ...process.env };
+    delete envWithout.MERCURY_RESEARCH_STOP_NUDGE;
+    const result = spawnSync('bash', [nudgeScript], {
+      input,
+      env: envWithout,
+      encoding: 'utf8',
+      timeout: 10000,
+    });
+    assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+    assert.equal((result.stdout || '').trim(), '', 'should produce no stdout when env unset');
   });
-  assert.equal(result.status, 0, `stderr: ${result.stderr}`);
-  assert.equal((result.stdout || '').trim(), '', 'should produce no stdout when env unset');
-});

@@ -11,7 +11,11 @@ When a `dev` sub-agent tries to stop, Claude Code fires the `SubagentStop` event
 3. Resolves the test command — convention file first, then auto-detect.
 4. Runs the test command with a configurable timeout.
 5. If tests fail or time out — emits `{"decision":"block","reason":"..."}` on stdout + exit 0.
-6. If tests pass — emits `{"hookSpecificOutput":{"hookEventName":"SubagentStop","additionalContext":"✓ Mercury test gate: `<cmd>` passed (exit 0)"}}` on stdout + exit 0, surfacing a positive signal to main (non-blocking; never combined with `decision`).
+6. If tests pass — emits the following on stdout + exit 0, surfacing a fixed positive signal to main (non-blocking; never combined with `decision`; `testCmd` is intentionally not interpolated to prevent prompt injection):
+
+```json
+{"hookSpecificOutput":{"hookEventName":"SubagentStop","additionalContext":"✓ Mercury test gate: tests passed (exit 0)"}}
+```
 7. If no test command resolves (fail-open) — exits 0 with no output (spec-safe "no opinion"); strict mode (`MERCURY_TEST_GATE_STRICT=1`) blocks instead.
 
 ## Setup
