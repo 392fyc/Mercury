@@ -73,6 +73,7 @@ class _FakeSd:
 
 def _run(env_value, blocks, sr=SR, silence_sec=0.8, min_sec=0.4):
     """Run listen_once against fake audio; return (captured_audio, stderr_text, text)."""
+    prev_env = os.environ.get("VOICE_PRE_RECORD_SEC")  # save to restore (test isolation)
     if env_value is None:
         os.environ.pop("VOICE_PRE_RECORD_SEC", None)
     else:
@@ -90,7 +91,12 @@ def _run(env_value, blocks, sr=SR, silence_sec=0.8, min_sec=0.4):
                                    min_sec=min_sec, vad_thresh=THRESH)
     finally:
         _stt.sd = saved
-        os.environ.pop("VOICE_PRE_RECORD_SEC", None)
+        # restore the caller's original value rather than blindly deleting, so this helper
+        # doesn't pollute env preconditions of other tests in a shared-process run (Argus #497)
+        if prev_env is None:
+            os.environ.pop("VOICE_PRE_RECORD_SEC", None)
+        else:
+            os.environ["VOICE_PRE_RECORD_SEC"] = prev_env
     return captured.get("audio"), err.getvalue(), text
 
 
