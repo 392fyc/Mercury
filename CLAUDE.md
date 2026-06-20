@@ -25,6 +25,7 @@ Read these docs on demand when you need the corresponding information:
 | Agent view dispatch convention (multi-lane × bg sessions) | `.mercury/docs/guides/agent-view-dispatch.md` |
 | **Dynamic Workflow 模板库 + 触发/保存/复用约定** | `.claude/workflows/README.md` |
 | 四原语选型矩阵 + budget-scaling 规则 | `.claude/agents/main.md` §编排升级 |
+| **大规模 fan-out context 护栏 + skill 迁移决策/基线** | `.mercury/docs/guides/fanout-and-skill-migration-guardrails.md` |
 
 ## Ultracode 与 Dynamic Workflows
 

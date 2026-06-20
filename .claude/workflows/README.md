@@ -69,4 +69,5 @@ fan-out(`codebase-audit`)· adversarial-verify(`codebase-audit` 的 Verify / `ad
 - **dual-verify 仍是合并门**:Workflow 产出的代码改动,提交前照样跑 `/dual-verify` + 走 PR 到 develop(Workflow 不绕过任何 hook 回归)。
 - **成本**:一次 run 可能比对话方式多用数倍 token。先在小切片上试(单目录 / 窄问题)估开销;`/workflows` 实时看 token。
 - **model**:每个 agent 用会话 model,除非脚本 `opts.model` 显式路由。大 run 前先核对 `/model`。
-- **不重写既有 skill**:autoresearch/dual-verify 等暂不全量改写为 Workflow(large effort);先用本模板库验证价值再渐进迁移(调查文档 §不建议吸收 #7)。
+- **不重写既有 skill**:autoresearch/dual-verify 等暂不全量改写为 Workflow(large effort);先用本模板库验证价值再渐进迁移(调查文档 §不建议吸收 #7)。迁移判定标准 + 回归基线(防模板库无序侵蚀稳定 skill)见 [`.mercury/docs/guides/fanout-and-skill-migration-guardrails.md`](../../.mercury/docs/guides/fanout-and-skill-migration-guardrails.md)(#485)§4-5。
+- **大规模 fan-out 前的检查清单 + 规模上限规则**(本节 5 条是每模板内嵌约束;升级到任何大规模 fan-out *之前*该过哪些 + 该 fan 多大)同见上述 #485 guide §2-3。
