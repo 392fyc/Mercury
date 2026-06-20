@@ -1,6 +1,6 @@
 # settings.json permissions vs PreToolUse hooks — #486 决策 ADR
 
-> 状态: **生效中** | 制定日期: 2026-06-21 | Closes: [#486](https://github.com/392fyc/Mercury/issues/486)([#478](https://github.com/392fyc/Mercury/issues/478) harness 现代化 **P3 / S8**)
+> 状态: **生效中** | 制定日期: 2026-06-21(JST) | 解析: [#486](https://github.com/392fyc/Mercury/issues/486) 核心决策([#478](https://github.com/392fyc/Mercury/issues/478) harness 现代化 **P3 / S8**)。本 ADR 交付「是否下沉」的决策(=不下沉);#486 原范围的**可选实现型 follow-up**(附加 defense-in-depth permissions / 新 hook 特性试点)见 §4.2,issue 由用户裁定关闭或留作 follow-up tracker。
 > 来源核验: [code.claude.com/docs/en/permissions](https://code.claude.com/docs/en/permissions)(web-verified 2026-06-21)· [code.claude.com/docs/en/hooks](https://code.claude.com/docs/en/hooks)
 
 ---
