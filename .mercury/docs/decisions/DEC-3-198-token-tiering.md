@@ -158,3 +158,36 @@ This protocol is lightweight by design — no automation, just `/usage` snapshot
 - DEC-2 — TaskBundle Lightweight Dispatch (related: dispatch-layer optimization)
 - Issue #199 — burst-mode dual-process fallback (deferred)
 - Issue #200 — hybrid autoresearch Codex-early/Opus-late (deferred)
+
+---
+
+## Amendment — 2026-06-20 (Issue #481, umbrella #478 P1)
+
+This ADR was drafted 2026-04-08 when the `opus` tier resolved to **Opus 4.6**. Two corrections + one extension:
+
+### 1. Model resolution: 4.6 (draft) → 4.7 (#385) → 4.8 (now) — no frontmatter change needed
+
+The frontmatter uses **tier aliases** (`opus` / `sonnet` / `haiku`), which Claude Code resolves to the **current** model for that tier — they auto-track upgrades. The `opus` alias has resolved to a different concrete model at each checkpoint:
+
+- ADR draft (2026-04-08): `opus` → `claude-opus-4-6[1m]` (DEC-3 §Consequences runtime self-report).
+- [#385 ADR](https://github.com/392fyc/Mercury/issues/385) (2026-05-17): main lane measured 100% **Opus 4.7**.
+- This amendment (2026-06-20): session self-reports **`claude-opus-4-8[1m]`**.
+
+So the "Opus 4.6" prose throughout §Context / §Decision is **stale wording**, not a config bug — the aliases already deliver Opus 4.8. The most recent leg of that drift, as of #385, is **4.7 → 4.8**; the full span since the ADR draft is 4.6 → 4.7 → 4.8. Pricing is unchanged across 4.6/4.7/4.8 ($5/$25), verified 2026-06-20 ([Anthropic pricing](https://platform.claude.com/docs/en/about-claude/pricing)); cost-tracker now carries an explicit `claude-opus-4-8` entry ([#482](https://github.com/392fyc/Mercury/issues/482)).
+
+### 2. Keep tier aliases — do NOT pin versioned model IDs
+
+#481 proposed switching frontmatter to versioned IDs (e.g. `claude-opus-4-8`). **Declined.** The `model:` field accepts versioned IDs ([sub-agents doc](https://code.claude.com/docs/en/sub-agents), verified 2026-06-20), but pinning would FREEZE each agent at 4.8 and break DIRECTION's MUST "design for upward compatibility" (CLAUDE.md: "Do not build features that assume the model is weak"). Tier aliases auto-upgrade 4.6→4.7→4.8→future at no cost — that IS the desired behavior. Aliases stay.
+
+### 3. Per-agent `effort` injection (new)
+
+The `effort` frontmatter field is **verified-supported** ([sub-agents doc](https://code.claude.com/docs/en/sub-agents): "Effort level when this subagent is active. Overrides the session effort level. Options: `low`/`medium`/`high`/`xhigh`/`max`; available levels depend on the model"). Injected per tier to make reasoning effort explicit + aligned with the cost-tiering philosophy of this ADR:
+
+| Agent | `model:` | `effort:` | Rationale |
+|---|---|---|---|
+| `dev` / `acceptance` / `research` | `sonnet` | `medium` | code-edit / test-run / one-shot lookup — routine, no deep reasoning |
+| `critic` / `design` | `opus` | `xhigh` | adversarial review + architecture trade-offs — deep-reasoning class |
+
+`main.md` (`model: inherit`) is the session, not a dispatched sub-agent — no `effort` set (runs at session effort). `game-*` agents are out of #481 scope.
+
+On the choice of levels (per [model-config doc](https://code.claude.com/docs/en/model-config), verified 2026-06-20): the available effort levels depend on the model — **Sonnet 4.6 does not support `xhigh`**, so the Sonnet-tier agents (`dev`/`acceptance`/`research`) use `medium`; **Opus 4.7/4.8 support `xhigh`**, so the Opus-tier agents (`critic`/`design`) use it. Claude Code downgrades an unsupported effort level to the nearest supported one, so a mismatch would degrade gracefully rather than error — but we set each tier to a level it actually supports to make the intent explicit and avoid silent downgrades.
