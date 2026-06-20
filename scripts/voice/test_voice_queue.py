@@ -155,10 +155,24 @@ def test_per_session_isolation():
 def test_session_sanitization_no_traversal():
     with _temp_state() as d:
         root = (Path(d) / "voice-queue").resolve()
-        qd = vq._queue_dir("../../etc").resolve()
-        assert str(qd).startswith(str(root) + os.sep), (qd, root)  # confined under voice-queue
-        assert qd.name == "etc"  # separators stripped, single component
-        assert vq._queue_dir("..").name == "default"  # pure-dots -> shared default bucket
+        for raw in ("../../etc", "..", "a/../../b", "/abs/path"):
+            qd = vq._queue_dir(raw).resolve()
+            assert str(qd).startswith(str(root) + os.sep), (raw, qd, root)  # confined under root
+            assert os.sep not in qd.name and "/" not in qd.name, (raw, qd.name)  # one component
+        assert vq._queue_dir("../../etc").name.startswith("etc-")  # sanitised slug + hash suffix
+
+
+def test_session_resolution_and_injectivity():
+    with _temp_state():
+        # an already-safe id (UUID-like) maps to itself, verbatim and readable
+        assert vq._queue_dir("5e193a21-c931-4b46").name == "5e193a21-c931-4b46"
+        # distinct raw ids that sanitise to the SAME slug must NOT share a queue dir (F2:
+        # per-session isolation is a safety property — a collision = cross-session leak)
+        assert vq._queue_dir("a/b").name != vq._queue_dir("a:b").name
+        # an omitted session (None) -> default bucket; an explicit falsy "" -> default too,
+        # NOT silently rerouted to the env var's session (F1)
+        assert vq._queue_dir(None).name == "default"
+        assert vq._queue_dir("").name == "default"
 
 
 # --- exactly-once under concurrency (§8 test 7) ------------------------------------

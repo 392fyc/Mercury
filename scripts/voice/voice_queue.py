@@ -40,6 +40,7 @@ import os
 import re
 import sys
 import json
+import hashlib
 import itertools
 from pathlib import Path
 from datetime import datetime, timezone
@@ -60,22 +61,32 @@ _MIN_DT = datetime.min.replace(tzinfo=timezone.utc)
 
 
 def _safe_session(raw):
-    """Confine a (semi-trusted) session id to a single safe path component.
+    """Map a (semi-trusted) session id to a safe, collision-free single path component.
 
-    The id may arrive from a Stop-hook stdin payload or an env var, so it could contain
-    path separators or `..`. Replace anything outside [A-Za-z0-9._-] with `_` and strip
-    leading/trailing dots/underscores, so `../../etc` -> `etc` and `..` -> `default` —
-    no traversal out of the voice-queue dir is possible.
+    The id may arrive from a Stop-hook stdin payload or an env var, so two goals:
+      - traversal containment: replace anything outside [A-Za-z0-9._-] with `_` and strip
+        leading/trailing dots/underscores, so `../../etc` cannot escape the voice-queue dir.
+      - injective mapping: the sanitiser is lossy (distinct raw ids can fold to one slug),
+        and per-session isolation is a SAFETY property (§8 — a shared dir is cross-session
+        contamination), so a short hash of the RAW id is appended whenever sanitisation
+        changed anything. An already-safe id (e.g. a UUID session id) maps to itself
+        verbatim, keeping dir names readable; only mangled inputs grow the hash suffix.
     """
-    s = _SESSION_SANITIZE.sub("_", str(raw)).strip("._")
-    return s or "default"
+    raw = str(raw)
+    slug = _SESSION_SANITIZE.sub("_", raw).strip("._")
+    if slug == raw and slug:
+        return slug  # already a safe, non-empty single component (e.g. a UUID) — verbatim
+    digest = hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()[:12]
+    return f"{slug}-{digest}" if slug else f"s-{digest}"
 
 
 def _resolve_session(session=None):
-    if session:
-        return _safe_session(session)
-    env = os.environ.get("VOICE_QUEUE_SESSION")
-    return _safe_session(env) if env else "default"
+    # Only an OMITTED session (None) falls back to env/default. An explicitly-passed value —
+    # even a falsy one like "" — is honoured rather than silently rerouted to the env var's
+    # session, so a caller can never accidentally cross into another session's queue (F1).
+    if session is None:
+        session = os.environ.get("VOICE_QUEUE_SESSION")
+    return _safe_session(session) if session else "default"
 
 
 def _queue_dir(session=None):
