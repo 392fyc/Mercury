@@ -21,9 +21,16 @@ import site
 import time
 import queue
 import threading
+import collections   # #495: deque ring buffer for pre-record (Slice 1)
+import math          # #495: ceil for ring maxlen
 from pathlib import Path
 
 SAMPLERATE = 16000  # faster-whisper expects 16 kHz mono float32
+# upper bound for VOICE_PRE_RECORD_SEC (#495): a huge-but-finite value would overflow
+# ceil(sec / block_dur) -> OverflowError / an oversized deque, breaking the env-parse
+# "warn + fall back, never crash" contract. A pre-roll beyond a few seconds is misuse
+# anyway (the ring only needs the ~0.3s before onset). Above this -> warn + default.
+PRE_RECORD_MAX_SEC = 10.0
 
 # signature phrases Whisper emits on silence/noise — never legitimate dictation here
 # (carried over from #465; extend here and both daemon + MCP server benefit)
@@ -72,8 +79,8 @@ import numpy as np  # noqa: E402  (after DLL-dir registration)
 
 try:
     import sounddevice as sd  # noqa: E402
-except OSError:  # PortAudio not present (e.g. headless CI) — capture disabled, transcribe still works
-    sd = None
+except (OSError, ImportError):  # PortAudio missing (OSError) or sounddevice uninstalled
+    sd = None                   # (ImportError, headless CI) — capture off, transcribe still works
 from faster_whisper import WhisperModel  # noqa: E402
 
 
@@ -209,6 +216,37 @@ class SttEngine:
         capture_sr = self.capture_samplerate()
         blocksize = max(256, int(0.05 * capture_sr))  # ~50ms blocks
         block_dur = blocksize / capture_sr
+        # pre-record ring buffer (#495 Slice 1): keep the ~Ns BEFORE VAD onset so the
+        # leading syllable isn't clipped. Maintained on EVERY pre-onset block (voiced or
+        # not), unlike `pending` which resets on silence (the clip bug). 0 disables.
+        # Validation mirrors #472 (_calibrate): a mistyped / non-finite / non-positive
+        # value warns + falls back to default, never silently breaking listen().
+        pre_record_sec = 0.3
+        env_pr = os.environ.get("VOICE_PRE_RECORD_SEC")
+        if env_pr:
+            try:
+                pr_val = float(env_pr)
+                # accept 0 (off) or a finite, positive, sanely-bounded duration. The upper
+                # bound matters: a huge finite value (e.g. 1e308) overflows
+                # ceil(pre_record_sec / block_dur) -> OverflowError / oversized deque,
+                # breaking the never-crash contract (Codex #495 audit). Mirrors #472 style.
+                if pr_val == 0 or (np.isfinite(pr_val) and 0 < pr_val <= PRE_RECORD_MAX_SEC):
+                    pre_record_sec = pr_val      # 0 = off; (0, MAX] = ring length (sec)
+                else:
+                    raise ValueError(env_pr)
+            except ValueError:
+                print(f"[voice-stt] invalid VOICE_PRE_RECORD_SEC={env_pr!r} "
+                      f"(need 0 or finite 0<v<={PRE_RECORD_MAX_SEC:g}), "
+                      f"using default {pre_record_sec}", file=sys.stderr, flush=True)
+        # maxlen in BLOCKS. Must be >= onset_blocks, else the deque would NOT be a superset
+        # of the onset blocks `pending` holds, and seeding seg from it would DROP onset
+        # audio (a regression when VOICE_PRE_RECORD_SEC is below the onset window). ceil
+        # avoids rounding a sub-block duration down to a 0-length ring. 0 (off) -> empty.
+        if pre_record_sec > 0:
+            pre_blocks = max(math.ceil(pre_record_sec / block_dur), onset_blocks)
+        else:
+            pre_blocks = 0
+        preroll = collections.deque(maxlen=pre_blocks)   # rolling pre-onset audio
         q = queue.Queue()
 
         def _on_audio(indata, frames, time_info, status):
@@ -219,6 +257,7 @@ class SttEngine:
         threshold = self._calibrate(capture_sr, vad_thresh)
         seg, seg_samples, silence_run = [], 0, 0.0
         pending, pending_samples, voiced_run = [], 0, 0
+        preroll_leadin_samples = 0   # #495: silence seeded ahead of onset, excluded from min_sec
         in_speech = False
         # absolute wall cap = recording cap + a wait-for-onset grace. The grace bounds how
         # long we block waiting for the user to START speaking; keep it modest so a silent
@@ -235,6 +274,8 @@ class SttEngine:
                 except queue.Empty:
                     continue
                 voiced = rms > threshold
+                if not in_speech and pre_blocks:
+                    preroll.append(block)   # ring auto-evicts oldest; superset of `pending`
                 if not in_speech:
                     if voiced:
                         voiced_run += 1
@@ -242,7 +283,25 @@ class SttEngine:
                         pending_samples += len(block)
                         if voiced_run >= onset_blocks:
                             in_speech = True
-                            seg, seg_samples = pending, pending_samples
+                            # Seed from the ring, NOT `pending`: the ring holds the
+                            # onset_blocks voiced blocks PLUS the quiet lead-in. Using
+                            # `pending` drops the lead-in (the #495 clip bug); ring +
+                            # pending would DOUBLE-COUNT the onset blocks. The ring alone is
+                            # correct and complete (maxlen >= onset_blocks => superset of
+                            # pending). SEED, not PREPEND.
+                            if pre_blocks:
+                                seg = list(preroll)
+                                seg_samples = sum(len(b) for b in seg)
+                                # the SILENCE lead-in seeded ahead of the onset blocks must
+                                # NOT count toward the min_sec speech-length gate, or pre-roll
+                                # padding could let a too-short utterance pass (Claude #495
+                                # review). onset_blocks are the LAST seeded entries; everything
+                                # before them is lead-in. Keeps the gate ON==OFF equivalent.
+                                preroll_leadin_samples = sum(
+                                    len(b) for b in seg[:-onset_blocks])
+                                preroll.clear()      # consumed; don't leak to next utterance
+                            else:
+                                seg, seg_samples = pending, pending_samples  # feature off
                             pending, pending_samples, voiced_run = [], 0, 0
                             silence_run = 0.0
                     else:
@@ -259,7 +318,9 @@ class SttEngine:
                 if seg_samples >= cap:
                     break
 
-        if seg_samples < min_sec * capture_sr:
+        # gate on the post-onset speech span (exclude the silence lead-in the ring seeded),
+        # so VOICE_PRE_RECORD_SEC > 0 doesn't weaken the min_sec too-short filter (#495).
+        if (seg_samples - preroll_leadin_samples) < min_sec * capture_sr:
             return ""
         audio = np.concatenate(seg, axis=0).flatten()
         text, _peak = self.transcribe(audio, capture_sr)
