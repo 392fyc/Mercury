@@ -122,6 +122,7 @@ worker 自守卫:仅当语音模式 active(mode ≠ idle)时才播报,非语音�
 | `VOICE_TTS_LOCK_WAIT` | `8` | 跨进程播放锁等待秒数(超时则跳过本次播报) |
 | `VOICE_TTS_MAX_CHARS` | `600` | `speak()` 播报文本截断长度(所有调用方) |
 | `VOICE_LISTEN_ONSET_GRACE` | `10` | `listen` 等待用户开口的 onset 窗口(秒) |
+| `VOICE_PRE_RECORD_SEC` | `0.3` | onset 前预录环形缓冲时长(秒),补回句首被 VAD 截断的清音/气口;`0`=关,有效范围 `(0, 10]`,超出/非法值告警并回退默认 0.3(永不崩 listen)。实际 maxlen=`max(ceil(秒/块时长), onset_blocks)`,保证≥onset 窗口故永不丢 onset 音;预录的静音前导不计入 `min_sec` 短句门;>0.5 有把室噪/键盘声 prepend 进首字的风险(#495) |
 | `VOICE_VAD_FACTOR` | `2.5` | 能量 VAD 阈值=噪声地板×该倍率(低增益麦克风语音仅 ~3.5× 噪声,故默认 2.5;#472) |
 | `VOICE_VAD_THRESH` | (空=自动校准) | 能量 VAD 绝对阈值覆盖(RMS,设置后跳过自动校准) |
 | `VOICE_STATE_DIR` | `<repo>/.mercury/state` | 状态/笔记目录(也存跨进程播放锁) |
