@@ -103,13 +103,6 @@ def main():
 
     session = _resolve_session(payload)
     try:
-        # benign TOCTOU: a daemon enqueue landing AFTER this is_empty() check is simply delivered
-        # on the NEXT Stop, not lost — drain() below is the atomic per-session consume (its
-        # `not items` branch also covers the reverse race), so the early-return only widens a
-        # one-turn defer window, never drops speech.
-        if _vq.is_empty(session):
-            _reset_count(session)  # clean turn: nothing was said -> reset the continuation chain
-            return 0
         cap = _env_int("VOICE_QUEUE_MAX_CONTINUATIONS", 3)
         # Carry the continuation count forward ONLY if this is a continuation of OUR OWN chain:
         # the harness says we're mid-continuation (stop_hook_active) AND our marker is fresh
@@ -121,22 +114,25 @@ def main():
         count = _read_count(session) if in_own_chain else 0
         if count >= cap:
             # too many consecutive auto-continuations (likely room noise / echo loop). STOP
-            # blocking; LEAVE the items queued (do NOT drain/consume) so a later user turn still
-            # delivers them — never silently drop the user's speech (§8).
-            pending = len(_vq.peek_all(session))
-            _reset_count(session)
-            print(f"[voice-queue-drain] continuation cap ({cap}) reached — {pending} utterance(s) "
-                  "deferred to the next user-initiated turn", file=sys.stderr, flush=True)
+            # blocking; do NOT drain/consume so the items stay queued — a fresh user turn (or a
+            # chain gone stale past the window) resets the count above and delivers them later;
+            # never silently drop the user's speech (§8).
+            print(f"[voice-queue-drain] continuation cap ({cap}) reached — deferring queued "
+                  "speech to the next user-initiated turn", file=sys.stderr, flush=True)
             return 0
+        # ONE parse of the queue on the common path: drain() is the atomic per-session consume,
+        # and its empty result IS the "nothing queued" guard — no separate is_empty() directory
+        # walk (this runs in a timeout-bounded Stop hook) (Copilot).
         items = _vq.drain(_env_int("VOICE_QUEUE_MAX_ITEMS", 5), session)
         if not items:
-            _reset_count(session)  # raced empty between is_empty and drain
+            _reset_count(session)  # nothing was queued -> clean turn, reset the continuation chain
             return 0
         _write_count(session, count + 1)
-        transcript = "\n".join(f"- {it.get('text', '')}" for it in items)
+        # per-item type guard: a single malformed entry must NOT raise out and drop the WHOLE
+        # already-drained batch (voice_queue only enqueues dicts, but defend the boundary) (Argus).
+        transcript = "\n".join(f"- {it.get('text', '')}" for it in items if isinstance(it, dict))
         # bound the injected text: max_items caps the COUNT, but an individual transcription can
-        # be long — cap total chars so the Stop-hook block output can't bloat the context / strain
-        # the hook (Argus). Truncated content is still in the queue's consumed/ archive.
+        # be long — cap total chars so the Stop-hook block output can't bloat the context (Argus).
         cap_chars = _env_int("VOICE_QUEUE_DRAIN_MAX_CHARS", 1000)
         if len(transcript) > cap_chars:
             transcript = transcript[:cap_chars] + "……（其余略）"

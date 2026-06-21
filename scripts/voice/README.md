@@ -184,6 +184,7 @@ session **只**来自 `VOICE_QUEUE_SESSION`(与 listen() 同一解析通道,故�
 | `VOICE_QUEUE_MAX_CONTINUATIONS` | `3` | drain 连续自动续接(block)上限,防室噪/回授导致无限 spin;到顶则把队列项留到下个用户回合 |
 | `VOICE_QUEUE_CONT_WINDOW` | `120` | 续接计数链的新鲜窗口(秒);超过此空闲间隔的旧计数链视为陈旧并重置(仿 auto-handoff mtime 守卫,跨会话/空闲自愈) |
 | `VOICE_QUEUE_DRAIN_MAX_CHARS` | `1000` | drain 重注入 reason 的转写文本字符上限(超出截断);防长转写撑大 Stop-hook 输出/上下文 |
+| `VOICE_QUEUE_DRAIN_PYTHON` | (空=`.venv-voice`) | `voice-queue-drain.sh` 解释器覆盖;非默认部署目录(不用 .venv-voice)时指定 Python 绝对路径 |
 | `VOICE_DAEMON_HEARTBEAT_SEC` | `5` | daemon 心跳(pidfile mtime)刷新基准秒;`daemon_active()` 判活的过期阈值=2× |
 | `VOICE_DAEMON_SILENCE_SEC` | `0.8` | daemon 判一句结束的尾静音秒数 |
 | `VOICE_DAEMON_MIN_SEC` | `0.4` | daemon 最短有效句长(秒),短于此丢弃 |

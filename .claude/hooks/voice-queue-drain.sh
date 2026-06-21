@@ -15,8 +15,13 @@
 set -euo pipefail
 
 PROJ="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-PY="$PROJ/.venv-voice/Scripts/python.exe"          # native Windows venv
-[ -x "$PY" ] || PY="$PROJ/.venv-voice/bin/python"  # posix venv fallback
+# VOICE_QUEUE_DRAIN_PYTHON overrides the interpreter for non-default deploy layouts; else fall
+# back to the documented shared venv (.venv-voice) on native Windows / posix.
+PY="${VOICE_QUEUE_DRAIN_PYTHON:-}"
+if [ -z "$PY" ]; then
+  PY="$PROJ/.venv-voice/Scripts/python.exe"          # native Windows venv
+  [ -x "$PY" ] || PY="$PROJ/.venv-voice/bin/python"  # posix venv fallback
+fi
 
 # voice venv not installed -> nothing to do
 if [ ! -x "$PY" ]; then
