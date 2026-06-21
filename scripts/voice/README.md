@@ -23,6 +23,8 @@ scripts/voice/
   stt.py        STT 层:faster-whisper 加载 + 转写 + 单句阻塞录音(复用 #465 原语)
   tts.py        TTS 层:Kokoro-FastAPI(OpenAI 兼容)客户端 + edge-tts 回退 + 播放
   state.py      双模式状态机 + 秘书结构化记录(.mercury/state/voice-mode.json)
+  voice_queue.py  per-session transcript FIFO 队列(原子入队 + O_EXCL exactly-once 出队 + watermark 时间锚定;#495 Slice 2)
+  listen_daemon.py 常驻 STT daemon(模型 A:独占 mic、转写入队;enqueue-only 半双工;#495 Slice 3)
   mcp_server.py stdio MCP server:listen / announce / set_mode / record_note / get_status
   stop_notify.py Stop-hook worker:回合末读 last_assistant_message → TTS 播报
 .claude/hooks/voice-stop-notify.sh   Stop hook 包装(opt-in,默认不注册)
@@ -104,6 +106,27 @@ worker 自守卫:仅当语音模式 active(mode ≠ idle)时才播报,非语音�
 
 ---
 
+## Path 2:常驻 STT daemon(模型 A,opt-in)
+
+默认 `listen()` 每次自开麦克风录一句(#468 行为)。Path 2 引入**常驻 STT daemon**:由**单个进程独占麦克风**、always-on 转写、把每句话写进 per-session transcript 队列(`voice_queue`);此时 `listen()` 改为**读队列**而非自开第二条音频流——消除两条 `InputStream` 抢同一设备在 Windows 上的 `PortAudio -9998`(实测)。
+
+**启动 daemon**(独立终端,用共享 venv):
+
+```bash
+# 单会话(默认 session):
+.venv-voice/Scripts/python.exe scripts/voice/listen_daemon.py
+# 多 lane:用 VOICE_QUEUE_SESSION 指定 session(daemon 与会话内 listen() 须用同一值):
+VOICE_QUEUE_SESSION=lane-x .venv-voice/Scripts/python.exe scripts/voice/listen_daemon.py
+```
+
+session **只**来自 `VOICE_QUEUE_SESSION`(与 listen() 同一解析通道,故二者永不错位)。daemon 起来后 `listen()` 自动走队列;**不起 daemon 则一切如 #468**(完全 opt-in、向后兼容)。`Ctrl+C` / `SIGTERM` 干净退出(释放设备 + 删 pidfile)。
+
+> ⚠️ **半双工 / 必须用耳机**:daemon 始终开麦,而 `announce` 的 TTS 由扬声器播放。**同房间扬声器+麦克风**会让 daemon 听到 Kokoro 自己的声音并转写成幽灵「用户说」。本实现做了**半双工门控**(持 `voice-tts.lock` 时 daemon 丢弃采集),所以**播报期间麦克风是聋的**——这意味着**不支持「打断式 barge-in」**(说话盖过 agent),真 barge-in 需要 AEC(回声消除),超出当前范围。**强烈建议用耳机**以彻底规避回授。
+>
+> ⚠️ **真 mic 验证**:daemon 的采集/转写/-9998 规避/声学回授等行为依赖真实音频硬件 + Kokoro 服务,headless 单测覆盖逻辑(队列读写、心跳/pid 自愈、半双工门控、enqueue-only 无 paste),但**端到端需在真麦克风环境验证**:① 起 daemon,说一句,确认队列出现 `utt-*.json`;② 会话内 `listen()` 返回该句;③ `announce` 播报期间说话**不**被转写入队(半双工);④ `taskkill` daemon 后 `listen()` 退回自开麦不卡死。
+
+---
+
 ## 配置(env)
 
 | 变量 | 默认 | 说明 |
@@ -125,6 +148,11 @@ worker 自守卫:仅当语音模式 active(mode ≠ idle)时才播报,非语音�
 | `VOICE_PRE_RECORD_SEC` | `0.3` | onset 前预录环形缓冲时长(秒),补回句首被 VAD 截断的清音/气口;`0`=关,有效范围 `(0, 10]`,超出/非法值告警并回退默认 0.3(永不崩 listen)。实际 maxlen=`max(ceil(秒/块时长), onset_blocks)`,保证≥onset 窗口故永不丢 onset 音;预录的静音前导不计入 `min_sec` 短句门;>0.5 有把室噪/键盘声 prepend 进首字的风险(#495) |
 | `VOICE_VAD_FACTOR` | `2.5` | 能量 VAD 阈值=噪声地板×该倍率(低增益麦克风语音仅 ~3.5× 噪声,故默认 2.5;#472) |
 | `VOICE_VAD_THRESH` | (空=自动校准) | 能量 VAD 绝对阈值覆盖(RMS,设置后跳过自动校准) |
+| `VOICE_QUEUE_SESSION` | (空=`default`) | transcript 队列 + daemon pidfile 的 session 键(多 lane 隔离;**daemon 与 listen() 端须一致**,否则各读各的队列) |
+| `VOICE_DAEMON_HEARTBEAT_SEC` | `5` | daemon 心跳(pidfile mtime)刷新基准秒;`daemon_active()` 判活的过期阈值=2× |
+| `VOICE_DAEMON_SILENCE_SEC` | `0.8` | daemon 判一句结束的尾静音秒数 |
+| `VOICE_DAEMON_MIN_SEC` | `0.4` | daemon 最短有效句长(秒),短于此丢弃 |
+| `VOICE_DAEMON_ONSET_BLOCKS` | `3` | daemon 起话所需连续浊音块数(防单次噪声尖峰开句) |
 | `VOICE_STATE_DIR` | `<repo>/.mercury/state` | 状态/笔记目录(也存跨进程播放锁) |
 | `VOICE_STOP_MAX_CHARS` | `400` | Stop hook 播报截断长度 |
 
@@ -143,3 +171,12 @@ worker 自守卫:仅当语音模式 active(mode ≠ idle)时才播报,非语音�
 - 秘书模式"快响应"可按需把 `VOICE_ZH_MODEL_SECRETARY` 降到更小模型。
 - MCP `listen` 阻塞:等待开口的 onset 窗口由 `VOICE_LISTEN_ONSET_GRACE`(默认 10s)控制,
   静默时最长阻塞 ≈ `max_seconds + onset_grace`,留意 Claude Code 工具调用超时预算。
+- **Path 2 daemon 半双工(#495 Slice 3)**:daemon 持 `voice-tts.lock` 时丢采集 → 播报期间麦克风聋,
+  **不支持 barge-in**(打断式说话);真 barge-in 需 AEC,超范围。同房间扬声器+麦克风强烈建议改耳机以防回授。
+- **Path 2 daemon 崩溃自愈**:daemon 仅在 `InputStream` 起来后写 pidfile,退出(`finally`/`atexit`/`SIGTERM`)删之,
+  每轮刷新 mtime 作心跳;`daemon_active()` 要求 **pid 活 AND 心跳新鲜**双门,故 daemon 崩溃(泄漏设备/pid 回收假活)时
+  `listen()` 退回自开麦而非卡在永不填充的队列;自开麦若撞 `-9998`(残留进程占麦)返回清晰错误而非崩工具。
+- **daemon 与 listen() 的 session 一致性**:跨 lane 共享 `.mercury/state`,队列与 pidfile 按 `VOICE_QUEUE_SESSION` 隔离;
+  daemon 启动 session 须与会话内 `listen()` 的 `VOICE_QUEUE_SESSION` 相同,否则 `listen()` 读不到 daemon 写入的队列。
+- **listen() 时间锚定**:model A 下 `listen()` 只返回**调用之后**说的话(watermark),提问前的积压由 Stop-hook drain(Slice 5)消费,
+  不会被误当成回答。

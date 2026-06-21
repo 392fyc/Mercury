@@ -37,6 +37,7 @@ from mcp.server.fastmcp import FastMCP  # noqa: E402
 import stt as _stt  # noqa: E402
 import tts as _tts  # noqa: E402
 import state as _state  # noqa: E402
+import listen_daemon as _daemon  # noqa: E402  (light import; heavy deps lazy in the daemon)
 
 mcp = FastMCP("voice")
 
@@ -80,8 +81,31 @@ def listen(max_seconds: float = 20.0, silence_sec: float = 0.8) -> str:
     遇决策点/需补充信息时在工作模式下调用它，与 announce 配合实现双向交互。
     """
     mode = _state.get_mode()
-    engine = _engine_for_mode(mode)
-    text = engine.listen_once(max_seconds=max_seconds, silence_sec=silence_sec)
+    if _daemon.daemon_active():
+        # model A: a live STT daemon owns the mic -> READ the transcript queue instead of
+        # opening a second InputStream (two streams on one device contend -> PortAudio
+        # -9998). Time-anchored: only utterances spoken AFTER this call are returned, so a
+        # pre-question backlog isn't mistaken for the answer (that backlog is the Stop-hook
+        # drain's channel). silence_sec is irrelevant here — the daemon owns segmentation.
+        text = _daemon.wait_for_utterance(max_seconds=max_seconds)
+    else:
+        # no daemon -> self-open the mic, exactly as #468. Path 2 is OPT-IN: don't start the
+        # daemon and listen() behaves as before. A leaked mic device (a daemon that died
+        # without releasing its stream) surfaces here as PortAudioError -9998; surface a
+        # clear, actionable message rather than crashing the tool (§8).
+        try:
+            engine = _engine_for_mode(mode)
+            text = engine.listen_once(max_seconds=max_seconds, silence_sec=silence_sec)
+        except Exception as e:  # noqa: BLE001 — never crash listen(). Returns EARLY (before the
+            # secretary record_note below) so a capture FAILURE is never written as a note. Only
+            # a PortAudio error means the mic is contended (e.g. a leaked daemon device, §8);
+            # other errors (engine load / decode) report their real type so the message isn't a
+            # misleading "device occupied" claim.
+            print(f"[voice-mcp] listen_once failed: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+            if "PortAudio" in type(e).__name__:
+                return ("（语音捕获失败：麦克风可能被残留进程占用 [PortAudio -9998]。"
+                        "请重启 voice daemon 或确认无其他进程占用麦克风后重试。）")
+            return f"（语音捕获失败：{type(e).__name__}。请检查 STT 引擎 / 音频设备配置后重试。）"
     # in secretary mode, transcribed speech is auto-recorded as a note
     if mode == "secretary" and text:
         _state.record_note(text, kind="note")
