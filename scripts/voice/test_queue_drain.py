@@ -26,12 +26,12 @@ import queue_drain as qd        # noqa: E402
 
 @contextlib.contextmanager
 def _temp_state():
-    saved = {k: os.environ.get(k) for k in (
-        "VOICE_STATE_DIR", "VOICE_QUEUE_SESSION",
-        "VOICE_QUEUE_MAX_CONTINUATIONS", "VOICE_QUEUE_MAX_ITEMS")}
+    keys = ("VOICE_STATE_DIR", "VOICE_QUEUE_SESSION", "VOICE_QUEUE_MAX_CONTINUATIONS",
+            "VOICE_QUEUE_MAX_ITEMS", "VOICE_QUEUE_CONT_WINDOW", "VOICE_QUEUE_DRAIN_MAX_CHARS")
+    saved = {k: os.environ.get(k) for k in keys}
     d = tempfile.mkdtemp(prefix="qd-test-")
     os.environ["VOICE_STATE_DIR"] = d
-    for k in ("VOICE_QUEUE_SESSION", "VOICE_QUEUE_MAX_CONTINUATIONS", "VOICE_QUEUE_MAX_ITEMS"):
+    for k in keys[1:]:
         os.environ.pop(k, None)
     try:
         yield d
@@ -132,6 +132,19 @@ def test_fresh_user_turn_resets_continuation_chain():
         rc, out = _run({"stop_hook_active": False, "session_id": s})  # fresh turn -> count reset
         assert _block_reason(out)["decision"] == "block"
         assert "b" in _block_reason(out)["reason"]
+
+
+def test_reason_length_is_capped():
+    # Argus: max_items caps the COUNT but not chars — a long transcription must not bloat the
+    # block output. The assembled transcript is truncated at VOICE_QUEUE_DRAIN_MAX_CHARS.
+    with _temp_state():
+        os.environ["VOICE_QUEUE_DRAIN_MAX_CHARS"] = "50"
+        s = "longcap"
+        _vq.enqueue("x" * 300, session=s)
+        rc, out = _run({"stop_hook_active": False, "session_id": s})
+        reason = _block_reason(out)["reason"]
+        assert "（其余略）" in reason            # truncation marker present
+        assert reason.count("x") <= 60           # bounded near the 50-char cap, not 300
 
 
 def test_bad_stdin_json_exits_zero_no_block():

@@ -134,6 +134,12 @@ def main():
             return 0
         _write_count(session, count + 1)
         transcript = "\n".join(f"- {it.get('text', '')}" for it in items)
+        # bound the injected text: max_items caps the COUNT, but an individual transcription can
+        # be long — cap total chars so the Stop-hook block output can't bloat the context / strain
+        # the hook (Argus). Truncated content is still in the queue's consumed/ archive.
+        cap_chars = _env_int("VOICE_QUEUE_DRAIN_MAX_CHARS", 1000)
+        if len(transcript) > cap_chars:
+            transcript = transcript[:cap_chars] + "……（其余略）"
         reason = ("用户在你上一回合执行期间通过语音补充了以下内容（按时间顺序），"
                   "请在继续前纳入考虑：\n" + transcript)
         print(json.dumps({"decision": "block", "reason": reason}, ensure_ascii=False))
