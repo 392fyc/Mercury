@@ -27,7 +27,9 @@ scripts/voice/
   listen_daemon.py 常驻 STT daemon(模型 A:独占 mic、转写入队;enqueue-only 半双工;#495 Slice 3)
   mcp_server.py stdio MCP server:listen / announce / set_mode / record_note / get_status
   stop_notify.py Stop-hook worker:回合末读 last_assistant_message → TTS 播报
+  queue_drain.py Stop-hook worker:回合末 drain transcript 队列 → {decision:block} 重注入(#495 Slice 5)
 .claude/hooks/voice-stop-notify.sh   Stop hook 包装(opt-in,默认不注册)
+.claude/hooks/voice-queue-drain.sh   Stop hook 包装:队列 drain(opt-in,默认不注册;#495 Slice 5)
 .claude/commands/secretary.md|work.md  /secretary、/work 模式切换 slash command
 ```
 
@@ -127,6 +129,33 @@ session **只**来自 `VOICE_QUEUE_SESSION`(与 listen() 同一解析通道,故�
 >
 > ⚠️ **真 mic 验证**:daemon 的采集/转写/-9998 规避/声学回授等行为依赖真实音频硬件 + Kokoro 服务,headless 单测覆盖逻辑(队列读写、心跳/pid 自愈、半双工门控、enqueue-only 无 paste),但**端到端需在真麦克风环境验证**:① 起 daemon,说一句,确认队列出现 `utt-*.json`;② 会话内 `listen()` 返回该句;③ `announce` 播报期间说话**不**被转写入队(半双工);④ `taskkill` daemon 后 `listen()` 退回自开麦不卡死。
 
+### Stop-hook 队列 drain(#495 Slice 5,opt-in)
+
+`announce`+`listen` 是回合内主动拉取;daemon 在 agent **干活期间**捕获的话进了 transcript 队列,需要在**回合边界**把它们重注入会话,否则「干活期间说的话」会丢。`queue_drain.py`(经 `voice-queue-drain.sh` 包装)是这个回合末 worker:drain 队列 → 输出 `{"decision":"block","reason":<转写>}` exit 0,让 Claude Code 带着这些话续这一回合。
+
+**默认不注册**(避免给全团队每回合 spawn 进程)。要启用,往现有 `hooks.Stop[0].hooks` 数组**追加**一条(与 `stop-guard.sh` / `voice-stop-notify.sh` 并列,**不要替换整个 Stop**):
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/stop-guard.sh\"", "timeout": 10 },
+          { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/voice-queue-drain.sh\"", "timeout": 15 }
+        ]
+      }
+    ]
+  }
+}
+```
+
+(只新增 `voice-queue-drain.sh` 那一行;`stop-guard.sh` 原样保留。drain 排在 `stop-guard.sh` / `auto-handoff-stop.sh` 之后 —— 它们用 `decision:block` 时优先,可接受:下个干净 stop 再 drain。)
+
+> ⚠️ **与 `voice-stop-notify.sh` 二选一/合并**:两者都在 Stop 触发会让用户既听到队列重注入又听到上条回复播报(且共享播放锁串行)。建议**只注册其一**,或后续合并为单一 Stop worker(§设计 §8 minor)。
+>
+> **§8 续接回合聋区防护(loop-guard)**:drain **不**只靠 `stop_hook_active` 单守卫(那会漏掉「续接回合期间」说的话)。它自持 per-session 续接计数器(仿 `auto-handoff-stop.sh` 的 RETRY marker),即使 `stop_hook_active=true` 也会对**新的**非空队列再 block,但用 `VOICE_QUEUE_MAX_CONTINUATIONS`(默认 3)封顶连续续接 —— 防室噪/麦听到 Kokoro 自己声音导致无限 spin。**到顶后停止 block 并把队列项留到下个用户回合(绝不丢弃)** + stderr 提示。新用户回合(`stop_hook_active` falsy)重置计数链。worker **纯文本**(无同步 TTS,防慢 synth 撑爆 hook timeout)。
+
 ---
 
 ## 配置(env)
@@ -150,7 +179,12 @@ session **只**来自 `VOICE_QUEUE_SESSION`(与 listen() 同一解析通道,故�
 | `VOICE_PRE_RECORD_SEC` | `0.3` | onset 前预录环形缓冲时长(秒),补回句首被 VAD 截断的清音/气口;`0`=关,有效范围 `(0, 10]`,超出/非法值告警并回退默认 0.3(永不崩 listen)。实际 maxlen=`max(ceil(秒/块时长), onset_blocks)`,保证≥onset 窗口故永不丢 onset 音;预录的静音前导不计入 `min_sec` 短句门;>0.5 有把室噪/键盘声 prepend 进首字的风险(#495) |
 | `VOICE_VAD_FACTOR` | `2.5` | 能量 VAD 阈值=噪声地板×该倍率(低增益麦克风语音仅 ~3.5× 噪声,故默认 2.5;#472) |
 | `VOICE_VAD_THRESH` | (空=自动校准) | 能量 VAD 绝对阈值覆盖(RMS,设置后跳过自动校准) |
-| `VOICE_QUEUE_SESSION` | (空=`default`) | transcript 队列 + daemon pidfile 的 session 键(多 lane 隔离;**daemon 与 listen() 端须一致**,否则各读各的队列) |
+| `VOICE_QUEUE_SESSION` | (空=`default`) | transcript 队列 + daemon pidfile 的 session 键(多 lane 隔离;**daemon / listen() / queue-drain 三端须一致**,否则各读各的队列。queue-drain 端:env 未设时退回 Stop-hook stdin 的 session_id) |
+| `VOICE_QUEUE_MAX_ITEMS` | `5` | Stop-hook drain 单次重注入的最多 utterance 数(配合 hook timeout 预算) |
+| `VOICE_QUEUE_MAX_CONTINUATIONS` | `3` | drain 连续自动续接(block)上限,防室噪/回授导致无限 spin;到顶则把队列项留到下个用户回合 |
+| `VOICE_QUEUE_CONT_WINDOW` | `120` | 续接计数链的新鲜窗口(秒);超过此空闲间隔的旧计数链视为陈旧并重置(仿 auto-handoff mtime 守卫,跨会话/空闲自愈) |
+| `VOICE_QUEUE_DRAIN_MAX_CHARS` | `1000` | drain 重注入 reason 的转写文本字符上限(超出截断);防长转写撑大 Stop-hook 输出/上下文 |
+| `VOICE_QUEUE_DRAIN_PYTHON` | (空=`.venv-voice`) | `voice-queue-drain.sh` 解释器覆盖;非默认部署目录(不用 .venv-voice)时指定 Python 绝对路径 |
 | `VOICE_DAEMON_HEARTBEAT_SEC` | `5` | daemon 心跳(pidfile mtime)刷新基准秒;`daemon_active()` 判活的过期阈值=2× |
 | `VOICE_DAEMON_SILENCE_SEC` | `0.8` | daemon 判一句结束的尾静音秒数 |
 | `VOICE_DAEMON_MIN_SEC` | `0.4` | daemon 最短有效句长(秒),短于此丢弃 |
@@ -180,7 +214,11 @@ session **只**来自 `VOICE_QUEUE_SESSION`(与 listen() 同一解析通道,故�
 - **Path 2 daemon 半双工(默认,#495 Slice 3)**:daemon 持 `voice-tts.lock` 时丢采集 → 播报期间麦克风聋(安全轮流对讲)。
 - **opt-in barge-in(#495 Slice 4,默认关)**:`VOICE_BARGEIN=1` 后 daemon 播报期间不静音,onset 即写 generation-绑定
   停播信号(`voice-tts.stop`)让 `announce` 提前停;**仅耳机/AEC 环境可靠**(扬声器会假打断 + 回授幽灵句),
-  真扬声器 barge-in 需 AEC 超范围。可中断播放用 elapsed-time 边界而非 `sd.get_stream()`(§8:后者可能轮询错流)。
+  真扬声器 barge-in 需 AEC 超范围。可中断播放用后台 drain 线程 + 全程 poll(无不可中断尾窗),不用 `sd.get_stream()`(§8:后者可能轮询错流)。
+- **Stop-hook 队列 drain(#495 Slice 5,opt-in,默认不注册)**:回合末把 daemon 在干活期间入队的话重注入会话。loop-guard
+  自持续接计数器 + `VOICE_QUEUE_MAX_CONTINUATIONS` 封顶(不只靠 `stop_hook_active`),到顶把队列项留到下个用户回合不丢弃;
+  纯文本无同步 TTS(防撑爆 hook timeout)。**注册进 settings.json 是用户级治理变更,须手动按上方片段添加**(本切片不自动改 settings.json)。
+  与 `voice-stop-notify.sh` 建议二选一(否则双声)。
 - **Path 2 daemon 崩溃自愈**:daemon 仅在 `InputStream` 起来后写 pidfile,退出(`finally`/`atexit`/`SIGTERM`)删之,
   每轮刷新 mtime 作心跳;`daemon_active()` 要求 **pid 活 AND 心跳新鲜**双门,故 daemon 崩溃(泄漏设备/pid 回收假活)时
   `listen()` 退回自开麦而非卡在永不填充的队列;自开麦若撞 `-9998`(残留进程占麦)返回清晰错误而非崩工具。
