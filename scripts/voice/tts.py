@@ -314,8 +314,9 @@ def _play_wav_bytes(data):
     def _drain():
         try:
             sd.wait()
-        except BaseException as e:  # capture so a real playback error reaches the MAIN thread
-            err["e"] = e            # -> speak()'s ok / edge-fallback handling (not silently ok)
+        except Exception as e:  # capture a real playback error (e.g. PortAudioError) to re-raise
+            err["e"] = e        # on the MAIN thread; Exception (NOT BaseException) so we never
+            #                     swallow KeyboardInterrupt/SystemExit process-termination signals
         finally:
             done.set()
 
@@ -334,10 +335,16 @@ def _play_wav_bytes(data):
                 #                           leave the signal (cleared on the next lock-acquire)
                 break
             done.wait(poll)               # wake on completion OR after one poll interval
-        # wait for the background drain (sd.wait) to actually return before exiting, so the
-        # device is fully released and the NEXT playback can't race a still-draining stream
-        # (bounded so a hung sd.wait can't block forever) (Argus M).
-        done.wait(2.0)
+        # wait for the background drain (sd.wait) to return before exiting, so the device is
+        # fully released and the NEXT playback can't race a still-draining stream. If it does
+        # NOT finish within the bound (a hung sd.wait?), force-stop so we never release the
+        # playback lock with audio still on the device, then briefly settle (Argus/Copilot).
+        if not done.wait(2.0):
+            try:
+                sd.stop()
+            except Exception:
+                pass
+            done.wait(0.5)
         # surface a genuine playback failure to speak() — a deliberate barge-in is NOT a failure
         if not interrupted and err.get("e") is not None:
             raise err["e"]
