@@ -309,26 +309,38 @@ def _play_wav_bytes(data):
     # uninterruptible tail (an elapsed-time deadline would leave the post-deadline sd.wait()
     # window un-interruptible if device latency exceeds the estimate) (Codex M).
     done = threading.Event()
+    err = {}
 
     def _drain():
         try:
             sd.wait()
+        except BaseException as e:  # capture so a real playback error reaches the MAIN thread
+            err["e"] = e            # -> speak()'s ok / edge-fallback handling (not silently ok)
         finally:
             done.set()
 
+    interrupted = False
     try:
         sd.play(audio, sr)
         threading.Thread(target=_drain, daemon=True).start()
         while not done.is_set():
             if _pending_stop_for_me():
-                sd.stop()              # barge-in: stops playback -> _drain's sd.wait() returns
-                _clear_stop_signal()   # consume the signal we just acted on
+                interrupted = True
+                try:
+                    sd.stop()             # barge-in: stops playback -> _drain's sd.wait() returns
+                    _clear_stop_signal()  # consume only after a SUCCESSFUL stop
+                except Exception:
+                    pass                  # best-effort: a stop() error must not break announce();
+                #                           leave the signal (cleared on the next lock-acquire)
                 break
-            done.wait(poll)            # wake on completion OR after one poll interval
+            done.wait(poll)               # wake on completion OR after one poll interval
         # wait for the background drain (sd.wait) to actually return before exiting, so the
         # device is fully released and the NEXT playback can't race a still-draining stream
         # (bounded so a hung sd.wait can't block forever) (Argus M).
         done.wait(2.0)
+        # surface a genuine playback failure to speak() — a deliberate barge-in is NOT a failure
+        if not interrupted and err.get("e") is not None:
+            raise err["e"]
     finally:
         # reset even if play/wait raises, so a later _stop_current() won't sd.stop() spuriously
         _current["stream"] = None

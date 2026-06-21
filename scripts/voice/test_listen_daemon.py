@@ -351,8 +351,9 @@ def test_bargein_on_signals_stop_on_onset():
     # VOICE_BARGEIN on: the daemon does NOT mute during playback and, on user onset, writes a
     # barge-in stop-signal targeting the TTS lock holder (tts.request_stop).
     with _temp_state():
+        os.environ["VOICE_BARGEIN"] = "1"  # opt-in via the REAL env path (_temp_state restores)
         d = ld.EnqueueDaemon(session="bi-on")
-        d._bargein = True
+        assert d._bargein is True          # _bargein_enabled() parsed the opt-in env
         d.capture_sr, d.blocksize, d.threshold = 16000, 800, 0.1
         d.silence_sec, d.min_sec, d.max_sec, d.onset_blocks = 0.15, 0.0, 1.0, 2
         d._finalize = lambda seg, n, ts=None: None  # don't transcribe in this test
