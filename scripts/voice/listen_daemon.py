@@ -112,15 +112,29 @@ def daemon_active(session=None):
         return False
 
 
-def _tts_playing():
-    """True iff the TTS playback lock is held by a LIVE holder (the agent is speaking).
-    Reuses tts's lock primitives so the daemon stays half-duplex without its own protocol."""
+def _tts_lock_holder():
+    """The LIVE holder pid of the TTS playback lock (the process whose announce() is playing),
+    or 0 if there is no live holder. Reuses tts's lock primitives."""
     lp = _tts._lock_path()
     try:
         holder = int((lp.read_text(encoding="utf-8").strip() or "0"))
     except (OSError, ValueError):
-        return False
-    return _tts._pid_alive(holder)
+        return 0
+    return holder if _tts._pid_alive(holder) else 0
+
+
+def _tts_playing():
+    """True iff the agent's TTS is currently playing (lock held by a live holder)."""
+    return _tts_lock_holder() != 0
+
+
+def _bargein_enabled():
+    """Opt-in barge-in (default OFF). When ON, the daemon does NOT mute during playback;
+    instead it signals barge-in (tts.request_stop) on user onset. ONLY safe with headphones /
+    AEC — on open speakers the mic hears Kokoro's own output and would both false-fire the
+    barge-in AND transcribe phantom 'user' utterances (§8 acoustic echo). Default OFF =
+    half-duplex turn-taking (the Slice 3 behaviour)."""
+    return os.environ.get("VOICE_BARGEIN", "0") == "1"
 
 
 def wait_for_utterance(max_seconds=20.0, session=None, poll_sec=0.1):
@@ -178,6 +192,7 @@ class EnqueueDaemon:
         self.min_sec = _env_float("VOICE_DAEMON_MIN_SEC", 0.4)
         self.max_sec = _env_float("VOICE_DAEMON_MAX_SEC", 20.0)
         self.onset_blocks = _env_int("VOICE_DAEMON_ONSET_BLOCKS", 3)
+        self._bargein = _bargein_enabled()  # opt-in; OFF = half-duplex mute during playback
 
     def _load(self):
         # lazy heavy imports: only the daemon process pays for faster_whisper / sounddevice
@@ -202,6 +217,8 @@ class EnqueueDaemon:
             self.capture_sr, os.environ.get("VOICE_ZH_VAD_THRESH", "auto"))
 
     def _maybe_muted(self):
+        if self._bargein:
+            return False  # barge-in mode: stay listening during playback to detect user onset
         now = time.monotonic()
         if now >= self._mute_check_at:
             self._muted = _tts_playing()
@@ -290,6 +307,13 @@ class EnqueueDaemon:
                         in_speech = True
                         seg, seg_samples = pending, sum(len(b) for b in pending)
                         pending, voiced_run, silence_run = [], 0, 0.0
+                        if self._bargein:
+                            holder = _tts_lock_holder()
+                            if holder:
+                                # barge-in: the user spoke over the agent -> stop the TTS
+                                # playback (generation-bound to the lock holder). The utterance
+                                # keeps capturing and is enqueued normally.
+                                _tts.request_stop(holder)
                 else:
                     pending, voiced_run = [], 0
                 continue

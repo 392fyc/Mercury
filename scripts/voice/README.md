@@ -121,7 +121,9 @@ VOICE_QUEUE_SESSION=lane-x .venv-voice/Scripts/python.exe scripts/voice/listen_d
 
 session **只**来自 `VOICE_QUEUE_SESSION`(与 listen() 同一解析通道,故二者永不错位)。daemon 起来后 `listen()` 自动走队列;**不起 daemon 则一切如 #468**(完全 opt-in、向后兼容)。`Ctrl+C` / `SIGTERM` 干净退出(释放设备 + 删 pidfile)。
 
-> ⚠️ **半双工 / 必须用耳机**:daemon 始终开麦,而 `announce` 的 TTS 由扬声器播放。**同房间扬声器+麦克风**会让 daemon 听到 Kokoro 自己的声音并转写成幽灵「用户说」。本实现做了**半双工门控**(持 `voice-tts.lock` 时 daemon 丢弃采集),所以**播报期间麦克风是聋的**——这意味着**不支持「打断式 barge-in」**(说话盖过 agent),真 barge-in 需要 AEC(回声消除),超出当前范围。**强烈建议用耳机**以彻底规避回授。
+> ⚠️ **半双工(默认)/ 建议用耳机**:daemon 始终开麦,而 `announce` 的 TTS 由扬声器播放。**同房间扬声器+麦克风**会让 daemon 听到 Kokoro 自己的声音并转写成幽灵「用户说」。默认做**半双工门控**(持 `voice-tts.lock` 时 daemon 丢弃采集),所以**播报期间麦克风是聋的**(安全的轮流对讲)。
+>
+> **opt-in barge-in(#495 Slice 4,默认关)**:设 `VOICE_BARGEIN=1` 后 daemon **不再**在播报期间静音,而是检测到用户开口(onset)时写一个 generation-绑定的停播信号(`voice-tts.stop`,绑定当前播放进程 pid),`announce` 播放循环每 ~50ms poll、命中即 `sd.stop()` 提前停播 —— 实现「说话盖过 agent 即停」。**⚠️ 仅耳机/AEC 环境可靠**:扬声器下 daemon 会把 Kokoro 自己声音误当 onset → 几乎每次播报被假打断 + 回授幽灵句,故默认关;真正的扬声器 barge-in 需 AEC,超范围。停播信号 generation-绑定(target pid)+ 每次取锁清陈旧信号,故陈旧信号**绝不**截断下一句。
 >
 > ⚠️ **真 mic 验证**:daemon 的采集/转写/-9998 规避/声学回授等行为依赖真实音频硬件 + Kokoro 服务,headless 单测覆盖逻辑(队列读写、心跳/pid 自愈、半双工门控、enqueue-only 无 paste),但**端到端需在真麦克风环境验证**:① 起 daemon,说一句,确认队列出现 `utt-*.json`;② 会话内 `listen()` 返回该句;③ `announce` 播报期间说话**不**被转写入队(半双工);④ `taskkill` daemon 后 `listen()` 退回自开麦不卡死。
 
@@ -155,6 +157,8 @@ session **只**来自 `VOICE_QUEUE_SESSION`(与 listen() 同一解析通道,故�
 | `VOICE_DAEMON_ONSET_BLOCKS` | `3` | daemon 起话所需连续浊音块数(防单次噪声尖峰开句) |
 | `VOICE_DAEMON_MAX_SEC` | `20` | daemon 单句最长秒数,超过即强制 finalize(防永不静音输入让缓冲无界增长) |
 | `VOICE_DAEMON_QUEUE_MAX` | `200` | daemon 音频块队列上限(块,~50ms/块);backpressure 下丢最新块而非无界增长内存 |
+| `VOICE_BARGEIN` | (空=关) | 设 `1` 启用 opt-in barge-in(#495 Slice 4):daemon 播报期间不静音,检测 onset 即写停播信号停 TTS。**仅耳机/AEC 环境可靠**(扬声器会假打断 + 回授幽灵句);默认关=半双工 |
+| `VOICE_BARGEIN_POLL_MS` | `50` | `announce` 播放循环 poll 停播信号的间隔(毫秒);barge-in 响应延迟上界 |
 | `VOICE_STATE_DIR` | `<repo>/.mercury/state` | 状态/笔记目录(也存跨进程播放锁) |
 | `VOICE_STOP_MAX_CHARS` | `400` | Stop hook 播报截断长度 |
 
@@ -173,8 +177,10 @@ session **只**来自 `VOICE_QUEUE_SESSION`(与 listen() 同一解析通道,故�
 - 秘书模式"快响应"可按需把 `VOICE_ZH_MODEL_SECRETARY` 降到更小模型。
 - MCP `listen` 阻塞:等待开口的 onset 窗口由 `VOICE_LISTEN_ONSET_GRACE`(默认 10s)控制,
   静默时最长阻塞 ≈ `max_seconds + onset_grace`,留意 Claude Code 工具调用超时预算。
-- **Path 2 daemon 半双工(#495 Slice 3)**:daemon 持 `voice-tts.lock` 时丢采集 → 播报期间麦克风聋,
-  **不支持 barge-in**(打断式说话);真 barge-in 需 AEC,超范围。同房间扬声器+麦克风强烈建议改耳机以防回授。
+- **Path 2 daemon 半双工(默认,#495 Slice 3)**:daemon 持 `voice-tts.lock` 时丢采集 → 播报期间麦克风聋(安全轮流对讲)。
+- **opt-in barge-in(#495 Slice 4,默认关)**:`VOICE_BARGEIN=1` 后 daemon 播报期间不静音,onset 即写 generation-绑定
+  停播信号(`voice-tts.stop`)让 `announce` 提前停;**仅耳机/AEC 环境可靠**(扬声器会假打断 + 回授幽灵句),
+  真扬声器 barge-in 需 AEC 超范围。可中断播放用 elapsed-time 边界而非 `sd.get_stream()`(§8:后者可能轮询错流)。
 - **Path 2 daemon 崩溃自愈**:daemon 仅在 `InputStream` 起来后写 pidfile,退出(`finally`/`atexit`/`SIGTERM`)删之,
   每轮刷新 mtime 作心跳;`daemon_active()` 要求 **pid 活 AND 心跳新鲜**双门,故 daemon 崩溃(泄漏设备/pid 回收假活)时
   `listen()` 退回自开麦而非卡在永不填充的队列;自开麦若撞 `-9998`(残留进程占麦)返回清晰错误而非崩工具。

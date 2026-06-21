@@ -33,13 +33,16 @@ import listen_daemon as ld      # noqa: E402
 def _temp_state():
     prev = os.environ.get("VOICE_STATE_DIR")
     prev_sess = os.environ.get("VOICE_QUEUE_SESSION")
+    prev_bi = os.environ.get("VOICE_BARGEIN")
     d = tempfile.mkdtemp(prefix="ld-test-")
     os.environ["VOICE_STATE_DIR"] = d
     os.environ.pop("VOICE_QUEUE_SESSION", None)
+    os.environ.pop("VOICE_BARGEIN", None)  # hermetic: barge-in OFF unless a test sets it
     try:
         yield d
     finally:
-        for key, val in (("VOICE_STATE_DIR", prev), ("VOICE_QUEUE_SESSION", prev_sess)):
+        for key, val in (("VOICE_STATE_DIR", prev), ("VOICE_QUEUE_SESSION", prev_sess),
+                         ("VOICE_BARGEIN", prev_bi)):
             if val is None:
                 os.environ.pop(key, None)
             else:
@@ -332,6 +335,44 @@ def test_wait_for_utterance_returns_post_watermark():
         threading.Thread(target=producer, daemon=True).start()
         got = ld.wait_for_utterance(max_seconds=2.0, session=s, poll_sec=0.05)
         assert got == "delayed", got
+
+
+def test_bargein_off_half_duplex_mutes():
+    # default (VOICE_BARGEIN unset): half-duplex — muted while a live holder owns the TTS lock
+    with _temp_state():
+        d = ld.EnqueueDaemon(session="bi-off")
+        assert d._bargein is False
+        _state._atomic_write(_tts._lock_path(), str(os.getpid()))  # TTS playing (our live pid)
+        d._mute_check_at = 0.0
+        assert d._maybe_muted() is True
+
+
+def test_bargein_on_signals_stop_on_onset():
+    # VOICE_BARGEIN on: the daemon does NOT mute during playback and, on user onset, writes a
+    # barge-in stop-signal targeting the TTS lock holder (tts.request_stop).
+    with _temp_state():
+        d = ld.EnqueueDaemon(session="bi-on")
+        d._bargein = True
+        d.capture_sr, d.blocksize, d.threshold = 16000, 800, 0.1
+        d.silence_sec, d.min_sec, d.max_sec, d.onset_blocks = 0.15, 0.0, 1.0, 2
+        d._finalize = lambda seg, n, ts=None: None  # don't transcribe in this test
+        _state._atomic_write(_tts._lock_path(), str(os.getpid()))  # TTS playing (our live pid)
+        assert d._maybe_muted() is False  # barge-in mode listens through playback
+        voi = np.full(800, 0.5, dtype=np.float32)
+        for b in [voi] * 4:
+            d.q.put((b, float(np.sqrt(np.mean(b ** 2)))))
+        d.running = True
+        th = threading.Thread(target=d._run, daemon=True)
+        th.start()
+        fired = False
+        for _ in range(60):
+            if _tts._pending_stop_for_me():
+                fired = True
+                break
+            time.sleep(0.05)
+        d.running = False
+        th.join(timeout=1.0)
+        assert fired, "onset under barge-in must request_stop targeting the TTS lock holder"
 
 
 def _main():

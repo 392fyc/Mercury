@@ -63,6 +63,62 @@ def _lock_path():
     return d / "voice-tts.lock"
 
 
+def _stop_signal_path():
+    """The barge-in stop-signal file (same dir as the playback lock)."""
+    return _lock_path().parent / "voice-tts.stop"
+
+
+def _bargein_poll_sec():
+    try:
+        return max(0.01, float(os.environ.get("VOICE_BARGEIN_POLL_MS", "50") or "50") / 1000.0)
+    except (TypeError, ValueError):
+        return 0.05
+
+
+def request_stop(target_pid):
+    """Barge-in channel: ask the TTS playback held by `target_pid` to stop. The signal is
+    generation-bound to target_pid (and cleared on every lock-acquire), so a stale signal can
+    NEVER truncate a later / different playback (§8 finding 3). Best-effort — never raises.
+
+    Called by the listen daemon when it detects user onset while the agent is speaking (opt-in
+    barge-in). `_play_wav_bytes` honours the signal only if its target == os.getpid()."""
+    try:
+        target = int(target_pid)
+    except (TypeError, ValueError):
+        return
+    if target <= 0:
+        return
+    p = _stop_signal_path()
+    tmp = None
+    try:
+        fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=".tmp-stop-", suffix=".json")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"target": target, "ts": time.time()}))
+        os.replace(tmp, str(p))  # atomic publish
+    except OSError:
+        if tmp:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
+def _clear_stop_signal():
+    try:
+        _stop_signal_path().unlink()
+    except OSError:
+        pass  # absent / already gone -> nothing to clear
+
+
+def _pending_stop_for_me():
+    """True iff a barge-in stop-signal currently targets THIS process's playback."""
+    try:
+        data = json.loads(_stop_signal_path().read_text(encoding="utf-8"))
+        return int(data.get("target", 0)) == os.getpid()
+    except (OSError, ValueError, TypeError):  # missing / partial / corrupt -> no valid signal
+        return False
+
+
 def _pid_alive(pid):
     """True if process `pid` is still running. Used to avoid stealing a lock from a
     LIVE holder that is merely mid-long-playback (a stale mtime alone must not trigger
@@ -124,6 +180,8 @@ class _CrossProcLock:
             try:
                 self.fd = os.open(str(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
                 os.write(self.fd, str(os.getpid()).encode())
+                _clear_stop_signal()  # clear any stale barge-in signal at the START of every
+                #                       playback so a leftover can't truncate THIS one (§8)
                 return self
             except FileExistsError:
                 try:
@@ -216,7 +274,15 @@ def _stop_current():
 
 
 def _play_wav_bytes(data):
-    """Play WAV bytes via sounddevice (blocking)."""
+    """Play WAV bytes via sounddevice, INTERRUPTIBLE by a barge-in stop-signal targeted at
+    this process (#495 Slice 4). Normal playback runs to completion; if the listen daemon
+    writes a `voice-tts.stop` targeting THIS pid (opt-in barge-in), playback is stopped early.
+
+    Completion is bounded by the clip's own duration (play() is non-blocking) rather than
+    `sd.get_stream()` — get_stream returns the most-recently-created stream of the process,
+    which may be an INPUT stream (calibration / a self-open listen()), so polling it is the
+    'looks-correct-but-wrong' trap §8 flagged. sd.play + sd.stop is the existing pairing
+    (_stop_current already uses sd.stop on a sd.play playback)."""
     import numpy as np
     import sounddevice as sd
     with wave.open(io.BytesIO(data), "rb") as wf:
@@ -227,10 +293,29 @@ def _play_wav_bytes(data):
     audio = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
     if ch > 1:
         audio = audio.reshape(-1, ch)
+    poll = _bargein_poll_sec()
     _current["stream"] = True
+    # sd.wait() runs in a side thread and flips `done` when the REAL playback fully drains, so
+    # the main loop can poll the barge-in signal for the entire playback — there is no
+    # uninterruptible tail (an elapsed-time deadline would leave the post-deadline sd.wait()
+    # window un-interruptible if device latency exceeds the estimate) (Codex M).
+    done = threading.Event()
+
+    def _drain():
+        try:
+            sd.wait()
+        finally:
+            done.set()
+
     try:
         sd.play(audio, sr)
-        sd.wait()
+        threading.Thread(target=_drain, daemon=True).start()
+        while not done.is_set():
+            if _pending_stop_for_me():
+                sd.stop()              # barge-in: stops playback -> _drain's sd.wait() returns
+                _clear_stop_signal()   # consume the signal we just acted on
+                break
+            done.wait(poll)            # wake on completion OR after one poll interval
     finally:
         # reset even if play/wait raises, so a later _stop_current() won't sd.stop() spuriously
         _current["stream"] = None
