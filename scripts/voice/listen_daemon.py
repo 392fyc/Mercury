@@ -130,8 +130,12 @@ def wait_for_utterance(max_seconds=20.0, session=None, poll_sec=0.1):
     BEFORE the agent asked is NOT returned here (that backlog is the Stop-hook drain's job).
     This is what listen() calls in model A instead of opening its own InputStream.
     """
+    try:
+        poll_sec = max(0.01, float(poll_sec))  # clamp: a non-positive/invalid poll would busy-loop
+    except (TypeError, ValueError):              # or raise ValueError out of time.sleep (Copilot)
+        poll_sec = 0.1
     watermark = time.time()
-    deadline = watermark + max(0.0, float(max_seconds))
+    deadline = watermark + max(0.0, float(max_seconds) if isinstance(max_seconds, (int, float)) else 0.0)
     while True:
         text = _vq.pop_latest(watermark_ts=watermark, session=session)
         if text:
@@ -349,7 +353,16 @@ def _write_pidfile(session=None):
     except (OSError, ValueError):
         existing = 0
     if existing and existing != os.getpid() and _tts._pid_alive(existing):
-        raise RuntimeError(f"another live voice daemon already owns this session (pid {existing})")
+        # refuse ONLY if the holder is genuinely active (pid alive AND heartbeat fresh). A
+        # recycled pid with a STALE heartbeat is a dead daemon's leftover and is stealable —
+        # matching daemon_active()'s pid-AND-freshness liveness, so a crashed-then-pid-recycled
+        # daemon never wrongly blocks a fresh start (Copilot).
+        try:
+            fresh = (time.time() - p.stat().st_mtime) <= _stale_threshold()
+        except OSError:
+            fresh = False
+        if fresh:
+            raise RuntimeError(f"another live voice daemon already owns this session (pid {existing})")
     _state._atomic_write(p, str(os.getpid()))  # reuse the proven atomic write
     _ACTIVE_SESSION = session       # set AFTER the write so a refused (live-foreign) claim, which
     _PIDFILE_CLAIMED = True         # raises above, never marks us as the pidfile owner

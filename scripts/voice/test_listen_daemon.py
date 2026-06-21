@@ -207,6 +207,32 @@ def test_write_then_remove_pidfile_with_session_none():
         assert not p.exists(), "shutdown must remove the pidfile even when session is None"
 
 
+def test_write_pidfile_steals_stale_heartbeat_even_if_pid_alive():
+    # Copil­ot: refuse must match daemon_active()'s liveness — a recycled pid that happens to be
+    # alive but whose heartbeat is STALE is a dead daemon's leftover and must be stealable, not
+    # wrongly block a fresh start.
+    with _temp_state():
+        s = "stale-steal"
+        p = ld._daemon_pid_path(s)
+        _state._atomic_write(p, "424242")
+        old = time.time() - (ld._stale_threshold() + 60)
+        os.utime(p, (old, old))                 # stale heartbeat
+        orig = _tts._pid_alive
+        _tts._pid_alive = lambda pid: True       # pretend the recycled pid is alive
+        try:
+            ld._write_pidfile(s)                 # stale -> stealable despite "alive" pid
+            assert int(p.read_text(encoding="utf-8")) == os.getpid()
+        finally:
+            _tts._pid_alive = orig
+
+
+def test_wait_for_utterance_clamps_bad_poll_sec():
+    # Copilot: a non-positive / invalid poll_sec must not busy-loop or raise out of time.sleep
+    with _temp_state():
+        for bad in (0, -1, "x", None):
+            assert ld.wait_for_utterance(max_seconds=0.15, session="clamp", poll_sec=bad) == ""
+
+
 def test_touch_pidfile_recreates_when_externally_removed():
     # Codex M: if the pidfile is removed mid-run, the heartbeat re-establishes it so the live
     # daemon (still owning the mic) stays discoverable — daemon_active() must not read False
