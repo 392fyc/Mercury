@@ -109,8 +109,10 @@ def listen(max_seconds: float = 20.0, silence_sec: float = 0.8) -> str:
             # misleading "device occupied" claim.
             print(f"[voice-mcp] listen_once failed: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
             if "PortAudio" in type(e).__name__:
-                return ("（语音捕获失败：麦克风可能被残留进程占用 [PortAudio -9998]。"
-                        "请重启 voice daemon 或确认无其他进程占用麦克风后重试。）")
+                # don't hard-assert -9998 (not every PortAudioError is device-occupation); cite
+                # the real error type and offer -9998 as the LIKELY cause + an actionable next step
+                return (f"（语音捕获失败：音频设备错误 [{type(e).__name__}]，麦克风可能被残留进程占用"
+                        "（常见为 PortAudio -9998）。请重启 voice daemon 或确认无其他进程占用麦克风后重试。）")
             return f"（语音捕获失败：{type(e).__name__}。请检查 STT 引擎 / 音频设备配置后重试。）"
     # in secretary mode, transcribed speech is auto-recorded as a note
     if mode == "secretary" and text:

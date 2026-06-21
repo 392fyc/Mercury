@@ -153,6 +153,8 @@ session **只**来自 `VOICE_QUEUE_SESSION`(与 listen() 同一解析通道,故�
 | `VOICE_DAEMON_SILENCE_SEC` | `0.8` | daemon 判一句结束的尾静音秒数 |
 | `VOICE_DAEMON_MIN_SEC` | `0.4` | daemon 最短有效句长(秒),短于此丢弃 |
 | `VOICE_DAEMON_ONSET_BLOCKS` | `3` | daemon 起话所需连续浊音块数(防单次噪声尖峰开句) |
+| `VOICE_DAEMON_MAX_SEC` | `20` | daemon 单句最长秒数,超过即强制 finalize(防永不静音输入让缓冲无界增长) |
+| `VOICE_DAEMON_QUEUE_MAX` | `200` | daemon 音频块队列上限(块,~50ms/块);backpressure 下丢最新块而非无界增长内存 |
 | `VOICE_STATE_DIR` | `<repo>/.mercury/state` | 状态/笔记目录(也存跨进程播放锁) |
 | `VOICE_STOP_MAX_CHARS` | `400` | Stop hook 播报截断长度 |
 

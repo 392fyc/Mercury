@@ -19,7 +19,9 @@ daemon is started, `listen()` self-opens the mic exactly as in #468.
     True barge-in (talking OVER the agent) needs AEC and is out of scope; this ships
     half-duplex turn-taking (mic deaf while the agent speaks).
   - Self-healing liveness: the pidfile is written only AFTER the InputStream starts and is
-    removed on every exit path (finally + atexit + SIGTERM/CTRL_CLOSE); its mtime is a
+    removed on exit (finally + atexit + SIGTERM/SIGINT/SIGBREAK handlers; a hard kill / console-
+    window close that bypasses atexit is self-healed on the next startup by the dead-pid steal +
+    the heartbeat-staleness check, so a leaked pidfile never traps listen() permanently); its mtime is a
     heartbeat refreshed each loop. `daemon_active()` requires BOTH a live pid AND a fresh
     heartbeat, so a crashed daemon (leaked device / recycled pid) does NOT trap `listen()`
     reading a queue that will never fill (§8 -9998 / pid-recycle).

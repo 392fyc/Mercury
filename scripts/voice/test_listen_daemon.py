@@ -95,7 +95,10 @@ def test_run_segments_on_silence_and_caps_runaway():
             d.running = True
             th = threading.Thread(target=d._run, daemon=True)
             th.start()
-            time.sleep(0.4)  # let _run drain the fed blocks + finalize
+            for _ in range(60):  # poll up to ~3s for a finalize (condition-based, not a fixed sleep)
+                if sizes:
+                    break
+                time.sleep(0.05)
             d.running = False
             th.join(timeout=1.0)
             return sizes
@@ -133,7 +136,8 @@ def test_finalize_enqueues_under_capture_onset_ts():
 def test_daemon_has_no_paste_side_effects():
     # the dedicated #495 daemon must NEVER paste into the focused window or press keys —
     # that is #465's job, and reusing it here would inject keystrokes into the active app.
-    src = open(ld.__file__, encoding="utf-8").read()
+    with open(ld.__file__, encoding="utf-8") as f:  # explicit close (Windows handle/lock safety)
+        src = f.read()
     for forbidden in ("deliver_text", "keyboard", "press_and_release", "import keyboard"):
         assert forbidden not in src, f"daemon must not reference {forbidden!r}"
 
