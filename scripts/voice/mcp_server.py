@@ -87,7 +87,13 @@ def listen(max_seconds: float = 20.0, silence_sec: float = 0.8) -> str:
         # -9998). Time-anchored: only utterances spoken AFTER this call are returned, so a
         # pre-question backlog isn't mistaken for the answer (that backlog is the Stop-hook
         # drain's channel). silence_sec is irrelevant here — the daemon owns segmentation.
-        text = _daemon.wait_for_utterance(max_seconds=max_seconds)
+        try:
+            text = _daemon.wait_for_utterance(max_seconds=max_seconds)
+        except Exception as e:  # noqa: BLE001 — the queue is a cross-process boundary; a corrupt
+            # state dir / IO error must not crash the listen() tool (parity with the self-open
+            # path's guard below) (Argus boundary finding).
+            print(f"[voice-mcp] queue read failed: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+            return f"（语音队列读取失败：{type(e).__name__}。请检查 .mercury/state 队列目录后重试。）"
     else:
         # no daemon -> self-open the mic, exactly as #468. Path 2 is OPT-IN: don't start the
         # daemon and listen() behaves as before. A leaked mic device (a daemon that died

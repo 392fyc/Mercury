@@ -154,7 +154,12 @@ class EnqueueDaemon:
         self.capture_sr = None
         self.blocksize = None
         self.threshold = None
-        self.q = queue.Queue()
+        # bounded queue: the audio callback can NOT block, so on backpressure (e.g. a slow /
+        # hung transcribe) it drops the newest block rather than grow memory unbounded — the
+        # post-transcribe _drain_queue discards backlog anyway, so dropping under overflow is
+        # behaviourally equivalent + safe (Argus memory-risk finding).
+        self.q = queue.Queue(maxsize=_env_int("VOICE_DAEMON_QUEUE_MAX", 200))
+        self._dropped = 0
         self.stream = None
         self.worker = None
         self.running = False
@@ -204,7 +209,10 @@ class EnqueueDaemon:
             return  # half-duplex: drop capture while the agent's TTS is playing (§8 echo)
         block = indata.copy().flatten()
         rms = float(self._np.sqrt(self._np.mean(block ** 2)))
-        self.q.put((block, rms))
+        try:
+            self.q.put_nowait((block, rms))
+        except queue.Full:
+            self._dropped += 1  # backpressure: drop rather than block the audio callback
 
     def _finalize(self, seg, seg_samples, onset_ts=None):
         """Transcribe one utterance and ENQUEUE it under its capture-ONSET timestamp — no
@@ -221,7 +229,11 @@ class EnqueueDaemon:
             text, _ = self.engine.transcribe(audio, self.capture_sr)
             if text:
                 path = _vq.enqueue(text, ts=onset_ts, session=self.session)
-                print(f"[voice-daemon] enqueued {text!r} -> {path}", file=sys.stderr, flush=True)
+                # log a redacted summary (length only), NOT the transcript content — the user's
+                # speech may carry credentials / private info that must not leak to stderr logs
+                # (Argus privacy finding). The text itself lives only in the queue file.
+                print(f"[voice-daemon] enqueued utterance ({len(text)} chars) -> {path}",
+                      file=sys.stderr, flush=True)
         except Exception as e:  # never let a bad segment kill the daemon
             print(f"[voice-daemon] segment failed: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
         finally:
@@ -246,6 +258,10 @@ class EnqueueDaemon:
             now = time.monotonic()
             if now - last_hb >= _heartbeat_sec():
                 _touch_pidfile(self.session)
+                if self._dropped:  # surface backpressure drops for field debugging, then reset
+                    print(f"[voice-daemon] dropped {self._dropped} block(s) under backpressure",
+                          file=sys.stderr, flush=True)
+                    self._dropped = 0
                 last_hb = now
             try:
                 block, rms = self.q.get(timeout=0.1)

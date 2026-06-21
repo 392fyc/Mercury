@@ -244,6 +244,22 @@ def test_tts_playing_detects_live_holder():
         assert ld._tts_playing() is False
 
 
+def test_on_audio_drops_under_backpressure():
+    # bounded queue (Argus memory-risk): a full queue must make the audio callback DROP the
+    # newest block (never raise, never grow), so a slow/hung transcribe can't leak memory.
+    with _temp_state():
+        d = ld.EnqueueDaemon(session="bp")
+        d._np = np
+        d._muted = False
+        d._mute_check_at = float("inf")  # use the cached (False) mute state, no file IO
+        d.q = ld.queue.Queue(maxsize=2)
+        blk = np.zeros(800, dtype=np.float32)
+        for _ in range(5):
+            d._on_audio(blk, 800, None, None)  # 5 puts into a maxsize-2 queue
+        assert d.q.qsize() == 2  # capped, not grown
+        assert d._dropped == 3   # the 3 overflow blocks were dropped without raising
+
+
 def test_maybe_muted_caches_then_reflects_lock():
     with _temp_state():
         d = ld.EnqueueDaemon(session="mute")
