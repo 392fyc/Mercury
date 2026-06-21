@@ -110,10 +110,19 @@ def _clear_stop_signal():
         pass  # absent / already gone -> nothing to clear
 
 
+_STOP_SIGNAL_MAX_BYTES = 4096  # the signal is tiny JSON; a larger file is bogus
+
+
 def _pending_stop_for_me():
-    """True iff a barge-in stop-signal currently targets THIS process's playback."""
+    """True iff a barge-in stop-signal currently targets THIS process's playback. Bounded read
+    — an oversized file (the signal lives in a shared state dir) is ignored + dropped rather
+    than fully read on every ~50ms poll, so a giant file can't become a CPU/memory DoS."""
+    p = _stop_signal_path()
     try:
-        data = json.loads(_stop_signal_path().read_text(encoding="utf-8"))
+        if p.stat().st_size > _STOP_SIGNAL_MAX_BYTES:
+            _clear_stop_signal()  # bogus oversized signal -> drop it (stops the re-read DoS)
+            return False
+        data = json.loads(p.read_text(encoding="utf-8"))
         return int(data.get("target", 0)) == os.getpid()
     except (OSError, ValueError, TypeError):  # missing / partial / corrupt -> no valid signal
         return False
@@ -316,6 +325,10 @@ def _play_wav_bytes(data):
                 _clear_stop_signal()   # consume the signal we just acted on
                 break
             done.wait(poll)            # wake on completion OR after one poll interval
+        # wait for the background drain (sd.wait) to actually return before exiting, so the
+        # device is fully released and the NEXT playback can't race a still-draining stream
+        # (bounded so a hung sd.wait can't block forever) (Argus M).
+        done.wait(2.0)
     finally:
         # reset even if play/wait raises, so a later _stop_current() won't sd.stop() spuriously
         _current["stream"] = None

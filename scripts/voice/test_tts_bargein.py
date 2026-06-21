@@ -114,6 +114,15 @@ def test_pending_stop_handles_corrupt_signal():
         assert _tts._pending_stop_for_me() is False  # corrupt -> no valid signal, never raises
 
 
+def test_pending_stop_ignores_oversized_signal():
+    # an oversized signal file (the state dir is shared) must be ignored + dropped, not fully
+    # read on every ~50ms poll -> avoids a CPU/memory DoS (Argus security finding)
+    with _temp_state():
+        _tts._stop_signal_path().write_text("x" * (_tts._STOP_SIGNAL_MAX_BYTES + 100), encoding="utf-8")
+        assert _tts._pending_stop_for_me() is False
+        assert not _tts._stop_signal_path().exists()  # bogus oversized file dropped
+
+
 # --- clear-on-acquire (a stale signal can't truncate the NEXT playback, §8) -------------
 
 def test_lock_acquire_clears_stale_signal():
