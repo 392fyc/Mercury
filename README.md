@@ -15,10 +15,34 @@ See [`.mercury/docs/DIRECTION.md`](.mercury/docs/DIRECTION.md) for the full proj
 
 The earlier README described a Tauri/Vue desktop application with a Node.js orchestrator sidecar. That architecture was archived in April 2026 as part of the direction pivot (see [DIRECTION.md §五](.mercury/docs/DIRECTION.md)).
 
-- **Not** a desktop application — the GUI, Tauri shell, and `packages/gui/` are in `archive/packages/gui/`
-- **Not** an orchestrator — `packages/orchestrator/` is in `archive/packages/orchestrator/`; Claude Code native sub-agents cover the dispatch role
-- **Not** a CLI wrapper — Mercury does not wrap `claude` / `codex` / `opencode` binaries
+- **Not** a CLI wrapper — Mercury does not wrap `claude` / `codex` / `opencode` binaries; it configures them
+- **Not** a custom orchestrator — Claude Code native sub-agents cover the dispatch role; the old `packages/orchestrator/` lives in `archive/`
 - **Not** a closed system — every skill, hook, agent, and adapter is designed to be lifted out and used in another repo
+- **Not** "weak-model" software — features are designed for upward compatibility with stronger models, never around current limitations
+
+The lone exception to "not an application" is an early **desktop GUI** MVP (`mercury-gui/`) — a Tauri 2 shell that observes Mercury's own runtime state. It is Mercury-internal tooling explored ahead of the on-demand Phase 6 trigger, not the resurrected pre-pivot product.
+
+## Current status (snapshot — 2026-06)
+
+Mercury is built phase by phase against [`EXECUTION-PLAN.md`](.mercury/docs/EXECUTION-PLAN.md). This snapshot reflects accumulated progress; the plan is the authoritative source.
+
+| Phase | Scope | Status |
+|---|---|---|
+| **Phase 0** | Cleanup + scaffolding — archive pre-pivot stack, migrate roles to `.claude/agents/*.md` | ✅ Complete |
+| **Phase 1** | Dev pipeline — Main → Dev → Acceptance blind-review chain + `pr-flow` | ✅ Complete |
+| **Phase 2** | Quality gates — mechanical Stop-hook enforcement (`adapters/mercury-test-gate/`, `mercury-loop-detector/`) | ✅ Complete |
+| **Phase 3** | Memory layer — mem0 + Qdrant cross-session/cross-project memory (user-level) | ✅ Complete |
+| **Phase 4** | Session continuity — `claude-handoff` session-chain, worktree-per-task, compact-prevention, stall detection | ✅ Complete |
+| **Phase 5** | Notify hub — Telegram channel router + client; decision-point notifications | 🟡 Partial |
+| **Phase 6** | Desktop GUI — evaluated on-demand after Phase 1-5 are stable | ⚪ On-demand |
+
+Per [`EXECUTION-PLAN.md`](.mercury/docs/EXECUTION-PLAN.md), Phase 6 is explicitly **on-demand and not in the committed roadmap**. An early `mercury-gui/` MVP (Tauri 2 + React) nonetheless exists in-tree as exploratory work ahead of any formal trigger.
+
+Recent additions on top of the core phases:
+
+- **Multi-lane development** — multiple isolated work lanes (own worktree + branch + handoff) running in parallel under a 5-lane hard cap (see [Multi-lane development](#multi-lane-development))
+- **Voice agent (experimental)** — local STT/TTS conversation loop under `scripts/voice/` (listen daemon, transcript queue, interruptible playback) exposed to Claude Code via an MCP server
+- **Codex hooks GA** — lifecycle hooks now enforce branch/scope policy for Codex sessions, sharing the same scripts as Claude Code (see [Multi-agent runtimes](#multi-agent-runtimes))
 
 ## Architecture at a glance
 
@@ -27,15 +51,19 @@ Mercury (lightweight core — only builds what no external project provides)
 ├── .claude/
 │   ├── agents/        sub-agent role definitions (main, dev, acceptance, critic, design, research, game-*)
 │   ├── skills/        reusable workflow skills (pr-flow, autoresearch, dev-pipeline, dual-verify, ...)
-│   └── hooks/         SessionStart, PreToolUse, PostToolUse, PreCompact, Stop hooks
+│   └── hooks/         lifecycle hook scripts (PreToolUse/PostToolUse/UserPromptSubmit/Stop/SubagentStop), wired via settings.json — shared with Codex
+├── .codex/            Codex CLI config + hooks.json (lifecycle hooks GA) + rules/ defense-in-depth
 ├── .mercury/
 │   ├── docs/          DIRECTION.md + EXECUTION-PLAN.md + guides/ + research/
 │   ├── templates/     dispatch prompt templates
 │   └── gates/         quality-gate configurations
-├── adapters/          Mercury-owned hook/gate adapters (mercury-loop-detector, mercury-test-gate)
-├── scripts/           maintenance scripts (worktree-reaper, mem0 hooks, codex guardrails, ...)
-└── modules/           reserved for mounted external projects (currently empty — see External mounts)
+├── adapters/          Mercury-owned hook/gate/integration adapters (≤200 LOC each for external mounts)
+├── scripts/           maintenance scripts (lane-*, worktree-reaper, mem0 hooks, codex guardrails, voice/, ...)
+├── mercury-gui/       early desktop GUI MVP — Tauri 2 + React (Phase 6 is on-demand)
+└── modules/           reserved for mounted external projects (currently empty — see External project mounts)
 ```
+
+`adapters/` currently holds seven adapters: `mercury-loop-detector` and `mercury-test-gate` (mechanical Stop-hook gates), `mercury-notify` + `mercury-channel-router` + `mercury-channel-client` (notify hub), `gpt-image-2` (pixel-asset generation), and `playwright-mcp` (browser automation mount).
 
 Configuration lives at the repo root:
 
@@ -51,10 +79,8 @@ Configuration lives at the repo root:
 - [`gh`](https://cli.github.com/) — GitHub CLI for the PR flow
 - `git` (worktree support recommended)
 - Optional, per-agent:
-  - [Codex CLI](https://developers.openai.com/codex/) — for `AGENTS.md`-driven sessions
+  - [Codex CLI](https://developers.openai.com/codex/) — for `AGENTS.md`-driven sessions (lifecycle hooks supported, see below)
   - [Gemini CLI](https://www.npmjs.com/package/@google/gemini-cli) — for `GEMINI.md`-driven sessions
-
-Windows-specific Codex guardrails live in `.codex/config.toml`, `.codex/rules/default.rules`, and `scripts/codex/*.ps1` — see [AGENTS.md](AGENTS.md) for the enforcement path since Codex hooks are currently unavailable on Windows.
 
 ### Clone and enter
 
@@ -64,7 +90,7 @@ cd Mercury
 claude   # launch a Claude Code session at the repo root
 ```
 
-On session start, Claude Code auto-loads every agent under `.claude/agents/`, every skill under `.claude/skills/`, and every hook under `.claude/hooks/`. No build step is required.
+On session start, Claude Code auto-discovers every agent under `.claude/agents/` and every skill under `.claude/skills/`. Hooks are not directory-discovered — they are wired to lifecycle events in `.claude/settings.json` (and `.codex/hooks.json` for Codex), with the scripts living under `.claude/hooks/`. No build step is required.
 
 ### Typical first-session checklist
 
@@ -75,30 +101,69 @@ On session start, Claude Code auto-loads every agent under `.claude/agents/`, ev
 
 ## Skills and sub-agents
 
-The skills under `.claude/skills/` and sub-agents under `.claude/agents/` are **detachable** — each directory is self-contained and can be copied into another Claude Code project. Skill frontmatter lists the trigger phrases in English and Chinese. For an authoritative list, see the directory contents directly; this README describes notable ones rather than pinning an exact count (to avoid drift between the tree and the prose).
+The skills under `.claude/skills/` and sub-agents under `.claude/agents/` are **detachable** — each directory is self-contained and can be copied into another Claude Code project. Skill frontmatter lists the trigger phrases in English and Chinese. Treat the directory contents as the authoritative list; the snapshot below is current as of this writing and intentionally not a pinned count.
 
-Notable skills:
+Skills (13 at time of writing):
 
 | Skill | Purpose |
 |-------|---------|
 | `dev-pipeline` | Main → Dev sub-agent → Acceptance sub-agent with blind review |
 | `pr-flow` | End-to-end PR lifecycle: create → poll Argus → fix → merge |
-| `autoresearch` | Multi-round web research with mechanical quality gate |
 | `dual-verify` | Parallel Claude Code deep-review + Codex code-audit (mandatory pre-commit per CLAUDE.md) |
-| `handoff` | Session-to-session handoff document + ready-to-paste starting prompt |
+| `autoresearch` | Multi-round web research with a mechanical quality gate |
 | `web-research` | Mandatory web verification protocol for any SDK/API/CLI claim |
+| `handoff` | Session-to-session handoff document + ready-to-paste starting prompt |
+| `systematic-debugging` | Root-cause-first debugging workflow |
+| `subagent-driven-development` | Execute a plan via fresh sub-agent per task, two-stage review |
+| `verification-before-completion` | Hard evidence-before-claims checkpoint before "done" |
+| `gh-project-flow` | GitHub Project task pull/update for Mercury's own development |
+| `kb-lint` | Knowledge-base health checks (broken links, orphans, contradictions) |
+| `animate-frames` | Pixel-frame animation pipeline (sprite sequences) via the `gpt-image-2` adapter |
+| `caveman-toggle` | Persistent concise-output mode |
 
-Notable sub-agents: `main`, `dev`, `acceptance`, `critic`, `design`, `research`, plus three game-design agents (`game-researcher`, `game-analyst`, `game-critic`) cherry-picked from `msitarzewski/agency-agents`.
+Sub-agents (9): `main`, `dev`, `acceptance`, `critic`, `design`, `research`, plus three game-design agents (`game-researcher`, `game-analyst`, `game-critic`) cherry-picked from `msitarzewski/agency-agents`.
 
 ## Hooks
 
-`.claude/hooks/` contains active hooks invoked by Claude Code at lifecycle events:
+`.claude/settings.json` wires hook scripts (under `.claude/hooks/`) to lifecycle events:
 
-- `session-init.sh` — SessionStart context injection (date, KB index, memory snapshots)
-- `pre-commit-guard.sh`, `pr-create-guard.sh`, `pr-merge-guard.sh`, `push-guard.sh` — enforce branch policies and dual-verify gate
-- `scope-guard.sh`, `post-commit-reset.sh`, `post-review-flag.sh`, `post-web-research-flag.sh` — scope enforcement and state-flag lifecycle
+- `session-init.sh` — context injection on `UserPromptSubmit` (date, KB index, memory snapshots)
+- `pre-commit-guard.sh`, `pr-create-guard.sh`, `pr-merge-guard.sh`, `push-guard.sh` — `PreToolUse` (Bash) branch policies + dual-verify gate
+- `scope-guard.sh` (`PreToolUse` on Edit/Write), `post-commit-reset.sh`, `post-review-flag.sh`, `post-web-research-flag.sh` — scope enforcement and state-flag lifecycle (`PostToolUse`)
+- `stop-guard.sh`, `auto-handoff-stop.sh` — `Stop`; plus `research-stop-nudge.sh` on `SubagentStop`
 
-`adapters/mercury-loop-detector/` and `adapters/mercury-test-gate/` implement mechanical Stop-hook enforcement via exit codes. Per DIRECTION.md §八-1, this is the only exit-code-based mechanical Stop-hook implementation known to us in the Claude Code ecosystem — an ecosystem gap identified during Phase 2-1 evaluation.
+(Cross-session memory and compaction hooks — `pre-compact.py`, `session-end.py` — run at the **user level** under `~/.claude/hooks/`, not in this repo; see [Ecosystem](#ecosystem). The experimental voice integration ships scripts under `scripts/voice/` + `.claude/hooks/voice-*.sh` that are not wired into the committed `settings.json` by default.)
+
+`adapters/mercury-loop-detector/` and `adapters/mercury-test-gate/` implement mechanical Stop-hook enforcement via exit codes (registered on `PostToolUse` and `SubagentStop` respectively). Per DIRECTION.md §八-1, this is the only exit-code-based mechanical Stop-hook implementation known to us in the Claude Code ecosystem — an ecosystem gap identified during Phase 2-1 evaluation.
+
+## Multi-lane development
+
+Mercury runs multiple **lanes** in parallel — independent work streams that don't step on each other. Each lane owns a git worktree, a branch namespace, and a handoff document, so concurrent sessions (e.g. an architecture lane and a bug-fix lane) stay isolated.
+
+- **Branch prefix**: `lane/<short>/<N>-<slug>` (≤40 chars; a legacy `feature/lane-<lane>/...` form is still accepted)
+- **Hard cap**: 5 active lanes, grounded in working-memory / coordination-overhead research (see [`lane-naming.md`](.mercury/docs/guides/lane-naming.md))
+- **Tooling**: `scripts/lane-*.sh` (spawn / claim / close / sweep) + `lane-assertion.sh`, `lane-cap-check.sh`, `lane-auto-report.sh` enforce the protocol mechanically
+- **Lane guides**: [`lane-spawn.md`](.mercury/docs/guides/lane-spawn.md), [`lane-claim.md`](.mercury/docs/guides/lane-claim.md), [`lane-close.md`](.mercury/docs/guides/lane-close.md), [`lane-sweep.md`](.mercury/docs/guides/lane-sweep.md), [`lane-emergency-escalation.md`](.mercury/docs/guides/lane-emergency-escalation.md)
+
+## Multi-agent runtimes
+
+Mercury is primarily a Claude Code harness, but the same policies are mirrored for other agent CLIs so a task can be handed across runtimes without losing its guardrails.
+
+- **Claude Code** — primary runtime; reads `CLAUDE.md`, auto-discovers `.claude/{agents,skills}` and wires hooks via `.claude/settings.json`
+- **Codex CLI** — reads `AGENTS.md`; lifecycle hooks are **GA** (Codex CLI ≥ v0.124, stable v0.128+) and enabled via `[features] hooks = true` in `.codex/config.toml`. Hook scripts live under `.claude/hooks/` (single source of truth, shared with Claude Code); `.codex/rules/` + `scripts/codex/*.ps1` remain as defense-in-depth, and `.codex/rules/` also enforces what hooks cannot (e.g. the web-research gate)
+- **Gemini / OpenCode** — `GEMINI.md` / `OPENCODE.md` carry the equivalent instruction set
+
+## Ecosystem
+
+Some Mercury capabilities run as separate, independently-deployable layers rather than in-repo code:
+
+| Layer | Where | Role |
+|---|---|---|
+| **claude-handoff** | Local plugin ([392fyc/claude-handoff](https://github.com/392fyc/claude-handoff)) | Session handoff / continuation + `session_chain` SQLite — backs Phase 4 |
+| **Memory layer** | User-level `~/.claude/hooks/` + `~/.claude/scripts/` | mem0 + Qdrant adapter, session-start/end/pre-compact hooks, cost tracker — backs Phase 3 |
+| **Argus** | Self-hosted PR review bot | Automated PR review on GitHub; pairs with `dual-verify` and the `pr-flow` skill |
+
+User-level changes (anything under `~/.claude/`) are governed separately from project PRs — see the "用户级变更治理" section of [`CLAUDE.md`](CLAUDE.md) for the issue-tracking + rollback discipline.
 
 ## External project mounts
 
@@ -141,6 +206,7 @@ Or manually: `cp CLAUDE.local.md.example CLAUDE.local.md`.
 | Codex session instructions | [`AGENTS.md`](AGENTS.md) |
 | Git-flow conventions | [`.mercury/docs/guides/git-flow.md`](.mercury/docs/guides/git-flow.md) |
 | Issue-first workflow | [`.mercury/docs/guides/issue-workflow.md`](.mercury/docs/guides/issue-workflow.md) |
+| Lane naming + concurrency cap | [`.mercury/docs/guides/lane-naming.md`](.mercury/docs/guides/lane-naming.md) |
 | Architecture evaluation (PR #162) | [`.mercury/docs/research/issue-158-architecture-evaluation.md`](.mercury/docs/research/issue-158-architecture-evaluation.md) |
 
 ## Legacy / archived components
@@ -152,6 +218,8 @@ The following directories preserve the pre-pivot orchestrator/GUI architecture a
 - `archive/agents/`, `archive/skills/`, `archive/docs/` — pre-pivot content
 
 `packages/core/` still exists at the repo root for any shared types that may still be consumed. `mercury.config.json` / `mercury.config.example.json` remain as legacy config — only `obsidian.vaultName` / `obsidian.vaultPath` are still read (by `session-init.sh`), and removal is pending mem0 migration cleanup.
+
+(Note: the early `mercury-gui/` GUI MVP at the repo root is distinct from the archived pre-pivot `archive/packages/gui/`.)
 
 ## License
 
