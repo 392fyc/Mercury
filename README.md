@@ -162,8 +162,11 @@ Some Mercury capabilities run as separate, independently-deployable layers rathe
 | **claude-handoff** | Local plugin ([392fyc/claude-handoff](https://github.com/392fyc/claude-handoff)) | Session handoff / continuation + `session_chain` SQLite — backs Phase 4 |
 | **Memory layer** | User-level `~/.claude/hooks/` + `~/.claude/scripts/` | mem0 + Qdrant adapter, session-start/end/pre-compact hooks, cost tracker — backs Phase 3 |
 | **Argus** | Self-hosted PR review bot | Automated PR review on GitHub; pairs with `dual-verify` and the `pr-flow` skill |
+| **oh-my-claudecode (OMC)** | Claude Code plugin — enabled in committed `.claude/settings.json` (`enabledPlugins`) | Multi-agent orchestration companion: UltraQA cycling, agent teams, deep-research, skill lifecycle. Adopted as a plugin (DEC-4 "Path β"); its LLM-level `SubagentStop` gate complements Mercury's mechanical `mercury-test-gate` adapter. **Opt-in & reversible** — after cloning, run `/plugin marketplace add https://github.com/Yeachan-Heo/oh-my-claudecode` then `/reload-plugins`; flip the flag to `false` to run Mercury without it. |
 
 User-level changes (anything under `~/.claude/`) are governed separately from project PRs — see the "用户级变更治理" section of [`CLAUDE.md`](CLAUDE.md) for the issue-tracking + rollback discipline.
+
+> **OMC is a plugin, not a `modules/` mount.** Phase 2-1 evaluated OMC (alongside GSD / Superpowers / OpenSpace) against a mechanical Stop-hook criterion and DEFERred it (PR #195) for two reasons: OMC's gate is LLM-level rather than a mechanical exit-code check, and OMC ships **plugin-only with no git-submodule path** — which did not fit the then-strict "mount as a submodule under `modules/`" reading of the mount-first principle. That is why `modules/` stays empty. OMC was later adopted on its *supported* axis — a Claude Code **plugin** (DEC-4 "Path β"), recorded in `.claude/settings.json`. So Mercury *does* use OMC as a plugin companion; it simply is not (and cannot be) vendored as a submodule. See [External project mounts](#external-project-mounts) for the submodule philosophy.
 
 ## External project mounts
 
