@@ -151,20 +151,18 @@ assert_out_contains "unreserved_8400_port" "8400"
 # === Test 2: argus port 3000 IS reserved → must NOT be flagged unreserved ===
 assert_out_NOT_contains "port_3000_not_flagged" "host port 3000 (project"
 
-# === Test 3: ssh-tunnel registered but not running → NOT-RUNNING, not removed ===
-# ssh-tunnel (port 22) has no container in the docker fixture.
-assert_out_contains "ssh_not_running" "[NOT-RUNNING]"
-assert_out_contains "ssh_not_running_name" "ssh-tunnel"
-# Restart-transient guard wording present (not treated as removed).
-assert_out_contains "not_running_transient_note" "restart-transient"
+# === Test 3: ssh-tunnel is a NON-docker service (no containers[]/compose) →
+# EXEMPT from NOT-RUNNING. docker ps can never show the system sshd, so flagging
+# it would be permanent cron false-positive noise. It must NOT be flagged. ===
+assert_out_NOT_contains "ssh_exempt_not_running_name" "service 'ssh-tunnel' has no running"
 
 # === Test 4: out-of-scope advisory for subdomain/url ===
 assert_out_contains "oos_advisory" "[OUT-OF-SCOPE-UNVERIFIABLE]"
 
-# === Test 5: clean registry (matches docker exactly) → VALIDATE-OK exit 0 ===
-# Build a registry that fully matches the docker fixture: argus (3 containers),
-# sot-codex (2 containers, port 8400) registered; reserved_ports includes both.
-# Drop ssh-tunnel (not running → would be NOT-RUNNING noise).
+# === Test 5: clean registry that INCLUDES the non-docker ssh-tunnel service →
+# VALIDATE-OK exit 0. This is the regression the #163 dual-verify caught: a
+# registry carrying ssh-tunnel (no containers[]/compose) with NO other real
+# drift must reconcile clean, not loop on permanent NOT-RUNNING noise. ===
 REG5="$TEST_ROOT/services5.yaml"
 cat > "$REG5" <<'EOF'
 # NAS Service Registry
@@ -184,15 +182,57 @@ services:
     url: https://sot.fyc-space.uk
     containers: [sot-codex-tunnel-1, sot-codex-app-1]
     purpose: SoT codex
+  ssh-tunnel:
+    port: 22
+    subdomain: ssh
+    url: ssh.fyc-space.uk
+    purpose: SSH access via Cloudflare Tunnel (for CI/CD)
 
 reserved_ports:
   - 3000  # argus
   - 8400  # sot-codex
+  - 22    # ssh
 EOF
 run_validate "$REG5" "$STUB"
 assert_rc "clean_exit_zero" 0
 assert_out_contains "clean_marker" "VALIDATE-OK"
 assert_out_NOT_contains "clean_no_drift_marker" "VALIDATE-DRIFT"
+# ssh-tunnel present in the clean registry must NOT be flagged NOT-RUNNING.
+assert_out_NOT_contains "clean_ssh_exempt" "[NOT-RUNNING]"
+
+# === Test 5b: a DOCKER-BACKED service that is fully down (declares containers[]
+# but none are running) DOES trigger NOT-RUNNING + exit 1 — that's real drift,
+# distinct from the ssh-tunnel exemption above. ===
+REG5B="$TEST_ROOT/services5b.yaml"
+cat > "$REG5B" <<'EOF'
+# NAS Service Registry
+domain: fyc-space.uk
+tunnel: argus
+
+services:
+  argus:
+    port: 3000
+    containers: [argus, argus-tunnel, argus-selfcheck-scheduler]
+    purpose: PR review
+  sot-codex:
+    port: 8400
+    containers: [sot-codex-tunnel-1, sot-codex-app-1]
+    purpose: SoT codex
+  ghost:
+    port: 9999
+    compose: /share/homes/392fyc/ghost/docker-compose.yml
+    containers: [ghost-app, ghost-db]
+    purpose: docker service that is fully down
+
+reserved_ports:
+  - 3000  # argus
+  - 8400  # sot-codex
+  - 9999  # ghost
+EOF
+run_validate "$REG5B" "$STUB"
+assert_rc "docker_down_exit_one" 1
+assert_out_contains "docker_down_not_running" "[NOT-RUNNING]"
+assert_out_contains "docker_down_ghost_name" "ghost"
 
 # === Test 6: --registry flag overrides REGISTRY_FILE selection ===
 LAST_OUT=$(REGISTRY_DOCKER="$STUB" sh "$SCRIPT" --registry "$REG5" 2>/dev/null) && LAST_RC=0 || LAST_RC=$?

@@ -37,7 +37,7 @@ Which `services.<name>` fields can self-heal from docker vs. require a human:
 | Field | Source | Self-healing? |
 |-------|--------|---------------|
 | `port` | docker published host port | yes (validate flags mismatch; register writes it) |
-| `containers[]` | docker running container set per compose project | yes (register auto-derives; validate flags drift) |
+| `containers[]` | docker running container set per compose project | yes (register auto-derives **sorted** for byte-stable output; validate flags drift) |
 | `compose` | compose `config_files` label (comma-split for multi-file) | partially — discoverable, but a path the operator usually passes explicitly |
 | `subdomain` | — | **human-only** (no on-NAS source) |
 | `url` | — | **human-only** |
@@ -63,6 +63,24 @@ on-NAS ingress config to diff, so validate emits them as
 `[NOT-RUNNING]` deliberately means "registered but currently down" — it is NOT
 treated as "removed", so a container bouncing during a restart is not misread as
 a deletion.
+
+`[NOT-RUNNING]` fires **only for docker-backed services** — those declaring a
+`containers:` list or a `compose:` file. A service with neither (e.g.
+`ssh-tunnel` = the system sshd on :22 fronted by cloudflared, not a docker
+workload) is exempt: `docker ps` can never show it, so flagging it would be
+permanent cron false-positive noise (`VALIDATE-DRIFT` forever with no real
+drift). A docker-backed service that is genuinely all-down still flags.
+
+## Free-form field quoting
+
+register writes free-form scalars (`subdomain`/`url`/`compose`/`purpose`/
+`repo`/`cicd`) as YAML double-quoted scalars **when** they carry a hazard
+character (`#`, a `:`-space mapping sequence, or a leading YAML indicator),
+escaping interior `"` and `\`. This keeps a `#` from being read back as an
+inline comment and stops indicator characters from changing parse structure.
+`reg_get_field` strips one quote layer (honoring the escapes), so values
+round-trip intact. Newlines / control characters in any flag value are rejected
+outright (they would splice extra YAML lines).
 
 ## BusyBox / NAS constraints (why the code looks the way it does)
 

@@ -99,13 +99,37 @@ reg_get_field() {
       pat = "^    " field ":[[:space:]]*"
       if (match($0, pat)) {
         val = substr($0, RLENGTH + 1)
-        # Strip a trailing inline comment that is preceded by whitespace.
+        # Trim leading whitespace before inspecting for a quote.
+        sub(/^[[:space:]]+/, "", val)
+        if (match(val, /^"/)) {
+          # Double-quoted scalar: the value is everything up to the closing
+          # quote; a `#` INSIDE the quotes is data, not a comment. Take the
+          # substring between the first and the matching closing quote, undoing
+          # the \" and \\ escapes the writer applied.
+          rest = substr(val, 2)
+          out = ""
+          i = 1
+          n = length(rest)
+          while (i <= n) {
+            c = substr(rest, i, 1)
+            if (c == "\\" && i < n) { out = out substr(rest, i+1, 1); i += 2; continue }
+            if (c == "\"") break
+            out = out c; i++
+          }
+          print out
+          exit
+        }
+        if (match(val, /^'"'"'/)) {
+          # Single-quoted scalar: take up to the closing single quote.
+          rest = substr(val, 2)
+          q = index(rest, "'"'"'")
+          if (q > 0) print substr(rest, 1, q-1); else print rest
+          exit
+        }
+        # Plain scalar: strip a trailing inline comment preceded by whitespace,
+        # then trim trailing whitespace.
         sub(/[[:space:]]+#.*$/, "", val)
-        # Trim surrounding whitespace.
-        gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
-        # Strip matching surrounding quotes.
-        sub(/^"/, "", val); sub(/"$/, "", val)
-        sub(/^'"'"'/, "", val); sub(/'"'"'$/, "", val)
+        sub(/[[:space:]]+$/, "", val)
         print val
         exit
       }
@@ -210,9 +234,12 @@ reg_reserve_port() {
 # "<REGISTRY_FILE>.bak-<bak_suffix>" (caller supplies a local timestamp). Atomic
 # write via mktemp + mv.
 #
-# A service subtree spans from its `  <name>:` line through every following line
-# more-indented-than-2-spaces (its children) plus blank lines, up to the next
-# `  <sibling>:` line or the end of the services block.
+# A service subtree spans from its `  <name>:` line through every following
+# 4-space-or-more indented child line. The skip STOPS — and the line is
+# preserved — at the first blank line, comment line, or 2-space sibling key that
+# follows the children: those bytes logically belong to the separator before /
+# the start of the next sibling, NOT to the replaced service, so dropping them
+# would corrupt "siblings preserved byte-for-byte".
 # ---------------------------------------------------------------------------
 reg_upsert_service() {
   up_name="$1"
@@ -246,14 +273,15 @@ reg_upsert_service() {
       print; next
     }
 
-    # While skipping the old target subtree, drop its child lines (indent > 2)
-    # and blank lines, but stop at the next sibling (`  name:`).
+    # While skipping the old target subtree, drop ONLY its own child lines
+    # (indent >= 4 spaces). Stop skipping and PRESERVE the line on the first
+    # blank line, comment line, or 2-space sibling key — those bytes belong to
+    # the separator / next sibling, not to the replaced service.
     skipping {
-      if (match($0, /^  [A-Za-z0-9._-]+:/)) {
-        skipping = 0   # fall through to sibling-detection below
-      } else {
-        next           # child line or blank inside target subtree — drop
+      if (match($0, /^    /)) {
+        next           # 4-space-or-deeper child line of the target — drop
       }
+      skipping = 0     # blank / comment / sibling — fall through and keep it
     }
 
     # A 2-space-indented service key inside the block.

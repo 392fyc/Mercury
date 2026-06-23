@@ -119,6 +119,16 @@ printf '%s\n' "$REG_SERVICES" | sed '/^$/d' | while IFS= read -r svc; do
   declared=$(reg_service_containers "$svc" | sort -u | sed '/^$/d')
 
   if [ -z "$actual" ]; then
+    # NOT-RUNNING is only meaningful for docker-backed services: those that
+    # declare a `containers:` list or a `compose:` file in the registry. A
+    # service with NEITHER (e.g. ssh-tunnel = the system sshd on :22 fronted by
+    # cloudflared — not a docker workload) is not something docker ps can ever
+    # show, so flagging it NOT-RUNNING is permanent false-positive cron noise.
+    # Exempt it: validate manages docker-backed run-state only.
+    svc_compose=$(reg_get_field "$svc" compose)
+    if [ -z "$declared" ] && [ -z "$svc_compose" ]; then
+      continue
+    fi
     finding "[NOT-RUNNING] registry service '$svc' has no running containers (registered-but-down; restart-transient — NOT auto-treated as removed)"
     continue
   fi

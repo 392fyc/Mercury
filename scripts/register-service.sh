@@ -68,6 +68,30 @@ case "$PORT" in ''|*[!0-9]*) reg_die "--port must be numeric (got '$PORT')" ;; e
 case "$NAME" in *[!A-Za-z0-9._-]*) reg_die "--name must match [A-Za-z0-9._-] (got '$NAME')" ;; esac
 [ -f "$REGISTRY_FILE" ] || reg_die "registry file not found: $REGISTRY_FILE (set --registry or REGISTRY_FILE)"
 
+# Reject control chars / newlines in any free-form flag value: a newline would
+# splice an extra line into the YAML structure, control chars corrupt it. Done
+# before any write. We delete only the C0 control range (0x00-0x1F) + DEL
+# (0x7F); anything left there is a control byte. UTF-8 multibyte text (e.g. the
+# "→" in the baseline cicd field) has high bytes that are NOT control chars and
+# must pass — so we match the cntrl class explicitly, NOT "everything non-print"
+# (the latter would wrongly reject multibyte UTF-8 under a byte-wise C locale).
+reg_reject_control() {
+  rc_label="$1"; rc_val="$2"
+  [ -n "$rc_val" ] || return 0
+  # Count control bytes via wc -c (NOT $(...) capture of the bytes themselves —
+  # command substitution strips trailing newlines, which would hide a trailing
+  # \n). Any control byte (incl. interior/trailing newline, tab, CR) -> reject.
+  rc_count=$(printf '%s' "$rc_val" | tr -dc '[:cntrl:]' | wc -c | tr -d ' ')
+  [ "$rc_count" = "0" ] || reg_die "$rc_label must not contain newlines or control characters"
+}
+reg_reject_control "--subdomain" "$SUBDOMAIN"
+reg_reject_control "--url" "$URL"
+reg_reject_control "--compose" "$COMPOSE"
+reg_reject_control "--containers" "$CONTAINERS"
+reg_reject_control "--purpose" "$PURPOSE"
+reg_reject_control "--repo" "$REPO"
+reg_reject_control "--cicd" "$CICD"
+
 # Serialize concurrent registrations.
 reg_lock
 
@@ -109,48 +133,113 @@ if [ "$EXISTING_PORT" != "$PORT" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Derive --containers from running docker when omitted (root fix for stale
-# hand-maintained lists). Normalize comma/space separated input to a clean
-# "[a, b, c]" rendering either way.
+# Merge-upsert: when NAME already exists, read its current fields so that flags
+# NOT supplied on THIS invocation retain their stored values (partial
+# re-registration must not destroy untouched fields). A brand-new service
+# renders from flags alone (absent fields are not emitted).
+#
+# We must distinguish "flag not passed" (CONTAINERS unset by the caller) from
+# "flag passed empty". A getopts-style empty string is still a pass; we treat
+# the parsed default "" as not-passed for the merge (the CLI offers no way to
+# clear a field, by design — clearing would be a destructive op out of scope).
+# ---------------------------------------------------------------------------
+SERVICE_EXISTS=0
+for _svc in $(reg_list_services); do
+  [ "$_svc" = "$NAME" ] && { SERVICE_EXISTS=1; break; }
+done
+
+if [ "$SERVICE_EXISTS" = "1" ]; then
+  [ -n "$SUBDOMAIN" ] || SUBDOMAIN=$(reg_get_field "$NAME" subdomain)
+  [ -n "$URL" ]       || URL=$(reg_get_field "$NAME" url)
+  [ -n "$COMPOSE" ]   || COMPOSE=$(reg_get_field "$NAME" compose)
+  [ -n "$PURPOSE" ]   || PURPOSE=$(reg_get_field "$NAME" purpose)
+  [ -n "$REPO" ]      || REPO=$(reg_get_field "$NAME" repo)
+  [ -n "$CICD" ]      || CICD=$(reg_get_field "$NAME" cicd)
+  # containers: keep the stored set if neither --containers nor a docker derive
+  # is wanted. We mark whether the existing value should be reused.
+  if [ -z "$CONTAINERS" ]; then
+    EXISTING_CONTAINERS=$(reg_service_containers "$NAME" | paste -sd, - 2>/dev/null)
+    [ -n "$EXISTING_CONTAINERS" ] || EXISTING_CONTAINERS=$(reg_service_containers "$NAME" | tr '\n' ',' | sed 's/,$//')
+    CONTAINERS="$EXISTING_CONTAINERS"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Derive --containers from running docker when omitted AND not retained from an
+# existing entry (root fix for stale hand-maintained lists). Normalize
+# comma/space separated input to a clean "[a, b, c]" rendering either way, with
+# the names SORTED so the same set always renders byte-identically regardless of
+# docker enumeration order.
 # ---------------------------------------------------------------------------
 if [ -z "$CONTAINERS" ]; then
   CONTAINERS=$(reg_docker ps --format '{{.Label "com.docker.compose.project"}}|{{.Names}}' 2>/dev/null \
-    | awk -F'|' -v p="$NAME" '$1==p {print $2}' | sed '/^$/d' | paste -sd, - 2>/dev/null)
+    | awk -F'|' -v p="$NAME" '$1==p {print $2}' | sed '/^$/d' | sort | paste -sd, - 2>/dev/null)
   # paste may be absent on some BusyBox builds — fall back to tr+sed.
   if [ -z "$CONTAINERS" ]; then
     CONTAINERS=$(reg_docker ps --format '{{.Label "com.docker.compose.project"}}|{{.Names}}' 2>/dev/null \
-      | awk -F'|' -v p="$NAME" '$1==p {print $2}' | sed '/^$/d' | tr '\n' ',' | sed 's/,$//')
+      | awk -F'|' -v p="$NAME" '$1==p {print $2}' | sed '/^$/d' | sort | tr '\n' ',' | sed 's/,$//')
   fi
 fi
-# Normalize separators to ", " and build a YAML flow-sequence.
+# Normalize separators to ", " and build a YAML flow-sequence. Sort the names so
+# the rendering is byte-identical for a given set (no churn on re-register).
 CONT_LIST=""
 if [ -n "$CONTAINERS" ]; then
-  CONT_LIST=$(printf '%s' "$CONTAINERS" | tr ',' ' ' | tr -s ' ' \
-    | sed 's/^ *//; s/ *$//' | tr ' ' '\n' | sed '/^$/d' | paste -sd, - 2>/dev/null)
+  CONT_SORTED=$(printf '%s' "$CONTAINERS" | tr ',' ' ' | tr -s ' ' \
+    | sed 's/^ *//; s/ *$//' | tr ' ' '\n' | sed '/^$/d' | sort)
+  CONT_LIST=$(printf '%s\n' "$CONT_SORTED" | sed '/^$/d' | paste -sd, - 2>/dev/null)
   if [ -z "$CONT_LIST" ]; then
-    CONT_LIST=$(printf '%s' "$CONTAINERS" | tr ',' ' ' | tr -s ' ' \
-      | sed 's/^ *//; s/ *$//' | tr ' ' ',')
+    CONT_LIST=$(printf '%s\n' "$CONT_SORTED" | sed '/^$/d' | tr '\n' ',' | sed 's/,$//')
   fi
   # Add space after each comma for readability: a,b -> a, b
   CONT_LIST=$(printf '%s' "$CONT_LIST" | sed 's/,/, /g')
 fi
 
 # ---------------------------------------------------------------------------
-# Render the service block. Only emit fields that were supplied (or derived) so
-# we don't write empty keys. 2-space indent for the service key, 4-space for
-# children — matching the existing services.yaml shape.
+# Scalar YAML rendering. Free-form fields (subdomain/url/compose/purpose/repo/
+# cicd) can carry characters that change YAML parsing or truncate the value:
+#   - a ` #` sequence starts an inline comment (would truncate on read-back)
+#   - a leading YAML indicator (: # & * ! | > % @ ` " ' [ ] { } , and more)
+#   - an interior ": " maps-key sequence
+# When ANY risk marker is present we double-quote the value and escape interior
+# double-quotes + backslashes (YAML double-quoted scalar rules). reg_get_field
+# strips one layer of surrounding quotes, so the value reads back intact.
+# Newlines/control chars are already rejected above, so quoting is sufficient.
+# ---------------------------------------------------------------------------
+emit_field() {
+  ef_key="$1"; ef_val="$2"
+  [ -n "$ef_val" ] || return 0
+  ef_needs_quote=0
+  case "$ef_val" in
+    *" #"*|*'#'*) ef_needs_quote=1 ;;          # inline-comment hazard
+    *": "*|*":")  ef_needs_quote=1 ;;          # mapping-key hazard
+    [\ \"\'\:\#\&\*\!\|\>\%\@\`\[\]\{\}\,]*) ef_needs_quote=1 ;;  # leading indicator
+    *) ef_needs_quote=0 ;;
+  esac
+  if [ "$ef_needs_quote" = "1" ]; then
+    # Escape \ then " for a YAML double-quoted scalar.
+    ef_esc=$(printf '%s' "$ef_val" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    printf '    %s: "%s"\n' "$ef_key" "$ef_esc"
+  else
+    printf '    %s: %s\n' "$ef_key" "$ef_val"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Render the service block. Only emit fields that were supplied (or derived/
+# merged) so we don't write empty keys. 2-space indent for the service key,
+# 4-space for children — matching the existing services.yaml shape.
 # ---------------------------------------------------------------------------
 BLOCK=$(mktemp "${TMPDIR:-/tmp}/registry-newblock.XXXXXX") || reg_die "mktemp failed (block)"
 {
   printf '  %s:\n' "$NAME"
   printf '    port: %s\n' "$PORT"
-  [ -n "$SUBDOMAIN" ] && printf '    subdomain: %s\n' "$SUBDOMAIN"
-  [ -n "$URL" ]       && printf '    url: %s\n' "$URL"
-  [ -n "$COMPOSE" ]   && printf '    compose: %s\n' "$COMPOSE"
+  emit_field subdomain "$SUBDOMAIN"
+  emit_field url "$URL"
+  emit_field compose "$COMPOSE"
   [ -n "$CONT_LIST" ] && printf '    containers: [%s]\n' "$CONT_LIST"
-  [ -n "$PURPOSE" ]   && printf '    purpose: %s\n' "$PURPOSE"
-  [ -n "$REPO" ]      && printf '    repo: %s\n' "$REPO"
-  [ -n "$CICD" ]      && printf '    cicd: %s\n' "$CICD"
+  emit_field purpose "$PURPOSE"
+  emit_field repo "$REPO"
+  emit_field cicd "$CICD"
 } > "$BLOCK"
 
 # Timestamp for the .bak suffix — caller-local time. Fall back if date is odd.
