@@ -74,10 +74,14 @@ drift). A docker-backed service that is genuinely all-down still flags.
 ## Free-form field quoting
 
 register writes free-form scalars (`subdomain`/`url`/`compose`/`purpose`/
-`repo`/`cicd`) as YAML double-quoted scalars **when** they carry a hazard
-character (`#`, a `:`-space mapping sequence, or a leading YAML indicator),
-escaping interior `"` and `\`. This keeps a `#` from being read back as an
-inline comment and stops indicator characters from changing parse structure.
+`repo`/`cicd`) as YAML double-quoted scalars **when** they carry a hazard,
+escaping interior `"` and `\`. A value is double-quoted when it contains a
+`#` (inline-comment hazard), a `: `/trailing `:` mapping sequence, **or** it
+starts with a YAML indicator character — one of `-` (block-sequence), `?`
+(complex-mapping key), `:` `#` `&` `*` `!` `|` `>` `%` `@` `` ` `` `[` `]`
+`{` `}` `,`, a quote (`"` / `'`), or a space. This keeps a `#` from being read
+back as an inline comment and stops a leading indicator from changing the parse
+structure (e.g. `- foo` parsing as a block sequence rather than a scalar).
 `reg_get_field` strips one quote layer (honoring the escapes), so values
 round-trip intact. Newlines / control characters in any flag value are rejected
 outright (they would splice extra YAML lines).

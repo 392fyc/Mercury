@@ -198,7 +198,7 @@ fi
 # Scalar YAML rendering. Free-form fields (subdomain/url/compose/purpose/repo/
 # cicd) can carry characters that change YAML parsing or truncate the value:
 #   - a ` #` sequence starts an inline comment (would truncate on read-back)
-#   - a leading YAML indicator (: # & * ! | > % @ ` " ' [ ] { } , and more)
+#   - a leading YAML indicator (- ? : # & * ! | > % @ ` " ' [ ] { } , and more)
 #   - an interior ": " maps-key sequence
 # When ANY risk marker is present we double-quote the value and escape interior
 # double-quotes + backslashes (YAML double-quoted scalar rules). reg_get_field
@@ -212,6 +212,7 @@ emit_field() {
   case "$ef_val" in
     *" #"*|*'#'*) ef_needs_quote=1 ;;          # inline-comment hazard
     *": "*|*":")  ef_needs_quote=1 ;;          # mapping-key hazard
+    "-"*|"?"*)    ef_needs_quote=1 ;;          # leading block-seq / complex-key indicator
     [\ \"\'\:\#\&\*\!\|\>\%\@\`\[\]\{\}\,]*) ef_needs_quote=1 ;;  # leading indicator
     *) ef_needs_quote=0 ;;
   esac

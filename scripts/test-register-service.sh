@@ -365,6 +365,45 @@ if [ "$(cat "$REG15")" = "$BEFORE15" ]; then PASS=$((PASS+1)); else
   FAIL=$((FAIL+1)); printf 'FAIL: newline_no_write (file changed despite rejected newline value)\n' >&2
 fi
 
+# === Test 16: leading YAML block-seq / complex-key indicator (- / ?) — a value
+# starting with '- ' or '? ' must be double-quoted (else parsed as a sequence /
+# complex mapping key), read back intact, and be idempotent on re-register. ===
+REG16="$TEST_ROOT/r16.yaml"
+write_baseline_registry "$REG16"
+DASH='- dash lead'
+run_register "$REG16" --name sot-codex --port 8400 --containers "sot-codex-app-1" --purpose "$DASH"
+assert_rc "lead_dash_ok" 0
+# (a) Rendered as a double-quoted scalar, NOT a bare block-sequence indicator.
+assert_file_contains "lead_dash_quoted" '    purpose: "- dash lead"' "$REG16"
+# (b) Reads back to the original value via the lib reader.
+RB_DASH=$(REGISTRY_FILE="$REG16" sh -c '. "'"$REPO_ROOT"'/scripts/lib/registry-sh.sh"; reg_get_field sot-codex purpose')
+CASES=$((CASES+1))
+if [ "$RB_DASH" = "$DASH" ]; then PASS=$((PASS+1)); else
+  FAIL=$((FAIL+1)); printf 'FAIL: lead_dash_readback (got: %s)\n' "$RB_DASH" >&2
+fi
+# (c) Idempotent: re-register same value → byte-identical file.
+SNAP16=$(cat "$REG16")
+run_register "$REG16" --name sot-codex --port 8400 --containers "sot-codex-app-1" --purpose "$DASH"
+assert_rc "lead_dash_idempotent_ok" 0
+CASES=$((CASES+1))
+if [ "$(cat "$REG16")" = "$SNAP16" ]; then PASS=$((PASS+1)); else
+  FAIL=$((FAIL+1)); printf 'FAIL: lead_dash_idempotent (re-register changed the file)\n' >&2
+  [ "$VERBOSE" = "1" ] && { printf '%s\n' "$SNAP16" > "$TEST_ROOT/snap16.txt"; diff "$TEST_ROOT/snap16.txt" "$REG16" >&2 || true; }
+fi
+
+# Same for a leading complex-mapping-key indicator '? '.
+REG16Q="$TEST_ROOT/r16q.yaml"
+write_baseline_registry "$REG16Q"
+QLEAD='? q lead'
+run_register "$REG16Q" --name sot-codex --port 8400 --containers "sot-codex-app-1" --purpose "$QLEAD"
+assert_rc "lead_q_ok" 0
+assert_file_contains "lead_q_quoted" '    purpose: "? q lead"' "$REG16Q"
+RB_Q=$(REGISTRY_FILE="$REG16Q" sh -c '. "'"$REPO_ROOT"'/scripts/lib/registry-sh.sh"; reg_get_field sot-codex purpose')
+CASES=$((CASES+1))
+if [ "$RB_Q" = "$QLEAD" ]; then PASS=$((PASS+1)); else
+  FAIL=$((FAIL+1)); printf 'FAIL: lead_q_readback (got: %s)\n' "$RB_Q" >&2
+fi
+
 printf '\n=== register-service test summary ===\n'
 printf 'cases: %d  pass: %d  fail: %d\n' "$CASES" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1
