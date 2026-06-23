@@ -243,6 +243,91 @@ assert_out_contains "registry_flag_ok" "VALIDATE-OK"
 LAST_OUT=$(REGISTRY_DOCKER="$STUB" sh "$SCRIPT" --registry "$TEST_ROOT/nope.yaml" 2>/dev/null) && LAST_RC=0 || LAST_RC=$?
 assert_rc "missing_registry_err" 1
 
+# === Test 8 (finding 8): service / port membership must use FIXED-STRING match,
+# not regex. A running compose project whose name contains regex metachars (`.`)
+# must be reported UNREGISTERED when it is genuinely absent — a `grep -x` (regex)
+# could let a metachar accidentally match a different registered name. We use a
+# project name `a.c` and a registry that contains only `abc`: with regex `-x`,
+# `a.c` would match the line `abc` and the drift would be MISSED. ===
+REGEX_STUB="$TEST_ROOT/docker-regex.sh"
+cat > "$REGEX_STUB" <<'EOF'
+#!/bin/sh
+cmd="$1"; shift
+[ "$cmd" = "ps" ] || { echo "stub: unsupported: $cmd" >&2; exit 1; }
+fmt=""
+while [ $# -gt 0 ]; do case "$1" in --format) shift; fmt="$1"; shift ;; *) shift ;; esac; done
+case "$fmt" in
+  *Ports*)
+    cat <<'ROWS'
+a.c-app|a.c|/share/homes/392fyc/adotc|0.0.0.0:7100->7000/tcp
+ROWS
+    ;;
+  *)
+    cat <<'ROWS'
+a.c|a.c-app
+ROWS
+    ;;
+esac
+EOF
+chmod +x "$REGEX_STUB"
+REG8="$TEST_ROOT/services8.yaml"
+cat > "$REG8" <<'EOF'
+# NAS Service Registry
+domain: fyc-space.uk
+tunnel: argus
+
+services:
+  abc:
+    port: 7000
+    containers: [abc-app]
+    purpose: decoy whose name regex-matches a.c
+
+reserved_ports:
+  - 7000  # abc
+EOF
+run_validate "$REG8" "$REGEX_STUB"
+# Running project `a.c` is genuinely absent from the registry (only `abc` exists).
+# With fixed-string matching it MUST be flagged UNREGISTERED.
+assert_rc "regex_membership_drift" 1
+assert_out_contains "regex_membership_unregistered" "[UNREGISTERED-PROJECT]"
+assert_out_contains "regex_membership_proj_name" "'a.c'"
+
+# === Test 9 (finding 9): reg_get_field must read a service whose KEY LINE carries
+# an inline `# comment` — reg_list_services already accepts such keys, so the two
+# must agree on what a service key line is. ===
+REG9="$TEST_ROOT/services9.yaml"
+cat > "$REG9" <<'EOF'
+# NAS Service Registry
+domain: fyc-space.uk
+tunnel: argus
+
+services:
+  argus:  # inline comment on the service key line
+    port: 3000
+    subdomain: argus
+    containers: [argus, argus-tunnel]
+    purpose: PR review
+
+reserved_ports:
+  - 3000  # argus
+EOF
+GET_PORT=$(REGISTRY_FILE="$REG9" sh -c '. "'"$REPO_ROOT"'/scripts/lib/registry-sh.sh"; reg_get_field argus port')
+CASES=$((CASES+1))
+if [ "$GET_PORT" = "3000" ]; then PASS=$((PASS+1)); else
+  FAIL=$((FAIL+1)); printf 'FAIL: getfield_inline_comment_key_port (expected 3000, got "%s")\n' "$GET_PORT" >&2
+fi
+GET_SUB=$(REGISTRY_FILE="$REG9" sh -c '. "'"$REPO_ROOT"'/scripts/lib/registry-sh.sh"; reg_get_field argus subdomain')
+CASES=$((CASES+1))
+if [ "$GET_SUB" = "argus" ]; then PASS=$((PASS+1)); else
+  FAIL=$((FAIL+1)); printf 'FAIL: getfield_inline_comment_key_subdomain (expected argus, got "%s")\n' "$GET_SUB" >&2
+fi
+# And the list helper still lists it (parity check).
+LISTED=$(REGISTRY_FILE="$REG9" sh -c '. "'"$REPO_ROOT"'/scripts/lib/registry-sh.sh"; reg_list_services')
+CASES=$((CASES+1))
+if printf '%s\n' "$LISTED" | grep -qxF 'argus'; then PASS=$((PASS+1)); else
+  FAIL=$((FAIL+1)); printf 'FAIL: getfield_inline_comment_key_listed (argus not listed)\n' >&2
+fi
+
 printf '\n=== validate-registry test summary ===\n'
 printf 'cases: %d  pass: %d  fail: %d\n' "$CASES" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

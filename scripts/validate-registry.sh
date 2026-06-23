@@ -103,7 +103,7 @@ RUNNING_PORTS=$(printf '%s\n' "$DOCKER_PS" | awk -F'|' '
 # ---------------------------------------------------------------------------
 REG_SERVICES=$(reg_list_services)
 printf '%s\n' "$RUNNING_PROJECTS" | sed '/^$/d' | while IFS= read -r proj; do
-  if ! printf '%s\n' "$REG_SERVICES" | grep -qx -- "$proj"; then
+  if ! printf '%s\n' "$REG_SERVICES" | grep -qxF -- "$proj"; then
     finding "[UNREGISTERED-PROJECT] compose project '$proj' is running but absent from registry (services.<name> missing)"
   fi
 done
@@ -161,7 +161,7 @@ RESERVED=$(reg_list_reserved_ports | sort -u | sed '/^$/d')
 
 printf '%s\n' "$RUNNING_PORTS" | sed '/^$/d' | awk -F'\t' '{print $1}' | sort -u | while IFS= read -r port; do
   [ -n "$port" ] || continue
-  if ! printf '%s\n' "$RESERVED" | grep -qx -- "$port"; then
+  if ! printf '%s\n' "$RESERVED" | grep -qxF -- "$port"; then
     owner=$(printf '%s\n' "$RUNNING_PORTS" | awk -F'\t' -v p="$port" '$1==p {print $2; exit}')
     finding "[UNRESERVED-PORT] host port $port (project '$owner') is published but not in reserved_ports"
   fi

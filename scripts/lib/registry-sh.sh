@@ -89,7 +89,7 @@ reg_get_field() {
   awk -v want="$reg_name" -v field="$reg_field" '
     /^services:[[:space:]]*$/ { in_svc = 1; next }
     in_svc && /^[^[:space:]#]/ { in_svc = 0 }
-    in_svc && match($0, /^  ([A-Za-z0-9._-]+):[[:space:]]*$/) {
+    in_svc && match($0, /^  ([A-Za-z0-9._-]+):[[:space:]]*(#.*)?$/) {
       cur = $0; sub(/^  /, "", cur); sub(/:.*$/, "", cur)
       in_target = (cur == want) ? 1 : 0
       next
@@ -204,7 +204,10 @@ reg_reserve_port() {
   case "$rp_port" in
     ''|*[!0-9]*) reg_die "reg_reserve_port: port must be numeric (got '$rp_port')" ;;
   esac
-  if reg_list_reserved_ports | grep -qx -- "$rp_port"; then
+  # Symlink-redirect defense: never follow a symlinked registry file (the
+  # mktemp+mv write would otherwise replace the link target).
+  [ -L "$REGISTRY_FILE" ] && reg_die "registry file must not be a symlink: $REGISTRY_FILE"
+  if reg_list_reserved_ports | grep -qxF -- "$rp_port"; then
     return 0
   fi
   rp_tmp=$(mktemp "${TMPDIR:-/tmp}/registry-rp.XXXXXX") || reg_die "mktemp failed (reserve_port)"
@@ -245,6 +248,16 @@ reg_upsert_service() {
   up_name="$1"
   up_bak="$2"
   [ -f "$REGISTRY_FILE" ] || reg_die "reg_upsert_service: REGISTRY_FILE not found: $REGISTRY_FILE"
+  # Symlink-redirect defense: a symlinked registry file would silently redirect
+  # the mktemp+mv write (and the cp backup) to the link target.
+  [ -L "$REGISTRY_FILE" ] && reg_die "registry file must not be a symlink: $REGISTRY_FILE"
+  # Path-traversal defense on the backup suffix: up_bak flows from a
+  # caller/CI-controlled value (MERCURY_REGISTER_TIMESTAMP), so a `/` or `..`
+  # would land the backup outside the registry's directory. Restrict it to a
+  # safe filename charset. The `-` is last inside the bracket so it is literal.
+  case "$up_bak" in
+    ''|*[!A-Za-z0-9._-]*) reg_die "reg_upsert_service: unsafe backup suffix (must be [A-Za-z0-9._-]): '$up_bak'" ;;
+  esac
 
   up_block=$(mktemp "${TMPDIR:-/tmp}/registry-block.XXXXXX") || reg_die "mktemp failed (upsert block)"
   cat > "$up_block"

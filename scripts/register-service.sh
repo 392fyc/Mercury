@@ -44,18 +44,23 @@ SELF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 NAME=""; PORT=""; SUBDOMAIN=""; URL=""; COMPOSE=""; CONTAINERS=""
 PURPOSE=""; REPO=""; CICD=""
 
+# Value-taking flags must have a value present BEFORE we shift to consume it.
+# Without this guard, a value flag in last position (e.g. `--subdomain` with no
+# following arg) leaves $#=1; the second `shift` then runs on an empty argument
+# set and aborts under BusyBox sh. Mirror validate-registry.sh's `--registry`
+# pattern: require `[ $# -ge 2 ]` for every value flag.
 while [ $# -gt 0 ]; do
   case "$1" in
-    --name)       shift; NAME="${1:-}"; shift ;;
-    --port)       shift; PORT="${1:-}"; shift ;;
-    --subdomain)  shift; SUBDOMAIN="${1:-}"; shift ;;
-    --url)        shift; URL="${1:-}"; shift ;;
-    --compose)    shift; COMPOSE="${1:-}"; shift ;;
-    --containers) shift; CONTAINERS="${1:-}"; shift ;;
-    --purpose)    shift; PURPOSE="${1:-}"; shift ;;
-    --repo)       shift; REPO="${1:-}"; shift ;;
-    --cicd)       shift; CICD="${1:-}"; shift ;;
-    --registry)   shift; REGISTRY_FILE="${1:-}"; shift ;;
+    --name)       [ $# -ge 2 ] || reg_die "--name requires a value";       shift; NAME="$1"; shift ;;
+    --port)       [ $# -ge 2 ] || reg_die "--port requires a value";       shift; PORT="$1"; shift ;;
+    --subdomain)  [ $# -ge 2 ] || reg_die "--subdomain requires a value";  shift; SUBDOMAIN="$1"; shift ;;
+    --url)        [ $# -ge 2 ] || reg_die "--url requires a value";        shift; URL="$1"; shift ;;
+    --compose)    [ $# -ge 2 ] || reg_die "--compose requires a value";    shift; COMPOSE="$1"; shift ;;
+    --containers) [ $# -ge 2 ] || reg_die "--containers requires a value"; shift; CONTAINERS="$1"; shift ;;
+    --purpose)    [ $# -ge 2 ] || reg_die "--purpose requires a value";    shift; PURPOSE="$1"; shift ;;
+    --repo)       [ $# -ge 2 ] || reg_die "--repo requires a value";       shift; REPO="$1"; shift ;;
+    --cicd)       [ $# -ge 2 ] || reg_die "--cicd requires a value";       shift; CICD="$1"; shift ;;
+    --registry)   [ $# -ge 2 ] || reg_die "--registry requires a value";   shift; REGISTRY_FILE="$1"; shift ;;
     -h|--help)    sed -n '2,44p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*)           reg_die "unknown flag: $1" ;;
     *)            reg_die "unexpected argument: $1" ;;
@@ -67,6 +72,12 @@ done
 case "$PORT" in ''|*[!0-9]*) reg_die "--port must be numeric (got '$PORT')" ;; esac
 case "$NAME" in *[!A-Za-z0-9._-]*) reg_die "--name must match [A-Za-z0-9._-] (got '$NAME')" ;; esac
 [ -f "$REGISTRY_FILE" ] || reg_die "registry file not found: $REGISTRY_FILE (set --registry or REGISTRY_FILE)"
+# Symlink-redirect defense (fail-fast, before locking): refuse to write through
+# a symlinked registry file — the lib's mktemp+mv would otherwise replace the
+# link target, a link-hijack write primitive. The lib enforces this again at the
+# actual write site; this is the early, friendly rejection.
+[ -L "$REGISTRY_FILE" ] && reg_die "registry file must not be a symlink: $REGISTRY_FILE"
+[ -w "$REGISTRY_FILE" ] || reg_die "registry file is not writable: $REGISTRY_FILE"
 
 # Reject control chars / newlines in any free-form flag value: a newline would
 # splice an extra line into the YAML structure, control chars corrupt it. Done
@@ -118,7 +129,7 @@ done
 # reserved-but-unowned is a conflict (a non-service reservation like QNAP Web UI
 # 22443, or a leftover). Same-name idempotent re-register keeps its own port.
 if [ "$EXISTING_PORT" != "$PORT" ]; then
-  if reg_list_reserved_ports | grep -qx -- "$PORT"; then
+  if reg_list_reserved_ports | grep -qxF -- "$PORT"; then
     # Is this reserved port owned by some OTHER service?
     owner=""
     for svc in $(reg_list_services); do
@@ -172,12 +183,19 @@ fi
 # docker enumeration order.
 # ---------------------------------------------------------------------------
 if [ -z "$CONTAINERS" ]; then
-  CONTAINERS=$(reg_docker ps --format '{{.Label "com.docker.compose.project"}}|{{.Names}}' 2>/dev/null \
-    | awk -F'|' -v p="$NAME" '$1==p {print $2}' | sed '/^$/d' | sort | paste -sd, - 2>/dev/null)
+  # Run `docker ps` ONCE and check its exit status. A docker failure (daemon
+  # down, permission denied) must NOT be swallowed and silently treated as
+  # "this project has no containers" — that would write an empty/incomplete
+  # containers[]. Only a SUCCESSFUL ps that returns no matching rows is a
+  # legitimate empty result (containers[] left unset, not emitted).
+  DOCKER_PS_OUT=$(reg_docker ps --format '{{.Label "com.docker.compose.project"}}|{{.Names}}') \
+    || reg_die "docker ps failed during --containers auto-derive (daemon down / permission?). Pass --containers explicitly or fix docker. (REGISTRY_DOCKER=$REGISTRY_DOCKER)"
+  DERIVED=$(printf '%s\n' "$DOCKER_PS_OUT" \
+    | awk -F'|' -v p="$NAME" '$1==p {print $2}' | sed '/^$/d' | sort)
+  CONTAINERS=$(printf '%s' "$DERIVED" | sed '/^$/d' | paste -sd, - 2>/dev/null)
   # paste may be absent on some BusyBox builds — fall back to tr+sed.
-  if [ -z "$CONTAINERS" ]; then
-    CONTAINERS=$(reg_docker ps --format '{{.Label "com.docker.compose.project"}}|{{.Names}}' 2>/dev/null \
-      | awk -F'|' -v p="$NAME" '$1==p {print $2}' | sed '/^$/d' | sort | tr '\n' ',' | sed 's/,$//')
+  if [ -z "$CONTAINERS" ] && [ -n "$DERIVED" ]; then
+    CONTAINERS=$(printf '%s\n' "$DERIVED" | sed '/^$/d' | tr '\n' ',' | sed 's/,$//')
   fi
 fi
 # Normalize separators to ", " and build a YAML flow-sequence. Sort the names so

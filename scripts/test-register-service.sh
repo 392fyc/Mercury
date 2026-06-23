@@ -404,6 +404,79 @@ if [ "$RB_Q" = "$QLEAD" ]; then PASS=$((PASS+1)); else
   FAIL=$((FAIL+1)); printf 'FAIL: lead_q_readback (got: %s)\n' "$RB_Q" >&2
 fi
 
+# === Test 17 (finding 5): an unsafe MERCURY_REGISTER_TIMESTAMP backup suffix
+# containing path-traversal chars must be REJECTED before any write. ===
+REG17="$TEST_ROOT/r17.yaml"
+write_baseline_registry "$REG17"
+BEFORE17=$(cat "$REG17")
+ld="$TEST_ROOT/lock-17"
+LAST_OUT=$(REGISTRY_FILE="$REG17" REGISTRY_DOCKER="$STUB" REGISTRY_LOCKDIR="$ld" \
+           MERCURY_REGISTER_TIMESTAMP='../evil' \
+           sh "$SCRIPT" --name sot-codex --port 8400 --containers "sot-codex-app-1" 2>&1) \
+  && LAST_RC=0 || LAST_RC=$?
+rmdir "$ld" 2>/dev/null || true
+assert_rc "bak_traversal_rejected" 1
+assert_out_contains "bak_traversal_marker" "unsafe backup suffix"
+# No traversal backup must have been written anywhere outside the registry dir.
+CASES=$((CASES+1))
+if [ ! -e "$TEST_ROOT/evil" ] && [ "$(cat "$REG17")" = "$BEFORE17" ]; then PASS=$((PASS+1)); else
+  FAIL=$((FAIL+1)); printf 'FAIL: bak_traversal_no_write (traversal backup written or registry mutated)\n' >&2
+fi
+
+# === Test 18 (finding 6): a symlinked --registry target must be REJECTED (no
+# write redirected through the link). ===
+REG18_REAL="$TEST_ROOT/r18-real.yaml"
+REG18_LINK="$TEST_ROOT/r18-link.yaml"
+write_baseline_registry "$REG18_REAL"
+CASES=$((CASES+1))
+if ln -s "$REG18_REAL" "$REG18_LINK" 2>/dev/null && [ -L "$REG18_LINK" ]; then
+  PASS=$((PASS+1))
+  BEFORE18=$(cat "$REG18_REAL")
+  run_register "$REG18_LINK" --name sot-codex --port 8400 --containers "sot-codex-app-1"
+  assert_rc "symlink_rejected" 1
+  assert_out_contains "symlink_marker" "must not be a symlink"
+  CASES=$((CASES+1))
+  if [ "$(cat "$REG18_REAL")" = "$BEFORE18" ]; then PASS=$((PASS+1)); else
+    FAIL=$((FAIL+1)); printf 'FAIL: symlink_no_write (link target mutated despite rejection)\n' >&2
+  fi
+else
+  # Symlink creation unsupported (e.g. FS without symlink perms) — skip cleanly.
+  PASS=$((PASS+1)); printf 'SKIP: symlink test (ln -s unsupported here)\n' >&2
+fi
+
+# === Test 19 (finding 4): docker failure during --containers auto-derive must
+# reg_die, NOT silently write an empty containers[]. ===
+FAILSTUB="$TEST_ROOT/docker-fail.sh"
+cat > "$FAILSTUB" <<'EOF'
+#!/bin/sh
+echo "docker: Cannot connect to the Docker daemon" >&2
+exit 1
+EOF
+chmod +x "$FAILSTUB"
+REG19="$TEST_ROOT/r19.yaml"
+write_baseline_registry "$REG19"
+BEFORE19=$(cat "$REG19")
+ld="$TEST_ROOT/lock-19"
+# No --containers → triggers auto-derive → docker stub fails → must die.
+LAST_OUT=$(REGISTRY_FILE="$REG19" REGISTRY_DOCKER="$FAILSTUB" REGISTRY_LOCKDIR="$ld" \
+           sh "$SCRIPT" --name brandnew --port 8401 2>&1) && LAST_RC=0 || LAST_RC=$?
+rmdir "$ld" 2>/dev/null || true
+assert_rc "docker_fail_dies" 1
+assert_out_contains "docker_fail_marker" "docker ps failed"
+# Must NOT have written brandnew with an empty containers[].
+CASES=$((CASES+1))
+if [ "$(cat "$REG19")" = "$BEFORE19" ]; then PASS=$((PASS+1)); else
+  FAIL=$((FAIL+1)); printf 'FAIL: docker_fail_no_write (registry mutated despite docker failure)\n' >&2
+fi
+
+# === Test 20 (finding 7): a value-taking flag in LAST position with no value
+# must reg_die cleanly, NOT crash on a second shift over an empty arg set. ===
+REG20="$TEST_ROOT/r20.yaml"
+write_baseline_registry "$REG20"
+run_register "$REG20" --name sot-codex --port 8400 --subdomain
+assert_rc "trailing_flag_no_value" 1
+assert_out_contains "trailing_flag_marker" "--subdomain requires a value"
+
 printf '\n=== register-service test summary ===\n'
 printf 'cases: %d  pass: %d  fail: %d\n' "$CASES" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1
