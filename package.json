@@ -13,10 +13,7 @@
     "@types/node": "^25.5.0",
     "typescript": "^5.9.3"
   },
-  "dependencies": {
-    "grammy": "^1.43.0",
-    "@modelcontextprotocol/sdk": "^1.29.0"
-  },
+  "dependencies": {},
   "pnpm": {
     "onlyBuiltDependencies": ["better-sqlite3"]
   }

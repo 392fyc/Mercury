@@ -7,7 +7,6 @@ Mercury solves the things Claude Code alone does not:
 - Session continuity when context fills up (auto-handoff to a fresh session)
 - Cross-session, cross-project long-term memory
 - Quality gates for unattended long-running work
-- Notification + minimal-human-intervention at decision points
 
 See [`.mercury/docs/DIRECTION.md`](.mercury/docs/DIRECTION.md) for the full project charter and [`.mercury/docs/EXECUTION-PLAN.md`](.mercury/docs/EXECUTION-PLAN.md) for the roadmap.
 
@@ -33,8 +32,8 @@ Mercury is built phase by phase against [`EXECUTION-PLAN.md`](.mercury/docs/EXEC
 | **Phase 2** | Quality gates — mechanical Stop-hook enforcement (`adapters/mercury-test-gate/`, `mercury-loop-detector/`) | ✅ Complete |
 | **Phase 3** | Memory layer — mem0 + Qdrant cross-session/cross-project memory (user-level) | ✅ Complete |
 | **Phase 4** | Session continuity — `claude-handoff` session-chain, worktree-per-task, compact-prevention, stall detection | ✅ Complete |
-| **Phase 5** | Notify hub — Telegram channel router + client; decision-point notifications | 🟡 Partial |
-| **Phase 6** | Desktop GUI — evaluated on-demand after Phase 1-5 are stable | ⚪ On-demand |
+| ~~**Phase 5**~~ | ~~Notify hub — Telegram channel~~ — **abandoned & removed** ([#512](https://github.com/392fyc/Mercury/issues/512)): the Telegram/Channels approach is gated by Anthropic's server-side `tengu_harbor` rollout flag (unavailable on personal accounts), so the subsystem was stripped | ❌ Removed |
+| **Phase 6** | Desktop GUI — evaluated on-demand after Phase 1-4 are stable | ⚪ On-demand |
 
 Per [`EXECUTION-PLAN.md`](.mercury/docs/EXECUTION-PLAN.md), Phase 6 is explicitly **on-demand and not in the committed roadmap**. An early `mercury-gui/` MVP (Tauri 2 + React) nonetheless exists in-tree as exploratory work ahead of any formal trigger.
 
@@ -63,7 +62,7 @@ Mercury (lightweight core — only builds what no external project provides)
 └── modules/           reserved for mounted external projects (currently empty — see External project mounts)
 ```
 
-`adapters/` currently holds seven adapters: `mercury-loop-detector` and `mercury-test-gate` (mechanical Stop-hook gates), `mercury-notify` + `mercury-channel-router` + `mercury-channel-client` (notify hub), `gpt-image-2` (pixel-asset generation), and `playwright-mcp` (browser automation mount).
+`adapters/` currently holds four adapters: `mercury-loop-detector` and `mercury-test-gate` (mechanical Stop-hook gates), `gpt-image-2` (pixel-asset generation), and `playwright-mcp` (browser automation mount).
 
 Configuration lives at the repo root:
 
@@ -142,7 +141,7 @@ Mercury runs multiple **lanes** in parallel — independent work streams that do
 
 - **Branch prefix**: `lane/<short>/<N>-<slug>` (≤40 chars; a legacy `feature/lane-<lane>/...` form is still accepted)
 - **Hard cap**: 5 active lanes, grounded in working-memory / coordination-overhead research (see [`lane-naming.md`](.mercury/docs/guides/lane-naming.md))
-- **Tooling**: `scripts/lane-*.sh` (spawn / claim / close / sweep) + `lane-assertion.sh`, `lane-cap-check.sh`, `lane-auto-report.sh` enforce the protocol mechanically
+- **Tooling**: `scripts/lane-*.sh` (spawn / claim / close / sweep) + `lane-assertion.sh`, `lane-cap-check.sh` enforce the protocol mechanically
 - **Lane guides**: [`lane-spawn.md`](.mercury/docs/guides/lane-spawn.md), [`lane-claim.md`](.mercury/docs/guides/lane-claim.md), [`lane-close.md`](.mercury/docs/guides/lane-close.md), [`lane-sweep.md`](.mercury/docs/guides/lane-sweep.md), [`lane-emergency-escalation.md`](.mercury/docs/guides/lane-emergency-escalation.md)
 
 ## Multi-agent runtimes

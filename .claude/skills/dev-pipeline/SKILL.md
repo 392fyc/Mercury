@@ -280,14 +280,7 @@ On pass:
 2. If user requested PR: invoke `/pr-flow`
 3. Mark related GitHub Project item Done (via `/gh-project-flow` if Mercury self-dev) or via `Closes #N` in PR (general case)
 4. Summarize in Chinese for the user
-5. **Notify (Mercury-only, fail-safe)**: emit a user-actionable Telegram notification announcing pipeline completion so the user can decide next step (review PR, run cleanup, hand off) without watching the terminal:
-
-   ```bash
-   bash scripts/notify-event.sh info "Dev pipeline complete: <taskId>" "verdict=pass | files=<N> | branch=<branch>"
-   ```
-
-   The wrapper writes a single JSON line to stdout and **never blocks the pipeline**. Return shapes: happy path → `{ok:true}`; `MERCURY_NOTIFY_DISABLED=1` → `{ok:true,skipped:true}` (intentional opt-out); router unreachable → `{ok:false,error:"transport"}`; router replied non-2xx → `{ok:false,error:"router_<status>"}` (e.g. `router_500`); token file missing → `{ok:false,error:"no_token"}`; broken adapter / missing node → `{ok:false,error:"adapter_missing"|"node_missing"|"invoke:..."}`. Exit code is always 0 except for usage errors. The pipeline continues regardless. Anti-patterns (loop-detector stalls, hook failures, autocompact, heartbeat) MUST NOT call this — see `adapters/mercury-channel-router/README.md` "Acceptable Callers" + Issue #316. Skip this step in portable forks (no router → no-op anyway, but the helper file is Mercury-specific — see Detachability below).
-6. After PR merge is confirmed, run the **Phase 5 Cleanup block** as the final action (see Phase 5 above — the retry + `rm -rf` fallback logic is the SoT and is not duplicated here).
+5. After PR merge is confirmed, run the **Phase 5 Cleanup block** as the final action (see Phase 5 above — the retry + `rm -rf` fallback logic is the SoT and is not duplicated here).
 
 **Single source of truth**: the Phase 5 Cleanup block is the only authoritative description of when `$SHA_FILE` is removed. Phase 6 only reaches it via the `pass` branch above. If you find yourself debating "should I clean up here", re-read Phase 5.
 
@@ -314,9 +307,7 @@ This skill is designed to be portable to any repository that uses GitHub + Claud
 
 The `/gh-project-flow` reference in Phase 6 is **Mercury-specific** and should be removed or replaced when porting elsewhere — it is mentioned only because Mercury self-development uses Project #3 for task tracking.
 
-The Phase 6 step 5 notify call (`bash scripts/notify-event.sh ...`) is also **Mercury-specific** — it depends on `scripts/notify-event.sh` + `adapters/mercury-notify/notify.cjs` + `adapters/mercury-channel-router/`. Portable forks should remove the step or leave it as a no-op (the underlying `notify.cjs` itself fail-safes when the router is absent, so calling the script in a fork without the router will simply log `{ok:false}` and continue — no breakage, just a confused log line).
-
-To use it elsewhere, copy this skill directory plus the two agent files, then strip the `/gh-project-flow` line from Phase 6 and remove the notify step (or strip just the notify line and accept the harmless log noise). No other Mercury dependency.
+To use it elsewhere, copy this skill directory plus the two agent files, then strip the `/gh-project-flow` line from Phase 6. No other Mercury dependency.
 
 ## Known Limitations
 

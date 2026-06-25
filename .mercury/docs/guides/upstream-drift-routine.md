@@ -46,4 +46,4 @@ Mercury 挂载/借鉴了若干外部组件(cherry-pick 的 skill/agent 文件、
 
 - Tier-1:21 artifacts → `CLEAN=9 · CHANGED=9 · SKIP=3`。CHANGED = obra/superpowers(systematic-debugging ×2 + subagent-driven-development ×4)、JuliusBrussee/caveman ×2、microsoft/playwright-mcp。
 - Tier-2:14 items → `0 ACTIVE-RISK · 2 ACTION-NEEDED · 6 ACCEPTABLE-DRIFT · 1 DORMANT-OK · 5 NOT-STALE`。详见 #508 + side-bug user-memory。
-- 9 个 CHANGED 的裁决:superpowers 上游重构(ledger 恢复模式等)→ 单独 [#509](https://github.com/392fyc/Mercury/issues/509) 追踪 back-port(P3);caveman/agency-agents → accept-as-owned(Mercury 自有改写);playwright 0.0.76 / grammy 1.44 → 低优 re-pin(机制后续监控)。本 PR 仅回写 `last_drift_check` 建立基线,不在 PR 内 reconcile 各 CHANGED(漂移现状 = 机制监控对象)。
+- 9 个 CHANGED 的裁决:superpowers 上游重构(ledger 恢复模式等)→ 单独 [#509](https://github.com/392fyc/Mercury/issues/509) 追踪 back-port(P3);caveman/agency-agents → accept-as-owned(Mercury 自有改写);playwright 0.0.76 → 低优 re-pin(机制后续监控;grammy 1.44 原亦列为 npm 漂移项,该依赖已随 [#512](https://github.com/392fyc/Mercury/issues/512) 移除)。本 PR 仅回写 `last_drift_check` 建立基线,不在 PR 内 reconcile 各 CHANGED(漂移现状 = 机制监控对象)。
