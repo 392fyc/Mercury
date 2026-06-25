@@ -45,7 +45,6 @@ Mercury 本体只做外部项目做不到的事。能挂载的绝不自研。
 Mercury 本体 (自研，最小化)
 ├── session-continuity/    # 外部项目无此能力
 ├── memory-layer/          # 外部项目无此能力
-├── notify-hub/            # 外部项目无此能力
 ├── adapters/              # 外部项目接口转换（唯一耦合点）
 └── dev-pipeline/          # 预设开发组编排
 
@@ -95,7 +94,7 @@ Mercury 的核心价值不在代码里，在方法论里。
 - Agent SDK: ClaudeSDKClient 支持 session resume/fork，自动 context compaction，可通过 max_budget_usd 控制花费
 - PostCompact hook: 在 context 压缩后触发，可获取 compact_summary (UNVERIFIED — 官方文档仅列出 `session_id`/`transcript_path`/`compact_trigger`/`cwd`；`compact_summary` 需从 `transcript_path` 指向的 JSONL 提取，参见 `.research/reports/RESEARCH-Session-Continuity-183-2026-04-11.md`)，用于保存关键状态
 - CLI wrapper: 监控 claude -p 进程，检测完成/超时后启动新 session 并传递 handoff
-- Dispatch + Channels: 利用原生异步任务机制实现链式执行
+- Dispatch: 利用原生异步任务 / 后台 session 机制实现链式执行
 
 **自研理由**: 外部项目均未解决此问题，这是 Claude Code 生态的共同痛点。
 
@@ -122,25 +121,7 @@ Mercury 的核心价值不在代码里，在方法论里。
 
 ---
 
-### 模块 3: Notify Hub（通知层）
-
-**解决的问题**: agent 长时间自主工作时，人类无法得知关键节点，也无法远程确认/干预。
-
-**职责**:
-- 在关键节点（commit、PR、需要决策、异常）通知用户
-- 支持远程确认（用户通过 IM 回复即可）
-- 统一通知出口: 不关心底层是 Telegram、LINE 还是 Channel
-
-**技术方向**:
-- Claude Code Channels (原生双向通信)
-- IM Bot Bridge (Issue #91)
-- Argus review bot (PR 审查通知)
-
-**自研理由**: 通知路由和统一出口是 Mercury 特有需求。底层 IM 集成可用社区方案。
-
----
-
-### 模块 4: Quality Gate（质量门禁）
+### 模块 3: Quality Gate（质量门禁）
 
 **解决的问题**: agent 早期退出、自我确认、循环卡死等导致成果物质量不可靠。
 
@@ -160,7 +141,7 @@ Mercury 的核心价值不在代码里，在方法论里。
 
 ---
 
-### 模块 5: Dev Pipeline Preset（开发作业工作组）
+### 模块 4: Dev Pipeline Preset（开发作业工作组）
 
 **解决的问题**: 每次开发任务都需要手动配置角色分工和执行流程。
 
@@ -179,7 +160,7 @@ Mercury 的核心价值不在代码里，在方法论里。
 
 ---
 
-### 模块 6: Detachable Skills（可拆卸技能模块）
+### 模块 5: Detachable Skills（可拆卸技能模块）
 
 **解决的问题**: 通用开发能力增强需要可复用、可分发。
 
@@ -216,7 +197,7 @@ Mercury 的核心价值不在代码里，在方法论里。
 
 - **v1 交付物**: `mercury-gui/` 是基于 Tauri 2 的桌面壳，提供 Snapshot 与 Issues/PRs 两个标签页（多 lane 状态总览 + Issue/PR 看板），打包为 Windows MSI + NSIS。
 - **实现链**: Issues #413–#416 → PRs #421/#422/#424/#425（scaffold → 读侧数据层 → snapshot 视图 → Issue/PR 看板）。
-- **v2 stance**: 增强按需推进、不主动排期；v2 backlog（#427，仍 OPEN 作为跟踪）已逐项 disposition。进一步开发仅在多 session 并行管理出现真实需求时启动；CLI + IM bot 继续覆盖通知与远程介入需求。
+- **v2 stance**: 增强按需推进、不主动排期；v2 backlog（#427，仍 OPEN 作为跟踪）已逐项 disposition。进一步开发仅在多 session 并行管理出现真实需求时启动。
 - **相关设计提案**（均为 `status: PROPOSAL`、`decision_authority: User`，**尚未批准实施**，verdict 为推荐而非已批决策）：
   - 结构性拆分（单包 vs workspace）— 推荐 NO-GO / 保持单包，见 [`research/issue-446-mercury-gui-structural-split-2026-05.md`](research/issue-446-mercury-gui-structural-split-2026-05.md)。当前 `mercury-gui/` 即单包结构。
   - 前端测试基建选型 — 推荐 Vitest + jsdom + Testing Library 栈，见 [`research/issue-438-frontend-test-infra-2026-05.md`](research/issue-438-frontend-test-infra-2026-05.md)。
@@ -319,7 +300,6 @@ adapters/
 |---|---|---|
 | #92 周期维护 Agent | Memory Layer | 作为 KB health check skill |
 | #157 外部信息追踪 | Skills | 作为独立 skill |
-| #91 IM Bot Bridge | Notify Hub | 通知层实现方式 |
 | #86 PR Monitor | Skills | 合并入 pr-flow skill |
 | #107 Codex 追踪 | Quality Gate | 评估是否可通过挂载项目解决 |
 | #63 Agent 群体记忆 | Memory Layer | Plan 与长期记忆优化，对应 Phase 3 |

@@ -67,7 +67,6 @@ Mercury 的设计选择是做"**harness**"而非 orchestrator。Harness 这个�
 Mercury 本体 (自研，最小化)
 ├── session-continuity/    # 外部项目无此能力
 ├── memory-layer/          # 外部项目无此能力
-├── notify-hub/            # 外部项目无此能力
 ├── adapters/              # 外部项目接口转换（唯一耦合点）
 └── dev-pipeline/          # 预设开发组编排
 
@@ -302,6 +301,8 @@ AI agent 长时间自主工作时，token 消耗不透明是运营风险。Gap 1
 实测 soak 目标：5+ sessions post-merge 后 main context delta avg < 2K tokens per receipt（vs 之前的 5-15K）。
 
 ### Gap 3: Dev-pipeline → notify-hub wire（#369，S95）
+
+> **注（2026-06 更新）**：notify-hub（Telegram channel）子系统已于 [#512](https://github.com/392fyc/Mercury/issues/512) 整体废弃移除——入站投递被 Anthropic 服务端 `tengu_harbor` 灰度 flag 卡死，个人账户不可用，非 Mercury 可控。本节为 S95 当时的历史记录；文中 `notify-hub` / `mercury-channel-router` / `mercury-notify` / `scripts/notify-event.sh` 及相关 adapter 现已不存在。
 
 Mercury 的 notify-hub（`adapters/mercury-channel-router/` + `adapters/mercury-notify/`）在 Phase 5 PR #295 落地后，到 S95 为止零 callers——只有基础设施，没有任何模块实际发出通知。
 

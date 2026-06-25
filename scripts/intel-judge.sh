@@ -270,8 +270,7 @@ call_anthropic() {
   [[ -n "$key" ]] || { printf 'intel-judge: env %s is empty (no API key)\n' "$API_KEY_ENV" >&2; return 1; }
   # Put ALL request headers (incl. the API key) in a 0600 temp file read via
   # `-H @file` (curl >= 7.55), so the key never appears in argv / process list
-  # (/proc/<pid>/cmdline, `ps`). Mirrors the repo convention in
-  # scripts/lane-auto-report.sh:84-99 — `umask 077` for the perms + EXPLICIT
+  # (/proc/<pid>/cmdline, `ps`). Pattern: `umask 077` for the perms + EXPLICIT
   # rc-capture cleanup, deliberately NOT `trap RETURN` (which persists across
   # reinvocations and re-fires on later returns — prior Argus finding 3144785807).
   local hdr_file rc=1 out=""

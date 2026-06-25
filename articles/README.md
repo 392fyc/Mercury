@@ -29,7 +29,7 @@ Mercury 不仅是一套 harness 框架，更是一组设计哲学与工程实证
 
 ## 后续候选主题（Issue #376 候选清单）
 
-- 候选 2：Production-readiness gate 工程化方法（4-gap 框架 / cost-tracker / sub-agent return-size / dev-pipeline notify wire / loop-detector FP reduction）
+- 候选 2：Production-readiness gate 工程化方法（4-gap 框架 / cost-tracker / sub-agent return-size / loop-detector FP reduction）
 - 候选 3：Argus + Codex 双路审查与 nit-loop escape-hatch 协议（13 cross-PR 实证 evidence base）
 - 候选 4：Mercury multi-lane protocol v1 设计与实证（Rule 1-8 sub-rules + lane lifecycle + cwd routing）
 - 候选 5：Dev-pipeline + acceptance subagent + blind review pattern（Main → Dev → Acceptance chain + dodChecklist 结构化 receipt）

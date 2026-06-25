@@ -35,9 +35,8 @@ Phase 4: Session Continuity
   可用: Phase 1-3 全部能力
   解锁: agent 跨 session 自动接力 ← 里程碑: Mercury 可长时间自主工作
 
-Phase 5: Notify Hub
-  可用: Phase 1-4 全部能力
-  解锁: 远程通知 + 确认 ← 里程碑: 人类可离开键盘
+Phase 5: Notify Hub — 已废弃移除 (#512)
+  Telegram/Channels 方案被 Anthropic 服务端 tengu_harbor 灰度门卡死（个人账户不可用），整体剥离
 
 Phase 6: GUI
   可用: 全部模块
@@ -311,8 +310,8 @@ adapters/         # 适配层
 - Per-session counter at `scripts/pre-compact-block-counter.json`；决策与计数写 `flush.log`
 - Smoke test 3/3 PASS（auto first block、auto second escape、manual never-block）
 
-#### 4-3. B.3 Notify Hub fallback — Defer to Phase 5
-- 连续 block 3× 无响应 → 通过 Notify Hub 发通知；无需独立 issue，随 Phase 5 一并实装
+#### 4-3. B.3 Notify Hub fallback — 已取消 (#512)
+- 原设计「连续 block 3× 无响应 → 通过 Notify Hub 发通知」依赖 Notify Hub；Notify Hub 已废弃移除 (#512)，无投递通道，取消
 
 **产出**：agent 在 context 接近上限时收到 block reason，触发 handoff；原 flush-to-memory 路径不变
 **人类干预点**：~~B.1+B.2 soak 期间观察真实触发~~（已完成）
@@ -326,7 +325,7 @@ adapters/         # 适配层
 - ✅ sliding window 循环检测已实现并交付 (PR #229, #231, merged)
 - ✅ 增强 A: 多级超时 (soft → idle → hard) — Issue #290 落地
 - ✅ 增强 B: 卡死后诊断报告 → 写文件 (.mercury/state/stall-reports/) — Issue #290 落地
-- ❌ ~~增强 C (Phase 5 依赖): 卡死后推送通知给用户~~ — **已 revert (Issue #316, 2026-05-09)**: stall 事件 agent-self-consumed via `writeStallReport()`，不属于 user-actionable scope。Phase 5-3 通知 scope 只限 user-actionable 事件（详见 §5-3）
+- ❌ ~~增强 C (Phase 5 依赖): 卡死后推送通知给用户~~ — **已 revert (Issue #316, 2026-05-09)**: stall 事件 agent-self-consumed via `writeStallReport()`，不属于 user-actionable scope。（Phase 5 Notify Hub 其后已整体废弃移除，见 #512）
 
 **产出**: agent 可以自动跨 session 继续工作
 **人类干预点**: ~~技术方案选择（已完成，Option D）~~；首次 session 接力时确认状态传递完整性
@@ -335,35 +334,13 @@ adapters/         # 适配层
 
 ---
 
-## Phase 5: Notify Hub
+## Phase 5: Notify Hub — 已废弃移除 (#512)
 
-**目标**: 统一通知出口，支持远程确认。
-
-**可用开发模式**: 全部 Phase 1-4 能力 + Session Continuity
-**推荐会话模式**: Mode B（标准开发），agent 可以跨 session 持续开发此模块
-
-### 5-1. 通知接口定义 — ✅ Complete (PR #295, merged 2026-04-25)
-- ✅ `notify(severity, title, body, options)` interface 落地 (`adapters/mercury-notify/notify.cjs`)
-- ✅ 双向交互机制：Telegram inbound → Claude Code session via `notifications/claude/channel`，Claude reply via MCP reply tool
-- ✅ 远程权限审批 relay：`notifications/claude/channel/permission_request` + `permission` verdict pair (ADR §5.2 step 6 + §7.6 ID rewriting)
-
-### 5-2. 首个通知渠道 — ✅ Complete (PR #295, merged 2026-04-25)
-- ✅ Telegram bot via Anthropic Channels API research preview
-- ✅ 三 adapter 架构：`mercury-channel-router` (Telegram polling + IPC + 0-LLM regex routing) + `mercury-channel-client` (MCP server per session) + `mercury-notify` (thin HTTP client for hook scripts)
-- ✅ 限 3 session 同时运行，IPC Bearer token auth，allowlist fail-closed
-- ✅ Addresses Issue #91 ("IM Bot Bridge — LINE/Telegram 托管 Main Agent 远程对话") — closed manually post-merge
-
-### 5-3. 与其他模块集成 — 🟡 Partial
-- **Scope (user-actionable only)**: Phase 5-3 wire targets are limited to events with meaningful user response — Dev Pipeline complete, handoff session-switch, permission relay, critical security events. Internal agent state (loop-detector, hook failures, autocompact, heartbeat) **never** wires to notify.
-- ❌ Quality Gate: loop-detector stall → notify wire **已 revert** (Issue #316, 2026-05-09) — stall events are agent-self-consumed via `writeStallReport()`. Telegram reserved for user-actionable events only.
-- ⏳ Session Continuity: handoff session 切换时通知 — 待 `CLAUDE_HANDOFF_AUTO_LAUNCH_FLAGS` env var 在 claude-handoff plugin merge 后启用 (跨仓库: [`392fyc/claude-handoff#11`](https://github.com/392fyc/claude-handoff/pull/11))
-- ✅ Dev Pipeline: dev/acceptance subagent 完成时通知 — `dev-pipeline` skill Phase 6 step 5 调 `scripts/notify-event.sh` (Issue #369, S95, 2026-05-09)
-- 🔜 自然语言意图解析（"取消刚才那个"等口语命令）DEFER — MVP 用 deterministic `@<label>` + `/cmd` 已够用；远期 Phase 5-3 加 OpenAI gpt-4o-mini direct intent parser（ADR §11 Phase 5-3 + `router-llm-backend-2026-04-25.md`）
-
-**产出**: 统一通知层 + 至少一个 IM 渠道
-**人类干预点**: 通知渠道选择；通知频率调优（避免过度打扰）
-**验收标准**: agent 在关键节点自动通知用户，用户可远程确认
-**Phase 5 完成后解锁**: 人类可离开键盘，远程确认
+> **2026-06 废案**：整个 Notify Hub / Telegram channel 子系统已整体剥离。复测调查（直接 grep CC 2.1.191 原生二进制 + MCP 能力探测 + 官方文档/上游 issue 交叉核实）确认入站投递被 Anthropic 服务端 `tengu_harbor` gradual-rollout feature flag 卡死（`jmt()` 门 `if(!SSe()) return {skip, "channels feature is not currently available"}`）——该门对官方插件与 Mercury 自定义 adapter 一视同仁，个人账户不在 rollout 范围则不可用，非 Mercury 可控（上游 anthropics/claude-code #46299 / #58469 / #37184；官方文档 code.claude.com/docs/en/channels）。
+>
+> **已移除**：3 个 adapter（`mercury-channel-router` / `mercury-channel-client` / `mercury-notify`）+ `scripts/notify-event.sh` 等脚本 + `grammy` 依赖 + `.mcp.json` 的 `mercury-telegram` 条目 + Phase 5 历史研究 ADR + DIRECTION.md 模块 3。详见 [#512](https://github.com/392fyc/Mercury/issues/512)；取代 #511（入站修复，方案已废）。
+>
+> 「远程通知 + 确认 / 人类可离开键盘」里程碑随此移除暂无实现。若将来重启通知能力，须另选非 Telegram-Channels 后端（如 LINE / 自托管 ntfy / 邮件）并重新立项评估。Phase 6（GUI）编号与依赖不变。
 
 ---
 

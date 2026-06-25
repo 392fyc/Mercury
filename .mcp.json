@@ -10,10 +10,6 @@
       "args": ["mcp-server"],
       "env": {}
     },
-    "mercury-telegram": {
-      "command": "node",
-      "args": ["./adapters/mercury-channel-client/channel.cjs"]
-    },
     "playwright": {
       "type": "stdio",
       "command": "node",

@@ -18,9 +18,6 @@ adapters/
 |---------|-------------|
 | `mercury-loop-detector/` | PostToolUse hook detecting stall/loop patterns in Claude sessions |
 | `mercury-test-gate/` | PreToolUse hook enforcing test passage before destructive writes |
-| `mercury-channel-router/` | Telegram bot router (long-lived process per machine); IPC hub for all sessions |
-| `mercury-channel-client/` | MCP channel server (one per Claude Code session); bridges session to router |
-| `mercury-notify/` | Thin HTTP client for hook scripts to notify via router (fire-and-forget) |
 | `gpt-image-2/` | OpenAI gpt-image-2 image generation; mounts wuyoscar/gpt_image_2_skill via uvx-pinned-SHA |
 | `playwright-mcp/` | Config-gate wrapper mounting microsoft/playwright-mcp (Apache-2.0) as a pinned MCP server; enforces ADR §4.2 security red lines |
 
