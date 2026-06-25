@@ -67,15 +67,19 @@ jobs:
       - name: Run upstream drift check (read-only)
         id: check
         run: |
-          # The checker exits 0 (clean) / 1 (CHANGED) / 2 (UPSTREAM_GONE). Capture
-          # that code via PIPESTATUS without aborting the step (set +e around it).
+          # The checker signals DRIFT only via exit 1 (CHANGED) / 2 (UPSTREAM_GONE);
+          # 0 = clean. Setup/precondition failures use distinct codes (5 = missing
+          # jq/gh or no manifest, 64 = usage, 3 = write-back — not used here since
+          # this job is read-only), so a "could not run" is NOT mistaken for drift.
+          # Capture the checker's code via PIPESTATUS (set +e so the pipe's failure
+          # does not abort the step before we read it).
           set +e
           bash scripts/upstream-drift-check.sh | tee drift-report.txt
           rc=${PIPESTATUS[0]}
           set -e
           echo "rc=$rc" >> "$GITHUB_OUTPUT"
-          # 1 = CHANGED, 2 = UPSTREAM_GONE → drift. Any other non-zero (3/64/127)
-          # is an error in the checker invocation itself → fail the run to surface it.
+          # ONLY 1/2 are drift. Any other non-zero (3/5/64/127/…) is a checker
+          # error → fail the run to surface it, never file a spurious drift Issue.
           if [ "$rc" = "1" ] || [ "$rc" = "2" ]; then
             echo "drift=true" >> "$GITHUB_OUTPUT"
           elif [ "$rc" = "0" ]; then

@@ -29,7 +29,11 @@
 #   1  at least one CHANGED
 #   2  at least one UPSTREAM_GONE (most severe; takes precedence over CHANGED)
 #   3  --write-back failed (manifest left unchanged)
+#   5  prerequisite missing (jq/gh not installed) or no manifest found
 #   64 usage error (bad argument)
+# NOTE: drift is signalled ONLY by 1/2. Setup/precondition failures use 5 (not 1)
+# so a caller cannot mistake "could not run" for "CHANGED drift" — see the
+# rc-mapping in .github/workflows/upstream-drift.yml.
 #
 # Run manually:        bash scripts/upstream-drift-check.sh
 # Backfill timestamps: bash scripts/upstream-drift-check.sh --write-back
@@ -45,7 +49,7 @@ WRITE_BACK=0
 usage() {
   echo "Usage: bash scripts/upstream-drift-check.sh [--write-back]"
   echo "  --write-back  stamp last_drift_check (UTC date) on project-manifest entries after checking"
-  echo "Exit: 0 clean · 1 CHANGED present · 2 UPSTREAM_GONE present · 3 write-back failed · 64 usage error"
+  echo "Exit: 0 clean · 1 CHANGED present · 2 UPSTREAM_GONE present · 3 write-back failed · 5 prerequisite/no-manifest · 64 usage error"
 }
 for arg in "$@"; do
   case "$arg" in
@@ -62,7 +66,7 @@ USER_MANIFEST="${HOME}/.claude/upstream-manifest.json"
 for cmd in jq gh; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "ERROR: $cmd is required" >&2
-    exit 1
+    exit 5  # prerequisite missing — distinct from the 1/2 drift codes
   fi
 done
 
@@ -73,7 +77,7 @@ manifest_files=()
 
 if [[ ${#manifest_files[@]} -eq 0 ]]; then
   echo "ERROR: no manifest found at project ($PROJECT_MANIFEST) or user ($USER_MANIFEST) level" >&2
-  exit 1
+  exit 5  # no manifest to check — distinct from the 1/2 drift codes
 fi
 
 # Merge all manifest arrays into one temporary file
