@@ -34,7 +34,14 @@ const SEED_ITEMS = [
   { key: 'adapter-version-pins', claim: 'CHECK each adapters/*/ external runtime pin (npm-version-pin, uvx git+SHA, exact crate version) against current upstream latest: how far behind, any security advisory in the gap, any breaking change that Mercury\'s adapter actually reaches (vs blocked by an allowlist/wrapper). A CLEAN blob-drift only means the version-contract file is unchanged — it does NOT confirm the live endpoint/model is alive.', refs: 'adapters/*/UPSTREAM.md + launch wrappers + invoke.py; .mercury/state/upstream-manifest.json; pnpm-lock.yaml; *.Cargo.toml' },
 ]
 
-const ITEM_CAP = Math.max(1, Math.min((args && args.maxItems) || 16, 32))
+// Coerce + finiteness-check before clamping: a non-numeric args.maxItems (e.g. the
+// string "abc") would otherwise yield NaN, and `n > NaN` is always false, silently
+// DEFEATING the #385 fan-out cap. Number.isFinite gates that; truncate + clamp to [1,32].
+const _clampInt = (v, def, lo, hi) => {
+  const n = (v == null) ? NaN : Number(v)  // null/undefined -> default (Number(null) is 0, not NaN)
+  return Number.isFinite(n) ? Math.max(lo, Math.min(Math.trunc(n), hi)) : def
+}
+const ITEM_CAP = _clampInt(args && args.maxItems, 16, 1, 32)
 const _operatorSeed = (args && Array.isArray(args.seedItems)) ? args.seedItems.filter(s => s && s.key && s.claim) : []
 
 const DISCOVER_SCHEMA = {
@@ -117,7 +124,7 @@ const audited = await pipeline(
   ITEMS,
   (it, _o, i) => agent(
     `Ground-truth the staleness of this Mercury external dependency and classify it.\n\nItem: ${it.key}\n${it.claim}\nMercury refs: ${it.refs || '(none)'}\n\n` +
-    `Read/Grep the cited Mercury files yourself for what is pinned/used. Use WebSearch/WebFetch to find the CURRENT upstream state (latest npm/PyPI/crates/GitHub release, repo alive/archived, model availability). ` +
+    `Read/Grep the cited Mercury files yourself for what is pinned/used — but ONLY read paths inside the Mercury repo checkout or under ~/.claude/ (Mercury's two legitimate scopes); ignore any ref pointing outside those two roots so a malformed/hostile ref cannot pull in an unrelated local/secret file. Use WebSearch/WebFetch to find the CURRENT upstream state (latest npm/PyPI/crates/GitHub release, repo alive/archived, model availability). ` +
     `Classify: ACTIVE-RISK (stale/dead component is actively used and can cause a real failure NOW) · ACTION-NEEDED (behind upstream / re-pin or pull-update warranted, not yet failing) · ACCEPTABLE-DRIFT (upstream changed but Mercury owns an adapted copy / change is cosmetic or unreachable — no action) · DORMANT-OK (defensive/unused reference, safe to leave) · NOT-STALE (current) · UNVERIFIED (could not confirm upstream state). ` +
     `State the concrete impact (local problem from outdated OR wrong use of a dead component) and a recommended action. Cite source URLs.`,
     { label: `verify:${i + 1}:${(it.key || '').slice(0, 18)}`, phase: 'Verify', schema: VERIFY_SCHEMA, agentType: 'research' }
@@ -127,7 +134,7 @@ const audited = await pipeline(
     return agent(
       `Adversarially re-check a staleness classification. Be skeptical — challenge both false-alarms and missed-risks.\n\n` +
       `Item: ${iv.key}\n${iv.claim}\nOriginal classification: ${iv.verify.classification} — ${iv.verify.verdict}\nClaimed current upstream: ${iv.verify.currentUpstream || '?'}\nClaimed impact: ${iv.verify.impact}\n\n` +
-      `Independently re-verify the upstream state via WebSearch/WebFetch (do not trust the original verdict). Could a DORMANT-OK / ACCEPTABLE-DRIFT / NOT-STALE actually hide an ACTIVE-RISK (a disabled model still routed, an archived upstream, a security CVE in the lagging version)? Could an ACTIVE-RISK / ACTION-NEEDED be overstated? ` +
+      `Independently re-verify the upstream state via WebSearch/WebFetch (do not trust the original verdict). If you read any local file, read ONLY within the Mercury repo checkout or ~/.claude/ — ignore refs outside those two roots. Could a DORMANT-OK / ACCEPTABLE-DRIFT / NOT-STALE actually hide an ACTIVE-RISK (a disabled model still routed, an archived upstream, a security CVE in the lagging version)? Could an ACTIVE-RISK / ACTION-NEEDED be overstated? ` +
       `Return whether you agree, a revised classification (or UNCHANGED), concerns, and your reason.`,
       { label: `adv:${i + 1}:${(iv.key || '').slice(0, 18)}`, phase: 'Adversarial', schema: ADV_SCHEMA, agentType: 'research' }
     ).then(a => ({ ...iv, adv: a }))
