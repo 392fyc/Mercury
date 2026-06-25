@@ -1,0 +1,137 @@
+name: upstream-drift
+
+# Monthly upstream cherry-pick / version-pin drift watch (Issue #508 — Tier 1).
+#
+# Runs the deterministic, zero-LLM checker scripts/upstream-drift-check.sh on a
+# schedule. It compares each cherry-picked / version-pinned artifact's upstream
+# blob SHA at import vs upstream HEAD (CLEAN / CHANGED / UPSTREAM_GONE / SKIP).
+# When drift is detected it find-or-creates a single tracking Issue (label
+# `upstream-drift`) and posts the report there, so drift surfaces as a standing
+# backlog item instead of silently rotting (manifest entries previously sat at
+# last_drift_check=null from import until 2026-06).
+#
+# Tier 1 (mechanical) of Mercury's upstream-staleness mechanism. Tier 2 is the
+# periodic /mercury-staleness-audit LLM workflow (dead-component + version-lag
+# judgment that blob drift cannot see). Cadence + triage protocol:
+# .mercury/docs/guides/upstream-drift-routine.md.
+#
+# This job runs READ-ONLY: it does NOT write last_drift_check back to the repo
+# (GHA must not push to develop — Mercury PR-only rule). last_drift_check is the
+# "last human-reviewed" marker, stamped by local `upstream-drift-check.sh
+# --write-back` runs committed via PR; this job is the automated alarm.
+#
+# Fully detachable (DIRECTION.md modular design): delete this file +
+# scripts/upstream-drift-check.sh and the mechanism is gone; the tracking Issue
+# and the `upstream-drift` label then become harmless orphans.
+
+on:
+  schedule:
+    # Monthly, 1st @ 09:23 UTC. cron is always UTC. The off-the-hour minute (:23,
+    # not :00) follows GitHub's guidance that on-the-hour jobs are the most
+    # delayed/dropped under load. Monthly (not weekly) because cherry-pick /
+    # pin drift moves slower than the external-intel source watch.
+    - cron: '23 9 1 * *'
+  workflow_dispatch:
+    inputs:
+      file_issue:
+        description: 'On drift, file/update the tracking Issue (false = report to run summary only)'
+        required: false
+        type: boolean
+        default: true
+
+# Minimal GITHUB_TOKEN scopes: create/edit/list/comment Issues (issues:write) +
+# checkout the script (contents:read). No PAT required.
+permissions:
+  contents: read
+  issues: write
+
+# Serialize scheduled vs manual runs so two runs never both create the tracking
+# Issue. cancel-in-progress:false → a new trigger queues behind an in-flight run.
+concurrency:
+  group: upstream-drift
+  cancel-in-progress: false
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # gh CLI (preinstalled on ubuntu-latest) authenticates from GH_TOKEN. The
+      # drift checker itself calls `gh api` against PUBLIC upstream repos.
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Checkout (drift checker + manifest must be on disk)
+        uses: actions/checkout@v4
+
+      - name: Run upstream drift check (read-only)
+        id: check
+        run: |
+          # The checker signals DRIFT only via exit 1 (CHANGED) / 2 (UPSTREAM_GONE);
+          # 0 = clean. Setup/precondition failures use distinct codes (5 = missing
+          # jq/gh or no manifest, 64 = usage, 3 = write-back — not used here since
+          # this job is read-only), so a "could not run" is NOT mistaken for drift.
+          # Capture the checker's code via PIPESTATUS (set +e so the pipe's failure
+          # does not abort the step before we read it).
+          set +e
+          bash scripts/upstream-drift-check.sh | tee drift-report.txt
+          rc=${PIPESTATUS[0]}
+          set -e
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          # ONLY 1/2 are drift. Any other non-zero (3/5/64/127/…) is a checker
+          # error → fail the run to surface it, never file a spurious drift Issue.
+          if [ "$rc" = "1" ] || [ "$rc" = "2" ]; then
+            echo "drift=true" >> "$GITHUB_OUTPUT"
+          elif [ "$rc" = "0" ]; then
+            echo "drift=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::upstream-drift-check.sh exited with unexpected code $rc"; exit "$rc"
+          fi
+          echo "drift check rc=$rc"
+
+      - name: Surface report to run summary
+        if: always()
+        run: |
+          {
+            echo "## Upstream drift check ($(date -u +%Y-%m-%d))"
+            echo
+            echo '```'
+            cat drift-report.txt 2>/dev/null || echo "(no report produced)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: File or update tracking Issue on drift
+        if: steps.check.outputs.drift == 'true' && (github.event_name == 'schedule' || inputs.file_issue)
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # Idempotent label upsert keeps the module self-bootstrapping on a fresh clone.
+          gh label create upstream-drift --repo "$REPO" --color d4c5f9 \
+            --description "Upstream cherry-pick/pin drift flagged by the monthly upstream-drift watch" --force >/dev/null
+          TODAY="$(date -u +%Y-%m-%d)"
+          # Build the Issue body in a file to avoid printf/quoting injection from the report text.
+          {
+            echo "Automated upstream drift report — $TODAY ([run log]($RUN_URL))."
+            echo
+            echo "The monthly \`upstream-drift\` watch found cherry-picked / version-pinned artifacts whose upstream changed since import (CHANGED) or went away (UPSTREAM_GONE). Triage per \`.mercury/docs/guides/upstream-drift-routine.md\`: for each, decide pull-update / re-pin / accept-as-owned, then run \`bash scripts/upstream-drift-check.sh --write-back\` locally and commit the refreshed \`last_drift_check\` via PR."
+            echo
+            echo '```'
+            cat drift-report.txt
+            echo '```'
+          } > issue-body.md
+          # find-or-create a single tracking Issue: select DETERMINISTICALLY by lowest
+          # number (not gh's default ordering) and warn if more than one is open.
+          state_json="$(gh issue list --repo "$REPO" --label upstream-drift --state open --limit 100 --json number)"
+          dupes="$(printf '%s' "$state_json" | jq 'length')"
+          if [ "$dupes" -gt 1 ]; then
+            echo "::warning::multiple open upstream-drift Issues ($(printf '%s' "$state_json" | jq -c '[.[].number]')); commenting on the lowest. Close extras to keep it single-sourced."
+          fi
+          existing="$(printf '%s' "$state_json" | jq -r 'sort_by(.number) | .[0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$REPO" --body-file issue-body.md
+            echo "Updated tracking Issue #$existing"
+          else
+            gh issue create --repo "$REPO" --label upstream-drift \
+              --title "🔄 Upstream drift detected ($TODAY)" --body-file issue-body.md
+          fi

@@ -46,6 +46,7 @@ Dynamic Workflow 是 Claude Code 原生的「**确定性多 agent 编排**」原
 | `/mercury-adversarial-plan-review` | judge-panel | N 个独立角度起草计划 → 对抗评审团打分 → 综合优胜方案 + 嫁接亚军亮点;只产计划,实现仍回 Main→dev |
 | `/mercury-large-migration` | loop-until-done | 数十到数百文件机械迁移,按文件归属并行改造(每 agent 独占一文件,工作树原地编辑)+ 逐文件验证 + 循环至收敛;edits 不 commit,由 operator 合并提交 |
 | `/mercury-ecc-practice-scan` | fan-out + adversarial-verify + classify | **周期性复审** everything-claude-code(ECC)新实践:recon 扇出 → 逐条对抗式交叉核查(UNVERIFIED 标注)→ 映射到 Mercury(already-covered / worth-absorbing / not-applicable)。对齐 [#233](https://github.com/392fyc/Mercury/issues/233) ECC 审计,**只产报告不立项**。ECC-specific(非通用),见 `.mercury/docs/research/ecc-practice-scan-2026-06.md`(2026-06 首跑) |
+| `/mercury-staleness-audit` | fan-out + adversarial-verify + classify | **周期性上游依赖 staleness 审计**(Tier 2,对齐 [#508](https://github.com/392fyc/Mercury/issues/508)):discover 扫 manifest/adapter pin/plugin/lockfile → 逐项 web 核查 + 对抗式复检 → 分类(ACTIVE-RISK / ACTION-NEEDED / ACCEPTABLE-DRIFT / DORMANT-OK / NOT-STALE / UNVERIFIED)。比 `scripts/upstream-drift-check.sh`(Tier 1 机械 blob 漂移)多抓「落后幅度 / 组件失效 / 上游 archived」。**只产报告不立项**,见 `.mercury/docs/guides/upstream-drift-routine.md` |
 
 各模板的 `args` 入参见脚本顶部常量(如 `maxAngles` / `maxPractices` / `mercuryPaths` / `batchCap` / `contextPaths`)。
 
