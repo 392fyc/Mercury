@@ -306,7 +306,7 @@ AI agent 长时间自主工作时，token 消耗不透明是运营风险。Gap 1
 
 Mercury 的 notify-hub（`adapters/mercury-channel-router/` + `adapters/mercury-notify/`）在 Phase 5 PR #295 落地后，到 S95 为止零 callers——只有基础设施，没有任何模块实际发出通知。
 
-Gap 3 是连接 dev-pipeline 和 notify-hub 的最后一跳。在 dev-pipeline Phase 6（pass 后）加入：
+Gap 3 是连接 dev-pipeline 和 notify-hub 的最后一跳。在 dev-pipeline Phase 6（pass 后）加入（**以下为 S95 历史示例，勿执行——`scripts/notify-event.sh` 及相关 adapter 已随 #512 移除**）：
 
 ```bash
 bash scripts/notify-event.sh info "Dev pipeline complete: <taskId>" \

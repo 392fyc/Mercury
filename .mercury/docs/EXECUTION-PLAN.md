@@ -340,13 +340,13 @@ adapters/         # 适配层
 >
 > **已移除**：3 个 adapter（`mercury-channel-router` / `mercury-channel-client` / `mercury-notify`）+ `scripts/notify-event.sh` 等脚本 + `grammy` 依赖 + `.mcp.json` 的 `mercury-telegram` 条目 + Phase 5 历史研究 ADR + DIRECTION.md 模块 3。详见 [#512](https://github.com/392fyc/Mercury/issues/512)；取代 #511（入站修复，方案已废）。
 >
-> 「远程通知 + 确认 / 人类可离开键盘」里程碑随此移除暂无实现。若将来重启通知能力，须另选非 Telegram-Channels 后端（如 LINE / 自托管 ntfy / 邮件）并重新立项评估。Phase 6（GUI）编号与依赖不变。
+> 「远程通知 + 确认 / 人类可离开键盘」里程碑随此移除暂无实现。若将来重启通知能力，须另选非 Telegram-Channels 后端（如 LINE / 自托管 ntfy / 邮件）并重新立项评估。Phase 6（GUI）编号不变；其前置依赖由原 Phase 1-5 相应调整为 Phase 1-4。
 
 ---
 
 ## Phase 6: GUI（按需启动）
 
-**前置条件**: Phase 1-5 核心模块稳定运行后评估是否需要。
+**前置条件**: Phase 1-4 核心模块稳定运行后评估是否需要（原 Phase 5 Notify Hub 已废弃移除，见 #512）。
 
 **可用开发模式**: Mercury 完整能力栈
 **推荐会话模式**: Mode A (需求分析) 确定 GUI 范围 → Mode B (标准开发) 实现
@@ -369,8 +369,8 @@ adapters/         # 适配层
 | Phase 2 | 2-3 | Phase 1 | Mode C → Mode D → Mode B |
 | Phase 3 | 2-3 | Phase 1（使用 dev pipeline） | Mode A → Mode B |
 | Phase 4 | 3-4 | Phase 2 + Phase 3 | Mode C → Mode B |
-| Phase 5 | 2 | Phase 4 | Mode B |
-| Phase 6 | TBD | Phase 1-5 | Mode A → Mode B |
+| ~~Phase 5~~ | — | — | 已废弃移除 (#512) |
+| Phase 6 | TBD | Phase 1-4 | Mode A → Mode B |
 
 ### 每个 Phase 的标准流程
 1. 创建 GitHub Issue 描述 Phase 目标
