@@ -11,10 +11,15 @@
 # Modes:
 #   - default (F.A additive):  writes <memory-dir>/INDEX.generated.md;
 #                              canonical MEMORY.md / SESSION_INDEX.md untouched.
-#   - --in-place (F.B cutover): rewrites canonical MEMORY.md "Project (Session
-#                              History)" subsection AND SESSION_INDEX.md table
-#                              body, idempotent via HTML-comment markers.
-#                              BREAKING per Rule 7 v0 → v0.1 promotion.
+#   - --in-place (F.B cutover): rewrites canonical SESSION_INDEX.md table body
+#                              AND MEMORY.md "Project (Session History)"
+#                              subsection, idempotent via HTML-comment markers.
+#                              BREAKING per Rule 7 v0 → v0.1 promotion. Phase F.D
+#                              (Issue #514): the MEMORY.md region is a fixed
+#                              pointer to SESSION_INDEX.md, NOT per-session
+#                              bullets — the inlined history overflowed the
+#                              ~24KB Claude Code context-load window. SESSION_INDEX.md
+#                              + per-session sessions/*.md stay authoritative.
 #
 # Source precedence (per session row, both modes):
 #   1. <memory-dir>/sessions/S<N>(-<lane>)?.md frontmatter — when present,
@@ -472,40 +477,20 @@ emit_session_index_rows_only() {
   fi
 }
 
-# emit_memory_history_bullets — emits MEMORY.md "Project (Session History)"
-# bullets in DESCENDING session order (latest first), one bullet per session.
-# Bullet form when per-session file exists: `- [<file_path>](<file_path>) — <description>`
-# Fallback when only SESSION_INDEX row exists (no per-session file yet):
-#   `- S<id>(-<lane>)? — <description>`
-# Descending order matches existing MEMORY.md convention (latest sessions
-# surface first when MEMORY.md is loaded into Claude Code session context).
-emit_memory_history_bullets() {
-  if [ -n "$SORTED" ]; then
-    printf '%s\n' "$SORTED" | awk -F'\t' '
-      function md_escape(s,    n2, parts2, i2, result2) {
-        n2 = split(s, parts2, "|")
-        result2 = parts2[1]
-        for (i2 = 2; i2 <= n2; i2++) result2 = result2 "\\|" parts2[i2]
-        return result2
-      }
-      { lines[NR] = $0; n = NR }
-      END {
-        for (i = n; i >= 1; i--) {
-          split(lines[i], f, "\t")
-          # f[1]=sid f[2]=date f[3]=theme f[4]=outcome f[5]=origin f[6]=file_path
-          fpath = (f[6] == "") ? "" : f[6]
-          # Markdown bullets render `|` literally — escape for safety even though
-          # bullet content is more permissive than table cells.
-          desc = md_escape(f[3])
-          if (fpath != "") {
-            printf "- [%s](%s) — %s\n", fpath, fpath, desc
-          } else {
-            printf "- %s — %s\n", f[1], desc
-          }
-        }
-      }
-    '
-  fi
+# emit_memory_history_pointer — emits a FIXED pointer block for the MEMORY.md
+# "Project (Session History)" marker region (Phase F.D, Issue #514). MEMORY.md
+# no longer inlines per-session bullets: the full per-session history was held
+# redundantly in MEMORY.md AND SESSION_INDEX.md, and at 100+ sessions it
+# overflowed the ~24KB Claude Code context-load window so the back half of
+# MEMORY.md was silently truncated at session start. SESSION_INDEX.md (the
+# superset table) + the per-session sessions/S<N>(-<lane>)?.md bodies remain the
+# authoritative, non-truncated home. Output is constant text (no session-derived
+# content) → byte-identical across runs, preserving --in-place idempotency.
+emit_memory_history_pointer() {
+  cat <<'POINTER_EOF'
+> 完整逐-session 历史已迁出 MEMORY.md 以保持其在 Claude Code 加载窗口内可读(Issue #514, Phase F.D)。
+> 权威来源:[SESSION_INDEX.md](SESSION_INDEX.md)(本脚本 `--in-place` 维护的逐-session 表格)+ 各 `sessions/S<N>(-<lane>)?.md` 详档。
+POINTER_EOF
 }
 
 # splice_session_index_in_place <source_file> <generated_rows_file>
@@ -631,8 +616,8 @@ splice_memory_history_in_place() {
 # ---------------------------------------------------------------------------
 if [ "$IN_PLACE" = "1" ]; then
   ROWS_TMP=$(mktemp "${TMPDIR:-/tmp}/regen-memidx.XXXXXX")    || die "mktemp failed (rows tmp)"
-  BULLETS_TMP=$(mktemp "${TMPDIR:-/tmp}/regen-memidx.XXXXXX") || die "mktemp failed (bullets tmp)"
-  trap 'rm -f "$TMPFILE" "$TMPSEEN" "$ROWS_TMP" "$BULLETS_TMP"' EXIT
+  POINTER_TMP=$(mktemp "${TMPDIR:-/tmp}/regen-memidx.XXXXXX") || die "mktemp failed (pointer tmp)"
+  trap 'rm -f "$TMPFILE" "$TMPSEEN" "$ROWS_TMP" "$POINTER_TMP"' EXIT
 
   # First-run safety: backup canonical files before mutation. Operators recover via
   # `cp <file>.pre-cutover.bak <file>` if cutover output drifts from expectation.
@@ -647,10 +632,10 @@ if [ "$IN_PLACE" = "1" ]; then
   done
 
   emit_session_index_rows_only > "$ROWS_TMP"    || die "emit session index rows failed"
-  emit_memory_history_bullets  > "$BULLETS_TMP" || die "emit memory bullets failed"
+  emit_memory_history_pointer  > "$POINTER_TMP" || die "emit memory pointer failed"
 
   splice_session_index_in_place "$SESSION_INDEX_FILE" "$ROWS_TMP"
-  splice_memory_history_in_place "$MEMORY_FILE"        "$BULLETS_TMP"
+  splice_memory_history_in_place "$MEMORY_FILE"        "$POINTER_TMP"
 
   # H1 dual-verify fix + Argus iter1 BEGIN/END symmetry fix: post-splice marker
   # verification. Three failure modes guarded:

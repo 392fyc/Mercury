@@ -23,6 +23,7 @@ cutover.
 | **F.A (additive)** | Adds regenerate script; canonical files untouched | Issue #329 — landed |
 | **F.B (cutover)** | Splits existing rows into per-session files; replaces canonical sections with generated content via `--in-place` | Issue #330 — landed |
 | **F.C (lock-in)** | Claude Code PreToolUse + SessionEnd hooks prevent direct edits to canonical files | Issue #331 — staged in `scripts/hooks/`, deployment pending F.B 1-week soak |
+| **F.D (MEMORY.md pointer)** | `--in-place` writes a fixed pointer to `SESSION_INDEX.md` into MEMORY.md instead of per-session bullets (the inlined history overflowed the context-load window); `SESSION_INDEX.md` unchanged | Issue #514 — landed |
 
 ## Why this exists
 
@@ -209,8 +210,10 @@ What happens:
   - `<!-- END: scripts/regenerate-memory-index.sh --in-place -->`
 - Replaces SESSION_INDEX.md table body with sorted rows from per-session files
   (ascending by session number, lane=main first within tie).
-- Replaces MEMORY.md `## Project (Session History)` content with bullets
-  sorted descending (latest first), each linking to the per-session file.
+- Replaces MEMORY.md `## Project (Session History)` content with a **fixed
+  pointer** to `SESSION_INDEX.md` (Phase F.D, Issue #514 — see below), NOT
+  per-session bullets. The inlined history overflowed the context-load window;
+  `SESSION_INDEX.md` + `sessions/*.md` remain the authoritative full history.
 - Markdown table cells emit-escape `|` → `\|` so YAML scalars containing
   literal `|` survive cleanly.
 
@@ -232,6 +235,35 @@ commit/handoff to refresh canonical files from per-session sources.
 `--in-place` is mutually exclusive with `--output` and `--format diff`:
 - `--in-place + --output` → exit 2 (operators uncertain about target file)
 - `--in-place + --format diff` → exit 2 (cutover is not a diff operation)
+
+## Phase F.D — MEMORY.md history is a pointer, not bullets (Issue #514)
+
+Phase F.B wrote the full per-session history as descending bullets into **both**
+`SESSION_INDEX.md` AND MEMORY.md's `## Project (Session History)` region. At
+100+ sessions the MEMORY.md copy grew to ~64KB and **overflowed the ~24KB Claude
+Code context-load window** — the back half of MEMORY.md (curated
+User/Feedback/Reference/Project rows) was silently truncated at session start,
+defeating the index's purpose.
+
+Phase F.D drops the per-session bullets from MEMORY.md. `--in-place` now writes a
+**fixed pointer** between the MEMORY.md markers instead:
+
+```markdown
+> 完整逐-session 历史已迁出 MEMORY.md 以保持其在 Claude Code 加载窗口内可读(Issue #514, Phase F.D)。
+> 权威来源:[SESSION_INDEX.md](SESSION_INDEX.md)(本脚本 `--in-place` 维护的逐-session 表格)+ 各 `sessions/S<N>(-<lane>)?.md` 详档。
+```
+
+- **`SESSION_INDEX.md` is unchanged** — it remains the single authoritative,
+  full per-session index. Per-session `sessions/S<N>(-<lane>)?.md` bodies hold
+  the detail. **No information is lost** — the MEMORY.md bullets were always a
+  redundant projection of SESSION_INDEX.md rows / per-session frontmatter.
+- The pointer is **constant text** → `--in-place` stays byte-identical /
+  idempotent (the Phase F.B idempotency guarantee holds).
+- The `## Project (Session History)` heading + BEGIN/END markers are preserved,
+  so the F.C write-guard / validator machinery continues to operate unchanged
+  (the marker region still exists; only its content shape changed).
+- `emit_memory_history_pointer()` (replaces the former
+  `emit_memory_history_bullets()`) is the source of the pointer text.
 
 ## Phase F.C (`~/.claude/hooks/`) — staged
 
@@ -415,7 +447,7 @@ mutated. Check `.bak` file mtime against original cutover commit timestamp.
 
 ```bash
 scripts/test-regenerate-memory-index.sh           # F.A — 44 cases / 82 assertions
-scripts/test-regenerate-memory-index-in-place.sh  # F.B — 14 cases / 54 assertions
+scripts/test-regenerate-memory-index-in-place.sh  # F.B/F.D — 14 cases / 57 assertions
 scripts/test-mercury-memory-index-write-guard.sh  # F.C — 23 cases / 23 assertions
 scripts/test-mercury-memory-index-validator.sh    # F.C — 35 cases / 35 assertions
 ```
