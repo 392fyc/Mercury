@@ -634,8 +634,8 @@ if [ "$IN_PLACE" = "1" ]; then
   emit_session_index_rows_only > "$ROWS_TMP"    || die "emit session index rows failed"
   emit_memory_history_pointer  > "$POINTER_TMP" || die "emit memory pointer failed"
 
-  splice_session_index_in_place "$SESSION_INDEX_FILE" "$ROWS_TMP"
-  splice_memory_history_in_place "$MEMORY_FILE"        "$POINTER_TMP"
+  splice_session_index_in_place "$SESSION_INDEX_FILE" "$ROWS_TMP"     || die "splice session index failed: $SESSION_INDEX_FILE"
+  splice_memory_history_in_place "$MEMORY_FILE"        "$POINTER_TMP" || die "splice memory history failed: $MEMORY_FILE"
 
   # H1 dual-verify fix + Argus iter1 BEGIN/END symmetry fix: post-splice marker
   # verification. Three failure modes guarded:

@@ -314,12 +314,14 @@ write_session_file "$M12" "S1.md" "theme-1" "out-1"
 write_session_file "$M12" "S2.md" "theme-2" "out-2"
 write_session_file "$M12" "S3.md" "theme-3" "out-3"
 bash "$SCRIPT" --memory-dir "$M12" --in-place >/dev/null 2>&1
-# Count per-session bullets inside the MEMORY.md marker region — must be ZERO under F.D
-# (the full per-session history lives in SESSION_INDEX.md + sessions/*.md, not MEMORY.md)
+# Count ANY markdown bullet inside the MEMORY.md marker region — must be ZERO under F.D
+# (the region holds only the `>` pointer; full per-session history lives in
+# SESSION_INDEX.md + sessions/*.md). Per Argus #515: match any `- ` bullet form, not just
+# the `- [sessions/S...]` link form, so a regressed fallback bullet (`- S1 — ...`) is also caught.
 BULLET_COUNT=$(awk '
   /^<!-- BEGIN: scripts\/regenerate-memory-index.sh --in-place/ { in_marker = 1; next }
   /^<!-- END: scripts\/regenerate-memory-index.sh --in-place/ { in_marker = 0; next }
-  in_marker && /^- \[sessions\/S/ { c++ }
+  in_marker && /^- / { c++ }
   END { print c + 0 }
 ' "$M12/MEMORY.md")
 CASES=$((CASES + 1))
