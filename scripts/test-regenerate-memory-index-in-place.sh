@@ -206,12 +206,13 @@ assert_file_contains "first_run_session_index_end_marker"   "$M3/SESSION_INDEX.m
 assert_file_contains "first_run_session_index_new_theme"    "$M3/SESSION_INDEX.md" "new-theme"
 assert_file_NOT_contains "first_run_session_index_old_theme" "$M3/SESSION_INDEX.md" "original-theme"
 
-# --- Test 4: --in-place first run inserts markers in MEMORY.md ---
+# --- Test 4: --in-place first run inserts markers in MEMORY.md (Phase F.D #514: pointer, not bullets) ---
 assert_file_contains "first_run_memory_begin_marker" "$M3/MEMORY.md" "BEGIN: scripts/regenerate-memory-index.sh --in-place"
 assert_file_contains "first_run_memory_end_marker"   "$M3/MEMORY.md" "END: scripts/regenerate-memory-index.sh --in-place"
-# Bullet uses per-session file path
-assert_file_contains "first_run_memory_bullet"       "$M3/MEMORY.md" "[sessions/S1.md](sessions/S1.md) — new-theme"
-# Original content gone
+# Phase F.D: MEMORY.md region is a fixed pointer to SESSION_INDEX.md, NOT per-session bullets
+assert_file_contains "first_run_memory_pointer"      "$M3/MEMORY.md" "[SESSION_INDEX.md](SESSION_INDEX.md)"
+assert_file_NOT_contains "first_run_memory_no_bullet" "$M3/MEMORY.md" "[sessions/S1.md](sessions/S1.md)"
+# Original content gone (replaced by the pointer)
 assert_file_NOT_contains "first_run_memory_old_bullet" "$M3/MEMORY.md" "S1 original"
 
 # --- Test 5: --in-place preserves SESSION_INDEX header + footer + table header rows ---
@@ -273,14 +274,24 @@ else
   printf 'FAIL: subsequent_no_marker_dup — expected 1 BEGIN marker, got %d\n' "$BEGIN_COUNT" >&2
 fi
 
-# --- Test 10: bullet falls back to plain S<id> form when no per-session file ---
+# --- Test 10: no per-session file → MEMORY.md still shows only the pointer (Phase F.D);
+#     SESSION_INDEX.md table keeps the fallback row from the existing SESSION_INDEX row ---
 M10=$(mk_memdir "bullet-fallback")
 write_session_index "$M10" '| S1 | 2026-01-01 | from-index-only | from-index-out | — |'
 write_memory_md "$M10" '- placeholder'
 # No per-session file written
 bash "$SCRIPT" --memory-dir "$M10" --in-place >/dev/null 2>&1
-assert_file_contains "bullet_plain_form" "$M10/MEMORY.md" "- S1 — from-index-only"
-assert_file_NOT_contains "bullet_no_link" "$M10/MEMORY.md" "[sessions/S1.md]"
+assert_file_contains "memory_pointer_no_per_session" "$M10/MEMORY.md" "[SESSION_INDEX.md](SESSION_INDEX.md)"
+assert_file_NOT_contains "memory_no_plain_bullet" "$M10/MEMORY.md" "- S1 — from-index-only"
+# Fallback still feeds the SESSION_INDEX table (the authoritative session-history home).
+# Tighter (Codex audit): assert the row was regenerated INTO the managed marker region,
+# not merely left as pre-run fixture text sitting outside the markers.
+awk '
+  /^<!-- BEGIN: scripts\/regenerate-memory-index.sh --in-place/ { in_marker = 1; next }
+  /^<!-- END: scripts\/regenerate-memory-index.sh --in-place/   { in_marker = 0 }
+  in_marker { print }
+' "$M10/SESSION_INDEX.md" > "$M10/.index-region"
+assert_file_contains "session_index_fallback_row_in_region" "$M10/.index-region" "from-index-only"
 
 # --- Test 11: pipe escape in description and outcome cells ---
 M11=$(mk_memdir "pipe-escape")
@@ -293,7 +304,7 @@ assert_file_contains "pipe_escape_single" "$M11/SESSION_INDEX.md" 'theme with \|
 # Double pipe escaped to \|\|
 assert_file_contains "pipe_escape_double" "$M11/SESSION_INDEX.md" 'outcome with \|\| double'
 
-# --- Test 12: descending sort in MEMORY.md bullets ---
+# --- Test 12: MEMORY.md carries ONLY the pointer regardless of session count (Phase F.D #514) ---
 M12=$(mk_memdir "memory-descending")
 write_session_index "$M12" '| S1 | 2026-01-01 | t1 | o1 | — |
 | S2 | 2026-01-02 | t2 | o2 | — |
@@ -303,22 +314,24 @@ write_session_file "$M12" "S1.md" "theme-1" "out-1"
 write_session_file "$M12" "S2.md" "theme-2" "out-2"
 write_session_file "$M12" "S3.md" "theme-3" "out-3"
 bash "$SCRIPT" --memory-dir "$M12" --in-place >/dev/null 2>&1
-# Extract bullets in order, expect S3 before S2 before S1 (descending)
-ORDER=$(awk '
+# Count ANY markdown bullet inside the MEMORY.md marker region — must be ZERO under F.D
+# (the region holds only the `>` pointer; full per-session history lives in
+# SESSION_INDEX.md + sessions/*.md). Per Argus #515: match any `- ` bullet form, not just
+# the `- [sessions/S...]` link form, so a regressed fallback bullet (`- S1 — ...`) is also caught.
+BULLET_COUNT=$(awk '
   /^<!-- BEGIN: scripts\/regenerate-memory-index.sh --in-place/ { in_marker = 1; next }
   /^<!-- END: scripts\/regenerate-memory-index.sh --in-place/ { in_marker = 0; next }
-  in_marker && /^- \[sessions\/S/ {
-    match($0, /sessions\/S[0-9]+\.md/)
-    if (RLENGTH > 0) printf "%s ", substr($0, RSTART+9, RLENGTH-12)
-  }
+  in_marker && /^- / { c++ }
+  END { print c + 0 }
 ' "$M12/MEMORY.md")
 CASES=$((CASES + 1))
-if [ "$ORDER" = "S3 S2 S1 " ]; then
+if [ "$BULLET_COUNT" -eq 0 ]; then
   PASS=$((PASS + 1))
 else
   FAIL=$((FAIL + 1))
-  printf 'FAIL: memory_descending_order — expected "S3 S2 S1 ", got "%s"\n' "$ORDER" >&2
+  printf 'FAIL: memory_no_per_session_bullets — expected 0 bullets in marker region, got %d\n' "$BULLET_COUNT" >&2
 fi
+assert_file_contains "memory_pointer_present_multi" "$M12/MEMORY.md" "[SESSION_INDEX.md](SESSION_INDEX.md)"
 
 # --- Test 13: ascending sort in SESSION_INDEX.md table preserved ---
 ORDER=$(awk -F'|' '
