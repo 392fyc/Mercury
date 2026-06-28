@@ -6,6 +6,8 @@ user-invocable: true
 allowed-tools: Bash, Read
 ---
 
+> **ARCHIVED 2026-06-28 (#517)**: kb-lint 硬依赖 `$AGENTKB_DIR`,该环境变量本机已 unset(AgentKB 被 mem0 取代后 archival-pending),skill 一启动即 abort。随 #517 瘦身审计归档;如 AgentKB 复活可从此处还原。
+
 # KB Lint Skill
 
 Runs the AgentKB `lint.py` health checker against the knowledge base.

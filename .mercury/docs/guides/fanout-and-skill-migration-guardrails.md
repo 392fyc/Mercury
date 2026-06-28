@@ -104,7 +104,7 @@ fan-out 前**逐条**过,任一不满足即调整方案(降规模 / 换 model �
 | 复用价值 | 流程靠提示词即可复述 | 编排本身值得沉淀成可重跑脚本 |
 | 现有痛点 | 无串行瓶颈 | 现状是串行单 context,fan-out 能实质改善(如 autoresearch 串行 loop) |
 
-**典型保持 NL**:`dev-pipeline`(Main→Dev→Acceptance,几个 agent + 自适应)、`dual-verify`(2 并行 reviewer)、`systematic-debugging`/`handoff`(自适应)、`caveman-toggle`/`kb-lint`/`pr-flow`(状态切换 / 单命令轮询)。
+**典型保持 NL**:`dev-pipeline`(Main→Dev→Acceptance,几个 agent + 自适应)、`dual-verify`(2 并行 reviewer)、`systematic-debugging`/`handoff`(自适应)、`caveman-toggle`/`pr-flow`(状态切换 / 单命令轮询)。
 **候选可迁**:需 ≥3 源交叉核查的研究、repo 级审计、大规模迁移——但这些**已有**对应 Workflow 模板(`mercury-*`),无需再迁既有 skill。
 
 ### 4.3 decision gate(迁移任一 skill 前,PR body 必须逐条作答)
@@ -123,9 +123,11 @@ fan-out 前**逐条**过,任一不满足即调整方案(降规模 / 换 model �
 
 > 防侵蚀的可核对基线:下列稳定 skill **不得**被删除/掏空改投模板,除非对应 PR 通过 §4.3 decision gate。
 
-### 5.1 当前稳定 Mercury 自有 skill(`.claude/skills/`,NL 形态,**13 个**)
+### 5.1 当前稳定 Mercury 自有 skill(`.claude/skills/`,NL 形态,**12 个**)
 
-`animate-frames` · `autoresearch` · `caveman-toggle` · `dev-pipeline` · `dual-verify` · `gh-project-flow` · `handoff` · `kb-lint` · `pr-flow` · `subagent-driven-development` · `systematic-debugging` · `verification-before-completion` · `web-research`
+`animate-frames` · `autoresearch` · `caveman-toggle` · `dev-pipeline` · `dual-verify` · `gh-project-flow` · `handoff` · `pr-flow` · `subagent-driven-development` · `systematic-debugging` · `verification-before-completion` · `web-research`
+
+> 基线快照 2026-06-28(#517):kb-lint 硬依赖 unset 的 $AGENTKB_DIR 已归档至 archive/skills/,NL-skill 13→12。
 
 ### 5.2 当前 Workflow 模板(`.claude/workflows/`,**4 个**,P0 #479 新建,非从 skill 迁来)
 
@@ -133,9 +135,9 @@ fan-out 前**逐条**过,任一不满足即调整方案(降规模 / 换 model �
 
 ### 5.3 侵蚀检测规则(回归基线 invariant)
 
-1. **NL-skill 计数下限 = 13**:`.claude/skills/` 的**子目录数**(只数目录,不数散落文件)**不得低于 13**,除非某次下降由一个通过 §4.3 decision gate 的 PR 显式解释。核对命令(只数目录 → 误放的非目录文件不会掩盖被删 skill;给两种环境形态):
-   - PowerShell(Windows 主环境):`(Get-ChildItem .claude/skills -Directory).Count` ≥ 13
-   - bash / git-bash:`ls -d .claude/skills/*/ | wc -l` ≥ 13(`*/` glob 只匹配目录)
+1. **NL-skill 计数下限 = 12**:`.claude/skills/` 的**子目录数**(只数目录,不数散落文件)**不得低于 12**,除非某次下降由一个通过 §4.3 decision gate 的 PR 显式解释。核对命令(只数目录 → 误放的非目录文件不会掩盖被删 skill;给两种环境形态):
+   - PowerShell(Windows 主环境):`(Get-ChildItem .claude/skills -Directory).Count` ≥ 12
+   - bash / git-bash:`ls -d .claude/skills/*/ | wc -l` ≥ 12(`*/` glob 只匹配目录)
 2. **迁移留痕**:任何把 `.claude/skills/<name>/` 改写为 `.claude/workflows/<name>.js`(或为模板掏空一个 NL-skill)的 PR,必须:(a) PR body 答完 §4.3 五问;(b) 保留原 NL-skill ≥1 release 周期;(c) 走 dual-verify;(d) 在本表 §5.1/§5.2 记录迁移(基线随之更新)。
 3. **模板不夺触发词**:新增 Workflow 模板的 `meta.name` / 触发词不得遮蔽既有 skill 触发词(`dual-verify`/`pr-flow`/`autoresearch` 等),避免用户调用被静默改路由。
 4. **基线更新**:每次新增/迁移/删除 skill 或模板,**同一 PR** 内更新本节快照 + 日期,使本基线始终反映 ground truth。
