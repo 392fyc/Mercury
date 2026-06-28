@@ -95,14 +95,14 @@ On session start, Claude Code auto-discovers every agent under `.claude/agents/`
 
 1. Read `CLAUDE.md` (auto-surfaced by Claude Code) — enforces issue-first workflow, dual-verify before commit, PR-to-`develop` rule
 2. Read `.mercury/docs/DIRECTION.md` — project charter and module definitions
-3. Skim `.claude/skills/` — available workflows (`pr-flow`, `autoresearch`, `dev-pipeline`, `dual-verify`, `caveman-toggle`, `kb-lint`, ...)
+3. Skim `.claude/skills/` — available workflows (`pr-flow`, `autoresearch`, `dev-pipeline`, `dual-verify`, `caveman-toggle`, ...)
 4. Run your first task via the `dev-pipeline` skill: it dispatches a `dev` sub-agent, then an `acceptance` sub-agent, and returns a blind-review verdict
 
 ## Skills and sub-agents
 
 The skills under `.claude/skills/` and sub-agents under `.claude/agents/` are **detachable** — each directory is self-contained and can be copied into another Claude Code project. Skill frontmatter lists the trigger phrases in English and Chinese. Treat the directory contents as the authoritative list; the snapshot below is current as of this writing and intentionally not a pinned count.
 
-Skills (13 at time of writing):
+Skills (12 at time of writing):
 
 | Skill | Purpose |
 |-------|---------|
@@ -116,7 +116,6 @@ Skills (13 at time of writing):
 | `subagent-driven-development` | Execute a plan via fresh sub-agent per task, two-stage review |
 | `verification-before-completion` | Hard evidence-before-claims checkpoint before "done" |
 | `gh-project-flow` | GitHub Project task pull/update for Mercury's own development |
-| `kb-lint` | Knowledge-base health checks (broken links, orphans, contradictions) |
 | `animate-frames` | Pixel-frame animation pipeline (sprite sequences) via the `gpt-image-2` adapter |
 | `caveman-toggle` | Persistent concise-output mode |
 

@@ -53,20 +53,20 @@ Mercury 的部分功能跨仓库运作。以下表格记录外部仓库与 Mercu
 
 | Repo | Location | Purpose | 关系 |
 |------|----------|---------|------|
-| **Memory layer (user-level)** | `~/.claude/hooks/` + `~/.claude/scripts/` | mem0 adapter + bridge + flush + session-start/end hooks + cost tracker (#361) | 运行时独立于任何 git 仓库；mem0 Qdrant 数据在 `~/.claude/scripts/mem0-state/`；cost-tracker per-session jsonl 在 `~/.claude/scripts/cost-tracker/` |
+| **Memory layer (user-level)** | `~/.claude/hooks/` + `~/.claude/scripts/` | flush + session-start/end hooks + cost tracker (#361) | 运行时独立于任何 git 仓库；cost-tracker per-session jsonl 在 `~/.claude/scripts/cost-tracker/`（mem0 层已于 #518 退役） |
 | **claude-handoff** | 插件仓库 <https://github.com/392fyc/claude-handoff> | Session handoff / 续接 + `session_chain` SQLite | 作为本地插件挂载在 `~/.claude/settings.json` marketplace |
 | **AgentKB (archival-pending)** | `$AGENTKB_DIR` | 旧 Memory 层（Karpathy-style KB），Mercury #252 后被 mem0 取代 | 待归档；salvage 审计见 `.mercury/docs/research/agentkb-fork-salvage-audit-2026-04-17.md` |
-| **Mercury_KB** | *(archived)* | 项目专属 Obsidian vault (archived) | 已归档，早于 AgentKB 被取代 |
+| **Mercury_KB** | Obsidian vault（路径见 `.handoff-config` 的 `kb_dir`） | 项目专属 KB；现为 handoff 文档落点（#475，经 `.handoff-config` kb_dir 接线） | **active** — 经直接文件系统访问（非 obsidian MCP）；旧「已归档」表述 stale，#517 审计对齐 |
 
 **跨仓库开发注意事项：**
 - `dev-pipeline` 等 skill 假设单仓库工作，跨仓库任务需直接实现
 - 用户级 hooks / scripts 变更不走 Mercury PR 流程。相关路径里 `~/.claude` 等价于 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}`；命令示例可任选一种书写，env 形式在多账户 / CI 下更可移植
 - 新环境验证: 文件存在性 + 钩子注册 + 库可导入三层检查：
-  1. `ls "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/scripts/"` 看到 `pre-compact.py`/`session-end.py`/`flush.py`/`mem0_hooks.py`/`mem0_bridge.py`/`cost_tracker.py` 即为 #361 后状态
+  1. `ls "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/scripts/"` 看到 `pre-compact.py`/`session-end.py`/`flush.py`/`cost_tracker.py` 即为 #361 后状态（`mem0_hooks.py`/`mem0_bridge.py` 已于 #518 退役删除）
   2. `grep -c session-end.py "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"` 应返回 ≥1（钩子在 SessionEnd matcher 注册）；`grep AGENTKB "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"` 应返回 0 行
   3. `python -c "import sys; sys.path.insert(0, r'${CLAUDE_CONFIG_DIR:-$HOME/.claude}/scripts'); import cost_tracker; print(cost_tracker.session_log_path('verify-smoke'))"` 应打印 `cost-tracker/verify-smoke.jsonl` 路径（导入 + 路径解析 OK）
-- 安装依赖: `cd "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" && uv sync` 建立 `.venv/` 并装 mem0ai + qdrant-client
-- 回滚通道: `MERCURY_MEM0_DISABLED=1` / `AGENTKB_MEM0_DISABLED=1` / `MERCURY_COST_TRACKER_DISABLED=1` / `uv remove mem0ai` 任一即可 no-op 对应路径
+- 安装依赖: `cd "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" && uv sync` 建立 `.venv/`（mem0ai/qdrant-client 已于 #518 退役从依赖移除）
+- 回滚通道: `MERCURY_COST_TRACKER_DISABLED=1` 即可 no-op cost-tracker 路径（mem0 层已 #518 退役,原 `MERCURY_MEM0_DISABLED`/`AGENTKB_MEM0_DISABLED` 开关随之移除）
 - Cost tracker (#361) env vars (canonical 实现见 `~/.claude/scripts/cost_tracker.py` `PRICING` / `_disabled()` / `ceiling_advisory()` / `detect_tier_misuse()`)：`MERCURY_SESSION_COST_CEILING_USD=NN.NN` 触发 statusline 颜色阶梯 (绿 <70% / 黄 70-89% / 红 ≥90%)；`MERCURY_TIER_MISUSE_THRESHOLD` (默认 2000) 控制 opus 小任务 advisory 阈值；`MERCURY_COST_TRACKER_DISABLED=1` 软关 `write_session_summary()` 写路径（statusline 段落另在 hook 内独立 gate）
 
 **用户级变更治理（避免"仓库外漂移"）：**
@@ -74,9 +74,9 @@ Mercury 的部分功能跨仓库运作。以下表格记录外部仓库与 Mercu
 - **验证清单（必须全部通过）**:
   1. `settings.json` JSON 合法（`python -c "import json,os; json.load(open(os.path.expandvars('${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json')))"`）
   2. 每个涉及的 hook 脚本在合成 stdin 下 exit 0（见 #259 PR body 的验证示例）
-  3. 相关单测或 smoke test 通过（如 `mem0_bridge_test.py` 7/7）
+  3. 相关单测或 smoke test 通过
   4. 一次真实 hook 触发观察无回归
-- **回滚步骤**: 所有用户级变更前先 `CC="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; cp "$CC/settings.json" "$CC/settings.json.backup-pre-<issue>"`；发现回归时 `mv` 回去即可；mem0 层额外可通过 env var 软关
+- **回滚步骤**: 所有用户级变更前先 `CC="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; cp "$CC/settings.json" "$CC/settings.json.backup-pre-<issue>"`；发现回归时 `mv` 回去即可
 - **环境依赖审计**: 定期跑 `grep -rE "AGENTKB_DIR|\$AGENTKB" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/"` 确认未遗漏旧路径引用
 
 ## MUST
