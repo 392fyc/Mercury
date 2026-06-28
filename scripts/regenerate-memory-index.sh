@@ -499,7 +499,9 @@ POINTER_EOF
 # Atomic: writes to tmp file then mv. Operators recover via either:
 #   (a) git revert if the canonical file is in the user-memory layer's git tracking
 #   (b) cp from <memory-dir>/SESSION_INDEX.md.pre-cutover.bak (created on first
-#       --in-place run; see backup logic below)
+#       --in-place run; see backup logic below; NOTE (#517): original
+#       F.B cutover snapshot was retired/deleted — .pre-cutover.bak created by
+#       this script is a generic pre-mutation backup, not a cutover rollback)
 splice_session_index_in_place() {
   local source_file="$1"
   local rows_file="$2"
@@ -623,6 +625,9 @@ if [ "$IN_PLACE" = "1" ]; then
   # `cp <file>.pre-cutover.bak <file>` if cutover output drifts from expectation.
   # Skip backup if file already exists (subsequent runs are idempotent — backup
   # would overwrite the original pre-cutover snapshot with already-mutated content).
+  # NOTE (#517): original F.B cutover .pre-cutover.bak snapshots were
+  # retired/deleted; this block creates a generic pre-mutation backup (current state
+  # at invocation time), NOT a cutover rollback snapshot.
   for canonical in "$SESSION_INDEX_FILE" "$MEMORY_FILE"; do
     bak="${canonical}.pre-cutover.bak"
     if [ ! -f "$bak" ]; then
@@ -656,7 +661,7 @@ if [ "$IN_PLACE" = "1" ]; then
     end_count=$(grep -cF -- "$IN_PLACE_END_MARKER" "$canonical" 2>/dev/null || true)
     end_count=${end_count:-0}
     if [ "$begin_count" -ne 1 ] || [ "$end_count" -ne 1 ]; then
-      die "splice verification failed: $canonical has $begin_count BEGIN + $end_count END markers (expected 1+1). Likely missing anchor (table header / heading) OR prior partial-write state. Restore from $canonical.pre-cutover.bak before re-attempting cutover."
+      die "splice verification failed: $canonical has $begin_count BEGIN + $end_count END markers (expected 1+1). Likely missing anchor (table header / heading) OR prior partial-write state. Restore from $canonical.pre-cutover.bak (the existing generic pre-mutation backup; the original F.B cutover snapshot was retired #517) before re-attempting."
     fi
   done
 
