@@ -102,6 +102,10 @@ Mercury 的核心价值不在代码里，在方法论里。
 
 ### 模块 2: Memory Layer（长期记忆层）
 
+> **⚠ mem0 语义召回层已退役 #518（2026-06-28）**: #517 瘦身审计实测 mem0 + Qdrant 为**空仓**——Qdrant 0 行 / `history.db` 0 行，自 2026-04-18 初始化后从未写入；根因 `OPENAI_API_KEY` unset → `mem0_bridge.py` fail-safe 静默 no-op，`recall()` 全仓零调用方。用户裁定退役,删 **user-level runtime**: `~/.claude/scripts/{mem0_hooks,mem0_bridge}.py` + `mem0-state/` + NAS 镜像链、user-level `pyproject` 去 `mem0ai`+`qdrant-client`、注销计划任务（repo 内 `scripts/mem0_*.py` #258 Phase A 原型**未删**,属独立 DEFER 见 #517 KB-3）。
+> **当前长期记忆 = 文件式**（无向量语义召回层）: auto-memory `MEMORY.md` 索引 + `SESSION_INDEX.md` 全量历史 + handoff KB（Mercury_KB，#475）+ daily-log flush。
+> [Issue #384 ADR](research/cma-memory-vs-mem0-2026-05.md) 的「status quo + monitor」verdict **前提（mem0 在用 + 有召回价值）已被空仓证据证伪**;mem0 已由 #518 用户裁定退役,该 verdict 实务上失效、应正式 re-eval（空仓属 ADR 原 4 个 re-eval trigger 未预见的新增条件;ADR §结论本就预留「§模块 2 独立过时 → 单独 follow-up」）。**下方「职责 / 技术方向 / 自研理由」为退役前架构描述,保留作历史。**
+
 **解决的问题**: Claude Code 内置 memory 容量有限、不可结构化查询、不跨 session、不跨项目、不跨 vendor。
 
 **职责**:
@@ -111,11 +115,11 @@ Mercury 的核心价值不在代码里，在方法论里。
 - LLM 自维护: agent 全自动写入 + dedup，人类只读 / 查询
 - 失败安全 kill-switch: `AGENTKB_MEM0_DISABLED=1`（或 alias `MERCURY_MEM0_DISABLED=1`）软关；全路径 no-op-safe fail-falsy（mem0 缺失 / API key 缺失 / store 错误均不阻塞主流程）
 
-**技术方向** (当前实装；路径约定: `~/.claude/...` 等价于 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/...`，沿用 CLAUDE.md §"Related Repositories" 约定，二者可任选一种书写，env 形式在多账户 / CI 下更可移植):
+**技术方向** (退役前实装 #252→#518,见模块顶部 banner；路径约定: `~/.claude/...` 等价于 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/...`，沿用 CLAUDE.md §"Related Repositories" 约定，二者可任选一种书写，env 形式在多账户 / CI 下更可移植):
 - Adapter — [PR #258](https://github.com/392fyc/Mercury/pull/258) `599d313` 2026-04-17（Mercury Issue #252 **Phase A**，in-repo `scripts/`，仅 adapter prototype，hook 接线延后）: `mem0ai.Memory` 包装 + 4 个上游 P1 bug guard（mem0ai [#4099](https://github.com/mem0ai/mem0/issues/4099) empty-payload / [#4799](https://github.com/mem0ai/mem0/issues/4799) list-content / [#4453](https://github.com/mem0ai/mem0/issues/4453) threshold-filter / [#4536](https://github.com/mem0ai/mem0/issues/4536) contradiction-dedup 0.92 cosine fails-closed） + telemetry-off forced
 - Bridge + Hook 触发 + Vector store — user-level cross-repo 落地（post-Phase A，per CLAUDE.md §"用户级变更治理" + #259 governance pattern）: `~/.claude/scripts/mem0_bridge.py` no-op-safe `ingest_session()` / `recall()` + `~/.claude/hooks/{session-start.py,session-end.py,pre-compact.py}` hook 触发 + `~/.claude/scripts/mem0-state/qdrant/` + `history.db`（on-disk Qdrant + SQLite history，user-controlled）
 - Karpathy 模式 (raw → compile → wiki → Q&A → enhance) 映射: `add_safe()` → Qdrant + SQLite → `search_safe()` cosine + entity graph → `dedup_guard` 阈值拒绝矛盾或重复
-- 历史演进: Mercury_KB Obsidian vault（早期，已废）→ AgentKB-fork（Karpathy-style file KB，已归档详见 [`agentkb-fork-salvage-audit-2026-04-17.md`](research/agentkb-fork-salvage-audit-2026-04-17.md)）→ mem0 + Qdrant（当前实装）
+- 历史演进: Mercury_KB Obsidian vault（早期 KB；**未废——现为 handoff 文档落点 #475**，旧标「已废」于 #517 审计纠正）→ AgentKB-fork（Karpathy-style file KB，已归档详见 [`agentkb-fork-salvage-audit-2026-04-17.md`](research/agentkb-fork-salvage-audit-2026-04-17.md)）→ mem0 + Qdrant（#252 实装，**#518 退役**——空仓，见模块顶部 banner）→ **当前: 文件式长期记忆**（auto-memory `MEMORY.md` + `SESSION_INDEX.md` + handoff KB + daily-log flush，无向量语义召回层）
 
 **自研理由**: adapter + bridge + 4 P1 bug guard 是 Mercury 特有；底层 vector store + LLM compile loop 通过 mem0ai + Qdrant 上游解决。
 
