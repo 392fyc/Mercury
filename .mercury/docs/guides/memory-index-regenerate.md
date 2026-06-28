@@ -204,7 +204,8 @@ bash scripts/regenerate-memory-index.sh --in-place
 
 What happens:
 - Auto-creates `<canonical>.pre-cutover.bak` for each canonical file (only on
-  first invocation; subsequent runs preserve the original snapshot).
+  first invocation; subsequent runs skip via `[ ! -f ]`).
+  (NOTE #517: 这是 run-time 状态的 generic pre-mutation 备份，非已退役的 F.B cutover 快照)
 - Inserts HTML-comment marker block immediately after table header / heading:
   - `<!-- BEGIN: scripts/regenerate-memory-index.sh --in-place (Issue #330 Phase F.B). Regenerated content — DO NOT edit between markers. -->`
   - `<!-- END: scripts/regenerate-memory-index.sh --in-place -->`
@@ -399,35 +400,35 @@ git push --force-with-lease origin <branch>  # if branch already pushed
 ```
 
 This reverts repo state to pre-cutover. User-memory files (NOT in git) are
-untouched — operator restores those separately if needed via Channel 2.
+untouched — (Channel 2 user-memory 回滚已 RETIRED #517——F.B `.pre-cutover.bak` 快照已删；user-memory 如需恢复改从 git 历史 / curated 记忆手动重建。)
 
 ### Channel 2: User-memory side (canonical file drift)
+
+> **⚠ RETIRED #517**: 原 `.pre-cutover.bak`（F.B cutover #330 的一次性 pre-cutover 快照）已删除——cutover 距今 2+ 月，回滚会丢 2 个月 session 历史，实务不可行。repo 侧回滚用 Channel 1（git tag `lane-protocol-v0.1-pre-cutover`）。注：`regenerate-memory-index.sh` 的 `--in-place` 仍会按需创建 `<canonical>.pre-cutover.bak`，但那是**该次运行前的 generic pre-mutation 备份（当前状态快照）**，**不是**原始 cutover 状态——勿当 cutover 回滚用。
 
 If the cutover leaves canonical `MEMORY.md` or `SESSION_INDEX.md` in unexpected
 state (e.g. stray rows, missing markers, content drift):
 
-```bash
+**历史示例 — 勿执行（`.pre-cutover.bak` 已 #517 删除；见上方 RETIRED）**:
+
+```text
 MEM_DIR="${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}"
 cp "$MEM_DIR/SESSION_INDEX.md.pre-cutover.bak" "$MEM_DIR/SESSION_INDEX.md"
 cp "$MEM_DIR/MEMORY.md.pre-cutover.bak"        "$MEM_DIR/MEMORY.md"
 ```
 
-Backups are created automatically on first `--in-place` invocation and never
-overwritten on subsequent runs (preserves the true pre-cutover snapshot).
+注：`--in-place` 若重跑会按 `[ ! -f ]` 守卫创建 `.pre-cutover.bak`，但记录的是**该次运行前状态**（非已删的原始 cutover 快照，见上方 RETIRED 提示）。
 
 ### Channel 3: Combined (full revert)
 
+> **RETIRED #517**: 本通道的 user-memory 步骤（Channel 2）+ `INDEX.generated.md` drift 验证已退役（artifacts 已删）；仅 Channel 1（git tag）live。
+
 If both repo AND user-memory need rollback:
 
-1. Run Channel 2 first (restore canonical files from `.bak`).
-2. Run Channel 1 second (revert repo to tag).
-3. Verify regenerate works against pre-cutover state:
-   ```bash
-   bash scripts/regenerate-memory-index.sh --format diff
-   # Should report "no drift" against the original INDEX.generated.md from F.A soak
-   ```
-4. If verification fails, file new Issue with reproduction; per-session files
-   under `memory/sessions/` may need to be deleted to fully restore F.A baseline.
+1. ~~Run Channel 2 first (restore canonical files from `.bak`).~~ （Channel 2 已 RETIRED #517，跳过。）
+2. Run Channel 1 (revert repo to tag `lane-protocol-v0.1-pre-cutover`).
+3. ~~Verify regenerate works against pre-cutover state~~ **RETIRED #517**: `INDEX.generated.md`（F.A soak 快照）已删，drift 验证不可行。
+4. If repo-side verification fails after Channel 1, file new Issue with reproduction.
 
 ### Verifying rollback
 
@@ -440,8 +441,7 @@ grep -c 'BEGIN: scripts/regenerate-memory-index.sh --in-place' \
 # Expected: both report 0
 ```
 
-If the count is non-zero, Channel 2 was not invoked or the backup is itself
-mutated. Check `.bak` file mtime against original cutover commit timestamp.
+(#517: `.bak`/Channel 2 验证已退役。) Channel 1（git）回滚后，用 `git log`/`git status` 确认 repo 在 tag `lane-protocol-v0.1-pre-cutover`；canonical user-memory 文件不受 git 回滚影响。
 
 ## Tests
 
