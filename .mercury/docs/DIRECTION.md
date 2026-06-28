@@ -102,7 +102,7 @@ Mercury 的核心价值不在代码里，在方法论里。
 
 ### 模块 2: Memory Layer（长期记忆层）
 
-> **⚠ mem0 语义召回层已退役 #518（2026-06-28）**: #517 瘦身审计实测 mem0 + Qdrant 为**空仓**——Qdrant 0 行 / `history.db` 0 行，自 2026-04-18 初始化后从未写入；根因 `OPENAI_API_KEY` unset → `mem0_bridge.py` fail-safe 静默 no-op，`recall()` 全仓零调用方。用户裁定退役,删 **user-level runtime**: `~/.claude/scripts/{mem0_hooks,mem0_bridge}.py` + `mem0-state/` + NAS 镜像链、user-level `pyproject` 去 `mem0ai`+`qdrant-client`、注销计划任务（repo 内 `scripts/mem0_*.py` #258 Phase A 原型**未删**,属独立 DEFER 见 #517 KB-3）。
+> **⚠ mem0 语义召回层已退役 #518（2026-06-28）**: #517 瘦身审计实测 mem0 + Qdrant 为**空仓**——Qdrant 0 行 / `history.db` 0 行，自 2026-04-18 初始化后从未写入；根因 `OPENAI_API_KEY` unset → `mem0_bridge.py` fail-safe 静默 no-op，`recall()` 全仓零调用方。用户裁定退役,删 **user-level runtime**: `~/.claude/scripts/{mem0_hooks,mem0_bridge}.py` + `mem0-state/` + NAS 镜像链、user-level `pyproject` 去 `mem0ai`+`qdrant-client`、注销计划任务（repo 内 `scripts/mem0_*.py` #258 Phase A 原型 + `mem0-setup.md` 安装指南亦于 #517 KB-3 收尾批删除;内容存 git 历史 + [cma-memory ADR](research/cma-memory-vs-mem0-2026-05.md)）。
 > **当前长期记忆 = 文件式**（无向量语义召回层）: auto-memory `MEMORY.md` 索引 + `SESSION_INDEX.md` 全量历史 + handoff KB（Mercury_KB，#475）+ daily-log flush。
 > [Issue #384 ADR](research/cma-memory-vs-mem0-2026-05.md) 的「status quo + monitor」verdict **前提（mem0 在用 + 有召回价值）已被空仓证据证伪**;mem0 已由 #518 用户裁定退役,该 verdict 实务上失效、应正式 re-eval（空仓属 ADR 原 4 个 re-eval trigger 未预见的新增条件;ADR §结论本就预留「§模块 2 独立过时 → 单独 follow-up」）。**下方「职责 / 技术方向 / 自研理由」为退役前架构描述,保留作历史。**
 
