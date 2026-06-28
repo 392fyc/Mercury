@@ -55,7 +55,7 @@ Mercury 的部分功能跨仓库运作。以下表格记录外部仓库与 Mercu
 |------|----------|---------|------|
 | **Memory layer (user-level)** | `~/.claude/hooks/` + `~/.claude/scripts/` | flush + session-start/end hooks + cost tracker (#361) | 运行时独立于任何 git 仓库；cost-tracker per-session jsonl 在 `~/.claude/scripts/cost-tracker/`（mem0 层已于 #518 退役） |
 | **claude-handoff** | 插件仓库 <https://github.com/392fyc/claude-handoff> | Session handoff / 续接 + `session_chain` SQLite | 作为本地插件挂载在 `~/.claude/settings.json` marketplace |
-| **AgentKB (archival-pending)** | `$AGENTKB_DIR` | 旧 Memory 层（Karpathy-style KB），Mercury #252 后被 mem0 取代 | 待归档；salvage 审计见 `.mercury/docs/research/agentkb-fork-salvage-audit-2026-04-17.md` |
+| **AgentKB** *(retired)* | `$AGENTKB_DIR`（本机 unset） | 旧 Memory 层（Karpathy-style KB），#252 被 mem0 取代；mem0 自身已 #518 退役 → 当前长期记忆=文件式 | **已退役**（运行时 de-ref 完成、AGENTKB_DIR unset、kb-lint 已归档、mem0_migrate 已删）；salvage 审计见 `.mercury/docs/research/agentkb-fork-salvage-audit-2026-04-17.md` |
 | **Mercury_KB** | Obsidian vault（路径见 `.handoff-config` 的 `kb_dir`） | 项目专属 KB；现为 handoff 文档落点（#475，经 `.handoff-config` kb_dir 接线） | **active** — 经直接文件系统访问（非 obsidian MCP）；旧「已归档」表述 stale，#517 审计对齐 |
 
 **跨仓库开发注意事项：**

@@ -123,11 +123,12 @@ fan-out 前**逐条**过,任一不满足即调整方案(降规模 / 换 model �
 
 > 防侵蚀的可核对基线:下列稳定 skill **不得**被删除/掏空改投模板,除非对应 PR 通过 §4.3 decision gate。
 
-### 5.1 当前稳定 Mercury 自有 skill(`.claude/skills/`,NL 形态,**12 个**)
+### 5.1 当前稳定 Mercury 自有 skill(`.claude/skills/`,NL 形态,**11 个**)
 
-`animate-frames` · `autoresearch` · `caveman-toggle` · `dev-pipeline` · `dual-verify` · `gh-project-flow` · `handoff` · `pr-flow` · `subagent-driven-development` · `systematic-debugging` · `verification-before-completion` · `web-research`
+`animate-frames` · `autoresearch` · `caveman-toggle` · `dev-pipeline` · `dual-verify` · `handoff` · `pr-flow` · `subagent-driven-development` · `systematic-debugging` · `verification-before-completion` · `web-research`
 
 > 基线快照 2026-06-28(#517):kb-lint 硬依赖 unset 的 $AGENTKB_DIR 已归档至 archive/skills/,NL-skill 13→12。
+> 基线快照 2026-06-28(#517):gh-project-flow(BOOTSTRAP-ONLY,Project#3 废弃)归档至 archive/skills/,NL-skill 12→11。
 
 ### 5.2 当前 Workflow 模板(`.claude/workflows/`,**4 个**,P0 #479 新建,非从 skill 迁来)
 
@@ -135,9 +136,9 @@ fan-out 前**逐条**过,任一不满足即调整方案(降规模 / 换 model �
 
 ### 5.3 侵蚀检测规则(回归基线 invariant)
 
-1. **NL-skill 计数下限 = 12**:`.claude/skills/` 的**子目录数**(只数目录,不数散落文件)**不得低于 12**,除非某次下降由一个通过 §4.3 decision gate 的 PR 显式解释。核对命令(只数目录 → 误放的非目录文件不会掩盖被删 skill;给两种环境形态):
-   - PowerShell(Windows 主环境):`(Get-ChildItem .claude/skills -Directory).Count` ≥ 12
-   - bash / git-bash:`ls -d .claude/skills/*/ | wc -l` ≥ 12(`*/` glob 只匹配目录)
+1. **NL-skill 计数下限 = 11**:`.claude/skills/` 的**子目录数**(只数目录,不数散落文件)**不得低于 11**,除非某次下降由一个通过 §4.3 decision gate 的 PR 显式解释。核对命令(只数目录 → 误放的非目录文件不会掩盖被删 skill;给两种环境形态):
+   - PowerShell(Windows 主环境):`(Get-ChildItem .claude/skills -Directory).Count` ≥ 11
+   - bash / git-bash:`ls -d .claude/skills/*/ | wc -l` ≥ 11(`*/` glob 只匹配目录)
 2. **迁移留痕**:任何把 `.claude/skills/<name>/` 改写为 `.claude/workflows/<name>.js`(或为模板掏空一个 NL-skill)的 PR,必须:(a) PR body 答完 §4.3 五问;(b) 保留原 NL-skill ≥1 release 周期;(c) 走 dual-verify;(d) 在本表 §5.1/§5.2 记录迁移(基线随之更新)。
 3. **模板不夺触发词**:新增 Workflow 模板的 `meta.name` / 触发词不得遮蔽既有 skill 触发词(`dual-verify`/`pr-flow`/`autoresearch` 等),避免用户调用被静默改路由。
 4. **基线更新**:每次新增/迁移/删除 skill 或模板,**同一 PR** 内更新本节快照 + 日期,使本基线始终反映 ground truth。

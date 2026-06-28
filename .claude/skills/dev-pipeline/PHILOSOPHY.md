@@ -51,7 +51,7 @@ Three is not magic. Two is too few (one mistake, one fix, no slack). Four is too
 
 ## What it IS
 
-A 220-line markdown file that says: when a coding task is well-scoped and you want a second opinion, run it through this loop. Copy the file into any GitHub-based repository that has `.claude/agents/dev.md` and `.claude/agents/acceptance.md` defined, strip the Mercury-specific `/gh-project-flow` line out of Phase 6, and you are done.
+A 220-line markdown file that says: when a coding task is well-scoped and you want a second opinion, run it through this loop. Copy the file into any GitHub-based repository that has `.claude/agents/dev.md` and `.claude/agents/acceptance.md` defined, and you are done — Phase 6 already hands off via a portable `Closes #N` (no Mercury-specific `/gh-project-flow` step to strip).
 
 The methodology is the asset. The skill file is the artifact.
 

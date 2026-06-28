@@ -1,10 +1,21 @@
 # CMA Memory + `/responses/compact` vs Mercury mem0 — ADR
 
-> 状态: **生效中** | 制定日期: 2026-05-16 | 决策者: 392fyc (main lane S102) | Closes: [Issue #384](https://github.com/392fyc/Mercury/issues/384)
+> 状态: **已取代 (SUPERSEDED) — re-eval 2026-06-28** | 原制定: 2026-05-16 (主 lane S102) | 取代依据: mem0 已 #518 退役 (见下方 §Re-eval 2026-06-28) | Closes: [Issue #384](https://github.com/392fyc/Mercury/issues/384)
 > Parent context: [Issue #381 tech intel sweep](https://github.com/392fyc/Mercury/issues/381) + `~/.claude/projects/D--Mercury-Mercury/memory/research/tech-intel-sweep-2026-05-12.md` (user-level memory file, 不在 Mercury repo)
 > Predecessor: PR #258 (`scripts/mem0_hooks.py` 引入, Mercury #252 **Phase A** 2026-04-17 — adapter prototype; Phase B hook 接线后续 user-level 落地 per CLAUDE.md #259 governance pattern)
 >
 > **路径约定**: 本 ADR 涉及的用户级路径形式 `~/.claude/...` 等价于 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/...`, 二者可任选一种书写, env 形式在多账户 / CI 下更可移植 — 沿用 CLAUDE.md §"Related Repositories" 约定。
+
+---
+
+## Re-eval 2026-06-28 — Verdict (a) SUPERSEDED
+
+**mem0 已于 [#518](https://github.com/392fyc/Mercury/issues/518) 完全退役**(#517 瘦身审计实测空仓:Qdrant 0 行 / `history.db` 0 行,自 2026-04-18 从未写入;根因 `OPENAI_API_KEY` unset → 静默 no-op;`recall()` 零调用方)。原 Verdict (a)「mem0 + Qdrant 保持 canonical memory layer」的**前提(mem0 在用且有召回价值)已被空仓证据证伪**,故 verdict (a) 失效。
+
+- **触发机制**:原 4 个 monitor 条件(CMA non-runtime access / dreaming GA / mem0 维护成本飙升 / Mercury pivot CMA)**无一 fire**——退役由一个**未预见的新增条件**(空仓 + 从未使用)+ 用户裁定驱动,非原 ADR 预设路径。
+- **当前长期记忆 = 文件式**(无向量语义召回层):auto-memory `MEMORY.md` + `SESSION_INDEX.md` + handoff KB(Mercury_KB)+ daily-log flush。
+- **落地**:user-level runtime(#518)+ repo Phase A 原型(#521)+ CLAUDE.md(#519)+ DIRECTION.md 模块2(#520)全退役。
+- 下方原 ADR 正文**保留作历史**(2026-05-16 决策时点快照)。
 
 ---
 
