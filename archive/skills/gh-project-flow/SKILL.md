@@ -6,6 +6,8 @@ user-invocable: true
 allowed-tools: Bash, Read, Grep, Write, Edit
 ---
 
+> **ARCHIVED 2026-06-28 (#517)**: BOOTSTRAP-ONLY skill(自声明 Phase 3 退役)。Project #3 看板事实废弃(最大 issue ~#248 vs repo #521+),Mercury 现走 issue-first(Closes #N)。随 #517 做减法归档;如需恢复看板自动化可从此还原。
+
 # gh-project-flow — Bootstrap Task Management for Mercury Self-Dev
 
 > **BOOTSTRAP-ONLY**. This skill drives Mercury's *own* development task board (GitHub Project #3, owner `392fyc`). It is not a general-purpose project tracker. Mercury's vision for general dev is Memory Layer + Dev Pipeline, which arrive in Phase 3. When that ships, this skill is deprecated.

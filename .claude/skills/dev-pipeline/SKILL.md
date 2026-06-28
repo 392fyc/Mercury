@@ -278,7 +278,7 @@ Phase 6 is reached **only on `pass`**. Cleanup for non-pass terminal exits is ha
 On pass:
 1. Confirm commit is pushed (`git status`)
 2. If user requested PR: invoke `/pr-flow`
-3. Mark related GitHub Project item Done (via `/gh-project-flow` if Mercury self-dev) or via `Closes #N` in PR (general case)
+3. Mark the related GitHub Issue done — if a PR was created, its `Closes #N` auto-closes the issue on merge; otherwise close/update the issue manually.
 4. Summarize in Chinese for the user
 5. After PR merge is confirmed, run the **Phase 5 Cleanup block** as the final action (see Phase 5 above — the retry + `rm -rf` fallback logic is the SoT and is not duplicated here).
 
@@ -304,10 +304,6 @@ This skill is designed to be portable to any repository that uses GitHub + Claud
 - The target repo uses **GitHub Issues + GitHub PRs** (the protocol references `Closes #N`, `gh pr create`, and Mercury's `/pr-flow` skill — all GitHub-specific). Non-GitHub repos would need protocol adaptation.
 - The repo has a sane verifyCommands story (tests, lint, build commands that exit non-zero on failure)
 - The user is on a feature branch (not main, develop, or master)
-
-The `/gh-project-flow` reference in Phase 6 is **Mercury-specific** and should be removed or replaced when porting elsewhere — it is mentioned only because Mercury self-development uses Project #3 for task tracking.
-
-To use it elsewhere, copy this skill directory plus the two agent files, then strip the `/gh-project-flow` line from Phase 6. No other Mercury dependency.
 
 ## Known Limitations
 

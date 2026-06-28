@@ -102,7 +102,7 @@ On session start, Claude Code auto-discovers every agent under `.claude/agents/`
 
 The skills under `.claude/skills/` and sub-agents under `.claude/agents/` are **detachable** — each directory is self-contained and can be copied into another Claude Code project. Skill frontmatter lists the trigger phrases in English and Chinese. Treat the directory contents as the authoritative list; the snapshot below is current as of this writing and intentionally not a pinned count.
 
-Skills (12 at time of writing):
+Skills (11 at time of writing):
 
 | Skill | Purpose |
 |-------|---------|
@@ -115,7 +115,6 @@ Skills (12 at time of writing):
 | `systematic-debugging` | Root-cause-first debugging workflow |
 | `subagent-driven-development` | Execute a plan via fresh sub-agent per task, two-stage review |
 | `verification-before-completion` | Hard evidence-before-claims checkpoint before "done" |
-| `gh-project-flow` | GitHub Project task pull/update for Mercury's own development |
 | `animate-frames` | Pixel-frame animation pipeline (sprite sequences) via the `gpt-image-2` adapter |
 | `caveman-toggle` | Persistent concise-output mode |
 
