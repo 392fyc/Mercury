@@ -2,7 +2,7 @@
 
 > 编写日期:2026-06-30 · 范围:Claude Code 框架的语言/术语清晰度治理 · 受影响配置:用户级 `~/.claude/` + 项目级 `D:\Mercury\Mercury\.claude\`
 >
-> 关联 Issue:[#525](https://github.com/392fyc/Mercury/issues/525)(side-bug 路线) · 阶段:**仅研究,本会话未改任何配置**(GATE 在用户) · 产出方式:17 个 agent 的 Workflow(官方文档验证 → 根因诊断 → 方案对抗式核验 → 综合);三处承重事实(项目 `settings.json` 的 `language` 键、两处「仅里程碑用中文」矛盾)已由主控 agent 亲自本机复核通过
+> 关联 Issue:[#525](https://github.com/392fyc/Mercury/issues/525)(side-bug 路线) · 阶段:研究完成 → 用户批准「全做」→ **本会话已落地用户级 + 项目级改动(详见 §0)**;GATE 已通过 · 产出方式:17 个 agent 的 Workflow(官方文档验证 → 根因诊断 → 方案对抗式核验 → 综合);三处承重事实(项目 `settings.json` 的 `language` 键、两处「仅里程碑用中文」矛盾)已由主控 agent 亲自本机复核通过
 
 ---
 
@@ -22,7 +22,7 @@
 
 1. **新建用户级 output-style**:`~/.claude/output-styles/clear-chinese.md`(`keep-coding-instructions: true`),并在 `~/.claude/settings.json` 设 `"outputStyle": "clear-chinese"`。正文 = 上面的「说人话」原则 + 「黑话 → 正常说法」对照 + 正反例 + 白名单。这是系统提示层、每轮生效。
 2. **改写 `~/.claude/CLAUDE.md` §Language**:删掉量化交易翻译表与反例,换成「说人话」要点 + 「允许保留英文」白名单(文件 7984 → 6372 字节),并指向 output-style 避免重复。
-3. **消除跨文件矛盾**:项目 `CLAUDE.md` 的「Chinese for milestones」改为「所有响应都用正常清楚的中文」;`CLAUDE.local.md`(简洁模式)的里程碑例外同步改为「所有回复正常清楚中文,简洁只去客套、不牺牲可读性」。
+3. **消除跨文件矛盾**:项目 `CLAUDE.md` 的「Chinese for milestones」改为「所有面向用户的回复都用正常清楚的中文(代码 / 提交信息 / PR 正文保留英文惯例)」;`CLAUDE.local.md`(简洁模式)的里程碑例外同步改为「所有面向用户的回复正常清楚中文,简洁只去客套、不牺牲可读性」。
 4. **写入门控**:做成 output-style 与 CLAUDE.md 里的「写记忆 / handoff 时先自检黑话与精简度」行为规则,**未新增常驻钩子**——因为用户正受工具调用 / 钩子类问题困扰(见 #527),此刻加钩子的风险与时机都不好。
 5. **未做**(用户未选):清洗历史存储、每轮提醒钩子、韩日文 Stop 钩子。
 
@@ -164,13 +164,13 @@
 ### 推荐执行顺序(均为 GATE 项,改 `~/.claude/` 前须用户批准)
 
 **第 1 步(最高杠杆,最确定):消除跨文件矛盾。**
-把项目 `CLAUDE.md` 第 90 行、`CLAUDE.local.md` 第 23 行的「仅里程碑用中文」改成完整重述「所有响应均用简体中文(里程碑亦然)」。这是成本最低、确定性最高的修复——因为这两个文件加载更晚、实际胜出,当前的「窄化」很可能是失效主因之一。
+把项目 `CLAUDE.md` 第 90 行、`CLAUDE.local.md` 第 23 行的「仅里程碑用中文」改成完整重述「所有面向用户的回复均用正常清楚的简体中文(里程碑亦然;代码 / 提交信息 / PR 正文保留英文惯例)」。这是成本最低、确定性最高的修复——因为这两个文件加载更晚、实际胜出,当前的「窄化」很可能是失效主因之一。
 
 **第 2 步(最高杠杆,治本):清洗自动载入存储 + 加写入门控。**
 备份后把 `MEMORY.md` / `LANES.md` / 当前活跃 handoff 文档改写成清楚中文,让「事实上的示范范例」从反面转正面;给「写记忆/写 handoff」这一步加写入期检查(可选 Stop 钩子做黑话密度自检),切断「黑话回写→下轮镜像→再写黑话」的闭环。注意:`MEMORY.md` 非 git 管理、删改不可逆,**必须先备份**。
 
 **第 3 步(次高杠杆,承载术语词表):新建用户级 output-style「清晰中文」。**
-新建 `~/.claude/output-styles/chinese-clear.md`(建议用 ASCII 文件名避免兼容问题,frontmatter `name` 写中文),`keep-coding-instructions: true`,正文放:① 铁律「始终用简体中文」;② 英文白名单(代码标识符/路径/命令/专名/ticker/数学符号/行业缩写);③ harness 领域术语小词表(escape-hatch→应急绕过通道、nit-loop→挑刺循环、advisory→仅建议-非阻断、stale→失效、retire→退役、cherry-pick→摘取、carve-out→豁免条款、fan-out→扇出);④「先中文后括号附英文(仅首次)」格式;⑤ 3–5 个正例对照;⑥ 显式作用域声明。这一层承载 `language` 键做不到的术语翻译 + 格式,是 output-style 的不可替代价值(**不是**当语言锁用)。
+新建 `~/.claude/output-styles/clear-chinese.md`(建议用 ASCII 文件名避免兼容问题,frontmatter `name` 写中文),`keep-coding-instructions: true`,正文放:① 铁律「始终用简体中文」;② 英文白名单(代码标识符/路径/命令/专名/ticker/数学符号/行业缩写);③ harness 领域术语小词表(escape-hatch→应急绕过通道、nit-loop→挑刺循环、advisory→仅建议-非阻断、stale→失效、retire→退役、cherry-pick→摘取、carve-out→豁免条款、fan-out→扇出);④「先中文后括号附英文(仅首次)」格式;⑤ 3–5 个正例对照;⑥ 显式作用域声明。这一层承载 `language` 键做不到的术语翻译 + 格式,是 output-style 的不可替代价值(**不是**当语言锁用)。
 
 **第 4 步(同上,内容修复):重构 §Language 词表。**
 把 `~/.claude/CLAUDE.md` 的量化交易词表/反例换成 harness 领域正例(与第 3 步词表保持同向),精简冗长禁止表,显式声明作用域。**不做「前移」**(已无空间且无官方背书)。注意 USER:START 区可能被 `--force` 覆盖,改前备份并在 auto-memory `feedback_terminology_handoff.md` 回引。
@@ -184,6 +184,8 @@ UserPromptSubmit 钩子(与现有 keyword-detector 并存)每轮注入一行清�
 
 ## 7. 可度量的「说人话」标准
 
+> ⚠ 本节为原始研究版本。英文计数类指标已按 §0 修正:**英文本身不计扣分**,只计「网络黑话 / 内部简写」(中英都算);常见英文专名 / 术语(deploy、scope、API…)属正常表达、不算黑话。下表读作「原始草案 + 本修正」,以 §0 的再定义为准。
+>
 > 一份可检验的量化清单——既是「方案是否真生效」的裁定依据,也可部分写成脚本机械判定。
 
 对一段输出(排除代码块、行内代码、错误原文引用、PR 正文)逐条核验:
@@ -191,8 +193,8 @@ UserPromptSubmit 钩子(与现有 keyword-detector 并存)每轮注入一行清�
 | 维度 | 量化阈值 | 检测方式 |
 |------|---------|---------|
 | 韩文/日文字符 | 必须 = 0(硬性) | Unicode 区间:谚文 U+AC00–U+D7AF、平假名 U+3040–U+309F、片假名 U+30A0–U+30FF |
-| 每 100 汉字内「未翻译且有中文对应的英文术语」 | ≤ 2 | 统计夹在中文里的拉丁词,扣除白名单 |
-| 黑名单核心词出现 | = 0 | deploy/baseline/validate/scope/advisory/stale/retire/cherry-pick/carve-out/fan-out/escape-hatch/nit-loop 等 |
+| 网络黑话 / 内部简写密度(中英都算) | 每段 ≤ 1 | 统计英文复合简写(nit-loop、escape-hatch、soak)+ 中文圈内话(做减法、止血、钉死、兜底);**正常英文专名 / 术语不计** |
+| 高频黑话出现 | = 0 | 仅指**圈内简写**:英文复合简写(escape-hatch、nit-loop、carve-out、fan-out 等)+ 中文网络语(做减法、止血、钉死);**deploy / scope / baseline 等常见英文词不算黑话、不计** |
 | 首次出现的非白名单英文术语 | 必须「先中文后括号附英文」 | 该术语左侧应有中文释义,后续只用中文 |
 | 技术叙述单句长度 | 建议 6–60 字 | 避免电报式极简(简洁模式不豁免翻译展开) |
 | 作用域声明 | 规则文本含「所有响应/所有领域/每段/含 caveman」 | 对治 Opus 4.8 不自动外推 |
@@ -210,7 +212,7 @@ UserPromptSubmit 钩子(与现有 keyword-detector 并存)每轮注入一行清�
 - `cp "$CC/CLAUDE.md" "$CC/CLAUDE.md.backup-pre-lang-refactor"`
 - `MEMORY.md` 非 git、删改不可逆,改前务必单独备份其目录(`~/.claude/projects/D--Mercury-Mercury/memory/`)。
 
-**命令清单(GATE 后执行)**:① `mkdir -p ~/.claude/output-styles` + 写 chinese-clear.md;② 编辑用户 CLAUDE.md §Language;③ git 改项目 CLAUDE.md / CLAUDE.local.md(走 PR);④ 备份后清洗 MEMORY.md/LANES.md/handoff;⑤ 可选:写钩子脚本 + 在 settings.json UserPromptSubmit/Stop 数组追加 group。
+**命令清单(GATE 后执行)**:① `mkdir -p ~/.claude/output-styles` + 写 clear-chinese.md;② 编辑用户 CLAUDE.md §Language;③ git 改项目 CLAUDE.md / CLAUDE.local.md(走 PR);④ 备份后清洗 MEMORY.md/LANES.md/handoff;⑤ 可选:写钩子脚本 + 在 settings.json UserPromptSubmit/Stop 数组追加 group。
 
 **验证清单(全部通过才算成功)**:
 1. `python -c "import json,os; json.load(open(os.path.expandvars('$CC/settings.json')))"` JSON 合法;
@@ -220,7 +222,7 @@ UserPromptSubmit 钩子(与现有 keyword-detector 并存)每轮注入一行清�
 5. 故意写一句日文测 Stop 钩子是否 block(若启用)。
 
 **回滚通道**:
-- output-style:删 `~/.claude/output-styles/chinese-clear.md` 或把 settings 的 `outputStyle` 改回 Default,`/clear` 生效;
+- output-style:删 `~/.claude/output-styles/clear-chinese.md` 或把 settings 的 `outputStyle` 改回 Default,`/clear` 生效;
 - settings/钩子:`mv` 回 `.backup-pre-lang`;
 - 项目 CLAUDE.md/CLAUDE.local.md:`git revert`;
 - 用户 CLAUDE.md:恢复 `.backup-pre-lang-refactor`(注意 `omc-setup --global --force` 可能 clobber USER 区,备份是唯一保险);
