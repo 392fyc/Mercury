@@ -174,8 +174,8 @@ def main(argv: list[str] | None = None) -> int:
             out_paths = []
             for i, frame in enumerate(frames):
                 b64 = (frame or {}).get("base64")
-                if not b64:
-                    sys.stderr.write(f"error: animate frame {i} missing base64\n")
+                if not isinstance(b64, str) or not b64:
+                    sys.stderr.write(f"error: animate frame {i} missing/invalid base64\n")
                     return 1
                 fp = a.out_dir / f"frame_{i:02d}.png"
                 _write_png(b64, fp)
@@ -183,8 +183,8 @@ def main(argv: list[str] | None = None) -> int:
             summary = {"endpoint": "animate", "out_dir": str(a.out_dir), "frames": out_paths, "n_frames": len(out_paths), "size": [w, h], "usd": usd}
         else:
             b64 = (data.get("image") or {}).get("base64")
-            if not b64:
-                sys.stderr.write(f"error: {a.endpoint} response missing image.base64\n")
+            if not isinstance(b64, str) or not b64:
+                sys.stderr.write(f"error: {a.endpoint} response missing/invalid image.base64\n")
                 return 1
             _write_png(b64, a.out)
             summary = {"endpoint": a.endpoint, "out": str(a.out), "size": [w, h], "usd": usd}

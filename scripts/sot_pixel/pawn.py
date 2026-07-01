@@ -23,8 +23,10 @@ from scripts.image_gen.verify import VerifyConfig, verify_frames
 from . import godot_import, pack, postprocess
 
 # The SoT SpriteFrames animation name set (scenes/tactical/Unit.tscn).
-SOT_ANIMS = ["idle", "walk_south", "walk_north", "walk_east", "walk_west",
-             "hurt", "death"]
+# Tuple (immutable) so it is a safe default-argument value — a mutable list
+# default would risk implicit shared state across calls.
+SOT_ANIMS = ("idle", "walk_south", "walk_north", "walk_east", "walk_west",
+             "hurt", "death")
 SOT_FPS = 8.0
 # Frames requested per walk cycle when --animate-walk is on. PixelLab
 # animate-with-text accepts 2-20 (default 4); we request it EXPLICITLY so
@@ -123,7 +125,7 @@ def _build_animate_argv(adapter: Path, desc: str, out_subdir: Path,
 def generate_pawn(bible: CharacterBible, out_dir: Path, *,
                   name: str | None = None, size: int = 64,
                   ref: Path | None = None, backend: str = "pixflux",
-                  animations: list[str] = SOT_ANIMS,
+                  animations: tuple[str, ...] = SOT_ANIMS,
                   animate_walk: bool = False, quantize: bool = False,
                   max_palette: int = 256,
                   dry_run: bool = False, seed: int | None = None) -> dict:
