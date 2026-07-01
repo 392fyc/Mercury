@@ -62,7 +62,9 @@
 #      <memory-dir>/INDEX.generated.md snapshot
 #   2  invalid args / memory dir missing / SESSION_INDEX.md or MEMORY.md missing /
 #      output write failure (disk full / permission denied / parent dir missing) /
-#      --in-place + --output | --format diff combined (mutually exclusive)
+#      --in-place + --output | --format diff combined (mutually exclusive) /
+#      --in-place canonical file (SESSION_INDEX.md or MEMORY.md) is a symlink
+#      (Issue #516 symlink-hijack guard)
 
 set -u
 
@@ -94,7 +96,7 @@ while [ $# -gt 0 ]; do
     --in-place)   IN_PLACE=1; shift ;;
     -h|--help)
       # Print full Usage + Exit-codes block (must keep this end line in sync if header grows).
-      sed -n '2,57p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '2,67p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     -*) die "unknown flag: $1" ;;
     *)  die "unexpected positional argument: $1" ;;
@@ -620,6 +622,31 @@ if [ "$IN_PLACE" = "1" ]; then
   ROWS_TMP=$(mktemp "${TMPDIR:-/tmp}/regen-memidx.XXXXXX")    || die "mktemp failed (rows tmp)"
   POINTER_TMP=$(mktemp "${TMPDIR:-/tmp}/regen-memidx.XXXXXX") || die "mktemp failed (pointer tmp)"
   trap 'rm -f "$TMPFILE" "$TMPSEEN" "$ROWS_TMP" "$POINTER_TMP"' EXIT
+
+  # Symlink guard (Issue #516 hardening, defense-in-depth). Runs before the
+  # backup loop (which does `cp`) and before the splice functions (which do
+  # `mv`), so a hijacked canonical path never reaches either. Mirrors the
+  # existing symlink posture already applied to sessions/ (Pass 1, `[ -L ]`
+  # skip above) and the SAFE_MEMORY_DIR frontmatter sanitization — same
+  # threat family (a canonical file replaced by a symlink pointing outside
+  # the memory dir), applied to the two --in-place mutation targets.
+  #
+  # A `realpath $canonical` still-under-$MEMORY_DIR prefix check was
+  # considered (per the original issue wording) but deliberately NOT
+  # implemented: SESSION_INDEX_FILE / MEMORY_FILE are always constructed as
+  # "$MEMORY_DIR/<fixed-basename>" earlier in this script, so once a
+  # canonical path has passed the `[ -L ]` check below, `dirname "$canonical"`
+  # is by construction the same directory `cd` target as `$MEMORY_DIR` itself
+  # — the prefix comparison can never fail. Adding it would be dead code that
+  # only misleads readers into believing there is a second, independent
+  # protection layer. The `[ -L ]` symlink rejection is the sole and complete
+  # protection here: it is unreachable for cp/mv to follow a link outside the
+  # tree once every symlinked canonical path is refused outright.
+  for canonical in "$SESSION_INDEX_FILE" "$MEMORY_FILE"; do
+    if [ -L "$canonical" ]; then
+      die "refuse to mutate symlinked canonical file: $canonical (Issue #516 symlink-hijack guard)"
+    fi
+  done
 
   # First-run safety: backup canonical files before mutation. Operators recover via
   # `cp <file>.pre-cutover.bak <file>` if cutover output drifts from expectation.

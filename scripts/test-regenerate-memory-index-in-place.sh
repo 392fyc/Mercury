@@ -499,6 +499,65 @@ run_case "asymmetric_markers_detected" bash "$SCRIPT" --memory-dir "$M22" --in-p
 assert_rc "asymmetric_markers_rc" 2
 assert_err_contains "asymmetric_markers_msg" "splice verification failed"
 
+# --- Test 23/24: Issue #516 — symlink-hijack guard ---
+#
+# can_symlink() probes whether this environment can create symlinks at all.
+# Windows/git-bash frequently lacks the privilege (non-elevated shells, dev-mode
+# off) — `ln -s` fails silently or with a permission error. Rather than FAIL in
+# that case (which would be a false-negative on environments that simply can't
+# exercise the feature), these cases SKIP with a printed explanation and do NOT
+# count toward FAIL. These cases cover the symlink-hijack hard rejection — the
+# real, sole protection implemented for Issue #516. A separate realpath-prefix
+# check (canonical realpath still under --memory-dir realpath) was considered
+# per the original issue wording but removed as dead code: SESSION_INDEX_FILE /
+# MEMORY_FILE are always "$MEMORY_DIR/<fixed-basename>", so once a symlinked
+# canonical path is excluded via `[ -L ]`, that prefix comparison can never
+# fail — there is no realistic non-symlink fixture that would exercise it.
+can_symlink() {
+  local probe_dir probe_target probe_link
+  probe_dir=$(mktemp -d "${TMPDIR:-/tmp}/regen-memidx-symprobe.XXXXXX") || return 1
+  probe_target="$probe_dir/target"
+  probe_link="$probe_dir/link"
+  printf 'probe' > "$probe_target"
+  if ln -s "$probe_target" "$probe_link" 2>/dev/null && [ -L "$probe_link" ]; then
+    rm -rf "$probe_dir"
+    return 0
+  fi
+  rm -rf "$probe_dir"
+  return 1
+}
+
+if can_symlink; then
+  # --- Test 23: symlinked MEMORY.md refused; out-of-tree target left untouched ---
+  M23=$(mk_memdir "symlink-hijack-memory")
+  write_session_index "$M23" '| S1 | 2026-01-01 | t | o | — |'
+  write_session_file "$M23" "S1.md" "theme1" "out1"
+  OUTSIDE23="$TEST_ROOT/symlink-hijack-memory-OUTSIDE-target.md"
+  printf 'SENTINEL: outside-tree content, must not be mutated\n' > "$OUTSIDE23"
+  rm -f "$M23/MEMORY.md"
+  ln -s "$OUTSIDE23" "$M23/MEMORY.md"
+  run_case "symlink_hijack_memory_rejected" bash "$SCRIPT" --memory-dir "$M23" --in-place
+  assert_rc "symlink_hijack_memory_rc" 2
+  assert_err_contains "symlink_hijack_memory_msg" "refuse to mutate symlinked canonical file"
+  assert_file_contains "symlink_hijack_memory_sentinel_intact" "$OUTSIDE23" "SENTINEL: outside-tree content, must not be mutated"
+  assert_file_NOT_contains "symlink_hijack_memory_not_written" "$OUTSIDE23" "BEGIN: scripts/regenerate-memory-index.sh"
+
+  # --- Test 24: symlinked SESSION_INDEX.md refused; out-of-tree target left untouched ---
+  M24=$(mk_memdir "symlink-hijack-session-index")
+  write_memory_md "$M24" '- placeholder'
+  write_session_file "$M24" "S1.md" "theme1" "out1"
+  OUTSIDE24="$TEST_ROOT/symlink-hijack-session-index-OUTSIDE-target.md"
+  printf 'SENTINEL: outside-tree content, must not be mutated\n' > "$OUTSIDE24"
+  ln -s "$OUTSIDE24" "$M24/SESSION_INDEX.md"
+  run_case "symlink_hijack_session_index_rejected" bash "$SCRIPT" --memory-dir "$M24" --in-place
+  assert_rc "symlink_hijack_session_index_rc" 2
+  assert_err_contains "symlink_hijack_session_index_msg" "refuse to mutate symlinked canonical file"
+  assert_file_contains "symlink_hijack_session_index_sentinel_intact" "$OUTSIDE24" "SENTINEL: outside-tree content, must not be mutated"
+  assert_file_NOT_contains "symlink_hijack_session_index_not_written" "$OUTSIDE24" "BEGIN: scripts/regenerate-memory-index.sh"
+else
+  printf 'SKIP: Test 23/24 (Issue #516 symlink-hijack guard) — this environment cannot create symlinks (ln -s failed; likely non-elevated Windows/git-bash without symlink privilege). Not counted as FAIL.\n' >&2
+fi
+
 # --- Final report ---
 printf '\n=== regenerate-memory-index --in-place test summary ===\n'
 printf 'cases: %d  assertions: %d  fail: %d\n' "$CASES" "$PASS" "$FAIL"
