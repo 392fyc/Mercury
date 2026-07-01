@@ -329,11 +329,24 @@ def test_pawn_view_and_animate_direction_per_command() -> None:
             seen.add(direction)
         assert seen == {"north", "south", "east", "west"}, seen
 
-        # Every static frame also carries the overridden view + a direction.
+        # Every static frame carries the overridden view AND a direction
+        # that matches its own animation (walk_<dir> -> <dir>; idle / hurt /
+        # death -> south). This mirrors the animate check on the DEFAULT
+        # (non --animate-walk) path, so a regression hardcoding one
+        # direction for all static frames is caught too.
+        static_dirs: set[str] = set()
         for argv in static_cmds:
             opts = _opt_pairs(argv)
             assert opts.get("view") == "low top-down", argv
-            assert "direction" in opts, argv
+            stem = Path(argv[argv.index("--out") + 1]).name  # walk_north_00.png
+            if stem.startswith("walk_"):
+                expected = stem[len("walk_"):].split("_", 1)[0]
+            else:
+                expected = "south"  # idle / hurt / death face south
+            assert opts.get("direction") == expected, (stem, opts, expected)
+            static_dirs.add(opts["direction"])
+        # the four cardinal walk directions all appear among static frames
+        assert {"north", "south", "east", "west"} <= static_dirs, static_dirs
     print("PASS test_pawn_view_and_animate_direction_per_command")
 
 
