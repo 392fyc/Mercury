@@ -87,7 +87,7 @@ Mercury 的部分功能跨仓库运作。以下表格记录外部仓库与 Mercu
 - **Commit at every checkpoint**: every milestone must be committed and pushed.
 - **Dual-verify before commit**: every milestone must pass `/dual-verify` (parallel Claude Code deep-review + Codex code-audit) before committing. Do not use `/auto-verify` alone as the pre-commit gate.
 - **Web search before SDK/API code**: before writing ANY code that imports an external SDK, references an API signature, or claims a package version, you MUST use WebSearch/WebFetch to verify against the vendor's official documentation. GitHub source code alone is NOT sufficient. If verification is not possible, mark claims as UNVERIFIED.
-- **Chinese for milestones**: return milestone completion messages in Chinese.
+- **Chinese for all user-facing responses (normal, clear)**: reply to the user in clear, normal Simplified Chinese for everything — milestones included, not only completion messages. Use plain, complete sentences; avoid cryptic jargon and internet slang (English shorthand or Chinese alike). Keeping English proper nouns / commands / technical terms is fine — the test is reader comprehension, not absence of English. Code, commit messages, and PR bodies keep their own conventions (English where established). Detailed style rules live in the user-level `clear-chinese` output style.
 - **PR to develop**: all code merges into develop must go through a PR. Direct push to develop is forbidden.
 - **Install to D drive**: install software to `D:\Program Files`, not C drive.
 - **Modular design**: every new feature must be independently detachable. If it cannot be used outside Mercury, the coupling is too deep.
