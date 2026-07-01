@@ -33,8 +33,7 @@ DEFAULT_TOKEN_ENV = "PIXELLAB_API_TOKEN"
 
 def _load_token(env_name: str) -> str | None:
     """Token from env, falling back to a minimal repo-root .env parse."""
-    val = os.environ.get(env_name)
-    if val:
+    if (val := os.environ.get(env_name)):
         return val
     env_file = Path(__file__).resolve().parents[2] / ".env"
     if env_file.is_file():
@@ -50,7 +49,6 @@ def _load_token(env_name: str) -> str | None:
 def _b64_image(path: str, width: int, height: int) -> dict:
     """Resize to exactly WxH (NEAREST), return Base64Image (type 'base64')."""
     from PIL import Image  # lazy: only when a reference image is supplied
-
     with Image.open(path) as im:
         im = im.convert("RGBA")
         if im.size != (width, height):
@@ -167,29 +165,32 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.write(f"error: {a.endpoint} returned non-JSON body\n")
         return 1
     usd = (data.get("usage") or {}).get("usd")
-    if a.endpoint == "animate":
-        frames = data.get("images")
-        if not isinstance(frames, list) or not frames:
-            sys.stderr.write("error: animate response missing 'images' array\n")
-            return 1
-        out_paths = []
-        for i, frame in enumerate(frames):
-            b64 = (frame or {}).get("base64")
-            if not b64:
-                sys.stderr.write(f"error: animate frame {i} missing base64\n")
+    try:
+        if a.endpoint == "animate":
+            frames = data.get("images")
+            if not isinstance(frames, list) or not frames:
+                sys.stderr.write("error: animate response missing 'images' array\n")
                 return 1
-            fp = a.out_dir / f"frame_{i:02d}.png"
-            _write_png(b64, fp)
-            out_paths.append(str(fp))
-        summary = {"endpoint": "animate", "out_dir": str(a.out_dir), "frames": out_paths,
-                   "n_frames": len(out_paths), "size": [w, h], "usd": usd}
-    else:
-        b64 = (data.get("image") or {}).get("base64")
-        if not b64:
-            sys.stderr.write(f"error: {a.endpoint} response missing image.base64\n")
-            return 1
-        _write_png(b64, a.out)
-        summary = {"endpoint": a.endpoint, "out": str(a.out), "size": [w, h], "usd": usd}
+            out_paths = []
+            for i, frame in enumerate(frames):
+                b64 = (frame or {}).get("base64")
+                if not b64:
+                    sys.stderr.write(f"error: animate frame {i} missing base64\n")
+                    return 1
+                fp = a.out_dir / f"frame_{i:02d}.png"
+                _write_png(b64, fp)
+                out_paths.append(str(fp))
+            summary = {"endpoint": "animate", "out_dir": str(a.out_dir), "frames": out_paths, "n_frames": len(out_paths), "size": [w, h], "usd": usd}
+        else:
+            b64 = (data.get("image") or {}).get("base64")
+            if not b64:
+                sys.stderr.write(f"error: {a.endpoint} response missing image.base64\n")
+                return 1
+            _write_png(b64, a.out)
+            summary = {"endpoint": a.endpoint, "out": str(a.out), "size": [w, h], "usd": usd}
+    except (ValueError, OSError) as exc:  # b64 decode (binascii=ValueError) / PNG write (OSError)
+        sys.stderr.write(f"error: {a.endpoint} failed to decode/write PNG: {exc}\n")
+        return 1
     json.dump(summary, sys.stdout, indent=2)
     sys.stdout.write("\n")
     return 0

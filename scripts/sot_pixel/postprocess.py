@@ -79,7 +79,20 @@ def quantize_and_pack(groups: dict[str, list[Path]], out_sheet: Path,
     out_sheet.parent.mkdir(parents=True, exist_ok=True)
     json_out = out_sheet.with_suffix(".json")
     tagged_ase = out_sheet.with_name(out_sheet.stem + "_tagged.ase")
-    frames_csv = ",".join(str(p.resolve()) for p in ordered)
+    # The Lua receives frames/tags as comma/semicolon-joined strings, so a
+    # path containing ',' or a tag name containing ';' would corrupt parsing.
+    # Detect and graceful-skip to the pure-Python packer rather than emit a
+    # silently mis-split sheet. (Pawn-lane names come from SOT_ANIMS and are
+    # separator-free; this guards a user-supplied out_dir / future callers.)
+    resolved = [str(p.resolve()) for p in ordered]
+    if any("," in p for p in resolved) or any(";" in t for t in tag_specs):
+        sys.stderr.write(
+            "advisory: a frame path contains ',' or a tag contains ';' — "
+            "cannot safely pass to the Aseprite Lua; falling back to the "
+            "pure-Python packer\n"
+        )
+        return None
+    frames_csv = ",".join(resolved)
     tags_param = ";".join(tag_specs)
 
     step1 = [
