@@ -63,9 +63,8 @@
 #   2  invalid args / memory dir missing / SESSION_INDEX.md or MEMORY.md missing /
 #      output write failure (disk full / permission denied / parent dir missing) /
 #      --in-place + --output | --format diff combined (mutually exclusive) /
-#      --in-place canonical file (SESSION_INDEX.md or MEMORY.md) is a symlink, OR
-#      its realpath resolves outside the --memory-dir realpath (Issue #516
-#      symlink-hijack / realpath-ownership guard)
+#      --in-place canonical file (SESSION_INDEX.md or MEMORY.md) is a symlink
+#      (Issue #516 symlink-hijack guard)
 
 set -u
 
@@ -97,7 +96,7 @@ while [ $# -gt 0 ]; do
     --in-place)   IN_PLACE=1; shift ;;
     -h|--help)
       # Print full Usage + Exit-codes block (must keep this end line in sync if header grows).
-      sed -n '2,68p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '2,67p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     -*) die "unknown flag: $1" ;;
     *)  die "unexpected positional argument: $1" ;;
@@ -624,34 +623,29 @@ if [ "$IN_PLACE" = "1" ]; then
   POINTER_TMP=$(mktemp "${TMPDIR:-/tmp}/regen-memidx.XXXXXX") || die "mktemp failed (pointer tmp)"
   trap 'rm -f "$TMPFILE" "$TMPSEEN" "$ROWS_TMP" "$POINTER_TMP"' EXIT
 
-  # Realpath ownership + symlink guard (Issue #516 hardening, defense-in-depth).
-  # Runs before the backup loop (which does `cp`) and before the splice functions
-  # (which do `mv`), so a hijacked canonical path never reaches either. Mirrors the
-  # existing symlink posture already applied to sessions/ (Pass 1, `[ -L ]` skip
-  # above) and the SAFE_MEMORY_DIR frontmatter sanitization — same threat family
-  # (a canonical file replaced by a symlink, or an operator-supplied --memory-dir
-  # that resolves outside its own tree), applied to the two --in-place mutation
-  # targets. Not relying on `realpath`/`readlink -f` — neither is guaranteed on
-  # macOS/BSD without coreutils, and this script targets git-bash/Linux/macOS
-  # alike; `cd ... && pwd -P` is POSIX-portable and resolves symlinks in the
-  # directory chain.
-  MEM_DIR_REAL=$(cd "$MEMORY_DIR" && pwd -P) || die "failed to resolve realpath of memory dir: $MEMORY_DIR"
+  # Symlink guard (Issue #516 hardening, defense-in-depth). Runs before the
+  # backup loop (which does `cp`) and before the splice functions (which do
+  # `mv`), so a hijacked canonical path never reaches either. Mirrors the
+  # existing symlink posture already applied to sessions/ (Pass 1, `[ -L ]`
+  # skip above) and the SAFE_MEMORY_DIR frontmatter sanitization — same
+  # threat family (a canonical file replaced by a symlink pointing outside
+  # the memory dir), applied to the two --in-place mutation targets.
+  #
+  # A `realpath $canonical` still-under-$MEMORY_DIR prefix check was
+  # considered (per the original issue wording) but deliberately NOT
+  # implemented: SESSION_INDEX_FILE / MEMORY_FILE are always constructed as
+  # "$MEMORY_DIR/<fixed-basename>" earlier in this script, so once a
+  # canonical path has passed the `[ -L ]` check below, `dirname "$canonical"`
+  # is by construction the same directory `cd` target as `$MEMORY_DIR` itself
+  # — the prefix comparison can never fail. Adding it would be dead code that
+  # only misleads readers into believing there is a second, independent
+  # protection layer. The `[ -L ]` symlink rejection is the sole and complete
+  # protection here: it is unreachable for cp/mv to follow a link outside the
+  # tree once every symlinked canonical path is refused outright.
   for canonical in "$SESSION_INDEX_FILE" "$MEMORY_FILE"; do
-    # Primary guard: refuse outright if the canonical path itself is a symlink.
-    # This is the direct hit for the symlink-hijack scenario — cp/mv would
-    # otherwise follow the link and mutate whatever it points to.
     if [ -L "$canonical" ]; then
       die "refuse to mutate symlinked canonical file: $canonical (Issue #516 symlink-hijack guard)"
     fi
-    # Secondary guard: confirm the (non-symlink) canonical path's realpath still
-    # lives under the memory dir's realpath. Catches a --memory-dir argument
-    # that resolves outside its own tree via a symlinked ancestor directory.
-    canonical_parent_real=$(cd "$(dirname "$canonical")" && pwd -P) || die "failed to resolve realpath of parent dir for: $canonical"
-    canonical_real="$canonical_parent_real/$(basename "$canonical")"
-    case "$canonical_real" in
-      "$MEM_DIR_REAL"/*) ;;
-      *) die "refuse to mutate canonical file outside memory dir: $canonical resolves to $canonical_real (expected under $MEM_DIR_REAL) (Issue #516 realpath-ownership guard)" ;;
-    esac
   done
 
   # First-run safety: backup canonical files before mutation. Operators recover via

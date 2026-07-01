@@ -499,19 +499,20 @@ run_case "asymmetric_markers_detected" bash "$SCRIPT" --memory-dir "$M22" --in-p
 assert_rc "asymmetric_markers_rc" 2
 assert_err_contains "asymmetric_markers_msg" "splice verification failed"
 
-# --- Test 23/24: Issue #516 — realpath ownership + symlink guard ---
+# --- Test 23/24: Issue #516 — symlink-hijack guard ---
 #
 # can_symlink() probes whether this environment can create symlinks at all.
 # Windows/git-bash frequently lacks the privilege (non-elevated shells, dev-mode
 # off) — `ln -s` fails silently or with a permission error. Rather than FAIL in
 # that case (which would be a false-negative on environments that simply can't
 # exercise the feature), these cases SKIP with a printed explanation and do NOT
-# count toward FAIL. Note: because SESSION_INDEX_FILE / MEMORY_FILE are always
-# derived as "$MEMORY_DIR/<fixed-basename>", the only way a canonical path can
-# resolve outside the memory dir is via a symlink — the "non-symlink but
-# out-of-tree" case cannot be constructed as a realistic fixture under this
-# script's own path-derivation logic, so the symlink cases below are the
-# complete coverage for the realpath-ownership guard added in this Issue.
+# count toward FAIL. These cases cover the symlink-hijack hard rejection — the
+# real, sole protection implemented for Issue #516. A separate realpath-prefix
+# check (canonical realpath still under --memory-dir realpath) was considered
+# per the original issue wording but removed as dead code: SESSION_INDEX_FILE /
+# MEMORY_FILE are always "$MEMORY_DIR/<fixed-basename>", so once a symlinked
+# canonical path is excluded via `[ -L ]`, that prefix comparison can never
+# fail — there is no realistic non-symlink fixture that would exercise it.
 can_symlink() {
   local probe_dir probe_target probe_link
   probe_dir=$(mktemp -d "${TMPDIR:-/tmp}/regen-memidx-symprobe.XXXXXX") || return 1
