@@ -134,8 +134,16 @@ def _run_single_image(args: argparse.Namespace, bible: CharacterBible,
                          "is missing\n")
         return 1
 
-    # Verify dimensions only — HD assets are not palette-gated.
-    from PIL import Image
+    # Verify dimensions only — HD assets are not palette-gated. Pillow is a
+    # hard dependency for the single-image lane's verify/quantize; guard the
+    # import so a missing install surfaces the adapter's 0/1/2 error contract
+    # (exit 1 + guidance) instead of a raw ImportError traceback.
+    try:
+        from PIL import Image
+    except ImportError:
+        sys.stderr.write("error: Pillow is required for single-image "
+                         "verify/quantize (pip install Pillow)\n")
+        return 1
     with Image.open(out_path) as img:
         actual = img.size
     expected = _parse_size(preset.size)
