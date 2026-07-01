@@ -259,7 +259,40 @@ def test_pawn_dry_run_plan() -> None:
         assert "--init-image" in flat
         assert "--width" in flat and "64" in flat
         assert "knight_ref.png" in flat
+        # view defaults to high top-down and reaches every static frame's
+        # argv (one --opt view pair per animation).
+        assert report["view"] == "high top-down"
+        assert "high top-down" in flat
+        assert flat.count('"view"') >= len(report["animations"])
     print("PASS test_pawn_dry_run_plan")
+
+
+def test_pawn_view_override_and_animate_direction() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        bible_path = _write_bible(tmp_path)
+        out_dir = tmp_path / "out"
+        proc = subprocess.run(
+            [sys.executable, "-m", "scripts.sot_pixel",
+             "--asset", "pawn", "--bible", str(bible_path),
+             "--out-dir", str(out_dir), "--view", "side",
+             "--animate-walk", "--dry-run"],
+            capture_output=True, text=True, cwd=ROOT,
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert not out_dir.exists(), "pawn dry-run created files"
+        report = json.loads(proc.stdout)
+        assert report["view"] == "side"
+        flat = json.dumps(report["planned_commands"])
+        # override reaches the argv; the default is fully replaced
+        assert "side" in flat
+        assert "high top-down" not in flat
+        # animate-walk cycles are planned and each argv now carries an
+        # explicit direction + view pair (animate-with-text otherwise
+        # defaults to direction=east / view=side regardless of reference).
+        assert '"animate"' in flat
+        assert flat.count('"view"') == flat.count('"direction"')
+    print("PASS test_pawn_view_override_and_animate_direction")
 
 
 def main() -> int:
@@ -271,6 +304,7 @@ def main() -> int:
     test_presets_build_gpt_args()
     test_aseprite_graceful_skip()
     test_pawn_dry_run_plan()
+    test_pawn_view_override_and_animate_direction()
     print("ALL SMOKE PASS")
     return 0
 

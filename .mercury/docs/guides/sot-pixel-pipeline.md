@@ -222,6 +222,20 @@ Phase-0 samples are at `D:\ShipOfTheseus\resource\mercury-playground\`
   ```
 - `--animate-walk` generates walk-direction frames in addition to idle
   and hurt / death, producing the full 7-animation set.
+- `--view {side | low top-down | high top-down}` sets the PixelLab camera
+  pitch (default **high top-down**). This is what makes `walk_north` /
+  `walk_south` / `walk_east` / `walk_west` read as four *distinct* facings
+  on a top-down board. Under the API's `side` (sidescroller) default,
+  north and south collapse into near-identical camera-facing frames — the
+  pawn keeps facing the viewer regardless of `direction`. `high top-down`
+  turns `walk_north` into a true back view and `walk_south` into a
+  front view (A/B/C verified 2026-07-02; PixelLab
+  [`docs/options/character`](https://www.pixellab.ai/docs/options/character)
+  recommends high top-down for 4-direction board units). The same
+  `view` + `direction` pair is now passed on the `animate-with-text` walk
+  cycles too, so `--animate-walk` frames follow the requested facing
+  instead of the API's `east`/`side` defaults. Pass `--view side` only
+  for a genuine sidescroller unit.
 - `no_background=True` is set by default (PixelLab supports transparent
   background; the packer composites onto a checkerboard for preview).
 - PixelLab `animate-with-text` is capped at **64×64** output (verified
@@ -395,6 +409,7 @@ character set. Well within the $30 one-time budget validated in the ADR.
 | `error: Pillow not installed` | Missing required dep | `pip install Pillow requests` |
 | PixelLab pydantic error in logs | SDK v1.0.5 `Usage` model bug | Adapter uses REST direct; this is handled — image was generated; check `outputs.sheet` path |
 | `passed=false`, `dimension_uniformity` | Pawn ref image size mismatch | PixelLab requires `init_image` == output size; resize reference to 64×64 before passing |
+| Pawn `walk_north` / `walk_south` look identical (weak facing) | `view` left at PixelLab's `side` (sidescroller) default | pass `--view "high top-down"` — now the default; `side` collapses N/S into camera-facing frames (verified A/B/C 2026-07-02) |
 | Aseprite pass silently skipped | `aseprite` not on PATH | Install Aseprite / LibreSprite or accept the pure-Python packer fallback; the pawn report's `quantized` stays `false` and an advisory is written to stderr |
 | Cut-in has UI overlays or text | Missing "no UI/no text" suffix | Confirm `--asset cutin` (suffix is auto-applied); do not pass competing `--scene` text that re-introduces UI |
 | `.tres` animations wrong loop setting | `death` animation must have `loop=false` | Check `.tres` output; `loop=false` is the default for the `death` key (`DEFAULT_NON_LOOPING` in `scripts/sot_pixel/godot_import.py`) — if wrong, file a bug there |

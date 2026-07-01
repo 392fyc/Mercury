@@ -35,6 +35,19 @@ SOT_FPS = 8.0
 # .tres (otherwise expected==actual would make that gate tautological).
 ANIMATE_N_FRAMES = 4
 
+# PixelLab `view` sets the camera pitch. A top-down tactical board needs
+# north/south/east/west to read as four DISTINCT facings. Omitting `view`
+# lets PixelLab default to "side" (sidescroller), which collapses
+# walk_north and walk_south into near-identical camera-facing frames
+# (verified A/B/C 2026-07-02: side leaves walk_north facing the viewer;
+# "high top-down" makes it a true back view — see api.pixellab.ai
+# openapi.json + pixellab.ai/docs/options/character, which recommends
+# high top-down for 4-direction board units). Passing `view` on every
+# pixflux/bitforge AND animate call is what actually differentiates the
+# facings; `direction` alone is not enough under the side default.
+VIEW_CHOICES = ("side", "low top-down", "high top-down")
+DEFAULT_VIEW = "high top-down"
+
 ADAPTER_PATH_ENV = "MERCURY_PIXELLAB_ADAPTER"
 DEFAULT_ADAPTER_PATH = (
     Path(__file__).resolve().parent.parent.parent
@@ -102,8 +115,8 @@ def _safe_out(out_dir: Path, relative: str) -> Path:
 
 
 def _build_static_argv(adapter: Path, backend: str, desc: str, size: int,
-                       out_path: Path, direction: str, ref: Path | None,
-                       seed: int | None) -> list[str]:
+                       out_path: Path, direction: str, view: str,
+                       ref: Path | None, seed: int | None) -> list[str]:
     argv = [
         sys.executable, str(adapter),
         "--endpoint", backend,
@@ -111,6 +124,7 @@ def _build_static_argv(adapter: Path, backend: str, desc: str, size: int,
         "--width", str(size), "--height", str(size),
         "--out", str(out_path),
         "--opt", "direction", direction,
+        "--opt", "view", view,
         "--no-background",
     ]
     if ref is not None:
@@ -121,8 +135,12 @@ def _build_static_argv(adapter: Path, backend: str, desc: str, size: int,
 
 
 def _build_animate_argv(adapter: Path, desc: str, out_subdir: Path,
-                        ref_frame: Path, seed: int | None) -> list[str]:
-    # animate is fixed 64x64 by the adapter — no --width/--height.
+                        ref_frame: Path, direction: str, view: str,
+                        seed: int | None) -> list[str]:
+    # animate is fixed 64x64 by the adapter — no --width/--height. Pass
+    # direction + view too: animate-with-text defaults to direction="east"
+    # / view="side", so without these a walk_north cycle would animate an
+    # east-facing sidescroller sprite regardless of its reference frame.
     argv = [
         sys.executable, str(adapter),
         "--endpoint", "animate",
@@ -131,6 +149,8 @@ def _build_animate_argv(adapter: Path, desc: str, out_subdir: Path,
         "--reference-image", str(ref_frame),
         "--out-dir", str(out_subdir),
         "--n-frames", str(ANIMATE_N_FRAMES),
+        "--opt", "direction", direction,
+        "--opt", "view", view,
     ]
     if seed is not None:
         argv += ["--seed", str(seed)]
@@ -140,11 +160,17 @@ def _build_animate_argv(adapter: Path, desc: str, out_subdir: Path,
 def generate_pawn(bible: CharacterBible, out_dir: Path, *,
                   name: str | None = None, size: int = 64,
                   ref: Path | None = None, backend: str = "pixflux",
+                  view: str = DEFAULT_VIEW,
                   animations: tuple[str, ...] = SOT_ANIMS,
                   animate_walk: bool = False, quantize: bool = False,
                   max_palette: int = 256,
                   dry_run: bool = False, seed: int | None = None) -> dict:
     """Generate a SoT pawn sprite set and emit a SpriteFrames `.tres`.
+
+    `view` is the PixelLab camera pitch (one of VIEW_CHOICES). It defaults
+    to "high top-down" so walk_north/south/east/west render as four
+    distinct facings on a top-down board; passing "side" reproduces the
+    pre-fix sidescroller framing where north/south collapse together.
 
     `max_palette` is the verify rubric's palette ceiling. PixelLab's true
     64x64 frames legitimately carry 70-119 colors, so the default 256
@@ -177,7 +203,8 @@ def generate_pawn(bible: CharacterBible, out_dir: Path, *,
             "anim": anim, "kind": "static", "direction": direction,
             "desc": desc, "out": static_out,
             "argv": _build_static_argv(adapter, backend, desc, size,
-                                       static_out, direction, ref, seed),
+                                       static_out, direction, view, ref,
+                                       seed),
         })
         if animate_walk and anim.startswith("walk_"):
             anim_dir = _safe_out(out_dir, f"frames/{anim}")
@@ -186,13 +213,15 @@ def generate_pawn(bible: CharacterBible, out_dir: Path, *,
                 "anim": anim, "kind": "animate", "direction": direction,
                 "desc": adesc, "out_dir": anim_dir, "ref": static_out,
                 "argv": _build_animate_argv(adapter, adesc, anim_dir,
-                                            static_out, seed),
+                                            static_out, direction, view,
+                                            seed),
             })
 
     if dry_run:
         return {
             "asset": "pawn", "name": name, "dry_run": True, "passed": True,
             "size": size, "frame_size": f"{size}x{size}", "backend": backend,
+            "view": view,
             "animate_walk": animate_walk, "quantize": quantize,
             "ref": str(ref) if ref else None,
             "animations": list(animations),
@@ -288,7 +317,7 @@ def generate_pawn(bible: CharacterBible, out_dir: Path, *,
     return {
         "asset": "pawn", "name": name, "dry_run": False,
         "passed": vres.passed, "size": size, "frame_size": f"{size}x{size}",
-        "backend": backend, "animate_walk": animate_walk,
+        "backend": backend, "view": view, "animate_walk": animate_walk,
         "quantized": quantized, "frames_total": len(all_frames),
         "animations": list(animations),
         "usd_total": round(usd_total, 6),

@@ -142,6 +142,12 @@ all others loop). This file can be dropped in directly to replace
 the placeholder SpriteFrames resource in the tactical scene's
 `AnimatedSprite2D` node.
 
+The pawn lane defaults to `--view "high top-down"` so the four walk
+directions render as distinct facings on a top-down board (north = back
+view, south = front view). Pass `--view side` only for a genuine
+sidescroller unit; the `side` framing collapses north/south into
+near-identical camera-facing frames.
+
 ### 3. Dry-run (no API calls)
 
 Pass `--dry-run` to any asset type to print planned API calls and
