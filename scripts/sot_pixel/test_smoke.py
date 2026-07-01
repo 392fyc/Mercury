@@ -267,7 +267,23 @@ def test_pawn_dry_run_plan() -> None:
     print("PASS test_pawn_dry_run_plan")
 
 
-def test_pawn_view_override_and_animate_direction() -> None:
+def _opt_pairs(argv: list[str]) -> dict[str, str]:
+    """Collapse repeated `--opt KEY VALUE` triples in an argv into a dict."""
+    pairs: dict[str, str] = {}
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--opt":
+            pairs[argv[i + 1]] = argv[i + 2]
+            i += 3
+        else:
+            i += 1
+    return pairs
+
+
+def test_pawn_view_and_animate_direction_per_command() -> None:
+    # Use a SPACE-containing view ("low top-down") so this also exercises
+    # argparse choices + subprocess forwarding of multi-word values through
+    # the real CLI path (the no-space "side" would not catch a quoting bug).
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         bible_path = _write_bible(tmp_path)
@@ -275,24 +291,50 @@ def test_pawn_view_override_and_animate_direction() -> None:
         proc = subprocess.run(
             [sys.executable, "-m", "scripts.sot_pixel",
              "--asset", "pawn", "--bible", str(bible_path),
-             "--out-dir", str(out_dir), "--view", "side",
+             "--out-dir", str(out_dir), "--view", "low top-down",
              "--animate-walk", "--dry-run"],
             capture_output=True, text=True, cwd=ROOT,
         )
         assert proc.returncode == 0, proc.stderr
         assert not out_dir.exists(), "pawn dry-run created files"
         report = json.loads(proc.stdout)
-        assert report["view"] == "side"
-        flat = json.dumps(report["planned_commands"])
-        # override reaches the argv; the default is fully replaced
-        assert "side" in flat
-        assert "high top-down" not in flat
-        # animate-walk cycles are planned and each argv now carries an
-        # explicit direction + view pair (animate-with-text otherwise
-        # defaults to direction=east / view=side regardless of reference).
-        assert '"animate"' in flat
-        assert flat.count('"view"') == flat.count('"direction"')
-    print("PASS test_pawn_view_override_and_animate_direction")
+        assert report["view"] == "low top-down"
+        # The overridden view fully replaces the default everywhere.
+        assert "high top-down" not in json.dumps(report["planned_commands"])
+
+        # Split planned argv by endpoint so animate cycles are inspected
+        # individually — a global count would pass even if every animate
+        # argv dropped both options or hardcoded the wrong direction.
+        static_cmds: list[list[str]] = []
+        animate_cmds: list[list[str]] = []
+        for argv in report["planned_commands"]:
+            ep = argv[argv.index("--endpoint") + 1]
+            (animate_cmds if ep == "animate" else static_cmds).append(argv)
+
+        # --animate-walk plans exactly one animate cycle per walk_* dir.
+        assert len(animate_cmds) == 4, animate_cmds
+        seen: set[str] = set()
+        for argv in animate_cmds:
+            opts = _opt_pairs(argv)
+            # Each animate argv must carry BOTH the overridden view and an
+            # explicit per-direction value (animate-with-text otherwise
+            # defaults to view=side / direction=east regardless of ref).
+            assert opts.get("view") == "low top-down", argv
+            direction = opts.get("direction")
+            assert direction in {"north", "south", "east", "west"}, argv
+            # The direction must match THIS cycle's walk_<dir> output dir —
+            # guards against a single hardcoded direction on all cycles.
+            out_arg = argv[argv.index("--out-dir") + 1]
+            assert out_arg.endswith(f"walk_{direction}"), (out_arg, direction)
+            seen.add(direction)
+        assert seen == {"north", "south", "east", "west"}, seen
+
+        # Every static frame also carries the overridden view + a direction.
+        for argv in static_cmds:
+            opts = _opt_pairs(argv)
+            assert opts.get("view") == "low top-down", argv
+            assert "direction" in opts, argv
+    print("PASS test_pawn_view_and_animate_direction_per_command")
 
 
 def main() -> int:
@@ -304,7 +346,7 @@ def main() -> int:
     test_presets_build_gpt_args()
     test_aseprite_graceful_skip()
     test_pawn_dry_run_plan()
-    test_pawn_view_override_and_animate_direction()
+    test_pawn_view_and_animate_direction_per_command()
     print("ALL SMOKE PASS")
     return 0
 
