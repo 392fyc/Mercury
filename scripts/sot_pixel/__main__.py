@@ -197,6 +197,11 @@ def main(argv: list[str] | None = None) -> int:
             f"separators, got {name!r}\n"
         )
         return 2
+    if args.asset == "pawn" and (args.size <= 0 or args.max_palette <= 0):
+        sys.stderr.write(
+            "error: --size and --max-palette must be positive integers\n"
+        )
+        return 2
     if args.asset in SINGLE_IMAGE_ASSETS:
         return _run_single_image(args, bible, name)
     return _run_pawn(args, bible, name)

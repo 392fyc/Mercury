@@ -13,8 +13,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PIL import Image
-
 
 def frame_dimensions(frames: list[Path]) -> tuple[int, int]:
     """Return the uniform (width, height) of `frames`, else raise.
@@ -22,6 +20,7 @@ def frame_dimensions(frames: list[Path]) -> tuple[int, int]:
     Shared with `postprocess` so both packing paths reject ragged frame
     sets the same way before doing any layout work.
     """
+    from PIL import Image  # lazy: --help / dry-run must not require Pillow
     if not frames:
         raise ValueError("no frames to pack")
     size: tuple[int, int] | None = None
@@ -48,6 +47,7 @@ def pack_frames(groups: dict[str, list[Path]], out_sheet: Path,
     `out_sheet.with_suffix(".json")`. Raises ValueError on empty input or
     mixed frame dimensions.
     """
+    from PIL import Image  # lazy: --help / dry-run must not require Pillow
     if not groups:
         raise ValueError("groups is empty — nothing to pack")
     anim_names = list(groups.keys())

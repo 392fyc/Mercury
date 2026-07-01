@@ -68,6 +68,21 @@ def _base_description(bible: CharacterBible) -> str:
     return ", ".join(parts) if parts else bible.name
 
 
+def _assert_under(path: Path, out_dir: Path, what: str) -> None:
+    """Reject an adapter-returned path that resolves outside `out_dir`.
+
+    Trust boundary: a swapped-in adapter (MERCURY_PIXELLAB_ADAPTER) could
+    return a path pointing outside out_dir; we later read these paths back
+    for verify + packing, so confirm ownership before touching them.
+    """
+    try:
+        path.resolve().relative_to(out_dir.resolve())
+    except ValueError as exc:
+        raise RuntimeError(
+            f"pixellab adapter returned {what} outside out_dir: {path}"
+        ) from exc
+
+
 def _safe_out(out_dir: Path, relative: str) -> Path:
     """Resolve `out_dir / relative`, rejecting paths that escape out_dir.
 
@@ -216,7 +231,9 @@ def generate_pawn(bible: CharacterBible, out_dir: Path, *,
                     f"pixellab adapter returned no/invalid 'out' path for "
                     f"{step['anim']} (static frame)"
                 )
-            static_frames[step["anim"]] = Path(out)
+            out_path = Path(out)
+            _assert_under(out_path, out_dir, f"an 'out' path for {step['anim']}")
+            static_frames[step["anim"]] = out_path
         else:
             frames = result.get("frames")
             if not isinstance(frames, list) or not frames or \
@@ -225,7 +242,10 @@ def generate_pawn(bible: CharacterBible, out_dir: Path, *,
                     f"pixellab adapter returned no/invalid 'frames' list for "
                     f"{step['anim']} (animate cycle)"
                 )
-            animate_frames[step["anim"]] = [Path(p) for p in frames]
+            frame_paths = [Path(p) for p in frames]
+            for fp in frame_paths:
+                _assert_under(fp, out_dir, f"a frame path for {step['anim']}")
+            animate_frames[step["anim"]] = frame_paths
 
     groups: dict[str, list[Path]] = {}
     for anim in animations:
