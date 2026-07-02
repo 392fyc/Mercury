@@ -43,6 +43,18 @@ SOT_CODEX_DIR=/path/to/SoT-fyc-space bash scripts/sot-codex-serve.sh   # http://
 >
 > 复跑注意:默认复用 `.mercury/tmp/codex-fixtures/` 里的既有数据快照;若设计库在两次运行之间有更新,args 里加 `"refresh": true` 强制重新抓取 API,避免基于陈旧快照裁决。
 
+### C. 填空生成(L4 gap-fill)—— 传 `gapfill`
+
+不给候选,让工具**主动提示设计空白并起草一张**:把已录语料分类到 trigger×effect 覆盖矩阵上,选出最优空格(行、列都已有天赋占据、只是组合未被探索的格子优先),单 Sonnet 生成 **1 张** schema 合法草稿(按 roadmap 明确**不做批量生成**,备选空格只列出不生成),经 embedding 冗余筛(与任一已录天赋 cos > 0.85 判冗余)后,原样回灌 L1-L3 验证:
+
+```
+/talent-validate { "gapfill": true, "class_id": "ss" }
+```
+
+- **embedding 配置**:默认模型 `text-embedding-3-small`。endpoint 按序取 args `embed_base_url` → env `AZURE_OPENAI_EMBED_BASE_URL` → env `OPENAI_BASE_URL`;key 由执行 agent 从 env `AZURE_OPENAI_API_KEY`(或 `OPENAI_API_KEY`)读取,不入 args。**配置缺失或调用失败 fail-closed**:冗余度标 UNVERIFIED 并强制 verdict ≥ revise,绝不静默当作已筛。
+- **矩阵轴**:内置默认轴(见脚本 `DEFAULT_TRIGGER_AXES` / `DEFAULT_EFFECT_AXES`),可用 args `triggerAxes` / `effectAxes` 覆盖(每轴 ≤12 个唯一非空标签、单标签 ≤24 字符、不含 `|`;兜底桶「其他」缺失时自动补上);分类结果与语料 id 严格对账——语料外/重复/轴外条目丢弃并告警,覆盖有缺口时 verdict 下限 revise(防幻影空格)。
+- **产出解读**:报告多出 `gapfill`(目标空格 + 前 3 空格 + 冗余度)与 `candidateDraft`(完整草稿 JSON,由你决定是否录入设计库);`verdict` 是对生成草稿的 L1-L3 判定,冗余候选的 verdict 下限为 revise。矩阵饱和(无空格可填)时返回 `blocked` 并说明。
+
 ## 草稿字段(L1 schema 必填)
 
 `id` `class_id` `name` `damage_type` `rarity` `status` `trigger` `effect` `tags`(`rules` 强烈建议):

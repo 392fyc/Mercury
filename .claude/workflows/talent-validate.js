@@ -1,13 +1,14 @@
 export const meta = {
   name: 'talent-validate',
-  description: 'Hybrid talent-balance validator for the SoT (Ship of Theseus) game design layer: deterministic structure/tag/rule checks (zero-LLM, in-script) + Haiku semantic advisory + Haiku triage of shared-tag combinations + an adversarial Optimizer-vs-Defender pass that hunts abuse sequences. Pure LLM is a known-lenient balance judge, so quantitative/structural checks are done in code and the LLM is restricted to semantics + adversarial roles.',
-  whenToUse: 'Validating a SoT talent (by id from the Codex design API, or an inline draft) before it is locked: catches illegal schema/tags, dangling rule refs, supply-budget breaches, dangerous tag-combination loops, and high-value abuse sequences. Read-only against SoT — produces a findings report; never writes to the SoT repos. Numeric power-scoring is intentionally OUT of this MVP (the Codex narrative layer has no numeric power field yet; see roadmap §1.3 / §5).',
+  description: 'Hybrid talent-balance validator for the SoT (Ship of Theseus) game design layer: deterministic structure/tag/rule checks (zero-LLM, in-script) + Haiku semantic advisory + Haiku triage of shared-tag combinations + an adversarial Optimizer-vs-Defender pass that hunts abuse sequences. Pure LLM is a known-lenient balance judge, so quantitative/structural checks are done in code and the LLM is restricted to semantics + adversarial roles. Also carries an on-demand L4 gap-fill mode (args {"gapfill": true}): builds a trigger×effect coverage matrix over the stored corpus, generates ONE schema-legal candidate for the best empty cell, embedding-screens it for redundancy, and feeds it straight through L1-L3.',
+  whenToUse: 'Validating a SoT talent (by id from the Codex design API, or an inline draft) before it is locked: catches illegal schema/tags, dangling rule refs, supply-budget breaches, dangerous tag-combination loops, and high-value abuse sequences. Or, with {"gapfill": true}, proposing ONE new pre-validated design-space candidate where the corpus has no coverage. Read-only against SoT — produces a findings report; never writes to the SoT repos. Numeric power-scoring is intentionally OUT of this MVP (the Codex narrative layer has no numeric power field yet; see roadmap §1.3 / §5).',
   phases: [
     { title: 'Adapt', detail: 'pull candidate + peers + tag registry + rules from the Codex read-only API (or a prepared dataDir)' },
+    { title: 'GapFill', detail: 'L4 (gapfill mode only): classify corpus onto trigger×effect axes -> pick top empty cell -> generate ONE candidate -> embedding redundancy screen' },
     { title: 'Validate', detail: 'L1 deterministic (schema/enum/tag/rule-ref/supply) in-script + Haiku semantic advisory' },
     { title: 'Combine', detail: 'L2 enumerate shared-tag peer pairs in code, Haiku-triage each interaction' },
     { title: 'Adversarial', detail: 'L3 serial Optimizer (abuse sequence) -> Defender (refute), survivors = confirmed exploits' },
-    { title: 'Report', detail: 'consolidate L1/L2/L3 into one structured verdict' },
+    { title: 'Report', detail: 'consolidate L1/L2/L3 (+ L4 gap context) into one structured verdict' },
   ],
 }
 
@@ -17,34 +18,64 @@ export const meta = {
 //    rule codes, rarity counts). L2/L3 agents are handed dataDir PATHS + a task and read the
 //    peer bodies themselves — the 20-peer effect/trigger text is never bulk-injected.
 // 2. FAN-OUT CAP: L2 shared-tag pairs are bounded by PAIR_CAP; anything dropped is log()'d.
-//    L3 is a fixed 2-agent serial duel. Worst-case agents ≈ 1 (Adapt) + 1 (L1 semantic) +
-//    PAIR_CAP (L2, <=30) + 2 (L3) = <=34 — far under the 800-agent self-budget / 1000 runtime cap.
+//    L3 is a fixed 2-agent serial duel; L4 gapfill (opt-in mode) adds a fixed 3-agent serial
+//    chain. Worst-case agents ≈ 1 (Adapt) + 3 (L4, gapfill mode only) + 1 (L1 semantic) +
+//    PAIR_CAP (L2, <=30) + 2 (L3) = <=37 — far under the 800-agent self-budget / 1000 runtime cap.
 // 3. MODEL ROUTING (roadmap §1.2): Adapt = Sonnet (single corpus-assembly call, needs solid
 //    tool use); L1-semantic + L2-triage = Haiku (cheap structured calls, injected slice << 50K
 //    so we stay clear of Haiku's 200K hard cliff); L3 duel = Sonnet (strong enough for
-//    adversarial reasoning without paying for Opus on every pair).
+//    adversarial reasoning without paying for Opus on every pair); L4 gapfill trio = Sonnet
+//    (classification judgment / constrained generation / one-shot embedding scripting).
 // 4. READ-ONLY ON SoT: Adapt only does GET against the Codex API and writes fixtures under
 //    Mercury's own tmp dir — it never mutates the SoT repos (CLAUDE.md hard constraint).
 // 5. FAIL-CLOSED: any L2/L3 agent failure (parallel null) is tracked, surfaced, and forces the
 //    verdict to at least `revise` — an incomplete adversarial pass must never read as `pass`.
 
 // ── Inputs ──
-const talentId = (args && (args.talent_id || args.talentId)) || (typeof args === 'string' ? args : null)
-const draft = (args && (args.talent_draft_json || args.draft)) || null
-if (!talentId && !draft) {
-  log('No talent specified. Pass one via args, e.g. /talent-validate { "talent_id": "ss_jianqie" } or { "talent_draft_json": {...} }')
-  return { talentId: null, verdict: 'blocked', error: 'missing talent_id or talent_draft_json' }
+// The runtime hands arguments through VERBATIM — a slash-command / tool call may deliver a
+// STRING (either a bare talent id, or accidentally JSON-encoded args). Self-heal the
+// JSON-encoded case instead of misreading the whole blob as a talent id (observed live:
+// stringified {"gapfill": true, ...} ran as talent_id and burned an L3 pass on garbage).
+let input = args
+if (typeof input === 'string') {
+  const s = input.trim()
+  if (s.startsWith('{')) {
+    try { input = JSON.parse(s) } catch (e) { /* not JSON — treated as a bare id below */ }
+  }
 }
-const classId = (args && (args.class_id || args.classId)) || (draft && draft.class_id) || 'ss'
-const codexBaseUrl = (args && (args.codex_base_url || args.codexBaseUrl)) || 'http://127.0.0.1:8000'
+// A bare-string id must LOOK like an id; anything else is a malformed invocation, not an id.
+const bareId = (typeof input === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(input.trim())) ? input.trim() : null
+if (typeof input === 'string' && !bareId) {
+  log(`Malformed string argument (not a talent id, not parseable JSON): ${input.slice(0, 120)}`)
+  return { talentId: null, verdict: 'blocked', error: 'malformed args — pass {"talent_id": "..."}, {"talent_draft_json": {...}}, {"gapfill": true}, or a bare talent id string' }
+}
+// All option reads below go through `opts` so the self-healed object is the single source.
+const opts = (input && typeof input === 'object' && !Array.isArray(input)) ? input : {}
+const talentId = opts.talent_id || opts.talentId || bareId
+const draft = opts.talent_draft_json || opts.draft || null
+// L4 gap-fill mode (roadmap §1.2 L4 / §9.4): no candidate input — the workflow finds an
+// uncovered trigger×effect cell in the stored corpus, generates ONE schema-legal candidate
+// for it (batch generation is deliberately unsupported: triage burden > value), screens it
+// for embedding redundancy, then validates it through L1-L3 like any draft.
+let gapfill = !!(opts.gapfill || opts.gap_fill)
+if (gapfill && (talentId || draft)) {
+  log('NOTE: gapfill=true ignored — an explicit talent_id/draft was also provided and takes precedence')
+  gapfill = false
+}
+if (!talentId && !draft && !gapfill) {
+  log('No talent specified. Pass {"talent_id": "..."} or {"talent_draft_json": {...}} to validate, or {"gapfill": true} to generate one gap-filling candidate.')
+  return { talentId: null, verdict: 'blocked', error: 'missing talent_id / talent_draft_json / gapfill' }
+}
+const classId = opts.class_id || opts.classId || (draft && draft.class_id) || 'ss'
+const codexBaseUrl = opts.codex_base_url || opts.codexBaseUrl || 'http://127.0.0.1:8000'
 // Prepared fixtures dir (skips the API round-trip when supplied). The relative default
 // resolves against the repo root (agent cwd); the Adapt agent echoes back the absolute
 // path it actually used, and that absolute path is what L2/L3 receive (corpusDir).
-const dataDir = (args && args.dataDir) || '.mercury/tmp/codex-fixtures'
+const dataDir = opts.dataDir || '.mercury/tmp/codex-fixtures'
 // L2 fan-out cap: how many shared-tag peer pairs get a triage agent. Clamped [1, ceiling];
 // overflow is log()'d, never silently dropped. Default 20 covers the dense ss corpus
 // (20 same-class talents share popular tags like 攻击/战棋); raise pairCap for full coverage.
-const PAIR_CAP = Math.max(1, Math.min((args && args.pairCap) || 20, 30))
+const PAIR_CAP = Math.max(1, Math.min(opts.pairCap || 20, 30))
 // R6.6 supply budget — HARD-COUPLED to the SoT rule registry: the code 'R6.6' and the epic
 // (史诗) cap of 6 mirror the locked rule text as of 2026-07. If SoT renumbers the rule or
 // changes the cap, update BOTH constants (the check silently disables when the code is
@@ -54,20 +85,54 @@ const EPIC_SUPPLY_CAP = 6
 // Set refresh=true to force the Adapt agent to re-fetch everything from the API even when
 // dataDir already holds fixture files (the reuse default can silently serve a stale snapshot
 // after the design library has been edited).
-const refreshData = !!(args && (args.refresh || args.refreshData))
+const refreshData = !!(opts.refresh || opts.refreshData)
+
+// ── L4 gap-fill config (only read in gapfill mode) ──
+// Embedding redundancy screen: NO hardcoded resource URL — pass embed_base_url via args, or
+// let the screening agent probe env AZURE_OPENAI_EMBED_BASE_URL then OPENAI_BASE_URL. The key
+// comes from env (AZURE_OPENAI_API_KEY, fallback OPENAI_API_KEY) read by the agent, never
+// inlined here. Missing/failed embedding config fails CLOSED: similarity marked UNVERIFIED
+// and the verdict is forced to at least revise.
+const embedBaseUrl = opts.embed_base_url || opts.embedBaseUrl || null
+const embedModel = opts.embed_model || opts.embedModel || 'text-embedding-3-small'
+const EMBED_REDUNDANCY_COS = 0.85
+// Matrix axes: in-script defaults derived from the SoT tag registry + corpus conventions,
+// overridable via args.triggerAxes / args.effectAxes. A miscategorized axis cannot corrupt
+// validation (L1-L3 are unaffected) — it only shapes WHERE the ideation looks. The catch-all
+// bucket surfaces vocabulary drift and is never treated as a design target.
+const GAP_CATCH_ALL = '其他'
+const DEFAULT_TRIGGER_AXES = ['主动使用', '攻击/命中时', '被攻击/受击时', '击杀/处决时', '回合开始/结束', '移动/位移时', '资源变化时', GAP_CATCH_ALL]
+const DEFAULT_EFFECT_AXES = ['直接伤害', '增伤/暴击强化', '防御/减伤/招架', '控制/限制', '位移/机动', '资源获取', '状态施加/印记', '连击/追击', GAP_CATCH_ALL]
 
 // Operator-supplied inputs still get sanity bounds before being interpolated into agent
 // prompts: the base URL must be a plain http(s) URL without embedded credentials/whitespace
 // (deliberately NOT localhost-restricted — the design-library API is planned to move behind
 // the NAS URL once a CF service token exists, see the usage guide), and dataDir must not
 // traverse upward out of the workspace.
-if (typeof codexBaseUrl !== 'string' || !/^https?:\/\/[^\s@]+$/.test(codexBaseUrl)) {
+// Plain http(s) URL from a conservative charset: host[:port][/path] only — no userinfo,
+// quotes, backticks, spaces, or other shell/prompt-breaking characters can survive this shape.
+const SAFE_URL_RE = /^https?:\/\/[A-Za-z0-9.-]+(:\d+)?(\/[A-Za-z0-9._~/-]*)?$/
+if (typeof codexBaseUrl !== 'string' || !SAFE_URL_RE.test(codexBaseUrl)) {
   log(`Blocked unsafe codex_base_url: ${codexBaseUrl}`)
-  return { talentId: talentId || (draft && draft.id) || null, verdict: 'blocked', error: 'unsafe codex_base_url (must be a plain http(s) URL without credentials)' }
+  return { talentId: talentId || (draft && draft.id) || null, verdict: 'blocked', error: 'unsafe codex_base_url (must be a plain http(s) host[:port][/path] URL)' }
 }
-if (typeof dataDir !== 'string' || dataDir.includes('..')) {
-  log('Blocked unsafe dataDir (upward traversal)')
-  return { talentId: talentId || (draft && draft.id) || null, verdict: 'blocked', error: 'unsafe dataDir (must not contain ..)' }
+// dataDir: no upward traversal, and a conservative path charset — newlines, quotes, backticks,
+// '$' and friends must not ride into agent-executed Bash/python. Absolute paths stay ALLOWED:
+// prepared fixtures may live anywhere the operator chooses (ADAPT_SCHEMA.dataDir is documented
+// as an absolute dir), so this is a charset bound, not a root lock.
+if (typeof dataDir !== 'string' || dataDir.includes('..') || !/^[A-Za-z0-9._:/\\ -]{1,200}$/.test(dataDir)) {
+  log('Blocked unsafe dataDir (traversal or unsafe characters)')
+  return { talentId: talentId || (draft && draft.id) || null, verdict: 'blocked', error: 'unsafe dataDir (no .., path-safe characters only)' }
+}
+if (embedBaseUrl !== null && (typeof embedBaseUrl !== 'string' || !SAFE_URL_RE.test(embedBaseUrl))) {
+  log(`Blocked unsafe embed_base_url: ${embedBaseUrl}`)
+  return { talentId: null, verdict: 'blocked', error: 'unsafe embed_base_url (must be a plain http(s) host[:port][/path] URL)' }
+}
+// classId rides into file paths (talents_<classId>.json), agent-executed curl URLs, and the
+// generated id prefix — same sanity bound as its sibling inputs.
+if (typeof classId !== 'string' || !/^[A-Za-z0-9_-]{1,32}$/.test(classId)) {
+  log(`Blocked unsafe class_id: ${classId}`)
+  return { talentId: null, verdict: 'blocked', error: 'unsafe class_id (must match [A-Za-z0-9_-]{1,32})' }
 }
 
 // ── Schemas ──
@@ -144,53 +209,299 @@ const L3_DEFENDER_SCHEMA = {
   },
 }
 
+// ── L4 gap-fill schemas ──
+// Adapt variant without a candidate: gapfill has no talent under test yet.
+const GAP_ADAPT_SCHEMA = {
+  type: 'object', required: ['peers', 'tagKeys', 'ruleCodes', 'rarityCounts', 'dataDir'],
+  properties: {
+    peers: {
+      type: 'array', description: 'ALL stored same-class talents, LIGHT index only (no effect bodies)',
+      items: {
+        type: 'object', required: ['id', 'name', 'tags'],
+        properties: { id: { type: 'string' }, name: { type: 'string' }, rarity: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } } },
+      },
+    },
+    tagKeys: { type: 'array', items: { type: 'object', required: ['key', 'layer'], properties: { key: { type: 'string' }, layer: { type: 'string', enum: ['mech', 'content'] } } } },
+    ruleCodes: { type: 'array', items: { type: 'object', required: ['code', 'status'], properties: { code: { type: 'string' }, status: { type: 'string' }, group: { type: 'string' } } } },
+    rarityCounts: { type: 'object', additionalProperties: { type: 'number' } },
+    dataDir: { type: 'string', description: 'absolute dir holding talents_<class>.json / tags.json / rules.json' },
+  },
+}
+const GAP_CLASSIFY_SCHEMA = {
+  type: 'object', required: ['classified'],
+  properties: {
+    classified: {
+      type: 'array', description: 'one entry per stored talent — EXACTLY one bucket per axis',
+      items: { type: 'object', required: ['id', 'trigger_cat', 'effect_cat'], properties: {
+        id: { type: 'string' }, trigger_cat: { type: 'string' }, effect_cat: { type: 'string' },
+      } },
+    },
+  },
+}
+const GAP_GENERATE_SCHEMA = {
+  type: 'object', required: ['candidate', 'design_rationale'],
+  properties: {
+    candidate: {
+      type: 'object', required: ['id', 'class_id', 'name', 'damage_type', 'rarity', 'status', 'trigger', 'effect', 'rules', 'tags'],
+      properties: {
+        id: { type: 'string' }, class_id: { type: 'string' }, name: { type: 'string' },
+        damage_type: { type: 'string' }, rarity: { type: 'string' }, status: { type: 'string' },
+        trigger: { type: 'string' }, effect: { type: 'string' }, rules: { type: 'string' },
+        tags: { type: 'array', items: { type: 'string' } },
+      },
+    },
+    design_rationale: { type: 'string', description: 'why this fills the target cell; cite the corpus talents used for power calibration' },
+  },
+}
+const GAP_EMBED_SCHEMA = {
+  type: 'object', required: ['status', 'max_cos', 'most_similar_id'],
+  properties: {
+    status: { type: 'string', enum: ['ok', 'unavailable'], description: 'unavailable = endpoint/key missing or the embeddings call failed; NEVER fabricate numbers' },
+    max_cos: { type: 'number', description: 'highest cosine similarity vs any stored talent; -1 when unavailable' },
+    most_similar_id: { type: 'string', description: 'stored talent id with the highest cosine; empty when unavailable' },
+    detail: { type: 'string' },
+  },
+}
+
+// Coverage matrix + gap ranking — pure JS (the LLM never drives the quantitative selection).
+// gap-fit: prefer cells whose row AND column are each already inhabited (both axis values are
+// proven viable in this class; only the combination is unexplored), then by total occupancy.
+function buildGapCells(classified, tAxes, eAxes) {
+  const filled = new Set(classified.map(c => `${c.trigger_cat}|${c.effect_cat}`))
+  // Null-prototype maps: axis labels are user-suppliable, and a label like "__proto__" on a
+  // plain object would corrupt the counts (prototype pollution).
+  const rowCount = Object.create(null), colCount = Object.create(null)
+  for (const c of classified) {
+    rowCount[c.trigger_cat] = (rowCount[c.trigger_cat] || 0) + 1
+    colCount[c.effect_cat] = (colCount[c.effect_cat] || 0) + 1
+  }
+  const cells = []
+  for (const t of tAxes) {
+    for (const e of eAxes) {
+      if (t === GAP_CATCH_ALL || e === GAP_CATCH_ALL) continue // catch-all buckets are not design targets
+      if (!filled.has(`${t}|${e}`)) {
+        cells.push({ trigger: t, effect: e, rowN: rowCount[t] || 0, colN: colCount[e] || 0 })
+      }
+    }
+  }
+  return cells.sort((a, b) => (Math.min(b.rowN, b.colN) - Math.min(a.rowN, a.colN)) || ((b.rowN + b.colN) - (a.rowN + a.colN)))
+}
+
 // Tracks stage agents that failed (parallel null / missing result) so the verdict can fail
 // closed instead of silently reading incomplete coverage as a clean pass.
 const stageFailures = []
 
 // ── Phase 0: Adapt — Codex read-only API -> light index (lean dispatch) ──
 phase('Adapt')
-const candId = talentId || (draft && draft.id) || 'DRAFT'
+const candId = gapfill ? 'GAPFILL' : (talentId || (draft && draft.id) || 'DRAFT')
 const adapt = await agent(
   `You are a READ-ONLY data adapter for the SoT Codex design API. Do NOT write to any SoT repo.\n` +
-  `Goal: assemble the corpus for validating talent "${candId}" (class_id="${classId}").\n\n` +
+  (gapfill
+    ? `Goal: assemble the stored corpus for class_id="${classId}" (gap-fill mode — there is NO candidate talent yet).\n\n`
+    : `Goal: assemble the corpus for validating talent "${candId}" (class_id="${classId}").\n\n`) +
   `Step 1 — obtain data into dataDir="${dataDir}" (create it if missing):\n` +
   (refreshData
     ? `  - REFRESH MODE: ignore any existing files in dataDir — fetch fresh tags.json, rules.json, talents_${classId}.json via Bash curl from ${codexBaseUrl} (GET /api/tags , GET /api/rules , GET /api/talents?class_id=${classId}) and overwrite them.\n`
     : `  - tags.json, rules.json, talents_${classId}.json: if present in dataDir read them, else fetch via Bash curl from ${codexBaseUrl}: GET /api/tags , GET /api/rules , GET /api/talents?class_id=${classId} and save each.\n`) +
-  (draft
-    ? `  - The candidate is an INLINE DRAFT (id "${candId}" is NOT in the API — do NOT GET it, a fetch would 404). Use this JSON VERBATIM as the candidate, and WRITE exactly this JSON to dataDir/talent_${candId}.json (overwrite any 404 placeholder): ${JSON.stringify(draft)}\n`
-    : (refreshData
-        ? `  - candidate: fetch fresh via GET /api/talents/${talentId} from ${codexBaseUrl} (ignore any existing dataDir copy) and save to dataDir/talent_${talentId}.json.\n`
-        : `  - candidate: GET /api/talents/${talentId} from ${codexBaseUrl} (or read dataDir/talent_${talentId}.json if present) and ensure it is saved to dataDir/talent_${talentId}.json.\n`)) +
+  (gapfill
+    ? ''
+    : (draft
+        ? `  - The candidate is an INLINE DRAFT (id "${candId}" is NOT in the API — do NOT GET it, a fetch would 404). Use this JSON VERBATIM as the candidate, and WRITE exactly this JSON to dataDir/talent_${candId}.json (overwrite any 404 placeholder): ${JSON.stringify(draft)}\n`
+        : (refreshData
+            ? `  - candidate: fetch fresh via GET /api/talents/${talentId} from ${codexBaseUrl} (ignore any existing dataDir copy) and save to dataDir/talent_${talentId}.json.\n`
+            : `  - candidate: GET /api/talents/${talentId} from ${codexBaseUrl} (or read dataDir/talent_${talentId}.json if present) and ensure it is saved to dataDir/talent_${talentId}.json.\n`))) +
   `Step 2 — return a LIGHT index (NOT the full peer bodies):\n` +
-  `  - candidate: the full record of the talent under test (all fields).\n` +
-  `  - peers: same-class talents as id/name/rarity/tags ONLY (omit effect/trigger/rules bodies — they stay in the files).\n` +
+  (gapfill ? '' : `  - candidate: the full record of the talent under test (all fields).\n`) +
+  `  - peers: ${gapfill ? 'ALL stored ' : ''}same-class talents as id/name/rarity/tags ONLY (omit effect/trigger/rules bodies — they stay in the files).\n` +
   `  - tagKeys: every tag as {key, layer}. ruleCodes: every rule as {code, status, group}.\n` +
   `  - rarityCounts: count the stored same-class talents (talents_${classId}.json) by rarity.\n` +
-  `  - candidateStoredRarity: the candidate id's rarity AS CURRENTLY STORED in talents_${classId}.json; return '' (empty string) if the id is not in that list (inline draft or brand-new id).\n` +
+  (gapfill ? '' : `  - candidateStoredRarity: the candidate id's rarity AS CURRENTLY STORED in talents_${classId}.json; return '' (empty string) if the id is not in that list (inline draft or brand-new id).\n`) +
   `  - dataDir: the absolute path you used.\n` +
   `Use python or jq for robust JSON parsing (the data is UTF-8 Chinese). Keep the response to the index only.`,
-  { phase: 'Adapt', schema: ADAPT_SCHEMA, model: 'sonnet', label: `adapt:${candId}` }
+  { phase: 'Adapt', schema: gapfill ? GAP_ADAPT_SCHEMA : ADAPT_SCHEMA, model: 'sonnet', label: `adapt:${candId}` }
 )
-if (!adapt || !adapt.candidate) {
+if (!adapt || (!gapfill && !adapt.candidate)) {
   log('Adapt failed — could not load candidate/corpus from Codex API or dataDir')
   return { talentId: candId, verdict: 'blocked', error: 'adapt failed (Codex API unreachable and no usable dataDir?)' }
 }
-const candidate = adapt.candidate
-const peers = (adapt.peers || []).filter(p => p && p.id !== candidate.id)
+// A structurally-present but HOLLOW candidate (no name/trigger/effect at all) means the id was
+// not actually found (API down + no fixture) — block early instead of letting a shell record
+// burn the L2/L3 adversarial budget on nothing (observed live before this guard existed).
+if (!gapfill && adapt.candidate && !(adapt.candidate.name || adapt.candidate.trigger || adapt.candidate.effect)) {
+  log(`Adapt returned a hollow candidate record for "${candId}" — id not found in API or fixtures`)
+  return { talentId: candId, verdict: 'blocked', error: 'candidate record hollow / not found (check talent_id, API availability, or dataDir fixtures)' }
+}
+// gapfill: candidate/candidateStoredRarity are assigned by the GapFill phase below.
+let candidate = gapfill ? null : adapt.candidate
+let candidateStoredRarity = gapfill ? '' : (adapt.candidateStoredRarity || '')
+const peers = (adapt.peers || []).filter(p => p && (!candidate || p.id !== candidate.id))
 const tagKeySet = new Set((adapt.tagKeys || []).map(t => t.key))
 const ruleCodeSet = new Set((adapt.ruleCodes || []).map(r => r.code))
 const lockedRuleCodes = new Set((adapt.ruleCodes || []).filter(r => r.status === '锁定').map(r => r.code))
 const rarityCounts = adapt.rarityCounts || {}
-const candidateStoredRarity = adapt.candidateStoredRarity || ''
 const corpusDir = adapt.dataDir || dataDir
-log(`Adapt: candidate=${candidate.id} (${candidate.name}/${candidate.rarity}) · peers=${peers.length} · tags=${tagKeySet.size} · rules=${ruleCodeSet.size} · storedRarity=${candidateStoredRarity}`)
+log(candidate
+  ? `Adapt: candidate=${candidate.id} (${candidate.name}/${candidate.rarity}) · peers=${peers.length} · tags=${tagKeySet.size} · rules=${ruleCodeSet.size} · storedRarity=${candidateStoredRarity}`
+  : `Adapt (gapfill): corpus=${peers.length} stored talent(s) · tags=${tagKeySet.size} · rules=${ruleCodeSet.size}`)
 // Data-completeness sanity: an empty registry would turn every tag into a false "unknown tag"
 // error and mis-judge the verdict, so the affected checks are SKIPPED — but skipped coverage
 // must never read as a clean pass (fail-closed): record it as a stage failure -> verdict >= revise.
 if (tagKeySet.size === 0) { stageFailures.push('Adapt(tag registry empty — tag-legality checks skipped)'); log('WARN: tag registry empty — L1 SKIPS tag-legality checks (fail-closed -> revise)') }
 if (ruleCodeSet.size === 0) { stageFailures.push('Adapt(rule registry empty — rule-ref/supply-budget checks skipped)'); log('WARN: rule registry empty — rule-ref / supply-budget checks disabled (fail-closed -> revise)') }
+
+// ── Phase 0.5: L4 gap-fill — coverage matrix -> generate ONE candidate -> embedding screen ──
+let gapReport = null
+let gapRedundant = false
+if (gapfill) {
+  phase('GapFill')
+  // Generation needs the FULL registries (legal tags to pick from, real rule codes to cite);
+  // proceeding on an empty registry would fabricate an unvalidatable candidate — hard block.
+  if (tagKeySet.size === 0 || ruleCodeSet.size === 0) {
+    return { talentId: null, verdict: 'blocked', error: 'gapfill needs a complete tag + rule registry (empty registry loaded — stale dataDir? API down?)' }
+  }
+  if (peers.length === 0) {
+    return { talentId: null, verdict: 'blocked', error: 'gapfill needs a non-empty stored corpus to map coverage against' }
+  }
+  let tAxes = (Array.isArray(opts.triggerAxes) && opts.triggerAxes.length > 1) ? opts.triggerAxes : DEFAULT_TRIGGER_AXES
+  let eAxes = (Array.isArray(opts.effectAxes) && opts.effectAxes.length > 1) ? opts.effectAxes : DEFAULT_EFFECT_AXES
+  // Axis labels become matrix keys joined with '|' — a '|' inside a label would alias two
+  // distinct cells, and duplicate labels would emit duplicate cells. Axis count and label
+  // length are hard-bounded: they ride into every classification prompt and drive the matrix
+  // enumeration, so unbounded input means context bloat and runaway cells. Reject, don't guess.
+  const AXIS_MAX_COUNT = 12
+  const AXIS_LABEL_MAX_LEN = 24
+  const axisProblem = [...tAxes, ...eAxes].some(a => typeof a !== 'string' || !a.trim() || a.length > AXIS_LABEL_MAX_LEN || a.includes('|'))
+    || tAxes.length > AXIS_MAX_COUNT || eAxes.length > AXIS_MAX_COUNT
+    || new Set(tAxes).size !== tAxes.length || new Set(eAxes).size !== eAxes.length
+  if (axisProblem) {
+    return { talentId: null, verdict: 'blocked', error: `invalid custom axes — per axis: <=${AXIS_MAX_COUNT} unique non-empty labels, <=${AXIS_LABEL_MAX_LEN} chars each, no "|"` }
+  }
+  // The catch-all bucket is STRUCTURAL, not a design target: the classifier prompt directs
+  // hard-to-place talents there and the matrix skips it, so custom axes that omit it would
+  // push the classifier into off-axis labels that reconciliation then drops (false shortfall).
+  // Guarantee it exists on both axes.
+  if (!tAxes.includes(GAP_CATCH_ALL)) tAxes = [...tAxes, GAP_CATCH_ALL]
+  if (!eAxes.includes(GAP_CATCH_ALL)) eAxes = [...eAxes, GAP_CATCH_ALL]
+
+  // Classify the stored corpus onto the axes — the only LLM judgment in the mapping step;
+  // matrix arithmetic and cell selection stay in code (buildGapCells).
+  const cls = await agent(
+    `Read ${corpusDir}/talents_${classId}.json (UTF-8 Chinese; use python or jq). For EVERY stored talent, ` +
+    `classify its trigger timing and its primary effect into EXACTLY one bucket each.\n` +
+    `trigger buckets: ${JSON.stringify(tAxes)}\n` +
+    `effect buckets: ${JSON.stringify(eAxes)}\n` +
+    `Use "${GAP_CATCH_ALL}" ONLY when nothing else fits. Return one entry per talent id — no omissions.`,
+    { phase: 'GapFill', schema: GAP_CLASSIFY_SCHEMA, model: 'sonnet', label: `gap-classify:${classId}` }
+  )
+  if (!cls || !Array.isArray(cls.classified) || cls.classified.length === 0) {
+    return { talentId: null, verdict: 'blocked', error: 'gapfill classification failed — no coverage matrix' }
+  }
+  // Deterministic reconciliation against the stored corpus — the classifier is an LLM and may
+  // omit, duplicate, or invent ids; none of that may silently shape the matrix. Alien ids and
+  // duplicates are dropped in code (the schema cannot enforce dynamic enums or uniqueness),
+  // and ANY coverage shortfall floors the verdict to revise (fail-closed): a phantom-empty
+  // cell must never read as a clean novel gap.
+  const legalT = new Set(tAxes), legalE = new Set(eAxes)
+  const peerIdSet = new Set(peers.map(p => p.id))
+  const classifiedIds = new Set()
+  const classified = []
+  let alienN = 0, dupN = 0, offAxisN = 0
+  for (const c of cls.classified) {
+    if (!peerIdSet.has(c.id)) { alienN += 1; continue }
+    if (classifiedIds.has(c.id)) { dupN += 1; continue }
+    if (!legalT.has(c.trigger_cat) || !legalE.has(c.effect_cat)) { offAxisN += 1; continue }
+    classifiedIds.add(c.id)
+    classified.push(c)
+  }
+  if (alienN > 0) log(`WARN: ${alienN} classification(s) referenced ids not in the corpus and were dropped`)
+  if (dupN > 0) log(`WARN: ${dupN} duplicate classification(s) dropped (first occurrence kept)`)
+  if (offAxisN > 0) log(`WARN: ${offAxisN} classification(s) used off-axis labels and were dropped`)
+  if (classified.length === 0) {
+    return { talentId: null, verdict: 'blocked', error: 'gapfill classification unusable — nothing survived reconciliation (alien / duplicate / off-axis)' }
+  }
+  if (classified.length < peers.length) {
+    stageFailures.push(`L4(coverage matrix incomplete — ${classified.length}/${peers.length} stored talents classified)`)
+    log(`WARN: coverage matrix built from ${classified.length}/${peers.length} stored talents — possible phantom gaps (fail-closed -> revise)`)
+  }
+
+  const gapCells = buildGapCells(classified, tAxes, eAxes)
+  if (gapCells.length === 0) {
+    log('GapFill: matrix saturated — every non-catch-all trigger×effect cell is already covered')
+    return { talentId: null, verdict: 'blocked', error: 'gap matrix saturated — no empty cell to fill (nothing to generate)', gapfill: { saturated: true, targetCell: null, classifiedCount: classified.length, corpusCount: peers.length } }
+  }
+  const targetCell = gapCells[0]
+  log(`GapFill: ${gapCells.length} empty cell(s) · target =「${targetCell.trigger} × ${targetCell.effect}」(row ${targetCell.rowN} / col ${targetCell.colN} occupied) · runners-up: ${gapCells.slice(1, 3).map(c => `${c.trigger}×${c.effect}`).join(' , ') || 'none'}`)
+
+  // Generate exactly ONE candidate (roadmap §1.2 L4: batch generation is deliberately
+  // unsupported — triage burden > value; runner-up cells are reported, not generated).
+  const legalTags = (adapt.tagKeys || []).map(t => t.key)
+  const gen = await agent(
+    `You design ONE new talent for the SoT tactical RPG (class_id="${classId}") that fills an uncovered design-space cell.\n` +
+    `Target cell: trigger timing =「${targetCell.trigger}」, primary effect =「${targetCell.effect}」.\n` +
+    `Read ${corpusDir}/talents_${classId}.json for wording style + power calibration, and ${corpusDir}/rules.json for the rule registry — cite only EXISTING rule codes in the candidate's "rules" field.\n` +
+    `Hard constraints: tags MUST be chosen from ${JSON.stringify(legalTags)}; rarity ∈ 普通/稀有/史诗/传奇 (stored counts: ${JSON.stringify(rarityCounts)} — avoid 史诗 unless the design demands it); damage_type ∈ 无/物理/魔法/圣/纯伤害/混合; status = "草稿"; id = "${classId}_gap_" + a short pinyin slug of the name, colliding with NO stored id; class_id = "${classId}".\n` +
+    `Power level: comparable to same-rarity stored talents — do not exceed them. Return the candidate + a design_rationale citing the corpus talents you calibrated against.`,
+    { phase: 'GapFill', schema: GAP_GENERATE_SCHEMA, model: 'sonnet', label: `gap-generate:${targetCell.trigger}×${targetCell.effect}` }
+  )
+  if (!gen || !gen.candidate || typeof gen.candidate !== 'object' || Array.isArray(gen.candidate) || !gen.candidate.id) {
+    return { talentId: null, verdict: 'blocked', error: 'gapfill generation failed — no usable candidate object produced' }
+  }
+  candidate = gen.candidate
+  candidate.class_id = classId
+  candidate.status = '草稿' // a generated candidate must never claim any other lifecycle state
+  // Deterministic id hygiene — identity invariants are never left to the generator: enforce
+  // the gap prefix and de-collide against stored ids (a reused id would poison the R6.6
+  // "newly added" accounting below and make L2 compare the candidate against itself).
+  let genId = String(candidate.id).trim().replace(/\s+/g, '_').replace(/[^A-Za-z0-9_-]/g, '_')
+  if (!genId.startsWith(`${classId}_gap_`)) genId = `${classId}_gap_${genId.replace(new RegExp(`^${classId}_`), '')}`
+  genId = genId.slice(0, 56) // same safe-id charset as bare-id parsing; leave room for suffixes
+  while (peerIdSet.has(genId)) genId += '_x'
+  if (genId !== candidate.id) log(`GapFill: candidate id normalized「${candidate.id}」->「${genId}」`)
+  candidate.id = genId
+  candidateStoredRarity = '' // brand-new (now guaranteed-unique) id: R6.6 treats it as newly added
+
+  // Embedding redundancy screen — one agent does the whole vector step via Bash python and
+  // returns ONLY the summary (never the raw vectors: 20×1536 floats would be bulk injection).
+  // Candidate text is generator output — strip shell/prompt-breaking characters and cap the
+  // length before it rides into a prompt that drives Bash/python (defense-in-depth: JSON
+  // escaping alone doesn't stop an agent from pasting the text into a shell command).
+  const sanitizeEmbedText = (v, max) => String(v || '').replace(/[`$\\]/g, '').replace(/\r?\n/g, ' ').slice(0, max)
+  const embCandidate = {
+    name: sanitizeEmbedText(candidate.name, 80),
+    trigger: sanitizeEmbedText(candidate.trigger, 300),
+    effect: sanitizeEmbedText(candidate.effect, 300),
+  }
+  const emb = await agent(
+    `Compute embedding cosine similarity between ONE candidate talent and every stored talent, via Bash + python.\n` +
+    `Endpoint: ${embedBaseUrl ? `use base URL "${embedBaseUrl}"` : 'read env AZURE_OPENAI_EMBED_BASE_URL, else env OPENAI_BASE_URL'} — POST <base>/embeddings with header "api-key" from env AZURE_OPENAI_API_KEY (fallback: env OPENAI_API_KEY as "Authorization: Bearer"). NEVER print any key.\n` +
+    `Model: "${embedModel}". Text per talent = name + "|" + trigger + "|" + effect.\n` +
+    `Candidate (verbatim): ${JSON.stringify(embCandidate)}\n` +
+    `Stored talents: read ${corpusDir}/talents_${classId}.json. Batch all texts in ONE embeddings request (candidate first), then cosine in python.\n` +
+    `Return status="ok" with max_cos + most_similar_id, or status="unavailable" with max_cos=-1 if the endpoint/key is missing or ANY call fails — never fabricate numbers.`,
+    { phase: 'GapFill', schema: GAP_EMBED_SCHEMA, model: 'sonnet', label: `gap-embed:${candidate.id}` }
+  )
+  if (!emb || emb.status !== 'ok' || typeof emb.max_cos !== 'number' || emb.max_cos < -1 || emb.max_cos > 1) {
+    // FAIL-CLOSED: an unscreened candidate must not read as clean.
+    stageFailures.push('L4(embedding screen unavailable — redundancy UNVERIFIED)')
+    log(`WARN: embedding screen unavailable (${(emb && emb.detail) || 'agent failed'}) — redundancy UNVERIFIED (fail-closed -> revise)`)
+  } else if (emb.max_cos > EMBED_REDUNDANCY_COS) {
+    gapRedundant = true
+    log(`GapFill: candidate is REDUNDANT — cos ${emb.max_cos.toFixed(3)} vs ${emb.most_similar_id} > ${EMBED_REDUNDANCY_COS} (verdict floor: revise)`)
+  } else {
+    log(`GapFill: redundancy screen ok — max cos ${emb.max_cos.toFixed(3)} vs ${emb.most_similar_id}`)
+  }
+
+  gapReport = {
+    targetCell,
+    gapCellsTop3: gapCells.slice(0, 3),
+    axes: { trigger: tAxes, effect: eAxes },
+    classifiedCount: classified.length,
+    corpusCount: peers.length,
+    redundancy: (emb && emb.status === 'ok') ? { max_cos: emb.max_cos, most_similar_id: emb.most_similar_id, threshold: EMBED_REDUNDANCY_COS, redundant: gapRedundant } : { status: 'UNVERIFIED' },
+    design_rationale: gen.design_rationale || '',
+  }
+  log(`GapFill: generated candidate ${candidate.id}「${candidate.name}」(${candidate.rarity}) — feeding into L1-L3`)
+}
 
 // ── Phase 1: L1 deterministic (zero-LLM, in-script) ──
 phase('Validate')
@@ -363,7 +674,7 @@ const l1Warnings = l1Deterministic.filter(x => x.level === 'warning').length
 // pass: nothing of the above.
 let verdict
 if (l1Errors > 0 || l3.confirmedExploit) verdict = 'reject'
-else if (l1Warnings > 0 || l2Flagged.length > 0 || l3.undetermined || stageFailures.length > 0) verdict = 'revise'
+else if (l1Warnings > 0 || l2Flagged.length > 0 || l3.undetermined || stageFailures.length > 0 || gapRedundant) verdict = 'revise'
 else verdict = 'pass'
 
 return {
@@ -376,5 +687,7 @@ return {
   L1: { deterministic: l1Deterministic, semantic_advisory: l1SemanticIssues },
   L2: { triaged: l2Ok.length, failed: l2Failed, flagged: l2Flagged, droppedAtCap: Math.max(0, sharedPairs.length - pairsToTriage.length) },
   L3: l3.abuseLine ? { confirmedExploit: l3.confirmedExploit, undetermined: l3.undetermined, abuseLine: l3.abuseLine, defense: l3.defense } : { note: 'no abuse line produced' },
+  gapfill: gapReport, // null unless {"gapfill": true} mode; holds target cell + redundancy screen
+  candidateDraft: gapReport ? candidate : undefined, // the full generated draft for the designer
   corpusDir,
 }
