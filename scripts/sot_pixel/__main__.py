@@ -59,6 +59,11 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--backend", default="pixflux",
                    choices=["pixflux", "bitforge"],
                    help="pawn static-frame backend")
+    p.add_argument("--view", default=pawn.DEFAULT_VIEW,
+                   choices=list(pawn.VIEW_CHOICES),
+                   help="pawn camera pitch; 'high top-down' (default) makes "
+                        "walk_n/s/e/w four distinct facings, 'side' collapses "
+                        "north/south (sidescroller framing)")
     p.add_argument("--animate-walk", action="store_true",
                    help="generate walk_* as multi-frame animate cycles")
     p.add_argument("--max-palette", type=int, default=256,
@@ -172,7 +177,8 @@ def _run_pawn(args: argparse.Namespace, bible: CharacterBible,
     try:
         report = pawn.generate_pawn(
             bible, args.out_dir, name=name, size=args.size, ref=args.ref,
-            backend=args.backend, animate_walk=args.animate_walk,
+            backend=args.backend, view=args.view,
+            animate_walk=args.animate_walk,
             quantize=args.quantize, max_palette=args.max_palette,
             dry_run=args.dry_run, seed=args.seed,
         )
