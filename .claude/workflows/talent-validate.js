@@ -109,17 +109,24 @@ const DEFAULT_EFFECT_AXES = ['直接伤害', '增伤/暴击强化', '防御/减�
 // (deliberately NOT localhost-restricted — the design-library API is planned to move behind
 // the NAS URL once a CF service token exists, see the usage guide), and dataDir must not
 // traverse upward out of the workspace.
-if (typeof codexBaseUrl !== 'string' || !/^https?:\/\/[^\s@]+$/.test(codexBaseUrl)) {
+// Plain http(s) URL from a conservative charset: host[:port][/path] only — no userinfo,
+// quotes, backticks, spaces, or other shell/prompt-breaking characters can survive this shape.
+const SAFE_URL_RE = /^https?:\/\/[A-Za-z0-9.-]+(:\d+)?(\/[A-Za-z0-9._~/-]*)?$/
+if (typeof codexBaseUrl !== 'string' || !SAFE_URL_RE.test(codexBaseUrl)) {
   log(`Blocked unsafe codex_base_url: ${codexBaseUrl}`)
-  return { talentId: talentId || (draft && draft.id) || null, verdict: 'blocked', error: 'unsafe codex_base_url (must be a plain http(s) URL without credentials)' }
+  return { talentId: talentId || (draft && draft.id) || null, verdict: 'blocked', error: 'unsafe codex_base_url (must be a plain http(s) host[:port][/path] URL)' }
 }
-if (typeof dataDir !== 'string' || dataDir.includes('..')) {
-  log('Blocked unsafe dataDir (upward traversal)')
-  return { talentId: talentId || (draft && draft.id) || null, verdict: 'blocked', error: 'unsafe dataDir (must not contain ..)' }
+// dataDir: no upward traversal, and a conservative path charset — newlines, quotes, backticks,
+// '$' and friends must not ride into agent-executed Bash/python. Absolute paths stay ALLOWED:
+// prepared fixtures may live anywhere the operator chooses (ADAPT_SCHEMA.dataDir is documented
+// as an absolute dir), so this is a charset bound, not a root lock.
+if (typeof dataDir !== 'string' || dataDir.includes('..') || !/^[A-Za-z0-9._:/\\ -]{1,200}$/.test(dataDir)) {
+  log('Blocked unsafe dataDir (traversal or unsafe characters)')
+  return { talentId: talentId || (draft && draft.id) || null, verdict: 'blocked', error: 'unsafe dataDir (no .., path-safe characters only)' }
 }
-if (embedBaseUrl !== null && (typeof embedBaseUrl !== 'string' || !/^https?:\/\/[^\s@]+$/.test(embedBaseUrl))) {
+if (embedBaseUrl !== null && (typeof embedBaseUrl !== 'string' || !SAFE_URL_RE.test(embedBaseUrl))) {
   log(`Blocked unsafe embed_base_url: ${embedBaseUrl}`)
-  return { talentId: null, verdict: 'blocked', error: 'unsafe embed_base_url (must be a plain http(s) URL without credentials)' }
+  return { talentId: null, verdict: 'blocked', error: 'unsafe embed_base_url (must be a plain http(s) host[:port][/path] URL)' }
 }
 // classId rides into file paths (talents_<classId>.json), agent-executed curl URLs, and the
 // generated id prefix — same sanity bound as its sibling inputs.
@@ -261,7 +268,9 @@ const GAP_EMBED_SCHEMA = {
 // proven viable in this class; only the combination is unexplored), then by total occupancy.
 function buildGapCells(classified, tAxes, eAxes) {
   const filled = new Set(classified.map(c => `${c.trigger_cat}|${c.effect_cat}`))
-  const rowCount = {}, colCount = {}
+  // Null-prototype maps: axis labels are user-suppliable, and a label like "__proto__" on a
+  // plain object would corrupt the counts (prototype pollution).
+  const rowCount = Object.create(null), colCount = Object.create(null)
   for (const c of classified) {
     rowCount[c.trigger_cat] = (rowCount[c.trigger_cat] || 0) + 1
     colCount[c.effect_cat] = (colCount[c.effect_cat] || 0) + 1
@@ -356,11 +365,16 @@ if (gapfill) {
   let tAxes = (Array.isArray(opts.triggerAxes) && opts.triggerAxes.length > 1) ? opts.triggerAxes : DEFAULT_TRIGGER_AXES
   let eAxes = (Array.isArray(opts.effectAxes) && opts.effectAxes.length > 1) ? opts.effectAxes : DEFAULT_EFFECT_AXES
   // Axis labels become matrix keys joined with '|' — a '|' inside a label would alias two
-  // distinct cells, and duplicate labels would emit duplicate cells. Reject, don't guess.
-  const axisProblem = [...tAxes, ...eAxes].some(a => typeof a !== 'string' || !a.trim() || a.includes('|'))
+  // distinct cells, and duplicate labels would emit duplicate cells. Axis count and label
+  // length are hard-bounded: they ride into every classification prompt and drive the matrix
+  // enumeration, so unbounded input means context bloat and runaway cells. Reject, don't guess.
+  const AXIS_MAX_COUNT = 12
+  const AXIS_LABEL_MAX_LEN = 24
+  const axisProblem = [...tAxes, ...eAxes].some(a => typeof a !== 'string' || !a.trim() || a.length > AXIS_LABEL_MAX_LEN || a.includes('|'))
+    || tAxes.length > AXIS_MAX_COUNT || eAxes.length > AXIS_MAX_COUNT
     || new Set(tAxes).size !== tAxes.length || new Set(eAxes).size !== eAxes.length
   if (axisProblem) {
-    return { talentId: null, verdict: 'blocked', error: 'invalid custom axes — labels must be unique non-empty strings without "|"' }
+    return { talentId: null, verdict: 'blocked', error: `invalid custom axes — per axis: <=${AXIS_MAX_COUNT} unique non-empty labels, <=${AXIS_LABEL_MAX_LEN} chars each, no "|"` }
   }
   // The catch-all bucket is STRUCTURAL, not a design target: the classifier prompt directs
   // hard-to-place talents there and the matrix skips it, so custom axes that omit it would
@@ -429,8 +443,8 @@ if (gapfill) {
     `Power level: comparable to same-rarity stored talents — do not exceed them. Return the candidate + a design_rationale citing the corpus talents you calibrated against.`,
     { phase: 'GapFill', schema: GAP_GENERATE_SCHEMA, model: 'sonnet', label: `gap-generate:${targetCell.trigger}×${targetCell.effect}` }
   )
-  if (!gen || !gen.candidate || !gen.candidate.id) {
-    return { talentId: null, verdict: 'blocked', error: 'gapfill generation failed — no candidate produced' }
+  if (!gen || !gen.candidate || typeof gen.candidate !== 'object' || Array.isArray(gen.candidate) || !gen.candidate.id) {
+    return { talentId: null, verdict: 'blocked', error: 'gapfill generation failed — no usable candidate object produced' }
   }
   candidate = gen.candidate
   candidate.class_id = classId
@@ -438,8 +452,9 @@ if (gapfill) {
   // Deterministic id hygiene — identity invariants are never left to the generator: enforce
   // the gap prefix and de-collide against stored ids (a reused id would poison the R6.6
   // "newly added" accounting below and make L2 compare the candidate against itself).
-  let genId = String(candidate.id).trim().replace(/\s+/g, '_')
+  let genId = String(candidate.id).trim().replace(/\s+/g, '_').replace(/[^A-Za-z0-9_-]/g, '_')
   if (!genId.startsWith(`${classId}_gap_`)) genId = `${classId}_gap_${genId.replace(new RegExp(`^${classId}_`), '')}`
+  genId = genId.slice(0, 56) // same safe-id charset as bare-id parsing; leave room for suffixes
   while (peerIdSet.has(genId)) genId += '_x'
   if (genId !== candidate.id) log(`GapFill: candidate id normalized「${candidate.id}」->「${genId}」`)
   candidate.id = genId
@@ -447,11 +462,20 @@ if (gapfill) {
 
   // Embedding redundancy screen — one agent does the whole vector step via Bash python and
   // returns ONLY the summary (never the raw vectors: 20×1536 floats would be bulk injection).
+  // Candidate text is generator output — strip shell/prompt-breaking characters and cap the
+  // length before it rides into a prompt that drives Bash/python (defense-in-depth: JSON
+  // escaping alone doesn't stop an agent from pasting the text into a shell command).
+  const sanitizeEmbedText = (v, max) => String(v || '').replace(/[`$\\]/g, '').replace(/\r?\n/g, ' ').slice(0, max)
+  const embCandidate = {
+    name: sanitizeEmbedText(candidate.name, 80),
+    trigger: sanitizeEmbedText(candidate.trigger, 300),
+    effect: sanitizeEmbedText(candidate.effect, 300),
+  }
   const emb = await agent(
     `Compute embedding cosine similarity between ONE candidate talent and every stored talent, via Bash + python.\n` +
     `Endpoint: ${embedBaseUrl ? `use base URL "${embedBaseUrl}"` : 'read env AZURE_OPENAI_EMBED_BASE_URL, else env OPENAI_BASE_URL'} — POST <base>/embeddings with header "api-key" from env AZURE_OPENAI_API_KEY (fallback: env OPENAI_API_KEY as "Authorization: Bearer"). NEVER print any key.\n` +
     `Model: "${embedModel}". Text per talent = name + "|" + trigger + "|" + effect.\n` +
-    `Candidate (verbatim): ${JSON.stringify({ name: candidate.name, trigger: candidate.trigger, effect: candidate.effect })}\n` +
+    `Candidate (verbatim): ${JSON.stringify(embCandidate)}\n` +
     `Stored talents: read ${corpusDir}/talents_${classId}.json. Batch all texts in ONE embeddings request (candidate first), then cosine in python.\n` +
     `Return status="ok" with max_cos + most_similar_id, or status="unavailable" with max_cos=-1 if the endpoint/key is missing or ANY call fails — never fabricate numbers.`,
     { phase: 'GapFill', schema: GAP_EMBED_SCHEMA, model: 'sonnet', label: `gap-embed:${candidate.id}` }
