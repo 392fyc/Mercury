@@ -8,18 +8,23 @@
 # Probed working stack (2026-06-22): uvicorn 0.39.0 / CPython 3.14.3.
 #
 # Usage (run in its own terminal; it stays in the foreground serving):
-#   bash scripts/sot-codex-serve.sh
+#   SOT_CODEX_DIR=/path/to/SoT-fyc-space bash scripts/sot-codex-serve.sh
 #   # then, in another terminal / Claude session:
 #   /talent-validate { "talent_id": "ss_jianqie", "class_id": "ss" }
 #
 # Env:
-#   SOT_CODEX_DIR  SoT Codex repo (default /d/ShipOfTheseus/SoT-fyc-space — this machine's
-#                  checkout location, NOT a universal path; other environments must set it)
+#   SOT_CODEX_DIR  SoT Codex repo (REQUIRED — no default: repo locations are machine-specific,
+#                  and a silently wrong default is worse than a loud error)
 #   CODEX_PORT     port (default 8000)
 #   CODEX_DB       SQLite path — kept under Mercury tmp by default (never the SoT repo)
 set -uo pipefail
 
-SOT_CODEX="${SOT_CODEX_DIR:-/d/ShipOfTheseus/SoT-fyc-space}"
+SOT_CODEX="${SOT_CODEX_DIR:-}"
+if [[ -z "$SOT_CODEX" ]]; then
+  echo "ERROR: SOT_CODEX_DIR is not set. Point it at your SoT Codex repo checkout, e.g.:" >&2
+  echo "  SOT_CODEX_DIR=/path/to/SoT-fyc-space bash scripts/sot-codex-serve.sh" >&2
+  exit 2
+fi
 PORT="${CODEX_PORT:-8000}"
 # Repo root derived from this script's location so the default DB never hardcodes a machine path.
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -38,11 +43,19 @@ if [[ ! -f "$SOT_CODEX/seed/seed.json" ]]; then
   exit 2
 fi
 
-# Reuse a live instance instead of starting a confusing second one on the same port.
-if curl -s -m 2 -o /dev/null "http://127.0.0.1:$PORT/api/tags" 2>/dev/null; then
-  echo "NOTE: port $PORT is already serving (/api/tags responded) — reusing it, not starting a second instance."
-  echo "      Stop the existing instance first if it is stale."
-  exit 0
+# Reuse a live instance instead of starting a confusing second one on the same port — but only
+# when the responder actually looks like the SoT Codex API (/api/tags returns a JSON array;
+# shape probed against the live service). curl -f: an HTTP error (404/500 from an unrelated
+# service) must not read as "already serving".
+HEALTH="$(curl -fsS -m 2 "http://127.0.0.1:$PORT/api/tags" 2>/dev/null || true)"
+if [[ -n "$HEALTH" ]]; then
+  if printf '%s' "$HEALTH" | grep -qE '^\s*\['; then
+    echo "NOTE: port $PORT is already serving SoT Codex (/api/tags returned tag JSON) — reusing it."
+    echo "      Stop the existing instance first if it is stale."
+    exit 0
+  fi
+  echo "ERROR: port $PORT is occupied by a non-Codex service; refusing to reuse it." >&2
+  exit 2
 fi
 
 mkdir -p "$(dirname "$DB")"

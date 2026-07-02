@@ -51,6 +51,24 @@ const PAIR_CAP = Math.max(1, Math.min((args && args.pairCap) || 20, 30))
 // absent/unlocked — by design — so a renamed rule would also silently disable it).
 const EPIC_SUPPLY_RULE = 'R6.6'
 const EPIC_SUPPLY_CAP = 6
+// Set refresh=true to force the Adapt agent to re-fetch everything from the API even when
+// dataDir already holds fixture files (the reuse default can silently serve a stale snapshot
+// after the design library has been edited).
+const refreshData = !!(args && (args.refresh || args.refreshData))
+
+// Operator-supplied inputs still get sanity bounds before being interpolated into agent
+// prompts: the base URL must be a plain http(s) URL without embedded credentials/whitespace
+// (deliberately NOT localhost-restricted — the design-library API is planned to move behind
+// the NAS URL once a CF service token exists, see the usage guide), and dataDir must not
+// traverse upward out of the workspace.
+if (typeof codexBaseUrl !== 'string' || !/^https?:\/\/[^\s@]+$/.test(codexBaseUrl)) {
+  log(`Blocked unsafe codex_base_url: ${codexBaseUrl}`)
+  return { talentId: talentId || (draft && draft.id) || null, verdict: 'blocked', error: 'unsafe codex_base_url (must be a plain http(s) URL without credentials)' }
+}
+if (typeof dataDir !== 'string' || dataDir.includes('..')) {
+  log('Blocked unsafe dataDir (upward traversal)')
+  return { talentId: talentId || (draft && draft.id) || null, verdict: 'blocked', error: 'unsafe dataDir (must not contain ..)' }
+}
 
 // ── Schemas ──
 const ADAPT_SCHEMA = {
@@ -137,10 +155,14 @@ const adapt = await agent(
   `You are a READ-ONLY data adapter for the SoT Codex design API. Do NOT write to any SoT repo.\n` +
   `Goal: assemble the corpus for validating talent "${candId}" (class_id="${classId}").\n\n` +
   `Step 1 — obtain data into dataDir="${dataDir}" (create it if missing):\n` +
-  `  - tags.json, rules.json, talents_${classId}.json: if present in dataDir read them, else fetch via Bash curl from ${codexBaseUrl}: GET /api/tags , GET /api/rules , GET /api/talents?class_id=${classId} and save each.\n` +
+  (refreshData
+    ? `  - REFRESH MODE: ignore any existing files in dataDir — fetch fresh tags.json, rules.json, talents_${classId}.json via Bash curl from ${codexBaseUrl} (GET /api/tags , GET /api/rules , GET /api/talents?class_id=${classId}) and overwrite them.\n`
+    : `  - tags.json, rules.json, talents_${classId}.json: if present in dataDir read them, else fetch via Bash curl from ${codexBaseUrl}: GET /api/tags , GET /api/rules , GET /api/talents?class_id=${classId} and save each.\n`) +
   (draft
     ? `  - The candidate is an INLINE DRAFT (id "${candId}" is NOT in the API — do NOT GET it, a fetch would 404). Use this JSON VERBATIM as the candidate, and WRITE exactly this JSON to dataDir/talent_${candId}.json (overwrite any 404 placeholder): ${JSON.stringify(draft)}\n`
-    : `  - candidate: GET /api/talents/${talentId} from ${codexBaseUrl} (or read dataDir/talent_${talentId}.json if present) and ensure it is saved to dataDir/talent_${talentId}.json.\n`) +
+    : (refreshData
+        ? `  - candidate: fetch fresh via GET /api/talents/${talentId} from ${codexBaseUrl} (ignore any existing dataDir copy) and save to dataDir/talent_${talentId}.json.\n`
+        : `  - candidate: GET /api/talents/${talentId} from ${codexBaseUrl} (or read dataDir/talent_${talentId}.json if present) and ensure it is saved to dataDir/talent_${talentId}.json.\n`)) +
   `Step 2 — return a LIGHT index (NOT the full peer bodies):\n` +
   `  - candidate: the full record of the talent under test (all fields).\n` +
   `  - peers: same-class talents as id/name/rarity/tags ONLY (omit effect/trigger/rules bodies — they stay in the files).\n` +
@@ -216,6 +238,10 @@ function runL1Deterministic() {
         if (isNewEpic) v.push({ level: 'error', check: 'supply-budget', message: `此候选新增史诗占位将使供给达 ${epicAfter} > ${EPIC_SUPPLY_RULE} 锁定上限 ${EPIC_SUPPLY_CAP} (该牌导致越界)` })
         else v.push({ level: 'warning', check: 'supply-budget', message: `史诗池供给 ${epicAfter} 已 > ${EPIC_SUPPLY_RULE} 上限 ${EPIC_SUPPLY_CAP} (池子既有超限,非本候选导致;需设计层腾位)` })
       }
+    } else if (candidate.rarity === '史诗') {
+      // Registry loaded but the supply rule is absent or not locked — surface the skipped
+      // check loudly instead of letting registry drift disable it in silence.
+      log(`NOTE: epic-supply check skipped — ${EPIC_SUPPLY_RULE} is absent or not 锁定 in the loaded rule registry (registry drift / renamed rule?)`)
     }
   }
   return v

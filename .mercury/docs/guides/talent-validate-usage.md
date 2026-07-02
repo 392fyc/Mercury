@@ -11,8 +11,10 @@
 talent-validate 需要 SoT 设计库 API 取 tag 注册表 / 规则表 / 同职业天赋。在单独终端起:
 
 ```bash
-bash scripts/sot-codex-serve.sh    # http://127.0.0.1:8000, DB 隔离 Mercury tmp, 零写 SoT 仓
+SOT_CODEX_DIR=/path/to/SoT-fyc-space bash scripts/sot-codex-serve.sh   # http://127.0.0.1:8000, DB 隔离 Mercury tmp, 零写 SoT 仓
 ```
+
+(`SOT_CODEX_DIR` 必填,指向 SoT 设计库仓库检出位置;无默认值,防止换环境时静默指错目录。)
 
 (NAS `sot.fyc-space.uk` 待 CF token,暂用本地。)
 
@@ -38,6 +40,8 @@ bash scripts/sot-codex-serve.sh    # http://127.0.0.1:8000, DB 隔离 Mercury tm
 ```
 
 > 也可用 Workflow 工具直接跑:`Workflow({ scriptPath: ".claude/workflows/talent-validate.js", args: {...} })`。后台跑,`/workflows` 看进度。单张约 20-22 agents / ~800K token / ~9 分钟。
+>
+> 复跑注意:默认复用 `.mercury/tmp/codex-fixtures/` 里的既有数据快照;若设计库在两次运行之间有更新,args 里加 `"refresh": true` 强制重新抓取 API,避免基于陈旧快照裁决。
 
 ## 草稿字段(L1 schema 必填)
 
