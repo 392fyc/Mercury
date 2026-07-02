@@ -78,6 +78,9 @@ CLAUDE.md
 .mercury/sessions.json
 .mercury/transcripts/
 .mercury/backups/
+# SoT-workflow runtime: gdtoolkit venv + Codex fixtures + test probes — never commit
+.mercury/tmp/
+.mercury/tools/
 .mercury/mercury.db
 .mercury/mercury.db-wal
 .mercury/mercury.db-shm

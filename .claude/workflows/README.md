@@ -29,7 +29,7 @@ Dynamic Workflow 是 Claude Code 原生的「**确定性多 agent 编排**」原
 
 ## 保存与复用约定
 
-- **手写模板**(如本目录 5 个):文件名 = `meta.name`,放 `.claude/workflows/<name>.js` → 直接 `/<name>` 调用。
+- **手写模板**(本目录清单所列):文件名 = `meta.name`,放 `.claude/workflows/<name>.js` → 直接 `/<name>` 调用。
 - **从运行保存**:跑出满意的一次后 `/workflows` → 选中 → 按 `s` → Tab 切换保存位置(`.claude/workflows/` 项目级随 repo / `~/.claude/workflows/` 个人级)→ Enter。
 - **同名优先级**:项目级 > 个人级。
 - **传参**:`/<name>` 后跟参数,脚本里读全局 `args`(运行时把字符串/数组/对象**原样**传入,无需解析)。**注意**:`args` 的具体**形状是每个模板自定义的**(见各脚本顶部常量),不是每个模板都接受三种形状 —— 例如 research/plan-review/migration 接受「字符串 或 `{字段…}` 对象」,audit 接受对象;传入不符合该模板契约的形状(如给只认字符串/对象的模板传顶层数组)会落入缺参分支并打印用法提示。每个模板都对缺省/不符做了优雅降级(返回 error + hint,不抛错)。
@@ -47,12 +47,13 @@ Dynamic Workflow 是 Claude Code 原生的「**确定性多 agent 编排**」原
 | `/mercury-large-migration` | loop-until-done | 数十到数百文件机械迁移,按文件归属并行改造(每 agent 独占一文件,工作树原地编辑)+ 逐文件验证 + 循环至收敛;edits 不 commit,由 operator 合并提交 |
 | `/mercury-ecc-practice-scan` | fan-out + adversarial-verify + classify | **周期性复审** everything-claude-code(ECC)新实践:recon 扇出 → 逐条对抗式交叉核查(UNVERIFIED 标注)→ 映射到 Mercury(already-covered / worth-absorbing / not-applicable)。对齐 [#233](https://github.com/392fyc/Mercury/issues/233) ECC 审计,**只产报告不立项**。ECC-specific(非通用),见 `.mercury/docs/research/ecc-practice-scan-2026-06.md`(2026-06 首跑) |
 | `/mercury-staleness-audit` | fan-out + adversarial-verify + classify | **周期性上游依赖 staleness 审计**(Tier 2,对齐 [#508](https://github.com/392fyc/Mercury/issues/508)):discover 扫 manifest/adapter pin/plugin/lockfile → 逐项 web 核查 + 对抗式复检 → 分类(ACTIVE-RISK / ACTION-NEEDED / ACCEPTABLE-DRIFT / DORMANT-OK / NOT-STALE / UNVERIFIED)。比 `scripts/upstream-drift-check.sh`(Tier 1 机械 blob 漂移)多抓「落后幅度 / 组件失效 / 上游 archived」。**只产报告不立项**,见 `.mercury/docs/guides/upstream-drift-routine.md` |
+| `/talent-validate` | in-script deterministic + fan-out triage + adversarial duel | **SoT 天赋平衡混合验证**(对齐 roadmap §1/§9):L1 结构/枚举/tag/规则引用/史诗供给检查纯 JS 零 LLM → Haiku 语义 advisory → L2 共享 tag 组合逐对 Haiku triage(PAIR_CAP 上限,溢出 log)→ L3 Optimizer-vs-Defender 串行对抗;fail-closed(任一 stage 失败强制 verdict ≥revise)。**只读 SoT 仓**;前置起本地只读 API `scripts/sot-codex-serve.sh`;用法见 `.mercury/docs/guides/talent-validate-usage.md`。SoT-specific(非通用) |
 
 各模板的 `args` 入参见脚本顶部常量(如 `maxAngles` / `maxPractices` / `mercuryPaths` / `batchCap` / `contextPaths`)。
 
 ### 六大编排模式 ↔ 模板
 
-fan-out(`codebase-audit`/`ecc-practice-scan` 的 Recon)· adversarial-verify(`codebase-audit` 的 Verify / `adversarial-plan-review` 的 Judge / `ecc-practice-scan` 的 cross-check)· judge-panel/tournament(`adversarial-plan-review`)· generate-and-filter(`multi-source-research` 的 sweep→crosscheck)· classify-and-act(`ecc-practice-scan` 的 MapToMercury)· loop-until-done(`large-migration`)。
+fan-out(`codebase-audit`/`ecc-practice-scan` 的 Recon / `talent-validate` 的 L2 组合扫描)· adversarial-verify(`codebase-audit` 的 Verify / `adversarial-plan-review` 的 Judge / `ecc-practice-scan` 的 cross-check / `talent-validate` 的 L3 对抗)· judge-panel/tournament(`adversarial-plan-review`)· generate-and-filter(`multi-source-research` 的 sweep→crosscheck)· classify-and-act(`ecc-practice-scan` 的 MapToMercury)· loop-until-done(`large-migration`)。
 
 ---
 
