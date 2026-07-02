@@ -180,6 +180,14 @@ def generate_pawn(bible: CharacterBible, out_dir: Path, *,
     Returns a report dict. On `dry_run`, returns the plan (planned argv +
     descriptions) without any network call or file/directory creation.
     """
+    # Fail fast on an invalid view: the CLI enforces this via argparse
+    # choices, but generate_pawn is also called directly (skill / tests /
+    # future workflows), and an unchecked value would only surface as an
+    # opaque PixelLab API error downstream.
+    if view not in VIEW_CHOICES:
+        raise ValueError(
+            f"view must be one of {VIEW_CHOICES}, got {view!r}"
+        )
     name = name or bible.name
     base_desc = _base_description(bible)
     if ref is None and bible.reference_images:

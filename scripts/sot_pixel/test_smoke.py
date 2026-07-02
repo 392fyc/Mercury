@@ -273,6 +273,10 @@ def _opt_pairs(argv: list[str]) -> dict[str, str]:
     i = 0
     while i < len(argv):
         if argv[i] == "--opt":
+            # Guard the KEY/VALUE lookahead so a malformed plan fails with a
+            # clear assertion instead of an opaque IndexError.
+            assert i + 2 < len(argv), \
+                f"malformed --opt (missing KEY/VALUE) at end of argv: {argv[i:]}"
             pairs[argv[i + 1]] = argv[i + 2]
             i += 3
         else:
