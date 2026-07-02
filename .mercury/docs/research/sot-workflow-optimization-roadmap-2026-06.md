@@ -223,7 +223,7 @@ animate-frames 的 character-bible JSON 契约 + dHash 门 + palette 校验是�
 ### 9.4 后续待办(talent-validate 增量)
 - [ ] 扩跑其余 3 张已审天赋(破釜沉舟 `ss_pofu`/先之先 `ss_xianzhixian`/心眼·彻 `ss_xinyance`);心眼·彻作 draft 新增史诗应触发 R6.6 error→reject(验证"新增越界"归因路径,与"池既有超限"区分)。
 - [ ] **数值功率评分**(L1 增量):待 设计库补数值字段(决策点 1=a 实施后),加确定性功率预算评分(权重据现有平衡卡校准)。
-- [ ] **L4 gap-fill 构思**(§1.2/§6 P3):trigger×effect 覆盖矩阵 + embedding 相似度过滤,选空格子生成 1 个语料-schema-合法候选回灌 L1-L3。
+- [x] **L4 gap-fill 构思**(§1.2/§6 P3):trigger×effect 覆盖矩阵 + embedding 相似度过滤,选空格子生成 1 个语料-schema-合法候选回灌 L1-L3。**2026-07-02 落地**:gapfill 模式并入 `talent-validate.js`(args `{"gapfill": true}`;分类 agent + 纯 JS 矩阵/选格 + 单 Sonnet 生成 + text-embedding-3-small 冗余筛 cos>0.85,endpoint 经 args/env 无硬编码,筛重不可用时 fail-closed 标 UNVERIFIED 强制 ≥revise);用法见 usage guide §C。
 - [ ] Monte-Carlo 平衡 sim(Python,§6 P2)做数值平衡(L3 只抓逻辑 exploit,定量平衡需模拟)。
 - [ ] (可选硬化)把 fixtures 拉取从 Adapt agent 内联化为脚本前置;加 设计库 API 分页/规则表完整性校验(防合法引用被误报悬空);Z3 可选增强(§1.3)。
 
