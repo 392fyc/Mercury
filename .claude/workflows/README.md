@@ -71,6 +71,6 @@ fan-out(`codebase-audit`/`ecc-practice-scan` 的 Recon / `talent-validate` 的 L
 
 - **dual-verify 仍是合并门**:Workflow 产出的代码改动,提交前照样跑 `/dual-verify` + 走 PR 到 develop(Workflow 不绕过任何 hook 回归)。
 - **成本**:一次 run 可能比对话方式多用数倍 token。先在小切片上试(单目录 / 窄问题)估开销;`/workflows` 实时看 token。
-- **model**:每个 agent 用会话 model,除非脚本 `opts.model` 显式路由。大 run 前先核对 `/model`。
+- **model**:每个 agent 用会话 model,除非脚本 `opts.model` 显式路由。大 run 前先核对 `/model`。**Fable 5 节约([#535](https://github.com/392fyc/Mercury/issues/535))**:若会话主模型是 Fable($10/$50,≈2×Opus),不分层则整个 run 数十个 agent 全烧 Fable —— 模板的 finder / 机械 / 分类 stage 应 `opts.model:'sonnet'|'haiku'`,只最硬的 judge / synthesis / adversarial 裁决 stage 才 `'fable'`(或用 `opus`)。分层原则见 `.claude/agents/main.md` §模型分层与 Fable 5 节约。
 - **不重写既有 skill**:autoresearch/dual-verify 等暂不全量改写为 Workflow(large effort);先用本模板库验证价值再渐进迁移(调查文档 §不建议吸收 #7)。迁移判定标准 + 回归基线(防模板库无序侵蚀稳定 skill)见 [`.mercury/docs/guides/fanout-and-skill-migration-guardrails.md`](../../.mercury/docs/guides/fanout-and-skill-migration-guardrails.md)(#485)§4-5。
 - **大规模 fan-out 前的检查清单 + 规模上限规则**(本节 5 条是每模板内嵌约束;升级到任何大规模 fan-out *之前*该过哪些 + 该 fan 多大)同见上述 #485 guide §2-3。
