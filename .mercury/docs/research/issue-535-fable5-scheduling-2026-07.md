@@ -108,6 +108,8 @@ statusline 命令收到的 usage JSON(<https://code.claude.com/docs/en/statuslin
 | **Task Budgets API(`task-budgets-2026-03-13`)** | 官方文档 | **官方明确「not supported on Claude Code」** | **排除(此路不通)** |
 | Karpathy 模型分层论述 | — | 未找到确切一手出处;autoresearch 是**算力**分层非模型分层 | 不署名归因 |
 
+> **cherry-pick 合规提示**:表中标「可 cherry-pick」的外部实现(advisor-strategy-skill MIT、RouteLLM Apache-2.0 等),真正引入代码时**必须走 Mercury cherry-pick 协议**(`.mercury/state/upstream-manifest.json` 条目 + SKILL.md frontmatter 归属 + SHA 核实 + license 门槛,见 CLAUDE.md §Cherry-pick protocol)。本 ADR 仅为**策略研究,未引入任何外部代码**,故无 manifest / 归属改动;advisor 相关落地一律归 #506 pilot,届时按协议补齐合规。
+
 ### 3.2 Mercury Fable 节约策略(六层)
 
 按「把 Fable 留给最难环节,其余用便宜档」的原则,从大杠杆到补充杠杆:
