@@ -27,6 +27,7 @@ Read these docs on demand when you need the corresponding information:
 | 四原语选型矩阵 + budget-scaling 规则 | `.claude/agents/main.md` §编排升级 |
 | **大规模 fan-out context 护栏 + skill 迁移决策/基线** | `.mercury/docs/guides/fanout-and-skill-migration-guardrails.md` |
 | Cherry-pick carve-out 细则(CLI-scaffold: tauri/vite/shadcn) | `.mercury/docs/guides/cherry-pick-carve-out.md` |
+| **Fable 5 额度调度策略 + statusline 近似告警(ADR)** | `.mercury/docs/research/issue-535-fable5-scheduling-2026-07.md` |
 
 ## Ultracode 与 Dynamic Workflows
 
@@ -47,6 +48,20 @@ Mercury 用 Claude Code 原生 **Dynamic Workflow**(确定性多 agent 编排,JS
 - Haiku 路径注入切片 ≤50K token(200K ctx 硬 cliff);Codex/GPT-5.5 路径 272K cliff 越线整 session 翻倍。
 - runtime 兜底 ≤16 并发 / 1000 agent per run。
 - **dual-verify 仍是合并门**:Workflow 产出代码改动照样跑 `/dual-verify` + PR 到 develop,不绕过任何 hook 回归。
+
+## Fable 5 额度调度策略(#535)
+
+用户会话主模型若选 Fable 5(`claude-fable-5`,$10/$50 per M,≈2×Opus;Pro/Max/Team 及部分 Enterprise 订阅当前含至多「周额度 50%」份额 through 7/7,之后转 usage-credits),**主循环全程烧 Fable**(`main=inherit`)。省 Fable 的杠杆在**主循环模型选择 + 分层派活**,不在改 agent 定义(盘点:无 agent 硬编码 `model: fable`)。完整 ADR 见 Navigation 表的调度策略文档。
+
+**六层分层原则(大杠杆 → 补充)**:
+- **L0 主循环默认 Opus 4.8**:日常编排 / dev-pipeline / 研究综合用 Opus 做 driver;只在最难环节会话内 `/model fable` 临时切,用完切回。(Mercury 不替用户选 `/model`;这是工作习惯建议 + statusline 预警 + 分层约定共同支撑。)
+- **L1 subagent 分层**(现状已达标):新增 agent 默认不写 `model: fable`;需 Fable 级能力优先 `opus`,确有必要才显式 `fable` 且在 PR 说明理由。
+- **L2 Fable 只用于最难环节**:架构综合 / 长程多步裁决 / Argus 反复卡不过的复杂 review 深析 / 跨仓库不可逆决策推演 / 需 1M context 一次性容纳的超大上下文综合。其余一律 Opus 4.8 及以下。
+- **L3 Workflow per-stage 模型分层**:finder / 机械 / 分类 stage 用 `opts.model:'sonnet'|'haiku'`,只最硬的 judge / synthesis / adversarial 裁决 stage 才 `'fable'`(否则会话主模型是 Fable 时,整个 Workflow 数十个 agent 全烧 Fable)。
+- **L4 advisor 模式**(原生 advisor 工具,pilot → [#506](https://github.com/392fyc/Mercury/issues/506)):**#506 既定 pilot 配置 = cheap-main + Opus-advisor(降本)**。省 Fable 的扩展设想 = Opus-main + Fable-advisor(只在关键决策点 consult Fable),但 **Fable 作为 advisor model 的 CLI 支持性 UNVERIFIED**,仅作 #506 的可选扩展验证点、非其既定范围。**勿越界接线** —— advisor 是服务端单请求原生工具,禁写 Messages-API wrapper / MCP / skill 包装;落地归 #506。
+- **L5 `/effort` 第二层**:用 Fable 时默认低/中 effort,只裁决点升 high/max。
+
+**statusline Fable 额度显示**:官方 statusline schema **无 per-model / Fable 字段** → 无法精确显示剩余周额度;精确显示 = 上游功能请求(监控 changelog)。本地近似告警(cost-tracker 累计本周 Fable 估算花费 + `MERCURY_FABLE_WEEKLY_BUDGET_USD` 软预算颜色告警;**实现在用户级 `~/.claude/`、不在本 repo,走 #259 治理**)为 env-gated 可选项,**精度受限**(客户端估算 ≠ 服务端真实额度百分比;7/7 后 usage-credits 切换会改变分母语义,需按新计费重设阈值)。
 
 ## Related Repositories
 
