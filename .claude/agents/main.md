@@ -82,7 +82,7 @@ Fable 5(`claude-fable-5`,$10/$50 per M,≈2×Opus;Pro/Max/Team 及部分 Enterpr
 - 主循环默认 **Opus 4.8** driver;Fable 只在最难环节(架构综合 / 长程裁决 / 反复卡不过的复杂 review 深析 / 跨仓库不可逆推演 / 需 1M context 的超大综合)显式 `/model fable` 升级。
 - subagent `model:` 已分层(critic/design=opus,dev/acceptance/research=sonnet,game-researcher=haiku,main=inherit);**新增 agent 默认不写 `fable`**,需 Fable 级能力优先 `opus`。
 - **Workflow per-stage 分层**:finder / 机械 / 分类 stage 用 `opts.model:'sonnet'|'haiku'`,只最硬的 judge / synthesis / adversarial 裁决 stage 才 `'fable'`。模板默认继承会话 model → 若会话是 Fable,不分层则整个 run 数十 agent 全烧 Fable。
-- **advisor 模式**(Opus-main + Fable-advisor,只 consult 时烧 Fable)= pilot-gated → [#506](https://github.com/392fyc/Mercury/issues/506),勿越界接线(advisor 是服务端单请求原生工具)。
+- **advisor 模式**:**#506 既定 pilot = cheap-main + Opus-advisor**(降本);省 Fable 的扩展设想 = Opus-main + Fable-advisor(只 consult 时烧 Fable),但 Fable-as-advisor 的 CLI 支持性 **UNVERIFIED**,仅作 [#506](https://github.com/392fyc/Mercury/issues/506) 可选扩展验证点。勿越界接线(advisor 是服务端单请求原生工具)。
 - `/effort`:用 Fable 时默认低/中,裁决点才 high。
 
 完整六层策略 + statusline 近似告警见 ADR `.mercury/docs/research/issue-535-fable5-scheduling-2026-07.md`;CLAUDE.md §Fable 5 额度调度策略 有速览。

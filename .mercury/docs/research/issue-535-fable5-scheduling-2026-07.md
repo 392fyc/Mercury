@@ -99,7 +99,7 @@ statusline 命令收到的 usage JSON(<https://code.claude.com/docs/en/statuslin
 | **Anthropic Orchestrator-Workers** | 官方一手 | 贵模型管规划/裁决/汇总,便宜模型跑量;与 Mercury main/side 同构 | **采纳(核心依据)** |
 | **Claude Code 原生 `model:` frontmatter** | 官方文档 | `haiku/sonnet/opus/fable/inherit`,官方把「用 Haiku 省成本」列为设计目的;优先级 env > per-invocation > frontmatter > 主会话 | **采纳(落地手段)** |
 | **`/effort`(low/medium/high/max/xhigh)** | 官方文档 | 同模型内 thinking token 调节,正交于模型选型;用 Fable 时默认低/中 effort | **采纳(第二层杠杆)** |
-| **advisor 工具(`advisor_20260301`)** | 官方 + #280/#506 | cheap-main + strong-advisor 原生能力;省 Fable 场景 = Opus-main + Fable-advisor(只 consult 时烧 Fable) | **pilot-gated → #506** |
+| **advisor 工具(`advisor_20260301`)** | 官方 + #280/#506 | cheap-main + strong-advisor 原生能力。**#506 既定 pilot = Opus-advisor**;省 Fable 的扩展设想 = Opus-main + Fable-advisor(Fable-as-advisor CLI 支持性 UNVERIFIED) | **pilot → #506;Fable-advisor 为可选扩展验证点** |
 | **advisor-strategy-skill(MIT)** | GitHub | 触发条件清单 + 1000-3000 token 上下文预算硬控 | **结构借鉴 / 可 cherry-pick(归 #506)** |
 | FrugalGPT cascade | 论文 | 逐档升级、够用就停;需自定义「够用」信号 | 需改造(记为思路) |
 | aider Architect/Editor | 项目文档 | 贵出方案、便宜落地;目的是分工非省钱 | 需改造(记为思路) |
@@ -127,7 +127,7 @@ statusline 命令收到的 usage JSON(<https://code.claude.com/docs/en/statuslin
   当前 Workflow 模板默认继承会话 model。**风险:若会话主模型是 Fable,整个 Workflow 数十个 agent 全烧 Fable**(finder/机械 stage 本该 sonnet/haiku)。约定:模板里 finder / 机械 / 分类 stage 用 `opts.model:'sonnet'` 或 `'haiku'`,只有最硬的 judge / synthesis / adversarial 裁决 stage 才 `opts.model:'fable'`(或不指定 fable、用 opus)。把 Fable 周额度花在刀刃上。
 
 - **L4 — advisor 模式(pilot-gated,归 #506,本 ADR 不接线)**
-  原生 advisor 工具支持 cheap-main + strong-advisor。省 Fable 的相关形态 = **Opus-main + Fable-advisor**(主循环 Opus,只在关键决策点 consult Fable),把 Fable 消耗从「全程」压到「仅 consult」。**但**:advisor 按 advisor 模型费率独立计费(每次 consult 烧 $10/$50),是否净省取决于 consult 频率;且 Fable 作为 advisor model 是否被 CLI 支持**需 pilot 验证**(UNVERIFIED)。#506 pilot 明确避开 Haiku-main 选择器 bug,建议 Sonnet/Opus-main。**本 ADR 只记录 advisor 为候选杠杆并指向 #506,不越界接线**(#506 约束:不写任何 Messages-API wrapper / MCP / skill 包装,advisor 是服务端单请求工具)。
+  原生 advisor 工具支持 cheap-main + strong-advisor。**#506 pilot 的既定配置 = Sonnet/Opus-main + Opus-advisor**(降本,避开 Haiku-main 选择器 bug),这是 #506 当前范围。**省 Fable 的扩展形态** = Opus-main + **Fable**-advisor(主循环 Opus,只在关键决策点 consult Fable),把 Fable 消耗从「全程」压到「仅 consult」——**但**:advisor 按 advisor 模型费率独立计费(Fable-advisor 每次 consult 烧 $10/$50),是否净省取决于 consult 频率;且 **Fable 作为 advisor model 是否被 CLI 支持 = UNVERIFIED,需 pilot 验证**。故 Fable-as-advisor 仅作 #506 的**可选扩展验证点**,不是其既定 pilot 范围。**本 ADR 只记录 advisor 为候选杠杆并指向 #506,不越界接线**(#506 约束:不写任何 Messages-API wrapper / MCP / skill 包装,advisor 是服务端单请求工具)。
 
 - **L5 — `/effort` 第二层杠杆**
   即便某任务确定用 Fable,也默认给低/中 effort,只有真正需要深推理的裁决点升 high/max。模型选型(L0-L3)之外再省一层 thinking token。
@@ -159,7 +159,7 @@ statusline 命令收到的 usage JSON(<https://code.claude.com/docs/en/statuslin
 ## 5. 未决 / 后续
 
 - **精确 Fable 额度显示**:上游功能请求 + 监控 changelog(§2.2a)。
-- **advisor pilot**:#506(Opus-main + Fable-advisor 的省 Fable 形态可纳入 pilot 验证点;cost-tracker 是否需拆 `advisor_message` 子推断 token 见 #506)。
+- **advisor pilot**:#506 既定范围 = Sonnet/Opus-main + Opus-advisor(降本)。**Opus-main + Fable-advisor 的省 Fable 形态**(Fable-as-advisor CLI 支持性 UNVERIFIED)可作为 #506 的**可选扩展验证点**;cost-tracker 是否需拆 `advisor_message` 子推断 token 见 #506。
 - **7/7 usage-credits 切换**:7/8 后 Fable 计费从「周额度 50% 份额」变按量,软预算分母语义变化,需用户按新计费重设 `MERCURY_FABLE_WEEKLY_BUDGET_USD`。
 - **$10/$50 价格**:platform.claude.com/pricing 已核实(cost_tracker 现值);redeploying-fable-5 公告页本身未列价格数字(不影响,pricing 页为准)。
 

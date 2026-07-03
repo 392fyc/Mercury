@@ -58,10 +58,10 @@ Mercury 用 Claude Code 原生 **Dynamic Workflow**(确定性多 agent 编排,JS
 - **L1 subagent 分层**(现状已达标):新增 agent 默认不写 `model: fable`;需 Fable 级能力优先 `opus`,确有必要才显式 `fable` 且在 PR 说明理由。
 - **L2 Fable 只用于最难环节**:架构综合 / 长程多步裁决 / Argus 反复卡不过的复杂 review 深析 / 跨仓库不可逆决策推演 / 需 1M context 一次性容纳的超大上下文综合。其余一律 Opus 4.8 及以下。
 - **L3 Workflow per-stage 模型分层**:finder / 机械 / 分类 stage 用 `opts.model:'sonnet'|'haiku'`,只最硬的 judge / synthesis / adversarial 裁决 stage 才 `'fable'`(否则会话主模型是 Fable 时,整个 Workflow 数十个 agent 全烧 Fable)。
-- **L4 advisor 模式**(pilot-gated → [#506](https://github.com/392fyc/Mercury/issues/506)):Opus-main + Fable-advisor,只在关键决策点 consult Fable。**勿越界接线** —— advisor 是服务端单请求原生工具,禁写 Messages-API wrapper / MCP / skill 包装;落地归 #506 pilot。
+- **L4 advisor 模式**(原生 advisor 工具,pilot → [#506](https://github.com/392fyc/Mercury/issues/506)):**#506 既定 pilot 配置 = cheap-main + Opus-advisor(降本)**。省 Fable 的扩展设想 = Opus-main + Fable-advisor(只在关键决策点 consult Fable),但 **Fable 作为 advisor model 的 CLI 支持性 UNVERIFIED**,仅作 #506 的可选扩展验证点、非其既定范围。**勿越界接线** —— advisor 是服务端单请求原生工具,禁写 Messages-API wrapper / MCP / skill 包装;落地归 #506。
 - **L5 `/effort` 第二层**:用 Fable 时默认低/中 effort,只裁决点升 high/max。
 
-**statusline Fable 额度显示**:官方 statusline schema **无 per-model / Fable 字段** → 无法精确显示剩余周额度;精确显示 = 上游功能请求(监控 changelog)。本地近似告警(cost-tracker 累计本周 Fable 估算花费 + `MERCURY_FABLE_WEEKLY_BUDGET_USD` 软预算颜色告警)为 env-gated 可选项,**精度受限**(客户端估算 ≠ 服务端真实额度百分比;7/7 后 usage-credits 切换会改变分母语义,需按新计费重设阈值)。
+**statusline Fable 额度显示**:官方 statusline schema **无 per-model / Fable 字段** → 无法精确显示剩余周额度;精确显示 = 上游功能请求(监控 changelog)。本地近似告警(cost-tracker 累计本周 Fable 估算花费 + `MERCURY_FABLE_WEEKLY_BUDGET_USD` 软预算颜色告警;**实现在用户级 `~/.claude/`、不在本 repo,走 #259 治理**)为 env-gated 可选项,**精度受限**(客户端估算 ≠ 服务端真实额度百分比;7/7 后 usage-credits 切换会改变分母语义,需按新计费重设阈值)。
 
 ## Related Repositories
 
