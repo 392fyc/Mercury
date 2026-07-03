@@ -77,7 +77,7 @@ Task descriptions, review decisions, session summaries
 
 ### 模型分层与 Fable 5 节约([#535](https://github.com/392fyc/Mercury/issues/535))
 
-Fable 5(`claude-fable-5`,$10/$50 per M,≈2×Opus;Pro/Max/Team 及部分 Enterprise 订阅当前含至多「周额度 50%」份额 through 7/7,之后转 usage-credits)是最贵档。**消耗根源是会话主模型选了 Fable**(`main=inherit` → 主循环全程烧),不是 agent 定义(盘点:无 agent 硬编码 `model: fable`)。按 Anthropic 官方 Routing / Orchestrator-Workers 范式分层派活 —— 便宜档跑量,Fable 只做最难裁决:
+Fable 5(`claude-fable-5`,$10/$50 per M,≈2×Opus;Pro/Max/Team 及部分 Enterprise 订阅当前含至多「周额度 50%」份额 through 7/7,之后转 usage-credits;**定价与订阅条款时效性以官方页面为准,7/7 后按新计费重核**)是最贵档。**消耗根源是会话主模型选了 Fable**(`main=inherit` → 主循环全程烧),不是 agent 定义(盘点:无 agent 硬编码 `model: fable`)。按 Anthropic 官方 Routing / Orchestrator-Workers 范式分层派活 —— 便宜档跑量,Fable 只做最难裁决:
 
 - 主循环默认 **Opus 4.8** driver;Fable 只在最难环节(架构综合 / 长程裁决 / 反复卡不过的复杂 review 深析 / 跨仓库不可逆推演 / 需 1M context 的超大综合)显式 `/model fable` 升级。
 - subagent `model:` 已分层(critic/design=opus,dev/acceptance/research=sonnet,game-researcher=haiku,main=inherit);**新增 agent 默认不写 `fable`**,需 Fable 级能力优先 `opus`。
