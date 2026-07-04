@@ -62,7 +62,7 @@ The workflow involves:
 3. Creating a TodoWrite **and a durable progress ledger** to track progress (see [Durable Progress](#durable-progress))
 4. For each task:
    - **Check the ledger first** — a task already marked complete is DONE; do not re-dispatch it (post-compaction recovery)
-   - Dispatch an implementer subagent
+   - Dispatch an implementer subagent — **hand it a report-file path** (e.g. `.tmp/sdd/task-N-report.md`, alongside the ledger) as its `[REPORT_FILE]`, so it writes its full report to that file instead of into your context (the report-to-file contract in [implementer-prompt.md](implementer-prompt.md) depends on the controller supplying this path)
    - Address any questions before implementation proceeds
    - Implementer implements, tests, commits, and self-reviews
    - **Handle the implementer's reported status** (`DONE` / `DONE_WITH_CONCERNS` / `BLOCKED` / `NEEDS_CONTEXT` — see [Handling Implementer Status](#handling-implementer-status))

@@ -69,7 +69,9 @@ Task tool (general-purpose):
     ## Report Format
 
     Write your FULL report to the report file the controller named in this
-    dispatch ([REPORT_FILE]). Put the detail there:
+    dispatch ([REPORT_FILE]) — use the Write tool to create it (or a `Bash`
+    heredoc/redirect if you prefer). Do NOT put the full report in your final
+    message. Put the detail in the file:
     - What I implemented: [list of changes]
     - Tests: [commands run + results]
     - Files changed: [list]
