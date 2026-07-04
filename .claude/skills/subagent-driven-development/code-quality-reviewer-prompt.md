@@ -1,8 +1,11 @@
 <!-- Cherry-picked from obra/superpowers (MIT, Copyright 2025 Jesse Vincent)
      Source: https://github.com/obra/superpowers/blob/917e5f5/skills/subagent-driven-development/code-quality-reviewer-prompt.md
-     SHA: 917e5f53b16b115b70a3a355ed5f4993b9f8b73d
-     Date: 2026-04-10
-     Issue: #209 -->
+     SHA: 917e5f53b16b115b70a3a355ed5f4993b9f8b73d (2026-04-10, Issue #209)
+     Mercury adaptation (#509, 2026-07-04): upstream v6.1.x merged spec + code-quality
+     review into a single task-reviewer; Mercury intentionally keeps the two-stage
+     split. This file is the CODE-QUALITY stage, dispatched AFTER
+     spec-reviewer-prompt.md passes. Canonical for Mercury, not a stale reference
+     to a deleted upstream file — see SKILL.md "Mercury adaptation" note. -->
 
 # Code Quality Reviewer Prompt Template
 
