@@ -83,3 +83,15 @@ jobs:
             fi
           done
           [ "$LOW_COVERAGE_FOUND" -eq 0 ] || echo "::notice::Some files have low docstring coverage (warnings above)"
+
+  toolcall-xml-lint:
+    name: Tool-call XML Lint (#527)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint Claude-context files for literal tool-call markers
+        run: bash scripts/toolcall-xml-lint.sh
+
+      - name: Self-test the linter
+        run: bash scripts/test-toolcall-xml-lint.sh
