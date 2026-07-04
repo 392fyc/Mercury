@@ -131,11 +131,18 @@ for ((i=0; i<count; i++)); do
   # URL-encode upstream_path to handle spaces, #, ? and other special characters
   encoded_path=$(jq -rn --arg p "$upstream_path" '$p | @uri')
 
-  # Get blob SHA of the file at the recorded import commit
+  # Get blob SHA of the file at the recorded import commit.
+  # Branch on gh's EXIT CODE, not on whether the captured string is empty: gh api
+  # prints the HTTP-error body (e.g. {"message":"Not Found",...,"status":"404"}) to
+  # STDOUT on a 404, so `--jq '.sha'` yields a NON-empty string there. An emptiness
+  # check would sail past it and mis-compare a deleted file as CHANGED instead of
+  # UPSTREAM_GONE. (Root-caused in #530: obra/superpowers deleted spec-reviewer-prompt.md
+  # / code-quality-reviewer-prompt.md upstream; the old `|| true` + `-z` guard reported
+  # CHANGED, never GONE, and exited 1 instead of 2.)
   snap_err="$(mktemp)"
-  snap_blob=$(gh api "repos/$upstream_repo/contents/$encoded_path?ref=$recorded_sha" \
-    --jq '.sha' 2>"$snap_err" || true)
-  if [[ -z "$snap_blob" ]]; then
+  if snap_blob=$(gh api "repos/$upstream_repo/contents/$encoded_path?ref=$recorded_sha" --jq '.sha' 2>"$snap_err"); then
+    rm -f "$snap_err"
+  else
     if grep -q "404" "$snap_err" 2>/dev/null; then
       echo "UPSTREAM_GONE (import SHA unreachable: $recorded_sha)"
       gone=$((gone + 1))
@@ -146,13 +153,21 @@ for ((i=0; i<count; i++)); do
     rm -f "$snap_err"
     continue
   fi
-  rm -f "$snap_err"
+  # Defensive: a 200 response with no .sha field (unexpected for the contents API)
+  if [[ -z "$snap_blob" ]]; then
+    echo "SKIP (import ref returned no .sha)"
+    skipped=$((skipped + 1))
+    continue
+  fi
 
-  # Get blob SHA of the file at upstream HEAD
+  # Get blob SHA of the file at upstream HEAD (same exit-code discipline as the
+  # import-SHA fetch above — a 404 body is non-empty on STDOUT, so branch on gh's
+  # exit code to catch a file removed from upstream HEAD as UPSTREAM_GONE rather
+  # than CHANGED). See #530.
   head_err="$(mktemp)"
-  head_blob=$(gh api "repos/$upstream_repo/contents/$encoded_path" \
-    --jq '.sha' 2>"$head_err" || true)
-  if [[ -z "$head_blob" ]]; then
+  if head_blob=$(gh api "repos/$upstream_repo/contents/$encoded_path" --jq '.sha' 2>"$head_err"); then
+    rm -f "$head_err"
+  else
     if grep -q "404" "$head_err" 2>/dev/null; then
       echo "UPSTREAM_GONE (file removed from upstream HEAD)"
       gone=$((gone + 1))
@@ -163,7 +178,12 @@ for ((i=0; i<count; i++)); do
     rm -f "$head_err"
     continue
   fi
-  rm -f "$head_err"
+  # Defensive: a 200 response with no .sha field (unexpected for the contents API)
+  if [[ -z "$head_blob" ]]; then
+    echo "SKIP (upstream HEAD returned no .sha)"
+    skipped=$((skipped + 1))
+    continue
+  fi
 
   if [[ "$snap_blob" == "$head_blob" ]]; then
     echo "CLEAN"
