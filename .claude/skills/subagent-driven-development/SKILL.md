@@ -120,7 +120,7 @@ Conversation memory does not survive compaction — and Mercury routinely runs l
 - **Resolve the ledger path once** with `Bash`, validating the repo root first. A failed `git rev-parse` (not a git repo, or a corrupted checkout) returns empty, and an unvalidated `$ROOT` would point the ledger at `/.tmp/sdd/progress.md` — the wrong location, and a silent loss of progress tracking:
   ```bash
   ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
-  [ -n "$ROOT" ] || { echo "ledger: not a git repo — cannot track progress" >&2; }   # stop; do not proceed unrooted
+  [ -n "$ROOT" ] || { echo "ledger: not a git repo — cannot track progress" >&2; exit 1; }   # stop — do NOT proceed unrooted
   L="$ROOT/.tmp/sdd/progress.md"
   ```
   Non-empty is the portable check: `git rev-parse` output is Windows-safe as `D:/…` or `/d/…`, so do NOT additionally require a leading `/` (it would false-reject the `D:/…` form).
