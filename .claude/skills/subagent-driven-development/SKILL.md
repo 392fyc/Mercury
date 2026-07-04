@@ -47,6 +47,8 @@ Execute plan by dispatching fresh subagent per task, with two-stage review after
 
 **Continuous execution:** Do not pause to check in between tasks. Execute all tasks from the plan without stopping. The only reasons to stop are: a `BLOCKED` status you cannot resolve, ambiguity that genuinely prevents progress, or all tasks complete. "Should I continue?" prompts and progress summaries between tasks waste time — you were asked to execute the plan, so execute it.
 
+> **Mercury governance carve-out.** This "don't pause" rule covers routine in-plan tasks. It does NOT override Mercury's human-gate policy: irreversible, cross-repo, or shared-infrastructure decisions still stop for confirmation (via `AskUserQuestion`), and code still passes `/dual-verify` + PR review before merge. Continuous execution means no busywork check-ins — not bypassing a required gate. If a plan task would trip one of those gates, that is exactly the "ambiguity that genuinely prevents progress" case: surface it.
+
 ## When to Use
 
 Use subagent-driven development when you have an implementation plan with mostly independent tasks that you want to execute within the current session. It differs from the "executing-plans" approach by keeping you in the same session while dispatching fresh subagents per task without context pollution.
@@ -115,11 +117,19 @@ The implementer subagent reports one of four statuses. Handle each appropriately
 Conversation memory does not survive compaction — and Mercury routinely runs long, multi-agent Workflows that hit it. A controller that loses its place can re-dispatch an entire completed task sequence, the single most expensive failure this workflow can produce. Track progress in a **ledger file**, not only in todos.
 
 - **Ledger location:** `<repo-root>/.tmp/sdd/progress.md` (Mercury's `.gitignore` already ignores `.tmp/`, so the ledger is git-ignored scratch and never gets committed). If you run this skill outside Mercury, put the ledger under that repo's scratch convention and confirm the path is git-ignored — a committed ledger is a bug.
-- **At skill start,** read any existing ledger with `Bash`: `cat "$(git rev-parse --show-toplevel)/.tmp/sdd/progress.md" 2>/dev/null`. Tasks listed there as complete are DONE — do not re-dispatch them; resume at the first task not marked complete.
-- **When a task's review comes back clean,** append one line to the ledger with `Bash` in the same bookkeeping step (create the dir on first write):
+- **Resolve the ledger path once** with `Bash`, validating the repo root first. A failed `git rev-parse` (not a git repo, or a corrupted checkout) returns empty, and an unvalidated `$ROOT` would point the ledger at `/.tmp/sdd/progress.md` — the wrong location, and a silent loss of progress tracking:
   ```bash
-  L="$(git rev-parse --show-toplevel)/.tmp/sdd/progress.md"; mkdir -p "$(dirname "$L")"
-  echo "Task N: complete (commits <base7>..<head7>, review clean)" >> "$L"
+  ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+  [ -n "$ROOT" ] || { echo "ledger: not a git repo — cannot track progress" >&2; }   # stop; do not proceed unrooted
+  L="$ROOT/.tmp/sdd/progress.md"
+  ```
+  Non-empty is the portable check: `git rev-parse` output is Windows-safe as `D:/…` or `/d/…`, so do NOT additionally require a leading `/` (it would false-reject the `D:/…` form).
+- **At skill start,** read any existing ledger: `cat "$L" 2>/dev/null`. Tasks listed there as complete are DONE — do not re-dispatch them; resume at the first task not marked complete.
+- **When a task's review comes back clean,** append one line — failing loudly if any step fails, so a lost write never masquerades as saved progress (not losing progress is the whole point of the ledger):
+  ```bash
+  mkdir -p "$(dirname "$L")"                     || { echo "ledger: mkdir failed" >&2; exit 1; }
+  echo "Task N: complete (commits <base7>..<head7>, review clean)" >> "$L" \
+                                                  || { echo "ledger: append failed — progress NOT saved" >&2; exit 1; }
   ```
   Get the commit range from `git log --oneline` — `<base7>` is the commit before the task, `<head7>` the task's final commit.
 - **The ledger is your recovery map:** the commits it names exist in git even when your context no longer remembers creating them. After compaction, trust the ledger and `git log` over your own recollection.
