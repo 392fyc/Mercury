@@ -31,22 +31,38 @@ cd "$REPO_ROOT" || { echo "ERROR: cannot cd to repo root '$REPO_ROOT'" >&2; exit
 MARKER_RE='<f[u]nction_calls>|</f[u]nction_calls>|<in[v]oke[[:space:]]+name=|</in[v]oke>|<par[a]meter[[:space:]]+name=|</par[a]meter>|an[t]ml:in[v]oke|an[t]ml:f[u]nction_calls|an[t]ml:par[a]meter'
 
 # Build the scan set. Explicit args (files or dirs) override the default Claude-context set.
-declare -a FILES
+declare -a FILES=()
+
+# Collect one target (file or dir) into FILES, failing closed (exit 2) on anything we cannot
+# fully enumerate — an unreadable/untraversable directory arg, or a find error, must NOT be
+# silently dropped into a false PASS (this mirrors the per-file -r / grep-rc guards below).
+# Defined as a function so `exit` fires in the MAIN shell, not inside a `<(...)` subshell.
+add_target() {
+  local p="$1" out rc
+  if [[ -d "$p" ]]; then
+    if [[ ! -r "$p" || ! -x "$p" ]]; then
+      echo "ERROR: directory '$p' is not readable/traversable — failing closed." >&2
+      exit 2
+    fi
+    out="$(find "$p" -type f -name '*.md')"; rc=$?
+    if [[ "$rc" -ne 0 ]]; then
+      echo "ERROR: find failed under '$p' (rc=$rc, e.g. unreadable subdir) — failing closed." >&2
+      exit 2
+    fi
+    while IFS= read -r f; do [[ -n "$f" ]] && FILES+=("$f"); done <<< "$out"
+  elif [[ -f "$p" ]]; then
+    FILES+=("$p")
+  else
+    echo "WARN: skip non-existent path: $p" >&2
+  fi
+}
+
 if [[ "$#" -gt 0 ]]; then
-  while IFS= read -r line; do [[ -n "$line" ]] && FILES+=("$line"); done < <(
-    for p in "$@"; do
-      if [[ -d "$p" ]]; then find "$p" -type f -name '*.md' 2>/dev/null
-      elif [[ -f "$p" ]]; then printf '%s\n' "$p"
-      else echo "WARN: skip non-existent path: $p" >&2
-      fi
-    done
-  )
+  for p in "$@"; do add_target "$p"; done
 else
   # Default: the markdown/text files Claude auto-loads at session start or a skill injects.
-  while IFS= read -r line; do [[ -n "$line" ]] && FILES+=("$line"); done < <(
-    for f in CLAUDE.md CLAUDE.local.md AGENTS.md; do [[ -f "$f" ]] && printf '%s\n' "$f"; done
-    find .claude .mercury/docs -type f -name '*.md' 2>/dev/null
-  )
+  for f in CLAUDE.md CLAUDE.local.md AGENTS.md; do [[ -f "$f" ]] && FILES+=("$f"); done
+  for d in .claude .mercury/docs; do [[ -d "$d" ]] && add_target "$d"; done
 fi
 
 # Fail closed on an empty scan set: a typoed path arg, or a repo somehow missing its
