@@ -73,6 +73,8 @@ assert_exit "test source is marker-free"                0 bash "$LINT" "$SELF_TE
 verbose_out="$(TOOLCALL_LINT_VERBOSE=1 bash "$LINT" "$dirty" 2>&1 || true)"
 assert_not_contains "verbose output masks the invoke bracket"        "$verbose_out" "${lt}invoke"
 assert_not_contains "verbose output masks the function_calls tag"    "$verbose_out" "${lt}function_calls${gt}"
+# verbose emits only the matched marker, never the surrounding line content (no secret leak)
+assert_not_contains "verbose output omits surrounding line content"  "$verbose_out" "intro line"
 
 echo "----------------------------------------"
 echo "toolcall-xml-lint tests: $PASS passed, $FAIL failed"

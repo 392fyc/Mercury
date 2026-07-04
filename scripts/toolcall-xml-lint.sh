@@ -67,16 +67,30 @@ hits=0
 scanned=0
 for f in "${FILES[@]}"; do
   scanned=$((scanned+1))
-  # grep -I skips binary; -n gives line numbers. Read numbers off, then re-extract the line
-  # for masked display so no intact marker is ever echoed.
+  # Fail closed on an unreadable file: a gate must not silently skip (and thus read as "clean")
+  # a file it could not inspect — e.g. permission change mid-run. (Argus PR #537)
+  if [[ ! -r "$f" ]]; then
+    echo "ERROR: cannot read '$f' — failing closed (a gate must not skip an unreadable file)." >&2
+    exit 2
+  fi
+  # Capture grep's output AND status. grep rc: 0=match, 1=no match, >=2=real error. Swallowing a
+  # >=2 error (file vanished / permission change mid-scan) would yield a FALSE PASS. (Argus PR #537)
+  matches="$(grep -E -n -I "$MARKER_RE" "$f")"; rc=$?
+  if [[ "$rc" -ge 2 ]]; then
+    echo "ERROR: grep failed on '$f' (rc=$rc) — failing closed." >&2
+    exit 2
+  fi
+  [[ -z "$matches" ]] && continue
   while IFS=: read -r lineno _rest; do
     [[ -z "$lineno" ]] && continue
     hits=$((hits+1))
     echo "toolcall-xml-lint: literal tool-call marker at $f:$lineno"
     if [[ "${TOOLCALL_LINT_VERBOSE:-0}" == "1" ]]; then
-      sed -n "${lineno}p" "$f" | sed 's/</‹/g; s/>/›/g'
+      # Emit ONLY the masked matched marker(s) on this line — never the whole line — so any
+      # surrounding sensitive content (a stray token/secret) is not echoed to logs. (Argus PR #537)
+      sed -n "${lineno}p" "$f" | grep -E -o "$MARKER_RE" | sed 's/</‹/g; s/>/›/g; s/^/    marker: /'
     fi
-  done < <(grep -E -n -I "$MARKER_RE" "$f" 2>/dev/null)
+  done <<< "$matches"
 done
 
 echo "--------------------------------------"
