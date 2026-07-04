@@ -118,6 +118,7 @@ Mercury 的部分功能跨仓库运作。以下表格记录外部仓库与 Mercu
 - Do not create PRs without an associated GitHub Issue.
 - Do not build features that assume the model is weak — design for upward compatibility.
 - Do not create **external-project adapters** under `adapters/<vendor-name>/` exceeding 200 lines — rethink the mounting approach if this happens. (Mercury-internal tooling under `scripts/` is exempt — see the MUST bullet "External-project adapters under `adapters/<vendor-name>/` MUST stay under 200 lines" above for the carve-out and authority chain.)
+- Do not write literal tool-call XML markers (bare invoke / function_calls / parameter tags) into Claude-context files (`CLAUDE.md`, `AGENTS.md`, `.claude/**`, `.mercury/docs/**`, memory, handoffs) — one literal marker seeds the Opus-4.8 self-poisoning leak that hangs a turn with no output ([#527](https://github.com/392fyc/Mercury/issues/527)). Escape them (`&lt;` / `&gt;`, or split the keyword); `scripts/toolcall-xml-lint.sh` (wired into auto-verify CI) keeps the count at zero.
 
 ## Cherry-pick protocol
 

@@ -1,0 +1,3 @@
+# Shell scripts must stay LF so the shebang execs on Linux CI even when a contributor has
+# core.autocrlf=true — a CRLF `#!/usr/bin/env bash\r` fails to run on Linux. (Issue #527)
+*.sh text eol=lf
