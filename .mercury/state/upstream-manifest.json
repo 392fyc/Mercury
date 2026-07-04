@@ -9,7 +9,7 @@
     "import_pr": 216,
     "import_date": "2026-04-10",
     "import_rationale": "DEC-4 approved cherry-pick: root-cause debugging enforcement for Mercury quality workflow (Issue #209)",
-    "last_drift_check": "2026-06-24"
+    "last_drift_check": "2026-07-04"
   },
   {
     "path": ".claude/skills/systematic-debugging/condition-based-waiting.md",
@@ -21,7 +21,7 @@
     "import_pr": 216,
     "import_date": "2026-04-10",
     "import_rationale": "Supporting doc for systematic-debugging skill (Issue #209)",
-    "last_drift_check": "2026-06-24"
+    "last_drift_check": "2026-07-04"
   },
   {
     "path": ".claude/skills/systematic-debugging/condition-based-waiting-example.ts",
@@ -33,7 +33,7 @@
     "import_pr": 216,
     "import_date": "2026-04-10",
     "import_rationale": "Supporting example for systematic-debugging skill (Issue #209)",
-    "last_drift_check": "2026-06-24"
+    "last_drift_check": "2026-07-04"
   },
   {
     "path": ".claude/skills/systematic-debugging/defense-in-depth.md",
@@ -45,7 +45,7 @@
     "import_pr": 216,
     "import_date": "2026-04-10",
     "import_rationale": "Supporting doc for systematic-debugging skill (Issue #209)",
-    "last_drift_check": "2026-06-24"
+    "last_drift_check": "2026-07-04"
   },
   {
     "path": ".claude/skills/systematic-debugging/find-polluter.sh",
@@ -57,7 +57,7 @@
     "import_pr": 216,
     "import_date": "2026-04-10",
     "import_rationale": "Supporting script for systematic-debugging skill (Issue #209)",
-    "last_drift_check": "2026-06-24"
+    "last_drift_check": "2026-07-04"
   },
   {
     "path": ".claude/skills/systematic-debugging/root-cause-tracing.md",
@@ -69,55 +69,31 @@
     "import_pr": 216,
     "import_date": "2026-04-10",
     "import_rationale": "Supporting doc for systematic-debugging skill (Issue #209)",
-    "last_drift_check": "2026-06-24"
+    "last_drift_check": "2026-07-04"
   },
   {
     "path": ".claude/skills/subagent-driven-development/SKILL.md",
     "scope": "project",
     "upstream_repo": "obra/superpowers",
     "upstream_path": "skills/subagent-driven-development/SKILL.md",
-    "upstream_sha_at_import": "917e5f53b16b115b70a3a355ed5f4993b9f8b73d",
+    "upstream_sha_at_import": "d884ae04edebef577e82ff7c4e143debd0bbec99",
     "upstream_license": "MIT",
     "import_pr": 216,
     "import_date": "2026-04-10",
     "import_rationale": "DEC-4 approved cherry-pick: fresh-subagent-per-task execution pattern (Issue #209)",
-    "last_drift_check": "2026-06-24"
-  },
-  {
-    "path": ".claude/skills/subagent-driven-development/code-quality-reviewer-prompt.md",
-    "scope": "project",
-    "upstream_repo": "obra/superpowers",
-    "upstream_path": "skills/subagent-driven-development/code-quality-reviewer-prompt.md",
-    "upstream_sha_at_import": "917e5f53b16b115b70a3a355ed5f4993b9f8b73d",
-    "upstream_license": "MIT",
-    "import_pr": 216,
-    "import_date": "2026-04-10",
-    "import_rationale": "Supporting prompt template for subagent-driven-development skill (Issue #209)",
-    "last_drift_check": "2026-06-24"
+    "last_drift_check": "2026-07-04"
   },
   {
     "path": ".claude/skills/subagent-driven-development/implementer-prompt.md",
     "scope": "project",
     "upstream_repo": "obra/superpowers",
     "upstream_path": "skills/subagent-driven-development/implementer-prompt.md",
-    "upstream_sha_at_import": "917e5f53b16b115b70a3a355ed5f4993b9f8b73d",
+    "upstream_sha_at_import": "d884ae04edebef577e82ff7c4e143debd0bbec99",
     "upstream_license": "MIT",
     "import_pr": 216,
     "import_date": "2026-04-10",
     "import_rationale": "Supporting prompt template for subagent-driven-development skill (Issue #209)",
-    "last_drift_check": "2026-06-24"
-  },
-  {
-    "path": ".claude/skills/subagent-driven-development/spec-reviewer-prompt.md",
-    "scope": "project",
-    "upstream_repo": "obra/superpowers",
-    "upstream_path": "skills/subagent-driven-development/spec-reviewer-prompt.md",
-    "upstream_sha_at_import": "917e5f53b16b115b70a3a355ed5f4993b9f8b73d",
-    "upstream_license": "MIT",
-    "import_pr": 216,
-    "import_date": "2026-04-10",
-    "import_rationale": "Supporting prompt template for subagent-driven-development skill (Issue #209)",
-    "last_drift_check": "2026-06-24"
+    "last_drift_check": "2026-07-04"
   },
   {
     "path": ".claude/skills/verification-before-completion/SKILL.md",
@@ -129,7 +105,7 @@
     "import_pr": 216,
     "import_date": "2026-04-10",
     "import_rationale": "DEC-4 approved cherry-pick: evidence-before-claims verification enforcement (Issue #209)",
-    "last_drift_check": "2026-06-24"
+    "last_drift_check": "2026-07-04"
   },
   {
     "path": ".claude/skills/caveman-toggle/SKILL.md",
@@ -141,7 +117,7 @@
     "import_pr": 214,
     "import_date": "2026-04-10",
     "import_rationale": "Adapted caveman prompt text into Mercury-native persistent toggle skill (Issue #213)",
-    "last_drift_check": "2026-06-24"
+    "last_drift_check": "2026-07-04"
   },
   {
     "path": "CLAUDE.local.md.example",
@@ -153,7 +129,7 @@
     "import_pr": 214,
     "import_date": "2026-04-10",
     "import_rationale": "Contains caveman prompt text extracted from upstream SKILL.md for use as CLAUDE.local.md injection template (Issue #213)",
-    "last_drift_check": "2026-06-24"
+    "last_drift_check": "2026-07-04"
   },
   {
     "path": ".claude/agents/game-researcher.md",
@@ -165,7 +141,7 @@
     "import_pr": 281,
     "import_date": "2026-04-21",
     "import_rationale": "Game-dev A→B→C subagent chain stage 1 (information aggregation) for SoT production trial (Issue #281)",
-    "last_drift_check": "2026-06-24"
+    "last_drift_check": "2026-07-04"
   },
   {
     "path": ".claude/agents/game-analyst.md",
@@ -177,7 +153,7 @@
     "import_pr": 281,
     "import_date": "2026-04-21",
     "import_rationale": "Game-dev A→B→C subagent chain stage 2 (feasibility analysis) for SoT production trial (Issue #281)",
-    "last_drift_check": "2026-06-24"
+    "last_drift_check": "2026-07-04"
   },
   {
     "path": ".claude/agents/game-critic.md",
@@ -189,7 +165,7 @@
     "import_pr": 281,
     "import_date": "2026-04-21",
     "import_rationale": "Game-dev A→B→C subagent chain stage 3 (adversarial validation) for SoT production trial (Issue #281)",
-    "last_drift_check": "2026-06-24"
+    "last_drift_check": "2026-07-04"
   },
   {
     "path": "adapters/gpt-image-2/invoke.py",
@@ -201,7 +177,7 @@
     "import_pr": 354,
     "import_date": "2026-05-08",
     "import_rationale": "Phase 2 Slice A — wuyoscar/gpt_image_2_skill MIT mount via uvx-pinned-SHA per ADR pixel-animation-workflow §7.2.1 + S87 refinement (Issue #351). No upstream source vendored. upstream_path=pyproject.toml tracks the canonical version contract (deps, entry points) so scripts/upstream-drift-check.sh can detect upstream version bumps that affect this adapter's pinned SHA.",
-    "last_drift_check": "2026-06-24"
+    "last_drift_check": "2026-07-04"
   },
   {
     "path": "adapters/playwright-mcp/UPSTREAM.md",
@@ -213,6 +189,6 @@
     "import_pr": 459,
     "import_date": "2026-05-26",
     "import_rationale": "Phase 2 Slice A (Issue #458, ADR issue-154-web-automation) — npm-version-pinned MCP server runtime mount (third mount mode, alongside git submodule and uvx git+SHA). Execution contract = pinned npm version @playwright/mcp@0.0.75; upstream_sha_at_import = the git tag v0.0.75 commit (audit metadata mapping the pinned npm version back to an upstream git tag, NOT the execution contract). upstream_path=package.json tracks the canonical version/deps/bin contract so scripts/upstream-drift-check.sh can detect upstream version bumps that may require re-pinning this adapter. No upstream source vendored; adapters/playwright-mcp/launch.cjs is a Mercury config-gate wrapper only.",
-    "last_drift_check": "2026-06-24"
+    "last_drift_check": "2026-07-04"
   }
 ]
