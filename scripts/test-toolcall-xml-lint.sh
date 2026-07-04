@@ -64,6 +64,27 @@ assert_exit "real repo Claude-context is clean (baseline)" 0 bash "$LINT"
 # fail-closed: an explicit but non-existent path must not silently pass — exit 2, not 0
 assert_exit "non-existent path arg fails closed"        2 bash "$LINT" "$tmpdir/does-not-exist.md"
 
+# fail-closed on an UNREADABLE directory arg, and on a find error (unreadable subdir). chmod is
+# a no-op on Windows, so these assert only where it actually takes effect (ubuntu CI runs them
+# for real); otherwise they SKIP rather than give a false pass. (Codex re-audit coverage gap.)
+noread="$tmpdir/noread"; mkdir -p "$noread"; printf 'ok\n' > "$noread/a.md"
+chmod 000 "$noread" 2>/dev/null || true
+if [[ ! -r "$noread" || ! -x "$noread" ]]; then
+  assert_exit "unreadable directory arg fails closed"   2 bash "$LINT" "$noread"
+else
+  echo "SKIP: unreadable-directory test (chmod is a no-op on this platform)"
+fi
+chmod 755 "$noread" 2>/dev/null || true
+
+findfail="$tmpdir/findfail"; mkdir -p "$findfail/sub"; printf 'ok\n' > "$findfail/top.md"
+chmod 000 "$findfail/sub" 2>/dev/null || true
+if [[ ! -r "$findfail/sub" ]]; then
+  assert_exit "find error (unreadable subdir) fails closed" 2 bash "$LINT" "$findfail"
+else
+  echo "SKIP: find-error test (chmod is a no-op on this platform)"
+fi
+chmod 755 "$findfail/sub" 2>/dev/null || true
+
 # the linter's AND the test's own source must be marker-free (real self-poisoning proof now
 # that the linter no longer hard-skips them)
 assert_exit "linter source is marker-free"              0 bash "$LINT" "$LINT"
