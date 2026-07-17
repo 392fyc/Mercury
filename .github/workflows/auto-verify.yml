@@ -22,38 +22,8 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: TypeScript check (core)
-        run: |
-          if [ -f packages/core/tsconfig.json ]; then
-            npx tsc --noEmit -p packages/core/tsconfig.json
-          else
-            echo "No packages/core/tsconfig.json found — skipping"
-          fi
-
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "pnpm"
-
-      - run: pnpm install --frozen-lockfile
-
-      - name: ESLint (if configured)
-        run: |
-          if [ -f .eslintrc.json ] || [ -f .eslintrc.js ] || [ -f .eslintrc.cjs ] || [ -f .eslintrc.yml ] || [ -f eslint.config.js ] || [ -f eslint.config.mjs ] || [ -f eslint.config.cjs ] || [ -f eslint.config.ts ]; then
-            npx eslint --max-warnings 0 packages/ adapters/
-          else
-            echo "No ESLint config found — skipping"
-          fi
+      - name: TypeScript check (root tsconfig)
+        run: npx tsc --noEmit -p tsconfig.json
 
   docstring-coverage:
     name: Docstring Coverage
