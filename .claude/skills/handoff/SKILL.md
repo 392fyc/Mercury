@@ -572,6 +572,26 @@ After spawning the new process, do NOT continue producing output in the old
 session. The old session's job is done. Advise user to `/exit` (or close
 tab) once they confirm the new session is running.
 
+**This terminal state is SESSION-scoped, not just turn-scoped.** It holds
+across ALL subsequent turns, not only the spawn turn — the whole point of auto
+handoff is that the work moved to the new session. So if the user does NOT
+`/exit` and instead sends a follow-up message in the OLD session — a new
+request, "继续 / continue", "also check X", "keep going", etc. — do NOT silently
+pick it up as fresh task work. Doing so re-creates the exact failure auto
+handoff exists to prevent (the session that "handed off" but never actually
+stopped). Default response to any post-handoff follow-up: remind the user this
+session already auto-handed-off (name the spawned lane + task/Issue), that the
+work belongs in the new session, and ask whether they truly want to abandon the
+handoff and restart work HERE. Only resume substantive work in this old session
+on an **explicit** instruction to do so ("ignore the handoff, do it here",
+"restart work in this session") — an ambiguous or generic follow-up ("continue",
+"what else", "也检查一下…") is NOT that explicit instruction. And if the user
+DOES override: the session you just spawned is still live, so first remind them
+to `/exit` (or otherwise abandon) that new session before resuming here —
+otherwise both sessions run against the same lane/worktree and you risk the
+shared-worktree concurrent double-write incident. When unsure: stop and ask,
+never assume "a message arrived, therefore execute".
+
 ## Step 6: Post-Dispatch (manual mode only, optional)
 
 If the user returns after manual mode and says "launch it now", re-enter
@@ -596,10 +616,17 @@ the auto path from Step 5 (auto mode).
   (`.claude/hooks/auto-handoff-stop.sh`, Issue #469) that fires ONLY when auto
   mode has explicitly armed it (Step 5-auto.0) — it never auto-handoffs an
   un-armed session, so "explicit only" is preserved.
-- **Mode-scoped termination**: auto mode treats handoff as a terminal
-  event for the old session (spawn new → /exit old). Manual mode does
-  NOT terminate; the user decides. Never apply auto-mode termination to
-  a manual invocation.
+- **Mode-scoped termination is SESSION-scoped, not turn-scoped**: auto mode
+  treats handoff as a terminal event for the old session (spawn new → /exit
+  old), and terminal means **across every later turn**, not just the spawn
+  turn. After a successful auto handoff, a follow-up user message in the old
+  session does NOT re-authorize task work here — default to reminding the user
+  the session already handed off (name the spawned lane + task) and that the
+  work lives in the new session, and resume only on an **explicit** "abandon
+  the handoff, work here instead" instruction (a generic "continue" / "也检查一下"
+  is not explicit). See the end of Step 5 (auto mode) for the full contract.
+  Manual mode does NOT terminate; the user decides. Never apply auto-mode
+  termination to a manual invocation.
 - Before terminating (auto mode) verify all pending work has completed.
   Nothing carries over automatically.
 - Manual mode MUST NOT spawn processes. Only the `auto` token (as the
