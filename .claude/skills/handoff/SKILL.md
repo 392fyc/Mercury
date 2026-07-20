@@ -81,6 +81,11 @@ You have the full conversation in context. Synthesize:
 - Problems encountered and solutions found
 - Incomplete work and known next steps
 
+**Synthesis limit**: user instructions that the next session must act on are
+NOT synthesis material — they transfer via Step 2.2 (verbatim source block +
+tagged mapping), never via summary alone. Summarizing user directives is the
+root cause of the Issue #544 fidelity incident.
+
 ### Layer 2: Memory search (agentic)
 
 Two sources:
@@ -214,6 +219,7 @@ Write to `$HANDOFF_PATH` (resolved above):
 name: session_handoff
 description: "Session handoff — <one-line summary>"
 type: project
+content_sha256: <Step 2.2 M5 — body hash, filled after the body is final; omit if no user directives>
 ---
 # Session Handoff — <YYYY-MM-DD>
 
@@ -251,6 +257,24 @@ type: project
 - <gotchas / constraints>
 - <important file paths + roles>
 
+## Source Instructions (verbatim)
+<Step 2.2(a) — byte-exact copy of the user instruction(s)/feedback this
+handoff transfers. No cleanup, no reformatting, no summarizing. Omit this
+section ONLY for pure agent-state handoffs with no user directives.
+FENCE RULE (M1): the wrapper below MUST be longer than the longest run of the
+same fence char inside the source, or the source will close it early and
+silently truncate — defeating the byte-exact guarantee. If the source contains
+`~~~`, wrap with `~~~~` (or more `~`); if it also contains long `~` runs, add
+more. Backtick fences work too under the same longest-run rule.>
+~~~~text
+<user's original words, unmodified>
+~~~~
+
+## Instruction Map
+<Step 2.2(b) — provenance accounting. Either tag items inline in the sections
+above with [verbatim] / [paraphrase] / [added-by-packager: basis] and write
+"tags inline" here, or list source-segment → handoff-item pairs here.>
+
 ## User Instructions
 <If args passed in, embed here. Else "No additional instructions.">
 ```
@@ -258,6 +282,189 @@ type: project
 **CRITICAL RULE for Starting Prompt**: one primary task with numbered
 execution steps. Never a menu of options. The next session must be able to
 start executing step 1 without asking for direction.
+
+**Concreteness never overrides fidelity (Issue #544)**: "concrete" applies to
+execution steps, not to user intent. When the source instruction is open-ended
+or ambiguous, the concrete step IS "draft a proposal / flag for user
+clarification" — fabricating specifics the user never said (named examples,
+closed checklists, resolved ambiguities) is the #1 handoff *content* bug,
+symmetric to the #1 *process* bug in the top-of-skill banner. See Step 2.2.
+
+### Step 2.2: Fidelity Protocol (MANDATORY when the handoff carries user instructions or review feedback)
+
+> ## ⚠️ #1 RECURRING *CONTENT* FAILURE MODE — READ BEFORE WRITING THE DOC
+>
+> Generating a handoff is a **compression + rewrite** task, and an LLM's default
+> bias is to optimize executability: it fills in what the user *implied*,
+> closes open sets, resolves ambiguities to whatever is salient in context, and
+> converts range words into concrete counts. Each of those is a well-known
+> summarization-distortion mode, and every one of them **silently drops or
+> alters user intent**. Issue #544 is the forensic record: one handoff produced
+> **6 distinct distortions + 2 out-of-scope additions** vs the user's verbatim
+> prompt, none visible without the user re-pasting their original words.
+>
+> This protocol makes drop ("吞项") and invention ("加戏") **structurally
+> visible in a diff** instead of relying on a human to catch them.
+
+**When it applies**: any handoff that transfers user instructions, review
+feedback, design directives, or acceptance criteria the next session must act
+on. Skip ONLY for pure agent-state handoffs (e.g. "resume the build, no new
+user directives"). When in doubt, apply it.
+
+**M1 — Verbatim source block (defeats drop + drift)**. Copy the user's
+instruction text **byte-for-byte** into the "Source Instructions (verbatim)"
+section (Step 2.1 template). No cleanup, no reordering, no summarizing. A
+summary MAY accompany it but MUST NOT replace it. The next session (and the
+user) can then diff intent against your mapping. If the source is long, quote
+the directive-bearing spans in full — never elide with "..." inside a
+requirement.
+
+**M1 fence-collision guard**: the verbatim block is itself fenced, so a fence
+inside the source can close it early and silently truncate — which would defeat
+M1's whole point. Before inserting, scan the source for the longest run of
+` ``` ` and of `~~~`, and pick a wrapper fence of the *other* char (or the same
+char but strictly longer) per the CommonMark rule "a fence is closed only by a
+same-char fence at least as long". Default `~~~~` (4 tildes) clears a lone
+`~~~`; escalate if the source has longer runs. After writing, verify the block
+renders whole (the closing fence you intended is the one that closes it).
+
+**M2 — Provenance tagging (defeats invention)**. Every actionable item in the
+Starting Prompt / execution steps carries one tag:
+
+| Tag | Meaning | Rule |
+|---|---|---|
+| `[verbatim]` | user's own words, unchanged | must appear in the M1 block |
+| `[paraphrase]` | reworded, same scope | meaning-preserving only — no added specifics, no narrowed scope |
+| `[added-by-packager: <basis>]` | NOT in the source | REQUIRED basis (durable feedback / project constraint / prior decision). No basis ⇒ delete it. |
+
+An untagged actionable item is a protocol violation. A `[paraphrase]` that adds
+a specific the source lacks (a named example, a closed list, a resolved choice)
+is mis-tagged — it is either `[verbatim]`-backed or `[added-by-packager]`, never
+paraphrase. Packager **conclusions or preferences** (a leaning on an open
+question, a pre-selected option) are `[added-by-packager]` and MUST be labeled
+as assumptions, not folded into neutral description — especially when they sit
+under a "re-evaluate from first principles" meta-instruction they would
+otherwise quietly pre-empt.
+
+**M3 — Packager clause-walk gate (self-check before writing Step 5)**. Walk the
+M1 source clause by clause; each clause is either mapped to a tagged handoff
+item or explicitly marked out-of-scope in the Instruction Map. Run the #544
+trap checklist on every clause:
+
+1. **Rhetorical question ≠ action item.** A criticism phrased as a question
+   ("哪个游戏会这样写?" / "does any of this actually…?") is a *complaint about
+   the current state*, NOT an instruction to go do the literal thing. Do not
+   convert it into a concrete task (e.g. "go survey games X/Y/Z") — and never
+   invent the referents (the #544 doc named games the user never mentioned, and
+   listed the same game twice under two names).
+2. **Parallel list — count the items.** "A、B、和 C 都要重做" is three
+   deliverables. Verify all N survive; a meta-item (e.g. "the *way* definitions
+   are written") must not collapse into an adjective ("写得人话点").
+3. **Range words survive verbatim.** "全部 / all / 先不动 X" stays that scope.
+   Do not silently re-quantify "all talents" into "the 15 talents" because 15 is
+   the number salient in context.
+4. **"比如 / e.g. / such as" = OPEN set.** Examples illustrate a general need;
+   they are not the exhaustive checklist. Preserve the openness — don't ship the
+   three examples as a closed to-do and drop the real (broader) requirement.
+5. **Ambiguity → flag, don't resolve.** If a term has ≥2 readings ("快速选择/
+   解除选择" = per-unit toggle vs. bulk select-all), mark it **待用户澄清** in
+   the handoff; do NOT pick one silently. Picking is invention.
+6. **Forward references must resolve.** If the Starting Prompt says "按文档里的
+   执行顺序推进", the doc MUST contain an execution-order section. Any "see X / per
+   the Y below" must point at something that exists — no dangling promise.
+7. **Packager additions are tagged + basis-checked** per M2. If you added a gate
+   ("先出方案→等裁定→再落地") the user did not request, tag it and cite the
+   standing feedback that justifies it, or drop it.
+
+**M4 — Receiver diff directive (institutionalizes the catch)**. The Starting
+Prompt MUST instruct the next session, as an early action, to diff the M1
+verbatim block against the Instruction Map and **report any mismatch to the
+user before executing** — do not let the receiver assume fidelity. This turns
+the ad-hoc catch that surfaced #544 (a receiving session manually re-checking
+against the user's re-pasted prompt) into a standing step. Recommended
+Starting-Prompt line (note it carries its own M2 provenance tag — the M4 line
+is packager-added, so it is tagged like any other packager addition; the
+receiver-diff directive is the one actionable item exempt from *needing* a
+source clause, but NOT exempt from being tagged):
+
+> `[added-by-packager: Fidelity Protocol / Issue #544]` 执行前先做保真度自查:把
+> 本文档「Source Instructions (verbatim)」逐条对照「Instruction Map」,发现吞项/
+> 加戏/范围漂移/歧义被擅自单选,先报告用户再动手。
+
+**M5 — Version anchoring (defeats the third-order recurrence)**. The handoff
+doc is a **live file** — the next `/handoff` overwrites it. So a doc quoted
+later as "the frozen evidence of what was handed off" can silently be a
+*post-fix* version (exactly the #544 third-order failure: the "byte-exact
+frozen" copy was actually the corrected doc, and the real defective original
+survived only in a receiver's quotation). Two rules:
+
+- Every **instruction-carrying** handoff doc (i.e. one with an M1 source block)
+  records its own **content hash** in the frontmatter (`content_sha256: <digest
+  of the line-content below the frontmatter>`), so any later "this is the frozen
+  original" claim is machine-verifiable. Pure agent-state handoffs (no M1 block)
+  omit the field — consistent with the Step 2.1 template's omit note.
+  - **Scope of the digest (be accurate, don't overclaim)**: it is a
+    *line-content* hash, not a raw-byte hash. The snippet strips each line's
+    trailing CR (`sub(/\r$/,"")`), so a body saved LF vs CRLF hashes **identically
+    on every awk** (line-ending-agnostic). Command substitution strips trailing
+    newlines and `printf '%s\n'` restores exactly one, so *trailing-newline /
+    empty-final-line* differences are also normalized. It does NOT normalize
+    other whitespace: trailing spaces or tabs on a line, and interior blank
+    lines, ARE preserved and DO change the digest. Any change to the body's
+    actual line content changes the digest, so it catches the failure M5 targets
+    (a "frozen" doc that is silently a different *version* — different words). It
+    deliberately does NOT distinguish two bodies that differ only in line-ending
+    style or in the number of trailing newlines at end-of-file. If you ever need
+    true byte-for-byte equality, hash the raw file region instead and say so —
+    but for version anchoring the line-content digest is sufficient and is robust
+    to editors that switch LF/CRLF or add/strip a final newline.
+- Freezing a handoff as evidence means **snapshot BEFORE any fix**, copy
+  byte-for-byte, and record the source hash in the frozen copy. Never freeze
+  after editing.
+
+```bash
+# Compute the line-content digest of the body (below the closing frontmatter).
+# Portable across Git Bash (Windows) and macOS/Linux. CRLF-safe: the fence
+# match tolerates a trailing \r so a CRLF-saved handoff still splits correctly,
+# and `sub(/\r$/,"")` strips each body line's trailing CR so the digest is
+# line-ending-agnostic on EVERY awk (gawk auto-strips CR on Windows, but BSD awk
+# / mawk do NOT — without this, a CRLF file would hash differently there and the
+# trailing-empty-line normalization would not hold).
+# `&& c < 2` limits fence-matching to the FIRST TWO `---` lines only, so a
+# markdown horizontal rule (`---`) inside the body is hashed, not swallowed.
+# NOTE: this is a line-content digest, not raw bytes — see M5 "Scope of the
+# digest". Sufficient for version anchoring; use raw-byte hashing only if you
+# need exact-byte equality.
+HANDOFF_PATH="<resolved in Step 2.0>"
+BODY=$(awk '/^---\r?$/ && c < 2 { c++; next } c >= 2 { sub(/\r$/, ""); print }' "$HANDOFF_PATH")
+# Guard the bad-split case FIRST: an empty body would otherwise hash to the
+# well-known empty-string SHA256 (64 hex → passes the charset check below) and
+# silently anchor nothing. A real handoff always has a body.
+if [ -z "$BODY" ]; then
+  echo "ERROR: no document body below frontmatter — refusing to hash (bad split / no 2nd '---'?)" >&2
+  exit 1
+fi
+BODY_HASH=$(printf '%s\n' "$BODY" \
+  | { command -v sha256sum >/dev/null 2>&1 && sha256sum || shasum -a 256; } \
+  | cut -d' ' -f1)
+# Require exactly 64 chars AND all hex (stripping 0-9a-f leaves nothing).
+if [ "${#BODY_HASH}" -ne 64 ] || [ -n "$(printf '%s' "$BODY_HASH" | tr -d '0-9a-f')" ]; then
+  echo "ERROR: content hash not a 64-hex digest — aborting" >&2
+  exit 1
+fi
+echo "content_sha256: $BODY_HASH"
+# Write this value into the doc's frontmatter content_sha256 field.
+```
+
+**M6 — Concrete-vs-faithful reconciliation**. The Step 2.1 CRITICAL RULE
+("concrete steps, never a menu") is about *execution mechanics*, and it must
+never license fabricating *content*. When the source is open or ambiguous, the
+faithful concrete step is **"produce a proposal and get user sign-off"** or
+**"flag for clarification"** — that IS actionable (the next session can start
+drafting immediately) without inventing specifics the user never gave. Concrete
+≠ made-up. A handoff that turns "optimize for future multi-class scenarios (e.g.
+…)" into a fixed 3-item checklist is *less* faithful, not more concrete-in-a-
+good-way.
 
 ## Step 3: Session-chain update (best-effort, optional)
 
@@ -478,6 +685,14 @@ WORKTREE_PATH="$WORKTREE_PATH_RAW"
 SHORT_PROMPT="[LANE=${LANE_NAME}] Continue from session handoff. Read ${HANDOFF_PATH} as your first action."
 ```
 
+The SHORT_PROMPT stays terse (metacharacter-free, per the contract below), so
+the M4 receiver diff directive is NOT inlined here — it lives **inside** the
+handoff doc's Starting Prompt section (Step 2.2 M4), which the new session reads
+via the `Read` directive above. Manual mode carries M4 the same way (the user
+pastes the doc's Starting Prompt, which contains the self-check line). Either
+way the receiver's first-action fidelity diff travels in the doc, not the launch
+command.
+
 `$HANDOFF_PATH` is the location resolved in **Step 2.0** (`<workspace>/.handoff/`
 or `<kb_dir>/handoff/`, never the global memory dir). Shell variables do NOT
 persist across separate Bash tool calls — if Step 5 runs in a fresh shell,
@@ -603,6 +818,15 @@ the auto path from Step 5 (auto mode).
   new session.
 - Include specific file paths, line numbers, commands.
 - Never include secrets, API keys, credentials.
+- **Fidelity Protocol (Step 2.2) is mandatory when the handoff carries user
+  instructions / feedback / directives.** Verbatim source block (M1) + tagged
+  provenance (M2, `[verbatim]`/`[paraphrase]`/`[added-by-packager: basis]`) +
+  clause-walk gate (M3) + receiver diff directive (M4) + content-hash anchoring
+  (M5). Summarizing user directives instead of transferring them verbatim is
+  the #1 handoff *content* bug (Issue #544). "Concrete, never a menu" governs
+  execution mechanics only — it never licenses inventing content the user did
+  not give; when the source is open/ambiguous, the faithful concrete step is
+  "propose + get sign-off" or "flag for clarification" (M6).
 - The chat-output prompt is required in BOTH modes — never skip it. Completion
   is mode-scoped: in **manual mode** the prompt IS the primary deliverable; in
   **auto mode** the prompt is necessary but completion additionally requires
