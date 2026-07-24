@@ -74,12 +74,30 @@ function isValidPastTs(v, now) {
   return isPositiveTs(v) && v <= now + FUTURE_TS_GRACE_MS;
 }
 
-function updateTimestamps(state, is_write, is_progress, now) {
+function updateTimestamps(state, is_write, is_progress, now, idleResumeSec) {
+  const prevActivity = state.last_activity_ts; // capture BEFORE overwrite below
   state.last_activity_ts = now;
   if (is_write) {
     state.last_write_ts = now;
   }
   if (is_write || is_progress) {
+    state.last_progress_ts = now;
+  }
+  // Idle-resume heal (Issue #546). The soft/idle/hard timeout measures wall-clock
+  // time since the last progress signal — which WRONGLY includes idle/away time
+  // (overnight gaps, user stepping away mid-session). A genuine stall fires tool
+  // calls CONTINUOUSLY (inter-call gap of seconds); a resume-after-idle has a
+  // large gap between the PREVIOUS tool call and this one. So when the inter-call
+  // gap exceeds idleResumeSec, treat it as a resume — NOT a stuck loop — and reset
+  // the progress clock to `now`, so a resume that starts with a Read/Grep/Glob
+  // (which are not PROGRESS_TOOLS and so never refresh last_progress_ts) does not
+  // false-block on the accumulated idle time. Only last_progress_ts is reset
+  // (last_write_ts is left intact for write forensics; it is merely the fallback
+  // ref, unused once last_progress_ts is valid). Guarded on idleResumeSec being a
+  // finite positive number so pre-#546 callers/tests that omit it keep old behaviour.
+  if (Number.isFinite(idleResumeSec) && idleResumeSec > 0
+      && isValidPastTs(prevActivity, now)
+      && (now - prevActivity) / 1000 > idleResumeSec) {
     state.last_progress_ts = now;
   }
   // Initialise / heal on first call OR polluted state. Reject 0/negative AND

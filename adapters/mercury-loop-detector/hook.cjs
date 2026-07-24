@@ -9,7 +9,7 @@
 const fs     = require('fs');
 const path   = require('path');
 const crypto = require('crypto');
-const { checkMultiLevel, updateTimestamps } = require('./timeout.cjs');
+const { checkMultiLevel, updateTimestamps, resolveThresholds } = require('./timeout.cjs');
 const { writeStallReport }                  = require('./report.cjs');
 
 const TAG   = '[mercury-loop-detector]';
@@ -57,6 +57,13 @@ function loadConfig(cwd) {
   // var off mid-session does NOT immediately block on accumulated reads — main()
   // also resets state.read_count when the gate is on, so persisted state stays clean.
   cfg.read_write_ratio_disabled = process.env.MERCURY_LOOP_DETECTOR_MODE === 'research';
+  // Full kill-switch (Issue #546): a clean per-session disable that needs no
+  // committed-file edit — mirrors config `enabled:false` but via env, so an
+  // operator can silence a misfiring detector without touching a tracked file.
+  // Any of 1/true/yes (case-insensitive) disables the whole detector.
+  if (/^(1|true|yes)$/i.test(process.env.MERCURY_LOOP_DETECTOR_DISABLED || '')) {
+    cfg.enabled = false;
+  }
   return cfg;
 }
 
@@ -187,7 +194,11 @@ function main() {
   const ihash       = hashInput(tool_input);
 
   update(state, tool_name, ihash, is_write, is_read, is_progress, errored, err_sig);
-  updateTimestamps(state, is_write, is_progress, now);
+  // Pass the idle threshold so updateTimestamps can distinguish a resume-after-idle
+  // (large inter-call gap) from a continuous stall (Issue #546) and heal the
+  // progress clock accordingly, instead of counting idle time as "no progress".
+  const { idle: idleResumeSec } = resolveThresholds(cfg);
+  updateTimestamps(state, is_write, is_progress, now, idleResumeSec);
   saveState(statePath, state);
 
   // Timeout check (retrospective — evaluated at PostToolUse fire time)
