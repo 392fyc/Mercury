@@ -1690,3 +1690,136 @@ describe('writeStallReport state_snapshot.last_progress_ts', () => {
     assert.equal(report.state_snapshot.last_progress_ts, null);
   });
 });
+
+describe('Issue #546: idle-resume does not false-block; env kill-switch', () => {
+  const { execFileSync } = require('child_process');
+  const HOOK = path.join(__dirname, 'hook.cjs');
+  let counter = 0;
+  let tmpDirs = [];
+  function uniqueSession() { return `ete-546-${process.pid}-${++counter}-${Date.now()}`; }
+  function seedState(stateDir, session_id, over) {
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(path.join(stateDir, 'loop-detector.json'), JSON.stringify({
+      session_id, dup_count: 0, dup_tool: null, dup_hash: null, err_count: 0, err_last: null,
+      read_count: 0, np_count: 0, last_activity_ts: null, last_write_ts: null, last_progress_ts: null,
+      ...over
+    }, null, 2));
+  }
+  function runHook(tmpDir, stdinObj, extraEnv) {
+    let stdout = '';
+    try {
+      stdout = execFileSync('node', [HOOK], {
+        input: JSON.stringify(stdinObj),
+        env: { ...process.env, CLAUDE_PROJECT_DIR: tmpDir, ...(extraEnv || {}) },
+        timeout: 10000
+      }).toString();
+    } catch (e) { stdout = e.stdout ? e.stdout.toString() : ''; if (e.status !== 0) throw e; }
+    return stdout;
+  }
+  afterEach(() => {
+    for (const d of tmpDirs) { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* ignore */ } }
+    tmpDirs = [];
+  });
+
+  // ── unit: updateTimestamps idle-resume heal ──
+  test('updateTimestamps heals last_progress_ts on idle-resume (gap > idle) even for a read', () => {
+    const now = 1_700_000_000_000;
+    // Previous tool call 10 min ago (600s > 300s idle); this call is a read.
+    const state = makeState({ last_activity_ts: now - 600_000, last_write_ts: now - 600_000, last_progress_ts: now - 600_000 });
+    updateTimestamps(state, /*is_write*/ false, /*is_progress*/ false, now, /*idleResumeSec*/ 300);
+    assert.equal(state.last_progress_ts, now, 'idle-resume must reset progress clock to now');
+    assert.equal(state.last_write_ts, now - 600_000, 'idle-resume must NOT touch last_write_ts (write forensics preserved)');
+  });
+
+  test('updateTimestamps does NOT heal on continuous activity (gap <= idle)', () => {
+    const now = 1_700_000_000_000;
+    // Previous tool call 3s ago (continuous); progress clock 800s stale (real stall building).
+    const state = makeState({ last_activity_ts: now - 3_000, last_write_ts: now - 800_000, last_progress_ts: now - 800_000 });
+    updateTimestamps(state, false, false, now, 300);
+    assert.equal(state.last_progress_ts, now - 800_000, 'continuous read must NOT reset progress clock (stall detection preserved)');
+  });
+
+  test('updateTimestamps idle-resume gap exactly at threshold does NOT heal (strict >)', () => {
+    const now = 1_700_000_000_000;
+    const state = makeState({ last_activity_ts: now - 300_000, last_write_ts: now - 800_000, last_progress_ts: now - 800_000 });
+    updateTimestamps(state, false, false, now, 300); // gap == 300s, not > 300
+    assert.equal(state.last_progress_ts, now - 800_000, 'gap exactly at threshold is not a resume');
+  });
+
+  test('updateTimestamps omitting idleResumeSec keeps pre-#546 behaviour (no heal)', () => {
+    const now = 1_700_000_000_000;
+    const state = makeState({ last_activity_ts: now - 600_000, last_write_ts: now - 600_000, last_progress_ts: now - 600_000 });
+    updateTimestamps(state, false, false, now); // 4-arg legacy call
+    assert.equal(state.last_progress_ts, now - 600_000, 'no idleResumeSec → old behaviour, read does not bump');
+  });
+
+  test('updateTimestamps idle-resume ignores null prevActivity (cannot compute gap)', () => {
+    const now = 1_700_000_000_000;
+    const state = makeState({ last_activity_ts: null, last_write_ts: now - 800_000, last_progress_ts: now - 800_000 });
+    updateTimestamps(state, false, false, now, 300);
+    assert.equal(state.last_progress_ts, now - 800_000, 'null prevActivity → no idle-resume heal');
+  });
+
+  // ── ETE: the actual bug repro ──
+  test('ETE #546: idle ~10h then Read does NOT false-block (bug repro)', () => {
+    const tmpDir = makeTmpDir(); tmpDirs.push(tmpDir);
+    const session_id = uniqueSession();
+    const stateDir = path.join(tmpDir, '.mercury', 'state');
+    const now = Date.now();
+    // Session idle ~10h: nothing ran during the gap → last_activity_ts and
+    // last_progress_ts both ~10h stale. Resume with Grep (read). Pre-#546 this
+    // hard-blocked ("36657s since last progress"); with the fix it must pass.
+    seedState(stateDir, session_id, {
+      last_activity_ts: now - 36_000_000, last_write_ts: now - 36_000_000, last_progress_ts: now - 36_000_000
+    });
+    const stdout = runHook(tmpDir, { tool_name: 'Grep', tool_input: { pattern: 'x' }, tool_response: 'found 1', session_id });
+    assert.ok(!stdout.includes('"block"'), `idle-resume Grep must NOT block, got: ${stdout}`);
+    const finalState = JSON.parse(fs.readFileSync(path.join(stateDir, 'loop-detector.json'), 'utf8'));
+    assert.ok(finalState.last_progress_ts >= now - 2_000, 'progress clock healed to ~now on resume');
+    assert.equal(finalState.last_write_ts, now - 36_000_000, 'last_write_ts unchanged (read + idle-resume must not fake a write)');
+  });
+
+  // ── ETE: real stall still blocks ──
+  test('ETE #546: continuous activity + stale progress still hard-blocks (stall detection preserved)', () => {
+    const tmpDir = makeTmpDir(); tmpDirs.push(tmpDir);
+    const session_id = uniqueSession();
+    const stateDir = path.join(tmpDir, '.mercury', 'state');
+    const now = Date.now();
+    // Continuous: last tool 3s ago, but progress clock 1000s stale (> 900 hard) →
+    // a genuine read-only stall. Must still block.
+    seedState(stateDir, session_id, {
+      last_activity_ts: now - 3_000, last_write_ts: now - 1_000_000, last_progress_ts: now - 1_000_000
+    });
+    const stdout = runHook(tmpDir, { tool_name: 'Grep', tool_input: { pattern: 'y' }, tool_response: 'found 1', session_id });
+    assert.ok(stdout.includes('"block"'), `continuous read-only stall must still block, got: ${stdout}`);
+  });
+
+  // ── ETE: env kill-switch ──
+  test('ETE #546: MERCURY_LOOP_DETECTOR_DISABLED=1 disables detector (would-block scenario passes)', () => {
+    const tmpDir = makeTmpDir(); tmpDirs.push(tmpDir);
+    const session_id = uniqueSession();
+    const stateDir = path.join(tmpDir, '.mercury', 'state');
+    const now = Date.now();
+    seedState(stateDir, session_id, {
+      last_activity_ts: now - 3_000, last_write_ts: now - 1_000_000, last_progress_ts: now - 1_000_000
+    });
+    const stdout = runHook(tmpDir,
+      { tool_name: 'Grep', tool_input: { pattern: 'y' }, tool_response: 'found 1', session_id },
+      { MERCURY_LOOP_DETECTOR_DISABLED: '1' });
+    assert.ok(!stdout.includes('"block"'), `env kill-switch must disable blocking, got: ${stdout}`);
+  });
+
+  test('ETE #546: MERCURY_LOOP_DETECTOR_DISABLED=0 does NOT disable (would-block scenario still blocks)', () => {
+    const tmpDir = makeTmpDir(); tmpDirs.push(tmpDir);
+    const session_id = uniqueSession();
+    const stateDir = path.join(tmpDir, '.mercury', 'state');
+    const now = Date.now();
+    seedState(stateDir, session_id, {
+      last_activity_ts: now - 3_000, last_write_ts: now - 1_000_000, last_progress_ts: now - 1_000_000
+    });
+    const stdout = runHook(tmpDir,
+      { tool_name: 'Grep', tool_input: { pattern: 'y' }, tool_response: 'found 1', session_id },
+      { MERCURY_LOOP_DETECTOR_DISABLED: '0' });
+    assert.ok(stdout.includes('"block"'), `DISABLED=0 must NOT disable — stall still blocks, got: ${stdout}`);
+  });
+});
