@@ -255,6 +255,49 @@
 #     attempts to parse what is actually inside them — remain out of
 #     scope. All require deliberately constructing an indirection this
 #     hook cannot see into; not addressed here.
+#
+#     Iter 6 (performance — coordinator-measured): an unconditional `git
+#     rev-parse` (for Mercury's own common-dir) plus an unconditional `jq`
+#     call (for the hook stdin JSON's `cwd` field) ran at the TOP of this
+#     script regardless of command content, adding ~180ms (44%) to EVERY
+#     single Bash tool call — including ones with nothing to do with git
+#     at all — since this hook's PreToolUse matcher fires on every Bash
+#     invocation and Windows process-spawn overhead is expensive. Fixed:
+#     both are now resolved LAZILY via `_mercury_common_dir()`/
+#     `_hook_cwd()` cached accessor functions, only called from the exact
+#     points that actually need the value (Phase 0's Mercury-common-dir
+#     comparison; Pass B's cd/pushd same-repo check; process_segment's
+#     Phase 0 entry-cwd resolution) — each guarded so a command with no
+#     `cd`/`pushd` and no eligible `git push` segment never triggers
+#     either subprocess. `EFFECTIVE_CWD` (Pass B's cd-tracking seed) uses
+#     an explicit "unresolved" sentinel value instead of eagerly reading
+#     `HOOK_CWD`, resolved to the real value at the first point Pass B or
+#     process_segment's Phase 0 actually dereferences it. Benchmarked
+#     (`echo hi`, n=5, same synthetic JSON payload): pre-#552 baseline
+#     396ms average → iter-5 (pre-perf-fix) 576ms average (+180ms/+45%,
+#     confirms the regression) → post-fix 406ms average (+10ms/+2.5% vs
+#     baseline, well inside the ≤+30ms target). `git push`/`cd`-chain
+#     commands retain their necessary subprocess cost (both still resolve
+#     Mercury's common-dir and/or walk cd tracking, as they must).
+#
+#     Considered and NOT added: a cheap "command text contains no `git`
+#     substring → exit 0 immediately, skip the awk tokenizer entirely"
+#     pre-check. Rejected on correctness grounds, not measured need — the
+#     benchmark above shows awk's own cost is already negligible (the
+#     dominant 180ms was the two unconditional subprocess launches this
+#     iteration made lazy, not tokenization), so there is no remaining
+#     performance case for it. Adding it would also reopen exactly the
+#     kind of naive-regex bypass this hook's whole iter-1..3 history
+#     exists to close: the awk tokenizer already unescapes backslash
+#     sequences OUTSIDE and INSIDE double quotes (Codex iter-2 High #1,
+#     iter-3 Medium), meaning a token can read as literal `git` even when
+#     the substring `git` never appears unbroken in the raw command text
+#     (e.g. `g\it push origin develop` — bash executes this as `git push
+#     origin develop`, but a naive raw-text substring scan for `git` would
+#     miss it, since the literal bytes are `g`, `\`, `i`, `t`). A
+#     substring pre-check would have to replicate the same escape-aware
+#     scanning the tokenizer already does to stay safe — at which point it
+#     is not meaningfully cheaper than just running the tokenizer.
 
 INPUT=$(cat)
 
@@ -326,13 +369,27 @@ _git_common_dir() {
   esac
 }
 
-# Issue #552 — Mercury repo's own git common-dir, resolved once. Used by
-# the Phase 0 repo-awareness check in process_segment() to decide whether a
-# `git push` segment targets THIS repo (protection applies) or a different
-# one (out of scope, allowed through). Empty on resolution failure — Phase 0
-# treats that as "cannot determine", falling through to the existing
-# fail-closed Phase 1-3 logic unchanged.
-MERCURY_COMMON_DIR=$(_git_common_dir "$_PROJECT")
+# Issue #552 iter-6 (performance — coordinator-measured regression: an
+# unconditional `git rev-parse` here added ~180ms/44% to EVERY single Bash
+# tool call, including ones with no `git` anywhere in them, since this
+# hook's PreToolUse matcher fires on every Bash invocation and Windows
+# process-spawn overhead is expensive). Mercury's own git common-dir is
+# now resolved LAZILY — only the FIRST time `_mercury_common_dir()` is
+# actually called (from inside Phase 0, which itself only runs for a real
+# `git push` segment with no disabling gate already tripped) — and cached
+# so repeated calls within the same hook invocation (e.g. a command with
+# several push segments) cost one subprocess, not one per segment. Empty
+# on resolution failure — Phase 0 treats that as "cannot determine",
+# falling through to the existing fail-closed Phase 1-3 logic unchanged.
+_MERCURY_COMMON_DIR_COMPUTED=0
+_MERCURY_COMMON_DIR_CACHE=""
+_mercury_common_dir() {
+  if [ "$_MERCURY_COMMON_DIR_COMPUTED" -eq 0 ]; then
+    _MERCURY_COMMON_DIR_CACHE=$(_git_common_dir "$_PROJECT")
+    _MERCURY_COMMON_DIR_COMPUTED=1
+  fi
+  printf '%s' "$_MERCURY_COMMON_DIR_CACHE"
+}
 
 if [ "${GUARD_DEBUG:-0}" = "1" ] && [ -f "$LOG_FILE" ] && [ "$(wc -c < "$LOG_FILE")" -gt 102400 ]; then
   tail -100 "$LOG_FILE" > "$LOG_FILE.tmp" && mv "$LOG_FILE.tmp" "$LOG_FILE"
@@ -386,18 +443,35 @@ fi
 
 if [ "$HAS_JQ" -eq 1 ]; then
   COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
-  # Issue #552 — hook stdin JSON's top-level `cwd` field: "Current working
-  # directory when the hook is invoked" (confirmed present on all hook
-  # events, https://code.claude.com/docs/en/hooks). Fallback target-repo
-  # signal for the Phase 0 repo-awareness check when the push segment has
-  # no explicit `-C <path>`. Empty on missing/malformed field — Phase 0
-  # then has nothing to resolve and falls through fail-closed.
-  HOOK_CWD=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
 else
   # HAS_JQ=0 AND HAS_CMD_KEY=0 — INPUT did not carry a "command" key (e.g.
   # tool wasn't Bash). Nothing to gate.
   exit 0
 fi
+
+# Issue #552 — hook stdin JSON's top-level `cwd` field: "Current working
+# directory when the hook is invoked" (confirmed present on all hook
+# events, https://code.claude.com/docs/en/hooks). Fallback target-repo
+# signal for the Phase 0 repo-awareness check when a push segment has no
+# explicit `-C <path>`, and the seed value for the Pass B cd-tracker's
+# EFFECTIVE_CWD. Empty on missing/malformed field — Phase 0 then has
+# nothing to resolve and falls through fail-closed.
+#
+# Issue #552 iter-6 (performance): also resolved LAZILY now (one jq
+# subprocess, only when a `cd`/`pushd` or an eligible push segment
+# actually needs it — most Bash tool calls have neither), same rationale
+# and cache pattern as `_mercury_common_dir()` above.
+_HOOK_CWD_COMPUTED=0
+_HOOK_CWD_CACHE=""
+_hook_cwd() {
+  if [ "$_HOOK_CWD_COMPUTED" -eq 0 ]; then
+    if [ "$HAS_JQ" -eq 1 ]; then
+      _HOOK_CWD_CACHE=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
+    fi
+    _HOOK_CWD_COMPUTED=1
+  fi
+  printf '%s' "$_HOOK_CWD_CACHE"
+}
 
 debug_log "COMMAND=$COMMAND"
 
@@ -736,7 +810,16 @@ _find_command_position() {
 # specific `cd` "really" ran. This closes all 6 reproduced cases (short-
 # circuit, subshell, pipe, coproc, `if false; then cd; fi`) uniformly,
 # without needing to model any of their control-flow semantics.
-EFFECTIVE_CWD="$HOOK_CWD"
+# Issue #552 iter-6 (performance): EFFECTIVE_CWD starts as an UNRESOLVED
+# sentinel rather than eagerly calling `_hook_cwd()` (which would force
+# the jq subprocess even for commands with no `cd`/`pushd` and no `git
+# push` at all — the dominant case). It is resolved to the real HOOK_CWD
+# value lazily, at the FIRST point something actually needs it: either
+# Pass B's own cd/pushd handling below, or process_segment's Phase 0 (see
+# its sentinel-resolution at the top of the Phase 0 block). Any command
+# with neither construct never pays this cost.
+_LAZY_HOOK_CWD_SENTINEL="__push_guard_lazy_hook_cwd_unresolved__"
+EFFECTIVE_CWD="$_LAZY_HOOK_CWD_SENTINEL"
 EFFECTIVE_COMMON_DIR=""
 _eff_common_computed=0
 declare -a SEG_ENTRY_CWD=()
@@ -789,6 +872,13 @@ for _pb_sz in "${SEG_SIZES[@]}"; do
               # literal value).
               UNSAFE_STATE=1 ;;
             *)
+              # Issue #552 iter-6: this is the first point Pass B actually
+              # needs EFFECTIVE_CWD's real value (to join a relative `cd`
+              # arg, or as the baseline for the same-repo common-dir
+              # check below) — resolve the lazy sentinel now.
+              if [ "$EFFECTIVE_CWD" = "$_LAZY_HOOK_CWD_SENTINEL" ]; then
+                EFFECTIVE_CWD=$(_hook_cwd)
+              fi
               _pb_candidate=""
               case "$_pb_arg" in
                 /*|[A-Za-z]:[\\/]*|\\\\*)
@@ -1015,6 +1105,15 @@ process_segment() {
   #     transition or repo-redirection construct this hook cannot safely
   #     model, even if the construct itself lives in a DIFFERENT segment.
   if [ "$UNRESOLVABLE_SELECTOR" -eq 0 ] && [ "$UNSAFE_STATE" -eq 0 ]; then
+    # Issue #552 iter-6 (performance): this is the ONLY place a real `git
+    # push` segment (with no disabling gate already tripped) actually
+    # needs HOOK_CWD's value — resolve the Pass B lazy sentinel here, not
+    # before. A command with no eligible push segment at all (the
+    # dominant case — most Bash calls aren't `git push`) never reaches
+    # this line, so `_hook_cwd()`'s jq subprocess is never spent on it.
+    if [ "$_seg_entry_cwd" = "$_LAZY_HOOK_CWD_SENTINEL" ]; then
+      _seg_entry_cwd=$(_hook_cwd)
+    fi
     # Resolve which repo this segment's `git push` actually targets:
     # `-C <path>` (authoritative — overrides cwd for this invocation) else
     # `_seg_entry_cwd` — this segment's EFFECTIVE_CWD snapshot from the
@@ -1042,15 +1141,25 @@ process_segment() {
 
     # If that resolves to a git common-dir that differs from Mercury's own,
     # this push is out of this guard's scope — allow it through. Any
-    # failure to resolve (rev-parse errors, empty signal, MERCURY_COMMON_DIR
-    # itself unresolved) falls through unchanged to Phase 1-3 below —
-    # fail-closed, never a bypass source.
-    if [ -n "$_repo_path" ] && [ -n "$MERCURY_COMMON_DIR" ]; then
-      local _target_common_dir
-      _target_common_dir=$(_git_common_dir "$_repo_path")
-      if [ -n "$_target_common_dir" ] && [ "$(_normalize_path "$_target_common_dir")" != "$(_normalize_path "$MERCURY_COMMON_DIR")" ]; then
-        debug_log "ALLOWED (non-Mercury repo): target='$_target_common_dir' mercury='$MERCURY_COMMON_DIR'"
-        return 0
+    # failure to resolve (rev-parse errors, empty signal, Mercury's own
+    # common-dir itself unresolved) falls through unchanged to Phase 1-3
+    # below — fail-closed, never a bypass source.
+    #
+    # Issue #552 iter-6 (performance): `_mercury_common_dir()` (lazy,
+    # cached) instead of a plain `$MERCURY_COMMON_DIR` variable — this is
+    # the ONLY call site, and it only runs for a real push segment with no
+    # disabling gate already tripped, so the `git rev-parse` subprocess it
+    # spends on first call is never paid by a command with no such segment.
+    if [ -n "$_repo_path" ]; then
+      local _mercury_common_dir_val
+      _mercury_common_dir_val=$(_mercury_common_dir)
+      if [ -n "$_mercury_common_dir_val" ]; then
+        local _target_common_dir
+        _target_common_dir=$(_git_common_dir "$_repo_path")
+        if [ -n "$_target_common_dir" ] && [ "$(_normalize_path "$_target_common_dir")" != "$(_normalize_path "$_mercury_common_dir_val")" ]; then
+          debug_log "ALLOWED (non-Mercury repo): target='$_target_common_dir' mercury='$_mercury_common_dir_val'"
+          return 0
+        fi
       fi
     fi
   fi
