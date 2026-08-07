@@ -1354,6 +1354,114 @@ scenario \
   'JSON_CWD='
 
 # ===========================================================================
+# Issue #552 iter-3 (dual-verify NEEDS-CHANGES round 2, real hook-call
+# reproductions of a whole NEW class Codex found — see the "command-level
+# simplicity gate" fix-history comment in push-guard.sh for full rationale)
+#
+# All iter-1/iter-2 fixes gated Phase 0 at the SEGMENT level. This class of
+# bypass works because a shell-state-transition construct (cd/pushd/
+# GIT_DIR=/--chdir) can live in a DIFFERENT segment than the vulnerable
+# `git push`, so no segment-scoped check ever sees both halves together.
+# The command-level simplicity gate scans the WHOLE token stream once,
+# before segmenting, and disables Phase 0 for the ENTIRE command if
+# triggered — these scenarios use `JSON_CWD=/other/repo` (so, absent the
+# gate, Phase 0 would otherwise resolve "different repo" and ALLOW the
+# push) specifically to prove the gate overrides that and still blocks.
+# ===========================================================================
+
+# G1: `cd` anywhere -> whole-command gate fires. Real git behavior: `cd
+# <dir> && <cmd>` genuinely runs <cmd> inside <dir> — this is the single
+# most natural way to write "go do something in another repo".
+scenario \
+  '#552 iter-3 G1: `cd <dir> && git push origin develop` (real state transition) -> gate fires, still blocked' \
+  'cd /somewhere && git push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo'
+
+scenario \
+  '#552 iter-3 G1b: `cd` in an EARLIER segment than the push -> gate fires (whole-command, not segment-local)' \
+  'cd /somewhere && git add -A && git push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo'
+
+# G2: `GIT_DIR=`/`GIT_WORK_TREE=` via `export` — `export` is stripped as a
+# no-op wrapper by process_segment's wrapper-strip loop (same handling as
+# `env`), leaving the `GIT_DIR=x` token exposed to the gate scan exactly
+# like the plain-prefix and `env`-wrapped forms already covered by the
+# iter-2 per-segment UNRESOLVABLE_SELECTOR check — this scenario proves the
+# whole-command gate also catches it when `export ...; git push ...` are
+# TWO SEPARATE STATEMENTS (`;`-joined), i.e. two different segments, which
+# UNRESOLVABLE_SELECTOR (segment-scoped) cannot see across.
+scenario \
+  '#552 iter-3 G2: `export GIT_DIR=...; git push origin develop` (two segments) -> gate fires, still blocked' \
+  'export GIT_DIR=/mercury/.git; git push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo'
+
+# G3: `env --chdir=<dir> <cmd>` — verified real GNU coreutils env(1)
+# behavior, runs <cmd> with its cwd changed to <dir> before exec.
+scenario \
+  '#552 iter-3 G3: `env --chdir=<dir> git push origin develop` -> gate fires, still blocked' \
+  'env --chdir=/mercury git push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo'
+
+scenario \
+  '#552 iter-3 G3b: `env --chdir <dir> git push origin develop` (separate-arg form) -> gate fires, still blocked' \
+  'env --chdir /mercury git push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo'
+
+# G4: `pushd` — same real state-transition property as `cd`.
+scenario \
+  '#552 iter-3 G4: `pushd <dir> && git push origin develop` -> gate fires, still blocked' \
+  'pushd /mercury && git push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo'
+
+# G5: glued `-C<path>` (no separator) — verified live that real git
+# rejects this as `unknown option`, so it is NOT exploitable today; the
+# gate still fires defensively (zero-cost — see fix-history comment).
+# Either outcome (blocked via the gate, or allowed because Phase 0 would
+# have resolved a genuinely different repo) would be acceptable per the
+# coordinator's acceptance table, since git itself already refuses this
+# syntax; this harness asserts the gate's defensive behavior (blocked).
+scenario \
+  '#552 iter-3 G5: glued `-C<path>` (git rejects this syntax; gate is defensive-only) -> gate fires, still blocked' \
+  'git -C/mercury push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo'
+
+# ── Phase-0-existence pin (Codex: fail-closed scenarios alone cannot
+# prove Phase 0 is doing anything, since Phase 1-3 blocks by default with
+# or without it) ──────────────────────────────────────────────────────
+# This scenario ONLY passes if Phase 0 is actually resolving the target
+# repo and granting an allow: with Phase 0 deleted entirely, Phase 1-3
+# alone would see `push origin develop` and unconditionally block it
+# regardless of `cwd`. A non-Mercury-repo push to a branch NAMED `develop`
+# passing with exit 0 is therefore direct positive evidence that Phase 0
+# is live, not just that Phase 1-3 didn't misfire.
+scenario \
+  '#552 Phase-0-existence pin: non-Mercury repo push to a branch literally named `develop` -> allowed (only possible because Phase 0 is active)' \
+  'git push origin develop' \
+  0 '' '' \
+  'JSON_CWD=/other/repo'
+
+# Regression net: a "simple" command (no state-transition construct
+# anywhere) run inside a non-Mercury repo must remain fully unaffected by
+# the iter-3 gate — this is #552's entire reason to exist.
+scenario \
+  '#552 iter-3 regression: simple external-repo add+commit+push chain (no state-transition token) -> unaffected, still allowed' \
+  'git add -A && git commit -m x && git push origin master' \
+  0 '' '' \
+  'JSON_CWD=/other/repo'
+
+scenario \
+  '#552 iter-3 regression: `-C <absolute-path>` (properly separated, not glued) still resolves and allows a force-push to +master' \
+  'git -C /other/repo push origin +master' \
+  0 ''
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 

@@ -420,6 +420,78 @@ END {
 }
 ') || block_parser_fail "awk tokenizer exited non-zero"
 
+# Issue #552 iter-3 (dual-verify NEEDS-CHANGES, real hook-call
+# reproductions from `cd`/`pushd`/exported `GIT_DIR=`/`env --chdir=`/glued
+# `-C<path>` — see fix-history comment near the top of this file) —
+# COMMAND-LEVEL simplicity gate. Phase 0 (below) infers the target repo
+# from a STATIC snapshot: the `-C <path>` on the specific push segment, or
+# else the hook stdin JSON's `cwd` field captured once at hook invocation.
+# That snapshot is only valid if NOTHING in the whole command changes the
+# shell's working directory or git's repo-selection env vars BEFORE the
+# push runs — and shell state transitions are not segment-scoped: `cd
+# /other/repo && git push origin develop` puts the `cd` in segment 1 and
+# the vulnerable push in segment 2, so a per-segment check (like the
+# iter-2 UNRESOLVABLE_SELECTOR gate) cannot catch it. This gate therefore
+# scans the ENTIRE token stream (every segment) BEFORE any segment is
+# processed, and — if triggered — disables Phase 0 for the WHOLE command
+# (every segment falls back to Phase 1-3, exactly as if Issue #552 had
+# never shipped), not just the segment that carries the trigger token.
+#
+# Triggers (each verified against real git/env behavior, not assumed):
+#   - `cd` / `pushd` / `popd` as an exact token anywhere — real shell-state
+#     transitions. Real hook-call repro: `cd D:/Mercury/Mercury && git push
+#     origin develop` (external cwd, no other selector) was ALLOWED
+#     pre-fix; that push actually executes inside Mercury.
+#   - Any token matching `GIT_DIR=*` / `GIT_WORK_TREE=*` — catches the
+#     prefix form (`GIT_DIR=x git push ...`), the `export` form (`export
+#     GIT_DIR=x; git push ...` — `export` itself is stripped as a no-op
+#     wrapper by process_segment's wrapper-strip loop, leaving this same
+#     `GIT_DIR=x` token), and the `env`-wrapped form, in ANY segment,
+#     regardless of the iter-2 per-segment UNRESOLVABLE_SELECTOR gate
+#     (which only sees the segment carrying the actual `git push`).
+#   - `--chdir` / `--chdir=*` — `env --chdir=<dir> <cmd>` is a real,
+#     verified way to run a command in another directory (GNU coreutils
+#     env(1)); a `git` invocation reached through it inherits the changed
+#     cwd, invalidating any `cwd`-derived Phase 0 signal.
+#   - `-C<path>` glued with no separator (e.g. `git -CD:/Mercury/Mercury
+#     push ...`) — verified live: git itself rejects this as `unknown
+#     option` (git requires `-C` and its value as separate tokens, or
+#     none at all — never glued), so it is not exploitable today. Included
+#     anyway as a zero-cost defensive trigger in case that ever changes,
+#     and because the token-level scan cannot tell "not exploitable now"
+#     from "not exploitable ever" — being conservative here costs nothing.
+#
+# This is a coarse, command-level trigger by design — it does NOT try to
+# determine whether a `cd`/`GIT_DIR=`/etc. token actually AFFECTS the
+# specific push segment being evaluated (that would require full shell
+# control-flow modeling, which this hook explicitly does not attempt
+# elsewhere either — see the awk tokenizer's documented `bash -c "..."`
+# limitation). A "simple" command (no such tokens anywhere) keeps full
+# Phase 0 behavior; a command containing ANY of these constructs loses
+# Phase 0 for its ENTIRE duration. This does not regress real non-Mercury-
+# repo usage: `git add -A && git commit -m x && git push origin master`
+# run inside an external repo contains no state-transition construct, so
+# it is unaffected and still allowed through.
+COMMAND_LEVEL_UNSAFE=0
+TAB=$(printf '\t')
+TOK_PREFIX="TOK${TAB}"
+while IFS= read -r _gate_line; do
+  case "$_gate_line" in
+    "${TOK_PREFIX}"*)
+      _gate_tok="${_gate_line#${TOK_PREFIX}}"
+      case "$_gate_tok" in
+        cd|pushd|popd) COMMAND_LEVEL_UNSAFE=1 ;;
+        GIT_DIR=*|GIT_WORK_TREE=*) COMMAND_LEVEL_UNSAFE=1 ;;
+        --chdir|--chdir=*) COMMAND_LEVEL_UNSAFE=1 ;;
+        -C?*) COMMAND_LEVEL_UNSAFE=1 ;;
+      esac
+      ;;
+  esac
+done <<EOF
+$_TOK_STREAM
+EOF
+[ "$COMMAND_LEVEL_UNSAFE" -eq 1 ] && debug_log "Phase 0 disabled for whole command (simplicity gate triggered)"
+
 # Group tokens into segments and run Phase 1/2/3 inline per segment.
 # Per-segment phase evaluation closes the iter-1 break-on-first bypass:
 #   `git push origin lane/foo && git push origin develop` evaluates BOTH.
@@ -579,9 +651,17 @@ process_segment() {
 
   # ── Phase 0: repo-awareness (Issue #552) ──────────────────────────────
   # Skipped entirely (falls straight to Phase 1-3, as if #552 never
-  # shipped) whenever this segment carries a repo selector we cannot
-  # safely model — see UNRESOLVABLE_SELECTOR comment above.
-  if [ "$UNRESOLVABLE_SELECTOR" -eq 0 ]; then
+  # shipped) whenever EITHER gate fires:
+  #   - UNRESOLVABLE_SELECTOR (iter-2, segment-scoped): THIS segment's own
+  #     `git` invocation carries a selector Phase 0 cannot safely model
+  #     (--git-dir/--work-tree, repeated -C).
+  #   - COMMAND_LEVEL_UNSAFE (iter-3, whole-command, computed once above
+  #     before segmenting): ANY segment anywhere in the full command
+  #     contains a shell-state-transition or repo-redirection construct
+  #     (cd/pushd/popd, GIT_DIR=/GIT_WORK_TREE=, --chdir, glued -C<path>)
+  #     that could invalidate this segment's HOOK_CWD/-C snapshot even
+  #     though the construct itself lives in a DIFFERENT segment.
+  if [ "$UNRESOLVABLE_SELECTOR" -eq 0 ] && [ "$COMMAND_LEVEL_UNSAFE" -eq 0 ]; then
     # Resolve which repo this segment's `git push` actually targets:
     # `-C <path>` (authoritative — overrides cwd for this invocation) else
     # the hook stdin JSON's `cwd` field. A relative `-C` value is resolved
@@ -705,8 +785,8 @@ process_segment() {
 # and process. Lines beginning with `TOK<TAB>` are tokens (with the TAB-and-
 # everything-before stripped); the bare line `SEG` is a segment terminator.
 # Any other line shape is a protocol violation — ignored to fail closed.
-TAB=$(printf '\t')
-TOK_PREFIX="TOK${TAB}"
+# TAB/TOK_PREFIX already computed above for the Issue #552 iter-3
+# command-level simplicity gate pre-scan — reused here unchanged.
 while IFS= read -r line; do
   if [ "$line" = "SEG" ]; then
     if [ "${#CUR_SEG[@]}" -gt 0 ]; then
