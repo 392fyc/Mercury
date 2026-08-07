@@ -168,13 +168,93 @@
 #       - glued `-C<path>` at ANY token position (unchanged — still
 #         defensive-only, git rejects this syntax today)
 #
+#     Iter 5 (dual-verify round 4 — Codex + coordinator independent repro,
+#     6/6 reproduced, high-confidence) found the iter-4 tracker's core
+#     assumption was wrong: it treated TEXTUAL/SYNTACTIC token order as
+#     EXECUTION order, and assumed every `cd` it walked past actually runs
+#     in the parent shell. Neither holds for a short-circuited segment
+#     (`false && cd <dir>` — the `cd` never executes, but the iter-4
+#     tracker walked it anyway) or a `cd` that DOES execute but not in the
+#     parent shell's environment (a subshell `( cd <dir> ; : )`, a
+#     pipeline stage `cd <dir> | cat`, a `coproc` background job, or a
+#     never-taken `if false; then cd <dir>; fi` branch). Reproduced live,
+#     6/6:
+#       - `false && cd <external>; git push origin develop` (cwd=Mercury)
+#       - `true || cd <external>; git push origin develop`
+#       - `( cd <external> ; : ) ; git push origin develop`
+#       - `cd <external> | cat ; git push origin develop`
+#       - `coproc cd <external>; git push origin develop`
+#       - `if false; then cd <external>; fi; git push origin develop`
+#     All six ran INSIDE Mercury (the real push executes with the
+#     process's actual, unchanged cwd — none of these `cd` forms actually
+#     took effect), yet the iter-4 tracker updated EFFECTIVE_CWD to the
+#     external path anyway and Phase 0 granted a false ALLOW — the
+#     dangerous direction (Mercury→external, i.e. Phase 0 permits a push
+#     that is really hitting Mercury).
+#
+#     Iter 5 fix — SAME-REPO-ONLY ADVANCEMENT: a tracked `cd`/`pushd` only
+#     actually advances `EFFECTIVE_CWD` if its resolved target's git
+#     common-dir (via the SAME `_git_common_dir()` comparison Phase 0
+#     itself uses) matches the CURRENT `EFFECTIVE_CWD`'s common-dir — i.e.
+#     the `cd` stays inside the repo already being tracked. A `cd` that
+#     would cross OUT of that repo (or whose target/current common-dir
+#     cannot be resolved at all) sets `UNSAFE_STATE=1` INSTEAD of adopting
+#     the new directory. This makes the fix correct WITHOUT needing to
+#     model execution order, short-circuiting, or subshell/pipeline/coproc
+#     scoping at all: it doesn't matter whether a given `cd` "really" ran —
+#     only which direction crossing it implies matters, and disbelieving
+#     a cross-repo `cd` can only ever produce EXTRA blocking (the existing
+#     fail-closed path), never a false ALLOW. Re-examining the iter-4
+#     over-blocking fix under this rule: `cd docs && git push origin
+#     master` in a non-Mercury repo still resolves `docs` to the SAME
+#     repo (common-dir matches) and stays allowed — the fix that closed
+#     iter-4's over-blocking gap is preserved. A GENUINE cross-repo `cd`
+#     starting from Mercury (`cd <external> && git push origin master`,
+#     run with Mercury as the actual cwd) now sets `UNSAFE_STATE=1` and
+#     falls back to Phase 1-3, which is STRICTER than #552's pre-fix
+#     behavior would have been for a develop/master/main target anyway
+#     (Issue #552 never shipped for a push that is genuinely reached FROM
+#     Mercury) — accepted as an intentionally conservative trade-off, not
+#     a regression.
+#
+#     Also removed in iter-5 (Codex, accepted): the iter-4 `eval` branch's
+#     supplementary textual payload scan (grep for `git...push...
+#     <protected>` inside the quoted `eval` argument, block directly on
+#     match). Removed because it was both bypassable (`eval "git
+#     pu$(printf sh) origin develop"` never matches the literal substring
+#     scan — trivially defeated by any string-construction technique) and
+#     a false-positive source (`eval 'echo git push origin develop'` just
+#     PRINTS that text and would have been wrongly hard-blocked). Since
+#     `eval` hiding a real push inside its quoted payload was ALREADY
+#     unreachable by this hook before Issue #552 existed (the awk
+#     tokenizer has never recursed into quoted `eval`/`bash -c` content to
+#     find a nested `git push` — this is the same class of gap as the
+#     long-documented `bash -c "..."` limitation below), removing an
+#     unreliable ad-hoc scan does not reintroduce a gap that #552 had
+#     actually closed; `eval` still sets `UNSAFE_STATE=1` unconditionally
+#     (disabling Phase 0's potential ALLOW for the whole command), which
+#     is the correct and sufficient response given the payload's content
+#     is fundamentally unparseable here.
+#
+#     Iter-5 cleanliness (Codex, non-security): `process_segment`'s own
+#     wrapper-strip `coproc`/`function` NAME-skip exclusion list is now
+#     kept identical to `_find_command_position()`'s (both exclude
+#     `git`/`cd`/`pushd`/`popd`/`eval`/`source` as "never a coproc/function
+#     NAME") so the two independent wrapper-strip copies don't silently
+#     drift apart on a shared concept — no longer security-relevant given
+#     the same-repo-only gate above makes a `coproc`-hidden `cd`'s
+#     recognition non-exploitable either way.
+#
 #     Documented non-fix (Low, out of threat model, same tier as the
 #     existing `bash -c "..."` limitation): a `bash -c "..."` (or any
 #     other recursive-shell invocation) hiding a `cd`, a pre-existing
-#     opaque shell function/alias that itself changes cwd, and the
+#     opaque shell function/alias that itself changes cwd, the
 #     path-aliasing cases already documented above (subst/UNC/junction/
-#     symlink) remain out of scope — all require deliberately constructing
-#     an indirection this hook cannot see into; not addressed here.
+#     symlink), and (iter-5) `eval`/`source`/`.` payload CONTENT — this
+#     hook disables Phase 0 whenever any of these appear but never
+#     attempts to parse what is actually inside them — remain out of
+#     scope. All require deliberately constructing an indirection this
+#     hook cannot see into; not addressed here.
 
 INPUT=$(cat)
 
@@ -612,7 +692,7 @@ _find_command_position() {
   printf '%s' "$i"
 }
 
-# ── Pass B: per-segment cd/pushd tracking (Issue #552 iter-4) ─────────
+# ── Pass B: per-segment cd/pushd tracking (Issue #552 iter-4/iter-5) ──
 # EFFECTIVE_CWD starts at HOOK_CWD and advances, segment-by-segment IN
 # ORDER, whenever a segment's command-position token is `cd`/`pushd` with
 # exactly one safely-literal argument. SEG_ENTRY_CWD[k] snapshots
@@ -620,7 +700,45 @@ _find_command_position() {
 # cd/pushd, if any, is applied) — this is what a push in segment k should
 # resolve against, not the raw original HOOK_CWD. Any construct this
 # cannot safely track sets UNSAFE_STATE=1 (whole-command, same as Pass A).
+#
+# Iter-5 (dual-verify round 4 — Codex + coordinator independent repro, 6/6
+# reproduced): the iter-4 tracker treated TEXTUAL/SYNTACTIC token order as
+# EXECUTION order and assumed every `cd` it sees always runs in the parent
+# shell. Both assumptions are false for short-circuited segments
+# (`false && cd <dir>`, `true || cd <dir>` — the `cd` segment is walked
+# even though real bash would never execute it), and for `cd` that
+# genuinely executes but NOT in the parent shell's environment (a subshell
+# `( cd <dir> ; : )`, a pipeline stage `cd <dir> | cat`, a `coproc`
+# background job). In the Mercury→external direction this was merely
+# over-cautious (an untaken/scoped `cd` still degraded EFFECTIVE_CWD, at
+# worst causing an unnecessary UNSAFE_STATE — safe). In the EXTERNAL→
+# Mercury direction it was a real bypass: a syntactically-present-but-
+# never-really-effective `cd` INTO Mercury still updated EFFECTIVE_CWD,
+# which a later real push then resolved against — Phase 0 granted an
+# ALLOW on a push that actually ran inside Mercury.
+#
+# Fix — SAME-REPO-ONLY ADVANCEMENT: a tracked `cd`/`pushd`'s resolved
+# target is compared, via `_git_common_dir()` (the same real-git
+# comparison Phase 0 itself uses), against the CURRENT EFFECTIVE_CWD's
+# common-dir. Only if they match (the `cd` stays inside the repo we were
+# already tracking) does EFFECTIVE_CWD actually advance. Any cross-REPO
+# `cd` — or one whose target/current common-dir cannot be resolved at all
+# — sets UNSAFE_STATE=1 and EFFECTIVE_CWD is NOT updated. This does not
+# require correctly modeling execution order or subshell/pipeline scoping:
+# it doesn't matter WHETHER a given `cd` actually ran — the only thing
+# that matters is which DIRECTION crossing it implies, and this hook only
+# needs to distrust the ONE dangerous direction. A `cd` crossing OUT of
+# whatever repo was previously being tracked can never produce a false
+# ALLOW (crossing out just triggers UNSAFE_STATE, the existing fail-closed
+# path); a `cd` that (falsely, per mis-tracked execution order) appears to
+# stay WITHIN the same repo is harmless BY DEFINITION — if it's the same
+# repo, Phase 0's eventual verdict is identical whether or not that
+# specific `cd` "really" ran. This closes all 6 reproduced cases (short-
+# circuit, subshell, pipe, coproc, `if false; then cd; fi`) uniformly,
+# without needing to model any of their control-flow semantics.
 EFFECTIVE_CWD="$HOOK_CWD"
+EFFECTIVE_COMMON_DIR=""
+_eff_common_computed=0
 declare -a SEG_ENTRY_CWD=()
 _pb_off=0
 for _pb_sz in "${SEG_SIZES[@]}"; do
@@ -638,34 +756,21 @@ for _pb_sz in "${SEG_SIZES[@]}"; do
       # appearing in a DATA position (e.g. `git commit -m "fix $foo"`)
       # must NOT trigger this — that would reintroduce the exact
       # over-blocking iter-4 exists to fix.
-      eval)
-        # `eval "cd <mercury> && git push origin develop"` — the awk
-        # tokenizer buffers the whole double-quoted argument as ONE
-        # token (spaces/`&&`/etc. inside quotes are literal, not
-        # separators), so the `git`/`push` tokens are NEVER independently
-        # visible to process_segment's own detection. Unlike `source`/`.`
-        # (whose risky content lives in an EXTERNAL FILE this hook has no
-        # visibility into regardless), `eval`'s payload IS present, in
-        # full, right here in the command string — just quote-shielded
-        # from segmentation. So Phase 1-3 provides ZERO protection for
-        # this case (it never sees a `git push` to check), unlike the
-        # `source ./x.sh; git push origin develop` case where the visible
-        # push in the SEPARATE segment after `;` still gets caught by
-        # Phase 1-3 normally. A narrow, deliberately coarse defensive scan
-        # of the payload text closes this gap: if it textually looks like
-        # `git ... push ... <protected-branch>`, block outright (not just
-        # disable Phase 0 — there is nothing else that will catch it).
-        # Over-blocking risk here is accepted and narrow (scoped only to
-        # `eval` payloads, an already-rare Claude Code pattern combined
-        # with these exact words).
-        _pb_payload="${_pb_seg[*]:$((_pb_cmd_idx + 1))}"
-        if printf '%s' "$_pb_payload" | grep -qE '(^|[^A-Za-z0-9_])git([^A-Za-z0-9_].*)?push' \
-           && printf '%s' "$_pb_payload" | grep -qE '(^|[^A-Za-z0-9_])(develop|master|main)([^A-Za-z0-9_]|$)'; then
-          block_push "eval payload textually contains a protected-branch push: '$_pb_payload'"
-        fi
-        UNSAFE_STATE=1
-        ;;
-      source|.|*'$'*|*'`'*)
+      #
+      # Iter-5 (Codex, accepted): the iter-4 `eval` branch additionally
+      # ran a textual "does the payload look like `git ... push ...
+      # <protected>`" scan and hard-blocked on a match. Removed — it is
+      # both bypassable (`eval "git pu$(printf sh) origin develop"` never
+      # matches the literal substring scan) and a false-positive source
+      # (`eval 'echo git push origin develop'` just PRINTS that text and
+      # would have been wrongly blocked). `eval` hiding a real push was
+      # already unreachable by this hook BEFORE Issue #552 ever existed
+      # (same as the documented `bash -c "..."` limitation — the awk
+      # tokenizer has never recursed into a quoted eval/bash -c payload
+      # to find a nested `git push`), so removing an unreliable ad-hoc
+      # scan does not reintroduce a gap that iter-4 had actually closed.
+      # Documented in the file-header limitation list instead.
+      eval|source|.|*'$'*|*'`'*)
         UNSAFE_STATE=1 ;;
       cd|pushd)
         _pb_nargs=$(( _pb_sz - _pb_cmd_idx - 1 ))
@@ -683,17 +788,36 @@ for _pb_sz in "${SEG_SIZES[@]}"; do
               # command-substitution/glob metachar (cannot resolve its
               # literal value).
               UNSAFE_STATE=1 ;;
-            /*|[A-Za-z]:[\\/]*|\\\\*)
-              # Absolute (POSIX root, Windows drive-letter, or UNC).
-              EFFECTIVE_CWD="$_pb_arg" ;;
             *)
-              # Relative — join onto the current EFFECTIVE_CWD. If there
-              # is nothing to anchor a relative path against, this is
-              # unresolvable rather than silently wrong.
-              if [ -n "$EFFECTIVE_CWD" ]; then
-                EFFECTIVE_CWD="$EFFECTIVE_CWD/$_pb_arg"
-              else
+              _pb_candidate=""
+              case "$_pb_arg" in
+                /*|[A-Za-z]:[\\/]*|\\\\*)
+                  # Already absolute (POSIX root, Windows drive-letter, or UNC).
+                  _pb_candidate="$_pb_arg" ;;
+                *)
+                  # Relative — join onto the current EFFECTIVE_CWD. If
+                  # there is nothing to anchor a relative path against,
+                  # this is unresolvable rather than silently wrong.
+                  [ -n "$EFFECTIVE_CWD" ] && _pb_candidate="$EFFECTIVE_CWD/$_pb_arg"
+                  ;;
+              esac
+              # Iter-5 same-repo-only gate: only advance if the resolved
+              # candidate's common-dir matches the CURRENT EFFECTIVE_CWD's
+              # common-dir (computed lazily — most commands never `cd` at
+              # all, so most runs never pay this git-subprocess cost).
+              if [ "$_eff_common_computed" -eq 0 ]; then
+                EFFECTIVE_COMMON_DIR=""
+                [ -n "$EFFECTIVE_CWD" ] && EFFECTIVE_COMMON_DIR=$(_git_common_dir "$EFFECTIVE_CWD")
+                _eff_common_computed=1
+              fi
+              _pb_target_common=""
+              [ -n "$_pb_candidate" ] && _pb_target_common=$(_git_common_dir "$_pb_candidate")
+              if [ -z "$_pb_target_common" ] || [ -z "$EFFECTIVE_COMMON_DIR" ] \
+                 || [ "$(_normalize_path "$_pb_target_common")" != "$(_normalize_path "$EFFECTIVE_COMMON_DIR")" ]; then
                 UNSAFE_STATE=1
+              else
+                EFFECTIVE_CWD="$_pb_candidate"
+                EFFECTIVE_COMMON_DIR="$_pb_target_common"
               fi
               ;;
           esac
@@ -771,12 +895,22 @@ process_segment() {
       # of `function f { ... }` is segregated into its own segment by the
       # `{` separator, so we only need to handle the declaration prefix here.
       # Closes Codex iter-4 High (`coproc git push ...` + `function f {...}`).
+      # Iter-5 cleanliness (Codex): the exclusion list here now matches
+      # `_find_command_position()`'s (git/cd/pushd/popd/eval/source) even
+      # though THIS walker only ever needs to match `git` — keeping both
+      # copies' wrapper-strip rule sets identical avoids the two functions
+      # silently drifting apart on a shared concept (which token names are
+      # never a coproc/function NAME). No longer security-relevant either
+      # way since the iter-5 same-repo-only cd-tracking gate (see Pass B
+      # above) makes correct/incorrect `cd` recognition inside a `coproc`
+      # non-exploitable — a cross-repo `cd` blocks regardless of whether
+      # either walker "recognizes" it as `cd` specifically.
       coproc|function)
         i=$((i + 1)); _seen_change=1
         if [ "$i" -lt "$ntok" ]; then
           local _next="${tokens[$i]}"
           case "$_next" in
-            git) ;;  # don't consume, walker needs to match
+            git|cd|pushd|popd|eval|source) ;;  # don't consume, walker needs to match
             [A-Za-z_][A-Za-z0-9_-]*) i=$((i + 1)) ;;
           esac
         fi
