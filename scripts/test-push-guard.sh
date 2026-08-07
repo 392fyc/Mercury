@@ -1644,6 +1644,100 @@ scenario \
   'JSON_CWD=/other/repo;MOCK_COMMON_DIR='
 
 # ===========================================================================
+# Issue #552 iter-7 (dual-verify round 5 — Codex source-inlined review,
+# 2 real Critical regressions reproduced live by the coordinator; see the
+# iter-7 fix-history comment in push-guard.sh for the full grammar
+# rationale). Bash's simple-command grammar is `[assignment|redirection]*
+# command-name [argument|redirection]*` — the wrapper-strip walkers
+# already modeled the assignment half (`VAR=value` skip); iter-7 completes
+# the redirection half. This also incidentally closes a PRE-EXISTING gap
+# (present before Issue #552 ever shipped): `>/dev/null git push origin
+# develop` in Mercury was never blocked because the walker required `git`
+# at the very first token, and a leading redirect token stopped it cold.
+# ===========================================================================
+
+# Both coordinator-reproduced Critical cases (external cwd, cd genuinely
+# lands in Mercury, redirect prefix previously hid the `cd`/`git` from the
+# wrapper-strip walker entirely).
+scenario \
+  '#552 iter-7: `>/dev/null cd <mercury> && git push origin develop` (glued redirect prefix) -> tracked, still blocked' \
+  '>/dev/null cd __MERCURY_PATH__ && git push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo'
+
+scenario \
+  '#552 iter-7: `CDPATH=<mercury> cd <relative> && git push origin develop` (inline CDPATH token) -> UNSAFE_STATE, still blocked' \
+  'CDPATH=__MERCURY_PATH__ cd .probe && git push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo'
+
+# Pre-existing gap (present before #552, closed incidentally by the same
+# redirect-prefix fix): a leading redirect previously hid `git` itself
+# from process_segment's own wrapper-strip walker.
+scenario \
+  '#552 iter-7: `>/dev/null git push origin develop` in Mercury (pre-existing gap, not #552-introduced) -> now blocked' \
+  '>/dev/null git push origin develop' \
+  2 'BLOCKED'
+
+# Redirect-prefix operator-form coverage: glued target, separate target,
+# fd-numbered, and chained (multiple redirects before the command name).
+scenario \
+  '#552 iter-7: `2>&1 cd <mercury> && git push origin develop` (fd-duplication operator, glued) -> tracked, still blocked' \
+  '2>&1 cd __MERCURY_PATH__ && git push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo'
+
+scenario \
+  '#552 iter-7: `> /dev/null cd <mercury> && git push origin develop` (separate-token target) -> tracked, still blocked' \
+  '> /dev/null cd __MERCURY_PATH__ && git push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo'
+
+scenario \
+  '#552 iter-7: `2> /dev/null git push origin develop` in Mercury (fd-numbered, separate target) -> blocked' \
+  '2> /dev/null git push origin develop' \
+  2 'BLOCKED'
+
+scenario \
+  '#552 iter-7: `>/dev/null 2>&1 cd <mercury> && git push origin develop` (chained redirects) -> tracked, still blocked' \
+  '>/dev/null 2>&1 cd __MERCURY_PATH__ && git push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo'
+
+# CDPATH: inherited hook-process environment (no inline token) — a
+# RELATIVE `cd` argument cannot be safely tracked when CDPATH is set
+# (bash may search CDPATH's directories instead of the naive
+# EFFECTIVE_CWD-join this hook otherwise assumes); an ABSOLUTE `cd`
+# argument is unaffected (bash never consults CDPATH for it) and stays
+# trackable.
+scenario \
+  '#552 iter-7: inherited $CDPATH (hook env, no inline token) + relative `cd` -> UNSAFE_STATE, still blocked' \
+  'cd .probe && git push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo;CDPATH=/some/cdpath/entry'
+
+scenario \
+  '#552 iter-7: inherited $CDPATH (hook env) + ABSOLUTE `cd` -> unaffected, tracking still works, allowed' \
+  'cd /other/repo && git push origin master' \
+  0 '' '' \
+  'JSON_CWD=/other/repo;CDPATH=/some/cdpath/entry'
+
+# ── Regression net (Codex Medium — "verify these are not broken", the
+# coordinator's explicit acceptance-list item): a redirect AFTER the real
+# command name (not a prefix) must be handled exactly as before — this is
+# NOT prefix territory, so the iter-7 skip logic must never touch it.
+scenario \
+  '#552 iter-7 regression: `git push origin master > log.txt` (trailing redirect, external repo) -> unaffected, still allowed' \
+  'git push origin master > log.txt' \
+  0 '' '' \
+  'JSON_CWD=/other/repo'
+
+scenario \
+  '#552 iter-7 regression: `git push origin develop > log.txt` (trailing redirect, Mercury, protected target) -> still blocked' \
+  'git push origin develop > log.txt' \
+  2 'BLOCKED'
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 

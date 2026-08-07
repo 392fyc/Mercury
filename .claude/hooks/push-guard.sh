@@ -600,6 +600,24 @@ function flush_tok() {
     }
     if (c == "&") {
       nc = (i < n) ? substr(line, i+1, 1) : ""
+      # Issue #552 iter-7: `&` is ALSO used inside four bash redirection
+      # operators — `>&` `<&` (fd-duplication, e.g. `2>&1`) and `&>` `&>>`
+      # (redirect both stdout+stderr) — not just as the AND-operator/
+      # background-job separator this branch otherwise treats it as.
+      # Disambiguate WITHOUT touching the `&&`/background-job cases below:
+      #   - `>&`/`<&`: the token being built so far already ends in `>`
+      #     or `<` (e.g. tok=="2>" when we reach the `&` in "2>&1") —
+      #     append `&` and keep building, do not emit SEG.
+      #   - `&>`/`&>>`: `&` is the FIRST character (tok is still empty)
+      #     and the very NEXT character is `>` — same treatment.
+      # Any other `&` (empty tok, next char not `>`; or non-empty tok not
+      # ending in `>`/`<`) is unchanged: AND-operator (`&&`, consumes the
+      # second `&`) or background-job separator (bare `&`).
+      if ((length(tok) > 0 && (substr(tok, length(tok), 1) == ">" || substr(tok, length(tok), 1) == "<")) || (length(tok) == 0 && nc == ">")) {
+        tok = tok c
+        in_tok = 1
+        continue
+      }
       flush_tok(); print "SEG"
       if (nc == "&") i++
       continue
@@ -709,23 +727,98 @@ UNSAFE_STATE=0
 # every token (ignoring segment/command-position) is correct and
 # sufficient — unchanged from iter-3 for these three triggers specifically
 # (`cd`/`pushd`/`popd` moved OUT of this flat scan in iter-4 — see Pass B).
+#
+# Issue #552 iter-7 (dual-verify round 5 — Codex, real Critical,
+# reproduced live): `CDPATH=<mercury> cd <relative-dir> && git push origin
+# develop` from an external repo — bash's `cd` builtin, for a RELATIVE
+# target not found directly under the current directory, searches each
+# directory listed in $CDPATH BEFORE giving up (verified live:
+# `CDPATH=D:/Mercury/Mercury cd .probe` in an unrelated cwd actually lands
+# in `D:/Mercury/Mercury/.probe`). Pass B's cd-tracker resolves a relative
+# `cd` argument by naively joining it onto the current EFFECTIVE_CWD,
+# which is wrong whenever CDPATH is in play — the real landing directory
+# could be somewhere CDPATH points to instead. An inline `CDPATH=*` token
+# anywhere gets the same UNSAFE_STATE treatment as `GIT_DIR=`/
+# `GIT_WORK_TREE=` (it, too, redirects where a later `cd` actually lands,
+# regardless of position); the INHERITED case (CDPATH already set in this
+# hook process's own environment, no inline token needed) is handled
+# separately in Pass B below, since it depends on whether a tracked `cd`'s
+# argument is relative — an absolute `cd` target is NOT affected by
+# CDPATH (bash only consults it for a relative, not-found-directly
+# target), so absolute-target tracking is unaffected either way.
 for _t in "${ALL_TOKENS[@]}"; do
   case "$_t" in
-    GIT_DIR=*|GIT_WORK_TREE=*) UNSAFE_STATE=1 ;;
+    GIT_DIR=*|GIT_WORK_TREE=*|CDPATH=*) UNSAFE_STATE=1 ;;
     --chdir|--chdir=*) UNSAFE_STATE=1 ;;
     -C?*) UNSAFE_STATE=1 ;;
   esac
 done
 
+# Issue #552 iter-7 (dual-verify round 5 — Codex, source-inlined review,
+# real Critical, reproduced): bash's simple-command grammar is
+# `[assignment|redirection]* command-name [argument|redirection]*` — ANY
+# number of assignments AND redirections may appear, interleaved, BEFORE
+# the command name. Both wrapper-strip loops (this one and
+# process_segment()'s) already modeled the ASSIGNMENT half of that prefix
+# (`VAR=value` skip) but never the REDIRECTION half, so a leading
+# redirection token — `>/dev/null cd <mercury> && git push origin
+# develop` — stopped the walker before it ever reached `cd`, silently
+# treating the whole segment as "not a recognized command" (in
+# process_segment: falls through as "not git", so `git push` reached via
+# this pattern was ALSO undetected — `>/dev/null git push origin develop`
+# in Mercury went unblocked even BEFORE Issue #552, this closes that too).
+# This is completing an already-partially-modeled grammar production, not
+# adding a new heuristic — the assignment half was already there.
+#
+# Bash redirection operators recognized here (fd number 0+ digits
+# optional before the operator; the operator's TARGET may be glued
+# directly onto the same token — `>/dev/null`, `2>&1`, `1>&2` — or a
+# separate following token — `>` `/dev/null`):
+#   <   >   >>   <<   <<<   <&   >&   &>   &>>
+# Uses POSIX ERE (`[[ =~ ]]`) rather than a `case` glob: a glob pattern
+# precise enough to require "optional leading digits immediately followed
+# by exactly one of these multi-character operators" without ALSO
+# over-matching unrelated tokens is not expressible with plain shell
+# globbing (`[0-9]*` in a glob matches "one digit then anything", not
+# "zero-or-more digits" — using it here would make the match too loose
+# and risk skipping past a real command name that happens to start with a
+# digit followed by unrelated characters).
+_is_redirect_prefix_token() {
+  [[ "$1" =~ ^[0-9]*(\<\<\<|\<\<|\<\&|\&\>\>|\&\>|\>\>|\>\&|\>|\<) ]]
+}
+
+# Skips ONE redirection-prefix construct starting at tokens[$1] (an array
+# passed by name via nameref, iter-7 — needs the CALLER's own `i`/`tokens`
+# so it can both read and advance the index in place). Precondition:
+# `_is_redirect_prefix_token "${tokens[$i]}"` already true. Advances by 1
+# if the target is glued onto the same token (matched-length < token
+# length), else by 2 (bare operator token + a separate following target
+# token — if there is no following token, this command is malformed and
+# the caller's own `i<ntok` bounds check simply stops the loop next turn,
+# no crash).
+_skip_redirect_prefix() {
+  local -n _srp_i_ref="$1"
+  local -n _srp_tokens_ref="$2"
+  local _srp_tok="${_srp_tokens_ref[$_srp_i_ref]}"
+  [[ "$_srp_tok" =~ ^[0-9]*(\<\<\<|\<\<|\<\&|\&\>\>|\&\>|\>\>|\>\&|\>|\<) ]]
+  local _srp_op="${BASH_REMATCH[0]}"
+  if [ "${#_srp_tok}" -gt "${#_srp_op}" ]; then
+    _srp_i_ref=$(( _srp_i_ref + 1 ))
+  else
+    _srp_i_ref=$(( _srp_i_ref + 2 ))
+  fi
+}
+
 # Issue #552 iter-4 — find the "command position" token index within a
 # segment's token array: the first token that is not a wrapper (env var
-# assignment, an env/command/exec/builtin/sudo/doas/nohup/time wrapper,
-# `!`, a control-flow keyword, or a flag). This is a SEPARATE, purpose-
-# built copy of process_segment's own wrapper-strip loop rather than a
-# shared refactor — process_segment's copy also sets UNRESOLVABLE_SELECTOR
-# as a side effect while walking (iter-2, segment-scoped), which is out of
-# scope for this pure lookup used only by Pass B below. If either wrapper-
-# strip rule set changes, update BOTH copies.
+# assignment, a redirection, an env/command/exec/builtin/sudo/doas/nohup/
+# time wrapper, `!`, a control-flow keyword, or a flag). This is a
+# SEPARATE, purpose-built copy of process_segment's own wrapper-strip loop
+# rather than a shared refactor — process_segment's copy also sets
+# UNRESOLVABLE_SELECTOR as a side effect while walking (iter-2, segment-
+# scoped), which is out of scope for this pure lookup used only by Pass B
+# below. If either wrapper-strip rule set changes, update BOTH copies —
+# iter-7's redirection-skip is one such shared addition, applied to both.
 # Echoes the index (may equal $#, i.e. one past the last token, if the
 # segment is entirely wrapper tokens with no command found).
 _find_command_position() {
@@ -736,6 +829,15 @@ _find_command_position() {
   while [ "$_seen_change" -eq 1 ] && [ "$i" -lt "$ntok" ]; do
     _seen_change=0
     local tok="${tokens[$i]}"
+    # Issue #552 iter-7 — redirection prefix (see the `_is_redirect_prefix_
+    # token()` comment above for the full grammar rationale). Checked
+    # first, ahead of the `case`, since it needs its own multi-token
+    # skip-count logic rather than a fixed per-pattern offset.
+    if _is_redirect_prefix_token "$tok"; then
+      _skip_redirect_prefix i tokens
+      _seen_change=1
+      continue
+    fi
     case "$tok" in
       "!")
         i=$((i + 1)); _seen_change=1 ;;
@@ -882,13 +984,30 @@ for _pb_sz in "${SEG_SIZES[@]}"; do
               _pb_candidate=""
               case "$_pb_arg" in
                 /*|[A-Za-z]:[\\/]*|\\\\*)
-                  # Already absolute (POSIX root, Windows drive-letter, or UNC).
+                  # Already absolute (POSIX root, Windows drive-letter, or
+                  # UNC) — bash's `cd` never consults CDPATH for an
+                  # absolute target, so this stays safe to track even when
+                  # CDPATH is set in the hook's own inherited environment.
                   _pb_candidate="$_pb_arg" ;;
                 *)
-                  # Relative — join onto the current EFFECTIVE_CWD. If
-                  # there is nothing to anchor a relative path against,
-                  # this is unresolvable rather than silently wrong.
-                  [ -n "$EFFECTIVE_CWD" ] && _pb_candidate="$EFFECTIVE_CWD/$_pb_arg"
+                  # Issue #552 iter-7: RELATIVE target — if this hook
+                  # process inherited a non-empty $CDPATH, bash's real `cd`
+                  # would search CDPATH's directories (verified live:
+                  # `CDPATH=D:/Mercury/Mercury cd .probe` from an unrelated
+                  # cwd actually lands in `D:/Mercury/Mercury/.probe`) —
+                  # the naive "join onto EFFECTIVE_CWD" resolution below
+                  # would be silently wrong about where this really lands.
+                  # A normal environment never has CDPATH set, so this
+                  # check is cheap and does not affect the common case
+                  # (`cd docs && git push origin master` stays trackable).
+                  if [ -n "${CDPATH:-}" ]; then
+                    UNSAFE_STATE=1
+                  else
+                    # Join onto the current EFFECTIVE_CWD. If there is
+                    # nothing to anchor a relative path against, this is
+                    # unresolvable rather than silently wrong.
+                    [ -n "$EFFECTIVE_CWD" ] && _pb_candidate="$EFFECTIVE_CWD/$_pb_arg"
+                  fi
                   ;;
               esac
               # Iter-5 same-repo-only gate: only advance if the resolved
@@ -954,6 +1073,15 @@ process_segment() {
   while [ "$_seen_change" -eq 1 ] && [ "$i" -lt "$ntok" ]; do
     _seen_change=0
     local tok="${tokens[$i]}"
+    # Issue #552 iter-7 — redirection prefix (`_is_redirect_prefix_token()`
+    # comment above has the full grammar rationale). Checked first, ahead
+    # of the `case`, mirroring `_find_command_position()`'s copy — keeps
+    # both wrapper-strip walkers' redirection handling identical.
+    if _is_redirect_prefix_token "$tok"; then
+      _skip_redirect_prefix i tokens
+      _seen_change=1
+      continue
+    fi
     case "$tok" in
       # Bash logical-NOT (`! cmd` runs cmd, inverts exit code). `(` `{` are
       # NOT in this list — iter-5 promotes them to segment separators (awk
