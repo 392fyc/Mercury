@@ -111,7 +111,9 @@ cat > "$BIN_DIR/git" <<'MOCK_EOF'
 #!/usr/bin/env bash
 # mock git used by test-push-guard.sh — emulates rev-parse HEAD / --git-common-dir
 raw_c_path=""
+had_dash_c=0
 if [[ "${1:-}" == "-C" ]]; then
+  had_dash_c=1
   raw_c_path="${2:-}"
   shift 2
 fi
@@ -120,7 +122,20 @@ fi
 # identically to querying HOOK_CWD directly.
 raw_c_path="${raw_c_path%/.}"
 if [[ "${1:-}" == "rev-parse" && "${2:-}" == "--abbrev-ref" && "${3:-}" == "HEAD" ]]; then
-  printf '%s\n' "${MOCK_CURRENT_BRANCH:-feature/test}"
+  # Issue #552 iter-8 item2: a `-C <path>`-qualified query answers with
+  # $MOCK_CURRENT_BRANCH (the RESOLVED target repo's branch); a bare query
+  # (no `-C`, simulating the hook process's own unrelated cwd) answers with
+  # $MOCK_CURRENT_BRANCH_BARE, falling back to $MOCK_CURRENT_BRANCH when
+  # unset so every pre-iter-8 scenario (which never sets
+  # MOCK_CURRENT_BRANCH_BARE) is unaffected. This split is what lets a
+  # scenario PROVE Phase 3 now queries the Phase-0-resolved repo instead of
+  # the bare process cwd: pin the two to different branches and only the
+  # fixed code path reaches the protected one.
+  if [[ "$had_dash_c" -eq 1 ]]; then
+    printf '%s\n' "${MOCK_CURRENT_BRANCH:-feature/test}"
+  else
+    printf '%s\n' "${MOCK_CURRENT_BRANCH_BARE:-${MOCK_CURRENT_BRANCH:-feature/test}}"
+  fi
   exit 0
 fi
 if [[ "${1:-}" == "rev-parse" ]]; then
@@ -1736,6 +1751,129 @@ scenario \
   '#552 iter-7 regression: `git push origin develop > log.txt` (trailing redirect, Mercury, protected target) -> still blocked' \
   'git push origin develop > log.txt' \
   2 'BLOCKED'
+
+# ===========================================================================
+# Issue #552 iter-8 (dual-verify round 6 — Codex 3-Critical claim,
+# coordinator cross-checked each independently: only `>|` was a real gap;
+# `GIT_COMMON_DIR` alone does NOT redirect git's repo selection (verified
+# twice, added defensively anyway at zero cost); implicit-push wrong-repo
+# resolution is real but PRE-EXISTING (present before #552 ever shipped).
+# Direction this round: reverse the prefix-token default from "unknown ==
+# harmless" to "unknown == unsafe" instead of enumerating a 4th redirect
+# operator; item1 additionally needed a root-cause awk tokenizer fix
+# (`|` was unconditionally treated as a pipe/OR separator, fragmenting
+# `>|/dev/null` into a bare `>` token + a fresh, metacharacter-free
+# `/dev/null` segment that a pure default-deny check alone would NOT have
+# caught — see the push-guard.sh iter-8 fix-history comment for detail).
+# ===========================================================================
+
+# item1: `>|` (force-overwrite redirect, closes even under `set -C`) was
+# fragmented by the awk tokenizer's unconditional `|`-as-separator rule,
+# hiding the `cd`/`git` pair from the wrapper-strip walker exactly like the
+# iter-7 `&`-fragmentation bug did for `2>&1`. Fixed at the tokenizer level
+# (not by enumerating `>|` in the redirect-prefix operator list).
+scenario \
+  '#552 iter-8 item1: `>|/dev/null cd <mercury> && git push origin develop` (force-overwrite redirect, awk `|`-fragmentation fix) -> tracked, still blocked' \
+  '>|/dev/null cd __MERCURY_PATH__ && git push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo'
+
+# item1 regression net (coordinator's explicit acceptance-list ask): a tail
+# redirect and a `$`-in-data-position construct must remain unaffected by
+# both the awk `|`-fix and the default-deny reversal.
+scenario \
+  '#552 iter-8 regression: `git push origin master > log.txt` (external, tail redirect) -> unaffected, still allowed' \
+  'git push origin master > log.txt' \
+  0 '' '' \
+  'JSON_CWD=/other/repo'
+
+scenario \
+  '#552 iter-8 regression: `git commit -m "fix $foo" && git push origin master` (external, `$` in data position, not prefix) -> unaffected, still allowed' \
+  'git commit -m "fix $foo" && git push origin master' \
+  0 '' '' \
+  'JSON_CWD=/other/repo'
+
+scenario \
+  '#552 iter-8 regression: `cd docs && git push origin master` (external, plain relative cd) -> unaffected, still allowed' \
+  'cd docs && git push origin master' \
+  0 '' '' \
+  'JSON_CWD=/other/repo'
+
+# item (default-deny reversal, general case): an unrecognized token
+# containing shell metacharacters in prefix position (neither a known safe
+# prefix shape nor a plain command-name token) now falls back to
+# Phase 1-3 instead of being silently skipped as "probably harmless".
+scenario \
+  '#552 iter-8: `<>` glued token (Codex claimed leak; coordinator verified this ALREADY blocked pre-iter-8 too) in prefix position -> tracked, still blocked' \
+  '<> cd __MERCURY_PATH__ && git push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo'
+
+# item2 (Phase 3 pre-existing bug, closed incidentally by #552's
+# repo-awareness plumbing): implicit push (`git push`/`git push origin`,
+# no refspec) must resolve the current branch of the ACTUAL target repo
+# (Phase-0-resolved `-C`/GIT_DIR path), not the bare hook-process cwd.
+# MOCK_CURRENT_BRANCH answers `-C`-qualified queries (the resolved Mercury
+# target); MOCK_CURRENT_BRANCH_BARE answers bare queries (the hook
+# process's own external cwd) — pinning them to different branches proves
+# which one Phase 3 actually consults.
+scenario \
+  '#552 iter-8 item2: `git -C <mercury> push origin` (implicit, no refspec) from external hook cwd -> resolves Mercury target repo branch (develop), not bare hook cwd branch -> blocked' \
+  'git -C __MERCURY_PATH__ push origin' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo;MOCK_CURRENT_BRANCH=develop;MOCK_CURRENT_BRANCH_BARE=feature/unrelated'
+
+scenario \
+  '#552 iter-8 item2 regression: `git -C <other> push origin` (implicit, hook cwd = Mercury, target repo = external on unprotected branch) -> allowed, not wrongly blocked by bare-cwd branch' \
+  'git -C /other/repo push origin' \
+  0 '' '' \
+  'MOCK_CURRENT_BRANCH=feature/unrelated;MOCK_CURRENT_BRANCH_BARE=develop'
+
+# item3: GIT_COMMON_DIR added to the unsafe-env-var set defensively (zero
+# cost) even though real testing found it does NOT actually redirect git's
+# repo selection on its own — see the push-guard.sh comment for the
+# honest caveat. This scenario only proves the trigger fires, not that a
+# real bypass existed.
+scenario \
+  '#552 iter-8 item3: `GIT_COMMON_DIR=<mercury>/.git git push origin master` (external, defensive trigger) -> UNSAFE_STATE, blocked' \
+  'GIT_COMMON_DIR=__MERCURY_PATH__/.git git push origin master' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo'
+
+# ===========================================================================
+# Issue #552 iter-9 (dual-verify round 7 — coordinator caught iter-8's
+# Phase 3 fix as only half-done): a cross-repo `cd` legitimately triggers
+# UNSAFE_STATE (per the iter-5 same-repo-only-advancement invariant), so
+# Phase 0 never runs and `_repo_path` stays empty. iter-8 fell back to the
+# bare `git rev-parse --abbrev-ref HEAD` check in that case — the exact
+# wrong-cwd resolution the fix exists to eliminate. iter-9: when
+# `_repo_path` is empty at Phase 3, block unconditionally (fail-closed)
+# instead of guessing via a known-wrong bare rev-parse.
+# ===========================================================================
+
+scenario \
+  '#552 iter-9: `cd <mercury> && git push origin` (implicit, no refspec, cross-repo cd -> UNSAFE_STATE -> unresolvable target) -> fail-closed, now blocked' \
+  'cd __MERCURY_PATH__ && git push origin' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo'
+
+scenario \
+  '#552 iter-9 regression: `git -C <mercury> push origin` (implicit, iter-8 path, _repo_path resolves) -> still blocked via `-C` branch query, not the new fail-closed branch' \
+  'git -C __MERCURY_PATH__ push origin' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo;MOCK_CURRENT_BRANCH=develop;MOCK_CURRENT_BRANCH_BARE=feature/unrelated'
+
+scenario \
+  '#552 iter-9 regression: external repo, no cross-repo cd, implicit `git push origin` on unprotected branch -> _repo_path resolves to external, Phase 0 returns early, Phase 3 never reached, still allowed' \
+  'git push origin' \
+  0 '' '' \
+  'JSON_CWD=/other/repo'
+
+scenario \
+  '#552 iter-9 regression: external repo, same-repo `cd docs && git push origin` (tracked, same-repo advancement, not UNSAFE_STATE) -> _repo_path resolves to external, still allowed' \
+  'cd docs && git push origin' \
+  0 '' '' \
+  'JSON_CWD=/other/repo'
 
 # ===========================================================================
 # Summary

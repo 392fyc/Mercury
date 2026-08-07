@@ -374,21 +374,35 @@ _git_common_dir() {
 # tool call, including ones with no `git` anywhere in them, since this
 # hook's PreToolUse matcher fires on every Bash invocation and Windows
 # process-spawn overhead is expensive). Mercury's own git common-dir is
-# now resolved LAZILY — only the FIRST time `_mercury_common_dir()` is
-# actually called (from inside Phase 0, which itself only runs for a real
-# `git push` segment with no disabling gate already tripped) — and cached
-# so repeated calls within the same hook invocation (e.g. a command with
-# several push segments) cost one subprocess, not one per segment. Empty
+# now resolved LAZILY — only the FIRST time `_ensure_mercury_common_dir()`
+# is actually called (from inside Phase 0, which itself only runs for a
+# real `git push` segment with no disabling gate already tripped). Empty
 # on resolution failure — Phase 0 treats that as "cannot determine",
 # falling through to the existing fail-closed Phase 1-3 logic unchanged.
+#
+# Issue #552 iter-8 (Codex Low, confirmed and fixed): the iter-6 version
+# of this cache was named `_mercury_common_dir()` and called via command
+# substitution — `_val=$(_mercury_common_dir)` — which bash always forks
+# into a SUBSHELL. The `_MERCURY_COMMON_DIR_COMPUTED=1` write inside that
+# subshell never propagated back to the parent shell, so the "cache" was
+# silently a no-op on every call past the first — each call re-forked
+# `git rev-parse` regardless. Fixed by NOT going through command
+# substitution for the cache-check itself: `_ensure_mercury_common_dir()`
+# is a plain function call (no subshell) that mutates the two globals
+# directly; callers read `$_MERCURY_COMMON_DIR_CACHE` afterward instead
+# of capturing a return value. This is a genuine perf detail ONLY when a
+# single command has multiple push segments (the common single-push case
+# was already only ever going to call this once, so iter-6's core
+# "unconditional-call is gone" fix stands on its own regardless of this
+# bug) — documented honestly rather than left as a cache that looks like
+# it works but does not.
 _MERCURY_COMMON_DIR_COMPUTED=0
 _MERCURY_COMMON_DIR_CACHE=""
-_mercury_common_dir() {
+_ensure_mercury_common_dir() {
   if [ "$_MERCURY_COMMON_DIR_COMPUTED" -eq 0 ]; then
     _MERCURY_COMMON_DIR_CACHE=$(_git_common_dir "$_PROJECT")
     _MERCURY_COMMON_DIR_COMPUTED=1
   fi
-  printf '%s' "$_MERCURY_COMMON_DIR_CACHE"
 }
 
 if [ "${GUARD_DEBUG:-0}" = "1" ] && [ -f "$LOG_FILE" ] && [ "$(wc -c < "$LOG_FILE")" -gt 102400 ]; then
@@ -460,17 +474,24 @@ fi
 # Issue #552 iter-6 (performance): also resolved LAZILY now (one jq
 # subprocess, only when a `cd`/`pushd` or an eligible push segment
 # actually needs it — most Bash tool calls have neither), same rationale
-# and cache pattern as `_mercury_common_dir()` above.
+# and cache pattern as `_ensure_mercury_common_dir()` above.
+#
+# Issue #552 iter-8 (Codex Low, confirmed and fixed — same bug and same
+# fix shape as `_ensure_mercury_common_dir()` above): renamed from
+# `_hook_cwd()`, no longer called via command substitution (which forked
+# a subshell and silently discarded the `_HOOK_CWD_COMPUTED=1` cache
+# write, making the "cache" a no-op past the first call). Callers now
+# invoke `_ensure_hook_cwd` as a plain function call, then read
+# `$_HOOK_CWD_CACHE` directly.
 _HOOK_CWD_COMPUTED=0
 _HOOK_CWD_CACHE=""
-_hook_cwd() {
+_ensure_hook_cwd() {
   if [ "$_HOOK_CWD_COMPUTED" -eq 0 ]; then
     if [ "$HAS_JQ" -eq 1 ]; then
       _HOOK_CWD_CACHE=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
     fi
     _HOOK_CWD_COMPUTED=1
   fi
-  printf '%s' "$_HOOK_CWD_CACHE"
 }
 
 debug_log "COMMAND=$COMMAND"
@@ -594,6 +615,24 @@ function flush_tok() {
     if (c == ";")  { flush_tok(); print "SEG"; continue }
     if (c == "|") {
       nc = (i < n) ? substr(line, i+1, 1) : ""
+      # Issue #552 iter-8: `|` is ALSO the second character of the `>|`
+      # redirection operator (force-overwrite target even under `set -C`/
+      # noclobber) — do not treat it as a pipe/OR separator when the token
+      # being built so far already ends in `>` (e.g. tok==">" when we
+      # reach the `|` in ">|/dev/null"). Discovered via real reproduction:
+      # `>|/dev/null cd <mercury> && git push origin develop` fragmented
+      # into token ">" (its own segment) + a fresh segment starting with
+      # the innocuous-looking "/dev/null" token, hiding the `cd` from
+      # Pass B cd-tracker (mirrors the iter-7 fix for `&`-containing
+      # operators `>&`/`<&`/`&>`/`&>>` — same root-cause class: an
+      # operator character unconditionally treated as a separator,
+      # regardless of what precedes it). Any other `|` (bare pipe, or
+      # `||`) is unchanged.
+      if (length(tok) > 0 && substr(tok, length(tok), 1) == ">") {
+        tok = tok c
+        in_tok = 1
+        continue
+      }
       flush_tok(); print "SEG"
       if (nc == "|") i++
       continue
@@ -746,9 +785,21 @@ UNSAFE_STATE=0
 # argument is relative — an absolute `cd` target is NOT affected by
 # CDPATH (bash only consults it for a relative, not-found-directly
 # target), so absolute-target tracking is unaffected either way.
+# Issue #552 iter-8: `GIT_COMMON_DIR` added defensively, NOT because a
+# bypass through it was demonstrated — it was NOT. Codex iter-8 raised it
+# as a theoretical redirect-git's-repo-selection candidate alongside
+# `GIT_DIR`/`GIT_WORK_TREE`; real testing (twice, independently) showed
+# setting `GIT_COMMON_DIR` alone does NOT actually redirect which repo
+# git operates on (branch list unchanged, `develop` still fails to
+# resolve as a ref under the redirected value) — i.e. this specific
+# concern did not reproduce. Included anyway because the cost is zero
+# (one more `case` pattern) and, unlike the other entries in this list,
+# this one is explicitly NOT a confirmed-exploitable trigger — recorded
+# here so a future reader does not mistake its presence for proof it was
+# ever actually exploitable.
 for _t in "${ALL_TOKENS[@]}"; do
   case "$_t" in
-    GIT_DIR=*|GIT_WORK_TREE=*|CDPATH=*) UNSAFE_STATE=1 ;;
+    GIT_DIR=*|GIT_WORK_TREE=*|CDPATH=*|GIT_COMMON_DIR=*) UNSAFE_STATE=1 ;;
     --chdir|--chdir=*) UNSAFE_STATE=1 ;;
     -C?*) UNSAFE_STATE=1 ;;
   esac
@@ -809,6 +860,45 @@ _skip_redirect_prefix() {
   fi
 }
 
+# Issue #552 iter-8 (dual-verify round 6 — Codex source-inlined review;
+# coordinator independently confirmed 1 of 3 findings as a real gap, `>|`,
+# and 1 as a genuine pre-existing/non-#552 bug, Phase 3's implicit-push
+# branch resolution — see the iter-8 fix-history comment near the top of
+# this file for the full investigation, including why `GIT_COMMON_DIR`
+# was NOT confirmed exploitable and was added defensively rather than as
+# a proven-bug fix). DEFAULT-DENY reversal: every wrapper-strip case
+# above this point is a SPECIFIC, deliberately-recognized safe-prefix
+# shape (an assignment, a known wrapper keyword, a known flag, a known
+# redirection). Iter-1 through iter-7 all shared the OPPOSITE default —
+# a token matching none of those known shapes was silently treated as
+# "the command name found, stop here" — which is exactly how `>|` slipped
+# through (see the iter-8 fix-history comment: `>|` fragments into
+# innocuous-looking pieces at the awk-tokenizer level that never contain
+# a shell metacharacter themselves, so no reasonable enumeration of
+# "known redirect operators" alone can catch every future variant).
+# This function is the reversed default: a token that stops the
+# wrapper-strip walker is trusted as a real command name ONLY if it
+# contains NONE of the shell metacharacters a legitimate bare command
+# name/argument would never contain (`< > & | $` backtick `= ( ) { }`).
+# Any of those surviving to this point means an unmodeled shell construct
+# reached here — untrusted by default, not enumerated by exception.
+# `=` is included even though ordinary `VAR=value` assignments are
+# already consumed by the `[A-Za-z_]*=*` case above; a token that STILL
+# contains `=` here failed to match that pattern (e.g. starts with a
+# digit) and is unusual enough to distrust rather than guess at.
+# Deliberately does NOT distinguish "this token is the command name
+# itself" from "this token is an argument at the command position" —
+# either way, if it looks like an operator fragment rather than a word,
+# treat it as unsafe.
+_is_unsafe_command_token() {
+  case "$1" in
+    *'<'*|*'>'*|*'&'*|*'|'*|*'$'*|*'`'*|*'='*|*'('*|*')'*|*'{'*|*'}'*)
+      return 0 ;;
+    *)
+      return 1 ;;
+  esac
+}
+
 # Issue #552 iter-4 — find the "command position" token index within a
 # segment's token array: the first token that is not a wrapper (env var
 # assignment, a redirection, an env/command/exec/builtin/sudo/doas/nohup/
@@ -818,9 +908,18 @@ _skip_redirect_prefix() {
 # UNRESOLVABLE_SELECTOR as a side effect while walking (iter-2, segment-
 # scoped), which is out of scope for this pure lookup used only by Pass B
 # below. If either wrapper-strip rule set changes, update BOTH copies —
-# iter-7's redirection-skip is one such shared addition, applied to both.
-# Echoes the index (may equal $#, i.e. one past the last token, if the
-# segment is entirely wrapper tokens with no command found).
+# iter-7's redirection-skip and iter-8's default-deny check are two such
+# shared additions, applied to both.
+#
+# Echoes TWO space-separated values on one line: "<index> <unsafe>".
+# <index> may equal $#, i.e. one past the last token, if the segment is
+# entirely wrapper tokens with no command found. <unsafe> is "1" (iter-8
+# default-deny — see `_is_unsafe_command_token()` above) when the token
+# at <index> looks like an unmodeled shell-construct fragment rather than
+# a legitimate command name, else "0". This function runs inside a
+# command-substitution subshell (`$(...)`, forked by the caller), so it
+# CANNOT set the caller's global `UNSAFE_STATE` directly — the caller
+# must read this second value and act on it itself.
 _find_command_position() {
   local -a tokens=( "$@" )
   local ntok=${#tokens[@]}
@@ -865,7 +964,11 @@ _find_command_position() {
         i=$((i + 1)); _seen_change=1 ;;
     esac
   done
-  printf '%s' "$i"
+  local _unsafe=0
+  if [ "$i" -lt "$ntok" ] && _is_unsafe_command_token "${tokens[$i]}"; then
+    _unsafe=1
+  fi
+  printf '%s %s' "$i" "$_unsafe"
 }
 
 # ── Pass B: per-segment cd/pushd tracking (Issue #552 iter-4/iter-5) ──
@@ -929,7 +1032,13 @@ _pb_off=0
 for _pb_sz in "${SEG_SIZES[@]}"; do
   declare -a _pb_seg=( "${ALL_TOKENS[@]:$_pb_off:$_pb_sz}" )
   SEG_ENTRY_CWD+=( "$EFFECTIVE_CWD" )
-  _pb_cmd_idx=$(_find_command_position "${_pb_seg[@]}")
+  read -r _pb_cmd_idx _pb_prefix_unsafe <<< "$(_find_command_position "${_pb_seg[@]}")"
+  # Issue #552 iter-8 default-deny: an unmodeled prefix construct anywhere
+  # ahead of this segment's command position means we cannot trust
+  # whatever cd/pushd-tracking conclusion we would otherwise draw from it
+  # — whole-command UNSAFE_STATE, same treatment as every other
+  # unresolvable Pass B construct.
+  [ "$_pb_prefix_unsafe" = "1" ] && UNSAFE_STATE=1
   if [ "$_pb_cmd_idx" -lt "$_pb_sz" ]; then
     _pb_cmd_tok="${_pb_seg[$_pb_cmd_idx]}"
     case "$_pb_cmd_tok" in
@@ -979,7 +1088,8 @@ for _pb_sz in "${SEG_SIZES[@]}"; do
               # arg, or as the baseline for the same-repo common-dir
               # check below) — resolve the lazy sentinel now.
               if [ "$EFFECTIVE_CWD" = "$_LAZY_HOOK_CWD_SENTINEL" ]; then
-                EFFECTIVE_CWD=$(_hook_cwd)
+                _ensure_hook_cwd
+                EFFECTIVE_CWD="$_HOOK_CWD_CACHE"
               fi
               _pb_candidate=""
               case "$_pb_arg" in
@@ -1064,6 +1174,14 @@ process_segment() {
   # Phase 1-3 logic, exactly as if Issue #552 had never shipped. Never used
   # to grant a skip, only to withhold one.
   local UNRESOLVABLE_SELECTOR=0
+
+  # Issue #552 iter-8 — declared at function scope (not just inside the
+  # Phase 0 `if` block below) so Phase 3 (implicit-push branch check,
+  # further down) can also read it. Populated only when Phase 0 actually
+  # runs (UNRESOLVABLE_SELECTOR==0 && UNSAFE_STATE==0) and resolution
+  # succeeds; stays empty otherwise, in which case Phase 3 falls back to
+  # its pre-#552 behavior — see the Phase 3 fix-history comment there.
+  local _repo_path=""
 
   # Wrapper-strip: skip leading env-var assignments, command wrappers, and
   # subshell/group open chars. Loop until no transformation applies — no
@@ -1163,6 +1281,23 @@ process_segment() {
     esac
   done
 
+  # Issue #552 iter-8 default-deny (`_is_unsafe_command_token()` comment
+  # above has the full rationale, and `_find_command_position()`'s
+  # matching copy — kept in sync per this file's established convention).
+  # If wrapper-strip stopped at a token that is not shaped like a
+  # legitimate command name (a shell metacharacter this hook does not
+  # model survived to this point), do not silently trust the "not git,
+  # nothing to check" conclusion the two lines below would otherwise
+  # reach. Sets UNRESOLVABLE_SELECTOR — in the CURRENT architecture this
+  # mainly withholds Phase 0's allow for this segment (Phase 1-3 below
+  # still requires literal `git` recognition to activate either way, so
+  # this is primarily defense-in-depth/consistency rather than closing a
+  # concretely demonstrated bypass THROUGH this exact code path today —
+  # be honest about that rather than overclaiming).
+  if [ "$i" -lt "$ntok" ] && _is_unsafe_command_token "${tokens[$i]}"; then
+    UNRESOLVABLE_SELECTOR=1
+  fi
+
   [ "$i" -lt "$ntok" ] || return 0
   [ "${tokens[$i]}" = "git" ] || return 0
   i=$((i + 1))
@@ -1238,9 +1373,10 @@ process_segment() {
     # needs HOOK_CWD's value — resolve the Pass B lazy sentinel here, not
     # before. A command with no eligible push segment at all (the
     # dominant case — most Bash calls aren't `git push`) never reaches
-    # this line, so `_hook_cwd()`'s jq subprocess is never spent on it.
+    # this line, so `_ensure_hook_cwd()`'s jq subprocess is never spent on it.
     if [ "$_seg_entry_cwd" = "$_LAZY_HOOK_CWD_SENTINEL" ]; then
-      _seg_entry_cwd=$(_hook_cwd)
+      _ensure_hook_cwd
+      _seg_entry_cwd="$_HOOK_CWD_CACHE"
     fi
     # Resolve which repo this segment's `git push` actually targets:
     # `-C <path>` (authoritative — overrides cwd for this invocation) else
@@ -1253,8 +1389,8 @@ process_segment() {
     # runs). If `-C` is relative and `_seg_entry_cwd` is unavailable to
     # anchor it, there is nothing safe to resolve, so `_repo_path` stays
     # empty and Phase 0 falls through below exactly like any other
-    # resolution failure.
-    local _repo_path=""
+    # resolution failure. (Declared at function scope above, not `local`
+    # here — Phase 3 further down also reads it, iter-8.)
     if [ -n "$GIT_C_PATH" ]; then
       case "$GIT_C_PATH" in
         /*|[A-Za-z]:[\\/]*|\\\\*)
@@ -1273,14 +1409,16 @@ process_segment() {
     # common-dir itself unresolved) falls through unchanged to Phase 1-3
     # below — fail-closed, never a bypass source.
     #
-    # Issue #552 iter-6 (performance): `_mercury_common_dir()` (lazy,
-    # cached) instead of a plain `$MERCURY_COMMON_DIR` variable — this is
-    # the ONLY call site, and it only runs for a real push segment with no
-    # disabling gate already tripped, so the `git rev-parse` subprocess it
-    # spends on first call is never paid by a command with no such segment.
+    # Issue #552 iter-6 (performance): `_ensure_mercury_common_dir()`
+    # (lazy, cached — iter-8 fixed the cache to actually persist, see its
+    # definition above) instead of a plain `$MERCURY_COMMON_DIR` variable —
+    # this is the ONLY call site, and it only runs for a real push segment
+    # with no disabling gate already tripped, so the `git rev-parse`
+    # subprocess it spends on first call is never paid by a command with
+    # no such segment.
     if [ -n "$_repo_path" ]; then
-      local _mercury_common_dir_val
-      _mercury_common_dir_val=$(_mercury_common_dir)
+      _ensure_mercury_common_dir
+      local _mercury_common_dir_val="$_MERCURY_COMMON_DIR_CACHE"
       if [ -n "$_mercury_common_dir_val" ]; then
         local _target_common_dir
         _target_common_dir=$(_git_common_dir "$_repo_path")
@@ -1366,11 +1504,55 @@ process_segment() {
   done
 
   # ── Phase 3: implicit push from current branch (no explicit refspec) ──
+  # Issue #552 iter-8 — pre-existing bug, NOT introduced by #552 (Phase 3
+  # predates it): this used a BARE `git rev-parse --abbrev-ref HEAD`,
+  # resolving the branch in the HOOK PROCESS's own cwd rather than the
+  # repo this specific push actually targets. Reproduced live: external
+  # repo on a non-protected branch, `git -C <mercury> push origin`
+  # (implicit, no refspec) — the bare check read the EXTERNAL repo's
+  # branch (non-protected) and allowed it through, while the real push
+  # (via the explicit `-C`) hits Mercury's actual current branch
+  # (`develop`, protected). Fixed (iter-8): when `_repo_path` was
+  # successfully resolved above (Phase 0 ran and determined a concrete
+  # target repo for THIS segment), query the branch THERE via `-C`, not
+  # in the hook's own cwd — this also fixes a symmetric case within "same
+  # repo as Mercury" verdicts: a linked worktree can be on a different
+  # branch than the hook process's own cwd even though both share a
+  # common-dir.
+  #
+  # Issue #552 iter-9 — iter-8 only fixed HALF of this: when `_repo_path`
+  # is unavailable (Phase 0 was gated off by UNRESOLVABLE_SELECTOR /
+  # UNSAFE_STATE, e.g. a cross-repo `cd` that legitimately triggers the
+  # default-deny fallback, or resolution failed), iter-8 fell back to the
+  # bare `git rev-parse --abbrev-ref HEAD` check — which is the exact
+  # same wrong-cwd resolution this fix exists to eliminate. Reproduced
+  # live: hook process cwd = external repo (non-protected branch),
+  # `cd <mercury> && git push origin` (implicit) — the cross-repo `cd`
+  # sets UNSAFE_STATE so Phase 0 never runs and `_repo_path` stays empty;
+  # the bare fallback then read the EXTERNAL repo's branch and allowed a
+  # push that actually lands on Mercury's `develop`. Fixed: when
+  # `_repo_path` is empty, this hook has NO positive evidence about which
+  # repo the implicit push targets — per the fail-closed/default-deny
+  # invariant threaded through every phase of this hook (Phase 0 only
+  # grants an allow on positive confirmation; any uncertainty falls back
+  # to a block), block unconditionally instead of guessing via a
+  # known-wrong bare rev-parse. Every code path that reaches Phase 3 with
+  # `_repo_path` unset is exactly one of: (a) the real target is Mercury
+  # (should block), or (b) the real target is genuinely unknown (should
+  # also block, per the invariant) — there is no code path here where
+  # falling back to "allow" would be correct, since Phase 0 itself
+  # already returns 0 (allow) earlier whenever it can positively confirm
+  # a non-Mercury repo; reaching Phase 3 at all means that confirmation
+  # never happened.
   if [ "$HAS_EXPLICIT_TARGET" = false ]; then
-    local CURRENT_BRANCH
-    CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
-    if printf '%s' "$CURRENT_BRANCH" | grep -qE "$PROTECTED"; then
-      block_push "implicit push from current branch '$CURRENT_BRANCH'"
+    if [ -n "$_repo_path" ]; then
+      local CURRENT_BRANCH
+      CURRENT_BRANCH=$(git -C "$_repo_path" rev-parse --abbrev-ref HEAD 2>/dev/null)
+      if printf '%s' "$CURRENT_BRANCH" | grep -qE "$PROTECTED"; then
+        block_push "implicit push from current branch '$CURRENT_BRANCH'"
+      fi
+    else
+      block_push "implicit push with unresolvable target repo (fail-closed)"
     fi
   fi
 }
