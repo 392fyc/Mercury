@@ -456,7 +456,12 @@ if [ "$HAS_JQ" -eq 0 ] && [ "$HAS_CMD_KEY" -eq 1 ]; then
 fi
 
 if [ "$HAS_JQ" -eq 1 ]; then
-  COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
+  # `printf '%s'` rather than `echo` (Argus): `echo` is allowed to interpret
+  # backslash escapes depending on shell build / `xpg_echo`, and this payload is
+  # arbitrary JSON that routinely contains backslashes. `printf '%s'` never
+  # interprets its argument, and matches how the tokenizer below already feeds
+  # `$COMMAND` to awk — one convention for all untrusted-data pipes in this file.
+  COMMAND=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
 else
   # HAS_JQ=0 AND HAS_CMD_KEY=0 — INPUT did not carry a "command" key (e.g.
   # tool wasn't Bash). Nothing to gate.
@@ -488,7 +493,8 @@ _HOOK_CWD_CACHE=""
 _ensure_hook_cwd() {
   if [ "$_HOOK_CWD_COMPUTED" -eq 0 ]; then
     if [ "$HAS_JQ" -eq 1 ]; then
-      _HOOK_CWD_CACHE=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
+      # `printf '%s'` not `echo` — see the COMMAND extraction above for why.
+      _HOOK_CWD_CACHE=$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
     fi
     _HOOK_CWD_COMPUTED=1
   fi
@@ -1116,7 +1122,27 @@ for _pb_sz in "${SEG_SIZES[@]}"; do
                     # Join onto the current EFFECTIVE_CWD. If there is
                     # nothing to anchor a relative path against, this is
                     # unresolvable rather than silently wrong.
-                    [ -n "$EFFECTIVE_CWD" ] && _pb_candidate="$EFFECTIVE_CWD/$_pb_arg"
+                    #
+                    # Argus (PR #555): normalize the join instead of keeping
+                    # `..` / symlink segments as raw string. An unnormalized
+                    # join can make the same-repo comparison below judge a
+                    # different directory than the one the command's shell
+                    # will really be in. `pwd` here is bash's LOGICAL form on
+                    # purpose — this models a bash `cd`, and bash `cd` is
+                    # logical by default (`a/symlink/..` returns to `a`).
+                    # The `-C` join in Phase 0 uses `pwd -P` instead, because
+                    # `git -C` chdir()s physically; see that site's comment.
+                    # Normalization is BEST-EFFORT (same rationale as the
+                    # `-C` join in Phase 0 — see that site's comment): a
+                    # non-existent target keeps the raw join rather than
+                    # blanking, because a path that does not exist holds no
+                    # repo, so the same-repo gate below gets an empty
+                    # common-dir for it and sets UNSAFE_STATE regardless.
+                    # The traversal hazard only exists for real directories.
+                    if [ -n "$EFFECTIVE_CWD" ]; then
+                      _pb_candidate=$( cd "$EFFECTIVE_CWD/$_pb_arg" 2>/dev/null && pwd )
+                      [ -n "$_pb_candidate" ] || _pb_candidate="$EFFECTIVE_CWD/$_pb_arg"
+                    fi
                   fi
                   ;;
               esac
@@ -1397,7 +1423,31 @@ process_segment() {
           # Already absolute (POSIX root, Windows drive-letter, or UNC).
           _repo_path="$GIT_C_PATH" ;;
         *)
-          [ -n "$_seg_entry_cwd" ] && _repo_path="$_seg_entry_cwd/$GIT_C_PATH" ;;
+          # Argus (PR #555): normalize the join rather than leaving `..` /
+          # symlink segments in the string, so the common-dir comparison
+          # below judges the directory git will really operate in. `pwd -P`
+          # (PHYSICAL) on purpose here — `git -C <path>` chdir()s, which
+          # resolves symlinks physically. The Pass B `cd` join above uses
+          # bash's LOGICAL `pwd` instead, because it models a bash `cd`;
+          # see that site's comment. A failed `cd` yields empty, which the
+          # `[ -n "$_repo_path" ]` guard below turns into fall-through to
+          # Phase 1-3 (fail-closed), never an allow.
+          #
+          # Normalization is BEST-EFFORT: if the joined path does not exist
+          # (so `cd` into it fails) we keep the raw join instead of blanking
+          # it. That is safe, and NOT a weakening — the traversal hazard this
+          # normalization exists to close ("our verdict names a different
+          # directory than the one git really operates in") can only arise
+          # for a path that EXISTS. A path that does not exist holds no repo,
+          # so `_git_common_dir` on it returns empty and Phase 0 fails closed
+          # by the guard below anyway. Blanking it here instead would make
+          # this hook's verdict depend on the filesystem in a way it never
+          # did before, which is a behaviour change with no security payoff.
+          if [ -n "$_seg_entry_cwd" ]; then
+            _repo_path=$( cd "$_seg_entry_cwd/$GIT_C_PATH" 2>/dev/null && pwd -P )
+            [ -n "$_repo_path" ] || _repo_path="$_seg_entry_cwd/$GIT_C_PATH"
+          fi
+          ;;
       esac
     else
       _repo_path="$_seg_entry_cwd"
