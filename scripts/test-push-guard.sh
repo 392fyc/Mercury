@@ -73,16 +73,37 @@ trap '[[ -n "${WORK_DIR:-}" && -d "$WORK_DIR" ]] && rm -rf "$WORK_DIR"' EXIT
 BIN_DIR="$WORK_DIR/bin"
 mkdir -p "$BIN_DIR"
 
-# Mock git shim. push-guard.sh only invokes `git rev-parse --abbrev-ref HEAD`
-# during Phase 3 implicit-push detection. The mock returns $MOCK_CURRENT_BRANCH
-# (default `feature/test`) so explicit-target scenarios are unaffected and
-# implicit-push scenarios can exercise both protected and non-protected
-# branch states deterministically.
+# Mock git shim. push-guard.sh invokes `git rev-parse --abbrev-ref HEAD`
+# during Phase 3 implicit-push detection, and (Issue #552) `git -C <path>
+# rev-parse --show-toplevel` during the Phase 0 repo-awareness check
+# (the hook ALWAYS supplies `-C` for this call — see _repo_path usage).
+# The mock returns $MOCK_CURRENT_BRANCH (default `feature/test`) for the
+# former. For the latter: if $MOCK_TOPLEVEL is explicitly SET (even to an
+# empty string, e.g. to simulate a resolution failure), it wins; otherwise
+# the mock echoes the queried `-C <path>` back as its own toplevel — this
+# makes "same path queried twice" naturally resolve to "same repo" without
+# any override, so Mercury-repo scenarios (MERCURY_TOPLEVEL computed from
+# CLAUDE_PROJECT_DIR, target resolved from the same default cwd) match by
+# construction, while a `-C /other/repo` or a divergent JSON `cwd` value
+# naturally resolves to a different toplevel.
 cat > "$BIN_DIR/git" <<'MOCK_EOF'
 #!/usr/bin/env bash
-# mock git used by test-push-guard.sh — only emulates rev-parse HEAD
+# mock git used by test-push-guard.sh — emulates rev-parse HEAD / --show-toplevel
+raw_c_path=""
+if [[ "${1:-}" == "-C" ]]; then
+  raw_c_path="${2:-}"
+  shift 2
+fi
 if [[ "${1:-}" == "rev-parse" && "${2:-}" == "--abbrev-ref" && "${3:-}" == "HEAD" ]]; then
   printf '%s\n' "${MOCK_CURRENT_BRANCH:-feature/test}"
+  exit 0
+fi
+if [[ "${1:-}" == "rev-parse" && "${2:-}" == "--show-toplevel" ]]; then
+  if [[ -n "${MOCK_TOPLEVEL+set}" ]]; then
+    printf '%s\n' "${MOCK_TOPLEVEL}"
+  else
+    printf '%s\n' "${raw_c_path}"
+  fi
   exit 0
 fi
 exit 0
@@ -109,6 +130,44 @@ chmod +x "$BIN_DIR/git"
 run_hook() {
   local cmd="$1"
   local extra_env="${2:-}"
+  local fake_project="$WORK_DIR/proj-$RANDOM"
+  mkdir -p "$fake_project"
+  # Issue #552: `cwd` mirrors the hook stdin JSON's real top-level field
+  # (https://code.claude.com/docs/en/hooks — "current working directory
+  # when the hook is invoked"). Defaults to $fake_project (== the process's
+  # CLAUDE_PROJECT_DIR) so pre-#552 scenarios naturally resolve "same repo"
+  # via the mock git's `-C <path>` echo-back behavior and stay unaffected.
+  # A scenario can override via the special `JSON_CWD=<value>` pair in
+  # extra_env (stripped below before forwarding the rest as real env vars —
+  # it is a test-harness-only signal, not read by the hook process itself).
+  #
+  # MSYS2_ARG_CONV_EXCL note (Windows/Git-Bash only, harmless elsewhere):
+  # `jq` below is a native Windows binary (jq.exe). MSYS auto-translates
+  # any argv that LOOKS like a POSIX path (e.g. our mktemp-produced
+  # `/tmp/push-guard-test.XXXXXX/proj-NNNNN`) into its Windows form
+  # (`C:/Users/.../Temp/...`) before jq ever sees it — but only for THAT
+  # jq invocation's argv, not for the same value used directly as a bash
+  # env var (`CLAUDE_PROJECT_DIR="$fake_project"` below, untouched). Same
+  # physical directory, two divergent string forms reaching push-guard.sh's
+  # Phase 0 repo-awareness check — a false "different repo" positive that
+  # is purely a test-fixture MSYS artifact (production `cwd` values come
+  # from Claude Code itself, never through this argv-translation path).
+  # `MSYS2_ARG_CONV_EXCL='*'` suppresses the translation for this jq call
+  # so `$json_cwd` reaches the JSON payload byte-for-byte identical to how
+  # `CLAUDE_PROJECT_DIR` reaches the hook process.
+  local json_cwd="$fake_project"
+  local -a extra_env_kv=()
+  if [[ -n "$extra_env" ]]; then
+    IFS=';' read -r -a extra_env_kv <<< "$extra_env"
+  fi
+  local -a real_env_kv=()
+  local kv
+  for kv in "${extra_env_kv[@]}"; do
+    case "$kv" in
+      JSON_CWD=*) json_cwd="${kv#JSON_CWD=}" ;;
+      *) real_env_kv+=( "$kv" ) ;;
+    esac
+  done
   # Build JSON via jq -n so all JSON escape rules are handled correctly
   # (closes Copilot iter-2 line-117 finding: the previous manual escape
   # only covered \\, ", and \n; control chars like \r, \t, and 0x00..0x1f
@@ -117,19 +176,13 @@ run_hook() {
   # the harness is a robustness no-op for our environment but eliminates
   # a class of test-side input encoding bugs.
   local input
-  input=$(jq -nc --arg cmd "$cmd" '{tool_input: {command: $cmd}}') || {
+  input=$(MSYS2_ARG_CONV_EXCL='*' jq -nc --arg cmd "$cmd" --arg cwd "$json_cwd" '{tool_input: {command: $cmd}, cwd: $cwd}') || {
     printf 'run_hook: jq -n failed to encode JSON input\n' >&2
     return 1
   }
-  local fake_project="$WORK_DIR/proj-$RANDOM"
-  mkdir -p "$fake_project"
   local rc
-  local -a extra_env_kv=()
-  if [[ -n "$extra_env" ]]; then
-    IFS=';' read -r -a extra_env_kv <<< "$extra_env"
-  fi
   env "PATH=$BIN_DIR:$PATH" "CLAUDE_PROJECT_DIR=$fake_project" \
-    "${extra_env_kv[@]}" bash "$HOOK" 2> "$WORK_DIR/stderr.$$" <<<"$input" >/dev/null
+    "${real_env_kv[@]}" bash "$HOOK" 2> "$WORK_DIR/stderr.$$" <<<"$input" >/dev/null
   rc=$?
   cat "$WORK_DIR/stderr.$$" 2>/dev/null || true
   rm -f "$WORK_DIR/stderr.$$"
@@ -450,10 +503,17 @@ scenario \
 # git global options (-C, -c) before the push subcommand
 # ===========================================================================
 
+# Issue #552: `-C /repo` is a fake, non-existent path — under repo-awareness
+# it now (correctly) resolves as "a different repo" and would be ALLOWED
+# through on its own. This scenario predates #552 and exists to test `-C`
+# TOKEN PARSING robustness (quote/wrapper handling), not repo identity, so
+# MOCK_TOPLEVEL pins the resolved toplevel to match Mercury's regardless of
+# the literal `-C` value, isolating the parsing behavior under test.
 scenario \
   '`git -C /repo push origin develop` -> blocked' \
   'git -C /repo push origin develop' \
-  2 'BLOCKED'
+  2 'BLOCKED' '' \
+  'MOCK_TOPLEVEL=pinned-same-repo'
 
 scenario \
   '`git -c user.name=foo push origin develop` -> blocked' \
@@ -621,10 +681,14 @@ scenario \
   'env A="1 2" git push origin develop' \
   2 'BLOCKED'
 
+# Issue #552: same rationale as the `-C /repo` scenario above — pin
+# MOCK_TOPLEVEL so this stays a pure quote-parsing test, unaffected by the
+# new repo-awareness check.
 scenario \
   '`git -C "C:/repo with spaces" push origin develop` (quoted -C path) -> blocked' \
   'git -C "C:/repo with spaces" push origin develop' \
-  2 'BLOCKED'
+  2 'BLOCKED' '' \
+  'MOCK_TOPLEVEL=pinned-same-repo'
 
 scenario \
   "git -c 'user.name=A B' push origin develop (quoted -c value w/ space) -> blocked" \
@@ -1076,6 +1140,91 @@ scenario \
   $'CR in body (literal \\r) does not crash JSON encoding — not blocked' \
   $'git commit -m "develop\\rmaster" && git push origin lane/foo' \
   0 ''
+
+# ===========================================================================
+# Issue #552 — repo-awareness: non-Mercury-repo pushes must be allowed
+# through even when they target develop/master/main; Mercury-repo pushes
+# must still be blocked in every form.
+#
+# Mock semantics (see mock git above): a `-C <path>` query echoes <path>
+# back as its own toplevel, unless $MOCK_TOPLEVEL is explicitly set (even
+# to empty), which then wins for ALL toplevel queries. So:
+#   - `-C /other/repo` or a JSON `cwd` of `/other/repo` naturally resolves
+#     to a toplevel that differs from MERCURY_TOPLEVEL (resolved from
+#     CLAUDE_PROJECT_DIR == $fake_project) -> Phase 0 fires -> allowed.
+#   - Omitting any override, or targeting $fake_project itself, resolves
+#     "same repo" -> falls through to existing Phase 1-3 -> blocked as before.
+#   - `MOCK_TOPLEVEL=` (explicitly empty) forces BOTH sides to resolve
+#     empty, simulating a real `rev-parse` failure -> Phase 0 cannot
+#     determine anything -> fail-closed -> falls through -> blocked.
+# ===========================================================================
+
+scenario \
+  '#552 non-Mercury repo `git push origin master` via cwd -> allowed (out of scope)' \
+  'git push origin master' \
+  0 '' '' \
+  'JSON_CWD=/other/repo'
+
+scenario \
+  '#552 non-Mercury repo `git push origin develop` via cwd -> allowed' \
+  'git push origin develop' \
+  0 '' '' \
+  'JSON_CWD=/other/repo'
+
+scenario \
+  '#552 non-Mercury repo `git -C /other/repo push origin master` (-C authoritative) -> allowed' \
+  'git -C /other/repo push origin master' \
+  0 ''
+
+scenario \
+  '#552 non-Mercury repo implicit `git push` from branch=develop -> allowed (Phase 3 also skipped)' \
+  'git push' \
+  0 '' '' \
+  'JSON_CWD=/other/repo;MOCK_CURRENT_BRANCH=develop'
+
+scenario \
+  '#552 non-Mercury repo refspec `git push origin HEAD:master` -> allowed' \
+  'git push origin HEAD:master' \
+  0 '' '' \
+  'JSON_CWD=/other/repo'
+
+scenario \
+  '#552 non-Mercury repo `-C` wins over a Mercury-repo cwd -> allowed' \
+  'git -C /other/repo push origin develop' \
+  0 '' '' \
+  'JSON_CWD=/keep/this/as/mercury'
+
+# Regression net: Mercury-repo pushes (no cwd/-C divergence — the run_hook
+# default) still block in every existing form.
+scenario \
+  '#552 Mercury repo `git push origin develop` (default cwd) -> still blocked' \
+  'git push origin develop' \
+  2 'BLOCKED'
+
+scenario \
+  '#552 Mercury repo `git -C <mercury-path> push origin master` -> still blocked' \
+  'git push origin master' \
+  2 'BLOCKED'
+
+scenario \
+  '#552 Mercury repo implicit `git push` from branch=master -> still blocked' \
+  'git push' \
+  2 'BLOCKED' '' \
+  'MOCK_CURRENT_BRANCH=master'
+
+# Fail-closed: toplevel resolution fails (rev-parse returns nothing for
+# EITHER side) -> falls through to existing Phase 1-3 logic -> still blocked.
+scenario \
+  '#552 toplevel resolution fails (MOCK_TOPLEVEL empty) -> fail-closed, still blocked' \
+  'git push origin develop' \
+  2 'BLOCKED' '' \
+  'MOCK_TOPLEVEL=;JSON_CWD=/other/repo'
+
+scenario \
+  '#552 non-Mercury repo, safe target `git push origin lane/foo` -> allowed (unaffected either way)' \
+  'git push origin lane/foo' \
+  0 '' '' \
+  'JSON_CWD=/other/repo'
 
 # ===========================================================================
 # Summary

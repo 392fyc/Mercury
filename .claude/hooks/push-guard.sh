@@ -44,6 +44,20 @@
 #     Quote-strip in Phase 2 normalization handles literal quote chars
 #     defensively. `(` `)` `{` `}` are tokenized; `(` `{` are skipped during
 #     wrapper-strip. Hard-block on awk failure or unrecoverable extraction.
+#
+#   Issue #552 — Bug: no repository awareness. This guard's protection
+#     semantics (direct-push-to-protected-branch forbidden) are a Mercury-
+#     repo-specific CLAUDE.md rule, but the hook fired on ANY repo's
+#     `git push`, including a design-library repo whose established
+#     workflow is master-direct-commit. Fix: Phase 0 repo-awareness check
+#     inserted before Phase 1-3, per push segment — resolves the segment's
+#     actual target repo (`-C <path>` if present, else the hook stdin
+#     JSON's `cwd` field, confirmed present on all hook events per
+#     https://code.claude.com/docs/en/hooks) and compares its git toplevel
+#     against Mercury's toplevel. Non-Mercury repos are allowed through.
+#     Any failure to resolve either toplevel falls through unchanged to
+#     the existing fail-closed Phase 1-3 logic — this check can only ever
+#     grant a POSITIVELY CONFIRMED skip, never a bypass from uncertainty.
 
 INPUT=$(cat)
 
@@ -56,6 +70,26 @@ LOG_FILE="$STATE_DIR/push-guard-debug.log"
 debug_log() {
   [ "${GUARD_DEBUG:-0}" = "1" ] && echo "[$(date -Iseconds)] $1" >> "$LOG_FILE"
 }
+
+# Issue #552 — path normalization for repo-awareness comparisons. Lowercase
+# + backslash-to-slash + strip trailing slash so Windows drive-letter paths
+# with differing case or separator style (e.g. `D:\Mercury\Mercury` vs
+# `d:/mercury/mercury/`) compare equal.
+_normalize_path() {
+  local p="$1"
+  p="${p,,}"
+  p="${p//\\//}"
+  p="${p%/}"
+  printf '%s' "$p"
+}
+
+# Issue #552 — Mercury repo's own git toplevel, resolved once. Used by the
+# Phase 0 repo-awareness check in process_segment() to decide whether a
+# `git push` segment targets THIS repo (protection applies) or a different
+# one (out of scope, allowed through). Empty on resolution failure — Phase 0
+# treats that as "cannot determine", falling through to the existing
+# fail-closed Phase 1-3 logic unchanged.
+MERCURY_TOPLEVEL=$(git -C "$_PROJECT" rev-parse --show-toplevel 2>/dev/null)
 
 if [ "${GUARD_DEBUG:-0}" = "1" ] && [ -f "$LOG_FILE" ] && [ "$(wc -c < "$LOG_FILE")" -gt 102400 ]; then
   tail -100 "$LOG_FILE" > "$LOG_FILE.tmp" && mv "$LOG_FILE.tmp" "$LOG_FILE"
@@ -109,6 +143,13 @@ fi
 
 if [ "$HAS_JQ" -eq 1 ]; then
   COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
+  # Issue #552 — hook stdin JSON's top-level `cwd` field: "Current working
+  # directory when the hook is invoked" (confirmed present on all hook
+  # events, https://code.claude.com/docs/en/hooks). Fallback target-repo
+  # signal for the Phase 0 repo-awareness check when the push segment has
+  # no explicit `-C <path>`. Empty on missing/malformed field — Phase 0
+  # then has nothing to resolve and falls through fail-closed.
+  HOOK_CWD=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
 else
   # HAS_JQ=0 AND HAS_CMD_KEY=0 — INPUT did not carry a "command" key (e.g.
   # tool wasn't Bash). Nothing to gate.
@@ -379,12 +420,20 @@ process_segment() {
   i=$((i + 1))
 
   # Walk git global options until `push` or non-option non-push token.
+  # GIT_C_PATH captures a `-C <path>` global option value (if present) —
+  # used by the Phase 0 repo-awareness check below (Issue #552) since `-C`
+  # overrides the process cwd for that git invocation and is therefore the
+  # authoritative signal for which repo this segment's push targets.
   local push_idx=-1
+  local GIT_C_PATH=""
   while [ "$i" -lt "$ntok" ]; do
     local tok="${tokens[$i]}"
     case "$tok" in
       push) push_idx=$i; break ;;
-      -C|-c|--git-dir|--work-tree|--namespace|--super-prefix)
+      -C)
+        GIT_C_PATH="${tokens[$((i + 1))]:-}"
+        i=$((i + 2)); continue ;;
+      -c|--git-dir|--work-tree|--namespace|--super-prefix)
         # value-taking global option: skip flag + value in one step
         i=$((i + 2)); continue ;;
       --git-dir=*|--work-tree=*|--namespace=*|--super-prefix=*)
@@ -401,6 +450,24 @@ process_segment() {
   done
 
   [ "$push_idx" -ge 0 ] || return 0
+
+  # ── Phase 0: repo-awareness (Issue #552) ──────────────────────────────
+  # Resolve which repo this segment's `git push` actually targets:
+  # `-C <path>` (authoritative, overrides cwd for this invocation) else the
+  # hook stdin JSON's `cwd` field. If that resolves to a git toplevel that
+  # differs from Mercury's own toplevel, this push is out of this guard's
+  # scope — allow it through. Any failure to resolve (rev-parse errors,
+  # empty signal, MERCURY_TOPLEVEL itself unresolved) falls through
+  # unchanged to Phase 1-3 below — fail-closed, never a bypass source.
+  local _repo_path="${GIT_C_PATH:-$HOOK_CWD}"
+  if [ -n "$_repo_path" ] && [ -n "$MERCURY_TOPLEVEL" ]; then
+    local _target_toplevel
+    _target_toplevel=$(git -C "$_repo_path" rev-parse --show-toplevel 2>/dev/null)
+    if [ -n "$_target_toplevel" ] && [ "$(_normalize_path "$_target_toplevel")" != "$(_normalize_path "$MERCURY_TOPLEVEL")" ]; then
+      debug_log "ALLOWED (non-Mercury repo): target='$_target_toplevel' mercury='$MERCURY_TOPLEVEL'"
+      return 0
+    fi
+  fi
 
   # Slice push tokens (after the `push` token itself).
   local -a push_toks=()
