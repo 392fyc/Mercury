@@ -74,37 +74,57 @@ BIN_DIR="$WORK_DIR/bin"
 mkdir -p "$BIN_DIR"
 
 # Mock git shim. push-guard.sh invokes `git rev-parse --abbrev-ref HEAD`
-# during Phase 3 implicit-push detection, and (Issue #552) `git -C <path>
-# rev-parse --show-toplevel` during the Phase 0 repo-awareness check
-# (the hook ALWAYS supplies `-C` for this call — see _repo_path usage).
+# during Phase 3 implicit-push detection, and (Issue #552 iter-2) `git
+# -C <path> rev-parse --path-format=absolute --git-common-dir` (falling
+# back to the same call without `--path-format` on older git — the mock
+# recognizes both by just checking for `--git-common-dir` anywhere in the
+# rev-parse args) during the Phase 0 repo-awareness check.
+#
 # The mock returns $MOCK_CURRENT_BRANCH (default `feature/test`) for the
-# former. For the latter: if $MOCK_TOPLEVEL is explicitly SET (even to an
-# empty string, e.g. to simulate a resolution failure), it wins; otherwise
-# the mock echoes the queried `-C <path>` back as its own toplevel — this
-# makes "same path queried twice" naturally resolve to "same repo" without
-# any override, so Mercury-repo scenarios (MERCURY_TOPLEVEL computed from
-# CLAUDE_PROJECT_DIR, target resolved from the same default cwd) match by
-# construction, while a `-C /other/repo` or a divergent JSON `cwd` value
-# naturally resolves to a different toplevel.
+# HEAD query. For the common-dir query: if $MOCK_COMMON_DIR is explicitly
+# SET (even to an empty string, e.g. to simulate a resolution failure), it
+# wins; otherwise the mock echoes the queried `-C <path>` back as its own
+# common-dir (with a trailing `/.` stripped, crudely mirroring git's own
+# path canonicalization — enough to let a relative `-C .` resolve as "same
+# directory" in tests). This makes "same path queried twice" naturally
+# resolve to "same repo" without any override — so Mercury-repo scenarios
+# (MERCURY_COMMON_DIR computed from CLAUDE_PROJECT_DIR, target resolved
+# from the same default cwd) match by construction, while a `-C
+# /other/repo` or a divergent JSON `cwd` value naturally resolves to a
+# different common-dir. $MOCK_COMMON_DIR pins BOTH queries to the same
+# fixed value regardless of the path argument — used to simulate "two
+# different paths, same underlying repo" (e.g. a linked worktree vs its
+# main checkout, which is exactly the iter-1 regression this iteration
+# fixes: `--show-toplevel` differs per-worktree, `--git-common-dir` does
+# not).
 cat > "$BIN_DIR/git" <<'MOCK_EOF'
 #!/usr/bin/env bash
-# mock git used by test-push-guard.sh — emulates rev-parse HEAD / --show-toplevel
+# mock git used by test-push-guard.sh — emulates rev-parse HEAD / --git-common-dir
 raw_c_path=""
 if [[ "${1:-}" == "-C" ]]; then
   raw_c_path="${2:-}"
   shift 2
 fi
+# Crude canonicalization: strip a trailing "/." so `-C .` (relative,
+# resolved by the hook against HOOK_CWD before reaching here) echoes back
+# identically to querying HOOK_CWD directly.
+raw_c_path="${raw_c_path%/.}"
 if [[ "${1:-}" == "rev-parse" && "${2:-}" == "--abbrev-ref" && "${3:-}" == "HEAD" ]]; then
   printf '%s\n' "${MOCK_CURRENT_BRANCH:-feature/test}"
   exit 0
 fi
-if [[ "${1:-}" == "rev-parse" && "${2:-}" == "--show-toplevel" ]]; then
-  if [[ -n "${MOCK_TOPLEVEL+set}" ]]; then
-    printf '%s\n' "${MOCK_TOPLEVEL}"
-  else
-    printf '%s\n' "${raw_c_path}"
-  fi
-  exit 0
+if [[ "${1:-}" == "rev-parse" ]]; then
+  shift
+  for a in "$@"; do
+    if [[ "$a" == "--git-common-dir" ]]; then
+      if [[ -n "${MOCK_COMMON_DIR+set}" ]]; then
+        printf '%s\n' "${MOCK_COMMON_DIR}"
+      else
+        printf '%s\n' "${raw_c_path}"
+      fi
+      exit 0
+    fi
+  done
 fi
 exit 0
 MOCK_EOF
@@ -507,13 +527,13 @@ scenario \
 # it now (correctly) resolves as "a different repo" and would be ALLOWED
 # through on its own. This scenario predates #552 and exists to test `-C`
 # TOKEN PARSING robustness (quote/wrapper handling), not repo identity, so
-# MOCK_TOPLEVEL pins the resolved toplevel to match Mercury's regardless of
-# the literal `-C` value, isolating the parsing behavior under test.
+# MOCK_COMMON_DIR pins the resolved common-dir to match Mercury's regardless
+# of the literal `-C` value, isolating the parsing behavior under test.
 scenario \
   '`git -C /repo push origin develop` -> blocked' \
   'git -C /repo push origin develop' \
   2 'BLOCKED' '' \
-  'MOCK_TOPLEVEL=pinned-same-repo'
+  'MOCK_COMMON_DIR=pinned-same-repo'
 
 scenario \
   '`git -c user.name=foo push origin develop` -> blocked' \
@@ -682,13 +702,13 @@ scenario \
   2 'BLOCKED'
 
 # Issue #552: same rationale as the `-C /repo` scenario above — pin
-# MOCK_TOPLEVEL so this stays a pure quote-parsing test, unaffected by the
-# new repo-awareness check.
+# MOCK_COMMON_DIR so this stays a pure quote-parsing test, unaffected by
+# the new repo-awareness check.
 scenario \
   '`git -C "C:/repo with spaces" push origin develop` (quoted -C path) -> blocked' \
   'git -C "C:/repo with spaces" push origin develop' \
   2 'BLOCKED' '' \
-  'MOCK_TOPLEVEL=pinned-same-repo'
+  'MOCK_COMMON_DIR=pinned-same-repo'
 
 scenario \
   "git -c 'user.name=A B' push origin develop (quoted -c value w/ space) -> blocked" \
@@ -1147,16 +1167,19 @@ scenario \
 # must still be blocked in every form.
 #
 # Mock semantics (see mock git above): a `-C <path>` query echoes <path>
-# back as its own toplevel, unless $MOCK_TOPLEVEL is explicitly set (even
-# to empty), which then wins for ALL toplevel queries. So:
+# back as its own common-dir, unless $MOCK_COMMON_DIR is explicitly set
+# (even to empty), which then wins for ALL common-dir queries. So:
 #   - `-C /other/repo` or a JSON `cwd` of `/other/repo` naturally resolves
-#     to a toplevel that differs from MERCURY_TOPLEVEL (resolved from
+#     to a common-dir that differs from MERCURY_COMMON_DIR (resolved from
 #     CLAUDE_PROJECT_DIR == $fake_project) -> Phase 0 fires -> allowed.
 #   - Omitting any override, or targeting $fake_project itself, resolves
 #     "same repo" -> falls through to existing Phase 1-3 -> blocked as before.
-#   - `MOCK_TOPLEVEL=` (explicitly empty) forces BOTH sides to resolve
+#   - `MOCK_COMMON_DIR=` (explicitly empty) forces BOTH sides to resolve
 #     empty, simulating a real `rev-parse` failure -> Phase 0 cannot
 #     determine anything -> fail-closed -> falls through -> blocked.
+#   - `MOCK_COMMON_DIR=<fixed value>` (non-empty) pins BOTH sides to the
+#     SAME value regardless of path — models "different path, same repo"
+#     (e.g. a linked worktree vs its main checkout).
 # ===========================================================================
 
 scenario \
@@ -1202,7 +1225,7 @@ scenario \
   2 'BLOCKED'
 
 scenario \
-  '#552 Mercury repo `git -C <mercury-path> push origin master` -> still blocked' \
+  '#552 Mercury repo `git push origin master` (default cwd, no -C) -> still blocked' \
   'git push origin master' \
   2 'BLOCKED'
 
@@ -1212,19 +1235,123 @@ scenario \
   2 'BLOCKED' '' \
   'MOCK_CURRENT_BRANCH=master'
 
-# Fail-closed: toplevel resolution fails (rev-parse returns nothing for
+# Fail-closed: common-dir resolution fails (rev-parse returns nothing for
 # EITHER side) -> falls through to existing Phase 1-3 logic -> still blocked.
 scenario \
-  '#552 toplevel resolution fails (MOCK_TOPLEVEL empty) -> fail-closed, still blocked' \
+  '#552 common-dir resolution fails (MOCK_COMMON_DIR empty) -> fail-closed, still blocked' \
   'git push origin develop' \
   2 'BLOCKED' '' \
-  'MOCK_TOPLEVEL=;JSON_CWD=/other/repo'
+  'MOCK_COMMON_DIR=;JSON_CWD=/other/repo'
 
 scenario \
   '#552 non-Mercury repo, safe target `git push origin lane/foo` -> allowed (unaffected either way)' \
   'git push origin lane/foo' \
   0 '' '' \
   'JSON_CWD=/other/repo'
+
+# ===========================================================================
+# Issue #552 iter-2 (dual-verify NEEDS-CHANGES, real hook-call
+# reproductions — see Issue #552 fix-history comment in push-guard.sh for
+# the T1-T5 evidence this section formalizes into the regression suite)
+# ===========================================================================
+
+# T1 (Critical, most severe): a linked-worktree cwd — the hook's own NORMAL
+# execution context for every Mercury dev agent — must NOT be misread as
+# "a different repo" just because its `-C`/cwd path string differs from
+# CLAUDE_PROJECT_DIR. MOCK_COMMON_DIR pins both sides to the SAME value,
+# modeling "worktree path differs, but --git-common-dir agrees" (exactly
+# what real git does — verified live: `D:/Mercury/Mercury/.claude/
+# worktrees/agent-.../` and `D:/Mercury/Mercury` both resolve
+# --git-common-dir to `D:/Mercury/Mercury/.git`).
+scenario \
+  '#552 iter-2 T1: worktree cwd (differs from CLAUDE_PROJECT_DIR) but same git-common-dir -> still blocked' \
+  'git push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/some/worktree/path;MOCK_COMMON_DIR=pinned-common-dir'
+
+# T2: inline `GIT_DIR=`/`GIT_WORK_TREE=` env assignments (direct prefix and
+# `env`-wrapped form) redirect the real target repo — Phase 0 must not be
+# swayed by an accompanying non-Mercury cwd; the whole segment falls back
+# to Phase 1-3 fail-closed instead.
+scenario \
+  '#552 iter-2 T2a: inline GIT_DIR= assignment -> fail-closed, still blocked despite non-Mercury cwd' \
+  'GIT_DIR=/other/repo/.git git push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo'
+
+scenario \
+  '#552 iter-2 T2b: inline GIT_WORK_TREE= assignment -> fail-closed, still blocked' \
+  'GIT_WORK_TREE=/other/repo git push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo'
+
+scenario \
+  '#552 iter-2 T2c: `env GIT_DIR=... GIT_WORK_TREE=...` wrapper form -> fail-closed, still blocked' \
+  'env GIT_DIR=/other/repo/.git GIT_WORK_TREE=/other/repo git push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo'
+
+# T3: `--git-dir`/`--work-tree` global options (both `=` and separate-arg
+# forms) — same rationale as T2, expressed as git flags instead of env vars.
+scenario \
+  '#552 iter-2 T3a: `--git-dir=`/`--work-tree=` inline -> fail-closed, still blocked' \
+  'git --git-dir=/other/repo/.git --work-tree=/other/repo push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo'
+
+scenario \
+  '#552 iter-2 T3b: `--git-dir`/`--work-tree` separate-arg -> fail-closed, still blocked' \
+  'git --git-dir /other/repo/.git --work-tree /other/repo push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo'
+
+# T4/T5 regression net (already covered above by the pre-existing "default
+# cwd" and "non-Mercury repo" scenarios, restated here for direct
+# traceability to the Issue #552 iter-2 review table).
+scenario \
+  '#552 iter-2 T4: main-checkout cwd, `git push origin develop` -> still blocked (unchanged)' \
+  'git push origin develop' \
+  2 'BLOCKED'
+
+scenario \
+  '#552 iter-2 T5: non-Mercury-repo cwd, `git push origin master` -> allowed (unchanged)' \
+  'git push origin master' \
+  0 '' '' \
+  'JSON_CWD=/other/repo'
+
+# Repeated `-C`: git's real semantics is cumulative-relative (`-C a -C b`
+# == `-C a/b`), not "last value wins" — unmodeled, so Phase 0 must skip
+# entirely (fail-closed) rather than resolve against just the last `-C`.
+# A protected target must still block; a safe target is unaffected (Phase
+# 0 skip only withholds an ALLOW, it never manufactures a BLOCK).
+scenario \
+  '#552 iter-2: repeated `-C` (cumulative-relative semantics unmodeled) -> fail-closed, protected target still blocked' \
+  'git -C /other/repo -C /another/segment push origin develop' \
+  2 'BLOCKED'
+
+scenario \
+  '#552 iter-2: repeated `-C`, safe target -> not blocked (Phase 0 skip does not manufacture a block)' \
+  'git -C /other/repo -C /another/segment push origin lane/foo' \
+  0 ''
+
+# Relative `-C` must resolve against HOOK_CWD (where the command actually
+# executes), not the hook process's own cwd.
+scenario \
+  '#552 iter-2: relative `-C .` resolves against HOOK_CWD (default = CLAUDE_PROJECT_DIR) -> still blocked (same repo)' \
+  'git -C . push origin develop' \
+  2 'BLOCKED'
+
+scenario \
+  '#552 iter-2: relative `-C sub` from a non-Mercury HOOK_CWD -> allowed (still resolves to the non-Mercury repo)' \
+  'git -C sub push origin develop' \
+  0 '' '' \
+  'JSON_CWD=/other/repo'
+
+scenario \
+  '#552 iter-2: relative `-C` with no HOOK_CWD to anchor it -> cannot resolve, fail-closed, still blocked' \
+  'git -C sub push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD='
 
 # ===========================================================================
 # Summary

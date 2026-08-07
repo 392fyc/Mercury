@@ -58,6 +58,46 @@
 #     Any failure to resolve either toplevel falls through unchanged to
 #     the existing fail-closed Phase 1-3 logic — this check can only ever
 #     grant a POSITIVELY CONFIRMED skip, never a bypass from uncertainty.
+#
+#     Iter 2 (dual-verify NEEDS-CHANGES on both sides, real hook-call
+#     reproductions, not theoretical) found 3 regressive bypasses in the
+#     iter-1 Phase 0:
+#       - Critical: wrong identity predicate. `--show-toplevel` returns the
+#         PER-WORKTREE path; a Mercury dev-agent linked worktree (this
+#         hook's own normal execution context, `.claude/worktrees/<id>/`)
+#         has a toplevel that differs from the main checkout's, so a push
+#         FROM a worktree was misclassified as "a different repo" and
+#         allowed through — the worst possible direction of error. Fixed:
+#         compare `--git-common-dir` instead (identical across all linked
+#         worktrees of the same repo; verified via `git worktree list` +
+#         `rev-parse` on this exact environment, see Phase 0 comment below).
+#       - Critical: unmodelled repo selectors treated as harmless noise.
+#         `--git-dir`/`--work-tree` (space or `=` form) were silently
+#         skipped by the global-option walker without being recorded;
+#         inline `GIT_DIR=`/`GIT_WORK_TREE=` env assignments were absorbed
+#         by the generic `VAR=value` wrapper-strip case the same way;
+#         repeated `-C` (git's real semantics: each accumulates RELATIVE TO
+#         the previous, not "last wins") only kept the final occurrence.
+#         Any of these let a command's ACTUAL target repo diverge from
+#         what Phase 0 resolved, silently allowing a Mercury push through
+#         under a resolved-but-wrong "different repo" verdict. Fixed: any
+#         of these three signals sets UNRESOLVABLE_SELECTOR and Phase 0 is
+#         skipped ENTIRELY for that segment (falls to Phase 1-3 unchanged)
+#         — fail-closed, never a source of leniency.
+#       - Medium: a relative `-C <path>` was resolved against the HOOK
+#         PROCESS's own cwd, not against `HOOK_CWD` (where the actual
+#         command executes) — base mismatch. Fixed: relative `-C` values
+#         are joined onto `$HOOK_CWD`; if `HOOK_CWD` is unavailable to
+#         anchor it, treated as unresolvable (falls under the same
+#         fail-closed skip as above, not as "no -C at all").
+#
+#     Documented non-fix (Low, out of threat model, same tier as the
+#     existing `bash -c "..."` recursive-shell limitation noted elsewhere
+#     in this file): a `subst` drive letter, UNC path, junction, or
+#     symlink can make the SAME physical repo resolve to two different
+#     `--git-common-dir` strings, which would incorrectly allow a Mercury
+#     push through. Requires deliberately constructing such an alias;
+#     not addressed here.
 
 INPUT=$(cat)
 
@@ -83,13 +123,59 @@ _normalize_path() {
   printf '%s' "$p"
 }
 
-# Issue #552 — Mercury repo's own git toplevel, resolved once. Used by the
-# Phase 0 repo-awareness check in process_segment() to decide whether a
+# Issue #552 iter-2 — resolve a directory's git COMMON dir (the shared
+# `.git` across all linked worktrees of the same repo), NOT its toplevel.
+# A Mercury dev-agent worktree (`.claude/worktrees/<id>/`, this hook's own
+# normal execution context) has its own distinct toplevel but shares the
+# SAME common-dir as the main checkout — comparing toplevel wrongly
+# classified a worktree-originated push as "a different repo" (a real
+# regression, reproduced with real hook calls: worktree toplevel
+# `D:/Mercury/Mercury/.claude/worktrees/agent-.../`, main-checkout toplevel
+# `D:/Mercury/Mercury` — different strings, same repo). Common-dir is
+# identical for both: `D:/Mercury/Mercury/.git`.
+#
+# `--path-format=absolute` (forces the printed path to be absolute and
+# canonical) requires git >= 2.31 — verified via the official upstream
+# release notes: "git rev-parse can be explicitly told to give output as
+# absolute or relative path with the --path-format=(absolute|relative)
+# option" (https://github.com/git/git/blob/master/Documentation/RelNotes/2.31.0.adoc,
+# 2026-08-08). `--git-common-dir` itself is unaffected by `--path-format`
+# per the git-rev-parse manual page (https://git-scm.com/docs/git-rev-parse)
+# and has existed since git's worktree feature (long predates 2.31), so it
+# still works standalone on older git — but may then print a path relative
+# to the queried directory rather than absolute. `_git_common_dir()` tries
+# the modern absolute form first and falls back to resolving a relative
+# result with `cd`.
+_git_common_dir() {
+  local dir="$1"
+  local out
+  out=$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+  if [ -n "$out" ]; then
+    printf '%s' "$out"
+    return 0
+  fi
+  # --path-format unsupported (git < 2.31) or the combined call failed for
+  # another reason — retry the plain (pre-2.31-compatible) form.
+  out=$(git -C "$dir" rev-parse --git-common-dir 2>/dev/null)
+  [ -n "$out" ] || return 1
+  case "$out" in
+    /*|[A-Za-z]:[\\/]*|\\\\*)
+      # Already absolute (POSIX root, Windows drive-letter, or UNC).
+      printf '%s' "$out" ;;
+    *)
+      # Relative result — resolve it against the queried directory.
+      ( cd "$dir" 2>/dev/null && cd "$out" 2>/dev/null && pwd )
+      ;;
+  esac
+}
+
+# Issue #552 — Mercury repo's own git common-dir, resolved once. Used by
+# the Phase 0 repo-awareness check in process_segment() to decide whether a
 # `git push` segment targets THIS repo (protection applies) or a different
 # one (out of scope, allowed through). Empty on resolution failure — Phase 0
 # treats that as "cannot determine", falling through to the existing
 # fail-closed Phase 1-3 logic unchanged.
-MERCURY_TOPLEVEL=$(git -C "$_PROJECT" rev-parse --show-toplevel 2>/dev/null)
+MERCURY_COMMON_DIR=$(_git_common_dir "$_PROJECT")
 
 if [ "${GUARD_DEBUG:-0}" = "1" ] && [ -f "$LOG_FILE" ] && [ "$(wc -c < "$LOG_FILE")" -gt 102400 ]; then
   tail -100 "$LOG_FILE" > "$LOG_FILE.tmp" && mv "$LOG_FILE.tmp" "$LOG_FILE"
@@ -346,6 +432,14 @@ process_segment() {
   local ntok=${#tokens[@]}
   local i=0
 
+  # Issue #552 iter-2 — set to 1 the instant this segment carries a repo
+  # selector Phase 0 cannot safely model (inline GIT_DIR=/GIT_WORK_TREE=,
+  # --git-dir/--work-tree, or repeated -C). When set, Phase 0 is skipped
+  # ENTIRELY below — this segment falls straight through to the existing
+  # Phase 1-3 logic, exactly as if Issue #552 had never shipped. Never used
+  # to grant a skip, only to withhold one.
+  local UNRESOLVABLE_SELECTOR=0
+
   # Wrapper-strip: skip leading env-var assignments, command wrappers, and
   # subshell/group open chars. Loop until no transformation applies — no
   # iteration cap (closes the iter-1 6+ env wrapper bypass; transforms shrink
@@ -410,7 +504,17 @@ process_segment() {
       --|--*|-[A-Za-z]*)
         i=$((i + 1)); _seen_change=1 ;;
       # VAR=value assignment (now quote-aware via awk tokenization).
+      # Issue #552 iter-2 (Codex): `GIT_DIR=`/`GIT_WORK_TREE=` inline env
+      # assignments — whether as a direct prefix (`GIT_DIR=x git push ...`)
+      # or via `env` (`env GIT_DIR=x git push ...`, since `env` itself is
+      # already stripped by the wrapper case above, leaving this same
+      # `VAR=value` token next) — silently redirect which repo the
+      # subsequent `git` invocation targets. Flag as unresolvable rather
+      # than let Phase 0 resolve against the wrong (unmodified) directory.
       [A-Za-z_]*=*)
+        case "$tok" in
+          GIT_DIR=*|GIT_WORK_TREE=*) UNRESOLVABLE_SELECTOR=1 ;;
+        esac
         i=$((i + 1)); _seen_change=1 ;;
     esac
   done
@@ -426,17 +530,37 @@ process_segment() {
   # authoritative signal for which repo this segment's push targets.
   local push_idx=-1
   local GIT_C_PATH=""
+  local GIT_C_COUNT=0
   while [ "$i" -lt "$ntok" ]; do
     local tok="${tokens[$i]}"
     case "$tok" in
       push) push_idx=$i; break ;;
       -C)
+        # Issue #552 iter-2 (Codex): git's real multi -C semantics is
+        # cumulative-relative (`git -C a -C b` == `-C a/b`, each new -C
+        # resolved relative to the previous one's result), not "last
+        # value wins". Modeling that correctly needs a full relative-path
+        # join chain; instead we just count occurrences and flag >1 as
+        # unresolvable below (GIT_C_PATH is still captured for the common
+        # single-`-C` case, but ignored whenever GIT_C_COUNT>1).
         GIT_C_PATH="${tokens[$((i + 1))]:-}"
+        GIT_C_COUNT=$((GIT_C_COUNT + 1))
         i=$((i + 2)); continue ;;
-      -c|--git-dir|--work-tree|--namespace|--super-prefix)
+      --git-dir|--work-tree)
+        # Issue #552 iter-2 (Codex): these redirect which repo/worktree
+        # git operates on independently of cwd/-C — Phase 0 cannot safely
+        # resolve the true target without replicating git's own selector
+        # precedence rules. Flag as unresolvable; still skip flag+value so
+        # the rest of the walker (Phase 1-3 fallback) is unaffected.
+        UNRESOLVABLE_SELECTOR=1
+        i=$((i + 2)); continue ;;
+      -c|--namespace|--super-prefix)
         # value-taking global option: skip flag + value in one step
         i=$((i + 2)); continue ;;
-      --git-dir=*|--work-tree=*|--namespace=*|--super-prefix=*)
+      --git-dir=*|--work-tree=*)
+        UNRESOLVABLE_SELECTOR=1
+        i=$((i + 1)); continue ;;
+      --namespace=*|--super-prefix=*)
         # inlined value: skip flag only
         i=$((i + 1)); continue ;;
       --help|--version|-h|-v|-p|--paginate|-P|--no-pager|--bare|--no-replace-objects|--literal-pathspecs|--no-optional-locks)
@@ -451,21 +575,46 @@ process_segment() {
 
   [ "$push_idx" -ge 0 ] || return 0
 
+  [ "$GIT_C_COUNT" -gt 1 ] && UNRESOLVABLE_SELECTOR=1
+
   # ── Phase 0: repo-awareness (Issue #552) ──────────────────────────────
-  # Resolve which repo this segment's `git push` actually targets:
-  # `-C <path>` (authoritative, overrides cwd for this invocation) else the
-  # hook stdin JSON's `cwd` field. If that resolves to a git toplevel that
-  # differs from Mercury's own toplevel, this push is out of this guard's
-  # scope — allow it through. Any failure to resolve (rev-parse errors,
-  # empty signal, MERCURY_TOPLEVEL itself unresolved) falls through
-  # unchanged to Phase 1-3 below — fail-closed, never a bypass source.
-  local _repo_path="${GIT_C_PATH:-$HOOK_CWD}"
-  if [ -n "$_repo_path" ] && [ -n "$MERCURY_TOPLEVEL" ]; then
-    local _target_toplevel
-    _target_toplevel=$(git -C "$_repo_path" rev-parse --show-toplevel 2>/dev/null)
-    if [ -n "$_target_toplevel" ] && [ "$(_normalize_path "$_target_toplevel")" != "$(_normalize_path "$MERCURY_TOPLEVEL")" ]; then
-      debug_log "ALLOWED (non-Mercury repo): target='$_target_toplevel' mercury='$MERCURY_TOPLEVEL'"
-      return 0
+  # Skipped entirely (falls straight to Phase 1-3, as if #552 never
+  # shipped) whenever this segment carries a repo selector we cannot
+  # safely model — see UNRESOLVABLE_SELECTOR comment above.
+  if [ "$UNRESOLVABLE_SELECTOR" -eq 0 ]; then
+    # Resolve which repo this segment's `git push` actually targets:
+    # `-C <path>` (authoritative — overrides cwd for this invocation) else
+    # the hook stdin JSON's `cwd` field. A relative `-C` value is resolved
+    # against `HOOK_CWD` (where the command actually executes), NOT this
+    # hook process's own cwd — those can differ. If `-C` is relative and
+    # `HOOK_CWD` is unavailable to anchor it, there is nothing safe to
+    # resolve, so `_repo_path` stays empty and Phase 0 falls through below
+    # exactly like any other resolution failure.
+    local _repo_path=""
+    if [ -n "$GIT_C_PATH" ]; then
+      case "$GIT_C_PATH" in
+        /*|[A-Za-z]:[\\/]*|\\\\*)
+          # Already absolute (POSIX root, Windows drive-letter, or UNC).
+          _repo_path="$GIT_C_PATH" ;;
+        *)
+          [ -n "$HOOK_CWD" ] && _repo_path="$HOOK_CWD/$GIT_C_PATH" ;;
+      esac
+    else
+      _repo_path="$HOOK_CWD"
+    fi
+
+    # If that resolves to a git common-dir that differs from Mercury's own,
+    # this push is out of this guard's scope — allow it through. Any
+    # failure to resolve (rev-parse errors, empty signal, MERCURY_COMMON_DIR
+    # itself unresolved) falls through unchanged to Phase 1-3 below —
+    # fail-closed, never a bypass source.
+    if [ -n "$_repo_path" ] && [ -n "$MERCURY_COMMON_DIR" ]; then
+      local _target_common_dir
+      _target_common_dir=$(_git_common_dir "$_repo_path")
+      if [ -n "$_target_common_dir" ] && [ "$(_normalize_path "$_target_common_dir")" != "$(_normalize_path "$MERCURY_COMMON_DIR")" ]; then
+        debug_log "ALLOWED (non-Mercury repo): target='$_target_common_dir' mercury='$MERCURY_COMMON_DIR'"
+        return 0
+      fi
     fi
   fi
 
