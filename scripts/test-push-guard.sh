@@ -1354,80 +1354,36 @@ scenario \
   'JSON_CWD='
 
 # ===========================================================================
-# Issue #552 iter-3 (dual-verify NEEDS-CHANGES round 2, real hook-call
-# reproductions of a whole NEW class Codex found — see the "command-level
-# simplicity gate" fix-history comment in push-guard.sh for full rationale)
-#
-# All iter-1/iter-2 fixes gated Phase 0 at the SEGMENT level. This class of
-# bypass works because a shell-state-transition construct (cd/pushd/
-# GIT_DIR=/--chdir) can live in a DIFFERENT segment than the vulnerable
-# `git push`, so no segment-scoped check ever sees both halves together.
-# The command-level simplicity gate scans the WHOLE token stream once,
-# before segmenting, and disables Phase 0 for the ENTIRE command if
-# triggered — these scenarios use `JSON_CWD=/other/repo` (so, absent the
-# gate, Phase 0 would otherwise resolve "different repo" and ALLOW the
-# push) specifically to prove the gate overrides that and still blocks.
+# Issue #552 iter-3 (superseded by iter-4 below for `cd`/`pushd`/`popd` —
+# see the iter-4 block for those; `--chdir`/glued `-C<path>` are still
+# flat, position-agnostic Pass A triggers unaffected by the iter-4
+# cd-tracking rewrite, kept here unchanged)
 # ===========================================================================
 
-# G1: `cd` anywhere -> whole-command gate fires. Real git behavior: `cd
-# <dir> && <cmd>` genuinely runs <cmd> inside <dir> — this is the single
-# most natural way to write "go do something in another repo".
+# `env --chdir=<dir> <cmd>` — verified real GNU coreutils env(1) behavior,
+# runs <cmd> with its cwd changed to <dir> before exec. Unlike `cd`/
+# `pushd` (now tracked precisely — see iter-4 below), `--chdir` stays a
+# blunt "disable Phase 0 for the whole command" trigger regardless of
+# where it appears, since resolving its exact effect on a later segment's
+# cwd would require the same tracking complexity for comparatively rare
+# real-world usage.
 scenario \
-  '#552 iter-3 G1: `cd <dir> && git push origin develop` (real state transition) -> gate fires, still blocked' \
-  'cd /somewhere && git push origin develop' \
-  2 'BLOCKED' '' \
-  'JSON_CWD=/other/repo'
-
-scenario \
-  '#552 iter-3 G1b: `cd` in an EARLIER segment than the push -> gate fires (whole-command, not segment-local)' \
-  'cd /somewhere && git add -A && git push origin develop' \
-  2 'BLOCKED' '' \
-  'JSON_CWD=/other/repo'
-
-# G2: `GIT_DIR=`/`GIT_WORK_TREE=` via `export` — `export` is stripped as a
-# no-op wrapper by process_segment's wrapper-strip loop (same handling as
-# `env`), leaving the `GIT_DIR=x` token exposed to the gate scan exactly
-# like the plain-prefix and `env`-wrapped forms already covered by the
-# iter-2 per-segment UNRESOLVABLE_SELECTOR check — this scenario proves the
-# whole-command gate also catches it when `export ...; git push ...` are
-# TWO SEPARATE STATEMENTS (`;`-joined), i.e. two different segments, which
-# UNRESOLVABLE_SELECTOR (segment-scoped) cannot see across.
-scenario \
-  '#552 iter-3 G2: `export GIT_DIR=...; git push origin develop` (two segments) -> gate fires, still blocked' \
-  'export GIT_DIR=/mercury/.git; git push origin develop' \
-  2 'BLOCKED' '' \
-  'JSON_CWD=/other/repo'
-
-# G3: `env --chdir=<dir> <cmd>` — verified real GNU coreutils env(1)
-# behavior, runs <cmd> with its cwd changed to <dir> before exec.
-scenario \
-  '#552 iter-3 G3: `env --chdir=<dir> git push origin develop` -> gate fires, still blocked' \
+  '#552 `env --chdir=<dir> git push origin develop` -> whole-command Phase 0 disabled, still blocked' \
   'env --chdir=/mercury git push origin develop' \
   2 'BLOCKED' '' \
   'JSON_CWD=/other/repo'
 
 scenario \
-  '#552 iter-3 G3b: `env --chdir <dir> git push origin develop` (separate-arg form) -> gate fires, still blocked' \
+  '#552 `env --chdir <dir> git push origin develop` (separate-arg form) -> still blocked' \
   'env --chdir /mercury git push origin develop' \
   2 'BLOCKED' '' \
   'JSON_CWD=/other/repo'
 
-# G4: `pushd` — same real state-transition property as `cd`.
+# Glued `-C<path>` (no separator) — verified live that real git rejects
+# this as `unknown option`, so it is NOT exploitable today; still flagged
+# defensively (zero-cost — see fix-history comment in push-guard.sh).
 scenario \
-  '#552 iter-3 G4: `pushd <dir> && git push origin develop` -> gate fires, still blocked' \
-  'pushd /mercury && git push origin develop' \
-  2 'BLOCKED' '' \
-  'JSON_CWD=/other/repo'
-
-# G5: glued `-C<path>` (no separator) — verified live that real git
-# rejects this as `unknown option`, so it is NOT exploitable today; the
-# gate still fires defensively (zero-cost — see fix-history comment).
-# Either outcome (blocked via the gate, or allowed because Phase 0 would
-# have resolved a genuinely different repo) would be acceptable per the
-# coordinator's acceptance table, since git itself already refuses this
-# syntax; this harness asserts the gate's defensive behavior (blocked).
-scenario \
-  '#552 iter-3 G5: glued `-C<path>` (git rejects this syntax; gate is defensive-only) -> gate fires, still blocked' \
+  '#552 glued `-C<path>` (git rejects this syntax; defensive-only) -> still blocked' \
   'git -C/mercury push origin develop' \
   2 'BLOCKED' '' \
   'JSON_CWD=/other/repo'
@@ -1447,19 +1403,154 @@ scenario \
   0 '' '' \
   'JSON_CWD=/other/repo'
 
-# Regression net: a "simple" command (no state-transition construct
-# anywhere) run inside a non-Mercury repo must remain fully unaffected by
-# the iter-3 gate — this is #552's entire reason to exist.
 scenario \
-  '#552 iter-3 regression: simple external-repo add+commit+push chain (no state-transition token) -> unaffected, still allowed' \
-  'git add -A && git commit -m x && git push origin master' \
+  '#552 regression: `-C <absolute-path>` (properly separated, not glued) still resolves and allows a force-push to +master' \
+  'git -C /other/repo push origin +master' \
+  0 ''
+
+# ===========================================================================
+# Issue #552 iter-4 (dual-verify NEEDS-CHANGES round 3 — Codex + coordinator
+# independent repro, same 3 findings, high-confidence; see the iter-4
+# fix-history comment in push-guard.sh for the full before/after
+# rationale). The iter-3 blunt "cd anywhere disables Phase 0" scan was
+# wrong on BOTH ends:
+#   - Under-blocking: `eval "cd <dir> && ..."` / `source ./x.sh` / `X=cd;
+#     $X <dir>` all really change cwd while going undetected (the literal
+#     token `cd` never appears bare in the command text).
+#   - Over-blocking: `cd docs && git push origin master` in a non-Mercury
+#     repo (the most natural way to write "go do something in a
+#     subdirectory") or `git commit -m cd && ...` (`cd` as literal COMMIT
+#     MESSAGE content) both lost Phase 0 needlessly, reintroducing the
+#     exact "workflow loses continuity" complaint #552 exists to fix.
+#
+# Fix: replace the blunt scan with `cd`/`pushd` TRACKING (EFFECTIVE_CWD
+# threaded across segments in order) — see push-guard.sh Pass B. Mock
+# semantics for these scenarios: `MOCK_COMMON_DIR=pinned-mercury` models
+# "wherever `cd` lands, its common-dir happens to BE Mercury's" (since the
+# pin wins for ALL common-dir queries regardless of the literal path
+# string queried) — this is how these tests simulate "the tracked cd
+# target genuinely resolves to Mercury" without needing a real git repo at
+# a literal `D:/Mercury/Mercury`-shaped path inside the test harness.
+# ===========================================================================
+
+# ── MUST BLOCK: cd/pushd/popd/eval/source/indirection actually reaches
+# Mercury (mocked via MOCK_COMMON_DIR pin) ─────────────────────────────
+scenario \
+  '#552 iter-4: `cd <mercury> && git push origin develop` -> tracked, resolves to Mercury, still blocked' \
+  'cd /mercury-placeholder && git push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo;MOCK_COMMON_DIR=pinned-mercury'
+
+scenario \
+  '#552 iter-4: `\cd <mercury> && git push origin develop` (backslash-escaped, awk still tokenizes to bare `cd`) -> tracked, still blocked' \
+  '\cd /mercury-placeholder && git push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo;MOCK_COMMON_DIR=pinned-mercury'
+
+scenario \
+  '#552 iter-4: `builtin cd <mercury> && git push origin develop` (wrapper-stripped before cd-detection) -> tracked, still blocked' \
+  'builtin cd /mercury-placeholder && git push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo;MOCK_COMMON_DIR=pinned-mercury'
+
+scenario \
+  '#552 iter-4: `command cd <mercury> && git push origin develop` -> tracked, still blocked' \
+  'command cd /mercury-placeholder && git push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo;MOCK_COMMON_DIR=pinned-mercury'
+
+scenario \
+  '#552 iter-4: `pushd <mercury> && git push origin develop` -> tracked same as cd, still blocked' \
+  'pushd /mercury-placeholder && git push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo;MOCK_COMMON_DIR=pinned-mercury'
+
+scenario \
+  '#552 iter-4: `popd && git push origin develop` -> popd needs an untracked stack, UNSAFE_STATE unconditionally, still blocked' \
+  'popd && git push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo'
+
+scenario \
+  '#552 iter-4: `eval "cd <mercury> && git push origin develop"` (quoted payload, opaque to segmentation) -> defensive payload scan blocks directly' \
+  'eval "cd /mercury-placeholder && git push origin develop"' \
+  2 'BLOCKED'
+
+scenario \
+  '#552 iter-4: `source ./x.sh; git push origin develop` (two segments — the VISIBLE push in segment 2 blocks via ordinary Phase 1-3, independent of Phase 0)' \
+  'source ./x.sh; git push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo'
+
+scenario \
+  '#552 iter-4: `. ./x.sh && git push origin develop` (dot-source form) -> same as source, still blocked' \
+  '. ./x.sh && git push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo'
+
+scenario \
+  '#552 iter-4: `X=cd; $X <mercury> && git push origin develop` (variable holding "cd") -> command-position token is `$X`, contains `$`, UNSAFE_STATE, still blocked' \
+  'X=cd; $X /mercury-placeholder && git push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo'
+
+# ── MUST ALLOW: cd stays within (or `cd` is not really a shell cd at
+# all in) a non-Mercury repo — Issue #552's entire reason to exist ────
+scenario \
+  '#552 iter-4: external repo `cd docs && git push origin master` (natural subdirectory workflow) -> tracked, still resolves to the SAME non-Mercury repo, allowed' \
+  'cd docs && git push origin master' \
   0 '' '' \
   'JSON_CWD=/other/repo'
 
 scenario \
-  '#552 iter-3 regression: `-C <absolute-path>` (properly separated, not glued) still resolves and allows a force-push to +master' \
-  'git -C /other/repo push origin +master' \
-  0 ''
+  '#552 iter-4: external repo `git commit -m cd && git push origin master` (`cd` is COMMIT MESSAGE DATA, not command position) -> not treated as cd, allowed' \
+  'git commit -m cd && git push origin master' \
+  0 '' '' \
+  'JSON_CWD=/other/repo'
+
+scenario \
+  '#552 iter-4: external repo `echo cd && git push origin master` (`cd` is an argument to echo, not command position) -> not treated as cd, allowed' \
+  'echo cd && git push origin master' \
+  0 '' '' \
+  'JSON_CWD=/other/repo'
+
+scenario \
+  '#552 iter-4: external repo `git add -A && git commit -m x && git push origin master` (no state-transition token at all) -> unaffected, allowed' \
+  'git add -A && git commit -m x && git push origin master' \
+  0 '' '' \
+  'JSON_CWD=/other/repo'
+
+# ── cd-tracking correctness: unsafe forms fall back to whole-command
+# disable (fail-closed) rather than being silently mistracked ─────────
+scenario \
+  '#552 iter-4: bare `cd` (no args, targets unknowable $HOME) && git push origin develop -> UNSAFE_STATE, still blocked' \
+  'cd && git push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo'
+
+scenario \
+  '#552 iter-4: `cd -` (previous dir, unknowable) && git push origin develop -> UNSAFE_STATE, still blocked' \
+  'cd - && git push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo'
+
+scenario \
+  '#552 iter-4: `cd $VAR` (variable in arg) && git push origin develop -> UNSAFE_STATE, still blocked' \
+  'cd $VAR && git push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo'
+
+scenario \
+  '#552 iter-4: `cd dir1 dir2` (multiple args, ambiguous) && git push origin develop -> UNSAFE_STATE, still blocked' \
+  'cd dir1 dir2 && git push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo'
+
+scenario \
+  '#552 iter-4: `cd *` (glob metachar in arg) && git push origin develop -> UNSAFE_STATE, still blocked' \
+  'cd * && git push origin develop' \
+  2 'BLOCKED' '' \
+  'JSON_CWD=/other/repo'
 
 # ===========================================================================
 # Summary

@@ -98,6 +98,83 @@
 #     `--git-common-dir` strings, which would incorrectly allow a Mercury
 #     push through. Requires deliberately constructing such an alias;
 #     not addressed here.
+#
+#     Iter 3 (dual-verify NEEDS-CHANGES round 2) found a NEW class: a
+#     shell-state-transition construct (`cd`, `export GIT_DIR=`, `env
+#     --chdir=`, `pushd`) can invalidate Phase 0's HOOK_CWD/-C snapshot
+#     from a DIFFERENT segment than the one containing the vulnerable
+#     `git push` (`cd /other && git push origin develop` — `cd` in
+#     segment 1, push in segment 2 — no segment-scoped check sees both
+#     halves). Fixed with a coarse COMMAND-LEVEL token scan disabling
+#     Phase 0 for the whole command if any such construct appeared
+#     ANYWHERE, regardless of segment.
+#
+#     Iter 4 (dual-verify NEEDS-CHANGES round 3 — Codex + coordinator
+#     independent repro, same 3 findings, high-confidence) found the
+#     iter-3 coarse scan was wrong on BOTH ends at once:
+#       - Under-blocking (Critical): `eval "cd <mercury> && git push origin
+#         develop"` (content inside quotes, the `cd` token never appears
+#         bare), `source ./x.sh; git push origin develop` / `. ./x.sh &&
+#         ...` (verified live: sourcing a script containing `cd` DOES
+#         change the shell's cwd — the transition isn't even IN the
+#         command text), and `X=cd; $X <mercury> && ...` (verified live:
+#         bash really does execute the resulting `cd` after variable
+#         expansion) all changed cwd to Mercury while going undetected —
+#         the iter-3 scan only recognized `cd`/`pushd`/`popd` as LITERAL
+#         tokens, missing every indirection.
+#       - Over-blocking (Medium, but directly undermines #552's purpose):
+#         the iter-3 scan matched `cd` ANYWHERE in the token stream, so a
+#         non-Mercury-repo `cd docs && git push origin master` (the most
+#         natural way to write "go do something in a subdirectory") or
+#         even `git commit -m cd && git push origin master` (`cd` as
+#         literal COMMIT MESSAGE CONTENT, not a command) both lost Phase 0
+#         and got needlessly blocked — reintroducing the exact "workflow
+#         loses continuity" complaint Issue #552 exists to fix.
+#
+#     Iter 4 fix replaces the blunt token scan with `cd`/`pushd`
+#     TRACKING: `EFFECTIVE_CWD` starts at `HOOK_CWD` and advances,
+#     segment-by-segment IN ORDER, whenever a segment's COMMAND-POSITION
+#     token (the first non-wrapper token — same wrapper-strip rule set as
+#     process_segment's own git-detection, see `_find_command_position()`)
+#     is `cd` or `pushd` with EXACTLY ONE literal argument (no `$`,
+#     backtick, or glob metachar, and not bare `cd`/`cd -` which target an
+#     unknowable `$HOME`/previous-dir). A push segment's Phase 0 resolves
+#     against `EFFECTIVE_CWD` AS OF ENTERING THAT SEGMENT (its own
+#     `SEG_ENTRY_CWD` snapshot), not the raw original `HOOK_CWD`. This is
+#     STRICTER than the iter-3 scan where it needs to be (indirection
+#     through `eval`/`source`/`.`/a variable holding `cd`, or any
+#     unresolvable `cd` form, still disables Phase 0 for the WHOLE
+#     command via `UNSAFE_STATE`) and LOOSER where it should be (a bare
+#     `cd` to a subdirectory of a non-Mercury repo, or `cd` appearing only
+#     as DATA at a non-command position, no longer costs the allow).
+#     `UNSAFE_STATE` triggers, still whole-command and position-scanned
+#     exactly as noted for each:
+#       - command-position token is `eval`/`source`/`.` (recursing into
+#         unknown content this hook cannot parse)
+#       - command-position token contains `$` or a backtick (COMMAND
+#         position only — deliberately NOT scanning data/argument
+#         positions, so `git commit -m "fix $foo"` in an external repo is
+#         unaffected; scanning data positions would reintroduce the same
+#         class of over-blocking iter-4 exists to fix)
+#       - `cd`/`pushd` with zero args, `cd -`, a variable/glob-containing
+#         arg, or more than one arg (ambiguous — e.g. a flag alongside the
+#         directory) — cannot be tracked safely
+#       - `popd` (needs a directory-stack, not modeled) at ANY command
+#         position
+#       - `GIT_DIR=*`/`GIT_WORK_TREE=*` at ANY token position in ANY
+#         segment (unchanged from iter-3 — position-agnostic, since these
+#         redirect git's repo selection regardless of where they appear)
+#       - `--chdir`/`--chdir=*` at ANY token position (unchanged)
+#       - glued `-C<path>` at ANY token position (unchanged — still
+#         defensive-only, git rejects this syntax today)
+#
+#     Documented non-fix (Low, out of threat model, same tier as the
+#     existing `bash -c "..."` limitation): a `bash -c "..."` (or any
+#     other recursive-shell invocation) hiding a `cd`, a pre-existing
+#     opaque shell function/alias that itself changes cwd, and the
+#     path-aliasing cases already documented above (subst/UNC/junction/
+#     symlink) remain out of scope — all require deliberately constructing
+#     an indirection this hook cannot see into; not addressed here.
 
 INPUT=$(cat)
 
@@ -420,86 +497,229 @@ END {
 }
 ') || block_parser_fail "awk tokenizer exited non-zero"
 
-# Issue #552 iter-3 (dual-verify NEEDS-CHANGES, real hook-call
-# reproductions from `cd`/`pushd`/exported `GIT_DIR=`/`env --chdir=`/glued
-# `-C<path>` — see fix-history comment near the top of this file) —
-# COMMAND-LEVEL simplicity gate. Phase 0 (below) infers the target repo
-# from a STATIC snapshot: the `-C <path>` on the specific push segment, or
-# else the hook stdin JSON's `cwd` field captured once at hook invocation.
-# That snapshot is only valid if NOTHING in the whole command changes the
-# shell's working directory or git's repo-selection env vars BEFORE the
-# push runs — and shell state transitions are not segment-scoped: `cd
-# /other/repo && git push origin develop` puts the `cd` in segment 1 and
-# the vulnerable push in segment 2, so a per-segment check (like the
-# iter-2 UNRESOLVABLE_SELECTOR gate) cannot catch it. This gate therefore
-# scans the ENTIRE token stream (every segment) BEFORE any segment is
-# processed, and — if triggered — disables Phase 0 for the WHOLE command
-# (every segment falls back to Phase 1-3, exactly as if Issue #552 had
-# never shipped), not just the segment that carries the trigger token.
+# ── Parse the awk-emitted typed line-protocol stream into a flat token
+# array + per-segment size array (Issue #552 iter-4 groundwork). Lines
+# beginning with `TOK<TAB>` are tokens (with the TAB-and-everything-before
+# stripped); the bare line `SEG` is a segment terminator. Any other line
+# shape is a protocol violation — ignored to fail closed.
 #
-# Triggers (each verified against real git/env behavior, not assumed):
-#   - `cd` / `pushd` / `popd` as an exact token anywhere — real shell-state
-#     transitions. Real hook-call repro: `cd D:/Mercury/Mercury && git push
-#     origin develop` (external cwd, no other selector) was ALLOWED
-#     pre-fix; that push actually executes inside Mercury.
-#   - Any token matching `GIT_DIR=*` / `GIT_WORK_TREE=*` — catches the
-#     prefix form (`GIT_DIR=x git push ...`), the `export` form (`export
-#     GIT_DIR=x; git push ...` — `export` itself is stripped as a no-op
-#     wrapper by process_segment's wrapper-strip loop, leaving this same
-#     `GIT_DIR=x` token), and the `env`-wrapped form, in ANY segment,
-#     regardless of the iter-2 per-segment UNRESOLVABLE_SELECTOR gate
-#     (which only sees the segment carrying the actual `git push`).
-#   - `--chdir` / `--chdir=*` — `env --chdir=<dir> <cmd>` is a real,
-#     verified way to run a command in another directory (GNU coreutils
-#     env(1)); a `git` invocation reached through it inherits the changed
-#     cwd, invalidating any `cwd`-derived Phase 0 signal.
-#   - `-C<path>` glued with no separator (e.g. `git -CD:/Mercury/Mercury
-#     push ...`) — verified live: git itself rejects this as `unknown
-#     option` (git requires `-C` and its value as separate tokens, or
-#     none at all — never glued), so it is not exploitable today. Included
-#     anyway as a zero-cost defensive trigger in case that ever changes,
-#     and because the token-level scan cannot tell "not exploitable now"
-#     from "not exploitable ever" — being conservative here costs nothing.
-#
-# This is a coarse, command-level trigger by design — it does NOT try to
-# determine whether a `cd`/`GIT_DIR=`/etc. token actually AFFECTS the
-# specific push segment being evaluated (that would require full shell
-# control-flow modeling, which this hook explicitly does not attempt
-# elsewhere either — see the awk tokenizer's documented `bash -c "..."`
-# limitation). A "simple" command (no such tokens anywhere) keeps full
-# Phase 0 behavior; a command containing ANY of these constructs loses
-# Phase 0 for its ENTIRE duration. This does not regress real non-Mercury-
-# repo usage: `git add -A && git commit -m x && git push origin master`
-# run inside an external repo contains no state-transition construct, so
-# it is unaffected and still allowed through.
-COMMAND_LEVEL_UNSAFE=0
+# ALL_TOKENS is every token across the WHOLE command, segment boundaries
+# concatenated away — used by the Pass A flat scan below (position-
+# agnostic triggers). SEG_SIZES[k] is segment k's token count — used to
+# re-slice ALL_TOKENS into per-segment arrays for Pass B (cd-tracking) and
+# the final per-segment process_segment() dispatch, without re-parsing
+# $_TOK_STREAM a second or third time.
 TAB=$(printf '\t')
 TOK_PREFIX="TOK${TAB}"
-while IFS= read -r _gate_line; do
-  case "$_gate_line" in
-    "${TOK_PREFIX}"*)
-      _gate_tok="${_gate_line#${TOK_PREFIX}}"
-      case "$_gate_tok" in
-        cd|pushd|popd) COMMAND_LEVEL_UNSAFE=1 ;;
-        GIT_DIR=*|GIT_WORK_TREE=*) COMMAND_LEVEL_UNSAFE=1 ;;
-        --chdir|--chdir=*) COMMAND_LEVEL_UNSAFE=1 ;;
-        -C?*) COMMAND_LEVEL_UNSAFE=1 ;;
-      esac
-      ;;
-  esac
+declare -a ALL_TOKENS=()
+declare -a SEG_SIZES=()
+declare -a CUR_SEG=()
+while IFS= read -r _p_line; do
+  if [ "$_p_line" = "SEG" ]; then
+    if [ "${#CUR_SEG[@]}" -gt 0 ]; then
+      SEG_SIZES+=( "${#CUR_SEG[@]}" )
+      ALL_TOKENS+=( "${CUR_SEG[@]}" )
+      CUR_SEG=()
+    fi
+  else
+    case "$_p_line" in
+      "${TOK_PREFIX}"*)
+        CUR_SEG+=( "${_p_line#${TOK_PREFIX}}" )
+        ;;
+      *)
+        # Unrecognized line shape — defensive ignore. The awk tokenizer is
+        # the sole producer; this branch only fires under tampering.
+        ;;
+    esac
+  fi
 done <<EOF
 $_TOK_STREAM
 EOF
-[ "$COMMAND_LEVEL_UNSAFE" -eq 1 ] && debug_log "Phase 0 disabled for whole command (simplicity gate triggered)"
+# Defensive flush: awk's END block always emits a trailing SEG, but guard
+# the case where the stream was empty or truncated.
+if [ "${#CUR_SEG[@]}" -gt 0 ]; then
+  SEG_SIZES+=( "${#CUR_SEG[@]}" )
+  ALL_TOKENS+=( "${CUR_SEG[@]}" )
+fi
+
+# Issue #552 iter-4 — see the iter-4 fix-history comment near the top of
+# this file for the full before/after rationale. `UNSAFE_STATE` (renamed
+# from iter-3's `COMMAND_LEVEL_UNSAFE`) disables Phase 0 for the WHOLE
+# command when set — every segment falls back to Phase 1-3, exactly as if
+# Issue #552 had never shipped.
+UNSAFE_STATE=0
+
+# ── Pass A: position-agnostic whole-stream flat scan ──────────────────
+# These triggers redirect git's repo selection (or are defensive-only)
+# regardless of WHERE in the command they appear, so a flat scan over
+# every token (ignoring segment/command-position) is correct and
+# sufficient — unchanged from iter-3 for these three triggers specifically
+# (`cd`/`pushd`/`popd` moved OUT of this flat scan in iter-4 — see Pass B).
+for _t in "${ALL_TOKENS[@]}"; do
+  case "$_t" in
+    GIT_DIR=*|GIT_WORK_TREE=*) UNSAFE_STATE=1 ;;
+    --chdir|--chdir=*) UNSAFE_STATE=1 ;;
+    -C?*) UNSAFE_STATE=1 ;;
+  esac
+done
+
+# Issue #552 iter-4 — find the "command position" token index within a
+# segment's token array: the first token that is not a wrapper (env var
+# assignment, an env/command/exec/builtin/sudo/doas/nohup/time wrapper,
+# `!`, a control-flow keyword, or a flag). This is a SEPARATE, purpose-
+# built copy of process_segment's own wrapper-strip loop rather than a
+# shared refactor — process_segment's copy also sets UNRESOLVABLE_SELECTOR
+# as a side effect while walking (iter-2, segment-scoped), which is out of
+# scope for this pure lookup used only by Pass B below. If either wrapper-
+# strip rule set changes, update BOTH copies.
+# Echoes the index (may equal $#, i.e. one past the last token, if the
+# segment is entirely wrapper tokens with no command found).
+_find_command_position() {
+  local -a tokens=( "$@" )
+  local ntok=${#tokens[@]}
+  local i=0
+  local _seen_change=1
+  while [ "$_seen_change" -eq 1 ] && [ "$i" -lt "$ntok" ]; do
+    _seen_change=0
+    local tok="${tokens[$i]}"
+    case "$tok" in
+      "!")
+        i=$((i + 1)); _seen_change=1 ;;
+      if|then|else|elif|do|while|until)
+        i=$((i + 1)); _seen_change=1 ;;
+      env|command|exec|builtin|nohup|time|sudo|doas)
+        i=$((i + 1)); _seen_change=1 ;;
+      coproc|function)
+        i=$((i + 1)); _seen_change=1
+        if [ "$i" -lt "$ntok" ]; then
+          local _next="${tokens[$i]}"
+          case "$_next" in
+            git|cd|pushd|popd|eval|source) ;;  # don't consume, caller needs to match
+            [A-Za-z_][A-Za-z0-9_-]*) i=$((i + 1)) ;;
+          esac
+        fi
+        ;;
+      -u|-S|-C|--unset|--split-string|--chdir)
+        i=$((i + 2)); _seen_change=1 ;;
+      --*=*)
+        i=$((i + 1)); _seen_change=1 ;;
+      --|--*|-[A-Za-z]*)
+        i=$((i + 1)); _seen_change=1 ;;
+      [A-Za-z_]*=*)
+        i=$((i + 1)); _seen_change=1 ;;
+    esac
+  done
+  printf '%s' "$i"
+}
+
+# ── Pass B: per-segment cd/pushd tracking (Issue #552 iter-4) ─────────
+# EFFECTIVE_CWD starts at HOOK_CWD and advances, segment-by-segment IN
+# ORDER, whenever a segment's command-position token is `cd`/`pushd` with
+# exactly one safely-literal argument. SEG_ENTRY_CWD[k] snapshots
+# EFFECTIVE_CWD as of ENTERING segment k (i.e. BEFORE that segment's own
+# cd/pushd, if any, is applied) — this is what a push in segment k should
+# resolve against, not the raw original HOOK_CWD. Any construct this
+# cannot safely track sets UNSAFE_STATE=1 (whole-command, same as Pass A).
+EFFECTIVE_CWD="$HOOK_CWD"
+declare -a SEG_ENTRY_CWD=()
+_pb_off=0
+for _pb_sz in "${SEG_SIZES[@]}"; do
+  declare -a _pb_seg=( "${ALL_TOKENS[@]:$_pb_off:$_pb_sz}" )
+  SEG_ENTRY_CWD+=( "$EFFECTIVE_CWD" )
+  _pb_cmd_idx=$(_find_command_position "${_pb_seg[@]}")
+  if [ "$_pb_cmd_idx" -lt "$_pb_sz" ]; then
+    _pb_cmd_tok="${_pb_seg[$_pb_cmd_idx]}"
+    case "$_pb_cmd_tok" in
+      # Recursing into content this hook cannot parse (quoted `eval`
+      # payload, an external script's contents via `source`/`.`), or a
+      # command-position token built from an expansion this hook cannot
+      # resolve (`$X`, `` `cmd` ``) — MUST NOT trust EFFECTIVE_CWD past
+      # this point. Deliberately COMMAND-POSITION ONLY: a `$`/backtick
+      # appearing in a DATA position (e.g. `git commit -m "fix $foo"`)
+      # must NOT trigger this — that would reintroduce the exact
+      # over-blocking iter-4 exists to fix.
+      eval)
+        # `eval "cd <mercury> && git push origin develop"` — the awk
+        # tokenizer buffers the whole double-quoted argument as ONE
+        # token (spaces/`&&`/etc. inside quotes are literal, not
+        # separators), so the `git`/`push` tokens are NEVER independently
+        # visible to process_segment's own detection. Unlike `source`/`.`
+        # (whose risky content lives in an EXTERNAL FILE this hook has no
+        # visibility into regardless), `eval`'s payload IS present, in
+        # full, right here in the command string — just quote-shielded
+        # from segmentation. So Phase 1-3 provides ZERO protection for
+        # this case (it never sees a `git push` to check), unlike the
+        # `source ./x.sh; git push origin develop` case where the visible
+        # push in the SEPARATE segment after `;` still gets caught by
+        # Phase 1-3 normally. A narrow, deliberately coarse defensive scan
+        # of the payload text closes this gap: if it textually looks like
+        # `git ... push ... <protected-branch>`, block outright (not just
+        # disable Phase 0 — there is nothing else that will catch it).
+        # Over-blocking risk here is accepted and narrow (scoped only to
+        # `eval` payloads, an already-rare Claude Code pattern combined
+        # with these exact words).
+        _pb_payload="${_pb_seg[*]:$((_pb_cmd_idx + 1))}"
+        if printf '%s' "$_pb_payload" | grep -qE '(^|[^A-Za-z0-9_])git([^A-Za-z0-9_].*)?push' \
+           && printf '%s' "$_pb_payload" | grep -qE '(^|[^A-Za-z0-9_])(develop|master|main)([^A-Za-z0-9_]|$)'; then
+          block_push "eval payload textually contains a protected-branch push: '$_pb_payload'"
+        fi
+        UNSAFE_STATE=1
+        ;;
+      source|.|*'$'*|*'`'*)
+        UNSAFE_STATE=1 ;;
+      cd|pushd)
+        _pb_nargs=$(( _pb_sz - _pb_cmd_idx - 1 ))
+        if [ "$_pb_nargs" -ne 1 ]; then
+          # Zero args (bare `cd` → unknowable $HOME) or 2+ args
+          # (ambiguous — e.g. a flag alongside the directory, or a
+          # `pushd +N` stack-rotation form) — cannot track safely.
+          UNSAFE_STATE=1
+        else
+          _pb_arg="${_pb_seg[$((_pb_cmd_idx + 1))]}"
+          case "$_pb_arg" in
+            -|*'$'*|*'`'*|*'*'*|*'?'*|*'['*)
+              # `cd -` (previous dir, unknowable without a history we
+              # don't track) or an argument containing a variable/
+              # command-substitution/glob metachar (cannot resolve its
+              # literal value).
+              UNSAFE_STATE=1 ;;
+            /*|[A-Za-z]:[\\/]*|\\\\*)
+              # Absolute (POSIX root, Windows drive-letter, or UNC).
+              EFFECTIVE_CWD="$_pb_arg" ;;
+            *)
+              # Relative — join onto the current EFFECTIVE_CWD. If there
+              # is nothing to anchor a relative path against, this is
+              # unresolvable rather than silently wrong.
+              if [ -n "$EFFECTIVE_CWD" ]; then
+                EFFECTIVE_CWD="$EFFECTIVE_CWD/$_pb_arg"
+              else
+                UNSAFE_STATE=1
+              fi
+              ;;
+          esac
+        fi
+        ;;
+      popd)
+        # Needs a directory stack, which this hook does not model.
+        UNSAFE_STATE=1 ;;
+    esac
+  fi
+  _pb_off=$((_pb_off + _pb_sz))
+done
+[ "$UNSAFE_STATE" -eq 1 ] && debug_log "Phase 0 disabled for whole command (UNSAFE_STATE triggered)"
 
 # Group tokens into segments and run Phase 1/2/3 inline per segment.
 # Per-segment phase evaluation closes the iter-1 break-on-first bypass:
 #   `git push origin lane/foo && git push origin develop` evaluates BOTH.
 PROTECTED='^(develop|master|main)$'
 
-declare -a CUR_SEG=()
-
 process_segment() {
+  # Issue #552 iter-4 — first positional arg is this segment's
+  # SEG_ENTRY_CWD (EFFECTIVE_CWD as of entering this segment, per the
+  # Pass B cd-tracking above), NOT the raw original HOOK_CWD. The
+  # remaining args are the segment's tokens, unchanged.
+  local _seg_entry_cwd="$1"
+  shift
   local -a tokens=( "$@" )
   local ntok=${#tokens[@]}
   local i=0
@@ -655,21 +875,24 @@ process_segment() {
   #   - UNRESOLVABLE_SELECTOR (iter-2, segment-scoped): THIS segment's own
   #     `git` invocation carries a selector Phase 0 cannot safely model
   #     (--git-dir/--work-tree, repeated -C).
-  #   - COMMAND_LEVEL_UNSAFE (iter-3, whole-command, computed once above
-  #     before segmenting): ANY segment anywhere in the full command
-  #     contains a shell-state-transition or repo-redirection construct
-  #     (cd/pushd/popd, GIT_DIR=/GIT_WORK_TREE=, --chdir, glued -C<path>)
-  #     that could invalidate this segment's HOOK_CWD/-C snapshot even
-  #     though the construct itself lives in a DIFFERENT segment.
-  if [ "$UNRESOLVABLE_SELECTOR" -eq 0 ] && [ "$COMMAND_LEVEL_UNSAFE" -eq 0 ]; then
+  #   - UNSAFE_STATE (iter-3/iter-4, whole-command, computed once above
+  #     before segmenting — Pass A flat scan + Pass B cd-tracking): ANY
+  #     segment anywhere in the full command contains a shell-state-
+  #     transition or repo-redirection construct this hook cannot safely
+  #     model, even if the construct itself lives in a DIFFERENT segment.
+  if [ "$UNRESOLVABLE_SELECTOR" -eq 0 ] && [ "$UNSAFE_STATE" -eq 0 ]; then
     # Resolve which repo this segment's `git push` actually targets:
     # `-C <path>` (authoritative — overrides cwd for this invocation) else
-    # the hook stdin JSON's `cwd` field. A relative `-C` value is resolved
-    # against `HOOK_CWD` (where the command actually executes), NOT this
-    # hook process's own cwd — those can differ. If `-C` is relative and
-    # `HOOK_CWD` is unavailable to anchor it, there is nothing safe to
-    # resolve, so `_repo_path` stays empty and Phase 0 falls through below
-    # exactly like any other resolution failure.
+    # `_seg_entry_cwd` — this segment's EFFECTIVE_CWD snapshot from the
+    # Pass B cd-tracking above (i.e. HOOK_CWD as modified by any tracked
+    # `cd`/`pushd` in EARLIER segments — see iter-4 fix-history comment),
+    # NOT the raw original HOOK_CWD and NOT this hook process's own cwd.
+    # A relative `-C` value is likewise resolved against `_seg_entry_cwd`
+    # (the cwd in effect when THIS segment's `git` invocation actually
+    # runs). If `-C` is relative and `_seg_entry_cwd` is unavailable to
+    # anchor it, there is nothing safe to resolve, so `_repo_path` stays
+    # empty and Phase 0 falls through below exactly like any other
+    # resolution failure.
     local _repo_path=""
     if [ -n "$GIT_C_PATH" ]; then
       case "$GIT_C_PATH" in
@@ -677,10 +900,10 @@ process_segment() {
           # Already absolute (POSIX root, Windows drive-letter, or UNC).
           _repo_path="$GIT_C_PATH" ;;
         *)
-          [ -n "$HOOK_CWD" ] && _repo_path="$HOOK_CWD/$GIT_C_PATH" ;;
+          [ -n "$_seg_entry_cwd" ] && _repo_path="$_seg_entry_cwd/$GIT_C_PATH" ;;
       esac
     else
-      _repo_path="$HOOK_CWD"
+      _repo_path="$_seg_entry_cwd"
     fi
 
     # If that resolves to a git common-dir that differs from Mercury's own,
@@ -781,39 +1004,18 @@ process_segment() {
   fi
 }
 
-# Read the awk-emitted typed line-protocol stream, group tokens into segments,
-# and process. Lines beginning with `TOK<TAB>` are tokens (with the TAB-and-
-# everything-before stripped); the bare line `SEG` is a segment terminator.
-# Any other line shape is a protocol violation — ignored to fail closed.
-# TAB/TOK_PREFIX already computed above for the Issue #552 iter-3
-# command-level simplicity gate pre-scan — reused here unchanged.
-while IFS= read -r line; do
-  if [ "$line" = "SEG" ]; then
-    if [ "${#CUR_SEG[@]}" -gt 0 ]; then
-      process_segment "${CUR_SEG[@]}"
-      CUR_SEG=()
-    fi
-  else
-    case "$line" in
-      "${TOK_PREFIX}"*)
-        # Strip the TOK\t prefix; the remainder (which may itself equal
-        # the literal string `SEG`) is the token value.
-        CUR_SEG+=( "${line#${TOK_PREFIX}}" )
-        ;;
-      *)
-        # Unrecognized line shape — defensive ignore. The awk tokenizer is
-        # the sole producer; this branch only fires under tampering.
-        ;;
-    esac
-  fi
-done <<EOF
-$_TOK_STREAM
-EOF
-
-# Defensive flush: awk's END block always emits a trailing SEG, but guard
-# the case where the stream was empty or truncated.
-if [ "${#CUR_SEG[@]}" -gt 0 ]; then
-  process_segment "${CUR_SEG[@]}"
-fi
+# Dispatch each segment to process_segment(), re-slicing ALL_TOKENS via
+# SEG_SIZES (both already built above alongside the Pass A/B scans — no
+# need to re-parse $_TOK_STREAM a second time). Each call is prefixed with
+# that segment's SEG_ENTRY_CWD snapshot (Issue #552 iter-4) as the new
+# first positional argument process_segment() now expects.
+_disp_off=0
+_disp_idx=0
+for _disp_sz in "${SEG_SIZES[@]}"; do
+  declare -a _disp_seg=( "${ALL_TOKENS[@]:$_disp_off:$_disp_sz}" )
+  process_segment "${SEG_ENTRY_CWD[$_disp_idx]}" "${_disp_seg[@]}"
+  _disp_off=$((_disp_off + _disp_sz))
+  _disp_idx=$((_disp_idx + 1))
+done
 
 exit 0
