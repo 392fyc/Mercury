@@ -287,8 +287,9 @@ def _check_scope(roots: Roots, spec: dict, entity_types: list[dict],
     engine_scope = spec["engine_scope"]
     declared = {e["engine"]["path"] for e in entity_types if e.get("engine")}
     declared |= set(engine_scope.get("excluded_paths", {}))
-    actual = sources.engine_scope_entries(roots.engine,
-                                          engine_scope["data_dir"])
+    actual, engine_listing = sources.engine_scope_entries(
+        roots.engine, engine_scope["data_dir"])
+    _report_listing_anomalies(engine_listing, "engine", "data", findings)
     for missing in sorted(actual - declared):
         findings.append(Finding(
             "undeclared_scope",

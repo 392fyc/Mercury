@@ -787,6 +787,85 @@ def test_directory_symlink_is_reported_not_skipped() -> None:
     print(f"PASS test_directory_symlink_is_reported_not_skipped ({kind})")
 
 
+def _make_dir_alias(link: Path, target: Path) -> str | None:
+    """Create a directory alias, returning its kind, or None if impossible.
+
+    Symlinks need a privilege this machine does not have; junctions do not,
+    and a junction is the alias this machine would actually meet. Falling
+    back keeps the test real instead of skipping it.
+    """
+    try:
+        link.symlink_to(target, target_is_directory=True)
+        return "symlink"
+    except (OSError, NotImplementedError):
+        pass
+    if os.name != "nt" or not shutil.which("cmd"):
+        return None
+    made = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)],
+                          capture_output=True, text=True, timeout=30)
+    return "junction" if made.returncode == 0 else None
+
+
+def test_source_directory_itself_being_an_alias_is_reported() -> None:
+    """The *declared* source directory may itself be the alias.
+
+    `resolve_within` cannot notice this: resolving is precisely what erases
+    the evidence, so the alias was followed in silence while an alias one
+    level deeper was reported. Containment was never at risk here, but the
+    README promised aliases are never followed, and they were.
+    """
+    tmp_path = Path(tempfile.mkdtemp())
+    try:
+        engine, design, spec = _build_fixture(tmp_path)
+        _assert_pristine(spec, engine, design, tmp_path)
+
+        real = engine / "real_skills"
+        shutil.move(str(engine / "data" / "skills"), str(real))
+        kind = _make_dir_alias(engine / "data" / "skills", real)
+        if kind is None:
+            shutil.move(str(real), str(engine / "data" / "skills"))
+            print("SKIP test_source_directory_itself_being_an_alias_is_reported "
+                  "(cannot create a directory alias here)")
+            return
+        # fixture self-check: the alias is real and the entities are readable
+        # through it, i.e. the old code really would have sailed on
+        assert (engine / "data" / "skills" / "sw_slash.json").is_file(), \
+            "alias did not take effect, so this proves nothing"
+
+        proc = _run(spec, engine, design, tmp_path)
+        assert proc.returncode == 1, (proc.returncode, proc.stdout)
+        assert "unfollowed_link" in proc.stdout, proc.stdout
+        assert "data/skills" in proc.stdout, proc.stdout
+        assert "OK:" not in proc.stdout, proc.stdout
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+    print(f"PASS test_source_directory_itself_being_an_alias_is_reported ({kind})")
+
+
+def test_deeply_nested_json_exits_2_without_traceback() -> None:
+    """A valid but absurdly nested JSON file blows the decoder's stack.
+
+    `RecursionError` is a `RuntimeError`, so none of the OSError /
+    UnicodeDecodeError / JSONDecodeError handlers caught it and it escaped
+    as a traceback exiting 1 — indistinguishable from "the map has
+    findings".
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        engine, design, spec = _build_fixture(tmp_path)
+        _assert_pristine(spec, engine, design, tmp_path)
+
+        depth = 20000
+        payload = "[" * depth + "]" * depth
+        (engine / "data" / "skills" / "sw_deep.json").write_text(
+            payload, encoding="utf-8")
+        proc = _run(spec, engine, design, tmp_path)
+        assert proc.returncode == 2, (proc.returncode, proc.stdout, proc.stderr)
+        assert "Traceback" not in proc.stderr, proc.stderr
+        assert "nested too deeply" in proc.stderr, proc.stderr
+    print("PASS test_deeply_nested_json_exits_2_without_traceback")
+
+
 def test_file_symlink_out_of_repo_is_reported() -> None:
     """A .json symlink pointing out of the repository is not read."""
     with tempfile.TemporaryDirectory() as tmp, \
@@ -1040,6 +1119,8 @@ def main() -> int:
     test_null_is_not_a_justification()
     test_empty_repo_flag_is_an_error_not_a_fallback()
     test_directory_symlink_is_reported_not_skipped()
+    test_source_directory_itself_being_an_alias_is_reported()
+    test_deeply_nested_json_exits_2_without_traceback()
     test_file_symlink_out_of_repo_is_reported()
     test_unreadable_directory_exits_2_not_silently_empty()
     test_carrier_field_must_exist()

@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
@@ -73,13 +74,47 @@ def resolve_within(root: Path, rel_path: str) -> Path:
     `root` is expected to be already resolved (`resolve_roots` does that),
     so a symlinked or `..`-laden relative path cannot walk out of the
     repository and into, say, this repository's own files.
+
+    Note this *resolves* aliases rather than reporting them — by design,
+    since containment is the question here. Whether the path travelled
+    through an alias on the way is a separate question, answered by
+    `alias_components`, which has to be asked before this point or the
+    evidence is already gone.
     """
-    candidate = (root / rel_path).resolve()
+    try:
+        candidate = (root / rel_path).resolve()
+    except (OSError, RuntimeError) as exc:
+        # RuntimeError: defensive. `resolve()` is documented to raise it on a
+        # symlink loop in some versions, but this machine cannot create
+        # symlinks (no privilege) and junctions cannot form a loop, so it was
+        # never reproduced here. Caught to keep the exit-code contract, not
+        # because a failure was observed.
+        raise SourceError(f"cannot resolve {rel_path!r} under {root}: "
+                          f"{exc}") from exc
     if not candidate.is_relative_to(root):
         raise SourceError(
             f"path {rel_path!r} resolves to {candidate}, which is outside the "
             f"repository root {root} — refusing to read it")
     return candidate
+
+
+def alias_components(root: Path, rel_path: str) -> list[str]:
+    """Every component of `root/rel_path` that is itself a directory alias.
+
+    The declared source directory *itself* can be a symlink or junction —
+    `data/classes` rather than something inside it. `resolve_within` cannot
+    see that, because resolving is exactly what erases the evidence, so
+    that case used to be followed in silence while an alias one level
+    deeper was reported. Same rule for both now: an alias anywhere on the
+    declared path is reported.
+    """
+    found: list[str] = []
+    partial = root
+    for part in PurePosixPath(rel_path.replace("\\", "/")).parts:
+        partial = partial / part
+        if partial.is_symlink() or _is_reparse_dir(partial):
+            found.append(_rel(partial, root))
+    return found
 
 
 @dataclass
@@ -126,7 +161,8 @@ def resolve_roots(env: dict[str, str] | None = None,
         # compares against this, so it has to be the canonical form.
         try:
             path = Path(raw).expanduser().resolve()
-        except OSError as exc:
+        # RuntimeError is defensive only — see the note in `resolve_within`.
+        except (OSError, RuntimeError) as exc:
             problems.append(f"{label} repository path {raw!r} cannot be "
                             f"resolved: {exc}")
             continue
@@ -182,6 +218,15 @@ def load_json(path: Path) -> object:
             f"expected to store JSON as UTF-8") from exc
     except json.JSONDecodeError as exc:
         raise SourceError(f"{path} is not valid JSON: {exc}") from exc
+    except RecursionError as exc:
+        # Reproduced: a deeply nested (but syntactically valid) JSON array
+        # blows the decoder's stack. `RecursionError` is a `RuntimeError`,
+        # so none of the three above catch it, and it used to surface as a
+        # traceback exiting 1 — the code that means "the map has findings".
+        raise SourceError(
+            f"{path} is nested too deeply for the JSON decoder ({exc}); an "
+            f"entity file this deep is not something this checker can read"
+        ) from exc
 
 
 def normalise_id(value: object) -> tuple[str | None, str]:
@@ -222,7 +267,9 @@ def collect_json_dir(root: Path, rel_path: str, id_field: str) -> SideIds:
     if not base.is_dir():
         raise SourceError(f"engine source directory missing: {base}")
     listing = _iter_json(base, root)
-    out.links = listing.links
+    # Aliases on the declared path itself come first: they are the ones
+    # `resolve_within` above has already resolved away.
+    out.links = alias_components(root, rel_path) + listing.links
     out.escaping = listing.escaping
     for path in listing.files:
         rel = _rel(path, root)
@@ -253,6 +300,7 @@ def collect_json_array(root: Path, rel_path: str, id_field: str) -> SideIds:
     out on disk, never in how strictly their ids are judged.
     """
     out = SideIds()
+    out.links = alias_components(root, rel_path)
     path = resolve_within(root, rel_path)
     if not path.is_file():
         raise SourceError(f"design snapshot missing: {path}")
@@ -293,6 +341,8 @@ def engine_scope_entries(root: Path, data_dir: str) -> set[str]:
     at `data/foo.json` belongs to no declared directory, so without this it
     would slip past the scope guard entirely.
     """
+    listing = Listing()
+    listing.links = alias_components(root, data_dir)
     base = resolve_within(root, data_dir)
     if not base.is_dir():
         raise SourceError(f"engine data directory missing: {base}")
@@ -300,10 +350,45 @@ def engine_scope_entries(root: Path, data_dir: str) -> set[str]:
         children = sorted(base.iterdir())
     except OSError as exc:
         raise SourceError(f"cannot list {base}: {exc}") from exc
-    entries = {f"{data_dir}/{p.name}" for p in children if p.is_dir()}
-    entries |= {f"{data_dir}/{p.name}" for p in children
-                if p.is_file() and p.suffix.lower() == ".json"}
-    return entries
+    entries: set[str] = set()
+    for child in children:
+        name = f"{data_dir}/{child.name}"
+        if child.is_symlink() or _is_reparse_dir(child):
+            listing.links.append(_rel(child, root))
+        kind = _entry_kind(child)
+        if kind == "dir":
+            entries.add(name)
+        elif kind == "file" and child.suffix.lower() == ".json":
+            entries.add(name)
+        elif kind == "unknown":
+            # Defensive: `Path.is_dir()` swallows OSError and answers False,
+            # so an entry that cannot be stat'ed could drop out of the scope
+            # set and stop being "undeclared". NOT REPRODUCED — an `icacls
+            # /deny` on a directory still stats fine, so this branch has never
+            # been observed to run. Kept because the safe answer to "I cannot
+            # tell what this is" is to demand it be declared, not to forget it.
+            entries.add(name)
+    return entries, listing
+
+
+def _entry_kind(path: Path) -> str:
+    """'dir' / 'file' / 'unknown' — never a silent False on a stat failure."""
+    try:
+        mode = path.stat(follow_symlinks=False).st_mode
+    except OSError:
+        return "unknown"
+    if stat.S_ISDIR(mode):
+        return "dir"
+    if stat.S_ISREG(mode):
+        return "file"
+    if stat.S_ISLNK(mode):
+        # A link's own kind is whatever it points at; ask, but do not let a
+        # broken target turn into "not here".
+        try:
+            return "dir" if path.is_dir() else "file"
+        except OSError:
+            return "unknown"
+    return "unknown"
 
 
 def design_snapshot_files(root: Path, snapshot_dir: str) -> tuple[set[str],
@@ -315,10 +400,12 @@ def design_snapshot_files(root: Path, snapshot_dir: str) -> tuple[set[str],
     back too so the caller can report symlinked directories rather than let
     them vanish from the scope guard's view.
     """
+    aliases = alias_components(root, snapshot_dir)
     base = resolve_within(root, snapshot_dir)
     if not base.is_dir():
         raise SourceError(f"design snapshot directory missing: {base}")
     listing = _iter_json(base, root)
+    listing.links = aliases + listing.links
     return {_rel(p, root) for p in listing.files}, listing
 
 
@@ -386,7 +473,8 @@ def _iter_json(base: Path, root: Path) -> Listing:
             path = here / name
             try:
                 resolved = path.resolve()
-            except OSError as exc:
+            # RuntimeError is defensive only — see the note in `resolve_within`.
+            except (OSError, RuntimeError) as exc:
                 raise SourceError(f"cannot resolve {path}: {exc}") from exc
             if not resolved.is_relative_to(root):
                 listing.escaping.append(f"{_rel(path, root)} -> {resolved}")
