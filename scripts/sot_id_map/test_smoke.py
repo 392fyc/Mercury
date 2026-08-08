@@ -36,6 +36,52 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 PACKAGE_MAP = Path(__file__).resolve().parent / "id_map.json"
 
+#: Every child process gets a deadline. Measured on this machine: the
+#: heaviest single invocation is the full two-repository run at 0.22-0.24 s,
+#: `--help` is 0.13 s, and the whole 35-case suite is ~18 s. The budgets
+#: below are therefore ~100-250x the observed cost — deliberately generous,
+#: because a budget tight enough to trip on a slow or loaded machine would
+#: turn a passing suite flaky, and a flaky timeout teaches people to ignore
+#: timeouts. They exist to bound a *hang*, not to police performance.
+CHECKER_TIMEOUT = 60.0      # any `python -m scripts.sot_id_map` invocation
+HELP_TIMEOUT = 30.0         # `--help`, which reads nothing
+TOOL_TIMEOUT = 30.0         # external tools: icacls, mklink
+
+
+def _partial(stream: object) -> str:
+    """Whatever the killed child managed to emit, in a printable form."""
+    if stream is None:
+        return "(none)"
+    if isinstance(stream, bytes):
+        stream = stream.decode("utf-8", "replace")
+    text = str(stream).strip()
+    return text[:2000] or "(empty)"
+
+
+def _spawn(argv: list[str], timeout: float, **kwargs) -> subprocess.CompletedProcess:
+    """The one place this suite starts a child process.
+
+    Single boundary on purpose: a bare `subprocess.run` anywhere in here is
+    an unbounded wait, and one hung command would stall the entire suite
+    with no indication of which command it was. Routing everything through
+    here means the deadline cannot be forgotten at a new call site.
+
+    A timeout is reported as an `AssertionError` naming the argv and the
+    output captured before the kill — `TimeoutExpired` alone says a command
+    took too long without saying which, which is the failure mode that
+    wastes the most time to diagnose.
+    """
+    try:
+        return subprocess.run(argv, capture_output=True, text=True,
+                              timeout=timeout, **kwargs)
+    except subprocess.TimeoutExpired as exc:
+        raise AssertionError(
+            f"child process exceeded its {timeout}s budget and was killed\n"
+            f"  argv:   {argv}\n"
+            f"  stdout: {_partial(exc.stdout)}\n"
+            f"  stderr: {_partial(exc.stderr)}"
+        ) from exc
+
 
 # --------------------------------------------------------------------------
 # fixture
@@ -137,8 +183,8 @@ def _run(spec: dict, engine: Path, design: Path, tmp: Path,
     # console codepage (GBK on this machine) and a finding containing a
     # non-ASCII id blows up in the reader thread instead of failing an
     # assertion — a fixture failure wearing the costume of a code failure.
-    return subprocess.run(argv, capture_output=True, text=True, cwd=ROOT,
-                          env=run_env, encoding="utf-8", errors="replace")
+    return _spawn(argv, CHECKER_TIMEOUT, cwd=ROOT, env=run_env,
+                  encoding="utf-8", errors="replace")
 
 
 def _assert_pristine(spec: dict, engine: Path, design: Path,
@@ -155,8 +201,8 @@ def _assert_pristine(spec: dict, engine: Path, design: Path,
 # --------------------------------------------------------------------------
 
 def test_help() -> None:
-    proc = subprocess.run([sys.executable, "-m", "scripts.sot_id_map", "--help"],
-                          capture_output=True, text=True, cwd=ROOT)
+    proc = _spawn([sys.executable, "-m", "scripts.sot_id_map", "--help"],
+                  HELP_TIMEOUT, cwd=ROOT)
     assert proc.returncode == 0, proc.stderr
     assert "--engine-repo" in proc.stdout and "--design-repo" in proc.stdout
     print("PASS test_help")
@@ -548,11 +594,10 @@ def test_non_utf8_file_exits_2_without_traceback() -> None:
             raise AssertionError("fixture is wrong: the GBK map still decodes "
                                  "as UTF-8, so this proves nothing")
         gbk_map.write_bytes(payload)
-        proc = subprocess.run(
+        proc = _spawn(
             [sys.executable, "-m", "scripts.sot_id_map", "--map", str(gbk_map),
              "--engine-repo", str(engine), "--design-repo", str(design)],
-            capture_output=True, text=True, cwd=ROOT, encoding="utf-8",
-            errors="replace")
+            CHECKER_TIMEOUT, cwd=ROOT, encoding="utf-8", errors="replace")
         assert proc.returncode == 2, (proc.returncode, proc.stderr)
         assert "Traceback" not in proc.stderr, proc.stderr
     print("PASS test_non_utf8_file_exits_2_without_traceback")
@@ -720,18 +765,18 @@ def test_empty_repo_flag_is_an_error_not_a_fallback() -> None:
         env["SOT_ENGINE_REPO"] = str(engine)
         env["SOT_DESIGN_REPO"] = str(design)
         # fixture self-check: with the flag omitted, the environment works
-        ok = subprocess.run(
+        ok = _spawn(
             [sys.executable, "-m", "scripts.sot_id_map", "--map", str(map_path)],
-            capture_output=True, text=True, cwd=ROOT, env=env,
-            encoding="utf-8", errors="replace")
+            CHECKER_TIMEOUT, cwd=ROOT, env=env, encoding="utf-8",
+            errors="replace")
         assert ok.returncode == 0, (ok.stdout, ok.stderr)
 
         for flag in ("--engine-repo=", "--design-repo=", "--engine-repo=   "):
-            proc = subprocess.run(
+            proc = _spawn(
                 [sys.executable, "-m", "scripts.sot_id_map",
                  "--map", str(map_path), flag],
-                capture_output=True, text=True, cwd=ROOT, env=env,
-                encoding="utf-8", errors="replace")
+                CHECKER_TIMEOUT, cwd=ROOT, env=env, encoding="utf-8",
+                errors="replace")
             assert proc.returncode == 2, (flag, proc.returncode, proc.stdout)
             assert "empty value" in proc.stderr, (flag, proc.stderr)
             # the point: it did NOT fall back and run against the env repo
@@ -763,9 +808,8 @@ def test_directory_symlink_is_reported_not_skipped() -> None:
                 print("SKIP test_directory_symlink_is_reported_not_skipped "
                       f"(cannot create a directory symlink here: {exc})")
                 return
-            made = subprocess.run(
-                ["cmd", "/c", "mklink", "/J", str(link), str(hidden)],
-                capture_output=True, text=True)
+            made = _spawn(["cmd", "/c", "mklink", "/J", str(link), str(hidden)],
+                          TOOL_TIMEOUT)
             if made.returncode != 0:
                 print("SKIP test_directory_symlink_is_reported_not_skipped "
                       f"(symlink denied and mklink /J failed: "
@@ -801,8 +845,8 @@ def _make_dir_alias(link: Path, target: Path) -> str | None:
         pass
     if os.name != "nt" or not shutil.which("cmd"):
         return None
-    made = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)],
-                          capture_output=True, text=True, timeout=30)
+    made = _spawn(["cmd", "/c", "mklink", "/J", str(link), str(target)],
+                  TOOL_TIMEOUT)
     return "junction" if made.returncode == 0 else None
 
 
@@ -1004,8 +1048,8 @@ def test_unreadable_directory_exits_2_not_silently_empty() -> None:
         engine, design, spec = _build_fixture(tmp_path)
         _assert_pristine(spec, engine, design, tmp_path)
 
-        denied = subprocess.run(["icacls", str(target), "/deny", f"{user}:(RX)"],
-                                capture_output=True, text=True)
+        denied = _spawn(["icacls", str(target), "/deny", f"{user}:(RX)"],
+                        TOOL_TIMEOUT)
         if denied.returncode != 0:
             print("SKIP test_unreadable_directory_exits_2_not_silently_empty "
                   f"(icacls deny failed: {denied.stdout.strip()})")
@@ -1033,8 +1077,10 @@ def test_unreadable_directory_exits_2_not_silently_empty() -> None:
         # skills simply ceased to exist
         assert "OK:" not in proc.stdout, proc.stdout
     finally:
-        subprocess.run(["icacls", str(target), "/reset"],
-                       capture_output=True, text=True)
+        # Teardown runs even when the body already failed, so it must not be
+        # the thing that hangs: a stuck ACL reset would leave the deny in
+        # place *and* stall the suite.
+        _spawn(["icacls", str(target), "/reset"], TOOL_TIMEOUT)
         shutil.rmtree(tmp_path, ignore_errors=True)
     print("PASS test_unreadable_directory_exits_2_not_silently_empty")
 
@@ -1150,10 +1196,9 @@ def test_real_repositories_when_available() -> None:
         print("SKIP test_real_repositories_when_available "
               "(SOT_ENGINE_REPO / SOT_DESIGN_REPO not both set to real dirs)")
         return
-    proc = subprocess.run([sys.executable, "-m", "scripts.sot_id_map"],
-                          capture_output=True, text=True, cwd=ROOT,
-                          env=dict(os.environ), encoding="utf-8",
-                          errors="replace")
+    proc = _spawn([sys.executable, "-m", "scripts.sot_id_map"],
+                  CHECKER_TIMEOUT, cwd=ROOT, env=dict(os.environ),
+                  encoding="utf-8", errors="replace")
     assert proc.returncode == 0, proc.stdout + proc.stderr
     print("PASS test_real_repositories_when_available")
 
