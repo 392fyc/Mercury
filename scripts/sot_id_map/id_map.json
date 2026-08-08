@@ -1,0 +1,1727 @@
+{
+  "schema_version": 1,
+  "_readme": "Ship of Theseus 引擎仓 ↔ 设计库仓 的 id 对应表（Mercury Issue #556）。本文件是该对应关系的唯一真源，人工维护；校验方式与维护步骤见同目录 README.md。只出表、不写引擎消费代码 —— 消费方归 SoT lane（lane 文档 §2 分工矩阵）。",
+  "sides": {
+    "engine": {
+      "repo": "Ship_of_Theseus",
+      "root_env": "SOT_ENGINE_REPO",
+      "note": "Godot 4 引擎仓，实体数据在 data/**/*.json，一个实体一个文件。"
+    },
+    "design": {
+      "repo": "SoT-fyc-space",
+      "root_env": "SOT_DESIGN_REPO",
+      "note": "设计库仓。交接界面是 snapshots/*.json（导出脚本产物，数组形式）；不读它的 app/ 应用代码，也不连生产 API。"
+    }
+  },
+  "engine_scope": {
+    "data_dir": "data",
+    "excluded_paths": {
+      "data/runloop": "跑图循环配置文件（act1_config.json / run_config.json），没有 id 字段、不是实体，无从对应。"
+    }
+  },
+  "design_scope": {
+    "snapshot_dir": "snapshots",
+    "excluded_paths": {
+      "snapshots/manifest.json": "导出清单元数据（各实体条数与端点），不是实体表。"
+    }
+  },
+  "reason_codes": {
+    "engine_not_implemented": "设计库有该条目，引擎尚未实装同类实体。将来实装后应改成 mappings 条目。",
+    "design_not_registered": "引擎有该条目，设计库存在同类实体表但未登记这一条（多为剑士线以外的内容）。",
+    "engine_implements_as_field": "两侧都有这件事，但引擎把它实装成了另一个实体的字段而不是独立实体。必须同时给出 engine_carrier 指针（形如 data/classes/kensei.json#sword_qi_config），校验器会核实该文件存在。不许用 engine_not_implemented 顶替 —— 那是错误定性。",
+    "engine_no_entity_kind": "引擎侧根本没有这一类实体（设计库的规则条文、判定层等设计/规格层内容）。",
+    "design_no_entity_kind": "设计库侧根本没有这一类实体（引擎的 buff、词条、地图、波次等运行时内容）。",
+    "no_traceable_correspondence": "两侧都有相近概念，但没有可从数据或双方文档溯源的 id 级对应关系。按 Issue #556 界线，溯源不到就标本码写明原因，不猜。"
+  },
+  "entity_types": [
+    {
+      "type": "affix",
+      "coverage": "required",
+      "engine": {
+        "kind": "json_dir",
+        "path": "data/affixes",
+        "id_field": "id"
+      },
+      "design": null,
+      "note": "引擎战场词条（base/special 两个子目录，递归收集）。设计库无「词条」实体类型。"
+    },
+    {
+      "type": "buff",
+      "coverage": "required",
+      "engine": {
+        "kind": "json_dir",
+        "path": "data/buffs",
+        "id_field": "id"
+      },
+      "design": null,
+      "note": "引擎运行时增益/减益实例。lane 文档 §2.2 注 2 明确 stackable / max_stacks 等叠层语义是引擎独有、设计库无对应列；设计库的「增益状态 / 负面状态」是标签，不是 buff 注册表。"
+    },
+    {
+      "type": "building",
+      "coverage": "required",
+      "engine": {
+        "kind": "json_dir",
+        "path": "data/buildings",
+        "id_field": "id"
+      },
+      "design": null,
+      "note": "引擎城镇建设数据目录，当前为空。留在 required 是刻意的：将来出现文件时校验器会立刻要求给出归类。"
+    },
+    {
+      "type": "class",
+      "coverage": "required",
+      "engine": {
+        "kind": "json_dir",
+        "path": "data/classes",
+        "id_field": "id"
+      },
+      "design": {
+        "kind": "json_array",
+        "path": "snapshots/classes.json",
+        "id_field": "id"
+      },
+      "note": "职业。lane 文档 §5 第 1 条已把命名统一到 Mercury id，剑士线两职两侧同 id。"
+    },
+    {
+      "type": "enemy",
+      "coverage": "required",
+      "engine": {
+        "kind": "json_dir",
+        "path": "data/enemies",
+        "id_field": "id"
+      },
+      "design": null,
+      "note": "引擎敌方单位与测试单位。设计库无敌人实体类型。"
+    },
+    {
+      "type": "equipment",
+      "coverage": "required",
+      "engine": {
+        "kind": "json_dir",
+        "path": "data/equipment",
+        "id_field": "id"
+      },
+      "design": {
+        "kind": "json_array",
+        "path": "snapshots/equipment.json",
+        "id_field": "id"
+      },
+      "note": "可拾取装备。两侧属性模型不同（引擎 stats / tier / rarity，设计库 weapon_might / weapon_hit / weapon_crit），本表只做 id 对应，不做数值判断。"
+    },
+    {
+      "type": "event",
+      "coverage": "required",
+      "engine": {
+        "kind": "json_dir",
+        "path": "data/events",
+        "id_field": "id"
+      },
+      "design": null,
+      "note": "引擎 roguelite 事件节点。设计库无事件实体类型。"
+    },
+    {
+      "type": "map",
+      "coverage": "required",
+      "engine": {
+        "kind": "json_dir",
+        "path": "data/maps",
+        "id_field": "id"
+      },
+      "design": null,
+      "note": "引擎战场地图。设计库无地图实体类型。"
+    },
+    {
+      "type": "relic",
+      "coverage": "required",
+      "engine": {
+        "kind": "json_dir",
+        "path": "data/relics",
+        "id_field": "id"
+      },
+      "design": {
+        "kind": "json_array",
+        "path": "snapshots/relics.json",
+        "id_field": "id"
+      },
+      "note": "遗物。设计库 relics 表存在但当前 0 条（见设计库 snapshots/manifest.json）。"
+    },
+    {
+      "type": "skill",
+      "coverage": "required",
+      "engine": {
+        "kind": "json_dir",
+        "path": "data/skills",
+        "id_field": "id"
+      },
+      "design": {
+        "kind": "json_array",
+        "path": "snapshots/skills.json",
+        "id_field": "id"
+      },
+      "note": "技能。剑士线是本表基数最复杂的地方：引擎一个 swordsman_* 文件同时挂在 myrmidon 与 kensei 两个职业的 skill_ids 下，设计库则按职业拆成两条，所以是 1:N。"
+    },
+    {
+      "type": "state",
+      "coverage": "required",
+      "engine": {
+        "kind": "json_dir",
+        "path": "data/states",
+        "id_field": "id"
+      },
+      "design": {
+        "kind": "json_array",
+        "path": "snapshots/states.json",
+        "id_field": "id"
+      },
+      "note": "状态注册。引擎侧文件带 _mirror 字段，自述镜像自设计库快照的某个 commit，是本表最硬的溯源依据。"
+    },
+    {
+      "type": "talent",
+      "coverage": "required",
+      "engine": {
+        "kind": "json_dir",
+        "path": "data/talents",
+        "id_field": "id"
+      },
+      "design": {
+        "kind": "json_array",
+        "path": "snapshots/talents.json",
+        "id_field": "id"
+      },
+      "note": "天赋。引擎当前只实装 1 条（A1 首张接线天赋），同样带 _mirror 溯源。"
+    },
+    {
+      "type": "talent_tree_node",
+      "coverage": "required",
+      "engine": {
+        "kind": "json_dir",
+        "path": "data/talent-tree",
+        "id_field": "id"
+      },
+      "design": null,
+      "note": "引擎天赋树数据目录，当前为空。同 building，留 required 以便将来强制归类。"
+    },
+    {
+      "type": "terrain",
+      "coverage": "required",
+      "engine": {
+        "kind": "json_dir",
+        "path": "data/terrain",
+        "id_field": "id"
+      },
+      "design": null,
+      "note": "引擎地形类型表。设计库无地形实体类型。"
+    },
+    {
+      "type": "wave",
+      "coverage": "required",
+      "engine": {
+        "kind": "json_dir",
+        "path": "data/waves",
+        "id_field": "id"
+      },
+      "design": null,
+      "note": "引擎敌人波次。设计库无波次实体类型。"
+    },
+    {
+      "type": "weapon",
+      "coverage": "required",
+      "engine": {
+        "kind": "json_dir",
+        "path": "data/weapons",
+        "id_field": "id"
+      },
+      "design": null,
+      "note": "引擎单位内建武器属性块（weapon_might / weapon_hit / weapon_crit）。注意：设计库 equipment 表有同名三字段，但那是可拾取装备条目，id 命名空间（wpn_* vs eq_wpn_*）与用途都不同，没有 id 级可溯源对应，故全部标 no_traceable_correspondence 而不是猜一个配对。"
+    },
+    {
+      "type": "resource",
+      "coverage": "required",
+      "engine": null,
+      "design": {
+        "kind": "json_array",
+        "path": "snapshots/resources.json",
+        "id_field": "id"
+      },
+      "note": "设计库职业资源（剑气 / 剑意印记）。引擎没有资源实体，实装在职业档案的 sword_qi_config 与技能档案的 qi_* / mark_* 字段里 —— 属于「两侧都有这件事、但引擎建成了别的实体的字段」，用 engine_implements_as_field 而非「引擎未实装」。"
+    },
+    {
+      "type": "tag",
+      "coverage": "required",
+      "engine": null,
+      "design": {
+        "kind": "json_array",
+        "path": "snapshots/tags.json",
+        "id_field": "key"
+      },
+      "note": "设计库标签注册表（12 条中文标签）。引擎技能的 tags 是自由英文字符串（当前 30 个不同取值），没有注册表也没有双方文档记录的对照，故全部标 no_traceable_correspondence。字面上确有近似（奥义/ougi、反应/reaction、被动/passive_like、区域/area 等），但「位移」与「机动」两条都可能落到 mobility，无法逐条判定，按规矩不猜。"
+    },
+    {
+      "type": "rule",
+      "coverage": "required",
+      "engine": null,
+      "design": {
+        "kind": "json_array",
+        "path": "snapshots/rules.json",
+        "id_field": "code"
+      },
+      "note": "设计库规则条文（R1.1 等）。引擎无规则实体；引擎只在 data/states/*.json 的 rule_code 字段里按 code 引用（当前两条状态该字段皆为空串）。"
+    },
+    {
+      "type": "term",
+      "coverage": "required",
+      "engine": null,
+      "design": {
+        "kind": "json_array",
+        "path": "snapshots/terms.json",
+        "id_field": "term"
+      },
+      "note": "设计库术语表，当前 0 条。"
+    },
+    {
+      "type": "judgment",
+      "coverage": "required",
+      "engine": null,
+      "design": {
+        "kind": "json_array",
+        "path": "snapshots/judgments.json",
+        "id_field": "id"
+      },
+      "note": "设计库判定层条目（闪避 / 暴击回避 / 减益抵抗 / 招架）。引擎无判定实体类型。"
+    },
+    {
+      "type": "comment",
+      "coverage": "excluded",
+      "engine": null,
+      "design": {
+        "kind": "json_array",
+        "path": "snapshots/comments.json",
+        "id_field": "id"
+      },
+      "note": "设计库审阅评论。排除理由：这是审阅工作流数据不是游戏实体，随审阅随时增删，纳入覆盖会让本表在任何人留一条评论后就失败。excluded 的类型不参与覆盖检查，但仍必须在此声明，否则范围守卫会报 undeclared_scope。"
+    }
+  ],
+  "mappings": [
+    {
+      "type": "class",
+      "engine_ids": [
+        "myrmidon"
+      ],
+      "design_ids": [
+        "myrmidon"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id 同名（剑士）；lane 文档 §5 第 1 条「职业命名统一 Mercury id」已执行。"
+    },
+    {
+      "type": "class",
+      "engine_ids": [
+        "kensei"
+      ],
+      "design_ids": [
+        "kensei"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id 同名（剑圣）；同上。"
+    },
+    {
+      "type": "skill",
+      "engine_ids": [
+        "swordsman_zhanji"
+      ],
+      "design_ids": [
+        "myrmidon_zhanji",
+        "kensei_zhanji"
+      ],
+      "cardinality": "1:N",
+      "basis": "引擎 data/classes/myrmidon.json 与 data/classes/kensei.json 的 skill_ids 都含该引擎 id，而设计库把同名技能按职业拆成两条独立条目，故一个引擎 id 对应两个设计库 id。",
+      "note": "两条设计库条目不是重复：kensei_zhanji 的 effect 比 myrmidon_zhanji 多「命中时随机获得一枚当前未持有的印记」一段，而引擎单文件 swordsman_zhanji 的 description 含该段。两侧差异归 SoT 处理，本表不裁决。"
+    },
+    {
+      "type": "skill",
+      "engine_ids": [
+        "swordsman_yishan"
+      ],
+      "design_ids": [
+        "myrmidon_yishan",
+        "kensei_yishan"
+      ],
+      "cardinality": "1:N",
+      "basis": "引擎 data/classes/myrmidon.json 与 data/classes/kensei.json 的 skill_ids 都含该引擎 id，而设计库把同名技能按职业拆成两条独立条目，故一个引擎 id 对应两个设计库 id。",
+      "note": "两条设计库条目的 effect 文本当前完全一致。"
+    },
+    {
+      "type": "skill",
+      "engine_ids": [
+        "swordsman_zhaojia"
+      ],
+      "design_ids": [
+        "myrmidon_zhaojia",
+        "kensei_zhaojia"
+      ],
+      "cardinality": "1:N",
+      "basis": "引擎 data/classes/myrmidon.json 与 data/classes/kensei.json 的 skill_ids 都含该引擎 id，而设计库把同名技能按职业拆成两条独立条目，故一个引擎 id 对应两个设计库 id。",
+      "note": "kensei_zhaojia 多「满 3 印记时槽位替换为拔刀」一段；引擎在 swordsman_zhaojia 上以单一 description 承载，并由 swordsman_badao 的 slot_swap_provider 字段与职业 skill_ids 决定该替换在哪个职业上生效。"
+    },
+    {
+      "type": "skill",
+      "engine_ids": [
+        "swordsman_juhe"
+      ],
+      "design_ids": [
+        "myrmidon_juhe",
+        "kensei_juhe"
+      ],
+      "cardinality": "1:N",
+      "basis": "引擎 data/classes/myrmidon.json 与 data/classes/kensei.json 的 skill_ids 都含该引擎 id，而设计库把同名技能按职业拆成两条独立条目，故一个引擎 id 对应两个设计库 id。",
+      "note": "kensei_juhe 多「结算后随机获得一枚未持有印记」一段。"
+    },
+    {
+      "type": "skill",
+      "engine_ids": [
+        "swordsman_badao"
+      ],
+      "design_ids": [
+        "kensei_badao"
+      ],
+      "cardinality": "1:1",
+      "basis": "只有 data/classes/kensei.json 的 skill_ids 含 swordsman_badao；data/classes/myrmidon.json 的 description 明写「奥义『拔刀』为剑圣专属，不在本职业技能表内」。设计库侧也只有 kensei_badao、没有 myrmidon_badao。所以这一条是 1:1，不是上面四条那样的 1:N。"
+    },
+    {
+      "type": "talent",
+      "engine_ids": [
+        "myrmidon_jiecuo"
+      ],
+      "design_ids": [
+        "myrmidon_jiecuo"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id；引擎 data/talents/myrmidon_jiecuo.json 的 _mirror 字段自述「镜像自设计库 snapshots/talents.json @ 319993a」。"
+    },
+    {
+      "type": "state",
+      "engine_ids": [
+        "beishui"
+      ],
+      "design_ids": [
+        "beishui"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id；引擎 data/states/beishui.json 的 _mirror 字段自述「镜像自设计库 snapshots/states.json @ fb45402」。"
+    },
+    {
+      "type": "state",
+      "engine_ids": [
+        "shuangchi"
+      ],
+      "design_ids": [
+        "shuangchi"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id；引擎 data/states/shuangchi.json 的 _mirror 字段同上。",
+      "note": "引擎侧 engine_status = unevaluable（无副手槽，判定恒不成立）。那是实装状态，不影响 id 对应关系。"
+    },
+    {
+      "type": "equipment",
+      "engine_ids": [
+        "eq_wpn_iron_sword"
+      ],
+      "design_ids": [
+        "eq_wpn_iron_sword"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id 同名（铁剑）。",
+      "note": "属性模型不同：引擎是 stats {STR:2} + tier + rarity，设计库是 weapon_might 5 / weapon_hit 90 / weapon_crit 0。是否需要对齐属于数值裁决，不在本表范围内。"
+    }
+  ],
+  "unmapped": [
+    {
+      "type": "affix",
+      "side": "engine",
+      "id": "af_heal_resist",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "affix",
+      "side": "engine",
+      "id": "af_vanguard",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "affix",
+      "side": "engine",
+      "id": "afs_bulwark",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "affix",
+      "side": "engine",
+      "id": "afs_frenzy",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "buff",
+      "side": "engine",
+      "id": "burn",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "buff",
+      "side": "engine",
+      "id": "defense_down",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "buff",
+      "side": "engine",
+      "id": "defense_up",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "buff",
+      "side": "engine",
+      "id": "freeze",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "buff",
+      "side": "engine",
+      "id": "haste",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "buff",
+      "side": "engine",
+      "id": "poison",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "buff",
+      "side": "engine",
+      "id": "priority_up",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "buff",
+      "side": "engine",
+      "id": "slow",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "buff",
+      "side": "engine",
+      "id": "stun",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "buff",
+      "side": "engine",
+      "id": "swordsman_parry_stance",
+      "reason": "design_no_entity_kind",
+      "note": "引擎运行时状态，由 swordsman_zhaojia 施加；设计库把〔招架〕建成技能与判定（judgment parry），没有 buff 实体，故不在此处对应。"
+    },
+    {
+      "type": "class",
+      "side": "design",
+      "id": "sword_immortal",
+      "reason": "engine_not_implemented",
+      "note": "剑仙线在引擎 data/classes/ 无对应文件（引擎剑士线只实装 myrmidon 与 kensei）。"
+    },
+    {
+      "type": "class",
+      "side": "engine",
+      "id": "archer",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "class",
+      "side": "engine",
+      "id": "cleric",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "class",
+      "side": "engine",
+      "id": "knight",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "class",
+      "side": "engine",
+      "id": "mage",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "class",
+      "side": "engine",
+      "id": "soldier",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "enemy",
+      "side": "engine",
+      "id": "goblin_archer",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "enemy",
+      "side": "engine",
+      "id": "goblin_melee",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "enemy",
+      "side": "engine",
+      "id": "goblin_shaman",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "enemy",
+      "side": "engine",
+      "id": "test_archer",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "enemy",
+      "side": "engine",
+      "id": "test_dummy_regen",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "enemy",
+      "side": "engine",
+      "id": "test_dummy_revive",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "enemy",
+      "side": "engine",
+      "id": "test_lancer",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "enemy",
+      "side": "engine",
+      "id": "test_mage",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "equipment",
+      "side": "design",
+      "id": "eq_wpn_armorslayer",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "equipment",
+      "side": "design",
+      "id": "eq_wpn_binding_blade",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "equipment",
+      "side": "design",
+      "id": "eq_wpn_brave_sword",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "equipment",
+      "side": "design",
+      "id": "eq_wpn_durandal",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "equipment",
+      "side": "design",
+      "id": "eq_wpn_iron_blade",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "equipment",
+      "side": "design",
+      "id": "eq_wpn_killing_edge",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "equipment",
+      "side": "design",
+      "id": "eq_wpn_lancereaver",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "equipment",
+      "side": "design",
+      "id": "eq_wpn_light_brand",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "equipment",
+      "side": "design",
+      "id": "eq_wpn_longsword",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "equipment",
+      "side": "design",
+      "id": "eq_wpn_mani_katti",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "equipment",
+      "side": "design",
+      "id": "eq_wpn_poison_sword",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "equipment",
+      "side": "design",
+      "id": "eq_wpn_rapier",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "equipment",
+      "side": "design",
+      "id": "eq_wpn_regal_blade",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "equipment",
+      "side": "design",
+      "id": "eq_wpn_runesword",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "equipment",
+      "side": "design",
+      "id": "eq_wpn_silver_blade",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "equipment",
+      "side": "design",
+      "id": "eq_wpn_silver_sword",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "equipment",
+      "side": "design",
+      "id": "eq_wpn_slim_sword",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "equipment",
+      "side": "design",
+      "id": "eq_wpn_sol_katti",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "equipment",
+      "side": "design",
+      "id": "eq_wpn_steel_blade",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "equipment",
+      "side": "design",
+      "id": "eq_wpn_steel_sword",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "equipment",
+      "side": "design",
+      "id": "eq_wpn_wo_dao",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "equipment",
+      "side": "design",
+      "id": "eq_wpn_wyrmslayer",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "equipment",
+      "side": "engine",
+      "id": "eq_arm_chain_mail",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "equipment",
+      "side": "engine",
+      "id": "eq_arm_cloth_robe",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "equipment",
+      "side": "engine",
+      "id": "eq_arm_leather_vest",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "equipment",
+      "side": "engine",
+      "id": "eq_arm_tower_shield",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "equipment",
+      "side": "engine",
+      "id": "eq_wpn_oak_staff",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "equipment",
+      "side": "engine",
+      "id": "eq_wpn_short_bow",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "equipment",
+      "side": "engine",
+      "id": "eq_wpn_steel_lance",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "event",
+      "side": "engine",
+      "id": "event_abandoned_mine",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "event",
+      "side": "engine",
+      "id": "event_blessing_altar",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "event",
+      "side": "engine",
+      "id": "event_mysterious_merchant",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "judgment",
+      "side": "design",
+      "id": "crit_avoid",
+      "reason": "engine_no_entity_kind"
+    },
+    {
+      "type": "judgment",
+      "side": "design",
+      "id": "debuff_resist",
+      "reason": "engine_no_entity_kind"
+    },
+    {
+      "type": "judgment",
+      "side": "design",
+      "id": "evade",
+      "reason": "engine_no_entity_kind"
+    },
+    {
+      "type": "judgment",
+      "side": "design",
+      "id": "parry",
+      "reason": "engine_no_entity_kind"
+    },
+    {
+      "type": "map",
+      "side": "engine",
+      "id": "forest_01",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "map",
+      "side": "engine",
+      "id": "lakeside_01",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "map",
+      "side": "engine",
+      "id": "mountain_pass_01",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "map",
+      "side": "engine",
+      "id": "test_arena",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "relic",
+      "side": "engine",
+      "id": "relic_berserker_totem",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "relic",
+      "side": "engine",
+      "id": "relic_coin_pouch",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "relic",
+      "side": "engine",
+      "id": "relic_guardian_ward",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "relic",
+      "side": "engine",
+      "id": "relic_iron_core",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "relic",
+      "side": "engine",
+      "id": "relic_keen_edge",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "relic",
+      "side": "engine",
+      "id": "relic_lucky_clover",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "relic",
+      "side": "engine",
+      "id": "relic_mentor_tome",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "relic",
+      "side": "engine",
+      "id": "relic_scholar_seal",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "relic",
+      "side": "engine",
+      "id": "relic_swift_boots",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "relic",
+      "side": "engine",
+      "id": "relic_vampiric_fang",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "resource",
+      "side": "design",
+      "id": "mark",
+      "reason": "engine_implements_as_field",
+      "engine_carrier": "data/classes/kensei.json#sword_qi_config",
+      "note": "引擎没有「资源」实体，剑意印记实装为职业档案 sword_qi_config 的 mark_max / mark_*_bonus，加上技能档案的 mark_gain / mark_cost / requires_marks 字段。印记的心/道/势三种构成在引擎侧只体现为三个属性加成键，没有独立 id。"
+    },
+    {
+      "type": "resource",
+      "side": "design",
+      "id": "qi",
+      "reason": "engine_implements_as_field",
+      "engine_carrier": "data/classes/myrmidon.json#sword_qi_config",
+      "note": "引擎没有「资源」实体，剑气实装为职业档案 sword_qi_config 的 qi_max / qi_initial 等键，加上技能档案的 qi_cost / qi_gain_on_hit / qi_gain_on_kill 字段与职业档案的 basic_attack_qi_gain。"
+    },
+    {
+      "type": "rule",
+      "side": "design",
+      "id": "R1.1",
+      "reason": "engine_no_entity_kind"
+    },
+    {
+      "type": "rule",
+      "side": "design",
+      "id": "R1.10",
+      "reason": "engine_no_entity_kind"
+    },
+    {
+      "type": "rule",
+      "side": "design",
+      "id": "R1.2",
+      "reason": "engine_no_entity_kind"
+    },
+    {
+      "type": "rule",
+      "side": "design",
+      "id": "R1.3",
+      "reason": "engine_no_entity_kind"
+    },
+    {
+      "type": "rule",
+      "side": "design",
+      "id": "R1.4",
+      "reason": "engine_no_entity_kind"
+    },
+    {
+      "type": "rule",
+      "side": "design",
+      "id": "R1.5",
+      "reason": "engine_no_entity_kind"
+    },
+    {
+      "type": "rule",
+      "side": "design",
+      "id": "R1.6",
+      "reason": "engine_no_entity_kind"
+    },
+    {
+      "type": "rule",
+      "side": "design",
+      "id": "R1.7",
+      "reason": "engine_no_entity_kind"
+    },
+    {
+      "type": "rule",
+      "side": "design",
+      "id": "R1.8",
+      "reason": "engine_no_entity_kind"
+    },
+    {
+      "type": "rule",
+      "side": "design",
+      "id": "R1.9",
+      "reason": "engine_no_entity_kind"
+    },
+    {
+      "type": "rule",
+      "side": "design",
+      "id": "R2.1",
+      "reason": "engine_no_entity_kind"
+    },
+    {
+      "type": "rule",
+      "side": "design",
+      "id": "R2.2",
+      "reason": "engine_no_entity_kind"
+    },
+    {
+      "type": "rule",
+      "side": "design",
+      "id": "R2.3",
+      "reason": "engine_no_entity_kind"
+    },
+    {
+      "type": "rule",
+      "side": "design",
+      "id": "R2.4",
+      "reason": "engine_no_entity_kind"
+    },
+    {
+      "type": "rule",
+      "side": "design",
+      "id": "R3.1",
+      "reason": "engine_no_entity_kind"
+    },
+    {
+      "type": "rule",
+      "side": "design",
+      "id": "R3.2",
+      "reason": "engine_no_entity_kind"
+    },
+    {
+      "type": "rule",
+      "side": "design",
+      "id": "R3.3",
+      "reason": "engine_no_entity_kind"
+    },
+    {
+      "type": "rule",
+      "side": "design",
+      "id": "R3.4",
+      "reason": "engine_no_entity_kind"
+    },
+    {
+      "type": "rule",
+      "side": "design",
+      "id": "R4.1",
+      "reason": "engine_no_entity_kind"
+    },
+    {
+      "type": "rule",
+      "side": "design",
+      "id": "R4.2",
+      "reason": "engine_no_entity_kind"
+    },
+    {
+      "type": "rule",
+      "side": "design",
+      "id": "R4.3",
+      "reason": "engine_no_entity_kind"
+    },
+    {
+      "type": "rule",
+      "side": "design",
+      "id": "R4.4",
+      "reason": "engine_no_entity_kind"
+    },
+    {
+      "type": "rule",
+      "side": "design",
+      "id": "R5.9",
+      "reason": "engine_no_entity_kind"
+    },
+    {
+      "type": "skill",
+      "side": "design",
+      "id": "kensei_dashangduan",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "skill",
+      "side": "design",
+      "id": "kensei_huizhan",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "skill",
+      "side": "design",
+      "id": "kensei_jieli",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "skill",
+      "side": "design",
+      "id": "kensei_lianhuan",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "skill",
+      "side": "design",
+      "id": "kensei_lianshan",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "skill",
+      "side": "design",
+      "id": "kensei_qianjun",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "skill",
+      "side": "design",
+      "id": "kensei_qiefan",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "skill",
+      "side": "design",
+      "id": "kensei_sanduanzhan",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "skill",
+      "side": "design",
+      "id": "kensei_xinyan",
+      "reason": "engine_implements_as_field",
+      "engine_carrier": "data/classes/kensei.json#sword_qi_config",
+      "note": "同 myrmidon_xinyan：引擎侧载体是 data/classes/kensei.json 的 sword_qi_config。kensei 版比 myrmidon 版多「每枚印记提供对应属性加成」一段，引擎对应 mark_dex_bonus / mark_spd_bonus / mark_str_bonus 三个键。"
+    },
+    {
+      "type": "skill",
+      "side": "design",
+      "id": "kensei_xinyan_che",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "skill",
+      "side": "design",
+      "id": "kensei_xinyan_zhen",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "skill",
+      "side": "design",
+      "id": "kensei_yiwenzi",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "skill",
+      "side": "design",
+      "id": "kensei_zhantie",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "skill",
+      "side": "design",
+      "id": "myrmidon_xinyan",
+      "reason": "engine_implements_as_field",
+      "engine_carrier": "data/classes/myrmidon.json#sword_qi_config",
+      "note": "设计库把〔心眼〕建成 myrmidon 的一条被动技能；引擎没有对应的技能文件，而是把它实装成职业档案里的 sword_qi_config 字段组（crit_per_qi / qi_per_crit_pct / qi_ratio_threshold_pct / low_qi_stat_* / high_qi_stat_*）。data/classes/myrmidon.json 的 _note 原文写明这五项「按设计库 myrmidon_xinyan 现行口径实装」，该职业 description 也写明「持有心眼被动」。因此这不是「引擎未实装」。"
+    },
+    {
+      "type": "skill",
+      "side": "engine",
+      "id": "archer_aimed_shot",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "skill",
+      "side": "engine",
+      "id": "archer_eagle_eye",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "skill",
+      "side": "engine",
+      "id": "archer_piercing_arrow",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "skill",
+      "side": "engine",
+      "id": "cleric_bless",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "skill",
+      "side": "engine",
+      "id": "cleric_heal",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "skill",
+      "side": "engine",
+      "id": "cleric_holy_smite",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "skill",
+      "side": "engine",
+      "id": "knight_charge",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "skill",
+      "side": "engine",
+      "id": "knight_heavy_strike",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "skill",
+      "side": "engine",
+      "id": "knight_iron_wall",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "skill",
+      "side": "engine",
+      "id": "mage_fireball",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "skill",
+      "side": "engine",
+      "id": "mage_ice_bolt",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "skill",
+      "side": "engine",
+      "id": "mage_mana_shield",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "skill",
+      "side": "engine",
+      "id": "soldier_rally",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "skill",
+      "side": "engine",
+      "id": "soldier_shield_bash",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "skill",
+      "side": "engine",
+      "id": "soldier_slash",
+      "reason": "design_not_registered"
+    },
+    {
+      "type": "tag",
+      "side": "design",
+      "id": "位移",
+      "reason": "no_traceable_correspondence"
+    },
+    {
+      "type": "tag",
+      "side": "design",
+      "id": "击杀",
+      "reason": "no_traceable_correspondence"
+    },
+    {
+      "type": "tag",
+      "side": "design",
+      "id": "区域",
+      "reason": "no_traceable_correspondence"
+    },
+    {
+      "type": "tag",
+      "side": "design",
+      "id": "反应",
+      "reason": "no_traceable_correspondence"
+    },
+    {
+      "type": "tag",
+      "side": "design",
+      "id": "增益状态",
+      "reason": "no_traceable_correspondence"
+    },
+    {
+      "type": "tag",
+      "side": "design",
+      "id": "奥义",
+      "reason": "no_traceable_correspondence"
+    },
+    {
+      "type": "tag",
+      "side": "design",
+      "id": "攻击",
+      "reason": "no_traceable_correspondence"
+    },
+    {
+      "type": "tag",
+      "side": "design",
+      "id": "机动",
+      "reason": "no_traceable_correspondence"
+    },
+    {
+      "type": "tag",
+      "side": "design",
+      "id": "破格",
+      "reason": "no_traceable_correspondence"
+    },
+    {
+      "type": "tag",
+      "side": "design",
+      "id": "被动",
+      "reason": "no_traceable_correspondence"
+    },
+    {
+      "type": "tag",
+      "side": "design",
+      "id": "负面状态",
+      "reason": "no_traceable_correspondence"
+    },
+    {
+      "type": "tag",
+      "side": "design",
+      "id": "资源",
+      "reason": "no_traceable_correspondence"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_canxin",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_erdaokairen",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_ertianyiliu",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_guzhuyizhi",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_hengsaoqianjun",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_houfazhiren",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_houjibofa",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_huazhengweiling",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_jianqie",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_jianqihuidang",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_jiaoren",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_jiutoulongshan",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_juhe_ji",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_juhe_lie",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_kongzhan",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_lianqishi",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_liuqi",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_lixing",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_mijiantianxiang",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_mingjingzhishui",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_pofu",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_sanqitu",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_shihuo",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_shouxin",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_shunshizhan",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_tiaoxi",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_tsujigiri",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_tuodaoji",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_wanxiangguiyi",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_wuxiangjian",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_xianzhixian",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_xinyanche",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_xufeng",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_yanfan",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_yanliu",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_yingfeng",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_yinxin",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_yishan_luan",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_yixian",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "kensei_zhefan",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "myrmidon_jianyipengpai",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "myrmidon_kongchan",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "myrmidon_pozhu",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "myrmidon_rushen",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "myrmidon_sheshen",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "myrmidon_sixian",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "myrmidon_wangyue",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "talent",
+      "side": "design",
+      "id": "myrmidon_xianyue",
+      "reason": "engine_not_implemented"
+    },
+    {
+      "type": "terrain",
+      "side": "engine",
+      "id": "terrain_combat",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "wave",
+      "side": "engine",
+      "id": "wave_act1_boss_01",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "wave",
+      "side": "engine",
+      "id": "wave_act1_elite_01",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "wave",
+      "side": "engine",
+      "id": "wave_act1_elite_02",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "wave",
+      "side": "engine",
+      "id": "wave_act1_normal_01",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "wave",
+      "side": "engine",
+      "id": "wave_act1_normal_02",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "wave",
+      "side": "engine",
+      "id": "wave_act1_normal_03",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "wave",
+      "side": "engine",
+      "id": "wave_event_mine_ambush",
+      "reason": "design_no_entity_kind"
+    },
+    {
+      "type": "weapon",
+      "side": "engine",
+      "id": "wpn_archer_starter",
+      "reason": "no_traceable_correspondence"
+    },
+    {
+      "type": "weapon",
+      "side": "engine",
+      "id": "wpn_cleric_starter",
+      "reason": "no_traceable_correspondence"
+    },
+    {
+      "type": "weapon",
+      "side": "engine",
+      "id": "wpn_knight_starter",
+      "reason": "no_traceable_correspondence"
+    },
+    {
+      "type": "weapon",
+      "side": "engine",
+      "id": "wpn_mage_starter",
+      "reason": "no_traceable_correspondence"
+    },
+    {
+      "type": "weapon",
+      "side": "engine",
+      "id": "wpn_magical_ranged_basic",
+      "reason": "no_traceable_correspondence"
+    },
+    {
+      "type": "weapon",
+      "side": "engine",
+      "id": "wpn_physical_melee_basic",
+      "reason": "no_traceable_correspondence"
+    },
+    {
+      "type": "weapon",
+      "side": "engine",
+      "id": "wpn_physical_ranged_basic",
+      "reason": "no_traceable_correspondence"
+    },
+    {
+      "type": "weapon",
+      "side": "engine",
+      "id": "wpn_soldier_starter",
+      "reason": "no_traceable_correspondence"
+    },
+    {
+      "type": "weapon",
+      "side": "engine",
+      "id": "wpn_swordsman_starter",
+      "reason": "no_traceable_correspondence"
+    },
+    {
+      "type": "weapon",
+      "side": "engine",
+      "id": "wpn_test_archer",
+      "reason": "no_traceable_correspondence"
+    },
+    {
+      "type": "weapon",
+      "side": "engine",
+      "id": "wpn_test_lancer",
+      "reason": "no_traceable_correspondence"
+    },
+    {
+      "type": "weapon",
+      "side": "engine",
+      "id": "wpn_test_mage",
+      "reason": "no_traceable_correspondence"
+    },
+    {
+      "type": "weapon",
+      "side": "engine",
+      "id": "wpn_training_dummy",
+      "reason": "no_traceable_correspondence"
+    }
+  ]
+}
