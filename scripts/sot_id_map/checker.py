@@ -170,7 +170,7 @@ SAME_ID_FIELD = "same_id_other_side"
 def _check_cross_side(entity_types: list[dict],
                       collected: dict[tuple[str, str], SideIds],
                       unmapped_index: dict[tuple[str, str], dict[str, dict]],
-                      findings: list[Finding]) -> None:
+                      findings: list[Finding]) -> list[dict]:
     """The same id string on both sides may not be declared unmapped.
 
     Coverage alone only asks "is this id accounted for", never "is the
@@ -186,7 +186,14 @@ def _check_cross_side(entity_types: list[dict],
     other side is not the same thing. That leaves room for a real id
     collision between the two taxonomies without leaving room for a silent
     contradiction.
+
+    Returns the entries that actually used that escape hatch, so the report
+    can name them. A machine can only check that the justification is
+    non-empty, never that it is true, so every use of the hatch is a thing
+    a human has to review — which means it has to be visible without
+    grepping the data file.
     """
+    used: list[dict] = []
     for entry in entity_types:
         etype = entry["type"]
         if entry.get("coverage") == "excluded":
@@ -200,7 +207,12 @@ def _check_cross_side(entity_types: list[dict],
                 item = unmapped_index.get((etype, side), {}).get(entity_id)
                 if item is None:
                     continue
-                if str(item.get(SAME_ID_FIELD, "")).strip():
+                justification = str(item.get(SAME_ID_FIELD, "")).strip()
+                if justification:
+                    used.append({"type": etype, "side": side,
+                                 "id": entity_id,
+                                 "reason": item.get("reason"),
+                                 SAME_ID_FIELD: justification})
                     continue
                 findings.append(Finding(
                     "cross_side_contradiction",
@@ -211,6 +223,32 @@ def _check_cross_side(entity_types: list[dict],
                     f"{design.origin[entity_id]}) — map the pair, or state in "
                     f"a {SAME_ID_FIELD!r} field why the two are not the same "
                     f"entity"))
+    return used
+
+
+def _check_stale_escape_hatch(spec: dict, used: list[dict],
+                              findings: list[Finding]) -> None:
+    """A `same_id_other_side` that suppresses nothing must not sit there.
+
+    Without this, the hatch could be pre-authorised: sprinkle the field
+    over entries where it currently does nothing, and the day one of those
+    ids appears on the other side the contradiction is suppressed before
+    anyone ever decided it should be. Carrying the field is only legitimate
+    while it is actually doing something.
+    """
+    active = {(u["type"], u["side"], u["id"]) for u in used}
+    for index, item in enumerate(spec["unmapped"]):
+        if not str(item.get(SAME_ID_FIELD, "")).strip():
+            continue
+        key = (item.get("type"), item.get("side"), item.get("id"))
+        if key in active:
+            continue
+        findings.append(Finding(
+            "bad_map",
+            f"unmapped[{index}] ({item.get('side')} {item.get('type')} "
+            f"{item.get('id')!r}) carries {SAME_ID_FIELD!r}, but that id does "
+            f"not exist on the other side, so the field suppresses nothing — "
+            f"remove it rather than leaving the escape hatch pre-authorised"))
 
 
 def _cardinality(n_engine: int, n_design: int) -> str:
@@ -312,7 +350,9 @@ def check(roots: Roots, spec: dict) -> Report:
         _claim(claimed, etype, side, entity_id, where, findings)
         unmapped_index.setdefault((etype, side), {})[entity_id] = item
 
-    _check_cross_side(entity_types, collected, unmapped_index, findings)
+    escape_hatch_used = _check_cross_side(entity_types, collected,
+                                          unmapped_index, findings)
+    _check_stale_escape_hatch(spec, escape_hatch_used, findings)
 
     # Coverage: every id on a required entity type must have been claimed.
     stats: dict = {"entity_types": {}}
@@ -344,6 +384,7 @@ def check(roots: Roots, spec: dict) -> Report:
         stats["entity_types"][etype] = per_type
     stats["mappings"] = len(spec["mappings"])
     stats["unmapped"] = len(spec["unmapped"])
+    stats["escape_hatch_used"] = escape_hatch_used
     stats["engine_ids_total"] = sum(
         len(v.ids) for (t, s), v in collected.items() if s == "engine")
     stats["design_ids_total"] = sum(

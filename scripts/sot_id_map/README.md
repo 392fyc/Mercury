@@ -80,13 +80,18 @@ python -m scripts.sot_id_map.test_smoke
 | `missing_carrier` | 用了 `engine_implements_as_field`，但 `engine_carrier` 缺失、没有 `#字段` 部分、文件不存在，**或所指的字段在那个文件里根本不存在** |
 | `bad_reason` | `unmapped` 的原因码不在受控枚举内 |
 | `bad_cardinality` | 声明的基数与实际 id 个数不符 |
-| `bad_map` | 映射文件自身结构问题（未知实体类型、mapping 缺 `basis` 等） |
+| `bad_map` | 映射文件自身结构问题（未知实体类型、mapping 缺 `basis`、`same_id_other_side` 埋在没有对面同名 id 的条目上等） |
 
 ### `cross_side_contradiction`：覆盖检查挡不住的那一种假话
 
 覆盖检查只问「这个 id 被认领了吗」，不问「认领得对不对」。于是有一条路能一边通过一边说假话：一个**两侧都存在**的 id，被拆成两条互相矛盾的 `unmapped`——引擎侧写 `design_not_registered`（说设计库没登记），设计侧写 `engine_not_implemented`（说引擎没实装），而实际上两侧都有它。
 
-所以：只要某个 id 串在同一实体类型的两侧 id 全集里**都**出现，针对它的 `unmapped` 条目必须在 `same_id_other_side` 字段里写明「为什么另一侧那个同名条目不是同一个东西」。这给真正的 id 撞名留了一扇写明理由的门，但没给静默矛盾留门。
+所以：只要某个 id 串在同一实体类型的两侧 id 全集里**都**出现，针对它的 `unmapped` 条目必须在 `same_id_other_side` 字段里写明「为什么另一侧那个同名条目不是同一个东西」。这给真正的 id 撞名留了一扇写明理由的门。
+
+**这扇门的边界要说清楚**：校验器只能机械验证这个字段**非空**，验不了理由是否成立——填一句敷衍话同样能通过。所以用这个字段是一个**需要被人复核的动作，不是免检**。为此有两条约束：
+
+- **用了就会出现在报告里。** 汇总输出固定有一行 `same_id_other_side escape hatch: N in use`，N > 0 时逐条列出 id、原因码与所填理由。当前真实数据是 `0 in use`，一旦有人用了这扇门，下一个读报告的人立刻看得见，不必去翻数据文件。
+- **不许预先埋伏。** 某条 `unmapped` 带了这个字段、但那个 id 在另一侧根本不存在（也就是它当前什么都没抑制），报 `bad_map`。否则可以提前把字段撒在一堆条目上，等哪天对面出现同名 id 时矛盾就被悄悄抑制掉了——那等于绕过了这道检查。
 
 ### `engine_carrier` 的字段部分会被真的解析
 

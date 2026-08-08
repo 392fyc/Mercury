@@ -317,7 +317,45 @@ def test_cross_side_contradiction_is_reported() -> None:
                 item["same_id_other_side"] = "unrelated namesake, verified"
         proc = _run(excused, engine, design, tmp_path)
         assert proc.returncode == 0, proc.stdout
+        # ...and using it must be visible in the report, not only in the file
+        assert "same_id_other_side escape hatch: 2 in use" in proc.stdout, \
+            proc.stdout
+        assert "unverifiable by machine" in proc.stdout, proc.stdout
+        assert proc.stdout.count("unrelated namesake, verified") == 2, \
+            proc.stdout
     print("PASS test_cross_side_contradiction_is_reported")
+
+
+def test_escape_hatch_usage_is_always_reported() -> None:
+    """Zero uses still prints a line — silence would be indistinguishable."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        engine, design, spec = _build_fixture(tmp_path)
+        proc = _run(spec, engine, design, tmp_path)
+        assert proc.returncode == 0, proc.stdout
+        assert "same_id_other_side escape hatch: 0 in use" in proc.stdout, \
+            proc.stdout
+        assert "unverifiable by machine" not in proc.stdout, proc.stdout
+    print("PASS test_escape_hatch_usage_is_always_reported")
+
+
+def test_stale_escape_hatch_is_reported() -> None:
+    """The hatch may not be pre-authorised on entries where it does nothing."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        engine, design, spec = _build_fixture(tmp_path)
+        _assert_pristine(spec, engine, design, tmp_path)
+
+        broken = copy.deepcopy(spec)
+        # `sw_parry` exists on the engine side only, so the field suppresses
+        # nothing here — carrying it would silently pre-arm the hatch for the
+        # day a design entry of the same id shows up.
+        broken["unmapped"][0]["same_id_other_side"] = "just in case"
+        proc = _run(broken, engine, design, tmp_path)
+        assert proc.returncode == 1, proc.stdout
+        assert "suppresses nothing" in proc.stdout, proc.stdout
+        assert "sw_parry" in proc.stdout, proc.stdout
+    print("PASS test_stale_escape_hatch_is_reported")
 
 
 def test_carrier_field_must_exist() -> None:
@@ -520,6 +558,8 @@ def main() -> int:
     test_duplicate_claim_is_reported()
     test_missing_carrier_is_reported()
     test_cross_side_contradiction_is_reported()
+    test_escape_hatch_usage_is_always_reported()
+    test_stale_escape_hatch_is_reported()
     test_carrier_field_must_exist()
     test_file_without_id_is_reported()
     test_scope_guard_covers_loose_and_nested_files()

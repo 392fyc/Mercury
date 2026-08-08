@@ -90,6 +90,21 @@ def _print_text(report: checker.Report, roots) -> None:
         f"design ids: {report.stats['design_ids_total']}   "
         f"mappings: {report.stats['mappings']}   "
         f"unmapped: {report.stats['unmapped']}\n")
+
+    # The `same_id_other_side` escape hatch is machine-checkable only for
+    # being non-empty, never for being true, so each use is something a
+    # human must review. Print the count unconditionally: a reader should
+    # not have to grep the data file to find out whether the hatch is in
+    # use, and "0" is itself the information most of the time.
+    used = report.stats.get("escape_hatch_used", [])
+    caveat = (" (justifications are unverifiable by machine — review them)"
+              if used else "")
+    out.write(f"same_id_other_side escape hatch: {len(used)} in use{caveat}\n")
+    for item in used:
+        out.write(f"  {item['side']} {item['type']} {item['id']!r} "
+                  f"(reason {item['reason']!r}): "
+                  f"{item['same_id_other_side']}\n")
+
     if report.ok:
         out.write("\nOK: every id on both sides is mapped or explicitly "
                   "unmapped, and every referenced id exists.\n")
