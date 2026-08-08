@@ -31,7 +31,9 @@
     "engine_implements_as_field": "两侧都有这件事，但引擎把它实装成了另一个实体的字段而不是独立实体。必须同时给出 engine_carrier 指针（形如 data/classes/kensei.json#sword_qi_config），校验器会核实该文件存在。不许用 engine_not_implemented 顶替 —— 那是错误定性。",
     "engine_no_entity_kind": "引擎侧根本没有这一类实体（设计库的规则条文、判定层等设计/规格层内容）。",
     "design_no_entity_kind": "设计库侧根本没有这一类实体（引擎的 buff、词条、地图、波次等运行时内容）。",
-    "no_traceable_correspondence": "两侧都有相近概念，但没有可从数据或双方文档溯源的 id 级对应关系。按 Issue #556 界线，溯源不到就标本码写明原因，不猜。"
+    "no_traceable_correspondence": "两侧都有相近概念，但没有可从数据或双方文档溯源的 id 级对应关系——是「判不出」，不是「已确证没有」。按 Issue #556 界线，溯源不到就标本码写明原因，不猜。若后来查清了确实没有对应实体，应改判 engine_placeholder_no_design_entity 或 design_no_entity_kind。",
+    "engine_placeholder_no_design_entity": "引擎侧的占位 / 内部派生结构，且**已核对确认**设计库没有对应实体。与 no_traceable_correspondence 的边界：那个码是查了但判不出；本码是查过两侧、确认没有。与 design_no_entity_kind 的边界：那个码指设计库永久不建模的引擎原生内容（buff / 地图 / 波次 / 敌人）；本码指引擎自己的占位结构，将来若接上真实数据可能被取代，届时要重新归类。",
+    "design_shelved_not_imported": "设计库侧该条目的 shelf_state 不是「在用」（已归档 / 待删除），不是等待引擎实装的候选，引擎不导入是正确行为而不是欠账。与 engine_not_implemented 的边界：那个码是设计库在用、引擎尚未实装（将来实装后应改成 mappings）；本码是设计库自己把条目下架了。判据在数据里：snapshots/*.json 的 shelf_state 字段（待删除的另带 trashed_at 时刻）。"
   },
   "entity_types": [
     {
@@ -106,7 +108,7 @@
         "path": "snapshots/equipment.json",
         "id_field": "id"
       },
-      "note": "可拾取装备。两侧属性模型不同（引擎 stats / tier / rarity，设计库 weapon_might / weapon_hit / weapon_crit），本表只做 id 对应，不做数值判断。"
+      "note": "可拾取装备。Wave 2（引擎 develop @ 424c698）之后设计库 equipment 表的全部 22 条「在用」武器已 1:1 导入引擎 data/equipment/，引擎侧带 _mirror 锚点回指设计库快照；剩下 1 条 shelf_state=待删除 的按状态刻意未导入。引擎另有 7 条设计库未登记的条目（4 件防具 + 3 件非剑类武器）。引擎独有字段 tier / stats / engine_effects 不回流（lane 文档 §2.2）。本表只做 id 对应，不做数值判断。"
     },
     {
       "type": "event",
@@ -188,7 +190,7 @@
         "path": "snapshots/talents.json",
         "id_field": "id"
       },
-      "note": "天赋。引擎当前只实装 1 条（A1 首张接线天赋），同样带 _mirror 溯源。"
+      "note": "天赋。引擎当前实装 3 条（myrmidon_jiecuo 为 A1 首张，Wave 2 新增 kensei_erdaokairen 与 kensei_ertianyiliu），均带 _mirror 溯源。设计库 49 条里 31 条在用、18 条已归档或待删除；后者不是等待实装的候选，用 design_shelved_not_imported 与「在用但引擎未实装」区分开。"
     },
     {
       "type": "talent_tree_node",
@@ -232,7 +234,7 @@
         "id_field": "id"
       },
       "design": null,
-      "note": "引擎单位内建武器属性块（weapon_might / weapon_hit / weapon_crit）。注意：设计库 equipment 表有同名三字段，但那是可拾取装备条目，id 命名空间（wpn_* vs eq_wpn_*）与用途都不同，没有 id 级可溯源对应，故全部标 no_traceable_correspondence 而不是猜一个配对。"
+      "note": "引擎单位内建武器属性块（weapon_might / weapon_hit / weapon_crit），全部 13 条都是 starter / basic / test / dummy 占位，_note 自述由 R1.7 结构迁移从旧 class/enemy json 内联字段搬迁而来。设计库没有对应实体：它的 equipment 表虽有同名三字段，但那是可拾取装备，Wave 2 已证明其对应物是引擎 data/equipment/。故 13 条全部标 engine_placeholder_no_design_entity（已确证没有），不再是 no_traceable_correspondence（判不出）。"
     },
     {
       "type": "resource",
@@ -430,8 +432,262 @@
         "eq_wpn_iron_sword"
       ],
       "cardinality": "1:1",
-      "basis": "两侧同 id 同名（铁剑）。",
-      "note": "属性模型不同：引擎是 stats {STR:2} + tier + rarity，设计库是 weapon_might 5 / weapon_hit 90 / weapon_crit 0。是否需要对齐属于数值裁决，不在本表范围内。"
+      "basis": "两侧同 id 同名（铁剑）；引擎 data/equipment/eq_wpn_iron_sword.json 的 _mirror 字段自述「id / name / slot / rarity / weapon_might / weapon_hit / weapon_crit / description 是设计库 equipment 条目的只读镜像」，版本锚点 = 设计库仓 snapshots/equipment.json @ 2ea744b；两侧 weapon_might / weapon_hit / weapon_crit 逐项相等（5 / 90 / 0）。",
+      "note": "Wave 2（引擎 develop @ 424c698）之前引擎侧是 stats {STR:2} + tier 的另一套属性模型，本表当时记着「两侧属性模型不同」；该导入之后引擎已改用设计库的 weapon_might / weapon_hit / weapon_crit，那句话不再成立，已改写。引擎侧仍多两个设计库没有的字段：tier（由 rarity 派生，供掉落分桶）与 engine_effects（本条为 STR+2 的特效占位），按 lane 文档 §2.2 属引擎独有列、不回流。"
+    },
+    {
+      "type": "equipment",
+      "engine_ids": [
+        "eq_wpn_armorslayer"
+      ],
+      "design_ids": [
+        "eq_wpn_armorslayer"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id 同名（斩铠剑）；引擎 data/equipment/eq_wpn_armorslayer.json 的 _mirror 字段自述「id / name / slot / rarity / weapon_might / weapon_hit / weapon_crit / description 是设计库 equipment 条目的只读镜像」，版本锚点 = 设计库仓 snapshots/equipment.json @ 2ea744b；两侧 weapon_might / weapon_hit / weapon_crit 逐项相等（8 / 80 / 0）。"
+    },
+    {
+      "type": "equipment",
+      "engine_ids": [
+        "eq_wpn_binding_blade"
+      ],
+      "design_ids": [
+        "eq_wpn_binding_blade"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id 同名（封印之剑）；引擎 data/equipment/eq_wpn_binding_blade.json 的 _mirror 字段自述「id / name / slot / rarity / weapon_might / weapon_hit / weapon_crit / description 是设计库 equipment 条目的只读镜像」，版本锚点 = 设计库仓 snapshots/equipment.json @ 2ea744b；两侧 weapon_might / weapon_hit / weapon_crit 逐项相等（18 / 95 / 10）。"
+    },
+    {
+      "type": "equipment",
+      "engine_ids": [
+        "eq_wpn_brave_sword"
+      ],
+      "design_ids": [
+        "eq_wpn_brave_sword"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id 同名（勇者之剑）；引擎 data/equipment/eq_wpn_brave_sword.json 的 _mirror 字段自述「id / name / slot / rarity / weapon_might / weapon_hit / weapon_crit / description 是设计库 equipment 条目的只读镜像」，版本锚点 = 设计库仓 snapshots/equipment.json @ 2ea744b；两侧 weapon_might / weapon_hit / weapon_crit 逐项相等（9 / 75 / 0）。"
+    },
+    {
+      "type": "equipment",
+      "engine_ids": [
+        "eq_wpn_durandal"
+      ],
+      "design_ids": [
+        "eq_wpn_durandal"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id 同名（迪朗达尔）；引擎 data/equipment/eq_wpn_durandal.json 的 _mirror 字段自述「id / name / slot / rarity / weapon_might / weapon_hit / weapon_crit / description 是设计库 equipment 条目的只读镜像」，版本锚点 = 设计库仓 snapshots/equipment.json @ 2ea744b；两侧 weapon_might / weapon_hit / weapon_crit 逐项相等（17 / 90 / 0）。"
+    },
+    {
+      "type": "equipment",
+      "engine_ids": [
+        "eq_wpn_iron_blade"
+      ],
+      "design_ids": [
+        "eq_wpn_iron_blade"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id 同名（阔铁剑）；引擎 data/equipment/eq_wpn_iron_blade.json 的 _mirror 字段自述「id / name / slot / rarity / weapon_might / weapon_hit / weapon_crit / description 是设计库 equipment 条目的只读镜像」，版本锚点 = 设计库仓 snapshots/equipment.json @ 2ea744b；两侧 weapon_might / weapon_hit / weapon_crit 逐项相等（9 / 70 / 0）。"
+    },
+    {
+      "type": "equipment",
+      "engine_ids": [
+        "eq_wpn_killing_edge"
+      ],
+      "design_ids": [
+        "eq_wpn_killing_edge"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id 同名（杀戮之刃）；引擎 data/equipment/eq_wpn_killing_edge.json 的 _mirror 字段自述「id / name / slot / rarity / weapon_might / weapon_hit / weapon_crit / description 是设计库 equipment 条目的只读镜像」，版本锚点 = 设计库仓 snapshots/equipment.json @ 2ea744b；两侧 weapon_might / weapon_hit / weapon_crit 逐项相等（9 / 75 / 30）。"
+    },
+    {
+      "type": "equipment",
+      "engine_ids": [
+        "eq_wpn_light_brand"
+      ],
+      "design_ids": [
+        "eq_wpn_light_brand"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id 同名（光之剑）；引擎 data/equipment/eq_wpn_light_brand.json 的 _mirror 字段自述「id / name / slot / rarity / weapon_might / weapon_hit / weapon_crit / description 是设计库 equipment 条目的只读镜像」，版本锚点 = 设计库仓 snapshots/equipment.json @ 2ea744b；两侧 weapon_might / weapon_hit / weapon_crit 逐项相等（9 / 70 / 0）。"
+    },
+    {
+      "type": "equipment",
+      "engine_ids": [
+        "eq_wpn_longsword"
+      ],
+      "design_ids": [
+        "eq_wpn_longsword"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id 同名（长剑）；引擎 data/equipment/eq_wpn_longsword.json 的 _mirror 字段自述「id / name / slot / rarity / weapon_might / weapon_hit / weapon_crit / description 是设计库 equipment 条目的只读镜像」，版本锚点 = 设计库仓 snapshots/equipment.json @ 2ea744b；两侧 weapon_might / weapon_hit / weapon_crit 逐项相等（6 / 85 / 0）。"
+    },
+    {
+      "type": "equipment",
+      "engine_ids": [
+        "eq_wpn_mani_katti"
+      ],
+      "design_ids": [
+        "eq_wpn_mani_katti"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id 同名（玛尼卡提）；引擎 data/equipment/eq_wpn_mani_katti.json 的 _mirror 字段自述「id / name / slot / rarity / weapon_might / weapon_hit / weapon_crit / description 是设计库 equipment 条目的只读镜像」，版本锚点 = 设计库仓 snapshots/equipment.json @ 2ea744b；两侧 weapon_might / weapon_hit / weapon_crit 逐项相等（8 / 80 / 20）。"
+    },
+    {
+      "type": "equipment",
+      "engine_ids": [
+        "eq_wpn_poison_sword"
+      ],
+      "design_ids": [
+        "eq_wpn_poison_sword"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id 同名（毒剑）；引擎 data/equipment/eq_wpn_poison_sword.json 的 _mirror 字段自述「id / name / slot / rarity / weapon_might / weapon_hit / weapon_crit / description 是设计库 equipment 条目的只读镜像」，版本锚点 = 设计库仓 snapshots/equipment.json @ 2ea744b；两侧 weapon_might / weapon_hit / weapon_crit 逐项相等（3 / 70 / 0）。"
+    },
+    {
+      "type": "equipment",
+      "engine_ids": [
+        "eq_wpn_rapier"
+      ],
+      "design_ids": [
+        "eq_wpn_rapier"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id 同名（拉庇亚）；引擎 data/equipment/eq_wpn_rapier.json 的 _mirror 字段自述「id / name / slot / rarity / weapon_might / weapon_hit / weapon_crit / description 是设计库 equipment 条目的只读镜像」，版本锚点 = 设计库仓 snapshots/equipment.json @ 2ea744b；两侧 weapon_might / weapon_hit / weapon_crit 逐项相等（7 / 95 / 10）。"
+    },
+    {
+      "type": "equipment",
+      "engine_ids": [
+        "eq_wpn_regal_blade"
+      ],
+      "design_ids": [
+        "eq_wpn_regal_blade"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id 同名（王者之剑）；引擎 data/equipment/eq_wpn_regal_blade.json 的 _mirror 字段自述「id / name / slot / rarity / weapon_might / weapon_hit / weapon_crit / description 是设计库 equipment 条目的只读镜像」，版本锚点 = 设计库仓 snapshots/equipment.json @ 2ea744b；两侧 weapon_might / weapon_hit / weapon_crit 逐项相等（20 / 85 / 0）。"
+    },
+    {
+      "type": "equipment",
+      "engine_ids": [
+        "eq_wpn_runesword"
+      ],
+      "design_ids": [
+        "eq_wpn_runesword"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id 同名（如尼剑）；引擎 data/equipment/eq_wpn_runesword.json 的 _mirror 字段自述「id / name / slot / rarity / weapon_might / weapon_hit / weapon_crit / description 是设计库 equipment 条目的只读镜像」，版本锚点 = 设计库仓 snapshots/equipment.json @ 2ea744b；两侧 weapon_might / weapon_hit / weapon_crit 逐项相等（12 / 65 / 0）。"
+    },
+    {
+      "type": "equipment",
+      "engine_ids": [
+        "eq_wpn_silver_blade"
+      ],
+      "design_ids": [
+        "eq_wpn_silver_blade"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id 同名（阔银剑）；引擎 data/equipment/eq_wpn_silver_blade.json 的 _mirror 字段自述「id / name / slot / rarity / weapon_might / weapon_hit / weapon_crit / description 是设计库 equipment 条目的只读镜像」，版本锚点 = 设计库仓 snapshots/equipment.json @ 2ea744b；两侧 weapon_might / weapon_hit / weapon_crit 逐项相等（14 / 60 / 0）。"
+    },
+    {
+      "type": "equipment",
+      "engine_ids": [
+        "eq_wpn_silver_sword"
+      ],
+      "design_ids": [
+        "eq_wpn_silver_sword"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id 同名（银剑）；引擎 data/equipment/eq_wpn_silver_sword.json 的 _mirror 字段自述「id / name / slot / rarity / weapon_might / weapon_hit / weapon_crit / description 是设计库 equipment 条目的只读镜像」，版本锚点 = 设计库仓 snapshots/equipment.json @ 2ea744b；两侧 weapon_might / weapon_hit / weapon_crit 逐项相等（13 / 80 / 0）。"
+    },
+    {
+      "type": "equipment",
+      "engine_ids": [
+        "eq_wpn_slim_sword"
+      ],
+      "design_ids": [
+        "eq_wpn_slim_sword"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id 同名（细剑）；引擎 data/equipment/eq_wpn_slim_sword.json 的 _mirror 字段自述「id / name / slot / rarity / weapon_might / weapon_hit / weapon_crit / description 是设计库 equipment 条目的只读镜像」，版本锚点 = 设计库仓 snapshots/equipment.json @ 2ea744b；两侧 weapon_might / weapon_hit / weapon_crit 逐项相等（3 / 100 / 5）。"
+    },
+    {
+      "type": "equipment",
+      "engine_ids": [
+        "eq_wpn_sol_katti"
+      ],
+      "design_ids": [
+        "eq_wpn_sol_katti"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id 同名（索尔卡提）；引擎 data/equipment/eq_wpn_sol_katti.json 的 _mirror 字段自述「id / name / slot / rarity / weapon_might / weapon_hit / weapon_crit / description 是设计库 equipment 条目的只读镜像」，版本锚点 = 设计库仓 snapshots/equipment.json @ 2ea744b；两侧 weapon_might / weapon_hit / weapon_crit 逐项相等（12 / 95 / 25）。"
+    },
+    {
+      "type": "equipment",
+      "engine_ids": [
+        "eq_wpn_steel_blade"
+      ],
+      "design_ids": [
+        "eq_wpn_steel_blade"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id 同名（阔钢剑）；引擎 data/equipment/eq_wpn_steel_blade.json 的 _mirror 字段自述「id / name / slot / rarity / weapon_might / weapon_hit / weapon_crit / description 是设计库 equipment 条目的只读镜像」，版本锚点 = 设计库仓 snapshots/equipment.json @ 2ea744b；两侧 weapon_might / weapon_hit / weapon_crit 逐项相等（11 / 65 / 0）。"
+    },
+    {
+      "type": "equipment",
+      "engine_ids": [
+        "eq_wpn_steel_sword"
+      ],
+      "design_ids": [
+        "eq_wpn_steel_sword"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id 同名（钢剑）；引擎 data/equipment/eq_wpn_steel_sword.json 的 _mirror 字段自述「id / name / slot / rarity / weapon_might / weapon_hit / weapon_crit / description 是设计库 equipment 条目的只读镜像」，版本锚点 = 设计库仓 snapshots/equipment.json @ 2ea744b；两侧 weapon_might / weapon_hit / weapon_crit 逐项相等（8 / 75 / 0）。"
+    },
+    {
+      "type": "equipment",
+      "engine_ids": [
+        "eq_wpn_wo_dao"
+      ],
+      "design_ids": [
+        "eq_wpn_wo_dao"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id 同名（倭刀）；引擎 data/equipment/eq_wpn_wo_dao.json 的 _mirror 字段自述「id / name / slot / rarity / weapon_might / weapon_hit / weapon_crit / description 是设计库 equipment 条目的只读镜像」，版本锚点 = 设计库仓 snapshots/equipment.json @ 2ea744b；两侧 weapon_might / weapon_hit / weapon_crit 逐项相等（8 / 75 / 35）。"
+    },
+    {
+      "type": "equipment",
+      "engine_ids": [
+        "eq_wpn_wyrmslayer"
+      ],
+      "design_ids": [
+        "eq_wpn_wyrmslayer"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id 同名（龙斩剑）；引擎 data/equipment/eq_wpn_wyrmslayer.json 的 _mirror 字段自述「id / name / slot / rarity / weapon_might / weapon_hit / weapon_crit / description 是设计库 equipment 条目的只读镜像」，版本锚点 = 设计库仓 snapshots/equipment.json @ 2ea744b；两侧 weapon_might / weapon_hit / weapon_crit 逐项相等（7 / 75 / 0）。"
+    },
+    {
+      "type": "talent",
+      "engine_ids": [
+        "kensei_erdaokairen"
+      ],
+      "design_ids": [
+        "kensei_erdaokairen"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id 同名（二刀开刃）、同 class_id（kensei）、同 rarity（史诗），effect 文本逐字相等；引擎 data/talents/kensei_erdaokairen.json 的 _mirror 字段自述镜像自设计库 snapshots/talents.json @ 2ea744b。"
+    },
+    {
+      "type": "talent",
+      "engine_ids": [
+        "kensei_ertianyiliu"
+      ],
+      "design_ids": [
+        "kensei_ertianyiliu"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id 同名（二天一流）、同 class_id（kensei）、同 rarity（传奇），effect 文本逐字相等；引擎 data/talents/kensei_ertianyiliu.json 的 _mirror 字段自述镜像自设计库 snapshots/talents.json @ 2ea744b。",
+      "note": "引擎侧 _mirror 额外声明镜像了 extra_triggers 的触发五段，并注明 effect 里的双空格是设计库原文照抄。属实装细节，本表不裁决。"
     }
   ],
   "unmapped": [
@@ -608,134 +864,9 @@
     {
       "type": "equipment",
       "side": "design",
-      "id": "eq_wpn_armorslayer",
-      "reason": "engine_not_implemented"
-    },
-    {
-      "type": "equipment",
-      "side": "design",
-      "id": "eq_wpn_binding_blade",
-      "reason": "engine_not_implemented"
-    },
-    {
-      "type": "equipment",
-      "side": "design",
-      "id": "eq_wpn_brave_sword",
-      "reason": "engine_not_implemented"
-    },
-    {
-      "type": "equipment",
-      "side": "design",
-      "id": "eq_wpn_durandal",
-      "reason": "engine_not_implemented"
-    },
-    {
-      "type": "equipment",
-      "side": "design",
-      "id": "eq_wpn_iron_blade",
-      "reason": "engine_not_implemented"
-    },
-    {
-      "type": "equipment",
-      "side": "design",
-      "id": "eq_wpn_killing_edge",
-      "reason": "engine_not_implemented"
-    },
-    {
-      "type": "equipment",
-      "side": "design",
       "id": "eq_wpn_lancereaver",
-      "reason": "engine_not_implemented"
-    },
-    {
-      "type": "equipment",
-      "side": "design",
-      "id": "eq_wpn_light_brand",
-      "reason": "engine_not_implemented"
-    },
-    {
-      "type": "equipment",
-      "side": "design",
-      "id": "eq_wpn_longsword",
-      "reason": "engine_not_implemented"
-    },
-    {
-      "type": "equipment",
-      "side": "design",
-      "id": "eq_wpn_mani_katti",
-      "reason": "engine_not_implemented"
-    },
-    {
-      "type": "equipment",
-      "side": "design",
-      "id": "eq_wpn_poison_sword",
-      "reason": "engine_not_implemented"
-    },
-    {
-      "type": "equipment",
-      "side": "design",
-      "id": "eq_wpn_rapier",
-      "reason": "engine_not_implemented"
-    },
-    {
-      "type": "equipment",
-      "side": "design",
-      "id": "eq_wpn_regal_blade",
-      "reason": "engine_not_implemented"
-    },
-    {
-      "type": "equipment",
-      "side": "design",
-      "id": "eq_wpn_runesword",
-      "reason": "engine_not_implemented"
-    },
-    {
-      "type": "equipment",
-      "side": "design",
-      "id": "eq_wpn_silver_blade",
-      "reason": "engine_not_implemented"
-    },
-    {
-      "type": "equipment",
-      "side": "design",
-      "id": "eq_wpn_silver_sword",
-      "reason": "engine_not_implemented"
-    },
-    {
-      "type": "equipment",
-      "side": "design",
-      "id": "eq_wpn_slim_sword",
-      "reason": "engine_not_implemented"
-    },
-    {
-      "type": "equipment",
-      "side": "design",
-      "id": "eq_wpn_sol_katti",
-      "reason": "engine_not_implemented"
-    },
-    {
-      "type": "equipment",
-      "side": "design",
-      "id": "eq_wpn_steel_blade",
-      "reason": "engine_not_implemented"
-    },
-    {
-      "type": "equipment",
-      "side": "design",
-      "id": "eq_wpn_steel_sword",
-      "reason": "engine_not_implemented"
-    },
-    {
-      "type": "equipment",
-      "side": "design",
-      "id": "eq_wpn_wo_dao",
-      "reason": "engine_not_implemented"
-    },
-    {
-      "type": "equipment",
-      "side": "design",
-      "id": "eq_wpn_wyrmslayer",
-      "reason": "engine_not_implemented"
+      "reason": "design_shelved_not_imported",
+      "note": "设计库 shelf_state = 待删除（trashed_at = 2026-07-09T07:46:12.512429）。Wave 2 导入时引擎把设计库全部 22 条「在用」武器逐条导入 data/equipment/，只跳过了本条——跳过与 shelf_state 完全对应，所以这是按状态刻意不导入，不是「引擎尚未实装」。若设计库把它改回在用，才应期待引擎导入。"
     },
     {
       "type": "equipment",
@@ -1318,18 +1449,6 @@
     {
       "type": "talent",
       "side": "design",
-      "id": "kensei_erdaokairen",
-      "reason": "engine_not_implemented"
-    },
-    {
-      "type": "talent",
-      "side": "design",
-      "id": "kensei_ertianyiliu",
-      "reason": "engine_not_implemented"
-    },
-    {
-      "type": "talent",
-      "side": "design",
       "id": "kensei_guzhuyizhi",
       "reason": "engine_not_implemented"
     },
@@ -1361,7 +1480,8 @@
       "type": "talent",
       "side": "design",
       "id": "kensei_jianqie",
-      "reason": "engine_not_implemented"
+      "reason": "design_shelved_not_imported",
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
     },
     {
       "type": "talent",
@@ -1385,31 +1505,36 @@
       "type": "talent",
       "side": "design",
       "id": "kensei_juhe_ji",
-      "reason": "engine_not_implemented"
+      "reason": "design_shelved_not_imported",
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
     },
     {
       "type": "talent",
       "side": "design",
       "id": "kensei_juhe_lie",
-      "reason": "engine_not_implemented"
+      "reason": "design_shelved_not_imported",
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
     },
     {
       "type": "talent",
       "side": "design",
       "id": "kensei_kongzhan",
-      "reason": "engine_not_implemented"
+      "reason": "design_shelved_not_imported",
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
     },
     {
       "type": "talent",
       "side": "design",
       "id": "kensei_lianqishi",
-      "reason": "engine_not_implemented"
+      "reason": "design_shelved_not_imported",
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
     },
     {
       "type": "talent",
       "side": "design",
       "id": "kensei_liuqi",
-      "reason": "engine_not_implemented"
+      "reason": "design_shelved_not_imported",
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
     },
     {
       "type": "talent",
@@ -1433,13 +1558,15 @@
       "type": "talent",
       "side": "design",
       "id": "kensei_pofu",
-      "reason": "engine_not_implemented"
+      "reason": "design_shelved_not_imported",
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
     },
     {
       "type": "talent",
       "side": "design",
       "id": "kensei_sanqitu",
-      "reason": "engine_not_implemented"
+      "reason": "design_shelved_not_imported",
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
     },
     {
       "type": "talent",
@@ -1451,25 +1578,29 @@
       "type": "talent",
       "side": "design",
       "id": "kensei_shouxin",
-      "reason": "engine_not_implemented"
+      "reason": "design_shelved_not_imported",
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
     },
     {
       "type": "talent",
       "side": "design",
       "id": "kensei_shunshizhan",
-      "reason": "engine_not_implemented"
+      "reason": "design_shelved_not_imported",
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
     },
     {
       "type": "talent",
       "side": "design",
       "id": "kensei_tiaoxi",
-      "reason": "engine_not_implemented"
+      "reason": "design_shelved_not_imported",
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
     },
     {
       "type": "talent",
       "side": "design",
       "id": "kensei_tsujigiri",
-      "reason": "engine_not_implemented"
+      "reason": "design_shelved_not_imported",
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
     },
     {
       "type": "talent",
@@ -1487,13 +1618,15 @@
       "type": "talent",
       "side": "design",
       "id": "kensei_wuxiangjian",
-      "reason": "engine_not_implemented"
+      "reason": "design_shelved_not_imported",
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
     },
     {
       "type": "talent",
       "side": "design",
       "id": "kensei_xianzhixian",
-      "reason": "engine_not_implemented"
+      "reason": "design_shelved_not_imported",
+      "note": "设计库 shelf_state = 待删除，trashed_at = 2026-08-01T09:08:03.970003，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
     },
     {
       "type": "talent",
@@ -1505,7 +1638,8 @@
       "type": "talent",
       "side": "design",
       "id": "kensei_xufeng",
-      "reason": "engine_not_implemented"
+      "reason": "design_shelved_not_imported",
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
     },
     {
       "type": "talent",
@@ -1523,7 +1657,8 @@
       "type": "talent",
       "side": "design",
       "id": "kensei_yingfeng",
-      "reason": "engine_not_implemented"
+      "reason": "design_shelved_not_imported",
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
     },
     {
       "type": "talent",
@@ -1535,13 +1670,15 @@
       "type": "talent",
       "side": "design",
       "id": "kensei_yishan_luan",
-      "reason": "engine_not_implemented"
+      "reason": "design_shelved_not_imported",
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
     },
     {
       "type": "talent",
       "side": "design",
       "id": "kensei_yixian",
-      "reason": "engine_not_implemented"
+      "reason": "design_shelved_not_imported",
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
     },
     {
       "type": "talent",
@@ -1649,79 +1786,92 @@
       "type": "weapon",
       "side": "engine",
       "id": "wpn_archer_starter",
-      "reason": "no_traceable_correspondence"
+      "reason": "engine_placeholder_no_design_entity",
+      "note": "引擎单位内建武器属性块（弓箭手初始猎弓），_note 自述「[结构迁移] 从旧 class/enemy json 内联字段搬迁而来（Mercury R1.7，2026-07-08）」，即引擎内部重构的产物而非设计内容。本表原先标 no_traceable_correspondence，理由是设计库 equipment 有同名的 weapon_might / weapon_hit / weapon_crit 三字段、判不出是不是对应物；Wave 2 之后这个疑问已被数据回答：设计库 equipment 的 22 条在用条目逐条 1:1 落到了引擎 data/equipment/，与本目录无关，故改判为已确证没有对应实体。（SoT 请求，见设计库 docs/sot-to-mercury-wave2-feedback-2026-08-09.md §4 第 2 条。）"
     },
     {
       "type": "weapon",
       "side": "engine",
       "id": "wpn_cleric_starter",
-      "reason": "no_traceable_correspondence"
+      "reason": "engine_placeholder_no_design_entity",
+      "note": "引擎单位内建武器属性块（牧师初始法杖），_note 自述「[结构迁移] 从旧 class/enemy json 内联字段搬迁而来（Mercury R1.7，2026-07-08）」，即引擎内部重构的产物而非设计内容。本表原先标 no_traceable_correspondence，理由是设计库 equipment 有同名的 weapon_might / weapon_hit / weapon_crit 三字段、判不出是不是对应物；Wave 2 之后这个疑问已被数据回答：设计库 equipment 的 22 条在用条目逐条 1:1 落到了引擎 data/equipment/，与本目录无关，故改判为已确证没有对应实体。（SoT 请求，见设计库 docs/sot-to-mercury-wave2-feedback-2026-08-09.md §4 第 2 条。）"
     },
     {
       "type": "weapon",
       "side": "engine",
       "id": "wpn_knight_starter",
-      "reason": "no_traceable_correspondence"
+      "reason": "engine_placeholder_no_design_entity",
+      "note": "引擎单位内建武器属性块（骑士初始长剑），_note 自述「[结构迁移] 从旧 class/enemy json 内联字段搬迁而来（Mercury R1.7，2026-07-08）」，即引擎内部重构的产物而非设计内容。本表原先标 no_traceable_correspondence，理由是设计库 equipment 有同名的 weapon_might / weapon_hit / weapon_crit 三字段、判不出是不是对应物；Wave 2 之后这个疑问已被数据回答：设计库 equipment 的 22 条在用条目逐条 1:1 落到了引擎 data/equipment/，与本目录无关，故改判为已确证没有对应实体。（SoT 请求，见设计库 docs/sot-to-mercury-wave2-feedback-2026-08-09.md §4 第 2 条。）"
     },
     {
       "type": "weapon",
       "side": "engine",
       "id": "wpn_mage_starter",
-      "reason": "no_traceable_correspondence"
+      "reason": "engine_placeholder_no_design_entity",
+      "note": "引擎单位内建武器属性块（魔法师初始法杖），_note 自述「[结构迁移] 从旧 class/enemy json 内联字段搬迁而来（Mercury R1.7，2026-07-08）」，即引擎内部重构的产物而非设计内容。本表原先标 no_traceable_correspondence，理由是设计库 equipment 有同名的 weapon_might / weapon_hit / weapon_crit 三字段、判不出是不是对应物；Wave 2 之后这个疑问已被数据回答：设计库 equipment 的 22 条在用条目逐条 1:1 落到了引擎 data/equipment/，与本目录无关，故改判为已确证没有对应实体。（SoT 请求，见设计库 docs/sot-to-mercury-wave2-feedback-2026-08-09.md §4 第 2 条。）"
     },
     {
       "type": "weapon",
       "side": "engine",
       "id": "wpn_magical_ranged_basic",
-      "reason": "no_traceable_correspondence"
+      "reason": "engine_placeholder_no_design_entity",
+      "note": "引擎单位内建武器属性块（通用远程魔法基础武器），_note 自述「[结构迁移] 从旧 class/enemy json 内联字段搬迁而来（Mercury R1.7，2026-07-08）」，即引擎内部重构的产物而非设计内容。本表原先标 no_traceable_correspondence，理由是设计库 equipment 有同名的 weapon_might / weapon_hit / weapon_crit 三字段、判不出是不是对应物；Wave 2 之后这个疑问已被数据回答：设计库 equipment 的 22 条在用条目逐条 1:1 落到了引擎 data/equipment/，与本目录无关，故改判为已确证没有对应实体。（SoT 请求，见设计库 docs/sot-to-mercury-wave2-feedback-2026-08-09.md §4 第 2 条。）"
     },
     {
       "type": "weapon",
       "side": "engine",
       "id": "wpn_physical_melee_basic",
-      "reason": "no_traceable_correspondence"
+      "reason": "engine_placeholder_no_design_entity",
+      "note": "引擎单位内建武器属性块（通用近战物理基础武器），_note 自述「[结构迁移] 从旧 class/enemy json 内联字段搬迁而来（Mercury R1.7，2026-07-08）」，即引擎内部重构的产物而非设计内容。本表原先标 no_traceable_correspondence，理由是设计库 equipment 有同名的 weapon_might / weapon_hit / weapon_crit 三字段、判不出是不是对应物；Wave 2 之后这个疑问已被数据回答：设计库 equipment 的 22 条在用条目逐条 1:1 落到了引擎 data/equipment/，与本目录无关，故改判为已确证没有对应实体。（SoT 请求，见设计库 docs/sot-to-mercury-wave2-feedback-2026-08-09.md §4 第 2 条。）"
     },
     {
       "type": "weapon",
       "side": "engine",
       "id": "wpn_physical_ranged_basic",
-      "reason": "no_traceable_correspondence"
+      "reason": "engine_placeholder_no_design_entity",
+      "note": "引擎单位内建武器属性块（通用远程物理基础武器），_note 自述「[结构迁移] 从旧 class/enemy json 内联字段搬迁而来（Mercury R1.7，2026-07-08）」，即引擎内部重构的产物而非设计内容。本表原先标 no_traceable_correspondence，理由是设计库 equipment 有同名的 weapon_might / weapon_hit / weapon_crit 三字段、判不出是不是对应物；Wave 2 之后这个疑问已被数据回答：设计库 equipment 的 22 条在用条目逐条 1:1 落到了引擎 data/equipment/，与本目录无关，故改判为已确证没有对应实体。（SoT 请求，见设计库 docs/sot-to-mercury-wave2-feedback-2026-08-09.md §4 第 2 条。）"
     },
     {
       "type": "weapon",
       "side": "engine",
       "id": "wpn_soldier_starter",
-      "reason": "no_traceable_correspondence"
+      "reason": "engine_placeholder_no_design_entity",
+      "note": "引擎单位内建武器属性块（仆兵初始佩剑），_note 自述「[结构迁移] 从旧 class/enemy json 内联字段搬迁而来（Mercury R1.7，2026-07-08）」，即引擎内部重构的产物而非设计内容。本表原先标 no_traceable_correspondence，理由是设计库 equipment 有同名的 weapon_might / weapon_hit / weapon_crit 三字段、判不出是不是对应物；Wave 2 之后这个疑问已被数据回答：设计库 equipment 的 22 条在用条目逐条 1:1 落到了引擎 data/equipment/，与本目录无关，故改判为已确证没有对应实体。（SoT 请求，见设计库 docs/sot-to-mercury-wave2-feedback-2026-08-09.md §4 第 2 条。）"
     },
     {
       "type": "weapon",
       "side": "engine",
       "id": "wpn_swordsman_starter",
-      "reason": "no_traceable_correspondence"
+      "reason": "engine_placeholder_no_design_entity",
+      "note": "引擎单位内建武器属性块（剑圣初始太刀），_note 自述「[结构迁移] 从旧 class/enemy json 内联字段搬迁而来（Mercury R1.7，2026-07-08）」，即引擎内部重构的产物而非设计内容。本表原先标 no_traceable_correspondence，理由是设计库 equipment 有同名的 weapon_might / weapon_hit / weapon_crit 三字段、判不出是不是对应物；Wave 2 之后这个疑问已被数据回答：设计库 equipment 的 22 条在用条目逐条 1:1 落到了引擎 data/equipment/，与本目录无关，故改判为已确证没有对应实体。（SoT 请求，见设计库 docs/sot-to-mercury-wave2-feedback-2026-08-09.md §4 第 2 条。）"
     },
     {
       "type": "weapon",
       "side": "engine",
       "id": "wpn_test_archer",
-      "reason": "no_traceable_correspondence"
+      "reason": "engine_placeholder_no_design_entity",
+      "note": "引擎单位内建武器属性块（测试用弓箭手武器），_note 自述「[结构迁移] 从旧 class/enemy json 内联字段搬迁而来（Mercury R1.7，2026-07-08）」，即引擎内部重构的产物而非设计内容。本表原先标 no_traceable_correspondence，理由是设计库 equipment 有同名的 weapon_might / weapon_hit / weapon_crit 三字段、判不出是不是对应物；Wave 2 之后这个疑问已被数据回答：设计库 equipment 的 22 条在用条目逐条 1:1 落到了引擎 data/equipment/，与本目录无关，故改判为已确证没有对应实体。（SoT 请求，见设计库 docs/sot-to-mercury-wave2-feedback-2026-08-09.md §4 第 2 条。）"
     },
     {
       "type": "weapon",
       "side": "engine",
       "id": "wpn_test_lancer",
-      "reason": "no_traceable_correspondence"
+      "reason": "engine_placeholder_no_design_entity",
+      "note": "引擎单位内建武器属性块（测试用枪兵武器），_note 自述「[结构迁移] 从旧 class/enemy json 内联字段搬迁而来（Mercury R1.7，2026-07-08）」，即引擎内部重构的产物而非设计内容。本表原先标 no_traceable_correspondence，理由是设计库 equipment 有同名的 weapon_might / weapon_hit / weapon_crit 三字段、判不出是不是对应物；Wave 2 之后这个疑问已被数据回答：设计库 equipment 的 22 条在用条目逐条 1:1 落到了引擎 data/equipment/，与本目录无关，故改判为已确证没有对应实体。（SoT 请求，见设计库 docs/sot-to-mercury-wave2-feedback-2026-08-09.md §4 第 2 条。）"
     },
     {
       "type": "weapon",
       "side": "engine",
       "id": "wpn_test_mage",
-      "reason": "no_traceable_correspondence"
+      "reason": "engine_placeholder_no_design_entity",
+      "note": "引擎单位内建武器属性块（测试用法师武器），_note 自述「[结构迁移] 从旧 class/enemy json 内联字段搬迁而来（Mercury R1.7，2026-07-08）」，即引擎内部重构的产物而非设计内容。本表原先标 no_traceable_correspondence，理由是设计库 equipment 有同名的 weapon_might / weapon_hit / weapon_crit 三字段、判不出是不是对应物；Wave 2 之后这个疑问已被数据回答：设计库 equipment 的 22 条在用条目逐条 1:1 落到了引擎 data/equipment/，与本目录无关，故改判为已确证没有对应实体。（SoT 请求，见设计库 docs/sot-to-mercury-wave2-feedback-2026-08-09.md §4 第 2 条。）"
     },
     {
       "type": "weapon",
       "side": "engine",
       "id": "wpn_training_dummy",
-      "reason": "no_traceable_correspondence"
+      "reason": "engine_placeholder_no_design_entity",
+      "note": "引擎单位内建武器属性块（测试用木桩武器），_note 自述「[结构迁移] 从旧 class/enemy json 内联字段搬迁而来（Mercury R1.7，2026-07-08）」，即引擎内部重构的产物而非设计内容。本表原先标 no_traceable_correspondence，理由是设计库 equipment 有同名的 weapon_might / weapon_hit / weapon_crit 三字段、判不出是不是对应物；Wave 2 之后这个疑问已被数据回答：设计库 equipment 的 22 条在用条目逐条 1:1 落到了引擎 data/equipment/，与本目录无关，故改判为已确证没有对应实体。（SoT 请求，见设计库 docs/sot-to-mercury-wave2-feedback-2026-08-09.md §4 第 2 条。）"
     }
   ]
 }

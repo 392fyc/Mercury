@@ -148,24 +148,31 @@ python -m scripts.sot_id_map.test_smoke
    **两侧的 id 规则是同一条**，不存在一侧更宽松：id 必须是非空字符串，或整数（会被转成字符串——这是为设计库某些表用数据库自增主键做的**显式**让步，不是 `str()` 随手兜底）。空串、null、布尔、浮点、对象一律报 `missing_entity_id`，既不静默收下也不静默丢弃。
 4. **`mappings` / `unmapped`** —— 具体条目。`mappings` 每条必须有 `basis`（对应关系从哪儿溯源），`unmapped` 每条必须有受控原因码。
 
-### 六个原因码
+### 八个原因码
 
-| 码 | 什么时候用 |
-|---|---|
-| `engine_not_implemented` | 设计库有，引擎尚未实装同类实体（将来实装后应改成 `mappings` 条目） |
-| `design_not_registered` | 引擎有，设计库存在同类实体表但未登记这一条 |
-| `engine_implements_as_field` | **两侧都有这件事，但引擎建成了另一个实体的字段而非独立实体**。必须给 `engine_carrier` 指针，校验器核实文件存在 |
-| `engine_no_entity_kind` | 引擎侧根本没有这类实体（设计库的规则条文、判定层） |
-| `design_no_entity_kind` | 设计库侧根本没有这类实体（引擎的 buff、词条、地图、波次） |
-| `no_traceable_correspondence` | 两侧有相近概念，但没有可溯源的 id 级对应。按 #556 界线，溯源不到就写明原因，不猜 |
+| 码 | 什么时候用 | 当前条数 |
+|---|---|---:|
+| `engine_not_implemented` | 设计库**在用**，引擎尚未实装同类实体（将来实装后应改成 `mappings` 条目） | 41 |
+| `design_shelved_not_imported` | 设计库侧该条目的 `shelf_state` 不是「在用」（已归档 / 待删除），**不是等待实装的候选** | 19 |
+| `design_not_registered` | 引擎有，设计库存在同类实体表但未登记这一条 | 37 |
+| `engine_implements_as_field` | **两侧都有这件事，但引擎建成了另一个实体的字段而非独立实体**。必须给 `engine_carrier` 指针，校验器核实字段真实存在 | 4 |
+| `engine_no_entity_kind` | 引擎侧根本没有这类实体（设计库的规则条文、判定层） | 27 |
+| `design_no_entity_kind` | 设计库侧根本没有这类实体（引擎的 buff、词条、地图、波次、敌人、地形） | 37 |
+| `engine_placeholder_no_design_entity` | 引擎侧占位 / 内部派生结构，**已核对确认**设计库没有对应实体 | 13 |
+| `no_traceable_correspondence` | 两侧有相近概念，但**判不出** id 级对应。按 #556 界线，溯源不到就写明原因，不猜 | 12 |
 
-`engine_implements_as_field` 是刻意与 `engine_not_implemented` 分开的。当前用到它的四条是〔心眼〕两条技能与剑气 / 剑意印记两条资源：设计库把它们建成技能 / 资源实体，引擎把它们实装进了职业档案的 `sword_qi_config` 字段组。把这类归成「引擎未实装」是**错误定性**。
+三组容易混淆的边界，都是刻意分开的：
+
+- **`engine_implements_as_field` ≠ `engine_not_implemented`。** 当前用到前者的四条是〔心眼〕两条技能与剑气 / 剑意印记两条资源：设计库把它们建成技能 / 资源实体，引擎把它们实装进了职业档案的 `sword_qi_config` 字段组。把这类归成「引擎未实装」是**错误定性**——它已经实装了，只是换了一种实体形态。
+- **`engine_placeholder_no_design_entity` ≠ `no_traceable_correspondence`。** 前者是**查过两侧、确认没有**；后者是**查了但判不出**。把「已确证没有」和「判不了」塞进同一个码，就等于把两种该分开处置的状态混成一种：前者可以收工，后者要留着继续查。（此项区分应 SoT 请求加入，见设计库 `docs/sot-to-mercury-wave2-feedback-2026-08-09.md` §4 第 2 条。）
+- **`design_shelved_not_imported` ≠ `engine_not_implemented`。** 前者说的是设计库自己把条目下架了，引擎不导入是**正确行为**；后者说的是设计库在用而引擎欠着。两者混用会让读者以为有 19 条实装欠账，实际只有 41 条。判据在数据里：`snapshots/*.json` 的 `shelf_state`（待删除的另带 `trashed_at` 时刻）。
 
 ## 维护方式
 
 `id_map.json` 是人工维护的。典型改动场景：
 
-- **引擎实装了一条设计库已有的东西** → 把对应的 `unmapped`（`engine_not_implemented`）条目删掉，在 `mappings` 里加一条并写 `basis`。
+- **引擎实装了一条设计库已有的东西** → 把对应的 `unmapped`（`engine_not_implemented`）条目删掉，在 `mappings` 里加一条并写 `basis`。**`basis` 要能从数据本身溯源**，最硬的证据是引擎侧文件自带的 `_mirror` 字段（自述镜像自设计库某个快照 commit）加上两侧字段值逐项相等，「看着像」不算。
+- **设计库把某条下架（`shelf_state` 改成已归档 / 待删除）** → 该条的 `unmapped` 原因码从 `engine_not_implemented` 改成 `design_shelved_not_imported`；反之恢复在用则改回。这不影响覆盖，但影响读者判断「引擎到底欠了多少」。
 - **任一侧新增实体** → 校验器会以 `uncovered_id` 报出来。补一条 `mappings` 或 `unmapped`。
 - **任一侧新增整个实体类型（新目录 / 新快照文件）** → 校验器以 `undeclared_scope` 报出来。加 `entity_types` 条目，或列进 `excluded_paths` 并写理由。引擎侧直接落在 `data/` 下的散装 `*.json`、设计库 `snapshots/` 子目录里的快照，同样会被报出来。
 - **任一侧把来源目录 / 快照改名或删掉** → 同时报 `missing_source`（老路径没了）与 `undeclared_scope`（新路径没申报），改 `entity_types` 里那个 `path` 即可。
@@ -206,6 +213,7 @@ python -m scripts.sot_id_map.test_smoke
 
 ## 已知的判断点（复核时优先看这几处）
 
-- **引擎 `data/weapons/`（13 条）标了 `no_traceable_correspondence`**：设计库 `equipment` 表有同名的 `weapon_might` / `weapon_hit` / `weapon_crit` 三字段，schema 同形；但 id 命名空间（`wpn_*` vs `eq_wpn_*`）与用途（职业 / 测试单位内建武器 vs 可拾取装备）都不同，没有一条 id 对得上。判定为「不猜」而非配对。
-- **设计库 `tags`（12 条，标识符是 `key`）标了 `no_traceable_correspondence`**：引擎技能的 `tags` 是自由英文字符串（当前 30 个不同取值），没有注册表。字面上确有近似（奥义 / `ougi`、反应 / `reaction`、被动 / `passive_like`、区域 / `area`），但「位移」与「机动」两条都可能落到 `mobility`，逐条判不了，故整组不猜。
-- **`eq_wpn_iron_sword` 是两侧唯一的装备对应**：同 id 同名（铁剑），但两侧属性模型不同（引擎 `stats {STR:2}` + `tier` + `rarity`，设计库 `weapon_might 5` / `weapon_hit 90` / `weapon_crit 0`）。本表只做 id 对应，数值是否该对齐属于裁决问题，不在此处判断。
+- **引擎 `data/weapons/`（13 条）已从 `no_traceable_correspondence` 改判为 `engine_placeholder_no_design_entity`**（#558）。原先存疑的点是：设计库 `equipment` 表有同名的 `weapon_might` / `weapon_hit` / `weapon_crit` 三字段、schema 同形，判不出它是不是对应物。**Wave 2 把这个疑问用数据回答了**——设计库 `equipment` 的 22 条在用条目 1:1 落到了引擎 `data/equipment/`（引擎侧带 `_mirror` 锚点），与 `data/weapons/` 无关；而 13 条 `weapons` 的 `_note` 自述是 R1.7 结构迁移从旧 `class`/`enemy` json 内联字段搬来的引擎内部产物。所以现在是「已确证没有对应实体」，不再是「判不出」。
+- **设计库 `tags`（12 条，标识符是 `key`）仍是 `no_traceable_correspondence`**，而且现在是**唯一**用这个码的一组：引擎技能的 `tags` 是自由英文字符串（当前 30 个不同取值），没有注册表。字面上确有近似（奥义 / `ougi`、反应 / `reaction`、被动 / `passive_like`、区域 / `area`），但「位移」与「机动」两条都可能落到 `mobility`，逐条判不了，故整组不猜。**这一组保留原样，正是为了让「判不出」这个状态还有地方表达。**
+- **设计库装备现在有 22 条对应，不再是只有铁剑一条**。曾经记在这里的「两侧属性模型不同（引擎 `stats {STR:2}` + `tier`，设计库 `weapon_might`/`hit`/`crit`）」在 Wave 2 之后**已不成立**：引擎改用了设计库的三参数，22 条逐项相等。引擎侧仍多两个设计库没有的字段（`tier` 由 rarity 派生供掉落分桶、`engine_effects` 特效指令），按 lane 文档 §2.2 属引擎独有列、不回流。
+- **`eq_wpn_lancereaver` 是唯一一条设计库有而引擎刻意没导入的装备**：它的 `shelf_state` 是「待删除」（`trashed_at` = 2026-07-09）。判据是导入行为与状态完全对齐——22 条在用全导、1 条非在用不导，所以这是按状态刻意跳过，不是实装欠账。**若把它标成 `engine_not_implemented` 就是错误定性**，会让读者以为引擎欠了一条。
