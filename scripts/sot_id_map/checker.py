@@ -9,6 +9,10 @@ Failure classes (all of them exit non-zero and name the offending id):
 
   `undeclared_scope`   an engine `data/` directory or loose file, or a
                        design snapshot file, the map has never heard of
+  `missing_source`     a source the map declares is no longer in the
+                       repository (the other half of a rename)
+  `duplicate_entity_id`
+                       two entities on one side claiming the same id
   `uncovered_id`       an id that exists on one side but appears in
                        neither `mappings` nor `unmapped`
   `missing_entity_id`  a file inside a declared entity directory that
@@ -583,6 +587,23 @@ def check(roots: Roots, spec: dict) -> Report:
                 continue
             per_type[side] = len(known.ids)
             _report_listing_anomalies(known, side, f"{etype} source", findings)
+            if known.missing:
+                # Reported, then treated as an empty id set so the run
+                # continues. That degradation is safe *because* it is loud
+                # from more than one direction: the scope guard names the
+                # replacement path, and every mapping still pointing at the
+                # vanished source fails as `unknown_id`. An empty source
+                # never quietly becomes "this entity type does not exist".
+                findings.append(Finding(
+                    "missing_source",
+                    f"{side} {etype}: {known.missing} — if it was renamed or "
+                    f"moved, update this entity type's `{side}.path`; the "
+                    f"undeclared_scope findings above name what is there now"))
+            for duplicate in known.duplicates:
+                findings.append(Finding(
+                    "duplicate_entity_id",
+                    f"{side} {etype} id {duplicate} — two entities claiming "
+                    f"one id make the mapping ambiguous"))
             id_field = (entry[side] or {}).get("id_field", "id")
             for orphan in known.no_id:
                 findings.append(Finding(
@@ -639,6 +660,17 @@ def _check_carrier(roots: Roots, item: dict, where: str,
             f"carries it (e.g. {example!r})"))
         return
     rel, _, field_path = carrier.partition(CARRIER_SEP)
+    # Defence in depth, NOT a fix for an observed hole: a carrier pointing
+    # through a directory alias was already reported — measured — by the
+    # scope guard, which sees the alias while walking `data/`. Checking here
+    # too means carrier paths and source paths answer to one rule instead of
+    # relying on another check happening to cover them.
+    for alias in sources.alias_components(roots.engine, rel):
+        findings.append(Finding(
+            "unfollowed_link",
+            f"{where} points at engine carrier {carrier!r}, whose path "
+            f"crosses the directory alias {alias}; resolve the alias so the "
+            f"carrier names a real location"))
     try:
         path = sources.resolve_within(roots.engine, rel)
     except SourceError as exc:

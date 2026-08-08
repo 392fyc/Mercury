@@ -842,6 +842,94 @@ def test_source_directory_itself_being_an_alias_is_reported() -> None:
     print(f"PASS test_source_directory_itself_being_an_alias_is_reported ({kind})")
 
 
+def test_renamed_source_is_drift_not_a_crash() -> None:
+    """A renamed source directory is the headline case for this whole tool.
+
+    It used to exit 2 with one line about a missing path, throwing away the
+    report that already knew about the *new* directory. What the reader
+    needs is both halves at once — "classes is gone" and "classes_v2 is
+    undeclared" — which together say "this was a rename, update the map".
+
+    Also asserts the degradation stays loud: the vanished source becomes an
+    empty id set so the run can finish, and that must not quietly turn into
+    "this entity type no longer exists".
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        engine, design, spec = _build_fixture(tmp_path)
+        _assert_pristine(spec, engine, design, tmp_path)
+
+        shutil.move(str(engine / "data" / "classes"),
+                    str(engine / "data" / "classes_v2"))
+        assert not (engine / "data" / "classes").exists(), "rename did not happen"
+
+        proc = _run(spec, engine, design, tmp_path)
+        assert proc.returncode == 1, (proc.returncode, proc.stdout, proc.stderr)
+        assert "Traceback" not in proc.stderr, proc.stderr
+        # both halves of the rename, in one run
+        assert "missing_source" in proc.stdout, proc.stdout
+        assert "data/classes is declared" in proc.stdout, proc.stdout
+        assert "undeclared_scope" in proc.stdout, proc.stdout
+        assert "data/classes_v2" in proc.stdout, proc.stdout
+        # the degradation is not silent: the mapping that still points at the
+        # vanished source fails loudly rather than being skipped
+        assert "unknown_id" in proc.stdout, proc.stdout
+        assert "'hero'" in proc.stdout, proc.stdout
+        assert "OK:" not in proc.stdout, proc.stdout
+
+        # ...and the run really did continue: findings from *other* entity
+        # types are present too, which is the whole point of not aborting
+        skills = design / "snapshots" / "skills.json"
+        skills.write_text(json.dumps([{"id": "a_slash"}, {"id": "b_slash"},
+                                      {"id": "a_eye"}, {"id": "a_extra"}]),
+                          encoding="utf-8")
+        proc = _run(spec, engine, design, tmp_path)
+        assert "missing_source" in proc.stdout, proc.stdout
+        assert "a_extra" in proc.stdout, proc.stdout
+    print("PASS test_renamed_source_is_drift_not_a_crash")
+
+
+def test_deleted_snapshot_and_duplicate_ids_are_findings() -> None:
+    """The other two "data disagrees with the map" cases, same treatment."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        engine, design, spec = _build_fixture(tmp_path)
+        _assert_pristine(spec, engine, design, tmp_path)
+
+        skills = design / "snapshots" / "skills.json"
+        original = skills.read_text(encoding="utf-8")
+        skills.unlink()
+        proc = _run(spec, engine, design, tmp_path)
+        assert proc.returncode == 1, (proc.returncode, proc.stdout, proc.stderr)
+        assert "Traceback" not in proc.stderr, proc.stderr
+        assert "missing_source" in proc.stdout, proc.stdout
+        assert "snapshots/skills.json" in proc.stdout, proc.stdout
+        # mappings pointing into the vanished snapshot fail loudly
+        assert "unknown_id" in proc.stdout and "a_slash" in proc.stdout, \
+            proc.stdout
+        skills.write_text(original, encoding="utf-8")
+        _assert_pristine(spec, engine, design, tmp_path)
+
+        # duplicate id, engine side (two files claiming one id)
+        (engine / "data" / "skills" / "sw_slash_copy.json").write_text(
+            json.dumps({"id": "sw_slash"}), encoding="utf-8")
+        proc = _run(spec, engine, design, tmp_path)
+        assert proc.returncode == 1, (proc.returncode, proc.stdout)
+        assert "duplicate_entity_id" in proc.stdout, proc.stdout
+        assert "sw_slash" in proc.stdout, proc.stdout
+        (engine / "data" / "skills" / "sw_slash_copy.json").unlink()
+        _assert_pristine(spec, engine, design, tmp_path)
+
+        # duplicate id, design side
+        skills.write_text(json.dumps([{"id": "a_slash"}, {"id": "b_slash"},
+                                      {"id": "a_eye"}, {"id": "a_slash"}]),
+                          encoding="utf-8")
+        proc = _run(spec, engine, design, tmp_path)
+        assert proc.returncode == 1, (proc.returncode, proc.stdout)
+        assert "duplicate_entity_id" in proc.stdout, proc.stdout
+    print("PASS test_deleted_snapshot_and_duplicate_ids_are_findings")
+
+
 def test_deeply_nested_json_exits_2_without_traceback() -> None:
     """A valid but absurdly nested JSON file blows the decoder's stack.
 
@@ -1120,6 +1208,8 @@ def main() -> int:
     test_empty_repo_flag_is_an_error_not_a_fallback()
     test_directory_symlink_is_reported_not_skipped()
     test_source_directory_itself_being_an_alias_is_reported()
+    test_renamed_source_is_drift_not_a_crash()
+    test_deleted_snapshot_and_duplicate_ids_are_findings()
     test_deeply_nested_json_exits_2_without_traceback()
     test_file_symlink_out_of_repo_is_reported()
     test_unreadable_directory_exits_2_not_silently_empty()

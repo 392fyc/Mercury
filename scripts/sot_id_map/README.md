@@ -57,7 +57,22 @@ python -m scripts.sot_id_map --json     # 机器可读报告
 |---|---|
 | 0 | 两侧 id 全集都被覆盖，且映射引用的 id 都真实存在 |
 | 1 | 有 finding，逐条列出（见下表） |
-| 2 | **起不来**：环境变量未设、`--engine-repo=` 传了空、目录不存在、文件不是 UTF-8、JSON 嵌套深到解析器爆栈、目录没有读权限、映射文件读不了或缺顶层键 |
+| 2 | **起不来**：环境变量未设、`--engine-repo=` 传了空、**仓库根**目录不存在、文件不是 UTF-8、JSON 语法坏、JSON 嵌套深到解析器爆栈、目录没有读权限（ACL）、映射文件读不了或缺顶层键 |
+
+**1 和 2 的判据是**：这是「两侧数据与表对不上」（→ finding，退 1），还是「我根本读不到数据」（→ 退 2）。
+
+按这条判据，**来源目录被改名 / 快照被删 / 某侧出现重复 id 全部算退 1**——它们正是这个工具存在的头号理由，不是它跑不起来的理由。这类情况下该 (类型, 侧) 的 id 集退化成空、整轮继续跑完，好让一次运行把所有问题报全。**退化不会变成静默**：范围守卫会报出新出现的那个目录，映射表里仍指向消失来源的条目会撞出 `unknown_id`，两个方向同时响。
+
+改名事件的报告长这样（`data/classes` → `data/classes_v2`），两半都在，读者一眼能看出是改名：
+
+```
+[undeclared_scope] engine path data/classes_v2 is not declared in id_map.json ...
+[undeclared_scope] engine path data/classes is declared in id_map.json but no longer exists ...
+[unknown_id] mappings[0] references engine class id 'myrmidon', which does not exist ...
+[missing_source] engine class: data/classes is declared as a source directory but does not exist
+                 — if it was renamed or moved, update this entity type's `engine.path`;
+                   the undeclared_scope findings above name what is there now
+```
 
 **1 和 2 的分工是承重的**：1 的含义是「跑完了，发现了问题」，2 的含义是「根本没跑成」。所以任何异常都不许以栈回溯的形式冲到 `main()` 顶层——那样退出码会是 1，自动化会把一次崩溃读成一次正常的校验结果，而输出里一条 finding 都没有。相应地，`main()` 的异常漏斗是**显式列举**的（`SourceError` 与 `OSError`），**不是** `except Exception`：兜底式捕获会把这个包自己的 bug 也粉饰成「环境问题」。映射表自身结构坏了不走异常，走 `bad_map` finding（退 1）。
 
@@ -76,6 +91,8 @@ python -m scripts.sot_id_map.test_smoke
 | `uncovered_id` | 某侧存在、但映射表既没映射也没显式标 `unmapped` 的 id |
 | `undeclared_scope` | 引擎 `data/` 下出现映射表没声明过的**目录或散装 `*.json` 文件**，或设计库 `snapshots/` **递归**范围内出现没声明过的文件（反过来，声明了但已消失也报） |
 | `missing_entity_id` | 已声明的实体来源里有条目读不出 id（新增技能时忘了写 `id`、id 是空串、类型不对等）。两侧同一条规则，不会被无声跳过 |
+| `missing_source` | 映射表声明的来源（引擎目录 / 设计库快照）在仓库里不存在了。**改名事件的另一半**，与 `undeclared_scope` 成对出现 |
+| `duplicate_entity_id` | 同一侧有两个实体抢同一个 id，对应关系变得有歧义 |
 | `unfollowed_link` | 实体目录树里出现目录软链接或 junction。**一律不跟随、一律报出**，详见下节 |
 | `path_escape` | 目录树里的 `.json` 经软链接指到仓库根之外，未被读取 |
 | `cross_side_contradiction` | 同一个 id 串两侧都存在，却在某一侧被标成 `unmapped`。见下方说明 |
@@ -151,6 +168,7 @@ python -m scripts.sot_id_map.test_smoke
 - **引擎实装了一条设计库已有的东西** → 把对应的 `unmapped`（`engine_not_implemented`）条目删掉，在 `mappings` 里加一条并写 `basis`。
 - **任一侧新增实体** → 校验器会以 `uncovered_id` 报出来。补一条 `mappings` 或 `unmapped`。
 - **任一侧新增整个实体类型（新目录 / 新快照文件）** → 校验器以 `undeclared_scope` 报出来。加 `entity_types` 条目，或列进 `excluded_paths` 并写理由。引擎侧直接落在 `data/` 下的散装 `*.json`、设计库 `snapshots/` 子目录里的快照，同样会被报出来。
+- **任一侧把来源目录 / 快照改名或删掉** → 同时报 `missing_source`（老路径没了）与 `undeclared_scope`（新路径没申报），改 `entity_types` 里那个 `path` 即可。
 - **引擎实装了一条设计库已有的同名东西** → 校验器以 `cross_side_contradiction` 报出来（前提是原先标了 `unmapped`）。补一条 `mappings`。
 - **设计库那侧改了内容** → 设计库的交接界面是快照。对方重跑 `python scripts/export_snapshot.py` 提交之后，本校验器读到的就是新数据。
 
@@ -183,6 +201,7 @@ python -m scripts.sot_id_map.test_smoke
 - **`_entry_kind()` 里 `"unknown"` 那条分支从未被观察到执行。** 它防的是「`Path.is_dir()` 吞掉 OSError 返回 False，导致一个 stat 不了的条目从范围守卫里消失」。实测用 `icacls /deny` 拒绝目录读取时 `is_dir()` 仍返回 True，该前提没有发生。这是**防御性添加，不是在修一个已证实的漏洞**，代码注释里也是这么写的。
 - **`resolve()` 处捕获 `RuntimeError` 同样是防御性的。** 它防的是软链接环，但本机建不出软链接、junction 又形不成环，**无法验证**；而且 `resolve()` 对环抛 `RuntimeError` 还是 `OSError` 是版本相关的。同样在注释里标明未复现。
 - **跨平台行为只在 Windows 上实测过。** 「POSIX 软链接会被 `os.walk` 跳过」是文档知识而非实测；`_is_reparse_dir()` 在非 Windows 上恒为 False。别名剪枝逻辑本身与平台无关，但 Linux 上的实际表现没验过。
+- **`_check_carrier` 里那次 `alias_components()` 检查是纵深防御，不是在修已证实的漏洞。** 实测构造（`engine_carrier` 指向经 junction 的路径）已经被范围守卫报出 `unfollowed_link`，并没有静默通过；这里再查一次只是让 carrier 路径与来源路径服从同一条规则，不必依赖「恰好另一处检查覆盖到了」。代码注释里也是这么写的。
 - **`same_id_other_side` 只能被机械验证「是一个非空字符串」，验不了理由是否成立。** 填一句敷衍话仍然能通过（会被报告点名，但不会被拦）。这扇门的最终防线是人，不是工具。
 
 ## 已知的判断点（复核时优先看这几处）

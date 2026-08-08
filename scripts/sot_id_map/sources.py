@@ -196,6 +196,10 @@ class SideIds:
     links: list[str] = field(default_factory=list)
     #: files that resolve outside the repository root
     escaping: list[str] = field(default_factory=list)
+    #: set when the declared source is not there at all — drift, not a crash
+    missing: str | None = None
+    #: the same id appearing twice on one side
+    duplicates: list[str] = field(default_factory=list)
 
 
 def load_json(path: Path) -> object:
@@ -265,7 +269,16 @@ def collect_json_dir(root: Path, rel_path: str, id_field: str) -> SideIds:
     out = SideIds()
     base = resolve_within(root, rel_path)
     if not base.is_dir():
-        raise SourceError(f"engine source directory missing: {base}")
+        # Drift, not a crash. A declared source directory that is not there
+        # is the single most ordinary thing this checker exists to catch —
+        # somebody renamed it — so it comes back as data and lets the rest
+        # of the run finish, rather than aborting with one line about a
+        # missing path while the report that would have named the *new*
+        # directory is thrown away.
+        out.missing = (f"{rel_path} is declared as a source directory but "
+                       f"does not exist in the repository")
+        out.links = alias_components(root, rel_path)
+        return out
     listing = _iter_json(base, root)
     # Aliases on the declared path itself come first: they are the ones
     # `resolve_within` above has already resolved away.
@@ -283,10 +296,12 @@ def collect_json_dir(root: Path, rel_path: str, id_field: str) -> SideIds:
             out.no_id.append(f"{rel}: {why}")
             continue
         if value in out.ids:
-            raise SourceError(
-                f"duplicate id {value!r} in {base}: {out.origin[value]} and "
-                f"{rel}"
-            )
+            # Also drift: two files claiming one id is a repository problem
+            # the map should report alongside everything else, not a reason
+            # to stop reading.
+            out.duplicates.append(
+                f"{value!r} appears in both {out.origin[value]} and {rel}")
+            continue
         out.ids.add(value)
         out.origin[value] = rel
     return out
@@ -303,7 +318,11 @@ def collect_json_array(root: Path, rel_path: str, id_field: str) -> SideIds:
     out.links = alias_components(root, rel_path)
     path = resolve_within(root, rel_path)
     if not path.is_file():
-        raise SourceError(f"design snapshot missing: {path}")
+        # Same reasoning as the directory case above: a declared snapshot
+        # that is gone is drift to report, not a reason to abort.
+        out.missing = (f"{rel_path} is declared as a snapshot source but "
+                       f"does not exist in the repository")
+        return out
     obj = load_json(path)
     if not isinstance(obj, list):
         raise SourceError(f"{path} must hold a JSON array, got {type(obj).__name__}")
@@ -318,7 +337,8 @@ def collect_json_array(root: Path, rel_path: str, id_field: str) -> SideIds:
             out.no_id.append(f"{rel}[{index}]: {why}")
             continue
         if value in out.ids:
-            raise SourceError(f"duplicate id {value!r} in {rel}")
+            out.duplicates.append(f"{value!r} appears twice in {rel}")
+            continue
         out.ids.add(value)
         out.origin[value] = rel
     return out
