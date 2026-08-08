@@ -1,0 +1,710 @@
+"""Mechanical validation of `id_map.json` against both live repositories.
+
+The checker answers exactly one question: *does the hand-maintained map
+still describe what is actually in the two repositories?* It never edits
+anything, and it never guesses a correspondence — an id it cannot account
+for is reported, not silently absorbed.
+
+Failure classes (all of them exit non-zero and name the offending id):
+
+  `undeclared_scope`   an engine `data/` directory or loose file, or a
+                       design snapshot file, the map has never heard of
+  `missing_source`     a source the map declares is no longer in the
+                       repository (the other half of a rename)
+  `duplicate_entity_id`
+                       two entities on one side claiming the same id
+  `uncovered_id`       an id that exists on one side but appears in
+                       neither `mappings` nor `unmapped`
+  `missing_entity_id`  a file inside a declared entity directory that
+                       carries no usable id
+  `cross_side_contradiction`
+                       the same id string exists on both sides yet is
+                       declared unmapped on one of them
+  `unknown_id`         the map references an id that does not exist on the
+                       side it claims
+  `duplicate_id`       the same id claimed twice within one entity type
+  `bad_reason`         an `unmapped` reason outside the controlled enum
+  `missing_carrier`    `engine_implements_as_field` without an
+                       `engine_carrier` pointer that resolves to a real
+                       field of a real engine file
+  `bad_cardinality`    declared cardinality contradicts the id counts
+  `bad_map`            the map file itself is structurally broken
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+from . import sources
+from .sources import Roots, SideIds, SourceError
+
+MAP_PATH = Path(__file__).resolve().parent / "id_map.json"
+
+#: `engine_carrier` values look like `data/classes/kensei.json#sword_qi_config`.
+CARRIER_SEP = "#"
+
+
+def meaningful(value: object) -> str | None:
+    """The stripped string, or None if `value` is not a real string at all.
+
+    The single place this package decides whether a JSON value "is there".
+    `str(x).strip()` must never be used for that: `str(None)` is `"None"`,
+    `str(False)` is `"False"`, `str([])` is `"[]"` — all non-empty, all
+    truthy. Every "you must state a reason" rule in this checker was
+    therefore satisfiable by writing `null`, which is not an attack but the
+    ordinary hand-editing slip of typing a key and not filling it in.
+
+    Default posture: unknown means unsafe, not harmless.
+    """
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+@dataclass(frozen=True)
+class Finding:
+    kind: str
+    message: str
+
+    def __str__(self) -> str:  # pragma: no cover - formatting only
+        return f"[{self.kind}] {self.message}"
+
+
+@dataclass
+class Report:
+    findings: list[Finding]
+    stats: dict
+
+    @property
+    def ok(self) -> bool:
+        return not self.findings
+
+    def as_dict(self) -> dict:
+        return {
+            "ok": self.ok,
+            "findings": [{"kind": f.kind, "message": f.message}
+                         for f in self.findings],
+            "stats": self.stats,
+        }
+
+
+def load_map(path: Path | None = None) -> dict:
+    path = MAP_PATH if path is None else path
+    data = sources.load_json(path)   # OSError / UTF-8 / JSON -> SourceError
+    if not isinstance(data, dict):
+        raise SourceError(f"id map {path} must be a JSON object")
+    for key in ("reason_codes", "entity_types", "mappings", "unmapped",
+                "engine_scope", "design_scope"):
+        if key not in data:
+            raise SourceError(f"id map {path} is missing required key {key!r}")
+    return data
+
+
+def _validate_structure(spec: dict, findings: list[Finding]) -> bool:
+    """Reject a malformed map as findings before anything reads a repository.
+
+    Two jobs, both of which used to be missing:
+
+    * **Containment.** Every path in the map is checked lexically here, and
+      re-checked after joining in `sources.resolve_within`. Without this a
+      declared `engine.path` of `../../../elsewhere` was walked for real —
+      the checker would happily read files outside the repository it claims
+      to be reading, including this repository's own.
+    * **Shape.** A `null` in `mappings`, an `engine_ids` given as a bare
+      string, an `excluded_paths` written as a list — each of these either
+      crashed with a traceback or, worse, passed. The list form was the bad
+      one: `set()` over a list yields its elements, so a whole entity type
+      could be excluded with no reason recorded anywhere and no finding.
+
+    Returns False when the map is too broken to check against real data.
+    """
+    ok = True
+
+    def bad(message: str) -> None:
+        nonlocal ok
+        ok = False
+        findings.append(Finding("bad_map", message))
+
+    def check_path(value: object, where: str) -> None:
+        why = sources.bad_relative_path(value)
+        if why is not None:
+            bad(f"{where}: {why}")
+
+    def need_str(container: dict, key: str, where: str,
+                 optional: bool = False) -> None:
+        """Require a real, non-empty string — `null` is not an answer.
+
+        `optional` means the key may be absent entirely; it does *not* mean
+        the key may be present and empty. A field written as `null` is a
+        half-finished edit, and treating it as "not provided" is how a
+        must-state-a-reason rule turns into no rule at all.
+        """
+        if optional and key not in container:
+            return
+        if meaningful(container.get(key)) is None:
+            bad(f"{where}.{key} must be a non-empty string, got "
+                f"{container.get(key)!r}")
+
+    for scope_key, dir_key in (("engine_scope", "data_dir"),
+                               ("design_scope", "snapshot_dir")):
+        scope = spec.get(scope_key)
+        if not isinstance(scope, dict):
+            bad(f"{scope_key} must be an object")
+            continue
+        check_path(scope.get(dir_key), f"{scope_key}.{dir_key}")
+        excluded = scope.get("excluded_paths", {})
+        # A list here would silently drop entire entity types with no reason
+        # attached, which is exactly what the README promises cannot happen.
+        if not isinstance(excluded, dict):
+            bad(f"{scope_key}.excluded_paths must be an object mapping path "
+                f"-> reason, got {type(excluded).__name__} (a list has "
+                f"nowhere to record why the path is excluded)")
+            continue
+        for path_value, reason in excluded.items():
+            check_path(path_value, f"{scope_key}.excluded_paths key")
+            if meaningful(reason) is None:
+                bad(f"{scope_key}.excluded_paths[{path_value!r}] has no "
+                    f"stated reason (got {reason!r}) — excluding a path "
+                    f"without saying why is the silent pass this tool exists "
+                    f"to prevent")
+
+    reason_codes = spec.get("reason_codes")
+    if not isinstance(reason_codes, dict):
+        bad("reason_codes must be an object mapping code -> description")
+    else:
+        for code, description in reason_codes.items():
+            if meaningful(code) is None:
+                bad(f"reason_codes has a non-string code {code!r}")
+            if meaningful(description) is None:
+                bad(f"reason_codes[{code!r}] has no description (got "
+                    f"{description!r}) — a controlled code nobody can read "
+                    f"is not controlled")
+    entity_types = spec.get("entity_types")
+    if not isinstance(entity_types, list):
+        bad("entity_types must be a list")
+        return False
+    for index, entry in enumerate(entity_types):
+        where = f"entity_types[{index}]"
+        if not isinstance(entry, dict):
+            bad(f"{where} must be an object, got {type(entry).__name__}")
+            continue
+        need_str(entry, "type", where)
+        if entry.get("coverage") not in ("required", "excluded"):
+            bad(f"{where} has coverage {entry.get('coverage')!r}, expected "
+                f"'required' or 'excluded'")
+        for side in ("engine", "design"):
+            side_spec = entry.get(side)
+            if side_spec is None:
+                continue
+            if not isinstance(side_spec, dict):
+                bad(f"{where}.{side} must be an object or null")
+                continue
+            if side_spec.get("kind") not in ("json_dir", "json_array"):
+                bad(f"{where}.{side} has unknown kind "
+                    f"{side_spec.get('kind')!r}")
+            check_path(side_spec.get("path"), f"{where}.{side}.path")
+            need_str(side_spec, "id_field", f"{where}.{side}", optional=True)
+
+    for key in ("mappings", "unmapped"):
+        items = spec.get(key)
+        if not isinstance(items, list):
+            bad(f"{key} must be a list")
+            ok = False
+            continue
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                bad(f"{key}[{index}] must be an object, got "
+                    f"{type(item).__name__}")
+    if not isinstance(spec.get("mappings"), list) or \
+            not isinstance(spec.get("unmapped"), list):
+        return False
+
+    for index, mapping in enumerate(spec["mappings"]):
+        if not isinstance(mapping, dict):
+            continue
+        where = f"mappings[{index}]"
+        need_str(mapping, "type", where)
+        need_str(mapping, "cardinality", where)
+        # `basis` is the whole point of a mapping entry: where the
+        # correspondence is traceable from. Written as `null` it used to
+        # satisfy the "must cite a basis" rule while citing nothing.
+        need_str(mapping, "basis", where)
+        for side in ("engine_ids", "design_ids"):
+            value = mapping.get(side)
+            # A bare string is iterable and has a length, so it used to be
+            # accepted as a one-element list. Multi-character ids then blew
+            # up loudly as unknown ids, but a single-character id passed.
+            if not isinstance(value, list):
+                bad(f"mappings[{index}].{side} must be a list of ids, got "
+                    f"{type(value).__name__}")
+                continue
+            for entity_id in value:
+                if not isinstance(entity_id, str) or not entity_id.strip():
+                    bad(f"mappings[{index}].{side} contains {entity_id!r}, "
+                        f"expected a non-empty string id")
+
+    for index, item in enumerate(spec["unmapped"]):
+        if not isinstance(item, dict):
+            continue
+        where = f"unmapped[{index}]"
+        need_str(item, "type", where)
+        need_str(item, "id", where)
+        need_str(item, "reason", where)
+        if item.get("side") not in ("engine", "design"):
+            bad(f"{where}.side must be 'engine' or 'design', got "
+                f"{item.get('side')!r}")
+        # The escape hatch is only an escape hatch while it carries a real
+        # justification. Present-but-null used to sail straight through and
+        # suppress a `cross_side_contradiction` in silence, while the
+        # summary line still counted it as a justified use.
+        if SAME_ID_FIELD in item:
+            need_str(item, SAME_ID_FIELD, where)
+        carrier = item.get("engine_carrier")
+        if carrier is not None:
+            if meaningful(carrier) is None:
+                bad(f"{where}.engine_carrier must be a non-empty string, got "
+                    f"{carrier!r}")
+            elif CARRIER_SEP in carrier:
+                check_path(carrier.split(CARRIER_SEP, 1)[0],
+                           f"{where}.engine_carrier")
+            # missing '#field' is reported by _check_carrier, with context
+    return ok
+
+
+def _side_ids(roots: Roots, entity_types: list[dict]) -> dict[tuple[str, str], SideIds]:
+    """Collect `(entity type, side) -> ids` for every declared source."""
+    collected: dict[tuple[str, str], SideIds] = {}
+    for entry in entity_types:
+        etype = entry["type"]
+        for side, root in (("engine", roots.engine), ("design", roots.design)):
+            spec = entry.get(side)
+            if not spec:
+                continue
+            collected[(etype, side)] = sources.collect(root, spec)
+    return collected
+
+
+def _check_scope(roots: Roots, spec: dict, entity_types: list[dict],
+                 findings: list[Finding]) -> None:
+    """Every engine data dir / design snapshot file must be accounted for."""
+    engine_scope = spec["engine_scope"]
+    declared = {e["engine"]["path"] for e in entity_types if e.get("engine")}
+    declared |= set(engine_scope.get("excluded_paths", {}))
+    actual, engine_listing = sources.engine_scope_entries(
+        roots.engine, engine_scope["data_dir"])
+    _report_listing_anomalies(engine_listing, "engine", "data", findings)
+    for missing in sorted(actual - declared):
+        findings.append(Finding(
+            "undeclared_scope",
+            f"engine path {missing} is not declared in id_map.json "
+            f"(add an entity_types entry or list it under "
+            f"engine_scope.excluded_paths with a reason)"))
+    for gone in sorted(declared - actual):
+        findings.append(Finding(
+            "undeclared_scope",
+            f"engine path {gone} is declared in id_map.json but no "
+            f"longer exists in the engine repository"))
+
+    design_scope = spec["design_scope"]
+    declared_d = {e["design"]["path"] for e in entity_types if e.get("design")}
+    declared_d |= set(design_scope.get("excluded_paths", {}))
+    actual_d, listing = sources.design_snapshot_files(
+        roots.design, design_scope["snapshot_dir"])
+    _report_listing_anomalies(listing, "design", "snapshots", findings)
+    for missing in sorted(actual_d - declared_d):
+        findings.append(Finding(
+            "undeclared_scope",
+            f"design snapshot {missing} is not declared in id_map.json "
+            f"(add an entity_types entry or list it under "
+            f"design_scope.excluded_paths with a reason)"))
+    for gone in sorted(declared_d - actual_d):
+        findings.append(Finding(
+            "undeclared_scope",
+            f"design snapshot {gone} is declared in id_map.json but no "
+            f"longer exists in the design repository"))
+
+
+def _report_listing_anomalies(listing, side: str, label: str,
+                              findings: list[Finding]) -> None:
+    """Turn "the walk could not see everything" into findings, never silence.
+
+    A directory reached through a symlink or junction is skipped by
+    `os.walk`, and the scope guard only ever sees the parent, so the
+    entities behind it would simply not exist as far as this checker is
+    concerned. Following it automatically is not the answer either — the
+    link may point outside the repository, which is precisely what the
+    containment guard exists to stop. So the checker says what it found and
+    asks a human to resolve it explicitly.
+    """
+    for link in listing.links:
+        findings.append(Finding(
+            "unfollowed_link",
+            f"{link} (in the {side} {label} tree) is a directory symlink or "
+            f"junction; it was not followed, so anything behind it is "
+            f"invisible to this map. Replace it with a real directory, or "
+            f"declare its target as its own entity source — the checker will "
+            f"not guess, because a link can point outside the repository"))
+    for escape in listing.escaping:
+        findings.append(Finding(
+            "path_escape",
+            f"{escape} (in the {side} {label} tree) resolves outside the "
+            f"repository root and was not read"))
+
+
+def _claim(claimed: dict[tuple[str, str], dict[str, str]], etype: str,
+           side: str, entity_id: str, where: str,
+           findings: list[Finding]) -> None:
+    bucket = claimed.setdefault((etype, side), {})
+    previous = bucket.get(entity_id)
+    if previous is not None:
+        findings.append(Finding(
+            "duplicate_id",
+            f"{side} {etype} id {entity_id!r} is claimed twice: "
+            f"{previous} and {where}"))
+        return
+    bucket[entity_id] = where
+
+
+def _check_known(collected: dict[tuple[str, str], SideIds], etype: str,
+                 side: str, entity_id: str, where: str,
+                 findings: list[Finding]) -> None:
+    known = collected.get((etype, side))
+    if known is None:
+        findings.append(Finding(
+            "bad_map",
+            f"{where} references {side} side of entity type {etype!r}, but "
+            f"the map declares no {side} source for that type"))
+        return
+    if entity_id not in known.ids:
+        findings.append(Finding(
+            "unknown_id",
+            f"{where} references {side} {etype} id {entity_id!r}, which does "
+            f"not exist in the {side} repository"))
+
+
+#: Escape hatch for a genuine id collision — see `_check_cross_side`.
+SAME_ID_FIELD = "same_id_other_side"
+
+
+def _check_cross_side(entity_types: list[dict],
+                      collected: dict[tuple[str, str], SideIds],
+                      unmapped_index: dict[tuple[str, str], dict[str, dict]],
+                      findings: list[Finding]) -> list[dict]:
+    """The same id string on both sides may not be declared unmapped.
+
+    Coverage alone only asks "is this id accounted for", never "is the
+    account true". That leaves one way to pass while saying something
+    false: split an id that exists on *both* sides into two `unmapped`
+    entries whose reasons contradict each other — engine side claiming the
+    design library never registered it while the design side claims the
+    engine never implemented it, when in fact both have it.
+
+    So: if an id string is present in both side's id universes for one
+    entity type, an `unmapped` entry for it must justify itself in a
+    `same_id_other_side` note explaining why the same-named entity on the
+    other side is not the same thing. That leaves room for a real id
+    collision between the two taxonomies without leaving room for a silent
+    contradiction.
+
+    Returns the entries that actually used that escape hatch, so the report
+    can name them. A machine can only check that the justification is
+    non-empty, never that it is true, so every use of the hatch is a thing
+    a human has to review — which means it has to be visible without
+    grepping the data file.
+    """
+    used: list[dict] = []
+    for entry in entity_types:
+        etype = entry["type"]
+        if entry.get("coverage") == "excluded":
+            continue
+        engine = collected.get((etype, "engine"))
+        design = collected.get((etype, "design"))
+        if engine is None or design is None:
+            continue
+        for entity_id in sorted(engine.ids & design.ids):
+            for side in ("engine", "design"):
+                item = unmapped_index.get((etype, side), {}).get(entity_id)
+                if item is None:
+                    continue
+                justification = meaningful(item.get(SAME_ID_FIELD))
+                if justification:
+                    used.append({"type": etype, "side": side,
+                                 "id": entity_id,
+                                 "reason": item.get("reason"),
+                                 SAME_ID_FIELD: justification})
+                    continue
+                findings.append(Finding(
+                    "cross_side_contradiction",
+                    f"{side} {etype} id {entity_id!r} is declared unmapped "
+                    f"(reason {item.get('reason')!r}), but that same id also "
+                    f"exists on the {'design' if side == 'engine' else 'engine'} "
+                    f"side ({engine.origin[entity_id]} and "
+                    f"{design.origin[entity_id]}) — map the pair, or state in "
+                    f"a {SAME_ID_FIELD!r} field why the two are not the same "
+                    f"entity"))
+    return used
+
+
+def _check_stale_escape_hatch(spec: dict, used: list[dict],
+                              findings: list[Finding]) -> None:
+    """A `same_id_other_side` that suppresses nothing must not sit there.
+
+    Without this, the hatch could be pre-authorised: sprinkle the field
+    over entries where it currently does nothing, and the day one of those
+    ids appears on the other side the contradiction is suppressed before
+    anyone ever decided it should be. Carrying the field is only legitimate
+    while it is actually doing something.
+    """
+    active = {(u["type"], u["side"], u["id"]) for u in used}
+    for index, item in enumerate(spec["unmapped"]):
+        if meaningful(item.get(SAME_ID_FIELD)) is None:
+            continue
+        key = (item.get("type"), item.get("side"), item.get("id"))
+        if key in active:
+            continue
+        findings.append(Finding(
+            "bad_map",
+            f"unmapped[{index}] ({item.get('side')} {item.get('type')} "
+            f"{item.get('id')!r}) carries {SAME_ID_FIELD!r}, but that id does "
+            f"not exist on the other side, so the field suppresses nothing — "
+            f"remove it rather than leaving the escape hatch pre-authorised"))
+
+
+def _cardinality(n_engine: int, n_design: int) -> str:
+    left = "1" if n_engine == 1 else "N"
+    right = "1" if n_design == 1 else "N"
+    return f"{left}:{right}"
+
+
+def check(roots: Roots, spec: dict) -> Report:
+    findings: list[Finding] = []
+    # Structure and path containment first: nothing below may touch a
+    # repository until the map has been proven to describe paths that stay
+    # inside one.
+    if not _validate_structure(spec, findings):
+        return Report(findings=findings,
+                      stats={"entity_types": {}, "mappings": 0, "unmapped": 0,
+                             "engine_ids_total": 0, "design_ids_total": 0,
+                             "escape_hatch_used": [],
+                             "aborted": "map structure is invalid; no "
+                                        "repository data was read"})
+    entity_types: list[dict] = spec["entity_types"]
+    by_type = {e["type"]: e for e in entity_types}
+    if len(by_type) != len(entity_types):
+        findings.append(Finding("bad_map",
+                                "entity_types contains duplicate type names"))
+    reason_codes = set(spec["reason_codes"])
+
+    _check_scope(roots, spec, entity_types, findings)
+    collected = _side_ids(roots, entity_types)
+
+    # `(type, side) -> {id: where}` — enforces "at most one claim per id".
+    claimed: dict[tuple[str, str], dict[str, str]] = {}
+    # `(type, side) -> {id: unmapped entry}` — used by the cross-side check.
+    unmapped_index: dict[tuple[str, str], dict[str, dict]] = {}
+
+    for index, mapping in enumerate(spec["mappings"]):
+        where = f"mappings[{index}]"
+        etype = mapping.get("type")
+        entry = by_type.get(etype)
+        if entry is None:
+            findings.append(Finding("bad_map",
+                                    f"{where} has unknown entity type {etype!r}"))
+            continue
+        if entry.get("coverage") == "excluded":
+            findings.append(Finding(
+                "bad_map",
+                f"{where} maps entity type {etype!r}, which the map declares "
+                f"out of scope (coverage=excluded)"))
+            continue
+        engine_ids = mapping.get("engine_ids") or []
+        design_ids = mapping.get("design_ids") or []
+        if not engine_ids or not design_ids:
+            findings.append(Finding(
+                "bad_map",
+                f"{where} must list at least one engine id and one design id "
+                f"(use `unmapped` for one-sided entries)"))
+            continue
+        declared_card = mapping.get("cardinality")
+        expected_card = _cardinality(len(engine_ids), len(design_ids))
+        if declared_card != expected_card:
+            findings.append(Finding(
+                "bad_cardinality",
+                f"{where} declares cardinality {declared_card!r} but lists "
+                f"{len(engine_ids)} engine id(s) and {len(design_ids)} design "
+                f"id(s) (= {expected_card})"))
+        for side, ids in (("engine", engine_ids), ("design", design_ids)):
+            for entity_id in ids:
+                _check_known(collected, etype, side, entity_id, where, findings)
+                _claim(claimed, etype, side, entity_id, where, findings)
+
+    for index, item in enumerate(spec["unmapped"]):
+        where = f"unmapped[{index}]"
+        etype = item.get("type")
+        side = item.get("side")
+        entity_id = item.get("id")
+        entry = by_type.get(etype)
+        if entry is None:
+            findings.append(Finding("bad_map",
+                                    f"{where} has unknown entity type {etype!r}"))
+            continue
+        if entry.get("coverage") == "excluded":
+            findings.append(Finding(
+                "bad_map",
+                f"{where} lists entity type {etype!r}, which the map declares "
+                f"out of scope (coverage=excluded)"))
+            continue
+        # `side` / `id` / `reason` types are guaranteed by
+        # `_validate_structure`, which aborts the whole run before any
+        # repository is read — re-checking them here would be dead code.
+        reason = item.get("reason")
+        if reason not in reason_codes:
+            findings.append(Finding(
+                "bad_reason",
+                f"{where} ({side} {etype} {entity_id!r}) uses reason "
+                f"{reason!r}, which is not one of the controlled codes: "
+                f"{', '.join(sorted(reason_codes))}"))
+        if reason == "engine_implements_as_field":
+            _check_carrier(roots, item, where, findings)
+        _check_known(collected, etype, side, entity_id, where, findings)
+        _claim(claimed, etype, side, entity_id, where, findings)
+        unmapped_index.setdefault((etype, side), {})[entity_id] = item
+
+    escape_hatch_used = _check_cross_side(entity_types, collected,
+                                          unmapped_index, findings)
+    _check_stale_escape_hatch(spec, escape_hatch_used, findings)
+
+    # Coverage: every id on a required entity type must have been claimed.
+    stats: dict = {"entity_types": {}}
+    for entry in entity_types:
+        etype = entry["type"]
+        per_type: dict = {"coverage": entry.get("coverage", "required")}
+        for side in ("engine", "design"):
+            known = collected.get((etype, side))
+            if known is None:
+                per_type[side] = None
+                continue
+            per_type[side] = len(known.ids)
+            _report_listing_anomalies(known, side, f"{etype} source", findings)
+            if known.missing:
+                # Reported, then treated as an empty id set so the run
+                # continues. That degradation is safe *because* it is loud
+                # from more than one direction: the scope guard names the
+                # replacement path, and every mapping still pointing at the
+                # vanished source fails as `unknown_id`. An empty source
+                # never quietly becomes "this entity type does not exist".
+                findings.append(Finding(
+                    "missing_source",
+                    f"{side} {etype}: {known.missing} — if it was renamed or "
+                    f"moved, update this entity type's `{side}.path`; the "
+                    f"undeclared_scope findings above name what is there now"))
+            for duplicate in known.duplicates:
+                findings.append(Finding(
+                    "duplicate_entity_id",
+                    f"{side} {etype} id {duplicate} — two entities claiming "
+                    f"one id make the mapping ambiguous"))
+            id_field = (entry[side] or {}).get("id_field", "id")
+            for orphan in known.no_id:
+                findings.append(Finding(
+                    "missing_entity_id",
+                    f"{orphan} (declared {side} {etype} source, id field "
+                    f"{id_field!r}) — the map cannot see this entity"))
+            if entry.get("coverage") == "excluded":
+                continue
+            accounted = set(claimed.get((etype, side), {}))
+            for entity_id in sorted(known.ids - accounted):
+                findings.append(Finding(
+                    "uncovered_id",
+                    f"{side} {etype} id {entity_id!r} "
+                    f"({known.origin[entity_id]}) is neither mapped nor "
+                    f"explicitly listed as unmapped"))
+        stats["entity_types"][etype] = per_type
+    stats["mappings"] = len(spec["mappings"])
+    stats["unmapped"] = len(spec["unmapped"])
+    stats["escape_hatch_used"] = escape_hatch_used
+    stats["engine_ids_total"] = sum(
+        len(v.ids) for (t, s), v in collected.items() if s == "engine")
+    stats["design_ids_total"] = sum(
+        len(v.ids) for (t, s), v in collected.items() if s == "design")
+    return Report(findings=findings, stats=stats)
+
+
+def _check_carrier(roots: Roots, item: dict, where: str,
+                   findings: list[Finding]) -> None:
+    """`engine_implements_as_field` must point at a real field of a real file.
+
+    This is the reason code for "both sides have this thing, but the engine
+    built it as a field of another entity instead of an entity of its own".
+    Calling such a case `engine_not_implemented` would be a wrong
+    classification, and the entire evidence for the classification is *which
+    field* carries it — so the field half of the pointer is resolved too,
+    not just the file half. A pointer that names no field, or names one that
+    is not in the file, is exactly as unproven as no pointer at all.
+
+    The field part is a dot path (`a.b.c`) walked through nested objects.
+    """
+    carrier = item.get("engine_carrier")
+    example = f"data/classes/kensei.json{CARRIER_SEP}sword_qi_config"
+    if not isinstance(carrier, str) or not carrier.strip():
+        findings.append(Finding(
+            "missing_carrier",
+            f"{where} uses reason engine_implements_as_field but has no "
+            f"`engine_carrier` (expected e.g. {example!r})"))
+        return
+    if CARRIER_SEP not in carrier:
+        findings.append(Finding(
+            "missing_carrier",
+            f"{where} has engine_carrier {carrier!r} with no "
+            f"{CARRIER_SEP}<field> part — name the field that actually "
+            f"carries it (e.g. {example!r})"))
+        return
+    rel, _, field_path = carrier.partition(CARRIER_SEP)
+    # Defence in depth, NOT a fix for an observed hole: a carrier pointing
+    # through a directory alias was already reported — measured — by the
+    # scope guard, which sees the alias while walking `data/`. Checking here
+    # too means carrier paths and source paths answer to one rule instead of
+    # relying on another check happening to cover them.
+    for alias in sources.alias_components(roots.engine, rel):
+        findings.append(Finding(
+            "unfollowed_link",
+            f"{where} points at engine carrier {carrier!r}, whose path "
+            f"crosses the directory alias {alias}; resolve the alias so the "
+            f"carrier names a real location"))
+    try:
+        path = sources.resolve_within(roots.engine, rel)
+    except SourceError as exc:
+        findings.append(Finding("missing_carrier", f"{where}: {exc}"))
+        return
+    if not path.is_file():
+        findings.append(Finding(
+            "missing_carrier",
+            f"{where} points at engine carrier {carrier!r}, but "
+            f"{rel} does not exist in the engine repository"))
+        return
+    if not field_path.strip():
+        findings.append(Finding(
+            "missing_carrier",
+            f"{where} has engine_carrier {carrier!r} with an empty field "
+            f"name (expected e.g. {example!r})"))
+        return
+    try:
+        obj = sources.load_json(path)   # covers UTF-8 as well as JSON/OS
+    except SourceError as exc:
+        findings.append(Finding(
+            "missing_carrier",
+            f"{where} points at engine carrier {carrier!r}, but it could "
+            f"not be read: {exc}"))
+        return
+    cursor = obj
+    walked: list[str] = []
+    for part in field_path.split("."):
+        if not isinstance(cursor, dict) or part not in cursor:
+            at = "".join(f".{p}" for p in walked) or "<top level>"
+            findings.append(Finding(
+                "missing_carrier",
+                f"{where} points at engine carrier {carrier!r}, but field "
+                f"{part!r} does not exist at {at} in {rel}"))
+            return
+        cursor = cursor[part]
+        walked.append(part)
