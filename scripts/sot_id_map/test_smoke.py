@@ -27,6 +27,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -429,6 +430,283 @@ def test_scope_guard_covers_loose_and_nested_files() -> None:
     print("PASS test_scope_guard_covers_loose_and_nested_files")
 
 
+def test_declared_path_cannot_escape_the_repository(tmp_outside: Path) -> None:
+    """A declared path may not walk out of the repository it belongs to.
+
+    `tmp_outside` holds a JSON file that lives *outside* both fixture repos.
+    If the checker ever reads it, the escape happened — so the assertion is
+    on the file's own contents appearing in the report, not merely on the
+    exit code.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        engine, design, spec = _build_fixture(tmp_path)
+        _assert_pristine(spec, engine, design, tmp_path)
+
+        escapes = [
+            "../../outside",                       # parent traversal
+            "data/../../outside",                  # traversal mid-path
+            str(tmp_outside).replace("\\", "/"),   # absolute / drive-qualified
+            "/etc",                                # rooted
+        ]
+        for escape in escapes:
+            broken = copy.deepcopy(spec)
+            broken["entity_types"][0]["engine"]["path"] = escape
+            proc = _run(broken, engine, design, tmp_path)
+            assert proc.returncode == 1, (escape, proc.stdout, proc.stderr)
+            assert "bad_map" in proc.stdout, (escape, proc.stdout)
+            assert "Traceback" not in proc.stderr, (escape, proc.stderr)
+            # nothing outside was read, and no repository was read at all
+            assert "CANARY_OUTSIDE_REPO" not in proc.stdout, \
+                (escape, proc.stdout)
+            assert "no repository data was read" in proc.stdout, \
+                (escape, proc.stdout)
+
+        # same guard on the scope directories and on an engine_carrier
+        for key, scope in (("data_dir", "engine_scope"),
+                           ("snapshot_dir", "design_scope")):
+            broken = copy.deepcopy(spec)
+            broken[scope][key] = "../../outside"
+            proc = _run(broken, engine, design, tmp_path)
+            assert proc.returncode == 1, (scope, proc.stdout)
+            assert "bad_map" in proc.stdout, (scope, proc.stdout)
+        broken = copy.deepcopy(spec)
+        broken["unmapped"][1]["engine_carrier"] = "../../outside/leak.json#x"
+        proc = _run(broken, engine, design, tmp_path)
+        assert proc.returncode == 1, proc.stdout
+        assert "bad_map" in proc.stdout, proc.stdout
+        assert "CANARY_OUTSIDE_REPO" not in proc.stdout, proc.stdout
+    print("PASS test_declared_path_cannot_escape_the_repository")
+
+
+def test_excluded_paths_must_be_a_dict_with_reasons() -> None:
+    """The list form silently swallowed whole entity types with no reason."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        engine, design, spec = _build_fixture(tmp_path)
+        _assert_pristine(spec, engine, design, tmp_path)
+
+        # The exact shape that used to exit 0: exclude `skill` on both sides
+        # as a *list*, drop every skill entry, and watch 2 engine + 3 design
+        # ids disappear without a word.
+        broken = copy.deepcopy(spec)
+        broken["entity_types"] = [e for e in broken["entity_types"]
+                                  if e["type"] != "skill"]
+        broken["mappings"] = [m for m in broken["mappings"]
+                              if m["type"] != "skill"]
+        broken["unmapped"] = [u for u in broken["unmapped"]
+                              if u["type"] != "skill"]
+        broken["engine_scope"]["excluded_paths"] = ["data/runloop",
+                                                    "data/skills"]
+        broken["design_scope"]["excluded_paths"] = ["snapshots/skills.json"]
+        proc = _run(broken, engine, design, tmp_path)
+        assert proc.returncode == 1, (proc.returncode, proc.stdout)
+        assert "excluded_paths must be an object" in proc.stdout, proc.stdout
+        assert "nowhere to record why" in proc.stdout, proc.stdout
+
+        # dict form with an empty reason is just as unaccountable
+        blank = copy.deepcopy(spec)
+        blank["engine_scope"]["excluded_paths"]["data/runloop"] = "   "
+        proc = _run(blank, engine, design, tmp_path)
+        assert proc.returncode == 1, proc.stdout
+        assert "no stated reason" in proc.stdout, proc.stdout
+    print("PASS test_excluded_paths_must_be_a_dict_with_reasons")
+
+
+def test_non_utf8_file_exits_2_without_traceback() -> None:
+    """Both repos are full of Chinese; one editor save can produce this."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        engine, design, spec = _build_fixture(tmp_path)
+        _assert_pristine(spec, engine, design, tmp_path)
+
+        target = engine / "data" / "skills" / "sw_slash.json"
+        target.write_bytes(
+            json.dumps({"id": "sw_slash", "name": "斩击"},
+                       ensure_ascii=False).encode("gbk"))
+        proc = _run(spec, engine, design, tmp_path)
+        assert proc.returncode == 2, (proc.returncode, proc.stdout, proc.stderr)
+        assert "Traceback" not in proc.stderr, proc.stderr
+        assert "not valid UTF-8" in proc.stderr, proc.stderr
+
+        # same for the map file itself
+        target.write_text(json.dumps({"id": "sw_slash"}), encoding="utf-8")
+        _assert_pristine(spec, engine, design, tmp_path)
+        gbk_map = tmp_path / "gbk_map.json"
+        # The fixture map is pure ASCII, and ASCII is byte-identical in GBK
+        # and UTF-8 — encoding it as GBK would prove nothing. Put a Chinese
+        # note in first so the bytes really are undecodable as UTF-8, then
+        # assert that they are (fixture self-check before the real one).
+        chinese_map = copy.deepcopy(spec)
+        chinese_map["_note"] = "中文说明，用来让这份文件在 GBK 下真的不是 UTF-8"
+        payload = json.dumps(chinese_map, ensure_ascii=False).encode("gbk")
+        try:
+            payload.decode("utf-8")
+        except UnicodeDecodeError:
+            pass
+        else:
+            raise AssertionError("fixture is wrong: the GBK map still decodes "
+                                 "as UTF-8, so this proves nothing")
+        gbk_map.write_bytes(payload)
+        proc = subprocess.run(
+            [sys.executable, "-m", "scripts.sot_id_map", "--map", str(gbk_map),
+             "--engine-repo", str(engine), "--design-repo", str(design)],
+            capture_output=True, text=True, cwd=ROOT, encoding="utf-8",
+            errors="replace")
+        assert proc.returncode == 2, (proc.returncode, proc.stderr)
+        assert "Traceback" not in proc.stderr, proc.stderr
+    print("PASS test_non_utf8_file_exits_2_without_traceback")
+
+
+def test_malformed_map_reports_findings_not_traceback() -> None:
+    """A `null` in `mappings` used to crash out through `main()` as exit 1."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        engine, design, spec = _build_fixture(tmp_path)
+        _assert_pristine(spec, engine, design, tmp_path)
+
+        for mutate, needle in (
+            (lambda s: s["mappings"].append(None), "must be an object"),
+            (lambda s: s["unmapped"].append(None), "must be an object"),
+            (lambda s: s.update(entity_types="nope"), "must be a list"),
+            (lambda s: s["entity_types"][0].update(coverage="maybe"),
+             "expected 'required' or 'excluded'"),
+            (lambda s: s["entity_types"][0]["engine"].update(kind="magic"),
+             "unknown kind"),
+        ):
+            broken = copy.deepcopy(spec)
+            mutate(broken)
+            proc = _run(broken, engine, design, tmp_path)
+            assert proc.returncode == 1, (needle, proc.returncode, proc.stderr)
+            assert "Traceback" not in proc.stderr, (needle, proc.stderr)
+            assert "bad_map" in proc.stdout and needle in proc.stdout, \
+                (needle, proc.stdout)
+
+        # a missing top-level key is an environment-class problem: exit 2
+        gutted = copy.deepcopy(spec)
+        del gutted["reason_codes"]
+        proc = _run(gutted, engine, design, tmp_path)
+        assert proc.returncode == 2, (proc.returncode, proc.stderr)
+        assert "Traceback" not in proc.stderr, proc.stderr
+        assert "reason_codes" in proc.stderr, proc.stderr
+    print("PASS test_malformed_map_reports_findings_not_traceback")
+
+
+def test_empty_and_odd_ids_rejected_on_both_sides() -> None:
+    """The two sides judge ids by one rule, not two."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        engine, design, spec = _build_fixture(tmp_path)
+        _assert_pristine(spec, engine, design, tmp_path)
+
+        # design side: empty string used to be accepted as a real id
+        skills = design / "snapshots" / "skills.json"
+        original = skills.read_text(encoding="utf-8")
+        for value, needle in ((" ", "empty string"),
+                              (None, "absent or null"),
+                              (True, "boolean"),
+                              (1.5, "id is a float"),
+                              ({"a": 1}, "id is a dict")):
+            skills.write_text(json.dumps(
+                [{"id": "a_slash"}, {"id": "b_slash"}, {"id": "a_eye"},
+                 {"id": value}]), encoding="utf-8")
+            proc = _run(spec, engine, design, tmp_path)
+            assert proc.returncode == 1, (value, proc.stdout, proc.stderr)
+            assert "missing_entity_id" in proc.stdout, (value, proc.stdout)
+            assert needle in proc.stdout, (value, proc.stdout)
+        skills.write_text(original, encoding="utf-8")
+        _assert_pristine(spec, engine, design, tmp_path)
+
+        # engine side: same rule, same finding
+        (engine / "data" / "skills" / "sw_blank.json").write_text(
+            json.dumps({"id": "  "}), encoding="utf-8")
+        proc = _run(spec, engine, design, tmp_path)
+        assert proc.returncode == 1, proc.stdout
+        assert "missing_entity_id" in proc.stdout, proc.stdout
+        assert "empty string" in proc.stdout, proc.stdout
+    print("PASS test_empty_and_odd_ids_rejected_on_both_sides")
+
+
+def test_unreadable_directory_exits_2_not_silently_empty() -> None:
+    """An unreadable directory must not read as "this directory is empty".
+
+    Windows-only in practice (it needs `icacls`), and skipped elsewhere
+    rather than faked: a mocked permission error would only prove the mock
+    works. The measured behaviour this guards against is real — `rglob`
+    over a denied directory yields nothing at all, so every entity in it
+    disappears while the run still looks healthy.
+    """
+    if os.name != "nt" or not shutil.which("icacls"):
+        print("SKIP test_unreadable_directory_exits_2_not_silently_empty "
+              "(needs Windows icacls)")
+        return
+    # Managed by hand rather than with `TemporaryDirectory`: a denied ACL
+    # makes the automatic cleanup itself raise, which would turn a passing
+    # test into a teardown failure.
+    tmp_path = Path(tempfile.mkdtemp())
+    target = tmp_path / "engine" / "data" / "skills"
+    user = os.environ.get("USERNAME", "")
+    try:
+        engine, design, spec = _build_fixture(tmp_path)
+        _assert_pristine(spec, engine, design, tmp_path)
+
+        denied = subprocess.run(["icacls", str(target), "/deny", f"{user}:(RX)"],
+                                capture_output=True, text=True)
+        if denied.returncode != 0:
+            print("SKIP test_unreadable_directory_exits_2_not_silently_empty "
+                  f"(icacls deny failed: {denied.stdout.strip()})")
+            return
+        # Fixture self-check: the denial really took effect. Done by trying
+        # a real listing, not `os.access` — on Windows that only reports the
+        # read-only attribute and answers "readable" for a directory the ACL
+        # denies, which would leave this guard permanently satisfied and
+        # useless.
+        try:
+            os.listdir(target)
+        except PermissionError:
+            pass
+        else:
+            print("SKIP test_unreadable_directory_exits_2_not_silently_empty "
+                  "(icacls deny did not take effect; likely elevated or an "
+                  "unusual account setup)")
+            return
+
+        proc = _run(spec, engine, design, tmp_path)
+        assert proc.returncode == 2, (proc.returncode, proc.stdout, proc.stderr)
+        assert "Traceback" not in proc.stderr, proc.stderr
+        assert "cannot read" in proc.stderr, proc.stderr
+        # the failure mode being guarded against: a green run in which the
+        # skills simply ceased to exist
+        assert "OK:" not in proc.stdout, proc.stdout
+    finally:
+        subprocess.run(["icacls", str(target), "/reset"],
+                       capture_output=True, text=True)
+        shutil.rmtree(tmp_path, ignore_errors=True)
+    print("PASS test_unreadable_directory_exits_2_not_silently_empty")
+
+
+def test_mapping_ids_must_be_lists() -> None:
+    """A bare string is iterable; a single-character id used to slip through."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        engine, design, spec = _build_fixture(tmp_path)
+        _assert_pristine(spec, engine, design, tmp_path)
+
+        for value in ("sw_slash", "x", 3, {"a": 1}):
+            broken = copy.deepcopy(spec)
+            broken["mappings"][0]["engine_ids"] = value
+            proc = _run(broken, engine, design, tmp_path)
+            assert proc.returncode == 1, (value, proc.stdout)
+            assert "must be a list of ids" in proc.stdout, (value, proc.stdout)
+
+        blank = copy.deepcopy(spec)
+        blank["mappings"][0]["design_ids"] = ["a_slash", ""]
+        proc = _run(blank, engine, design, tmp_path)
+        assert proc.returncode == 1, proc.stdout
+        assert "expected a non-empty string id" in proc.stdout, proc.stdout
+    print("PASS test_mapping_ids_must_be_lists")
+
+
 def test_bad_cardinality_is_reported() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
@@ -551,6 +829,13 @@ def test_non_ascii_finding_is_printable() -> None:
 def main() -> int:
     test_help()
     test_fixture_passes_clean()
+    with tempfile.TemporaryDirectory() as outside:
+        # A canary living outside both repositories. Any test that finds this
+        # string in the checker's output has caught a containment escape.
+        outside_path = Path(outside)
+        (outside_path / "leak.json").write_text(
+            json.dumps({"id": "CANARY_OUTSIDE_REPO"}), encoding="utf-8")
+        test_declared_path_cannot_escape_the_repository(outside_path)
     test_removed_mapping_is_reported()
     test_new_engine_file_is_reported()
     test_nonexistent_id_is_reported()
@@ -560,6 +845,12 @@ def main() -> int:
     test_cross_side_contradiction_is_reported()
     test_escape_hatch_usage_is_always_reported()
     test_stale_escape_hatch_is_reported()
+    test_excluded_paths_must_be_a_dict_with_reasons()
+    test_non_utf8_file_exits_2_without_traceback()
+    test_malformed_map_reports_findings_not_traceback()
+    test_empty_and_odd_ids_rejected_on_both_sides()
+    test_mapping_ids_must_be_lists()
+    test_unreadable_directory_exits_2_not_silently_empty()
     test_carrier_field_must_exist()
     test_file_without_id_is_reported()
     test_scope_guard_covers_loose_and_nested_files()

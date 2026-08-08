@@ -10,7 +10,14 @@ Reads both repositories read-only and validates `id_map.json` against
 them. `--json` prints a machine-readable report instead of the text one.
 
 Exit codes: 0 map matches both repositories / 1 validation findings /
-2 environment or usage error (missing variable, unreadable map).
+2 environment or usage error (missing variable, unreadable map,
+undecodable file, permission denied).
+
+The 1 / 2 split is load-bearing, so nothing is allowed to reach the top of
+`main()` as a traceback: a crash exiting 1 would be indistinguishable from
+a clean run that found problems, and automation would read a failure as a
+result. Anything that means "could not start" exits 2; anything wrong with
+the map itself comes back as findings and exits 1.
 """
 from __future__ import annotations
 
@@ -57,6 +64,12 @@ def _force_utf8_output() -> None:
 def main(argv: list[str] | None = None) -> int:
     _force_utf8_output()
     args = _parser().parse_args(argv)
+    # Deliberately *not* a blanket `except Exception`: that would relabel a
+    # real bug in this package as an environment problem and hide it behind
+    # a tidy exit 2. Only the two families that genuinely mean "the checker
+    # could not start" are caught. A malformed map no longer needs to be
+    # caught here at all — `checker.check` validates its structure first and
+    # reports `bad_map` findings instead of crashing on it.
     try:
         roots = resolve_roots(engine=args.engine_repo, design=args.design_repo)
         spec = checker.load_map(args.map_path)
@@ -64,8 +77,13 @@ def main(argv: list[str] | None = None) -> int:
     except SourceError as exc:
         sys.stderr.write(f"error: {exc}\n")
         return 2
-    except KeyError as exc:
-        sys.stderr.write(f"error: id map is missing required key {exc}\n")
+    except OSError as exc:
+        # Permission denied on a directory walk, a vanished path mid-run, and
+        # similar. Exit 2, never 1: exit 1 means "the map has findings", so
+        # letting a crash land there would make automation read a failure as
+        # a normal result.
+        sys.stderr.write(f"error: filesystem problem while reading the "
+                         f"repositories: {exc}\n")
         return 2
 
     if args.json:
@@ -80,6 +98,13 @@ def _print_text(report: checker.Report, roots) -> None:
     out = sys.stdout
     out.write(f"engine repo: {roots.engine}\n")
     out.write(f"design repo: {roots.design}\n\n")
+    aborted = report.stats.get("aborted")
+    if aborted:
+        out.write(f"ABORTED: {aborted}\n\n")
+        out.write(f"FAIL: {len(report.findings)} finding(s)\n")
+        for finding in report.findings:
+            out.write(f"  {finding}\n")
+        return
     out.write(f"{'entity type':<16}{'engine':>8}{'design':>8}  coverage\n")
     for etype, per in report.stats["entity_types"].items():
         eng = "-" if per["engine"] is None else str(per["engine"])

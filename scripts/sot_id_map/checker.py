@@ -28,7 +28,6 @@ Failure classes (all of them exit non-zero and name the offending id):
 """
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -70,15 +69,140 @@ class Report:
 
 def load_map(path: Path | None = None) -> dict:
     path = MAP_PATH if path is None else path
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except OSError as exc:
-        raise SourceError(f"cannot read id map {path}: {exc}") from exc
-    except json.JSONDecodeError as exc:
-        raise SourceError(f"id map {path} is not valid JSON: {exc}") from exc
+    data = sources.load_json(path)   # OSError / UTF-8 / JSON -> SourceError
     if not isinstance(data, dict):
         raise SourceError(f"id map {path} must be a JSON object")
+    for key in ("reason_codes", "entity_types", "mappings", "unmapped",
+                "engine_scope", "design_scope"):
+        if key not in data:
+            raise SourceError(f"id map {path} is missing required key {key!r}")
     return data
+
+
+def _validate_structure(spec: dict, findings: list[Finding]) -> bool:
+    """Reject a malformed map as findings before anything reads a repository.
+
+    Two jobs, both of which used to be missing:
+
+    * **Containment.** Every path in the map is checked lexically here, and
+      re-checked after joining in `sources.resolve_within`. Without this a
+      declared `engine.path` of `../../../elsewhere` was walked for real —
+      the checker would happily read files outside the repository it claims
+      to be reading, including this repository's own.
+    * **Shape.** A `null` in `mappings`, an `engine_ids` given as a bare
+      string, an `excluded_paths` written as a list — each of these either
+      crashed with a traceback or, worse, passed. The list form was the bad
+      one: `set()` over a list yields its elements, so a whole entity type
+      could be excluded with no reason recorded anywhere and no finding.
+
+    Returns False when the map is too broken to check against real data.
+    """
+    ok = True
+
+    def bad(message: str) -> None:
+        nonlocal ok
+        ok = False
+        findings.append(Finding("bad_map", message))
+
+    def check_path(value: object, where: str) -> None:
+        why = sources.bad_relative_path(value)
+        if why is not None:
+            bad(f"{where}: {why}")
+
+    for scope_key, dir_key in (("engine_scope", "data_dir"),
+                               ("design_scope", "snapshot_dir")):
+        scope = spec.get(scope_key)
+        if not isinstance(scope, dict):
+            bad(f"{scope_key} must be an object")
+            continue
+        check_path(scope.get(dir_key), f"{scope_key}.{dir_key}")
+        excluded = scope.get("excluded_paths", {})
+        # A list here would silently drop entire entity types with no reason
+        # attached, which is exactly what the README promises cannot happen.
+        if not isinstance(excluded, dict):
+            bad(f"{scope_key}.excluded_paths must be an object mapping path "
+                f"-> reason, got {type(excluded).__name__} (a list has "
+                f"nowhere to record why the path is excluded)")
+            continue
+        for path_value, reason in excluded.items():
+            check_path(path_value, f"{scope_key}.excluded_paths key")
+            if not isinstance(reason, str) or not reason.strip():
+                bad(f"{scope_key}.excluded_paths[{path_value!r}] has no "
+                    f"stated reason — excluding a path without saying why is "
+                    f"the silent pass this tool exists to prevent")
+
+    if not isinstance(spec.get("reason_codes"), dict):
+        bad("reason_codes must be an object mapping code -> description")
+    entity_types = spec.get("entity_types")
+    if not isinstance(entity_types, list):
+        bad("entity_types must be a list")
+        return False
+    for index, entry in enumerate(entity_types):
+        where = f"entity_types[{index}]"
+        if not isinstance(entry, dict):
+            bad(f"{where} must be an object, got {type(entry).__name__}")
+            continue
+        if not isinstance(entry.get("type"), str) or not entry["type"].strip():
+            bad(f"{where} has no usable `type`")
+        if entry.get("coverage") not in ("required", "excluded"):
+            bad(f"{where} has coverage {entry.get('coverage')!r}, expected "
+                f"'required' or 'excluded'")
+        for side in ("engine", "design"):
+            side_spec = entry.get(side)
+            if side_spec is None:
+                continue
+            if not isinstance(side_spec, dict):
+                bad(f"{where}.{side} must be an object or null")
+                continue
+            if side_spec.get("kind") not in ("json_dir", "json_array"):
+                bad(f"{where}.{side} has unknown kind "
+                    f"{side_spec.get('kind')!r}")
+            check_path(side_spec.get("path"), f"{where}.{side}.path")
+            id_field = side_spec.get("id_field", "id")
+            if not isinstance(id_field, str) or not id_field.strip():
+                bad(f"{where}.{side}.id_field must be a non-empty string")
+
+    for key in ("mappings", "unmapped"):
+        items = spec.get(key)
+        if not isinstance(items, list):
+            bad(f"{key} must be a list")
+            ok = False
+            continue
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                bad(f"{key}[{index}] must be an object, got "
+                    f"{type(item).__name__}")
+    if not isinstance(spec.get("mappings"), list) or \
+            not isinstance(spec.get("unmapped"), list):
+        return False
+
+    for index, mapping in enumerate(spec["mappings"]):
+        if not isinstance(mapping, dict):
+            continue
+        for side in ("engine_ids", "design_ids"):
+            value = mapping.get(side)
+            # A bare string is iterable and has a length, so it used to be
+            # accepted as a one-element list. Multi-character ids then blew
+            # up loudly as unknown ids, but a single-character id passed.
+            if not isinstance(value, list):
+                bad(f"mappings[{index}].{side} must be a list of ids, got "
+                    f"{type(value).__name__}")
+                continue
+            for entity_id in value:
+                if not isinstance(entity_id, str) or not entity_id.strip():
+                    bad(f"mappings[{index}].{side} contains {entity_id!r}, "
+                        f"expected a non-empty string id")
+
+    for index, item in enumerate(spec["unmapped"]):
+        if not isinstance(item, dict):
+            continue
+        carrier = item.get("engine_carrier")
+        if carrier is not None:
+            if not isinstance(carrier, str) or CARRIER_SEP not in carrier:
+                continue    # shape reported by _check_carrier with context
+            check_path(carrier.split(CARRIER_SEP, 1)[0],
+                       f"unmapped[{index}].engine_carrier")
+    return ok
 
 
 def _side_ids(roots: Roots, entity_types: list[dict]) -> dict[tuple[str, str], SideIds]:
@@ -259,6 +383,16 @@ def _cardinality(n_engine: int, n_design: int) -> str:
 
 def check(roots: Roots, spec: dict) -> Report:
     findings: list[Finding] = []
+    # Structure and path containment first: nothing below may touch a
+    # repository until the map has been proven to describe paths that stay
+    # inside one.
+    if not _validate_structure(spec, findings):
+        return Report(findings=findings,
+                      stats={"entity_types": {}, "mappings": 0, "unmapped": 0,
+                             "engine_ids_total": 0, "design_ids_total": 0,
+                             "escape_hatch_used": [],
+                             "aborted": "map structure is invalid; no "
+                                        "repository data was read"})
     entity_types: list[dict] = spec["entity_types"]
     by_type = {e["type"]: e for e in entity_types}
     if len(by_type) != len(entity_types):
@@ -365,13 +499,12 @@ def check(roots: Roots, spec: dict) -> Report:
                 per_type[side] = None
                 continue
             per_type[side] = len(known.ids)
+            id_field = (entry[side] or {}).get("id_field", "id")
             for orphan in known.no_id:
                 findings.append(Finding(
                     "missing_entity_id",
-                    f"{orphan} is inside the declared {side} {etype} source "
-                    f"but carries no usable "
-                    f"{(entry[side] or {}).get('id_field', 'id')!r} field, so "
-                    f"the map cannot see it"))
+                    f"{orphan} (declared {side} {etype} source, id field "
+                    f"{id_field!r}) — the map cannot see this entity"))
             if entry.get("coverage") == "excluded":
                 continue
             accounted = set(claimed.get((etype, side), {}))
@@ -422,7 +555,11 @@ def _check_carrier(roots: Roots, item: dict, where: str,
             f"carries it (e.g. {example!r})"))
         return
     rel, _, field_path = carrier.partition(CARRIER_SEP)
-    path = roots.engine / rel
+    try:
+        path = sources.resolve_within(roots.engine, rel)
+    except SourceError as exc:
+        findings.append(Finding("missing_carrier", f"{where}: {exc}"))
+        return
     if not path.is_file():
         findings.append(Finding(
             "missing_carrier",
@@ -436,12 +573,12 @@ def _check_carrier(roots: Roots, item: dict, where: str,
             f"name (expected e.g. {example!r})"))
         return
     try:
-        obj = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        obj = sources.load_json(path)   # covers UTF-8 as well as JSON/OS
+    except SourceError as exc:
         findings.append(Finding(
             "missing_carrier",
-            f"{where} points at engine carrier {carrier!r}, but {rel} could "
-            f"not be read as JSON: {exc}"))
+            f"{where} points at engine carrier {carrier!r}, but it could "
+            f"not be read: {exc}"))
         return
     cursor = obj
     walked: list[str] = []

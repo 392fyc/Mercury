@@ -57,7 +57,9 @@ python -m scripts.sot_id_map --json     # 机器可读报告
 |---|---|
 | 0 | 两侧 id 全集都被覆盖，且映射引用的 id 都真实存在 |
 | 1 | 有 finding，逐条列出（见下表） |
-| 2 | 环境或用法问题：环境变量未设、目录不存在、映射文件读不了或结构坏了 |
+| 2 | **起不来**：环境变量未设、目录不存在、文件不是 UTF-8、目录没有读权限、映射文件读不了或缺顶层键 |
+
+**1 和 2 的分工是承重的**：1 的含义是「跑完了，发现了问题」，2 的含义是「根本没跑成」。所以任何异常都不许以栈回溯的形式冲到 `main()` 顶层——那样退出码会是 1，自动化会把一次崩溃读成一次正常的校验结果，而输出里一条 finding 都没有。相应地，`main()` 的异常漏斗是**显式列举**的（`SourceError` 与 `OSError`），**不是** `except Exception`：兜底式捕获会把这个包自己的 bug 也粉饰成「环境问题」。映射表自身结构坏了不走异常，走 `bad_map` finding（退 1）。
 
 ### 跑测试
 
@@ -73,14 +75,16 @@ python -m scripts.sot_id_map.test_smoke
 |---|---|
 | `uncovered_id` | 某侧存在、但映射表既没映射也没显式标 `unmapped` 的 id |
 | `undeclared_scope` | 引擎 `data/` 下出现映射表没声明过的**目录或散装 `*.json` 文件**，或设计库 `snapshots/` **递归**范围内出现没声明过的文件（反过来，声明了但已消失也报） |
-| `missing_entity_id` | 已声明的实体目录里有文件读不出 id（例如新增技能时忘了写 `id`）。这类文件不会被无声跳过 |
+| `missing_entity_id` | 已声明的实体来源里有条目读不出 id（新增技能时忘了写 `id`、id 是空串、类型不对等）。两侧同一条规则，不会被无声跳过 |
 | `cross_side_contradiction` | 同一个 id 串两侧都存在，却在某一侧被标成 `unmapped`。见下方说明 |
 | `unknown_id` | 映射表引用了对应侧不存在的 id |
 | `duplicate_id` | 同一实体类型下同一个 id 被认领两次 |
 | `missing_carrier` | 用了 `engine_implements_as_field`，但 `engine_carrier` 缺失、没有 `#字段` 部分、文件不存在，**或所指的字段在那个文件里根本不存在** |
 | `bad_reason` | `unmapped` 的原因码不在受控枚举内 |
 | `bad_cardinality` | 声明的基数与实际 id 个数不符 |
-| `bad_map` | 映射文件自身结构问题（未知实体类型、mapping 缺 `basis`、`same_id_other_side` 埋在没有对面同名 id 的条目上等） |
+| `bad_map` | 映射文件自身的结构问题。含：路径逃出仓库根 / 绝对路径 / 盘符 / UNC / 含 `..`；`excluded_paths` 不是对象或理由为空；`mappings`·`unmapped` 里出现非对象（如 `null`）；`engine_ids`·`design_ids` 不是列表（裸字符串曾被当成单元素列表，单字符 id 能整条通过）；未知实体类型；mapping 缺 `basis`；`same_id_other_side` 埋在没有对面同名 id 的条目上 |
+
+结构类 `bad_map` 在**读任何仓库数据之前**就判定，报告开头会打 `ABORTED: map structure is invalid; no repository data was read`。
 
 ### `cross_side_contradiction`：覆盖检查挡不住的那一种假话
 
@@ -101,9 +105,15 @@ python -m scripts.sot_id_map.test_smoke
 
 `id_map.json` 四段：
 
-1. **`engine_scope` / `design_scope`** —— 范围守卫。引擎 `data/` 下每个子目录、设计库 `snapshots/` 下每个 `.json`，要么被某个 `entity_types` 条目认领，要么列进 `excluded_paths` 并写明理由。没被声明的一律报 `undeclared_scope`，所以将来两侧新增内容不会被无声漏掉。
+1. **`engine_scope` / `design_scope`** —— 范围守卫。引擎 `data/` 下每个子目录与散装 `.json`、设计库 `snapshots/` 递归范围内每个 `.json`，要么被某个 `entity_types` 条目认领，要么列进 `excluded_paths` 并写明理由。没被声明的一律报 `undeclared_scope`，所以将来两侧新增内容不会被无声漏掉。
+
+   `excluded_paths` **必须是对象**（路径 → 理由），且理由非空字符串。写成数组会被拒（`bad_map`）：数组没有地方放理由，而一个不用写理由的排除通道可以一次吞掉整个实体类型——那正是这道守卫存在的意义的反面。
 2. **`reason_codes`** —— 受控枚举，六个码，每个带说明。
 3. **`entity_types`** —— 每个实体类型的两侧取数方式（引擎 = 目录递归、设计库 = 快照数组 + id 字段名），`coverage` 为 `required` 或 `excluded`，`note` 写明该类型的跨仓情况。
+
+   **路径一律相对于仓库根，且必须留在根以内。** 绝对路径、盘符路径（`D:/...`）、UNC（`//host/...`）、含 `..` 的路径全部报 `bad_map`，且此时**一个字节的仓库数据都不会被读**（报告开头会打 `ABORTED`）。这不是洁癖：`root / "D:/x"` 在 Windows 上会把 root 整个丢掉，而 `../../..` 曾让校验器真的去遍历了 Mercury 自己的目录、把本仓的 `id_map.json` 与 `.omc/` 会话状态读了进来。拼接之后还会再用 `resolve()` 复查一次是否落在根内——这一层抓的是字符串检查看不见的软链接逃逸。
+
+   **两侧的 id 规则是同一条**，不存在一侧更宽松：id 必须是非空字符串，或整数（会被转成字符串——这是为设计库某些表用数据库自增主键做的**显式**让步，不是 `str()` 随手兜底）。空串、null、布尔、浮点、对象一律报 `missing_entity_id`，既不静默收下也不静默丢弃。
 4. **`mappings` / `unmapped`** —— 具体条目。`mappings` 每条必须有 `basis`（对应关系从哪儿溯源），`unmapped` 每条必须有受控原因码。
 
 ### 六个原因码
