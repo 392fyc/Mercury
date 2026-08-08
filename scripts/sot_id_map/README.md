@@ -72,13 +72,25 @@ python -m scripts.sot_id_map.test_smoke
 | finding 类型 | 含义 |
 |---|---|
 | `uncovered_id` | 某侧存在、但映射表既没映射也没显式标 `unmapped` 的 id |
-| `undeclared_scope` | 引擎 `data/` 下出现映射表没声明过的目录，或设计库 `snapshots/` 出现没声明过的文件（反过来，声明了但已消失也报） |
+| `undeclared_scope` | 引擎 `data/` 下出现映射表没声明过的**目录或散装 `*.json` 文件**，或设计库 `snapshots/` **递归**范围内出现没声明过的文件（反过来，声明了但已消失也报） |
+| `missing_entity_id` | 已声明的实体目录里有文件读不出 id（例如新增技能时忘了写 `id`）。这类文件不会被无声跳过 |
+| `cross_side_contradiction` | 同一个 id 串两侧都存在，却在某一侧被标成 `unmapped`。见下方说明 |
 | `unknown_id` | 映射表引用了对应侧不存在的 id |
 | `duplicate_id` | 同一实体类型下同一个 id 被认领两次 |
+| `missing_carrier` | 用了 `engine_implements_as_field`，但 `engine_carrier` 缺失、没有 `#字段` 部分、文件不存在，**或所指的字段在那个文件里根本不存在** |
 | `bad_reason` | `unmapped` 的原因码不在受控枚举内 |
-| `missing_carrier` | 用了 `engine_implements_as_field` 却没给 `engine_carrier`，或指向的引擎文件不存在 |
 | `bad_cardinality` | 声明的基数与实际 id 个数不符 |
 | `bad_map` | 映射文件自身结构问题（未知实体类型、mapping 缺 `basis` 等） |
+
+### `cross_side_contradiction`：覆盖检查挡不住的那一种假话
+
+覆盖检查只问「这个 id 被认领了吗」，不问「认领得对不对」。于是有一条路能一边通过一边说假话：一个**两侧都存在**的 id，被拆成两条互相矛盾的 `unmapped`——引擎侧写 `design_not_registered`（说设计库没登记），设计侧写 `engine_not_implemented`（说引擎没实装），而实际上两侧都有它。
+
+所以：只要某个 id 串在同一实体类型的两侧 id 全集里**都**出现，针对它的 `unmapped` 条目必须在 `same_id_other_side` 字段里写明「为什么另一侧那个同名条目不是同一个东西」。这给真正的 id 撞名留了一扇写明理由的门，但没给静默矛盾留门。
+
+### `engine_carrier` 的字段部分会被真的解析
+
+`engine_implements_as_field` 的全部说服力就在「引擎把它建成了哪个字段」，所以 `#` 之后那半截会被当作点号路径（`a.b.c`）在那个 JSON 里逐层下探，走不通就报 `missing_carrier`。只验文件存在等于没验。
 
 ## 数据文件怎么读
 
@@ -108,15 +120,22 @@ python -m scripts.sot_id_map.test_smoke
 
 - **引擎实装了一条设计库已有的东西** → 把对应的 `unmapped`（`engine_not_implemented`）条目删掉，在 `mappings` 里加一条并写 `basis`。
 - **任一侧新增实体** → 校验器会以 `uncovered_id` 报出来。补一条 `mappings` 或 `unmapped`。
-- **任一侧新增整个实体类型（新目录 / 新快照文件）** → 校验器以 `undeclared_scope` 报出来。加 `entity_types` 条目，或列进 `excluded_paths` 并写理由。
+- **任一侧新增整个实体类型（新目录 / 新快照文件）** → 校验器以 `undeclared_scope` 报出来。加 `entity_types` 条目，或列进 `excluded_paths` 并写理由。引擎侧直接落在 `data/` 下的散装 `*.json`、设计库 `snapshots/` 子目录里的快照，同样会被报出来。
+- **引擎实装了一条设计库已有的同名东西** → 校验器以 `cross_side_contradiction` 报出来（前提是原先标了 `unmapped`）。补一条 `mappings`。
 - **设计库那侧改了内容** → 设计库的交接界面是快照。对方重跑 `python scripts/export_snapshot.py` 提交之后，本校验器读到的就是新数据。
 
 改完必须跑一次校验器并贴退出码；这与 lane 文档 §6.1「交接即验收」的口径一致。
 
 `unmapped` 目前 200 条以上，其中绝大多数是成组的（例如引擎的地图 / 波次 / 敌人整类没有设计库对应物）。首次填表时是按类型分组决定原因码、再逐条展开写入的，组一级的判断理由写在对应 `entity_types` 条目的 `note` 字段里，不在每条上重复。
 
+## 读表前必须知道的两件事
+
+**一、`tag` / `rule` / `term` 三类的标识符不是 `id`。** 它们在设计库里的整型 `id` 是数据库自增主键，重建库时会被压实重排（设计库 `snapshots/README.md` §5.3 有实测记录），**不是跨仓标识符**。本表对这三类分别用 `key` / `code` / `term` 作为 id 字段，写在各自 `entity_types` 条目的 `design.id_field` 里。所以 `unmapped` 里 `tag` 那 12 条看到的中文（击杀 / 奥义 / 反应 …）是**标签的 `key`**，不是显示名；`rule` 那 23 条看到的 `R1.1` 是 `code`。
+
+**二、两条 resource 的 `engine_carrier` 指向不同的职业档案，是有规则的。** `mark` 指 `data/classes/kensei.json`，`qi` 指 `data/classes/myrmidon.json`——规则是**指向设计库该条目 `class_ids` 所覆盖的职业**：`mark` 的 `class_ids` 只有 `kensei`；`qi` 的 `class_ids` 是剑士线三职共享，取这条线的起点职业 `myrmidon`（引擎 `data/classes/myrmidon.json` 的 `_note` 自述「剑士是这条线的起点（Lv1-4），转职在 Lv5」）。需要知道的引擎现状是：`sword_qi_config` 与两组键在**两个职业档案里都齐全**，所以指哪一个都能通过校验；不统一指向同一个文件是因为两条资源的 `class_ids` 本来就不同。两条 `unmapped` 条目的 `note` 里各自写了这段。
+
 ## 已知的判断点（复核时优先看这几处）
 
 - **引擎 `data/weapons/`（13 条）标了 `no_traceable_correspondence`**：设计库 `equipment` 表有同名的 `weapon_might` / `weapon_hit` / `weapon_crit` 三字段，schema 同形；但 id 命名空间（`wpn_*` vs `eq_wpn_*`）与用途（职业 / 测试单位内建武器 vs 可拾取装备）都不同，没有一条 id 对得上。判定为「不猜」而非配对。
-- **设计库 `tags`（12 条）标了 `no_traceable_correspondence`**：引擎技能的 `tags` 是自由英文字符串（当前 30 个不同取值），没有注册表。字面上确有近似（奥义 / `ougi`、反应 / `reaction`、被动 / `passive_like`、区域 / `area`），但「位移」与「机动」两条都可能落到 `mobility`，逐条判不了，故整组不猜。
+- **设计库 `tags`（12 条，标识符是 `key`）标了 `no_traceable_correspondence`**：引擎技能的 `tags` 是自由英文字符串（当前 30 个不同取值），没有注册表。字面上确有近似（奥义 / `ougi`、反应 / `reaction`、被动 / `passive_like`、区域 / `area`），但「位移」与「机动」两条都可能落到 `mobility`，逐条判不了，故整组不猜。
 - **`eq_wpn_iron_sword` 是两侧唯一的装备对应**：同 id 同名（铁剑），但两侧属性模型不同（引擎 `stats {STR:2}` + `tier` + `rarity`，设计库 `weapon_might 5` / `weapon_hit 90` / `weapon_crit 0`）。本表只做 id 对应，数值是否该对齐属于裁决问题，不在此处判断。

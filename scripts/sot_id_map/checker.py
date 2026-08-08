@@ -7,16 +7,22 @@ for is reported, not silently absorbed.
 
 Failure classes (all of them exit non-zero and name the offending id):
 
-  `undeclared_scope`   an engine `data/` directory or a design snapshot
-                       file the map has never heard of
+  `undeclared_scope`   an engine `data/` directory or loose file, or a
+                       design snapshot file, the map has never heard of
   `uncovered_id`       an id that exists on one side but appears in
                        neither `mappings` nor `unmapped`
+  `missing_entity_id`  a file inside a declared entity directory that
+                       carries no usable id
+  `cross_side_contradiction`
+                       the same id string exists on both sides yet is
+                       declared unmapped on one of them
   `unknown_id`         the map references an id that does not exist on the
                        side it claims
   `duplicate_id`       the same id claimed twice within one entity type
   `bad_reason`         an `unmapped` reason outside the controlled enum
-  `missing_carrier`    `engine_implements_as_field` without a resolvable
-                       `engine_carrier` pointer
+  `missing_carrier`    `engine_implements_as_field` without an
+                       `engine_carrier` pointer that resolves to a real
+                       field of a real engine file
   `bad_cardinality`    declared cardinality contradicts the id counts
   `bad_map`            the map file itself is structurally broken
 """
@@ -94,18 +100,18 @@ def _check_scope(roots: Roots, spec: dict, entity_types: list[dict],
     engine_scope = spec["engine_scope"]
     declared = {e["engine"]["path"] for e in entity_types if e.get("engine")}
     declared |= set(engine_scope.get("excluded_paths", {}))
-    actual = sources.engine_top_level_dirs(roots.engine,
-                                           engine_scope["data_dir"])
+    actual = sources.engine_scope_entries(roots.engine,
+                                          engine_scope["data_dir"])
     for missing in sorted(actual - declared):
         findings.append(Finding(
             "undeclared_scope",
-            f"engine directory {missing} is not declared in id_map.json "
+            f"engine path {missing} is not declared in id_map.json "
             f"(add an entity_types entry or list it under "
             f"engine_scope.excluded_paths with a reason)"))
     for gone in sorted(declared - actual):
         findings.append(Finding(
             "undeclared_scope",
-            f"engine directory {gone} is declared in id_map.json but no "
+            f"engine path {gone} is declared in id_map.json but no "
             f"longer exists in the engine repository"))
 
     design_scope = spec["design_scope"]
@@ -157,6 +163,56 @@ def _check_known(collected: dict[tuple[str, str], SideIds], etype: str,
             f"not exist in the {side} repository"))
 
 
+#: Escape hatch for a genuine id collision — see `_check_cross_side`.
+SAME_ID_FIELD = "same_id_other_side"
+
+
+def _check_cross_side(entity_types: list[dict],
+                      collected: dict[tuple[str, str], SideIds],
+                      unmapped_index: dict[tuple[str, str], dict[str, dict]],
+                      findings: list[Finding]) -> None:
+    """The same id string on both sides may not be declared unmapped.
+
+    Coverage alone only asks "is this id accounted for", never "is the
+    account true". That leaves one way to pass while saying something
+    false: split an id that exists on *both* sides into two `unmapped`
+    entries whose reasons contradict each other — engine side claiming the
+    design library never registered it while the design side claims the
+    engine never implemented it, when in fact both have it.
+
+    So: if an id string is present in both side's id universes for one
+    entity type, an `unmapped` entry for it must justify itself in a
+    `same_id_other_side` note explaining why the same-named entity on the
+    other side is not the same thing. That leaves room for a real id
+    collision between the two taxonomies without leaving room for a silent
+    contradiction.
+    """
+    for entry in entity_types:
+        etype = entry["type"]
+        if entry.get("coverage") == "excluded":
+            continue
+        engine = collected.get((etype, "engine"))
+        design = collected.get((etype, "design"))
+        if engine is None or design is None:
+            continue
+        for entity_id in sorted(engine.ids & design.ids):
+            for side in ("engine", "design"):
+                item = unmapped_index.get((etype, side), {}).get(entity_id)
+                if item is None:
+                    continue
+                if str(item.get(SAME_ID_FIELD, "")).strip():
+                    continue
+                findings.append(Finding(
+                    "cross_side_contradiction",
+                    f"{side} {etype} id {entity_id!r} is declared unmapped "
+                    f"(reason {item.get('reason')!r}), but that same id also "
+                    f"exists on the {'design' if side == 'engine' else 'engine'} "
+                    f"side ({engine.origin[entity_id]} and "
+                    f"{design.origin[entity_id]}) — map the pair, or state in "
+                    f"a {SAME_ID_FIELD!r} field why the two are not the same "
+                    f"entity"))
+
+
 def _cardinality(n_engine: int, n_design: int) -> str:
     left = "1" if n_engine == 1 else "N"
     right = "1" if n_design == 1 else "N"
@@ -177,6 +233,8 @@ def check(roots: Roots, spec: dict) -> Report:
 
     # `(type, side) -> {id: where}` — enforces "at most one claim per id".
     claimed: dict[tuple[str, str], dict[str, str]] = {}
+    # `(type, side) -> {id: unmapped entry}` — used by the cross-side check.
+    unmapped_index: dict[tuple[str, str], dict[str, dict]] = {}
 
     for index, mapping in enumerate(spec["mappings"]):
         where = f"mappings[{index}]"
@@ -252,6 +310,9 @@ def check(roots: Roots, spec: dict) -> Report:
             _check_carrier(roots, item, where, findings)
         _check_known(collected, etype, side, entity_id, where, findings)
         _claim(claimed, etype, side, entity_id, where, findings)
+        unmapped_index.setdefault((etype, side), {})[entity_id] = item
+
+    _check_cross_side(entity_types, collected, unmapped_index, findings)
 
     # Coverage: every id on a required entity type must have been claimed.
     stats: dict = {"entity_types": {}}
@@ -264,6 +325,13 @@ def check(roots: Roots, spec: dict) -> Report:
                 per_type[side] = None
                 continue
             per_type[side] = len(known.ids)
+            for orphan in known.no_id:
+                findings.append(Finding(
+                    "missing_entity_id",
+                    f"{orphan} is inside the declared {side} {etype} source "
+                    f"but carries no usable "
+                    f"{(entry[side] or {}).get('id_field', 'id')!r} field, so "
+                    f"the map cannot see it"))
             if entry.get("coverage") == "excluded":
                 continue
             accounted = set(claimed.get((etype, side), {}))
@@ -285,24 +353,64 @@ def check(roots: Roots, spec: dict) -> Report:
 
 def _check_carrier(roots: Roots, item: dict, where: str,
                    findings: list[Finding]) -> None:
-    """`engine_implements_as_field` must point at a real engine file.
+    """`engine_implements_as_field` must point at a real field of a real file.
 
     This is the reason code for "both sides have this thing, but the engine
     built it as a field of another entity instead of an entity of its own".
     Calling such a case `engine_not_implemented` would be a wrong
-    classification, so the pointer is mandatory and is verified to resolve.
+    classification, and the entire evidence for the classification is *which
+    field* carries it — so the field half of the pointer is resolved too,
+    not just the file half. A pointer that names no field, or names one that
+    is not in the file, is exactly as unproven as no pointer at all.
+
+    The field part is a dot path (`a.b.c`) walked through nested objects.
     """
     carrier = item.get("engine_carrier")
+    example = f"data/classes/kensei.json{CARRIER_SEP}sword_qi_config"
     if not isinstance(carrier, str) or not carrier.strip():
         findings.append(Finding(
             "missing_carrier",
             f"{where} uses reason engine_implements_as_field but has no "
-            f"`engine_carrier` (expected e.g. "
-            f"'data/classes/kensei.json{CARRIER_SEP}sword_qi_config')"))
+            f"`engine_carrier` (expected e.g. {example!r})"))
         return
-    rel = carrier.split(CARRIER_SEP, 1)[0]
-    if not (roots.engine / rel).is_file():
+    if CARRIER_SEP not in carrier:
+        findings.append(Finding(
+            "missing_carrier",
+            f"{where} has engine_carrier {carrier!r} with no "
+            f"{CARRIER_SEP}<field> part — name the field that actually "
+            f"carries it (e.g. {example!r})"))
+        return
+    rel, _, field_path = carrier.partition(CARRIER_SEP)
+    path = roots.engine / rel
+    if not path.is_file():
         findings.append(Finding(
             "missing_carrier",
             f"{where} points at engine carrier {carrier!r}, but "
             f"{rel} does not exist in the engine repository"))
+        return
+    if not field_path.strip():
+        findings.append(Finding(
+            "missing_carrier",
+            f"{where} has engine_carrier {carrier!r} with an empty field "
+            f"name (expected e.g. {example!r})"))
+        return
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        findings.append(Finding(
+            "missing_carrier",
+            f"{where} points at engine carrier {carrier!r}, but {rel} could "
+            f"not be read as JSON: {exc}"))
+        return
+    cursor = obj
+    walked: list[str] = []
+    for part in field_path.split("."):
+        if not isinstance(cursor, dict) or part not in cursor:
+            at = "".join(f".{p}" for p in walked) or "<top level>"
+            findings.append(Finding(
+                "missing_carrier",
+                f"{where} points at engine carrier {carrier!r}, but field "
+                f"{part!r} does not exist at {at} in {rel}"))
+            return
+        cursor = cursor[part]
+        walked.append(part)

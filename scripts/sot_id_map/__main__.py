@@ -40,7 +40,22 @@ def _parser() -> argparse.ArgumentParser:
     return p
 
 
+def _force_utf8_output() -> None:
+    """Findings can contain non-ASCII ids — do not let the console eat them.
+
+    The design library's tag registry is keyed by Chinese strings, so a
+    finding naming one of those ids is unprintable on a default Windows
+    console (GBK), and the resulting UnicodeEncodeError would replace a
+    useful report with a traceback.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 def main(argv: list[str] | None = None) -> int:
+    _force_utf8_output()
     args = _parser().parse_args(argv)
     try:
         roots = resolve_roots(engine=args.engine_repo, design=args.design_repo)

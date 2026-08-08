@@ -911,7 +911,7 @@
       "id": "mark",
       "reason": "engine_implements_as_field",
       "engine_carrier": "data/classes/kensei.json#sword_qi_config",
-      "note": "引擎没有「资源」实体，剑意印记实装为职业档案 sword_qi_config 的 mark_max / mark_*_bonus，加上技能档案的 mark_gain / mark_cost / requires_marks 字段。印记的心/道/势三种构成在引擎侧只体现为三个属性加成键，没有独立 id。"
+      "note": "引擎没有「资源」实体，剑意印记实装为职业档案 sword_qi_config 的 mark_max / mark_*_bonus，加上技能档案的 mark_gain / mark_cost / requires_marks 字段。印记的心/道/势三种构成在引擎侧只体现为三个属性加成键，没有独立 id。carrier 选 kensei.json 而不是 myrmidon.json：设计库 mark 条目的 class_ids 只有 kensei。注意 myrmidon.json 里也有同名的 sword_qi_config 与 mark_* 三键，其 _note 自述「[占位] 印记三项加成沿用 kensei，是否应在下位职业上弱于剑圣，设计侧尚未裁决」——所以两个职业档案都带这组键是引擎现状，carrier 指哪一个按设计库 class_ids 决定。"
     },
     {
       "type": "resource",
@@ -919,7 +919,7 @@
       "id": "qi",
       "reason": "engine_implements_as_field",
       "engine_carrier": "data/classes/myrmidon.json#sword_qi_config",
-      "note": "引擎没有「资源」实体，剑气实装为职业档案 sword_qi_config 的 qi_max / qi_initial 等键，加上技能档案的 qi_cost / qi_gain_on_hit / qi_gain_on_kill 字段与职业档案的 basic_attack_qi_gain。"
+      "note": "引擎没有「资源」实体，剑气实装为职业档案 sword_qi_config 的 qi_max / qi_initial 等键，加上技能档案的 qi_cost / qi_gain_on_hit / qi_gain_on_kill 字段与职业档案的 basic_attack_qi_gain。carrier 选 myrmidon.json 而不是 kensei.json：设计库 qi 条目的 class_ids 是剑士线三职共享，而 myrmidon 是这条线的起点职业（data/classes/myrmidon.json 的 _note 自述「剑士是这条线的起点（Lv1-4），转职在 Lv5」）。kensei.json 里同样有 sword_qi_config 与全套 qi_* 键——引擎是两个职业档案各存一份，不是只有一处。这与 mark 指向 kensei.json 的规则是同一条：carrier 指向设计库条目 class_ids 所覆盖的那个职业，两条不统一是因为两条资源的 class_ids 本来就不同。"
     },
     {
       "type": "rule",

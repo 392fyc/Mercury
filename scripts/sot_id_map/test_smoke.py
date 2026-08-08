@@ -70,6 +70,9 @@ def _build_fixture(tmp: Path) -> tuple[Path, Path, dict]:
       [{"id": "a_slash"}, {"id": "b_slash"}, {"id": "a_eye"}])
     w(design / "snapshots" / "classes.json", [{"id": "hero"}])
     w(design / "snapshots" / "rules.json", [{"code": "R1.1"}])
+    # `hero` deliberately exists on both sides: it is what the cross-side
+    # contradiction test breaks, and what proves the clean fixture does not
+    # trip that check.
 
     spec = {
         "schema_version": 1,
@@ -129,9 +132,12 @@ def _run(spec: dict, engine: Path, design: Path, tmp: Path,
     if pass_repo_flags:
         argv += ["--engine-repo", str(engine), "--design-repo", str(design)]
     run_env = dict(os.environ) if env is None else env
-    run_env["PYTHONIOENCODING"] = "utf-8"
+    # Decode the child explicitly. Without this the parent falls back to the
+    # console codepage (GBK on this machine) and a finding containing a
+    # non-ASCII id blows up in the reader thread instead of failing an
+    # assertion — a fixture failure wearing the costume of a code failure.
     return subprocess.run(argv, capture_output=True, text=True, cwd=ROOT,
-                          env=run_env)
+                          env=run_env, encoding="utf-8", errors="replace")
 
 
 def _assert_pristine(spec: dict, engine: Path, design: Path,
@@ -274,6 +280,117 @@ def test_missing_carrier_is_reported() -> None:
     print("PASS test_missing_carrier_is_reported")
 
 
+def test_cross_side_contradiction_is_reported() -> None:
+    """Coverage asks "accounted for"; this asks "accounted for truthfully".
+
+    `hero` exists on both sides. Splitting it into two mutually
+    contradictory `unmapped` entries — one claiming the design library
+    never registered it, the other claiming the engine never implemented
+    it — satisfies coverage while stating something false.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        engine, design, spec = _build_fixture(tmp_path)
+        _assert_pristine(spec, engine, design, tmp_path)
+
+        broken = copy.deepcopy(spec)
+        broken["reason_codes"]["design_not_registered"] = "engine has it only"
+        broken["mappings"] = [m for m in broken["mappings"]
+                              if m["type"] != "class"]
+        broken["unmapped"] += [
+            {"type": "class", "side": "engine", "id": "hero",
+             "reason": "design_not_registered"},
+            {"type": "class", "side": "design", "id": "hero",
+             "reason": "engine_not_implemented"},
+        ]
+        proc = _run(broken, engine, design, tmp_path)
+        assert proc.returncode == 1, proc.stdout
+        assert "cross_side_contradiction" in proc.stdout, proc.stdout
+        assert proc.stdout.count("cross_side_contradiction") == 2, proc.stdout
+        assert "hero" in proc.stdout, proc.stdout
+
+        # The documented escape hatch for a genuine id collision: state why
+        # the same-named entity on the other side is not the same thing.
+        excused = copy.deepcopy(broken)
+        for item in excused["unmapped"]:
+            if item["id"] == "hero":
+                item["same_id_other_side"] = "unrelated namesake, verified"
+        proc = _run(excused, engine, design, tmp_path)
+        assert proc.returncode == 0, proc.stdout
+    print("PASS test_cross_side_contradiction_is_reported")
+
+
+def test_carrier_field_must_exist() -> None:
+    """The field half of `engine_carrier` is the evidence — verify it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        engine, design, spec = _build_fixture(tmp_path)
+        _assert_pristine(spec, engine, design, tmp_path)
+
+        for bad, needle in (
+            ("data/classes/hero.json#no_such_field_at_all", "no_such_field"),
+            ("data/classes/hero.json#passive_config.no_such_key", "no_such_key"),
+            ("data/classes/hero.json#", "empty field name"),
+            ("data/classes/hero.json", "no #<field> part"),
+        ):
+            broken = copy.deepcopy(spec)
+            broken["unmapped"][1]["engine_carrier"] = bad
+            proc = _run(broken, engine, design, tmp_path)
+            assert proc.returncode == 1, (bad, proc.stdout)
+            assert "missing_carrier" in proc.stdout, (bad, proc.stdout)
+            assert needle in proc.stdout, (bad, proc.stdout)
+
+        # a nested dot path that *does* resolve must still pass
+        ok = copy.deepcopy(spec)
+        ok["unmapped"][1]["engine_carrier"] = \
+            "data/classes/hero.json#passive_config.crit_per_qi"
+        proc = _run(ok, engine, design, tmp_path)
+        assert proc.returncode == 0, proc.stdout
+    print("PASS test_carrier_field_must_exist")
+
+
+def test_file_without_id_is_reported() -> None:
+    """A new entity whose author forgot the id field must not read green."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        engine, design, spec = _build_fixture(tmp_path)
+        _assert_pristine(spec, engine, design, tmp_path)
+
+        ghost = engine / "data" / "skills" / "sw_ghost.json"
+        ghost.write_text(json.dumps({"name": "ghost"}), encoding="utf-8")
+        proc = _run(spec, engine, design, tmp_path)
+        assert proc.returncode == 1, proc.stdout
+        assert "missing_entity_id" in proc.stdout, proc.stdout
+        assert "sw_ghost.json" in proc.stdout, proc.stdout
+    print("PASS test_file_without_id_is_reported")
+
+
+def test_scope_guard_covers_loose_and_nested_files() -> None:
+    """Two blind spots: loose `data/*.json`, and nested design snapshots."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        engine, design, spec = _build_fixture(tmp_path)
+        _assert_pristine(spec, engine, design, tmp_path)
+
+        loose = engine / "data" / "loose_entity.json"
+        loose.write_text(json.dumps({"id": "loose"}), encoding="utf-8")
+        proc = _run(spec, engine, design, tmp_path)
+        assert proc.returncode == 1, proc.stdout
+        assert "undeclared_scope" in proc.stdout, proc.stdout
+        assert "data/loose_entity.json" in proc.stdout, proc.stdout
+        loose.unlink()
+        _assert_pristine(spec, engine, design, tmp_path)
+
+        nested = design / "snapshots" / "archive"
+        nested.mkdir()
+        (nested / "old_skills.json").write_text(json.dumps([]),
+                                                encoding="utf-8")
+        proc = _run(spec, engine, design, tmp_path)
+        assert proc.returncode == 1, proc.stdout
+        assert "snapshots/archive/old_skills.json" in proc.stdout, proc.stdout
+    print("PASS test_scope_guard_covers_loose_and_nested_files")
+
+
 def test_bad_cardinality_is_reported() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
@@ -363,12 +480,34 @@ def test_real_repositories_when_available() -> None:
         print("SKIP test_real_repositories_when_available "
               "(SOT_ENGINE_REPO / SOT_DESIGN_REPO not both set to real dirs)")
         return
-    env = dict(os.environ)
-    env["PYTHONIOENCODING"] = "utf-8"
     proc = subprocess.run([sys.executable, "-m", "scripts.sot_id_map"],
-                          capture_output=True, text=True, cwd=ROOT, env=env)
+                          capture_output=True, text=True, cwd=ROOT,
+                          env=dict(os.environ), encoding="utf-8",
+                          errors="replace")
     assert proc.returncode == 0, proc.stdout + proc.stderr
     print("PASS test_real_repositories_when_available")
+
+
+def test_non_ascii_finding_is_printable() -> None:
+    """A finding naming a non-ASCII id must print, not raise.
+
+    The design library keys its tag registry by Chinese strings, so this is
+    a live path, not a hypothetical one. Run with the console codepage
+    default (no `PYTHONIOENCODING`) so a regression here really would fail.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        engine, design, spec = _build_fixture(tmp_path)
+        (design / "snapshots" / "rules.json").write_text(
+            json.dumps([{"code": "R1.1"}, {"code": "破格"}],
+                       ensure_ascii=False), encoding="utf-8")
+        env = {k: v for k, v in os.environ.items() if k != "PYTHONIOENCODING"}
+        proc = _run(spec, engine, design, tmp_path, env=env)
+        assert proc.returncode == 1, (proc.returncode, proc.stdout, proc.stderr)
+        assert "Traceback" not in proc.stderr, proc.stderr
+        assert "uncovered_id" in proc.stdout and "破格" in proc.stdout, \
+            proc.stdout
+    print("PASS test_non_ascii_finding_is_printable")
 
 
 def main() -> int:
@@ -380,9 +519,14 @@ def main() -> int:
     test_bad_reason_code_is_reported()
     test_duplicate_claim_is_reported()
     test_missing_carrier_is_reported()
+    test_cross_side_contradiction_is_reported()
+    test_carrier_field_must_exist()
+    test_file_without_id_is_reported()
+    test_scope_guard_covers_loose_and_nested_files()
     test_bad_cardinality_is_reported()
     test_undeclared_scope_is_reported()
     test_missing_env_exits_2_with_guidance()
+    test_non_ascii_finding_is_printable()
     test_packaged_map_is_wellformed()
     test_real_repositories_when_available()
     print("ALL SMOKE PASS")

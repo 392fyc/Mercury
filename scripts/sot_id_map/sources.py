@@ -71,10 +71,17 @@ def resolve_roots(env: dict[str, str] | None = None,
 
 @dataclass
 class SideIds:
-    """Ids found on one side of one entity type, plus their provenance."""
+    """Ids found on one side of one entity type, plus their provenance.
+
+    `no_id` collects files inside a declared entity directory that carry no
+    usable id. They are reported as findings rather than skipped: a new
+    engine entity whose author forgot the `id` field would otherwise leave
+    the map green while the entity is invisible to it.
+    """
 
     ids: set[str] = field(default_factory=set)
     origin: dict[str, str] = field(default_factory=dict)  # id -> file path
+    no_id: list[str] = field(default_factory=list)        # file paths
 
 
 def _load_json(path: Path) -> object:
@@ -89,21 +96,25 @@ def _load_json(path: Path) -> object:
 def collect_json_dir(root: Path, rel_path: str, id_field: str) -> SideIds:
     """Every `*.json` under `root/rel_path` (recursive) contributes one id.
 
-    Files without the id field are ignored on purpose: the engine keeps
-    non-entity config next to entity data (`data/runloop/*.json`), and the
-    map declares such directories out of scope explicitly rather than
-    letting them leak in here.
+    A file that yields no usable id is recorded in `SideIds.no_id` and
+    surfaces as a finding. Whole directories of non-entity config (the
+    engine keeps `data/runloop/*.json` next to entity data) are handled the
+    other way round — the map excludes such a directory by name, with a
+    stated reason, so nothing gets waved through file by file.
     """
     out = SideIds()
     base = root / rel_path
     if not base.is_dir():
         raise SourceError(f"engine source directory missing: {base}")
     for path in sorted(base.rglob("*.json")):
+        rel = path.relative_to(root).as_posix()
         obj = _load_json(path)
         if not isinstance(obj, dict):
+            out.no_id.append(rel)
             continue
         value = obj.get(id_field)
         if not isinstance(value, str) or not value:
+            out.no_id.append(rel)
             continue
         if value in out.ids:
             raise SourceError(
@@ -148,22 +159,30 @@ def collect(root: Path, spec: dict) -> SideIds:
     raise SourceError(f"unknown source kind {kind!r} in id_map.json")
 
 
-def engine_top_level_dirs(root: Path, data_dir: str) -> set[str]:
-    """Immediate subdirectories of the engine `data/` tree.
+def engine_scope_entries(root: Path, data_dir: str) -> set[str]:
+    """Everything directly under the engine `data/` tree that must be declared.
 
-    Used by the scope guard: a directory the map never mentions means new
-    engine content the map has not been told about, which is a failure —
-    not something to pass over quietly.
+    Both immediate subdirectories *and* loose `*.json` files sitting
+    directly in `data/`. The loose-file half matters: a new entity dropped
+    at `data/foo.json` belongs to no declared directory, so without this it
+    would slip past the scope guard entirely.
     """
     base = root / data_dir
     if not base.is_dir():
         raise SourceError(f"engine data directory missing: {base}")
-    return {f"{data_dir}/{p.name}" for p in sorted(base.iterdir()) if p.is_dir()}
+    entries = {f"{data_dir}/{p.name}" for p in sorted(base.iterdir())
+               if p.is_dir()}
+    entries |= {f"{data_dir}/{p.name}" for p in sorted(base.glob("*.json"))}
+    return entries
 
 
 def design_snapshot_files(root: Path, snapshot_dir: str) -> set[str]:
-    """Every `*.json` directly inside the design `snapshots/` directory."""
+    """Every `*.json` anywhere under the design `snapshots/` directory.
+
+    Recursive on purpose — a snapshot filed into a new subdirectory is
+    still new content the map has not been told about.
+    """
     base = root / snapshot_dir
     if not base.is_dir():
         raise SourceError(f"design snapshot directory missing: {base}")
-    return {f"{snapshot_dir}/{p.name}" for p in sorted(base.glob("*.json"))}
+    return {p.relative_to(root).as_posix() for p in sorted(base.rglob("*.json"))}
