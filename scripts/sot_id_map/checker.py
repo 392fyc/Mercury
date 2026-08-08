@@ -40,6 +40,24 @@ MAP_PATH = Path(__file__).resolve().parent / "id_map.json"
 CARRIER_SEP = "#"
 
 
+def meaningful(value: object) -> str | None:
+    """The stripped string, or None if `value` is not a real string at all.
+
+    The single place this package decides whether a JSON value "is there".
+    `str(x).strip()` must never be used for that: `str(None)` is `"None"`,
+    `str(False)` is `"False"`, `str([])` is `"[]"` — all non-empty, all
+    truthy. Every "you must state a reason" rule in this checker was
+    therefore satisfiable by writing `null`, which is not an attack but the
+    ordinary hand-editing slip of typing a key and not filling it in.
+
+    Default posture: unknown means unsafe, not harmless.
+    """
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
 @dataclass(frozen=True)
 class Finding:
     kind: str
@@ -109,6 +127,21 @@ def _validate_structure(spec: dict, findings: list[Finding]) -> bool:
         if why is not None:
             bad(f"{where}: {why}")
 
+    def need_str(container: dict, key: str, where: str,
+                 optional: bool = False) -> None:
+        """Require a real, non-empty string — `null` is not an answer.
+
+        `optional` means the key may be absent entirely; it does *not* mean
+        the key may be present and empty. A field written as `null` is a
+        half-finished edit, and treating it as "not provided" is how a
+        must-state-a-reason rule turns into no rule at all.
+        """
+        if optional and key not in container:
+            return
+        if meaningful(container.get(key)) is None:
+            bad(f"{where}.{key} must be a non-empty string, got "
+                f"{container.get(key)!r}")
+
     for scope_key, dir_key in (("engine_scope", "data_dir"),
                                ("design_scope", "snapshot_dir")):
         scope = spec.get(scope_key)
@@ -126,13 +159,23 @@ def _validate_structure(spec: dict, findings: list[Finding]) -> bool:
             continue
         for path_value, reason in excluded.items():
             check_path(path_value, f"{scope_key}.excluded_paths key")
-            if not isinstance(reason, str) or not reason.strip():
+            if meaningful(reason) is None:
                 bad(f"{scope_key}.excluded_paths[{path_value!r}] has no "
-                    f"stated reason — excluding a path without saying why is "
-                    f"the silent pass this tool exists to prevent")
+                    f"stated reason (got {reason!r}) — excluding a path "
+                    f"without saying why is the silent pass this tool exists "
+                    f"to prevent")
 
-    if not isinstance(spec.get("reason_codes"), dict):
+    reason_codes = spec.get("reason_codes")
+    if not isinstance(reason_codes, dict):
         bad("reason_codes must be an object mapping code -> description")
+    else:
+        for code, description in reason_codes.items():
+            if meaningful(code) is None:
+                bad(f"reason_codes has a non-string code {code!r}")
+            if meaningful(description) is None:
+                bad(f"reason_codes[{code!r}] has no description (got "
+                    f"{description!r}) — a controlled code nobody can read "
+                    f"is not controlled")
     entity_types = spec.get("entity_types")
     if not isinstance(entity_types, list):
         bad("entity_types must be a list")
@@ -142,8 +185,7 @@ def _validate_structure(spec: dict, findings: list[Finding]) -> bool:
         if not isinstance(entry, dict):
             bad(f"{where} must be an object, got {type(entry).__name__}")
             continue
-        if not isinstance(entry.get("type"), str) or not entry["type"].strip():
-            bad(f"{where} has no usable `type`")
+        need_str(entry, "type", where)
         if entry.get("coverage") not in ("required", "excluded"):
             bad(f"{where} has coverage {entry.get('coverage')!r}, expected "
                 f"'required' or 'excluded'")
@@ -158,9 +200,7 @@ def _validate_structure(spec: dict, findings: list[Finding]) -> bool:
                 bad(f"{where}.{side} has unknown kind "
                     f"{side_spec.get('kind')!r}")
             check_path(side_spec.get("path"), f"{where}.{side}.path")
-            id_field = side_spec.get("id_field", "id")
-            if not isinstance(id_field, str) or not id_field.strip():
-                bad(f"{where}.{side}.id_field must be a non-empty string")
+            need_str(side_spec, "id_field", f"{where}.{side}", optional=True)
 
     for key in ("mappings", "unmapped"):
         items = spec.get(key)
@@ -179,6 +219,13 @@ def _validate_structure(spec: dict, findings: list[Finding]) -> bool:
     for index, mapping in enumerate(spec["mappings"]):
         if not isinstance(mapping, dict):
             continue
+        where = f"mappings[{index}]"
+        need_str(mapping, "type", where)
+        need_str(mapping, "cardinality", where)
+        # `basis` is the whole point of a mapping entry: where the
+        # correspondence is traceable from. Written as `null` it used to
+        # satisfy the "must cite a basis" rule while citing nothing.
+        need_str(mapping, "basis", where)
         for side in ("engine_ids", "design_ids"):
             value = mapping.get(side)
             # A bare string is iterable and has a length, so it used to be
@@ -196,12 +243,28 @@ def _validate_structure(spec: dict, findings: list[Finding]) -> bool:
     for index, item in enumerate(spec["unmapped"]):
         if not isinstance(item, dict):
             continue
+        where = f"unmapped[{index}]"
+        need_str(item, "type", where)
+        need_str(item, "id", where)
+        need_str(item, "reason", where)
+        if item.get("side") not in ("engine", "design"):
+            bad(f"{where}.side must be 'engine' or 'design', got "
+                f"{item.get('side')!r}")
+        # The escape hatch is only an escape hatch while it carries a real
+        # justification. Present-but-null used to sail straight through and
+        # suppress a `cross_side_contradiction` in silence, while the
+        # summary line still counted it as a justified use.
+        if SAME_ID_FIELD in item:
+            need_str(item, SAME_ID_FIELD, where)
         carrier = item.get("engine_carrier")
         if carrier is not None:
-            if not isinstance(carrier, str) or CARRIER_SEP not in carrier:
-                continue    # shape reported by _check_carrier with context
-            check_path(carrier.split(CARRIER_SEP, 1)[0],
-                       f"unmapped[{index}].engine_carrier")
+            if meaningful(carrier) is None:
+                bad(f"{where}.engine_carrier must be a non-empty string, got "
+                    f"{carrier!r}")
+            elif CARRIER_SEP in carrier:
+                check_path(carrier.split(CARRIER_SEP, 1)[0],
+                           f"{where}.engine_carrier")
+            # missing '#field' is reported by _check_carrier, with context
     return ok
 
 
@@ -241,8 +304,9 @@ def _check_scope(roots: Roots, spec: dict, entity_types: list[dict],
     design_scope = spec["design_scope"]
     declared_d = {e["design"]["path"] for e in entity_types if e.get("design")}
     declared_d |= set(design_scope.get("excluded_paths", {}))
-    actual_d = sources.design_snapshot_files(roots.design,
-                                             design_scope["snapshot_dir"])
+    actual_d, listing = sources.design_snapshot_files(
+        roots.design, design_scope["snapshot_dir"])
+    _report_listing_anomalies(listing, "design", "snapshots", findings)
     for missing in sorted(actual_d - declared_d):
         findings.append(Finding(
             "undeclared_scope",
@@ -254,6 +318,33 @@ def _check_scope(roots: Roots, spec: dict, entity_types: list[dict],
             "undeclared_scope",
             f"design snapshot {gone} is declared in id_map.json but no "
             f"longer exists in the design repository"))
+
+
+def _report_listing_anomalies(listing, side: str, label: str,
+                              findings: list[Finding]) -> None:
+    """Turn "the walk could not see everything" into findings, never silence.
+
+    A directory reached through a symlink or junction is skipped by
+    `os.walk`, and the scope guard only ever sees the parent, so the
+    entities behind it would simply not exist as far as this checker is
+    concerned. Following it automatically is not the answer either — the
+    link may point outside the repository, which is precisely what the
+    containment guard exists to stop. So the checker says what it found and
+    asks a human to resolve it explicitly.
+    """
+    for link in listing.links:
+        findings.append(Finding(
+            "unfollowed_link",
+            f"{link} (in the {side} {label} tree) is a directory symlink or "
+            f"junction; it was not followed, so anything behind it is "
+            f"invisible to this map. Replace it with a real directory, or "
+            f"declare its target as its own entity source — the checker will "
+            f"not guess, because a link can point outside the repository"))
+    for escape in listing.escaping:
+        findings.append(Finding(
+            "path_escape",
+            f"{escape} (in the {side} {label} tree) resolves outside the "
+            f"repository root and was not read"))
 
 
 def _claim(claimed: dict[tuple[str, str], dict[str, str]], etype: str,
@@ -331,7 +422,7 @@ def _check_cross_side(entity_types: list[dict],
                 item = unmapped_index.get((etype, side), {}).get(entity_id)
                 if item is None:
                     continue
-                justification = str(item.get(SAME_ID_FIELD, "")).strip()
+                justification = meaningful(item.get(SAME_ID_FIELD))
                 if justification:
                     used.append({"type": etype, "side": side,
                                  "id": entity_id,
@@ -362,7 +453,7 @@ def _check_stale_escape_hatch(spec: dict, used: list[dict],
     """
     active = {(u["type"], u["side"], u["id"]) for u in used}
     for index, item in enumerate(spec["unmapped"]):
-        if not str(item.get(SAME_ID_FIELD, "")).strip():
+        if meaningful(item.get(SAME_ID_FIELD)) is None:
             continue
         key = (item.get("type"), item.get("side"), item.get("id"))
         if key in active:
@@ -430,11 +521,6 @@ def check(roots: Roots, spec: dict) -> Report:
                 f"{where} must list at least one engine id and one design id "
                 f"(use `unmapped` for one-sided entries)"))
             continue
-        if not str(mapping.get("basis", "")).strip():
-            findings.append(Finding(
-                "bad_map",
-                f"{where} has no `basis` — every mapping must cite where the "
-                f"correspondence is traceable from"))
         declared_card = mapping.get("cardinality")
         expected_card = _cardinality(len(engine_ids), len(design_ids))
         if declared_card != expected_card:
@@ -464,13 +550,9 @@ def check(roots: Roots, spec: dict) -> Report:
                 f"{where} lists entity type {etype!r}, which the map declares "
                 f"out of scope (coverage=excluded)"))
             continue
-        if side not in ("engine", "design"):
-            findings.append(Finding("bad_map",
-                                    f"{where} has invalid side {side!r}"))
-            continue
-        if not isinstance(entity_id, str) or not entity_id:
-            findings.append(Finding("bad_map", f"{where} has no id"))
-            continue
+        # `side` / `id` / `reason` types are guaranteed by
+        # `_validate_structure`, which aborts the whole run before any
+        # repository is read — re-checking them here would be dead code.
         reason = item.get("reason")
         if reason not in reason_codes:
             findings.append(Finding(
@@ -499,6 +581,7 @@ def check(roots: Roots, spec: dict) -> Report:
                 per_type[side] = None
                 continue
             per_type[side] = len(known.ids)
+            _report_listing_anomalies(known, side, f"{etype} source", findings)
             id_field = (entry[side] or {}).get("id_field", "id")
             for orphan in known.no_id:
                 findings.append(Finding(

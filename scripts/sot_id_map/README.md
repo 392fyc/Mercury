@@ -76,6 +76,8 @@ python -m scripts.sot_id_map.test_smoke
 | `uncovered_id` | 某侧存在、但映射表既没映射也没显式标 `unmapped` 的 id |
 | `undeclared_scope` | 引擎 `data/` 下出现映射表没声明过的**目录或散装 `*.json` 文件**，或设计库 `snapshots/` **递归**范围内出现没声明过的文件（反过来，声明了但已消失也报） |
 | `missing_entity_id` | 已声明的实体来源里有条目读不出 id（新增技能时忘了写 `id`、id 是空串、类型不对等）。两侧同一条规则，不会被无声跳过 |
+| `unfollowed_link` | 实体目录树里出现目录软链接或 junction。**一律不跟随、一律报出**，详见下节 |
+| `path_escape` | 目录树里的 `.json` 经软链接指到仓库根之外，未被读取 |
 | `cross_side_contradiction` | 同一个 id 串两侧都存在，却在某一侧被标成 `unmapped`。见下方说明 |
 | `unknown_id` | 映射表引用了对应侧不存在的 id |
 | `duplicate_id` | 同一实体类型下同一个 id 被认领两次 |
@@ -97,6 +99,17 @@ python -m scripts.sot_id_map.test_smoke
 - **用了就会出现在报告里。** 汇总输出固定有一行 `same_id_other_side escape hatch: N in use`，N > 0 时逐条列出 id、原因码与所填理由。当前真实数据是 `0 in use`，一旦有人用了这扇门，下一个读报告的人立刻看得见，不必去翻数据文件。
 - **不许预先埋伏。** 某条 `unmapped` 带了这个字段、但那个 id 在另一侧根本不存在（也就是它当前什么都没抑制），报 `bad_map`。否则可以提前把字段撒在一堆条目上，等哪天对面出现同名 id 时矛盾就被悄悄抑制掉了——那等于绕过了这道检查。
 
+### 目录别名：一律不跟随、一律报出
+
+实体目录树里如果出现**目录软链接或 Windows junction**，校验器不跟随它，并报 `unfollowed_link`。两个原因：
+
+- **不能静默跳过**：`os.walk` 默认不跟随 POSIX 软链接且一声不吭，链接后面的实体就会从 id 全集里凭空消失，而范围守卫只看得见父目录、发现不了——又是一次「绿着跑，数据没了」。
+- **也不能盲目跟随**：链接可以指到仓库之外，跟随就等于绕过路径包含保证。
+
+**跨平台行为被统一了**：实测 Windows 上 `os.walk` 会径直穿过 junction（POSIX 软链接则不会），也就是同一个仓库在不同机器上会被读成不同的样子，其中一种还会把未声明的内容经别名拉进来。所以这里不交给平台决定：别名目录一律剪掉、一律报出，请把它换成真目录，或者把它的目标声明成独立的实体来源。
+
+单个 `.json` 文件的软链接会被 `os.walk` 当普通文件列出，所以每个文件读取前还会再做一次「解析后是否仍在仓库根内」的检查，指到仓外的报 `path_escape` 且不读。
+
 ### `engine_carrier` 的字段部分会被真的解析
 
 `engine_implements_as_field` 的全部说服力就在「引擎把它建成了哪个字段」，所以 `#` 之后那半截会被当作点号路径（`a.b.c`）在那个 JSON 里逐层下探，走不通就报 `missing_carrier`。只验文件存在等于没验。
@@ -112,6 +125,8 @@ python -m scripts.sot_id_map.test_smoke
 3. **`entity_types`** —— 每个实体类型的两侧取数方式（引擎 = 目录递归、设计库 = 快照数组 + id 字段名），`coverage` 为 `required` 或 `excluded`，`note` 写明该类型的跨仓情况。
 
    **路径一律相对于仓库根，且必须留在根以内。** 绝对路径、盘符路径（`D:/...`）、UNC（`//host/...`）、含 `..` 的路径全部报 `bad_map`，且此时**一个字节的仓库数据都不会被读**（报告开头会打 `ABORTED`）。这不是洁癖：`root / "D:/x"` 在 Windows 上会把 root 整个丢掉，而 `../../..` 曾让校验器真的去遍历了 Mercury 自己的目录、把本仓的 `id_map.json` 与 `.omc/` 会话状态读了进来。拼接之后还会再用 `resolve()` 复查一次是否落在根内——这一层抓的是字符串检查看不见的软链接逃逸。
+
+   **「必须写点什么」的字段一律做真类型校验**，不是 `str(x)` 强转后判非空。`str(None)` 是 `"None"`、`str(False)` 是 `"False"`、`str([])` 是 `"[]"`，三者都非空都为真——所以曾经**填一个 JSON `null` 就能满足「必须写理由」**，包括那个抑制 `cross_side_contradiction` 的 `same_id_other_side`。现在 `type` / `side` / `id` / `reason` / `cardinality` / `basis` / `engine_carrier` / `same_id_other_side` / `excluded_paths` 的值 / `reason_codes` 的描述，全部要求真字符串且 `strip()` 后非空，否则 `bad_map`。默认姿态是**未知即不安全**，不是未知即无害。
 
    **两侧的 id 规则是同一条**，不存在一侧更宽松：id 必须是非空字符串，或整数（会被转成字符串——这是为设计库某些表用数据库自增主键做的**显式**让步，不是 `str()` 随手兜底）。空串、null、布尔、浮点、对象一律报 `missing_entity_id`，既不静默收下也不静默丢弃。
 4. **`mappings` / `unmapped`** —— 具体条目。`mappings` 每条必须有 `basis`（对应关系从哪儿溯源），`unmapped` 每条必须有受控原因码。
@@ -148,6 +163,14 @@ python -m scripts.sot_id_map.test_smoke
 **一、`tag` / `rule` / `term` 三类的标识符不是 `id`。** 它们在设计库里的整型 `id` 是数据库自增主键，重建库时会被压实重排（设计库 `snapshots/README.md` §5.3 有实测记录），**不是跨仓标识符**。本表对这三类分别用 `key` / `code` / `term` 作为 id 字段，写在各自 `entity_types` 条目的 `design.id_field` 里。所以 `unmapped` 里 `tag` 那 12 条看到的中文（击杀 / 奥义 / 反应 …）是**标签的 `key`**，不是显示名；`rule` 那 23 条看到的 `R1.1` 是 `code`。
 
 **二、两条 resource 的 `engine_carrier` 指向不同的职业档案，是有规则的。** `mark` 指 `data/classes/kensei.json`，`qi` 指 `data/classes/myrmidon.json`——规则是**指向设计库该条目 `class_ids` 所覆盖的职业**：`mark` 的 `class_ids` 只有 `kensei`；`qi` 的 `class_ids` 是剑士线三职共享，取这条线的起点职业 `myrmidon`（引擎 `data/classes/myrmidon.json` 的 `_note` 自述「剑士是这条线的起点（Lv1-4），转职在 Lv5」）。需要知道的引擎现状是：`sword_qi_config` 与两组键在**两个职业档案里都齐全**，所以指哪一个都能通过校验；不统一指向同一个文件是因为两条资源的 `class_ids` 本来就不同。两条 `unmapped` 条目的 `note` 里各自写了这段。
+
+## 这个校验器防什么、不防什么
+
+**防的是漂移与疏忽**：两侧数据变了而表没跟上、新增内容没人归类、字段写了一半没填值、目录被别名遮住、文件编码坏掉、路径写错走出了仓库。这些都是日常会真实发生的事，上面每一条都有对应的 finding 和回归测试。
+
+**不防蓄意构造**。`id_map.json` 是 Mercury 自己仓库里的文件，改它要走 Issue + PR + review。所以判据是：**要触发某个问题，是不是必须有人往本仓提交一份刻意畸形的 map？如果是，就不在本校验器的职责范围内**——那属于 code review 的职责，再加闸门只会无限迭代下去。
+
+这条界线是**事后**划的，不是用来给已知缺口开脱的：`null`、空串、命令行传空、软链接/junction 这些都**不算**蓄意构造（它们是手写 JSON 和真实环境里的常见情形），所以全部修掉了。
 
 ## 已知的判断点（复核时优先看这几处）
 

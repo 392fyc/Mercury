@@ -627,6 +627,193 @@ def test_empty_and_odd_ids_rejected_on_both_sides() -> None:
     print("PASS test_empty_and_odd_ids_rejected_on_both_sides")
 
 
+def test_null_is_not_a_justification() -> None:
+    """`null` must not satisfy any "you must state something" rule.
+
+    One root cause, several doors: `str(None)` is `"None"`, which is
+    non-empty and truthy, so every field guarded by `str(x).strip()` could
+    be satisfied by writing `null` — the ordinary slip of typing a key and
+    not filling it in. The worst of them suppressed a
+    `cross_side_contradiction` outright.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        engine, design, spec = _build_fixture(tmp_path)
+        _assert_pristine(spec, engine, design, tmp_path)
+
+        # the Critical: null justification must not suppress the finding
+        contradiction = copy.deepcopy(spec)
+        contradiction["reason_codes"]["design_not_registered"] = "engine only"
+        contradiction["mappings"] = [m for m in contradiction["mappings"]
+                                     if m["type"] != "class"]
+        contradiction["unmapped"] += [
+            {"type": "class", "side": "engine", "id": "hero",
+             "reason": "design_not_registered", "same_id_other_side": None},
+            {"type": "class", "side": "design", "id": "hero",
+             "reason": "engine_not_implemented", "same_id_other_side": None},
+        ]
+        proc = _run(contradiction, engine, design, tmp_path)
+        assert proc.returncode == 1, (proc.returncode, proc.stdout)
+        assert "bad_map" in proc.stdout, proc.stdout
+        assert "same_id_other_side must be a non-empty string" in proc.stdout, \
+            proc.stdout
+        # and it must not be counted as a justified use of the hatch
+        assert "escape hatch: 2 in use" not in proc.stdout, proc.stdout
+
+        # every other "must be stated" field, same root cause
+        for mutate, needle in (
+            (lambda s: s["mappings"][0].update(basis=None),
+             "mappings[0].basis must be a non-empty string"),
+            (lambda s: s["mappings"][0].update(cardinality=None),
+             "cardinality must be a non-empty string"),
+            (lambda s: s["mappings"][0].update(type=None),
+             "mappings[0].type must be a non-empty string"),
+            (lambda s: s["unmapped"][0].update(reason=None),
+             "unmapped[0].reason must be a non-empty string"),
+            (lambda s: s["unmapped"][0].update(id=None),
+             "unmapped[0].id must be a non-empty string"),
+            (lambda s: s["unmapped"][0].update(side=None),
+             "side must be 'engine' or 'design'"),
+            (lambda s: s["unmapped"][1].update(engine_carrier=None),
+             "engine_carrier"),
+            (lambda s: s["entity_types"][0].update(type=None),
+             "entity_types[0].type must be a non-empty string"),
+            (lambda s: s["engine_scope"]["excluded_paths"].update(
+                {"data/runloop": None}), "has no stated reason"),
+            (lambda s: s["reason_codes"].update(engine_not_implemented=None),
+             "has no description"),
+            # the same coercion trap wearing different clothes
+            (lambda s: s["mappings"][0].update(basis=False),
+             "basis must be a non-empty string"),
+            (lambda s: s["mappings"][0].update(basis=[]),
+             "basis must be a non-empty string"),
+            (lambda s: s["mappings"][0].update(basis="   "),
+             "basis must be a non-empty string"),
+        ):
+            broken = copy.deepcopy(spec)
+            mutate(broken)
+            proc = _run(broken, engine, design, tmp_path)
+            assert proc.returncode == 1, (needle, proc.returncode, proc.stderr)
+            assert "Traceback" not in proc.stderr, (needle, proc.stderr)
+            assert needle in proc.stdout, (needle, proc.stdout)
+
+        # unhashable `type` used to reach `by_type.get([])` and raise
+        broken = copy.deepcopy(spec)
+        broken["entity_types"][0]["type"] = []
+        proc = _run(broken, engine, design, tmp_path)
+        assert proc.returncode == 1, (proc.returncode, proc.stderr)
+        assert "Traceback" not in proc.stderr, proc.stderr
+        assert "must be a non-empty string" in proc.stdout, proc.stdout
+    print("PASS test_null_is_not_a_justification")
+
+
+def test_empty_repo_flag_is_an_error_not_a_fallback() -> None:
+    """`--engine-repo=` must not quietly resolve to the environment."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        engine, design, spec = _build_fixture(tmp_path)
+        _assert_pristine(spec, engine, design, tmp_path)
+
+        map_path = tmp_path / "map.json"
+        map_path.write_text(json.dumps(spec), encoding="utf-8")
+        env = dict(os.environ)
+        env["SOT_ENGINE_REPO"] = str(engine)
+        env["SOT_DESIGN_REPO"] = str(design)
+        # fixture self-check: with the flag omitted, the environment works
+        ok = subprocess.run(
+            [sys.executable, "-m", "scripts.sot_id_map", "--map", str(map_path)],
+            capture_output=True, text=True, cwd=ROOT, env=env,
+            encoding="utf-8", errors="replace")
+        assert ok.returncode == 0, (ok.stdout, ok.stderr)
+
+        for flag in ("--engine-repo=", "--design-repo=", "--engine-repo=   "):
+            proc = subprocess.run(
+                [sys.executable, "-m", "scripts.sot_id_map",
+                 "--map", str(map_path), flag],
+                capture_output=True, text=True, cwd=ROOT, env=env,
+                encoding="utf-8", errors="replace")
+            assert proc.returncode == 2, (flag, proc.returncode, proc.stdout)
+            assert "empty value" in proc.stderr, (flag, proc.stderr)
+            # the point: it did NOT fall back and run against the env repo
+            assert "OK:" not in proc.stdout, (flag, proc.stdout)
+    print("PASS test_empty_repo_flag_is_an_error_not_a_fallback")
+
+
+def test_directory_symlink_is_reported_not_skipped() -> None:
+    """A linked entity directory must not vanish in silence."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        engine, design, spec = _build_fixture(tmp_path)
+        _assert_pristine(spec, engine, design, tmp_path)
+
+        hidden = engine / "shared_skills"
+        hidden.mkdir()
+        (hidden / "sw_linked.json").write_text(json.dumps({"id": "sw_linked"}),
+                                               encoding="utf-8")
+        link = engine / "data" / "skills" / "shared"
+        try:
+            link.symlink_to(hidden, target_is_directory=True)
+            kind = "symlink"
+        except (OSError, NotImplementedError) as exc:
+            # Unprivileged Windows cannot create symlinks, but it can create
+            # junctions — and a junction is the case this machine would
+            # actually hit, so fall back to it rather than skipping. It also
+            # exercises the reparse-tag branch, which `is_symlink()` misses.
+            if os.name != "nt" or not shutil.which("cmd"):
+                print("SKIP test_directory_symlink_is_reported_not_skipped "
+                      f"(cannot create a directory symlink here: {exc})")
+                return
+            made = subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(link), str(hidden)],
+                capture_output=True, text=True)
+            if made.returncode != 0:
+                print("SKIP test_directory_symlink_is_reported_not_skipped "
+                      f"(symlink denied and mklink /J failed: "
+                      f"{made.stdout.strip() or made.stderr.strip()})")
+                return
+            kind = "junction"
+        # fixture self-check: the link is real and leads to the entity
+        assert (link / "sw_linked.json").is_file(), \
+            "symlink did not take effect, so the assertion below is empty"
+
+        proc = _run(spec, engine, design, tmp_path)
+        assert proc.returncode == 1, (proc.returncode, proc.stdout)
+        assert "unfollowed_link" in proc.stdout, proc.stdout
+        assert "shared" in proc.stdout, proc.stdout
+        # the failure mode guarded against: green run, entity simply gone
+        assert "OK:" not in proc.stdout, proc.stdout
+        assert "sw_linked" not in proc.stdout, \
+            "the linked entity was walked after all: " + proc.stdout
+    print(f"PASS test_directory_symlink_is_reported_not_skipped ({kind})")
+
+
+def test_file_symlink_out_of_repo_is_reported() -> None:
+    """A .json symlink pointing out of the repository is not read."""
+    with tempfile.TemporaryDirectory() as tmp, \
+            tempfile.TemporaryDirectory() as outside:
+        tmp_path = Path(tmp)
+        engine, design, spec = _build_fixture(tmp_path)
+        _assert_pristine(spec, engine, design, tmp_path)
+
+        target = Path(outside) / "outsider.json"
+        target.write_text(json.dumps({"id": "CANARY_OUTSIDE_REPO"}),
+                          encoding="utf-8")
+        link = engine / "data" / "skills" / "sw_outside.json"
+        try:
+            link.symlink_to(target)
+        except (OSError, NotImplementedError) as exc:
+            print("SKIP test_file_symlink_out_of_repo_is_reported "
+                  f"(cannot create a file symlink here: {exc})")
+            return
+        assert link.is_file(), "symlink did not take effect"
+
+        proc = _run(spec, engine, design, tmp_path)
+        assert proc.returncode == 1, (proc.returncode, proc.stdout)
+        assert "path_escape" in proc.stdout, proc.stdout
+        assert "CANARY_OUTSIDE_REPO" not in proc.stdout, proc.stdout
+    print("PASS test_file_symlink_out_of_repo_is_reported")
+
+
 def test_unreadable_directory_exits_2_not_silently_empty() -> None:
     """An unreadable directory must not read as "this directory is empty".
 
@@ -850,6 +1037,10 @@ def main() -> int:
     test_malformed_map_reports_findings_not_traceback()
     test_empty_and_odd_ids_rejected_on_both_sides()
     test_mapping_ids_must_be_lists()
+    test_null_is_not_a_justification()
+    test_empty_repo_flag_is_an_error_not_a_fallback()
+    test_directory_symlink_is_reported_not_skipped()
+    test_file_symlink_out_of_repo_is_reported()
     test_unreadable_directory_exits_2_not_silently_empty()
     test_carrier_field_must_exist()
     test_file_without_id_is_reported()

@@ -102,7 +102,20 @@ def resolve_roots(env: dict[str, str] | None = None,
     resolved: dict[str, Path] = {}
     for label, var, override in (("engine", ENGINE_ENV, engine),
                                  ("design", DESIGN_ENV, design)):
-        raw = override if override else env.get(var, "")
+        # `--engine-repo=` (explicitly empty) is a mistake, not a request to
+        # fall back. Treating the two as the same thing meant a caller who
+        # deliberately blanked the flag silently got whatever the ambient
+        # environment happened to point at — the opposite of what they asked
+        # for, and invisible in the output.
+        if override is not None:
+            if not override.strip():
+                problems.append(
+                    f"--{label}-repo was given an empty value; pass a real "
+                    f"path or omit the flag to use ${var}")
+                continue
+            raw = override
+        else:
+            raw = env.get(var, "")
         if not raw.strip():
             problems.append(
                 f"{label} repository path is not set: export {var}=<path to "
@@ -143,6 +156,10 @@ class SideIds:
     ids: set[str] = field(default_factory=set)
     origin: dict[str, str] = field(default_factory=dict)  # id -> file path
     no_id: list[str] = field(default_factory=list)        # "where: why"
+    #: directory symlinks/junctions inside the source, not followed
+    links: list[str] = field(default_factory=list)
+    #: files that resolve outside the repository root
+    escaping: list[str] = field(default_factory=list)
 
 
 def load_json(path: Path) -> object:
@@ -204,8 +221,11 @@ def collect_json_dir(root: Path, rel_path: str, id_field: str) -> SideIds:
     base = resolve_within(root, rel_path)
     if not base.is_dir():
         raise SourceError(f"engine source directory missing: {base}")
-    for path in sorted(_iter_json(base)):
-        rel = path.relative_to(root).as_posix()
+    listing = _iter_json(base, root)
+    out.links = listing.links
+    out.escaping = listing.escaping
+    for path in listing.files:
+        rel = _rel(path, root)
         obj = load_json(path)
         if not isinstance(obj, dict):
             out.no_id.append(f"{rel}: file holds a JSON "
@@ -286,38 +306,111 @@ def engine_scope_entries(root: Path, data_dir: str) -> set[str]:
     return entries
 
 
-def design_snapshot_files(root: Path, snapshot_dir: str) -> set[str]:
+def design_snapshot_files(root: Path, snapshot_dir: str) -> tuple[set[str],
+                                                                  Listing]:
     """Every `*.json` anywhere under the design `snapshots/` directory.
 
     Recursive on purpose — a snapshot filed into a new subdirectory is
-    still new content the map has not been told about.
+    still new content the map has not been told about. The `Listing` comes
+    back too so the caller can report symlinked directories rather than let
+    them vanish from the scope guard's view.
     """
     base = resolve_within(root, snapshot_dir)
     if not base.is_dir():
         raise SourceError(f"design snapshot directory missing: {base}")
-    return {p.relative_to(root).as_posix() for p in _iter_json(base)}
+    listing = _iter_json(base, root)
+    return {_rel(p, root) for p in listing.files}, listing
 
 
-def _iter_json(base: Path) -> list[Path]:
-    """Recursive `*.json` listing that refuses to guess on an unreadable dir.
+@dataclass
+class Listing:
+    """A recursive listing plus everything about it that needs saying."""
 
-    Deliberately `os.walk(onerror=...)` rather than `Path.rglob`. Measured
-    on Windows: `rglob` over a directory the process may not read does not
-    raise — it yields nothing, so the directory silently reads as empty and
-    every entity in it vanishes from the checker's view while the run still
-    looks healthy. A silent wrong answer is worse than a crash, and much
-    worse than a clean error, so the walk error is surfaced as a
-    `SourceError` and becomes exit 2 through `main()`.
+    files: list[Path] = field(default_factory=list)
+    #: directory symlinks/junctions found on the way, not followed
+    links: list[str] = field(default_factory=list)
+    #: files that resolve outside the repository root (symlinked away)
+    escaping: list[str] = field(default_factory=list)
+
+
+def _iter_json(base: Path, root: Path) -> Listing:
+    """Recursive `*.json` listing that never silently loses content.
+
+    Three ways a walk can quietly lie, all handled here rather than
+    discovered later as missing entities:
+
+    * **Unreadable directory.** Deliberately `os.walk(onerror=...)` rather
+      than `Path.rglob`. Measured on Windows: `rglob` over a directory the
+      process may not read does not raise — it yields nothing, so the
+      directory reads as empty and every entity in it vanishes while the
+      run still looks healthy.
+    * **Directory symlink or junction.** `os.walk` does not follow these by
+      default and says nothing about them, so an entity directory reached
+      through a link would simply not exist as far as the map is concerned,
+      and the scope guard — which only sees the parent — would not notice.
+      They are reported instead. Following them is not the fix: a link can
+      point outside the repository, which would walk straight through the
+      containment guarantee.
+    * **File symlink pointing out of the repository.** Followed by the walk
+      as an ordinary file, so containment is re-checked per file.
+
+    Nothing here raises for the last two: they are facts about the
+    repository, not about the map, so they travel as findings.
     """
-    found: list[Path] = []
+    listing = Listing()
 
     def _onerror(exc: OSError) -> None:
         raise SourceError(
             f"cannot read {exc.filename or base} while walking {base}: {exc}"
         ) from exc
 
-    for dirpath, _dirnames, filenames in os.walk(base, onerror=_onerror):
+    for dirpath, dirnames, filenames in os.walk(base, onerror=_onerror):
+        here = Path(dirpath)
+        keep: list[str] = []
+        for name in dirnames:
+            path = here / name
+            if path.is_symlink() or _is_reparse_dir(path):
+                listing.links.append(_rel(path, root))
+            else:
+                keep.append(name)
+        # Pruned rather than left to the platform. `os.walk(followlinks=False)`
+        # skips POSIX symlinks but, measured here, walks straight through a
+        # Windows junction — so the same repository would be read differently
+        # on different machines, and one of those readings pulls in content
+        # through an alias the map never declared. One rule instead: an
+        # aliased directory is never traversed and always reported.
+        dirnames[:] = keep
         for name in filenames:
-            if name.lower().endswith(".json"):
-                found.append(Path(dirpath) / name)
-    return sorted(found)
+            if not name.lower().endswith(".json"):
+                continue
+            path = here / name
+            try:
+                resolved = path.resolve()
+            except OSError as exc:
+                raise SourceError(f"cannot resolve {path}: {exc}") from exc
+            if not resolved.is_relative_to(root):
+                listing.escaping.append(f"{_rel(path, root)} -> {resolved}")
+                continue
+            listing.files.append(path)
+    listing.files.sort()
+    return listing
+
+
+def _rel(path: Path, root: Path) -> str:
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def _is_reparse_dir(path: Path) -> bool:
+    """True for a Windows junction, which `is_symlink()` reports as False.
+
+    Junctions are a real alias mechanism on this platform (this repository's
+    own push-guard notes list them alongside `subst`), and `os.walk` skips
+    them exactly like symlinks, so they need the same treatment.
+    """
+    try:
+        return bool(path.stat(follow_symlinks=False).st_reparse_tag)
+    except (OSError, AttributeError):
+        return False
