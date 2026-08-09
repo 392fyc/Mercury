@@ -515,8 +515,13 @@ def _is_reparse_dir(path: Path) -> bool:
     """True for a Windows junction, which `is_symlink()` reports as False.
 
     Junctions are a real alias mechanism on this platform (this repository's
-    own push-guard notes list them alongside `subst`), and `os.walk` skips
-    them exactly like symlinks, so they need the same treatment.
+    own push-guard notes list them alongside `subst`), so they need the same
+    treatment as symlinks — which is exactly why callers must prune them by
+    hand: `os.walk` does NOT skip a junction the way it skips a symlink. It
+    walks straight through. Measured with a real junction while writing
+    scripts/kb.py (#564); the walk below already prunes correctly, and its
+    own comment says so, but this docstring previously claimed the opposite
+    and was what made the same bug easy to write a second time.
     """
     try:
         return bool(path.stat(follow_symlinks=False).st_reparse_tag)
