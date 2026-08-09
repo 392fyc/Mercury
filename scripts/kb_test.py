@@ -281,6 +281,74 @@ def main() -> int:
         finally:
             srv.shutdown()
 
+        # A key with an embedded newline would reach http.client as a malformed
+        # header and raise ValueError, which is not an OSError.
+        rc, _, err = run(["osearch", "x"], vault,
+                         env_extra={"OBSIDIAN_API_KEY": "abc\ndef",
+                                    "OBSIDIAN_HOST": "http://127.0.0.1:9"})
+        check("a key containing a newline exits 3, not a traceback",
+              rc == 3 and "newline" in err and "Traceback" not in err,
+              f"rc={rc} err={err!r}")
+
+        # rest_call must NOT force a dict: the real /search/simple/ answers
+        # with an array, and enforcing dict there broke osearch outright.
+        # Only callers needing a mapping check, so a JSON array must be fine
+        # for osearch and rejected for status.
+        class _Array(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):  # noqa: N802
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'[{"filename":"a.md"}]')
+            do_GET = do_POST
+            def log_message(self, *a):
+                pass
+
+        asrv = http.server.HTTPServer(("127.0.0.1", 0), _Array)
+        threading.Thread(target=asrv.serve_forever, daemon=True).start()
+        try:
+            aenv = {"OBSIDIAN_API_KEY": "dummy",
+                    "OBSIDIAN_HOST": f"http://127.0.0.1:{asrv.server_port}"}
+            rc, out, err = run(["osearch", "x"], vault, env_extra=aenv)
+            check("osearch accepts a JSON array (regression guard)",
+                  rc == 0 and "a.md" in out, f"rc={rc} err={err!r}")
+            rc, out, _ = run(["status"], vault, env_extra=aenv)
+            check("status reports rest unavailable on a non-object body "
+                  "instead of AttributeError",
+                  rc == 0 and "unavailable" in out and "Traceback" not in out,
+                  f"rc={rc} out={out!r}")
+        finally:
+            asrv.shutdown()
+
+        # The 8 MiB cap had no test until the audit pointed that out: deleting
+        # the capped read would have left the guard silently unexercised.
+        class _Huge(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):  # noqa: N802
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                chunk = b"x" * (1 << 20)
+                for _ in range(9):          # 9 MiB > MAX_REST_BODY
+                    try:
+                        self.wfile.write(chunk)
+                    except OSError:
+                        return
+            do_GET = do_POST
+            def log_message(self, *a):
+                pass
+
+        hsrv = http.server.HTTPServer(("127.0.0.1", 0), _Huge)
+        threading.Thread(target=hsrv.serve_forever, daemon=True).start()
+        try:
+            rc, _, err = run(
+                ["osearch", "x"], vault,
+                env_extra={"OBSIDIAN_API_KEY": "dummy",
+                           "OBSIDIAN_HOST": f"http://127.0.0.1:{hsrv.server_port}"})
+            check("an oversized REST body is rejected, not buffered whole",
+                  rc == 3 and "more than" in err, f"rc={rc} err={err!r}")
+        finally:
+            hsrv.shutdown()
+
         # Invalid UTF-8 is the same class of hole one line earlier than the
         # JSON guard: UnicodeDecodeError is a ValueError, so main()'s OSError
         # handler misses it too.

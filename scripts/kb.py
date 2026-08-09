@@ -261,7 +261,7 @@ _OPENER = urllib.request.build_opener(_NoRedirect)
 
 
 def rest_call(path: str, method: str = "GET", payload: dict | None = None,
-              content_type: str = "application/json") -> dict:
+              content_type: str = "application/json"):
     key = os.environ.get(KEY_ENV, "").strip()
     if not key:
         raise KbError(
@@ -269,6 +269,13 @@ def rest_call(path: str, method: str = "GET", payload: dict | None = None,
             f"REST API, which also requires the Obsidian app to be running. "
             f"Filesystem subcommands (ls/cat/write/append/find/grep) need "
             f"neither.", EXIT_REST)
+    # A key with an embedded newline reaches http.client as a malformed header
+    # and raises ValueError — not an OSError, so main() would traceback on what
+    # is really a config typo. Rejected here with the usual REST exit code.
+    if any(c in key for c in "\r\n\x00") or not key.isprintable():
+        raise KbError(
+            f"{KEY_ENV} contains a newline or control character — check for a "
+            f"stray line break where it is set", EXIT_REST)
     host = os.environ.get(HOST_ENV, "").strip() or DEFAULT_HOST
     # urlopen honours whatever scheme it is handed, `file:` included — so an
     # OBSIDIAN_HOST of `file:///C:/...` would turn this network call into a
@@ -308,6 +315,18 @@ def rest_call(path: str, method: str = "GET", payload: dict | None = None,
             f"cannot reach the Obsidian Local REST API at {host}: {exc.reason}\n"
             f"Is Obsidian running with the Local REST API plugin enabled? "
             f"Filesystem subcommands do not need it.", EXIT_REST) from exc
+    except OSError as exc:
+        # A timeout while reading the body arrives as TimeoutError, an OSError
+        # that URLError does not wrap. Without this it escapes to main(), which
+        # reports it as a generic failure and returns 1 — silently breaking the
+        # documented contract that REST trouble is 3.
+        raise KbError(f"REST {method} {url} failed: {exc}", EXIT_REST) from exc
+    except ValueError as exc:
+        # http.client rejects malformed headers with ValueError. The key is
+        # screened above, but the URL can carry surprises too; keep the exit
+        # code honest rather than tracebacking.
+        raise KbError(f"REST {method} {url} could not be sent: {exc}",
+                      EXIT_REST) from exc
     if len(raw) > MAX_REST_BODY:
         raise KbError(
             f"REST {method} {url} returned more than {MAX_REST_BODY} bytes and "
@@ -325,7 +344,7 @@ def rest_call(path: str, method: str = "GET", payload: dict | None = None,
     if not body.strip():
         return {}
     try:
-        return json.loads(body)
+        parsed_body = json.loads(body)
     except json.JSONDecodeError as exc:
         # A proxy or a wrong port answers with HTML, not JSON. JSONDecodeError
         # is not an OSError, so main()'s handler does not catch it and the
@@ -334,6 +353,30 @@ def rest_call(path: str, method: str = "GET", payload: dict | None = None,
         raise KbError(
             f"REST {method} {url} returned a non-JSON body — is {host} really "
             f"the Local REST API?\n{snippet}", EXIT_REST) from exc
+    # Deliberately NOT narrowed to dict here. The real `/search/simple/`
+    # answers with a JSON *array* — an earlier attempt to enforce dict at this
+    # layer broke `osearch` outright, caught by running it against the live
+    # API. Shape is the caller's business; see `rest_object` for the callers
+    # that genuinely need a mapping.
+    return parsed_body
+
+
+def rest_object(*args, **kwargs) -> dict:
+    """`rest_call` for endpoints that must answer with a JSON object.
+
+    `[]`, `"ok"` and `null` are all valid JSON, so a caller that goes straight
+    to `.get()` would raise AttributeError against a wrong endpoint. Checking
+    here keeps that a reported REST error while leaving array-returning
+    endpoints alone.
+    """
+    result = rest_call(*args, **kwargs)
+    if not isinstance(result, dict):
+        raise KbError(
+            f"expected a JSON object from the Local REST API but got "
+            f"{type(result).__name__} — is "
+            f"{os.environ.get(HOST_ENV, '').strip() or DEFAULT_HOST} really "
+            f"the Local REST API?", EXIT_REST)
+    return result
 
 
 # --------------------------------------------------------------------------
@@ -352,7 +395,7 @@ def cmd_status(args) -> int:
               f"filesystem subcommands unaffected")
         return EXIT_OK
     try:
-        info = rest_call("/")
+        info = rest_object("/")
     except KbError as exc:
         emit(f"rest       unavailable at {host}")
         emit(f"           {exc}".replace("\n", "\n           "))
