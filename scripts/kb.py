@@ -400,7 +400,13 @@ def cmd_status(args) -> int:
         emit(f"rest       unavailable at {host}")
         emit(f"           {exc}".replace("\n", "\n           "))
         return EXIT_OK  # not a failure: the filesystem path still works
-    versions = info.get("versions", {})
+    # The `{}` default only applies when the key is ABSENT. `{"versions": null}`
+    # and `{"versions": []}` are both valid JSON objects that pass rest_object's
+    # top-level check and then hand a non-mapping to the .get() calls below.
+    # Checking the top level is not the same as checking what you dereference.
+    versions = info.get("versions")
+    if not isinstance(versions, dict):
+        versions = {}
     emit(f"rest       reachable at {host} "
           f"(obsidian {versions.get('obsidian', '?')}, "
           f"plugin {versions.get('self', '?')}, "

@@ -320,6 +320,33 @@ def main() -> int:
         finally:
             asrv.shutdown()
 
+        # rest_object checks the TOP LEVEL only. `{"versions": null}` is a
+        # valid object that passes that check and then hands a non-mapping to
+        # cmd_status's .get() calls. Checking the container is not the same as
+        # checking what you dereference out of it.
+        class _NullVersions(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):  # noqa: N802
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"versions": null, "authenticated": true}')
+            do_GET = do_POST
+            def log_message(self, *a):
+                pass
+
+        nsrv = http.server.HTTPServer(("127.0.0.1", 0), _NullVersions)
+        threading.Thread(target=nsrv.serve_forever, daemon=True).start()
+        try:
+            rc, out, err = run(
+                ["status"], vault,
+                env_extra={"OBSIDIAN_API_KEY": "dummy",
+                           "OBSIDIAN_HOST": f"http://127.0.0.1:{nsrv.server_port}"})
+            check("status survives a null nested field without AttributeError",
+                  rc == 0 and "Traceback" not in err and "Traceback" not in out,
+                  f"rc={rc} out={out!r} err={err!r}")
+        finally:
+            nsrv.shutdown()
+
         # The 8 MiB cap had no test until the audit pointed that out: deleting
         # the capped read would have left the guard silently unexercised.
         class _Huge(http.server.BaseHTTPRequestHandler):
