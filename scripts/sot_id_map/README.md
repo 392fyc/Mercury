@@ -152,7 +152,7 @@ python -m scripts.sot_id_map.test_smoke
 
 | 码 | 什么时候用 | 当前条数 |
 |---|---|---:|
-| `engine_not_implemented` | 设计库**在用**，引擎尚未实装同类实体（将来实装后应改成 `mappings` 条目） | 41 |
+| `engine_not_implemented` | 设计库**在用**，引擎尚未实装同类实体（将来实装后应改成 `mappings` 条目） | 38 |
 | `design_shelved_not_imported` | 设计库侧该条目的 `shelf_state` 不是「在用」（已归档 / 待删除），**不是等待实装的候选** | 19 |
 | `design_not_registered` | 引擎有，设计库存在同类实体表但未登记这一条 | 37 |
 | `engine_implements_as_field` | **两侧都有这件事，但引擎建成了另一个实体的字段而非独立实体**。必须给 `engine_carrier` 指针，校验器核实字段真实存在 | 4 |
@@ -165,7 +165,7 @@ python -m scripts.sot_id_map.test_smoke
 
 - **`engine_implements_as_field` ≠ `engine_not_implemented`。** 当前用到前者的四条是〔心眼〕两条技能与剑气 / 剑意印记两条资源：设计库把它们建成技能 / 资源实体，引擎把它们实装进了职业档案的 `sword_qi_config` 字段组。把这类归成「引擎未实装」是**错误定性**——它已经实装了，只是换了一种实体形态。
 - **`engine_placeholder_no_design_entity` ≠ `no_traceable_correspondence`。** 前者是**查过两侧、确认没有**；后者是**查了但判不出**。把「已确证没有」和「判不了」塞进同一个码，就等于把两种该分开处置的状态混成一种：前者可以收工，后者要留着继续查。（此项区分应 SoT 请求加入，见设计库 `docs/sot-to-mercury-wave2-feedback-2026-08-09.md` §4 第 2 条。）
-- **`design_shelved_not_imported` ≠ `engine_not_implemented`。** 前者说的是设计库自己把条目下架了，引擎不导入是**正确行为**；后者说的是设计库在用而引擎欠着。两者混用会让读者以为有 19 条实装欠账，实际只有 41 条。判据在数据里：`snapshots/*.json` 的 `shelf_state`（待删除的另带 `trashed_at` 时刻）。
+- **`design_shelved_not_imported` ≠ `engine_not_implemented`。** 前者说的是设计库自己把条目下架了，引擎不导入是**正确行为**；后者说的是设计库在用而引擎欠着。两者混用会让读者把两组加在一起、以为有 57 条实装欠账，实际欠的只有 `engine_not_implemented` 那 38 条。判据在数据里：`snapshots/*.json` 的 `shelf_state`（待删除的另带 `trashed_at` 时刻）。
 
 ## 维护方式
 
@@ -181,7 +181,36 @@ python -m scripts.sot_id_map.test_smoke
 
 改完必须跑一次校验器并贴退出码；这与 lane 文档 §6.1「交接即验收」的口径一致。
 
-`unmapped` 目前 200 条以上，其中绝大多数是成组的（例如引擎的地图 / 波次 / 敌人整类没有设计库对应物）。首次填表时是按类型分组决定原因码、再逐条展开写入的，组一级的判断理由写在对应 `entity_types` 条目的 `note` 字段里，不在每条上重复。
+`unmapped` 的绝大多数条目是成组的（例如引擎的地图 / 波次 / 敌人整类没有设计库对应物）。首次填表时是按类型分组决定原因码、再逐条展开写入的，组一级的判断理由写在对应 `entity_types` 条目的 `note` 字段里，不在每条上重复。
+
+### 独立复核一条 `basis`（不要采信「逐字段比对全部相等」这句话）
+
+`basis` 写「N 项逐字段比对全部相等」时，复核者应当能自己重跑这一步。把下面这段复制运行即可，改 `IDS` 换要查的条目：
+
+```python
+import io, json, os
+ENGINE = os.environ["SOT_ENGINE_REPO"]; DESIGN = os.environ["SOT_DESIGN_REPO"]
+IDS       = ["kensei_jianqihuidang"]                    # 要复核的 id
+ENG_DIR   = "data/talents"                              # 引擎侧目录
+DES_SNAP  = "snapshots/talents.json"                    # 设计库侧快照
+FIELDS    = ["id", "name", "class_id", "rarity", "tags",
+             "trigger_event", "trigger_object", "trigger_source",
+             "trigger_condition", "trigger_frequency", "trigger_frequency_n",
+             "effect", "rules"]
+
+by_id = {t["id"]: t for t in json.load(io.open(f"{DESIGN}/{DES_SNAP}", encoding="utf-8"))}
+for tid in IDS:
+    eng = json.load(io.open(f"{ENGINE}/{ENG_DIR}/{tid}.json", encoding="utf-8"))
+    des = by_id[tid]
+    for f in FIELDS:
+        print(f"{tid:24s} {f:22s} "
+              f"{'MATCH' if eng.get(f) == des.get(f) else '*** DIFF ***'}")
+```
+
+两条注意：
+
+- **不要用肉眼比对。** 终端常把这些字段里的中文渲染成乱码，两个不同的值看上去会一模一样，比对因此毫无意义。判等必须在代码里做。
+- **也不要把哈希指纹写进 `basis`。** 看似能让证据自证，实际是又一个随数据演进失效、且过期时无声的数字——本 README 其余地方刻意不写死计数，同一个理由。脚本不会过期：数据变了它重新算。`basis` 负责说清楚「比了哪两个文件、比了哪些字段、锚在哪个 commit」，够复核者自己跑一遍就行。
 
 ## 读表前必须知道的两件事
 

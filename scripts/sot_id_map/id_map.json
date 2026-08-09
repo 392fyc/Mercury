@@ -190,7 +190,7 @@
         "path": "snapshots/talents.json",
         "id_field": "id"
       },
-      "note": "天赋。引擎当前实装 3 条（myrmidon_jiecuo 为 A1 首张，Wave 2 新增 kensei_erdaokairen 与 kensei_ertianyiliu），均带 _mirror 溯源。设计库 49 条里 31 条在用、18 条已归档或待删除；后者不是等待实装的候选，用 design_shelved_not_imported 与「在用但引擎未实装」区分开。"
+      "note": "天赋。引擎已实装的天赋逐条列在这里、不报总数（myrmidon_jiecuo 为 A1 首张；Wave 2 新增 kensei_erdaokairen 与 kensei_ertianyiliu；Wave 3 新增 kensei_jianqihuidang、kensei_yanfan 与 myrmidon_sixian），均带 _mirror 溯源；只列不计数，是为了让新增时必须改这份枚举，不会出现数字与名单对不上的情形。设计库 49 条里 31 条在用、18 条已归档或待删除；后者不是等待实装的候选，用 design_shelved_not_imported 与「在用但引擎未实装」区分开。"
     },
     {
       "type": "talent_tree_node",
@@ -688,6 +688,41 @@
       "cardinality": "1:1",
       "basis": "两侧同 id 同名（二天一流）、同 class_id（kensei）、同 rarity（传奇），effect 文本逐字相等；引擎 data/talents/kensei_ertianyiliu.json 的 _mirror 字段自述镜像自设计库 snapshots/talents.json @ 2ea744b。",
       "note": "引擎侧 _mirror 额外声明镜像了 extra_triggers 的触发五段，并注明 effect 里的双空格是设计库原文照抄。属实装细节，本表不裁决。"
+    },
+    {
+      "type": "talent",
+      "engine_ids": [
+        "kensei_jianqihuidang"
+      ],
+      "design_ids": [
+        "kensei_jianqihuidang"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id 同名（剑气回荡）、同 class_id（kensei）、同 rarity（稀有）；id / name / class_id / rarity / tags / trigger_event / trigger_object / trigger_source / trigger_condition / trigger_frequency / trigger_frequency_n / effect / rules 共 13 项逐字段比对全部相等（引擎 054f29c 对设计库 snapshots/talents.json）。引擎 data/talents/kensei_jianqihuidang.json 的 _mirror 字段自述镜像自设计库 snapshots/talents.json @ 2ea744b。设计库侧 shelf_state 为「在用」，故 design_shelved_not_imported 不适用。",
+      "note": "引擎侧 _mirror 额外声明镜像了 extra_triggers 的触发五段。该卡是两行两效果、靠 engine_effects 的 row 字段各自绑定一行，属实装细节，本表不裁决。"
+    },
+    {
+      "type": "talent",
+      "engine_ids": [
+        "kensei_yanfan"
+      ],
+      "design_ids": [
+        "kensei_yanfan"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id 同名（燕返）、同 class_id（kensei）、同 rarity（史诗）；id / name / class_id / rarity / tags / trigger_event / trigger_object / trigger_source / trigger_condition / trigger_frequency / trigger_frequency_n / effect / rules 共 13 项逐字段比对全部相等（引擎 054f29c 对设计库 snapshots/talents.json）。引擎 data/talents/kensei_yanfan.json 的 _mirror 字段自述镜像自设计库 snapshots/talents.json @ 2ea744b。设计库侧 shelf_state 为「在用」，故 design_shelved_not_imported 不适用。"
+    },
+    {
+      "type": "talent",
+      "engine_ids": [
+        "myrmidon_sixian"
+      ],
+      "design_ids": [
+        "myrmidon_sixian"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id 同名（死线）、同 class_id（myrmidon）、同 rarity（稀有）；id / name / class_id / rarity / tags / trigger_event / trigger_object / trigger_source / trigger_condition / trigger_frequency / trigger_frequency_n / effect / rules 共 13 项逐字段比对全部相等（引擎 054f29c 对设计库 snapshots/talents.json）。引擎 data/talents/myrmidon_sixian.json 的 _mirror 字段自述镜像自设计库 snapshots/talents.json @ 2ea744b。设计库侧 shelf_state 为「在用」，故 design_shelved_not_imported 不适用。",
+      "note": "设计库该条目的 levels_json 留有一份不含当前 effect 的旧版本文本（193 字符；另两张 Wave 3 卡该字段仅 2 字符），与引擎 _mirror 里的说明一致。属设计库单写域的过期残留，已记录交 SoT 侧判断，不影响本条映射的依据 —— 映射依据是 id 与上述 13 项镜像字段，不含 levels_json。"
     }
   ],
   "unmapped": [
@@ -1481,13 +1516,7 @@
       "side": "design",
       "id": "kensei_jianqie",
       "reason": "design_shelved_not_imported",
-      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
-    },
-    {
-      "type": "talent",
-      "side": "design",
-      "id": "kensei_jianqihuidang",
-      "reason": "engine_not_implemented"
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库的非在用天赋，引擎侧一条都没有导入；已导入的天赋全部是「在用」条目。（此处刻意不写条数：这段 note 在多个条目里重复，写死计数会在每次交付后一起过期，而漏改一处比全错更难发现。）"
     },
     {
       "type": "talent",
@@ -1506,35 +1535,35 @@
       "side": "design",
       "id": "kensei_juhe_ji",
       "reason": "design_shelved_not_imported",
-      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库的非在用天赋，引擎侧一条都没有导入；已导入的天赋全部是「在用」条目。（此处刻意不写条数：这段 note 在多个条目里重复，写死计数会在每次交付后一起过期，而漏改一处比全错更难发现。）"
     },
     {
       "type": "talent",
       "side": "design",
       "id": "kensei_juhe_lie",
       "reason": "design_shelved_not_imported",
-      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库的非在用天赋，引擎侧一条都没有导入；已导入的天赋全部是「在用」条目。（此处刻意不写条数：这段 note 在多个条目里重复，写死计数会在每次交付后一起过期，而漏改一处比全错更难发现。）"
     },
     {
       "type": "talent",
       "side": "design",
       "id": "kensei_kongzhan",
       "reason": "design_shelved_not_imported",
-      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库的非在用天赋，引擎侧一条都没有导入；已导入的天赋全部是「在用」条目。（此处刻意不写条数：这段 note 在多个条目里重复，写死计数会在每次交付后一起过期，而漏改一处比全错更难发现。）"
     },
     {
       "type": "talent",
       "side": "design",
       "id": "kensei_lianqishi",
       "reason": "design_shelved_not_imported",
-      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库的非在用天赋，引擎侧一条都没有导入；已导入的天赋全部是「在用」条目。（此处刻意不写条数：这段 note 在多个条目里重复，写死计数会在每次交付后一起过期，而漏改一处比全错更难发现。）"
     },
     {
       "type": "talent",
       "side": "design",
       "id": "kensei_liuqi",
       "reason": "design_shelved_not_imported",
-      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库的非在用天赋，引擎侧一条都没有导入；已导入的天赋全部是「在用」条目。（此处刻意不写条数：这段 note 在多个条目里重复，写死计数会在每次交付后一起过期，而漏改一处比全错更难发现。）"
     },
     {
       "type": "talent",
@@ -1559,14 +1588,14 @@
       "side": "design",
       "id": "kensei_pofu",
       "reason": "design_shelved_not_imported",
-      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库的非在用天赋，引擎侧一条都没有导入；已导入的天赋全部是「在用」条目。（此处刻意不写条数：这段 note 在多个条目里重复，写死计数会在每次交付后一起过期，而漏改一处比全错更难发现。）"
     },
     {
       "type": "talent",
       "side": "design",
       "id": "kensei_sanqitu",
       "reason": "design_shelved_not_imported",
-      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库的非在用天赋，引擎侧一条都没有导入；已导入的天赋全部是「在用」条目。（此处刻意不写条数：这段 note 在多个条目里重复，写死计数会在每次交付后一起过期，而漏改一处比全错更难发现。）"
     },
     {
       "type": "talent",
@@ -1579,28 +1608,28 @@
       "side": "design",
       "id": "kensei_shouxin",
       "reason": "design_shelved_not_imported",
-      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库的非在用天赋，引擎侧一条都没有导入；已导入的天赋全部是「在用」条目。（此处刻意不写条数：这段 note 在多个条目里重复，写死计数会在每次交付后一起过期，而漏改一处比全错更难发现。）"
     },
     {
       "type": "talent",
       "side": "design",
       "id": "kensei_shunshizhan",
       "reason": "design_shelved_not_imported",
-      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库的非在用天赋，引擎侧一条都没有导入；已导入的天赋全部是「在用」条目。（此处刻意不写条数：这段 note 在多个条目里重复，写死计数会在每次交付后一起过期，而漏改一处比全错更难发现。）"
     },
     {
       "type": "talent",
       "side": "design",
       "id": "kensei_tiaoxi",
       "reason": "design_shelved_not_imported",
-      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库的非在用天赋，引擎侧一条都没有导入；已导入的天赋全部是「在用」条目。（此处刻意不写条数：这段 note 在多个条目里重复，写死计数会在每次交付后一起过期，而漏改一处比全错更难发现。）"
     },
     {
       "type": "talent",
       "side": "design",
       "id": "kensei_tsujigiri",
       "reason": "design_shelved_not_imported",
-      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库的非在用天赋，引擎侧一条都没有导入；已导入的天赋全部是「在用」条目。（此处刻意不写条数：这段 note 在多个条目里重复，写死计数会在每次交付后一起过期，而漏改一处比全错更难发现。）"
     },
     {
       "type": "talent",
@@ -1619,14 +1648,14 @@
       "side": "design",
       "id": "kensei_wuxiangjian",
       "reason": "design_shelved_not_imported",
-      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库的非在用天赋，引擎侧一条都没有导入；已导入的天赋全部是「在用」条目。（此处刻意不写条数：这段 note 在多个条目里重复，写死计数会在每次交付后一起过期，而漏改一处比全错更难发现。）"
     },
     {
       "type": "talent",
       "side": "design",
       "id": "kensei_xianzhixian",
       "reason": "design_shelved_not_imported",
-      "note": "设计库 shelf_state = 待删除，trashed_at = 2026-08-01T09:08:03.970003，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
+      "note": "设计库 shelf_state = 待删除，trashed_at = 2026-08-01T09:08:03.970003，不是等待引擎实装的候选。设计库的非在用天赋，引擎侧一条都没有导入；已导入的天赋全部是「在用」条目。（此处刻意不写条数，理由同已归档那组 note。）"
     },
     {
       "type": "talent",
@@ -1639,13 +1668,7 @@
       "side": "design",
       "id": "kensei_xufeng",
       "reason": "design_shelved_not_imported",
-      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
-    },
-    {
-      "type": "talent",
-      "side": "design",
-      "id": "kensei_yanfan",
-      "reason": "engine_not_implemented"
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库的非在用天赋，引擎侧一条都没有导入；已导入的天赋全部是「在用」条目。（此处刻意不写条数：这段 note 在多个条目里重复，写死计数会在每次交付后一起过期，而漏改一处比全错更难发现。）"
     },
     {
       "type": "talent",
@@ -1658,7 +1681,7 @@
       "side": "design",
       "id": "kensei_yingfeng",
       "reason": "design_shelved_not_imported",
-      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库的非在用天赋，引擎侧一条都没有导入；已导入的天赋全部是「在用」条目。（此处刻意不写条数：这段 note 在多个条目里重复，写死计数会在每次交付后一起过期，而漏改一处比全错更难发现。）"
     },
     {
       "type": "talent",
@@ -1671,14 +1694,14 @@
       "side": "design",
       "id": "kensei_yishan_luan",
       "reason": "design_shelved_not_imported",
-      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库的非在用天赋，引擎侧一条都没有导入；已导入的天赋全部是「在用」条目。（此处刻意不写条数：这段 note 在多个条目里重复，写死计数会在每次交付后一起过期，而漏改一处比全错更难发现。）"
     },
     {
       "type": "talent",
       "side": "design",
       "id": "kensei_yixian",
       "reason": "design_shelved_not_imported",
-      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库 18 条非在用天赋引擎侧一条都没有导入，已导入的 3 条全部是「在用」条目。"
+      "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库的非在用天赋，引擎侧一条都没有导入；已导入的天赋全部是「在用」条目。（此处刻意不写条数：这段 note 在多个条目里重复，写死计数会在每次交付后一起过期，而漏改一处比全错更难发现。）"
     },
     {
       "type": "talent",
@@ -1714,12 +1737,6 @@
       "type": "talent",
       "side": "design",
       "id": "myrmidon_sheshen",
-      "reason": "engine_not_implemented"
-    },
-    {
-      "type": "talent",
-      "side": "design",
-      "id": "myrmidon_sixian",
       "reason": "engine_not_implemented"
     },
     {
