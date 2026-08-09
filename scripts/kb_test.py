@@ -153,6 +153,16 @@ def main() -> int:
                   "blanket-deny)", rc == 0 and "sub/seed.md" in out,
                   f"rc={rc} out={out!r}")
 
+        # --- write boundary errors are reported, not tracebacked. Writing
+        # --- onto an existing directory is the one failure of this class that
+        # --- is trivial to construct; disk-full and ACL failures are NOT
+        # --- covered here, so those branches remain unexercised.
+        (Path(vault) / "adir").mkdir()
+        rc, _, err = run(["write", "adir"], vault, stdin="x\n")
+        check("write onto a directory reports cleanly, no traceback",
+              rc == 1 and "cannot write" in err and "Traceback" not in err,
+              f"rc={rc} err={err!r}")
+
         # --- missing things fail as failures, not as success
         rc, _, _ = run(["cat", "nope.md"], vault)
         check("cat on a missing note exits 1", rc == 1, f"rc={rc}")
@@ -180,6 +190,50 @@ def main() -> int:
                                     "OBSIDIAN_HOST": "http://127.0.0.1:9"})
         check("osearch against a dead port exits 3 and names Obsidian",
               rc == 3 and "Is Obsidian running" in err, f"rc={rc} err={err!r}")
+
+        # urlopen honours any scheme it is given, so an OBSIDIAN_HOST of
+        # `file://` would quietly become a local file read instead of a
+        # network call. Also covers the likelier mistake of omitting http://.
+        for bad_host, label in [
+                (f"file:///{Path(tmp).as_posix()}/", "file:// scheme"),
+                ("localhost:27123", "missing scheme"),
+                ("http://", "no host")]:
+            rc, out, err = run(["osearch", "x"], vault,
+                               env_extra={"OBSIDIAN_API_KEY": "dummy",
+                                          "OBSIDIAN_HOST": bad_host})
+            check(f"osearch rejects OBSIDIAN_HOST with {label} (exit 3)",
+                  rc == 3 and f"invalid {'OBSIDIAN_HOST'}" in err,
+                  f"rc={rc} err={err!r} out={out!r}")
+
+        # A wrong port or a proxy answers with HTML. json.loads raises
+        # JSONDecodeError, which is NOT an OSError, so main()'s handler does
+        # not catch it — without the guard this tracebacks instead of
+        # reporting REST trouble. Served from a real socket rather than mocked.
+        import http.server
+        import threading
+
+        class _Html(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):  # noqa: N802 - stdlib callback name
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers()
+                self.wfile.write(b"<html><body>not json</body></html>")
+            do_GET = do_POST
+            def log_message(self, *a):  # silence per-request logging
+                pass
+
+        srv = http.server.HTTPServer(("127.0.0.1", 0), _Html)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            rc, _, err = run(
+                ["osearch", "x"], vault,
+                env_extra={"OBSIDIAN_API_KEY": "dummy",
+                           "OBSIDIAN_HOST": f"http://127.0.0.1:{srv.server_port}"})
+            check("non-JSON REST body exits 3 instead of tracebacking",
+                  rc == 3 and "non-JSON" in err and "Traceback" not in err,
+                  f"rc={rc} err={err!r}")
+        finally:
+            srv.shutdown()
 
         # --- broken pipe. Needs output long enough that the downstream reader
         # --- closes mid-write; a short listing finishes first and never

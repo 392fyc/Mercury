@@ -250,6 +250,17 @@ def rest_call(path: str, method: str = "GET", payload: dict | None = None,
             f"Filesystem subcommands (ls/cat/write/append/find/grep) need "
             f"neither.", EXIT_REST)
     host = os.environ.get(HOST_ENV, "").strip() or DEFAULT_HOST
+    # urlopen honours whatever scheme it is handed, `file:` included — so an
+    # OBSIDIAN_HOST of `file:///C:/...` would turn this network call into a
+    # local file read, with the Authorization header silently meaningless.
+    # Restricting the scheme also catches the far more likely case: a host
+    # written without `http://`, which would otherwise fail somewhere less
+    # obvious.
+    parsed = urllib.parse.urlparse(host)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise KbError(
+            f"invalid {HOST_ENV}={host!r}: expected an http:// or https:// URL "
+            f"with a host, e.g. {DEFAULT_HOST}", EXIT_REST)
     url = urllib.parse.urljoin(host.rstrip("/") + "/", path.lstrip("/"))
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
     req = urllib.request.Request(url, data=data, method=method)
@@ -269,7 +280,18 @@ def rest_call(path: str, method: str = "GET", payload: dict | None = None,
             f"cannot reach the Obsidian Local REST API at {host}: {exc.reason}\n"
             f"Is Obsidian running with the Local REST API plugin enabled? "
             f"Filesystem subcommands do not need it.", EXIT_REST) from exc
-    return json.loads(body) if body.strip() else {}
+    if not body.strip():
+        return {}
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError as exc:
+        # A proxy or a wrong port answers with HTML, not JSON. JSONDecodeError
+        # is not an OSError, so main()'s handler does not catch it and the
+        # command would traceback instead of reporting REST trouble.
+        snippet = body[:400].replace("\n", " ")
+        raise KbError(
+            f"REST {method} {url} returned a non-JSON body — is {host} really "
+            f"the Local REST API?\n{snippet}", EXIT_REST) from exc
 
 
 # --------------------------------------------------------------------------
@@ -322,13 +344,33 @@ def cmd_cat(args) -> int:
 def _write(args, mode: str) -> int:
     root = vault_root()
     path = resolve_in_vault(root, args.path)
-    body = sys.stdin.read()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open(mode, encoding="utf-8", newline="\n") as handle:
-        handle.write(body)
+    # Each boundary names what it was doing and which path it was doing it to.
+    # main() already turns a stray OSError into a clean EXIT_FAIL, so this is
+    # not about avoiding a traceback — it is that "[Errno 28] No space left"
+    # with no verb and no path makes a write failure and a read-back failure
+    # look identical.
+    try:
+        body = sys.stdin.read()
+    except OSError as exc:
+        raise KbError(f"cannot read the note body from stdin: {exc}",
+                      EXIT_FAIL) from exc
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise KbError(f"cannot create {path.parent}: {exc}", EXIT_FAIL) from exc
+    try:
+        with path.open(mode, encoding="utf-8", newline="\n") as handle:
+            handle.write(body)
+    except OSError as exc:
+        raise KbError(f"cannot write {rel_of(root, path)}: {exc}",
+                      EXIT_FAIL) from exc
     # Read back rather than trusting the write: a successful open() says
     # nothing about what actually landed on disk.
-    written = path.read_text(encoding="utf-8")
+    try:
+        written = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise KbError(f"wrote {rel_of(root, path)} but could not read it back "
+                      f"to verify: {exc}", EXIT_FAIL) from exc
     if mode == "w" and written != body:
         raise KbError(f"write verification failed for {args.path}", EXIT_FAIL)
     print(f"{'wrote' if mode == 'w' else 'appended to'} "
