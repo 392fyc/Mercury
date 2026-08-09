@@ -1,3 +1,23 @@
 # Shell scripts must stay LF so the shebang execs on Linux CI even when a contributor has
 # core.autocrlf=true — a CRLF `#!/usr/bin/env bash\r` fails to run on Linux. (Issue #527)
 *.sh text eol=lf
+
+# Workflow templates must stay LF in the *working tree*, not just in the index. When a
+# Workflow is invoked by `name` or `scriptPath`, Claude Code's permission pipeline reads
+# the file off disk into the `script` field and re-validates it; a CR (0x0D) is rejected as
+# "script contains control characters that would be hidden in the approval dialog", so
+# every template becomes uncallable by name under core.autocrlf=true. (Issue #551)
+#
+# Scoped to the directory rather than to *.js because the constraint follows the
+# directory's role as the template host (CLAUDE.md: "模板库宿主在 .claude/workflows/"),
+# so a future .mjs/.ts template inherits the protection without another drift incident.
+#
+# `text=auto` rather than a bare `text`: a bare `text` marks EVERY present and future
+# file in the directory as text, so a binary asset added later (a diagram in the README,
+# say) would be silently mangled by EOL conversion on checkout. Measured, not assumed —
+# in a throwaway repo with core.autocrlf=true, a 24-byte file starting with the PNG magic
+# \x89PNG\r\n\x1a\n came back 21 bytes under `text eol=lf` and byte-identical under
+# `text=auto eol=lf`, while a .js file converted to LF under both. Note that
+# `git ls-files --eol` reported the binary as `i/-text w/-text` in BOTH cases, so that
+# output is not evidence of binary safety — only comparing bytes is.
+.claude/workflows/** text=auto eol=lf
