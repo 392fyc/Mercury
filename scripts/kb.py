@@ -240,6 +240,26 @@ def rel_of(root: Path, path: Path) -> str:
 # REST (only for what the filesystem cannot do)
 # --------------------------------------------------------------------------
 
+MAX_REST_BODY = 8 * 1024 * 1024  # 8 MiB; the real API answers in kilobytes
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse to follow redirects, because urllib would carry the key along.
+
+    Measured, not assumed: a 302 from the configured host to a *different*
+    authority received the exact same `Authorization: Bearer <key>` header.
+    So a hijacked or mistyped OBSIDIAN_HOST needs only to answer with a
+    redirect to harvest the token. The Local REST API has no reason to
+    redirect at all, so any 3xx is an error here rather than a hop to follow.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def rest_call(path: str, method: str = "GET", payload: dict | None = None,
               content_type: str = "application/json") -> dict:
     key = os.environ.get(KEY_ENV, "").strip()
@@ -268,10 +288,18 @@ def rest_call(path: str, method: str = "GET", payload: dict | None = None,
     if data is not None:
         req.add_header("Content-Type", content_type)
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            body = resp.read().decode("utf-8")
+        with _OPENER.open(req, timeout=10) as resp:
+            raw = resp.read(MAX_REST_BODY + 1)
     except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", "replace")[:400]
+        # Bounded read here too: the truncation below happens after decoding,
+        # so an unbounded read would already have consumed the memory.
+        detail = exc.read(MAX_REST_BODY + 1).decode("utf-8", "replace")[:400]
+        if exc.code in (301, 302, 303, 307, 308):
+            raise KbError(
+                f"REST {method} {url} answered with a redirect (HTTP "
+                f"{exc.code}), which is not followed: urllib would resend the "
+                f"Authorization header to the new host. Point {HOST_ENV} "
+                f"straight at the Local REST API.", EXIT_REST) from exc
         hint = (" — check OBSIDIAN_API_KEY" if exc.code == 401 else "")
         raise KbError(f"REST {method} {url} failed: HTTP {exc.code}{hint}\n"
                       f"{detail}", EXIT_REST) from exc
@@ -280,6 +308,20 @@ def rest_call(path: str, method: str = "GET", payload: dict | None = None,
             f"cannot reach the Obsidian Local REST API at {host}: {exc.reason}\n"
             f"Is Obsidian running with the Local REST API plugin enabled? "
             f"Filesystem subcommands do not need it.", EXIT_REST) from exc
+    if len(raw) > MAX_REST_BODY:
+        raise KbError(
+            f"REST {method} {url} returned more than {MAX_REST_BODY} bytes and "
+            f"was not read further — is {host} really the Local REST API?",
+            EXIT_REST)
+    try:
+        body = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        # Same class of hole as the JSON guard below, one line earlier:
+        # UnicodeDecodeError is a ValueError, not an OSError, so main()'s
+        # handler does not catch it either.
+        raise KbError(
+            f"REST {method} {url} returned a body that is not valid UTF-8 — "
+            f"is {host} really the Local REST API?", EXIT_REST) from exc
     if not body.strip():
         return {}
     try:

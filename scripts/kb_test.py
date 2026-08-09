@@ -222,6 +222,52 @@ def main() -> int:
             def log_message(self, *a):  # silence per-request logging
                 pass
 
+        # A redirect must NOT be followed: urllib resends the Authorization
+        # header to the new authority, so a hijacked or mistyped host could
+        # harvest OBSIDIAN_API_KEY by answering 302. Asserting on the error
+        # alone would be too weak — the real requirement is that the key never
+        # reaches the second hop, so the second hop records what it saw.
+        got_auth: list = []
+
+        class _Sink(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):  # noqa: N802
+                got_auth.append(self.headers.get("Authorization"))
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b"{}")
+            do_GET = do_POST
+            def log_message(self, *a):
+                pass
+
+        sink = http.server.HTTPServer(("127.0.0.1", 0), _Sink)
+        threading.Thread(target=sink.serve_forever, daemon=True).start()
+
+        class _Redir(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):  # noqa: N802
+                self.send_response(302)
+                self.send_header(
+                    "Location", f"http://127.0.0.1:{sink.server_port}/moved")
+                self.end_headers()
+            do_GET = do_POST
+            def log_message(self, *a):
+                pass
+
+        redir = http.server.HTTPServer(("127.0.0.1", 0), _Redir)
+        threading.Thread(target=redir.serve_forever, daemon=True).start()
+        try:
+            rc, _, err = run(
+                ["osearch", "x"], vault,
+                env_extra={"OBSIDIAN_API_KEY": "SECRET-TOKEN",
+                           "OBSIDIAN_HOST": f"http://127.0.0.1:{redir.server_port}"})
+            check("a redirect is refused rather than followed (exit 3)",
+                  rc == 3 and "redirect" in err, f"rc={rc} err={err!r}")
+            check("the API key never reached the redirect target",
+                  got_auth == [], f"second hop saw: {got_auth!r}")
+        finally:
+            redir.shutdown()
+            sink.shutdown()
+
         srv = http.server.HTTPServer(("127.0.0.1", 0), _Html)
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         try:
@@ -234,6 +280,32 @@ def main() -> int:
                   f"rc={rc} err={err!r}")
         finally:
             srv.shutdown()
+
+        # Invalid UTF-8 is the same class of hole one line earlier than the
+        # JSON guard: UnicodeDecodeError is a ValueError, so main()'s OSError
+        # handler misses it too.
+        class _Binary(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):  # noqa: N802
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b"\xff\xfe\x00 not utf-8 at all")
+            do_GET = do_POST
+            def log_message(self, *a):
+                pass
+
+        bsrv = http.server.HTTPServer(("127.0.0.1", 0), _Binary)
+        threading.Thread(target=bsrv.serve_forever, daemon=True).start()
+        try:
+            rc, _, err = run(
+                ["osearch", "x"], vault,
+                env_extra={"OBSIDIAN_API_KEY": "dummy",
+                           "OBSIDIAN_HOST": f"http://127.0.0.1:{bsrv.server_port}"})
+            check("non-UTF-8 REST body exits 3 instead of tracebacking",
+                  rc == 3 and "not valid UTF-8" in err
+                  and "Traceback" not in err, f"rc={rc} err={err!r}")
+        finally:
+            bsrv.shutdown()
 
         # --- broken pipe. Needs output long enough that the downstream reader
         # --- closes mid-write; a short listing finishes first and never
