@@ -183,6 +183,35 @@ python -m scripts.sot_id_map.test_smoke
 
 `unmapped` 的绝大多数条目是成组的（例如引擎的地图 / 波次 / 敌人整类没有设计库对应物）。首次填表时是按类型分组决定原因码、再逐条展开写入的，组一级的判断理由写在对应 `entity_types` 条目的 `note` 字段里，不在每条上重复。
 
+### 独立复核一条 `basis`（不要采信「逐字段比对全部相等」这句话）
+
+`basis` 写「N 项逐字段比对全部相等」时，复核者应当能自己重跑这一步。把下面这段复制运行即可，改 `IDS` 换要查的条目：
+
+```python
+import io, json, os
+ENGINE = os.environ["SOT_ENGINE_REPO"]; DESIGN = os.environ["SOT_DESIGN_REPO"]
+IDS       = ["kensei_jianqihuidang"]                    # 要复核的 id
+ENG_DIR   = "data/talents"                              # 引擎侧目录
+DES_SNAP  = "snapshots/talents.json"                    # 设计库侧快照
+FIELDS    = ["id", "name", "class_id", "rarity", "tags",
+             "trigger_event", "trigger_object", "trigger_source",
+             "trigger_condition", "trigger_frequency", "trigger_frequency_n",
+             "effect", "rules"]
+
+by_id = {t["id"]: t for t in json.load(io.open(f"{DESIGN}/{DES_SNAP}", encoding="utf-8"))}
+for tid in IDS:
+    eng = json.load(io.open(f"{ENGINE}/{ENG_DIR}/{tid}.json", encoding="utf-8"))
+    des = by_id[tid]
+    for f in FIELDS:
+        print(f"{tid:24s} {f:22s} "
+              f"{'MATCH' if eng.get(f) == des.get(f) else '*** DIFF ***'}")
+```
+
+两条注意：
+
+- **不要用肉眼比对。** 终端常把这些字段里的中文渲染成乱码，两个不同的值看上去会一模一样，比对因此毫无意义。判等必须在代码里做。
+- **也不要把哈希指纹写进 `basis`。** 看似能让证据自证，实际是又一个随数据演进失效、且过期时无声的数字——本 README 其余地方刻意不写死计数，同一个理由。脚本不会过期：数据变了它重新算。`basis` 负责说清楚「比了哪两个文件、比了哪些字段、锚在哪个 commit」，够复核者自己跑一遍就行。
+
 ## 读表前必须知道的两件事
 
 **一、`tag` / `rule` / `term` 三类的标识符不是 `id`。** 它们在设计库里的整型 `id` 是数据库自增主键，重建库时会被压实重排（设计库 `snapshots/README.md` §5.3 有实测记录），**不是跨仓标识符**。本表对这三类分别用 `key` / `code` / `term` 作为 id 字段，写在各自 `entity_types` 条目的 `design.id_field` 里。所以 `unmapped` 里 `tag` 那 12 条看到的中文（击杀 / 奥义 / 反应 …）是**标签的 `key`**，不是显示名；`rule` 那 23 条看到的 `R1.1` 是 `code`。
