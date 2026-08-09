@@ -106,10 +106,13 @@ SANDBOX NOTE: some harnesses permit only a narrow set of commands. These are
 known to work and are enough to audit a diff — prefer them:
     git status --porcelain | git log -1 --oneline | git diff --stat
     git diff <base>...HEAD | git branch --show-current | cat <file> | ls <dir>
-These were observed to be refused on one harness (Windows app-server path). They
-may work on yours; if one is refused, just don't retry it:
+The following were refused on ONE specific harness (Windows app-server path).
+That is an observation about that environment, not a general rule — they may
+work fine on yours, so try them if you need them. Only if one is actually
+refused, don't retry it:
     git rev-parse (any form) | git rev-list | git show-ref | git config --get
-    git stash | git push | git commit | git checkout | bash / bash -c (anything)
+    git stash | git push | git commit | git checkout
+    bash / bash -c (any argument, including ones with no git in them)
 A refusal is not a reason to stop. Note which command was refused, continue with
 whatever works, and report your findings. Do NOT conclude from a few refusals
 that the sandbox blocks everything and abandon the audit.
@@ -147,7 +150,9 @@ Measured on Windows with codex-cli 0.129.0 going through the app-server path (Is
 
 The failure this prevents is not the refusal itself but what Codex concludes from it. Given a couple of refusals, Codex reports that the sandbox blocked everything and declines to audit at all — which is what made #554 look like "Codex cannot run any Bash in this repo". It can: in the one probe round that deliberately mixed both kinds, 7 of its 11 commands ran and returned real output, including the `git diff <base>...HEAD` this skill actually depends on. Telling it up front which commands work, and that a refusal is not a reason to stop, is what turns the audit from "unavailable" into "normal".
 
-Upstream tracking: [openai/codex-plugin-cc#57](https://github.com/openai/codex-plugin-cc/issues/57) — as filed, the app-server's `thread/start` RPC does not accept `sandboxPermissions` and `config.toml` sandbox settings are ignored on that path, which is why this is not configurable away from Mercury's side. Check the issue for its current state rather than trusting this paragraph; if it has been fixed, the note costs nothing but should be re-measured before anyone leans on it further.
+Upstream tracking: [openai/codex-plugin-cc#57](https://github.com/openai/codex-plugin-cc/issues/57) — as filed, the app-server's `thread/start` RPC does not accept `sandboxPermissions` and `config.toml` sandbox settings are ignored on that path, which is why this was not configurable away from Mercury's side.
+
+**Don't take this section's word for any of it — re-measure instead.** It is cheap: ask Codex to issue one command from each list above and report the outcome verbatim — one command per tool call, so each outcome is attributable to a single command. A policy refusal is distinguishable from a real execution failure by its *shape*, not by the message: the job log (path is in the `result --json` payload under `.storedJob.logFile`) shows `Command declined … (exit -1)` about a millisecond after `Running command`, whereas anything that genuinely ran took 0.5–1.3s in the same log and reports a real exit code. If the refused list now runs, this note costs nothing and can be trimmed. If commands from the permitted list start failing, stop trusting the rest of this section and re-measure before acting on it.
 
 ### Recovery commands
 
