@@ -723,6 +723,18 @@
       "cardinality": "1:1",
       "basis": "两侧同 id 同名（死线）、同 class_id（myrmidon）、同 rarity（稀有）；id / name / class_id / rarity / tags / trigger_event / trigger_object / trigger_source / trigger_condition / trigger_frequency / trigger_frequency_n / effect / rules 共 13 项逐字段比对全部相等（引擎 054f29c 对设计库 snapshots/talents.json）。引擎 data/talents/myrmidon_sixian.json 的 _mirror 字段自述镜像自设计库 snapshots/talents.json @ 2ea744b。设计库侧 shelf_state 为「在用」，故 design_shelved_not_imported 不适用。",
       "note": "设计库该条目的 levels_json 留有一份不含当前 effect 的旧版本文本（193 字符；另两张 Wave 3 卡该字段仅 2 字符），与引擎 _mirror 里的说明一致。属设计库单写域的过期残留，已记录交 SoT 侧判断，不影响本条映射的依据 —— 映射依据是 id 与上述 13 项镜像字段，不含 levels_json。"
+    },
+    {
+      "type": "talent",
+      "engine_ids": [
+        "kensei_jiaoren"
+      ],
+      "design_ids": [
+        "kensei_jiaoren"
+      ],
+      "cardinality": "1:1",
+      "basis": "两侧同 id 同名（交刃）、同 class_id（kensei）、同 rarity（史诗）；id / name / class_id / rarity / tags / trigger_event / trigger_object / trigger_source / trigger_condition / trigger_frequency / trigger_frequency_n / effect / rules 共 13 项逐字段比对全部相等（引擎 74acb57 对设计库 snapshots/talents.json @ d486d28；该文件在 74acb57..3ac65b1 之间无改动，故对当前引擎 HEAD 同样成立）。引擎 data/talents/kensei_jiaoren.json 的 _mirror 字段自述版本锚点 = 生产库 /api/talents 的 kensei_jiaoren，updated_at 2026-08-08T07:57:03.152679。设计库快照侧 shelf_state 为「在用」（status=待审阅），故 design_shelved_not_imported 不适用。",
+      "note": "引擎侧该条目另有 _designlib_wording 字段，记着设计库 rules 原文的「final_modifier」在引擎里实际键名是 final_multiplier。那属设计库生产库活数据（lane §2.1 单写方 = 用户 + SoT 组），已走转交协议交对方判断，不影响本条映射 —— 映射依据是 id 与上述 13 项镜像字段。"
     }
   ],
   "unmapped": [
@@ -1521,12 +1533,6 @@
     {
       "type": "talent",
       "side": "design",
-      "id": "kensei_jiaoren",
-      "reason": "engine_not_implemented"
-    },
-    {
-      "type": "talent",
-      "side": "design",
       "id": "kensei_jiutoulongshan",
       "reason": "engine_not_implemented"
     },
@@ -1649,13 +1655,6 @@
       "id": "kensei_wuxiangjian",
       "reason": "design_shelved_not_imported",
       "note": "设计库 shelf_state = 已归档，不是等待引擎实装的候选。设计库的非在用天赋，引擎侧一条都没有导入；已导入的天赋全部是「在用」条目。（此处刻意不写条数：这段 note 在多个条目里重复，写死计数会在每次交付后一起过期，而漏改一处比全错更难发现。）"
-    },
-    {
-      "type": "talent",
-      "side": "design",
-      "id": "kensei_xianzhixian",
-      "reason": "design_shelved_not_imported",
-      "note": "设计库 shelf_state = 待删除，trashed_at = 2026-08-01T09:08:03.970003，不是等待引擎实装的候选。设计库的非在用天赋，引擎侧一条都没有导入；已导入的天赋全部是「在用」条目。（此处刻意不写条数，理由同已归档那组 note。）"
     },
     {
       "type": "talent",
