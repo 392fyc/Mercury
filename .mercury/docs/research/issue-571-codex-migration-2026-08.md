@@ -587,3 +587,92 @@ Codex 每行只有 `timestamp` / `type` / `payload` 三个顶层 key，
 **这正是本次迁移的起因所在**（Claude 订阅到期），所以这不是理论风险。
 要让记忆层在纯 Codex 环境下可用，`flush.py` 需要一条 `codex exec` 的替代提取路径。
 该改动需要 G0-1 完成后才能验证，且属用户级脚本的实质变更，**未擅自动手**。
+
+## 九、订阅到期会连带断掉什么（完整审计 + 两处修复）
+
+只发现一处就交给用户，等于让他在不完整的信息上做决定。所以做了完整审计
+（用户级 + 仓内，两种检索手段互相印证，结论一致）。**依赖 Claude CLI 的恰好两处**：
+
+| 位置 | 用途 | 处理 |
+|---|---|---|
+| `~/.claude/scripts/flush.py` | 记忆提取 | **已加 codex 路径**（见下） |
+| `scripts/handoff-launch.sh` | `/handoff auto` 拉起下一个会话 | **已参数化**（commit `7f17632`） |
+
+### handoff-launch.sh：两个 CLI 的 prompt 形式不同
+
+四处硬编码 `claude`。加 `--harness claude|codex`（默认 `$MERCURY_HANDOFF_HARNESS`
+再默认 `claude`，现役行为逐字不变）。
+
+**关键差异**：
+
+```
+claude -- "<prompt>"    需要 -- 把 prompt 与自身 flag 分开
+codex "<prompt>"        位置参数；codex --help 的用法行是 codex [OPTIONS] [PROMPT]
+```
+
+给 codex 照抄 `--` 会让 prompt 被当成 flag 解析而**丢掉**，而窗口照常打开 ——
+又一个静默失败。Windows 路径还有次级陷阱：分隔符对 codex 是空串，
+直接写进 argv 会给 `wt` 传一个**空参数**而非「没有参数」，所以用数组按需追加。
+
+测试 24/24（原 19）。**变异验证**：强制 codex 带上 `--`，掉到 23/24 并指出确切缺陷。
+
+### flush.py：codex 提取路径
+
+三处照抄就会坏的差异：
+
+1. **`codex exec` 的 stdout 是事件流日志，不是回答**。`claude -p` 只打印回答。
+   照抄 `result.stdout` 会把一整片事件日志当摘要写进记忆 —— 坏得很像成功。
+   必须用 `-o/--output-last-message <FILE>`。
+2. **必须 `--skip-git-repo-check`**：cwd 是 `~/.claude`，它不是 git 仓库。
+3. **沙箱显式只读**：提取任务不该有写权限。
+
+stdin 传 prompt 这点两者相同（`codex exec --help` 写明 prompt 未作为参数给出时读 stdin）。
+
+**刻意不做自动回退**（claude 失败就换 codex）：调用失败可能只是网络抖动，
+自动回退会把偶发失败变成静默换模型，且失败时延迟翻倍。由用户显式切换更可预期。
+
+桩测试 11 项全过。**变异验证**：把输出取法改回读 stdout，测试立刻抓到
+`[EVENT] task_started` 混进摘要。
+
+**尚未验证**：真实模型产出的摘要质量（需 G0-1）。接线已证，质量待测。
+
+### 顺带挖出一个存在已久的静默 bug（与 Codex 无关）
+
+测试中 SessionEnd 出现 traceback。**没有为了让测试变绿而放宽判断**，查了真因 ——
+它来自 hook 自己：
+
+```
+UnicodeDecodeError: 'gbk' codec can't decode byte 0xaa in position 643
+```
+
+`session-end.py` 调 git 时用 `text=True` 但**没给 encoding**，Python 遂用本机 locale
+（GBK，代码页 936）解 git 的 UTF-8 输出。**本仓最近 20 条 commit 里 12 条是中文标题**，
+必然踩中。异常抛在 subprocess 的**读取线程**里，外层 `except` 捕获不到 ——
+stdout 静默变空，hook 照样 exit 0。
+
+**A/B 实测**：旧写法提取到 `[]`，加 `encoding="utf-8", errors="replace"` 后提取到 `['571']`。
+即 session_chain 数据库一直在**无 issue 关联**的情况下记录会话，且毫无征兆。
+
+验证脚本已随仓库落地：`scripts/codex/memory-layer-tests/`（三个脚本 + README 说明
+每条判据为什么在那里），满足「用户级变更须留验证步骤」的治理要求。
+备份三份，回滚命令写在该 README 里。
+
+## 十、三个重名 skill 的裁决依据（G3-4 副作用）
+
+装上 superpowers 6.3.0 后三个 skill 名各出现两次。**差异性质分两类，不能一刀切**：
+
+**第一类 —— 可安全弃用旧版**：`systematic-debugging`、`verification-before-completion`。
+正文里 `mercury` / `dual-verify` / `argus` / `.mercury/` 引用**各 0 处**，
+manifest 登记均为 `obra/superpowers @ 917e5f53b16b` 的 cherry-pick ——
+**逐字镜像的旧版**。建议删 `.agents/skills/` 下的镜像（只影响 Codex 侧，
+`.claude/skills/` 正本不动），manifest 的 `mirror_paths` 相应去掉 `.agents/` 项。
+
+**第二类 —— 不能弃用**：`subagent-driven-development`。Mercury 版比插件版**小**
+（12,297 vs 32,339 字节），但大小不是判据 —— 它的 frontmatter 有 `mercury_adaptation:`
+字段，正文明写 "This is a Mercury-owned adaptation, NOT a verbatim mirror"，
+含 **12 处**项目专属引用（#385 context 护栏、Windows 优先路径），
+manifest 记的上游 SHA 也不同（`d884ae04edeb`）。删掉会丢失 Mercury 自有改造。
+
+**这里的重名是真冲突**，两条路：改名为 `mercury-subagent-driven-development`，
+或禁用插件那份（**「按 skill 粒度禁用」这个能力未验证**）。
+倾向改名 —— 不依赖未验证能力，且把「这是改造版」写进名字比靠优先级规则更不易出错。
