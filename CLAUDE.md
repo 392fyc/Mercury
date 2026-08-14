@@ -28,6 +28,7 @@ Read these docs on demand when you need the corresponding information:
 | **大规模 fan-out context 护栏 + skill 迁移决策/基线** | `.mercury/docs/guides/fanout-and-skill-migration-guardrails.md` |
 | Cherry-pick carve-out 细则(CLI-scaffold: tauri/vite/shadcn) | `.mercury/docs/guides/cherry-pick-carve-out.md` |
 | **Fable 5 额度调度策略 + statusline 近似告警(ADR)** | `.mercury/docs/research/issue-535-fable5-scheduling-2026-07.md` |
+| **Codex CLI 迁移主档(G0-G6 目标 + 实测修正,与正文冲突以附录为准)** | `.mercury/docs/research/issue-571-codex-migration-2026-08.md` |
 
 ## Ultracode 与 Dynamic Workflows
 

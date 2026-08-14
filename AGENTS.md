@@ -26,6 +26,7 @@ Read these docs on demand when you need the corresponding information:
 | Dispatch prompt templates | `.mercury/templates/` |
 | Cherry-pick carve-out 细则 | `.mercury/docs/guides/cherry-pick-carve-out.md` |
 | **Codex 迁移总台账 (G0-G6)** | [#571](https://github.com/392fyc/Mercury/issues/571) |
+| **Codex 迁移主档**(目标 + 实测修正；与正文冲突以附录为准) | `.mercury/docs/research/issue-571-codex-migration-2026-08.md` |
 
 ## Related Repositories
 
