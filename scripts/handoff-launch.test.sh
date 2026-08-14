@@ -427,6 +427,70 @@ STUB2
     ;;
 esac
 
+# ── 22-26. --harness (Mercury Issue #571 / G5) ────────────────────────────
+# 迁到 Codex 后 /handoff auto 需要能拉起 codex。两者接收初始 prompt 的形式不同：
+#   claude -- "<prompt>"   需要 `--` 分隔符
+#   codex "<prompt>"       位置参数，`codex --help` 的用法行是 `codex [OPTIONS] [PROMPT]`
+# 给 codex 照抄 `--` 会让 prompt 被当成 flag 解析而丢掉，所以两条形态都要钉住。
+
+# 22. 默认 harness 必须仍是 claude —— 加功能不应顺带改掉现役默认。
+assert_exit_and_contains \
+  "default harness is still claude (no behavior change)" \
+  0 'claude -- "' \
+  bash "$LAUNCH_SCRIPT" \
+    --lane "test" \
+    --worktree "$FAKE_WORKTREE" \
+    --handoff-doc "$FAKE_HANDOFF" \
+    --dry-run
+
+# 23. --harness codex 出现在 dry-run 摘要里
+assert_exit_and_contains \
+  "--harness codex is reported in dry-run summary" \
+  0 'HARNESS:       codex' \
+  bash "$LAUNCH_SCRIPT" \
+    --lane "test" \
+    --worktree "$FAKE_WORKTREE" \
+    --handoff-doc "$FAKE_HANDOFF" \
+    --harness codex \
+    --dry-run
+
+# 24. codex 形态**不能**带 `--` 分隔符（带了 prompt 会被丢掉）
+CODEX_CMD_OUT="$(bash "$LAUNCH_SCRIPT" \
+  --lane "test" --worktree "$FAKE_WORKTREE" --handoff-doc "$FAKE_HANDOFF" \
+  --harness codex --dry-run 2>&1 | grep '^COMMAND:')"
+if echo "$CODEX_CMD_OUT" | grep -qF 'codex "' && ! echo "$CODEX_CMD_OUT" | grep -qF 'codex -- '; then
+  echo "PASS: codex form omits the '--' separator"
+  PASS_COUNT=$((PASS_COUNT + 1))
+else
+  echo "FAIL: codex form separator wrong; got: $CODEX_CMD_OUT"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILURES+=("codex form omits '--'")
+fi
+
+# 25. 环境变量 MERCURY_HANDOFF_HARNESS 生效
+HARNESS_ENV_OUT="$(MERCURY_HANDOFF_HARNESS=codex bash "$LAUNCH_SCRIPT" \
+  --lane "test" --worktree "$FAKE_WORKTREE" --handoff-doc "$FAKE_HANDOFF" \
+  --dry-run 2>&1 | grep '^HARNESS:')"
+if echo "$HARNESS_ENV_OUT" | grep -qF 'codex'; then
+  echo "PASS: MERCURY_HANDOFF_HARNESS env var is honored"
+  PASS_COUNT=$((PASS_COUNT + 1))
+else
+  echo "FAIL: env var not honored; got: $HARNESS_ENV_OUT"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILURES+=("MERCURY_HANDOFF_HARNESS honored")
+fi
+
+# 26. 未知 harness 必须被拒（fail-closed，不能默默回退到 claude）
+assert_exit_and_contains \
+  "unknown --harness exits 2" \
+  2 "invalid --harness" \
+  bash "$LAUNCH_SCRIPT" \
+    --lane "test" \
+    --worktree "$FAKE_WORKTREE" \
+    --handoff-doc "$FAKE_HANDOFF" \
+    --harness "gemini" \
+    --dry-run
+
 # ── Summary ───────────────────────────────────────────────────────────────
 TOTAL=$((PASS_COUNT + FAIL_COUNT))
 echo ""
