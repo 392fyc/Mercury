@@ -334,7 +334,7 @@ ChatGPT web 的定时任务跑在云上、碰不到本地仓库，不适用。
 > 正文写于调研阶段。下面这些是**动手做之后**被实证推翻或补充的，与正文冲突时**以本附录为准**。
 > 执行台账见 [#571](https://github.com/392fyc/Mercury/issues/571)，代码见 PR #572。
 
-## 一、硬陷阱要改得更严重：Codex 做不了**任何** git 写操作
+## 一、~~硬陷阱要改得更严重：Codex 做不了**任何** git 写操作~~ —— **本节已被推翻，见附录三第十八节**
 
 正文写「沙箱下 `.git` / `.agents` / `.codex` 始终只读 —— Codex 改不了自己的 skill / hook / agent 定义」。
 
@@ -868,3 +868,63 @@ Workflow 调用，那是另一个量级的工作，且只覆盖本机。
 
 下一步若要继续追，最经济的是**交互式会话**跑一次（区分「非交互不发事件」与「hook 引擎不工作」），
 而不是继续加进程采集手段。
+
+## 十八、推翻附录一第一节：Codex **能**做 git 写操作，取决于沙箱档位
+
+附录一第一节写「Codex 做不了**任何** git 写操作」「提交必须在 Codex 之外完成」
+「**这不是配置能解的**」。**三句都错。** 2026-08-14 实测：
+
+| 沙箱档位 | `git commit` |
+|---|---|
+| `workspace-write` | 拒绝：`Unable to create '.git/index.lock': Permission denied` |
+| `danger-full-access` | **成功**（干净测试仓验证，非本仓配置问题） |
+
+**错在哪**：当时只测了 `workspace-write` 一档，就下了「任何」「始终」「不是配置能解的」
+这类全称结论。与同日 dual-verify 抓到的「一次 `apply_patch` 未触发 hook → 断言全部 hook 不触发」
+是**同一个毛病**：从单点观测推全称。
+
+### 关键：提高档位不等于失去防护
+
+这决定了这条路可不可行。实测 `danger-full-access` 下：
+
+```
+git push origin HEAD
+→ declined in 0ms:
+  rejected: Use `powershell -File scripts/codex/git-safe.ps1 push ...`
+            so protected-branch checks run first.
+```
+
+**`.codex/rules/` 照常拦截。** 原因是两者是不同机制：
+
+- **沙箱**管**文件系统访问**（能不能写 `.git/index.lock`）
+- **rules** 管**哪些命令能被发出**，工作在 router 层、命令执行**之前**
+
+所以「升档位」只解开文件系统那一层，命令层的护栏原封不动。
+
+### 完整链路实证
+
+`danger-full-access` + `.codex/rules/` 拦直接 git 命令 + 走 `scripts/codex/git-safe.ps1`
+（包装器内含受保护分支检查）——Codex 自己完成了「暂存 → 提交」：
+
+```
+commit 0a6c08c  probe: Codex 端到端提交验证 (#571)
+ .mercury/docs/probes/_e2e-probe.md | 4 ++++
+```
+
+**所以 G4-1 的「dev-pipeline / pr-flow 在 Codex 上只能跑到审查为止」也一并推翻。**
+它们能跑完，只是需要在 git 写那一步临时升档。
+
+### 建议的工作姿态
+
+**日常保持 `workspace-write`**（沙箱兜住绝大多数误操作），
+**只在确实需要 git 写时临时升到 `danger-full-access`**，且始终经 `git-safe.ps1`。
+不建议把 `danger-full-access` 设成常驻默认——沙箱那层在别的场景仍然有价值
+（例如它实测拦住过往 `C:\Program Files` 与仓外路径的写入）。
+
+### 顺带一条方法论
+
+这次测试第一版的探针文件，我预先在正文里写了「由 Codex 自行创建并提交」——
+**而那时它只是被我用 `printf` 创建、从未提交**。一个审查 agent 当场判了 High：
+「用完成时宣称，但 `git log --all` 无记录」。批评成立。
+**不要预先把尚未发生的事写成既成事实**，哪怕你确信它马上就会发生。
+第二版改成让 Codex 自己从头创建并提交，才是真证据。

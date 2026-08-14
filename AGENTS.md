@@ -158,7 +158,18 @@ Mercury 原本用 Claude Code 的 Dynamic Workflow（脚本确定性编排数十
   所以 web-research 的强制**只剩 `developer_instructions` 的自律**，没有任何东西会拦你。
   （早先这条写的是「靠 developer_instructions 与 `.codex/rules/` 的指令层」，
   把 rules 也算了进去，与 `.codex/config.toml` 第 11 条相矛盾 —— 那会让人误以为有规则层兜底。）
-- **沙箱下 `.git` / `.agents` / `.codex` 始终只读** —— Codex 改不了自己的 skill / hook / agent 定义，凡涉及写这三个目录必须在 Codex 之外操作。
+- **`workspace-write` 下 `.git` / `.agents` / `.codex` 只读；`danger-full-access` 下可写**
+  （2026-08-14 实测更正，此前这条写的是「始终只读」「不是配置能解的」，**两句都是错的**）。
+  实测：`workspace-write` 下 `git commit` 报 `Unable to create '.git/index.lock': Permission denied`；
+  换 `danger-full-access` 后同一操作成功。干净测试仓复现，非本仓配置问题。
+- **提高档位不等于裸奔 —— `.codex/rules/` 仍然生效。** 实测 `danger-full-access` 下
+  `git push origin HEAD` 依旧被 router 层 `declined in 0ms` 并回显 justification。
+  原因是两者机制不同：**沙箱管文件系统访问，rules 管哪些命令能被发出**，
+  rules 工作在命令执行之前，不受档位影响。
+- **因此 Codex 能走完整开发链**：`danger-full-access` + `.codex/rules/` 拦截直接 git 命令
+  + 走 `scripts/codex/git-safe.ps1`（内含受保护分支检查）。
+  实证：commit `0a6c08c` 就是 Codex 自己完成暂存与提交产生的。
+  日常仍用 `workspace-write`；**只在确实需要 git 写时才临时升档**。
 - Codex sandbox may block network access — git push failures are expected, Main Agent handles push.
 - **主次与这里原先写的相反**：`.codex/rules/` 才是 Codex 上唯一实测生效的强制层，
   `scripts/codex/*.ps1` 是第二道；hook **不是**主层，因为它根本不触发（见上条 G2-1 实测）。
