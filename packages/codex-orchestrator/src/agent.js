@@ -36,7 +36,14 @@ export function normalizeSchema(node) {
   for (const [k, v] of Object.entries(node)) out[k] = normalizeSchema(v);
   if (out.type === 'object' || out.properties) {
     if (out.additionalProperties === undefined) out.additionalProperties = false;
-    if (out.properties && !out.required) out.required = Object.keys(out.properties);
+    if (out.properties) {
+      // 严格模式要求 required 列出**全部** properties，所以不能只在 required 缺失时
+      // 才补 —— 调用方按普通 JSON Schema 的习惯写 required: ['file'] 表示「只有它必需」，
+      // 那样剩下的属性仍然缺席，请求照样被平台拒绝。这里做并集补全。
+      const have = new Set(Array.isArray(out.required) ? out.required : []);
+      for (const k of Object.keys(out.properties)) have.add(k);
+      out.required = [...have];
+    }
   }
   return out;
 }
@@ -106,6 +113,12 @@ export async function runAgent(prompt, opts = {}) {
     cwd, timeoutMs = 600000, maxAttempts = 3, web = false, log, signal,
   } = opts;
 
+  // 日志故障绝不能掀翻编排。可选链只挡 log 为 null/undefined，挡不住方法本身抛错，
+  // 而 RunLog.say() 最终会调 process.stderr.write —— 那不是绝对不抛的。
+  // 本函数对外承诺「失败返回 null，不抛」，所以每一处日志调用都要包起来，
+  // 包括 try 块之外的那些。
+  const say = (m, ...a) => { try { log?.[m]?.(...a); } catch { /* 日志坏了不影响主流程 */ } };
+
   const wireSchema = schema ? normalizeSchema(schema) : null;
   const codex = new Codex();
   const threadOptions = { sandboxMode: sandbox, skipGitRepoCheck: true };
@@ -117,7 +130,7 @@ export async function runAgent(prompt, opts = {}) {
   let lastReason = '未知';
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     if (signal?.aborted) return null;
-    log?.agentStarted(label, attempt);
+    say('agentStarted', label, attempt);
     const t0 = Date.now();
     try {
       const thread = codex.startThread(threadOptions);
@@ -133,7 +146,7 @@ export async function runAgent(prompt, opts = {}) {
       const ms = Date.now() - t0;
 
       if (!schema) {
-        log?.agentOk(label, ms, turn.usage);
+        say('agentOk', label, ms, turn.usage);
         return turn.finalResponse;
       }
 
@@ -142,28 +155,28 @@ export async function runAgent(prompt, opts = {}) {
         parsed = extractJson(turn.finalResponse);
       } catch (e) {
         lastReason = `格式错误（${errText(e)}）`;
-        log?.agentRetry(label, attempt, lastReason);
+        say('agentRetry', label, attempt, lastReason);
         continue;
       }
       const bad = validate(parsed, schema);
       if (bad) {
         lastReason = `格式错误（${bad}）`;
-        log?.agentRetry(label, attempt, lastReason);
+        say('agentRetry', label, attempt, lastReason);
         continue;
       }
-      log?.agentOk(label, ms, turn.usage);
+      say('agentOk', label, ms, turn.usage);
       return parsed;
     } catch (err) {
       const reason = errText(err);
       const c = classify(err);
       // 未识别的错误要留痕：它是补分类规则的唯一线索。
-      if (!c.matched) log?.emit('error.unclassified', { label, message: reason });
+      if (!c.matched) say('emit', 'error.unclassified', { label, message: reason });
       lastReason = reason;
       if (!c.retryable || attempt >= maxAttempts) {
-        log?.agentFailed(label, `${reason}（${c.why}）`, attempt);
+        say('agentFailed', label, `${reason}（${c.why}）`, attempt);
         return null;
       }
-      log?.agentRetry(label, attempt, `${reason}（${c.why}）`);
+      say('agentRetry', label, attempt, `${reason}（${c.why}）`);
       try {
         await sleep(backoffMs(attempt), signal);
       } catch {
@@ -171,6 +184,6 @@ export async function runAgent(prompt, opts = {}) {
       }
     }
   }
-  log?.agentFailed(label, lastReason, maxAttempts);
+  say('agentFailed', label, lastReason, maxAttempts);
   return null;
 }

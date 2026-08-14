@@ -9,6 +9,7 @@
  */
 
 import { RunLog, runAgent, parallel, pipeline, classify, capFanout, mapWithPool, sleep } from '../src/index.js';
+import { normalizeSchema } from '../src/agent.js';
 
 const LOG_FILE = process.env.ORCH_SMOKE_LOG || null;
 const log = new RunLog({ file: LOG_FILE, runId: 'smoke' });
@@ -100,8 +101,43 @@ results.push(check('认证失败被判为不可重试', classify(new Error('unau
   results.push(check('取消信号传达到 thunk 与 stage', gotInThunk === ctrl.signal && gotInStage === ctrl.signal));
 }
 
+{
+  // 缺陷五：normalizeSchema 早先只在 required 完全缺失时才补全，
+  // 调用方写 required:['a'] 这种部分必需时剩余属性不会补进去，
+  // 而严格模式要求列全 —— 请求会在执行前被平台拒绝。
+  const out = normalizeSchema({
+    type: 'object',
+    required: ['a'],
+    properties: { a: { type: 'string' }, b: { type: 'integer' } },
+  });
+  const req = (out.required || []).slice().sort().join(',');
+  results.push(check('部分 required 被并集补全', req === 'a,b' && out.additionalProperties === false, `required=[${req}]`));
+}
+{
+  // 嵌套层也要补，否则深层对象照样被拒。
+  const out = normalizeSchema({
+    type: 'object',
+    properties: { inner: { type: 'object', properties: { x: { type: 'string' } } } },
+  });
+  const inner = out.properties.inner;
+  results.push(check('嵌套层同样补齐', inner.additionalProperties === false && JSON.stringify(inner.required) === '["x"]'));
+}
+
 // —— 2. 真实调用 ——
 console.log('\n真实 Codex 调用：');
+{
+  // 缺陷六：日志调用曾放在 try 块外，log 方法抛错会让 runAgent 直接抛出，
+  // 违背它「失败返回 null，不抛」的承诺。这里传一个必抛的 log，
+  // 并用一个必然被服务端拒绝的 effort 让调用快速失败。
+  const boomLog = new Proxy({}, { get: () => () => { throw new Error('日志坏了'); } });
+  let threw = null, ret = 'unset';
+  try {
+    ret = await runAgent('随便说一个字', { label: 'log-boom', effort: 'definitely-not-a-valid-effort', sandbox: 'read-only', maxAttempts: 1, log: boomLog });
+  } catch (e) {
+    threw = e;
+  }
+  results.push(check('日志抛错不掀翻 runAgent', threw === null && ret === null, threw ? `抛了: ${threw.message}` : `返回 ${JSON.stringify(ret)}`));
+}
 const t0 = Date.now();
 const three = await parallel([() => ask(1), () => ask(2), () => ask(3)], { concurrency: 3 });
 const wall = Date.now() - t0;
