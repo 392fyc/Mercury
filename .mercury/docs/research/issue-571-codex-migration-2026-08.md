@@ -705,3 +705,38 @@ codex plugin marketplace remove superpowers-dev
 **验证回滚是否生效**：跑 `scripts/codex/memory-layer-tests/` 下的三个脚本 ——
 回滚后 `transcript-parser-verify.py` 的 A 项（Codex 路径能读出内容）应当**失败**，
 因为那正是被回滚掉的能力。若它仍然通过，说明回滚没真正生效。
+
+## 十二、workflow 分档第 5/6/7 条：尝试找使用证据，失败（否定结果）
+
+第 5/6/7 条（`staleness-audit` 降级、`ecc-practice-scan` 冻结、`large-migration` 冻结）
+标注了「需项目所有者确认，依据是 README 描述而非实际调用记录」。
+2026-08-14 尝试把它变成有证据的判断，**没成功**。记录下来省得重复尝试。
+
+**试过的两个信号，都不成立：**
+
+**① git 提交历史 —— 无区分度。** 原设想是「常用的会被改过多次」。实测：
+
+| 分档 | workflow | 提交次数 | 最后改动 |
+|---|---|---|---|
+| 重建 | `mercury-codebase-audit` | 1 | 2026-06-20 |
+| 重建 | `mercury-multi-source-research` | 1 | 2026-06-20 |
+| 重建 | `mercury-adversarial-plan-review` | 1 | 2026-06-20 |
+| 重建 | `talent-validate` | 2 | 2026-07-02 |
+| 降级 | `mercury-staleness-audit` | 1 | 2026-06-25 |
+| 冻结 | `mercury-ecc-practice-scan` | 1 | 2026-06-21 |
+| 冻结 | `mercury-large-migration` | 1 | 2026-06-20 |
+
+**两组看起来一模一样** —— 除 `talent-validate` 外全是「建好就没再动过」。
+这个指标不区分「常用」和「没用过」，因为**脚本稳定不需要改**与**脚本没人用**
+产生完全相同的痕迹。
+
+**② 运行状态文件 —— 仓库里根本不存在。** 仓内唯一的 `.jsonl` 是本次编排层跑出来的
+5 个 `orchestrator-*`。Claude 的 Workflow runtime 把运行记录写在**会话目录**，
+不写仓库，所以 7 个 workflow **都**没有仓库可见的运行痕迹。
+
+**结论**：分档只能靠项目所有者对实际工作节奏的判断，仓库里找不到客观依据。
+原标注保持不变 —— 它当时就说清了依据是 README 自述，那个说法是准确的。
+
+**给下一个人**：不要再从 git 历史或仓内状态文件里找这个答案，那里没有。
+真要客观依据，得从 Claude Code 的会话记录（`~/.claude/projects/*/`）里翻
+Workflow 调用，那是另一个量级的工作，且只覆盖本机。
