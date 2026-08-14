@@ -9,7 +9,11 @@
     "import_pr": 216,
     "import_date": "2026-04-10",
     "import_rationale": "DEC-4 approved cherry-pick: root-cause debugging enforcement for Mercury quality workflow (Issue #209)",
-    "last_drift_check": "2026-07-04"
+    "last_drift_check": "2026-07-04",
+    "mirror_paths": [
+      ".agents/skills/systematic-debugging/SKILL.md"
+    ],
+    "mirror_rationale": "Codex 只扫描 .agents/skills/（官方 6 层发现路径之一），而 Claude Code 只读 .claude/skills/；本机 core.symlinks=false，符号链接不可用，所以过渡期两份并存。Claude Code 退役后 .claude/skills/ 一并退役，届时把 path 改成镜像路径并删除本字段。"
   },
   {
     "path": ".claude/skills/systematic-debugging/condition-based-waiting.md",
@@ -21,7 +25,11 @@
     "import_pr": 216,
     "import_date": "2026-04-10",
     "import_rationale": "Supporting doc for systematic-debugging skill (Issue #209)",
-    "last_drift_check": "2026-07-04"
+    "last_drift_check": "2026-07-04",
+    "mirror_paths": [
+      ".agents/skills/systematic-debugging/condition-based-waiting.md"
+    ],
+    "mirror_rationale": "Codex 只扫描 .agents/skills/（官方 6 层发现路径之一），而 Claude Code 只读 .claude/skills/；本机 core.symlinks=false，符号链接不可用，所以过渡期两份并存。Claude Code 退役后 .claude/skills/ 一并退役，届时把 path 改成镜像路径并删除本字段。"
   },
   {
     "path": ".claude/skills/systematic-debugging/condition-based-waiting-example.ts",
@@ -33,7 +41,11 @@
     "import_pr": 216,
     "import_date": "2026-04-10",
     "import_rationale": "Supporting example for systematic-debugging skill (Issue #209)",
-    "last_drift_check": "2026-07-04"
+    "last_drift_check": "2026-07-04",
+    "mirror_paths": [
+      ".agents/skills/systematic-debugging/condition-based-waiting-example.ts"
+    ],
+    "mirror_rationale": "Codex 只扫描 .agents/skills/（官方 6 层发现路径之一），而 Claude Code 只读 .claude/skills/；本机 core.symlinks=false，符号链接不可用，所以过渡期两份并存。Claude Code 退役后 .claude/skills/ 一并退役，届时把 path 改成镜像路径并删除本字段。"
   },
   {
     "path": ".claude/skills/systematic-debugging/defense-in-depth.md",
@@ -45,7 +57,11 @@
     "import_pr": 216,
     "import_date": "2026-04-10",
     "import_rationale": "Supporting doc for systematic-debugging skill (Issue #209)",
-    "last_drift_check": "2026-07-04"
+    "last_drift_check": "2026-07-04",
+    "mirror_paths": [
+      ".agents/skills/systematic-debugging/defense-in-depth.md"
+    ],
+    "mirror_rationale": "Codex 只扫描 .agents/skills/（官方 6 层发现路径之一），而 Claude Code 只读 .claude/skills/；本机 core.symlinks=false，符号链接不可用，所以过渡期两份并存。Claude Code 退役后 .claude/skills/ 一并退役，届时把 path 改成镜像路径并删除本字段。"
   },
   {
     "path": ".claude/skills/systematic-debugging/find-polluter.sh",
@@ -57,7 +73,11 @@
     "import_pr": 216,
     "import_date": "2026-04-10",
     "import_rationale": "Supporting script for systematic-debugging skill (Issue #209)",
-    "last_drift_check": "2026-07-04"
+    "last_drift_check": "2026-07-04",
+    "mirror_paths": [
+      ".agents/skills/systematic-debugging/find-polluter.sh"
+    ],
+    "mirror_rationale": "Codex 只扫描 .agents/skills/（官方 6 层发现路径之一），而 Claude Code 只读 .claude/skills/；本机 core.symlinks=false，符号链接不可用，所以过渡期两份并存。Claude Code 退役后 .claude/skills/ 一并退役，届时把 path 改成镜像路径并删除本字段。"
   },
   {
     "path": ".claude/skills/systematic-debugging/root-cause-tracing.md",
@@ -69,7 +89,11 @@
     "import_pr": 216,
     "import_date": "2026-04-10",
     "import_rationale": "Supporting doc for systematic-debugging skill (Issue #209)",
-    "last_drift_check": "2026-07-04"
+    "last_drift_check": "2026-07-04",
+    "mirror_paths": [
+      ".agents/skills/systematic-debugging/root-cause-tracing.md"
+    ],
+    "mirror_rationale": "Codex 只扫描 .agents/skills/（官方 6 层发现路径之一），而 Claude Code 只读 .claude/skills/；本机 core.symlinks=false，符号链接不可用，所以过渡期两份并存。Claude Code 退役后 .claude/skills/ 一并退役，届时把 path 改成镜像路径并删除本字段。"
   },
   {
     "path": ".claude/skills/subagent-driven-development/SKILL.md",
@@ -81,7 +105,11 @@
     "import_pr": 216,
     "import_date": "2026-04-10",
     "import_rationale": "DEC-4 approved cherry-pick: fresh-subagent-per-task execution pattern (Issue #209)",
-    "last_drift_check": "2026-07-04"
+    "last_drift_check": "2026-07-04",
+    "mirror_paths": [
+      ".agents/skills/subagent-driven-development/SKILL.md"
+    ],
+    "mirror_rationale": "Codex 只扫描 .agents/skills/（官方 6 层发现路径之一），而 Claude Code 只读 .claude/skills/；本机 core.symlinks=false，符号链接不可用，所以过渡期两份并存。Claude Code 退役后 .claude/skills/ 一并退役，届时把 path 改成镜像路径并删除本字段。"
   },
   {
     "path": ".claude/skills/subagent-driven-development/implementer-prompt.md",
@@ -93,7 +121,11 @@
     "import_pr": 216,
     "import_date": "2026-04-10",
     "import_rationale": "Supporting prompt template for subagent-driven-development skill (Issue #209)",
-    "last_drift_check": "2026-07-04"
+    "last_drift_check": "2026-07-04",
+    "mirror_paths": [
+      ".agents/skills/subagent-driven-development/implementer-prompt.md"
+    ],
+    "mirror_rationale": "Codex 只扫描 .agents/skills/（官方 6 层发现路径之一），而 Claude Code 只读 .claude/skills/；本机 core.symlinks=false，符号链接不可用，所以过渡期两份并存。Claude Code 退役后 .claude/skills/ 一并退役，届时把 path 改成镜像路径并删除本字段。"
   },
   {
     "path": ".claude/skills/verification-before-completion/SKILL.md",
@@ -105,7 +137,11 @@
     "import_pr": 216,
     "import_date": "2026-04-10",
     "import_rationale": "DEC-4 approved cherry-pick: evidence-before-claims verification enforcement (Issue #209)",
-    "last_drift_check": "2026-07-04"
+    "last_drift_check": "2026-07-04",
+    "mirror_paths": [
+      ".agents/skills/verification-before-completion/SKILL.md"
+    ],
+    "mirror_rationale": "Codex 只扫描 .agents/skills/（官方 6 层发现路径之一），而 Claude Code 只读 .claude/skills/；本机 core.symlinks=false，符号链接不可用，所以过渡期两份并存。Claude Code 退役后 .claude/skills/ 一并退役，届时把 path 改成镜像路径并删除本字段。"
   },
   {
     "path": ".claude/skills/caveman-toggle/SKILL.md",
@@ -117,7 +153,11 @@
     "import_pr": 214,
     "import_date": "2026-04-10",
     "import_rationale": "Adapted caveman prompt text into Mercury-native persistent toggle skill (Issue #213)",
-    "last_drift_check": "2026-07-04"
+    "last_drift_check": "2026-07-04",
+    "mirror_paths": [
+      ".agents/skills/caveman-toggle/SKILL.md"
+    ],
+    "mirror_rationale": "Codex 只扫描 .agents/skills/（官方 6 层发现路径之一），而 Claude Code 只读 .claude/skills/；本机 core.symlinks=false，符号链接不可用，所以过渡期两份并存。Claude Code 退役后 .claude/skills/ 一并退役，届时把 path 改成镜像路径并删除本字段。"
   },
   {
     "path": "CLAUDE.local.md.example",
