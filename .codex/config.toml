@@ -18,6 +18,7 @@ MANDATORY: Before writing ANY code that imports an external SDK/API package or r
 9. Defense-in-depth: scripts/codex/*.ps1 wrappers (powershell -File scripts/codex/git-safe.ps1 add/commit/push) remain available as fallback when hooks cannot be relied on (e.g. shell invocation in non-Codex contexts)
 10. Before every commit on a PR branch, run dual-verify: spawn TWO independent subagents that review the change blind and in parallel, at different `model_reasoning_effort` levels, then compare their findings. Reviewing your own work inside a single agent context does NOT satisfy this gate. (The legacy wording "parallel Claude Code deep-review + Codex code-audit" assumed Claude Code hosted the session; it no longer applies once Codex is the harness — see AGENTS.md and Issue #571.) This gate applies to every milestone commit, not only PR-branch commits, and auto-verify alone does NOT satisfy it. Then run `powershell -File scripts/codex/guard.ps1 mark-review`
 11. Web-research enforcement: Codex hooks do NOT cover web_search tool calls (no handler — see Issue #20204). The web-research MUST is enforced at instruction level via clauses #1-5 above and via .codex/rules/. Verify your own compliance before each external SDK/API claim.
+12. 用户可见的回复一律用正常、清楚的简体中文完整句子。禁止网络黑话与内部简写 —— 英文缩写和中文圈内话都算，碰到就用平实的话讲清楚。专有名词、命令、接口名、字段名保留原文往往更清楚，保留即可；判断标准是读者能不能看懂，不是句子里有没有英文。宁可多写一句把事情说明白，也不要压缩到看不懂。严禁韩文与日文。代码、commit message、PR body 保持各自既有惯例（英文为主）。
 """
 
 # Enable lifecycle hooks (Codex CLI >= v0.124 GA, stable since v0.128).
