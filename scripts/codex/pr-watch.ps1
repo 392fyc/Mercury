@@ -49,6 +49,19 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# `Get-Content -Raw` 对**空文件**返回 $null（不是空字符串），于是 `.Trim()` 会抛
+# "You cannot call a method on a null-valued expression"。而 gh 查询失败时正好
+# 只创建文件、不写内容 —— 这条路径必然踩中。叠加 $ErrorActionPreference='Stop'，
+# 脚本会当场终止，导致下面的失败退避分支永远执行不到（实测：连查 3 次不存在的 PR，
+# 三次都是崩溃，状态文件一次都没写出来）。这个 helper 把空文件与不存在都收敛成 ''。
+function Read-TextFile {
+  param([string]$Path)
+  if (-not (Test-Path $Path)) { return '' }
+  $content = Get-Content $Path -Raw -ErrorAction SilentlyContinue
+  if ($null -eq $content) { return '' }
+  return $content.Trim()
+}
+
 function Get-RepoRoot {
   $r = (git rev-parse --show-toplevel 2>$null)
   if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($r)) {
@@ -69,7 +82,7 @@ if ($Pr -le 0) {
   # "JsonToken EndConstructor is not valid"。让 gh 直接写文件，再整份读回来最稳。
   $tmp1 = Join-Path $StateDir "_prlist-$branch.json"
   gh pr list --head $branch --json number --limit 1 > $tmp1 2>$null
-  $json = if (Test-Path $tmp1) { (Get-Content $tmp1 -Raw).Trim() } else { '' }
+  $json = Read-TextFile $tmp1
   if ($LASTEXITCODE -eq 0 -and $json -and $json -ne '[]') {
     $Pr = ($json | ConvertFrom-Json)[0].number
   }
@@ -84,10 +97,21 @@ if ($Reset) {
   exit 0
 }
 
-$state = if (Test-Path $stateFile) {
-  Get-Content $stateFile -Raw | ConvertFrom-Json
-} else {
-  [pscustomobject]@{ pr = $Pr; polls = 0; failures = 0; done = $false; lastStatus = ''; lastSeen = '' }
+$fresh = [pscustomobject]@{ pr = $Pr; polls = 0; failures = 0; done = $false; lastStatus = ''; lastSeen = '' }
+
+# 状态文件被写坏或截断（例如上一次运行中途被杀）时，ConvertFrom-Json 会得到 $null，
+# 随后 $state.done 又会撞上同一个空引用崩溃。这里退回全新状态而不是崩 —— 丢一轮
+# 计数远好过让整个观察链断掉。
+$state = $fresh
+$raw = Read-TextFile $stateFile
+if ($raw) {
+  try {
+    $parsed = $raw | ConvertFrom-Json
+    if ($null -ne $parsed) { $state = $parsed }
+    else { Write-Warning "状态文件 $stateFile 解析为空，按全新状态重来。" }
+  } catch {
+    Write-Warning "状态文件 $stateFile 无法解析（$($_.Exception.Message)），按全新状态重来。"
+  }
 }
 
 if ($state.done) {
@@ -110,7 +134,7 @@ $state.lastSeen = (Get-Date).ToString('o')
 $tmp = Join-Path $StateDir "_prview-$Pr.json"
 gh pr view $Pr --json reviews,reviewDecision,state > $tmp 2>$null
 $ghExit = $LASTEXITCODE
-$reviewJson = if (Test-Path $tmp) { (Get-Content $tmp -Raw).Trim() } else { '' }
+$reviewJson = Read-TextFile $tmp
 if ($ghExit -ne 0 -or [string]::IsNullOrWhiteSpace($reviewJson)) {
   # 失败不算一次有效轮询 —— 否则网络抖动会白白吃掉配额。
   $state.polls = [int]$state.polls - 1
