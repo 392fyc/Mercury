@@ -520,3 +520,70 @@ ChatGPT web 的定时任务跑在云上、碰不到本地仓库，不适用。
 
 理由：纯状态查询让模型跑一遍固定吃约 1.4 万 input token，而它做的只是读一个 JSON 字段。
 轮询上限 3 次与失败退避两条约定均保留。这是取舍不是疏漏，可推翻。
+
+## 八、G5-3 记忆层：修好了一半，另一半是新发现的缺口
+
+### 已修：三个 hook 在 Codex 下会静默什么都不记
+
+用 Codex 形态的合成 stdin 跑记忆层三个 hook，三个都 exit 0。**但 exit 0 不等于干了活。**
+查副作用发现 SessionEnd 没有产出任何 flush 文件，日志给出真因：
+
+```
+SessionEnd fired: session=g53-probe-end source=unknown
+SKIP: empty context
+```
+
+两处已知差异的结论一好一坏：
+
+- **差异 1（Codex 给 `reason`、脚本读 `source`）无害** —— `source=unknown`，
+  `.get("source", "unknown")` 的默认值兜住了，不崩。
+- **差异 2 是真的** —— 不是「轮次太少」，是**解析出零条消息**。
+
+**用真实数据核实**（不是只信自己手写的夹具）：扫 6 个真实 rollout 后确认，
+Codex 每行只有 `timestamp` / `type` / `payload` 三个顶层 key，
+`message` / `role` / `content` 在顶层出现 **0 次** —— 内容嵌在 `payload.role` /
+`payload.content` 里。而解析器读的是 `entry["message"]["role"]` 或退化到
+`entry["role"]`，两者都不存在。
+
+**还有第二层陷阱**：content 块的 type 是 **`input_text`**（OpenAI Responses 形态），
+不是 Claude 的 `"text"`。只修嵌套层级、不改块类型判断的话，仍然读到空。
+
+**修复**：两个文件各加一支 Codex 分支（`session-end.py` 与 `pre-compact.py`
+**各有一份逐字相同的 `extract_conversation_context` 拷贝** —— 改一个必须改另一个，
+只改一处会留下一半的静默失败；长期应抽成共用模块）。
+
+只取 `type == "response_item"`：`event_msg/user_message` 是同一轮用户输入的另一种表示，
+两个都收会重复计数。
+
+**三项判据验证**（两个文件各跑一遍，全过）：
+| 判据 | 结果 |
+|---|---|
+| A. Codex 路径能读出内容（5 个真实 rollout） | 全部有内容（改动前为零） |
+| B. Claude 现役路径未回归（3 轮、内容齐全、summary 行忽略） | 通过 |
+| C. 不重复计数（同一轮的两种表示只记一次） | 通过 |
+
+端到端复验：用真实 rollout 跑完整 SessionEnd →
+`Flushing session g53-real-end: 11624 chars` → `Result: FLUSH_OK`，
+产出 13,593 字节的 flush 文件。改动前是 0 字符、`SKIP: empty context`。
+
+备份：`~/.claude/hooks/session-end.py.backup-pre-571-g53`、
+`~/.claude/hooks/pre-compact.py.backup-pre-571-g53`。
+
+### 未修：提取环节硬依赖 Claude CLI（新缺口）
+
+日志里的 `Using claude CLI: C:\Users\392fy\.local\bin\claude.exe` 暴露了另一半问题。
+
+`~/.claude/scripts/flush.py` 的 `_find_claude_exe()` 找不到 claude 可执行文件就直接
+`return "FLUSH_ERROR: claude executable not found"`，**全文对 codex 的引用数为 0**。
+
+所以记忆层现在的状态是：
+
+| 环节 | 状态 |
+|---|---|
+| hook 注册与触发 | 可用 |
+| 解析 Codex transcript | **已修，可用** |
+| 提取与写入记忆 | **依赖 Claude CLI —— 订阅失效即断** |
+
+**这正是本次迁移的起因所在**（Claude 订阅到期），所以这不是理论风险。
+要让记忆层在纯 Codex 环境下可用，`flush.py` 需要一条 `codex exec` 的替代提取路径。
+该改动需要 G0-1 完成后才能验证，且属用户级脚本的实质变更，**未擅自动手**。
