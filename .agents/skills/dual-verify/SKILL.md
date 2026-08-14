@@ -13,6 +13,37 @@ allowed-tools: Bash, Read, Grep, Glob, Agent
 > 在重写落地之前，Codex 上执行本门的方式是：**spawn 两个独立 subagent，指定不同的 `model_reasoning_effort`，让它们互不可见地审查同一改动，然后比对两份结论**。
 > 下方的检查清单（按关注点分工、结构化 finding、Critical/High 分级、fail-closed）仍然适用，只是执行者换成了那两个 subagent。
 
+### Codex 上的调用契约（实测自运行时提示，2026-08-14）
+
+以下内容来自 `codex debug prompt-input` 读到的 Codex 实际系统提示，不是从公开文档推断的。
+
+**协作工具**：`spawn_agent`、`followup_task`、`send_message`、`wait_agent`、`interrupt_agent`、`list_agents`。
+它们**必须作为直接工具调用**发起（形如 `to=functions.collaboration.spawn_agent`），
+**不能从 `functions.exec` 内部调用** —— 它们被有意排除在 `exec` 的 `tools.*` 命名空间之外。
+
+**并发上限 4 个槽，且把自己算在内** —— 所以最多同时跑 3 个 subagent。两路盲审占 2 个，够用。
+
+**⚠️ 最容易踩的一条：`fork_turns` 不设成 `"none"` 就无法指定不同的 effort。**
+运行时提示原文：full-history fork（`fork_turns` 省略或 `"all"`）**继承父级的 model 与 reasoning effort，且不接受覆盖**；
+要设 `model` 或 `reasoning_effort`，必须同时把 `fork_turns` 设为 `"none"` 或一个正整数字符串。
+
+也就是说，「spawn 两个全历史 fork、分别给不同 effort」这种直觉写法会**静默失效** ——
+两路会以完全相同的档位跑，比对出来的"两份结论"其实是同一档位的两次采样，这个门就形同虚设。
+
+**`fork_turns: "none"` 同时也是盲审的前提。** 全历史 fork 会把我的推理过程一并带给审查者，
+那它看到的就不是"改动本身"而是"我如何为改动辩护" —— 盲审的意义正在于隔断这条路径。
+所以这两个要求指向同一个设置，不冲突。
+
+**共享文件系统**：所有 agent 共用同一个工作目录，一个 agent 的写入对其他 agent 立即可见。
+因此盲审的隔离**只存在于上下文层面，不存在于文件层面** —— 两个审查者必须都是只读的，
+否则它们会互相看见对方的中间产物。
+
+**`<multi_agent_mode>` 默认禁止主动 spawn**，除非用户、`AGENTS.md` 或 **skill 指令**明确要求。
+本 skill 的指令即构成该授权之一，所以在本门内 spawn 是被允许的；
+但这也意味着**不能指望模型自己想到要开两路** —— 必须由本 skill 显式触发。
+
+**`wait_agent` 用较长的等待时间**（分钟级），运行时提示明确要求避免忙轮询。
+
 Run two independent blind reviews in parallel, then consolidate findings and mark review complete.
 
 ## When
