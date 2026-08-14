@@ -173,8 +173,10 @@ Mercury 原本用 Claude Code 的 Dynamic Workflow（脚本确定性编排数十
 - Codex sandbox may block network access — git push failures are expected, Main Agent handles push.
 - **主次与这里原先写的相反**：`.codex/rules/` 才是 Codex 上唯一实测生效的强制层，
   `scripts/codex/*.ps1` 是第二道；hook **不是**主层，因为它根本不触发（见上条 G2-1 实测）。
-  配置本身保持原样（`[features] hooks = true` + `.codex/hooks.json` + 脚本仍在
-  `.claude/hooks/` 与 Claude Code 共用一份），这样上游修好后无需重新接线 ——
-  但**在它被证实触发之前，任何依赖 hook 的强制都必须视为不存在**。
+  **`[features] hooks` 已于 2026-08-14 由 `true` 改为 `false`**（项目级与用户级都改，用户要求）。
+  理由：hook 一条都不触发时留着 `true` 是「看起来武装、实际不响」的不确定状态，
+  万一某条路径下它又响了就会跑出没人预期的脚本 —— 不作用就该关闭，而不是静默。
+  `.codex/hooks.json` 与 `.claude/hooks/` 下的脚本**都保留未删**（后者仍是 Claude Code 的现役强制层，
+  照常工作），上游修好后把该标志改回 `true` 即可恢复接线，无需重新配置。
 
 <!-- MERCURY_AGENTS_MD_TAIL_SENTINEL — 末尾哨兵：本文件有 32 KiB 硬上限且超限静默截断。改动后跑 `codex debug prompt-input | grep -c MERCURY_AGENTS_MD_TAIL_SENTINEL`，返回 0 说明文件已被截断。 -->
