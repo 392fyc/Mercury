@@ -102,7 +102,7 @@ function extractJson(text) {
  * @param {string} [opts.cwd]            工作目录
  * @param {number} [opts.timeoutMs]      单次尝试的超时
  * @param {number} [opts.maxAttempts]    含首次在内的总尝试次数
- * @param {boolean} [opts.web]           是否开实时联网检索
+ * @param {boolean} [opts.web]           是否开实时联网检索；read-only 沙箱下可能不可用，需使用可写沙箱档位
  * @param {RunLog} opts.log
  * @param {AbortSignal} [opts.signal]
  * @returns {Promise<any|null>} 失败返回 null（失败隔离），不抛
@@ -118,6 +118,10 @@ export async function runAgent(prompt, opts = {}) {
   // 本函数对外承诺「失败返回 null，不抛」，所以每一处日志调用都要包起来，
   // 包括 try 块之外的那些。
   const say = (m, ...a) => { try { log?.[m]?.(...a); } catch { /* 日志坏了不影响主流程 */ } };
+
+  if (web === true && sandbox === 'read-only') {
+    say('say', '警告：read-only 沙箱下实时检索可能不可用，建议改用可写沙箱档位。');
+  }
 
   const wireSchema = schema ? normalizeSchema(schema) : null;
   const codex = new Codex();
