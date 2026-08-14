@@ -7,7 +7,8 @@
           {
             "type": "command",
             "command": "bash \"$(git rev-parse --show-toplevel)/.claude/hooks/scope-guard.sh\"",
-            "timeout": 5
+            "timeout": 5,
+            "command_windows": "& bash \"$(& git rev-parse --show-toplevel)/.claude/hooks/scope-guard.sh\""
           }
         ]
       },
@@ -17,22 +18,26 @@
           {
             "type": "command",
             "command": "bash \"$(git rev-parse --show-toplevel)/.claude/hooks/pre-commit-guard.sh\"",
-            "timeout": 5
+            "timeout": 5,
+            "command_windows": "& bash \"$(& git rev-parse --show-toplevel)/.claude/hooks/pre-commit-guard.sh\""
           },
           {
             "type": "command",
             "command": "bash \"$(git rev-parse --show-toplevel)/.claude/hooks/push-guard.sh\"",
-            "timeout": 5
+            "timeout": 5,
+            "command_windows": "& bash \"$(& git rev-parse --show-toplevel)/.claude/hooks/push-guard.sh\""
           },
           {
             "type": "command",
             "command": "bash \"$(git rev-parse --show-toplevel)/.claude/hooks/pr-create-guard.sh\"",
-            "timeout": 5
+            "timeout": 5,
+            "command_windows": "& bash \"$(& git rev-parse --show-toplevel)/.claude/hooks/pr-create-guard.sh\""
           },
           {
             "type": "command",
             "command": "bash \"$(git rev-parse --show-toplevel)/.claude/hooks/pr-merge-guard.sh\"",
-            "timeout": 15
+            "timeout": 15,
+            "command_windows": "& bash \"$(& git rev-parse --show-toplevel)/.claude/hooks/pr-merge-guard.sh\""
           }
         ]
       }
@@ -44,7 +49,8 @@
           {
             "type": "command",
             "command": "node \"$(git rev-parse --show-toplevel)/adapters/mercury-loop-detector/hook.cjs\"",
-            "timeout": 10
+            "timeout": 10,
+            "command_windows": "& node \"$(& git rev-parse --show-toplevel)/adapters/mercury-loop-detector/hook.cjs\""
           }
         ]
       },
@@ -54,7 +60,8 @@
           {
             "type": "command",
             "command": "bash \"$(git rev-parse --show-toplevel)/.claude/hooks/post-commit-reset.sh\"",
-            "timeout": 5
+            "timeout": 5,
+            "command_windows": "& bash \"$(& git rev-parse --show-toplevel)/.claude/hooks/post-commit-reset.sh\""
           }
         ]
       }
@@ -65,12 +72,14 @@
           {
             "type": "command",
             "command": "bash \"$(git rev-parse --show-toplevel)/.claude/hooks/session-init.sh\"",
-            "timeout": 5
+            "timeout": 5,
+            "command_windows": "& bash \"$(& git rev-parse --show-toplevel)/.claude/hooks/session-init.sh\""
           },
           {
             "type": "command",
             "command": "bash \"$(git rev-parse --show-toplevel)/.claude/hooks/user-prompt-submit.sh\"",
-            "timeout": 5
+            "timeout": 5,
+            "command_windows": "& bash \"$(& git rev-parse --show-toplevel)/.claude/hooks/user-prompt-submit.sh\""
           }
         ]
       }
@@ -81,7 +90,8 @@
           {
             "type": "command",
             "command": "bash \"$(git rev-parse --show-toplevel)/.claude/hooks/stop-guard.sh\"",
-            "timeout": 10
+            "timeout": 10,
+            "command_windows": "& bash \"$(& git rev-parse --show-toplevel)/.claude/hooks/stop-guard.sh\""
           }
         ]
       }

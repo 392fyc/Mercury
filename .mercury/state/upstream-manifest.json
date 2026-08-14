@@ -9,7 +9,8 @@
     "import_pr": 216,
     "import_date": "2026-04-10",
     "import_rationale": "DEC-4 approved cherry-pick: root-cause debugging enforcement for Mercury quality workflow (Issue #209)",
-    "last_drift_check": "2026-07-04"
+    "last_drift_check": "2026-07-04",
+    "mirror_rationale": "Codex 侧的镜像已于 2026-08-14 移除（Issue #571 / G3-4）：superpowers 插件 6.3.0 提供同名 skill，两份并存会让模型在未文档化的优先级下乱选。本条只保留 .claude/skills/ 一份，供 Claude Code 使用。**Codex 侧改依赖用户级 superpowers 插件** —— 该依赖已在 AGENTS.md 显式声明。"
   },
   {
     "path": ".claude/skills/systematic-debugging/condition-based-waiting.md",
@@ -21,7 +22,8 @@
     "import_pr": 216,
     "import_date": "2026-04-10",
     "import_rationale": "Supporting doc for systematic-debugging skill (Issue #209)",
-    "last_drift_check": "2026-07-04"
+    "last_drift_check": "2026-07-04",
+    "mirror_rationale": "Codex 侧的镜像已于 2026-08-14 移除（Issue #571 / G3-4）：superpowers 插件 6.3.0 提供同名 skill，两份并存会让模型在未文档化的优先级下乱选。本条只保留 .claude/skills/ 一份，供 Claude Code 使用。**Codex 侧改依赖用户级 superpowers 插件** —— 该依赖已在 AGENTS.md 显式声明。"
   },
   {
     "path": ".claude/skills/systematic-debugging/condition-based-waiting-example.ts",
@@ -33,7 +35,8 @@
     "import_pr": 216,
     "import_date": "2026-04-10",
     "import_rationale": "Supporting example for systematic-debugging skill (Issue #209)",
-    "last_drift_check": "2026-07-04"
+    "last_drift_check": "2026-07-04",
+    "mirror_rationale": "Codex 侧的镜像已于 2026-08-14 移除（Issue #571 / G3-4）：superpowers 插件 6.3.0 提供同名 skill，两份并存会让模型在未文档化的优先级下乱选。本条只保留 .claude/skills/ 一份，供 Claude Code 使用。**Codex 侧改依赖用户级 superpowers 插件** —— 该依赖已在 AGENTS.md 显式声明。"
   },
   {
     "path": ".claude/skills/systematic-debugging/defense-in-depth.md",
@@ -45,7 +48,8 @@
     "import_pr": 216,
     "import_date": "2026-04-10",
     "import_rationale": "Supporting doc for systematic-debugging skill (Issue #209)",
-    "last_drift_check": "2026-07-04"
+    "last_drift_check": "2026-07-04",
+    "mirror_rationale": "Codex 侧的镜像已于 2026-08-14 移除（Issue #571 / G3-4）：superpowers 插件 6.3.0 提供同名 skill，两份并存会让模型在未文档化的优先级下乱选。本条只保留 .claude/skills/ 一份，供 Claude Code 使用。**Codex 侧改依赖用户级 superpowers 插件** —— 该依赖已在 AGENTS.md 显式声明。"
   },
   {
     "path": ".claude/skills/systematic-debugging/find-polluter.sh",
@@ -57,7 +61,8 @@
     "import_pr": 216,
     "import_date": "2026-04-10",
     "import_rationale": "Supporting script for systematic-debugging skill (Issue #209)",
-    "last_drift_check": "2026-07-04"
+    "last_drift_check": "2026-07-04",
+    "mirror_rationale": "Codex 侧的镜像已于 2026-08-14 移除（Issue #571 / G3-4）：superpowers 插件 6.3.0 提供同名 skill，两份并存会让模型在未文档化的优先级下乱选。本条只保留 .claude/skills/ 一份，供 Claude Code 使用。**Codex 侧改依赖用户级 superpowers 插件** —— 该依赖已在 AGENTS.md 显式声明。"
   },
   {
     "path": ".claude/skills/systematic-debugging/root-cause-tracing.md",
@@ -69,7 +74,8 @@
     "import_pr": 216,
     "import_date": "2026-04-10",
     "import_rationale": "Supporting doc for systematic-debugging skill (Issue #209)",
-    "last_drift_check": "2026-07-04"
+    "last_drift_check": "2026-07-04",
+    "mirror_rationale": "Codex 侧的镜像已于 2026-08-14 移除（Issue #571 / G3-4）：superpowers 插件 6.3.0 提供同名 skill，两份并存会让模型在未文档化的优先级下乱选。本条只保留 .claude/skills/ 一份，供 Claude Code 使用。**Codex 侧改依赖用户级 superpowers 插件** —— 该依赖已在 AGENTS.md 显式声明。"
   },
   {
     "path": ".claude/skills/subagent-driven-development/SKILL.md",
@@ -81,7 +87,11 @@
     "import_pr": 216,
     "import_date": "2026-04-10",
     "import_rationale": "DEC-4 approved cherry-pick: fresh-subagent-per-task execution pattern (Issue #209)",
-    "last_drift_check": "2026-07-04"
+    "last_drift_check": "2026-07-04",
+    "mirror_paths": [
+      ".agents/skills/mercury-subagent-driven-development/SKILL.md"
+    ],
+    "mirror_rationale": "Codex 侧那份已于 2026-08-14 改名为 .agents/skills/mercury-subagent-driven-development/（Issue #571 / G3-4）：它含 Mercury 专属改造，与 superpowers 插件的同名 skill 不是同一个，改名以避免同名歧义。两份内容会各自演进，不是镜像关系。"
   },
   {
     "path": ".claude/skills/subagent-driven-development/implementer-prompt.md",
@@ -93,7 +103,11 @@
     "import_pr": 216,
     "import_date": "2026-04-10",
     "import_rationale": "Supporting prompt template for subagent-driven-development skill (Issue #209)",
-    "last_drift_check": "2026-07-04"
+    "last_drift_check": "2026-07-04",
+    "mirror_paths": [
+      ".agents/skills/mercury-subagent-driven-development/implementer-prompt.md"
+    ],
+    "mirror_rationale": "Codex 侧那份已于 2026-08-14 改名为 .agents/skills/mercury-subagent-driven-development/（Issue #571 / G3-4）：它含 Mercury 专属改造，与 superpowers 插件的同名 skill 不是同一个，改名以避免同名歧义。两份内容会各自演进，不是镜像关系。"
   },
   {
     "path": ".claude/skills/verification-before-completion/SKILL.md",
@@ -105,7 +119,8 @@
     "import_pr": 216,
     "import_date": "2026-04-10",
     "import_rationale": "DEC-4 approved cherry-pick: evidence-before-claims verification enforcement (Issue #209)",
-    "last_drift_check": "2026-07-04"
+    "last_drift_check": "2026-07-04",
+    "mirror_rationale": "Codex 侧的镜像已于 2026-08-14 移除（Issue #571 / G3-4）：superpowers 插件 6.3.0 提供同名 skill，两份并存会让模型在未文档化的优先级下乱选。本条只保留 .claude/skills/ 一份，供 Claude Code 使用。**Codex 侧改依赖用户级 superpowers 插件** —— 该依赖已在 AGENTS.md 显式声明。"
   },
   {
     "path": ".claude/skills/caveman-toggle/SKILL.md",
@@ -117,7 +132,11 @@
     "import_pr": 214,
     "import_date": "2026-04-10",
     "import_rationale": "Adapted caveman prompt text into Mercury-native persistent toggle skill (Issue #213)",
-    "last_drift_check": "2026-07-04"
+    "last_drift_check": "2026-07-04",
+    "mirror_paths": [
+      ".agents/skills/caveman-toggle/SKILL.md"
+    ],
+    "mirror_rationale": "Codex 只扫描 .agents/skills/（官方 6 层发现路径之一），而 Claude Code 只读 .claude/skills/；本机 core.symlinks=false，符号链接不可用，所以过渡期两份并存。Claude Code 退役后 .claude/skills/ 一并退役，届时把 path 改成镜像路径并删除本字段。"
   },
   {
     "path": "CLAUDE.local.md.example",

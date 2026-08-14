@@ -1,0 +1,17 @@
+{
+  "name": "@mercury/codex-orchestrator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Deterministic multi-agent orchestration on Codex CLI — the replacement for Claude Code Dynamic Workflows (Mercury Issue #571, G6).",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "scripts": {
+    "smoke": "node scripts/smoke.js"
+  },
+  "dependencies": {
+    "@openai/codex-sdk": "0.147.0"
+  }
+}

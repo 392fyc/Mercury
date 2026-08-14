@@ -9,16 +9,6 @@
       "command": "codex",
       "args": ["mcp-server"],
       "env": {}
-    },
-    "playwright": {
-      "type": "stdio",
-      "command": "node",
-      "args": [
-        "./adapters/playwright-mcp/launch.cjs",
-        "--isolated",
-        "--caps=storage",
-        "--storage-state=$MERCURY_PLAYWRIGHT_STORAGE_STATE"
-      ]
     }
   }
 }

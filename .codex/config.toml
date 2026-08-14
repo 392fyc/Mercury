@@ -4,6 +4,31 @@
 # Ensure web search is always available and live
 web_search = "live"
 
+# 权限姿态（G2-3，Issue #571）。
+#
+# Claude Code 侧对应的是 .claude/settings.local.json 的 defaultMode = bypassPermissions
+# 加 18 条 allow —— 实质是全放行，靠 hook 兜底。**这里刻意不做 1:1 直译**：
+# 把「全放行」搬到 Codex 等于用 --yolo，而 Codex 有更合适的表达方式，
+# 且实测已确认 .codex/rules/ 的运行时自动发现是有效的（它拦住了 git commit，
+# 原样回显了 rules 里的 justification）。
+#
+# 于是姿态改成三层各司其职，而不是「全放行 + 事后拦」：
+#   - sandbox_mode = workspace-write：能改本仓文件，改不了仓外的东西。
+#     写 C:\Program Files 这类操作实测会被沙箱直接拒（patch rejected:
+#     writing outside of the project），不必等 hook。
+#   - approval_policy = on-request：不逐步打断，需要越权时才问。
+#   - 危险的具体命令（受保护分支推送、绕过 guard 的 commit 等）交给 .codex/rules/。
+#
+# 没有配 writable_roots：跨仓库作业时用 --add-dir 显式声明，比常驻放开更清楚。
+# network_access 必须开 —— git push / pnpm install / gh 都要它，
+# 关掉会让整条开发流程在沙箱里失败，而这些操作本身已由 rules 层管着。
+# ⚠️ 只放顶层标量。section（[xxx]）一律写在文件末尾 —— 见下方 [features] 那段注释：
+# TOML 的 section 会捕获其后**所有** key=value 直到下一个 section 头，
+# 在这里插一个 section 会把 developer_instructions 静默 re-parent 进去，
+# 而 **TOML 解析依然合法、不会报任何错**。改完必须验证顶层键，光验证「解析通过」查不出来。
+sandbox_mode = "workspace-write"
+approval_policy = "on-request"
+
 # Mandatory instructions injected into every session
 developer_instructions = """
 MANDATORY: Before writing ANY code that imports an external SDK/API package or references API signatures:
@@ -14,10 +39,11 @@ MANDATORY: Before writing ANY code that imports an external SDK/API package or r
 5. If web_search fails, mark claims as UNVERIFIED
 6. Never commit or push directly on develop, master, or main
 7. If the current branch is protected or does not match feature/TASK-<id> or lane/<lane>/(init|<n>|<n>-<slug>), stop and move the work to a task branch before committing
-8. Codex hooks (.codex/hooks.json) are the primary enforcement layer for Bash + apply_patch tool calls (push-guard / pre-commit-guard / pr-create-guard / pr-merge-guard / scope-guard)
+8. **Do not rely on Codex hooks.** MEASURED (CLI 0.147.0, 2026-08-14, Issue #571 / G2-1): a real session performing a real `apply_patch` did NOT invoke its `PreToolUse` hook, even though `.codex/hooks.json` registers it and the `hooks` feature flag reads `stable`/`true`. SCOPE OF THAT EVIDENCE: exactly one path. The other three event types registered in hooks.json — `UserPromptSubmit`, `Stop`, `PostToolUse` — were NOT tested, so do not claim they are broken. Treating all of them as unavailable is a conservative posture (an unverified guard should not be counted on), not a proven fact. Method: an unconditional log line was instrumented at the top of scope-guard.sh; the probe file WAS created (so the patch really happened) and the manual-invocation control DID write the log (so the instrumentation and path were correct), yet the session produced no log line. Root cause is UNVERIFIED — the official docs pages for Codex hooks 404 and could not be checked. **The real enforcement layer on Codex is `.codex/rules/`**, which was confirmed in the same session: `git push origin HEAD` was `declined in 0ms` at the router with the rules justification echoed verbatim. Treat `scripts/codex/*.ps1` wrappers and clause #6/#7 self-discipline as the remaining lines, and do not assume any hook will stop you
 9. Defense-in-depth: scripts/codex/*.ps1 wrappers (powershell -File scripts/codex/git-safe.ps1 add/commit/push) remain available as fallback when hooks cannot be relied on (e.g. shell invocation in non-Codex contexts)
-10. Before every commit on a PR branch, run the dual-verify skill (parallel Claude Code deep-review + Codex code-audit); for minor commits auto-verify is acceptable; then run `powershell -File scripts/codex/guard.ps1 mark-review`
-11. Web-research enforcement: Codex hooks do NOT cover web_search tool calls (no handler — see Issue #20204). The web-research MUST is enforced at instruction level via clauses #1-5 above and via .codex/rules/. Verify your own compliance before each external SDK/API claim.
+10. Before every commit on a PR branch, run dual-verify: spawn TWO independent subagents that review the change blind and in parallel, at different `model_reasoning_effort` levels, then compare their findings. Reviewing your own work inside a single agent context does NOT satisfy this gate. (The legacy wording "parallel Claude Code deep-review + Codex code-audit" assumed Claude Code hosted the session; it no longer applies once Codex is the harness — see AGENTS.md and Issue #571.) This gate applies to every milestone commit, not only PR-branch commits, and auto-verify alone does NOT satisfy it. Then run `powershell -File scripts/codex/guard.ps1 mark-review`
+11. Web-research enforcement: Codex hooks do NOT cover web_search tool calls (no handler — see Issue #20204), and `.codex/rules/` does NOT constrain it either — rules match command prefixes, which cannot reach a hosted tool. So clauses #1-5 above are the ONLY enforcement, and they are advisory: nothing will block you. This rule runs on self-discipline on Codex. Verify your own compliance before each external SDK/API claim.
+12. 用户可见的回复一律用正常、清楚的简体中文完整句子。禁止网络黑话与内部简写 —— 英文缩写和中文圈内话都算，碰到就用平实的话讲清楚。专有名词、命令、接口名、字段名保留原文往往更清楚，保留即可；判断标准是读者能不能看懂，不是句子里有没有英文。宁可多写一句把事情说明白，也不要压缩到看不懂。严禁韩文与日文。代码、commit message、PR body 保持各自既有惯例（英文为主）。
 """
 
 # Enable lifecycle hooks (Codex CLI >= v0.124 GA, stable since v0.128).
@@ -33,3 +59,29 @@ MANDATORY: Before writing ANY code that imports an external SDK/API package or r
 # See .mercury/docs/research/codex-hooks-adoption-2026-05.md for ADR.
 [features]
 hooks = true
+
+# workspace-write 档位下的细则。network_access 必须开 —— git push / pnpm install / gh
+# 都要它，关掉会让整条开发流程在沙箱里失败，而这些操作本身已由 .codex/rules/ 管着。
+# 没有配 writable_roots：跨仓库作业时用 --add-dir 显式声明，比常驻放开更清楚。
+[sandbox_workspace_write]
+network_access = true
+
+# MCP servers（项目级）。用户级 `~/.codex/config.toml` 另配了 obsidian 与 godot，
+# 那两条不在这里。本文件当前**不注册任何项目级 MCP server**。
+#
+# playwright 已于 2026-08-14 移除（用户决定，Issue #571 / G3-3）。
+# 移除而非修好的理由：它依赖的 `MERCURY_PLAYWRIGHT_STORAGE_STATE` 在进程 / 用户 / 机器
+# 三个层级全都没有设置，适配器 `adapters/playwright-mcp/launch.cjs` 的 `expandEnv()`
+# 因此必然 fail-closed：
+#     config gate rejected launch: unresolved environment variable in path:
+#     "$MERCURY_PLAYWRIGHT_STORAGE_STATE" → "$MERCURY_PLAYWRIGHT_STORAGE_STATE"
+# 这**不是迁移造成的回归** —— `.mcp.json` 里是逐字相同的参数，两个 harness 上都早已起不来。
+# 与其留一条永远起不来的注册（每次调用都要失败一次、还让人误以为这个能力可用），
+# 不如摘掉；要恢复就把该变量指向一个真实的 storage-state 文件再把注册加回来。
+# 适配器代码 `adapters/playwright-mcp/` **保留未删**，恢复时无需重新挂载。
+#
+# 顺带记录已查明的一点：相对路径 `./adapters/...` 以**启动 MCP 时的工作目录**为解析基准，
+# 不是仓库根 —— 跨仓库启动时会解析到别处。
+#
+# `.mcp.json` 里另有两条同样不该迁的：`codex`（在 Codex 里配它自己没意义）与
+# `mercury-orchestrator`（实现已随 #173/#174 归档，端口 7654 无监听）。

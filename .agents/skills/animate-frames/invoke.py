@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+"""animate-frames skill — CLI wrapper around `scripts.image_gen`.
+
+Two modes:
+
+1. `--example <template>` — emit a starter scenes JSON to stdout. No
+   subprocess, no API key needed. Templates: `walking-cycle`, `idle`,
+   `attack-arc`. Agents typically pipe to a file then edit `scene` text.
+
+2. (default) — forward all arguments verbatim to
+   `python -m scripts.image_gen` rooted at this repo. The skill adds no
+   logic of its own; it exists so agents have a stable
+   `/animate-frames`-style entrypoint that doesn't require knowing the
+   `scripts/image_gen/` module path.
+
+Per ADR §7.2.3 (`.mercury/docs/research/pixel-animation-workflow-2026-05-08.md`).
+"""
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+# Slice B target marker — used only when launching the pipeline
+# subprocess. Validation is DEFERRED to that code path (Argus iter-8
+# Minor 可移植性): if a caller cherry-picks just this skill — or only
+# uses `--help` / `--example` / argparse-error paths — we should not
+# refuse to import. Only the pipeline launch needs the marker.
+_PIPELINE_MARKER = Path("scripts") / "image_gen" / "__main__.py"
+
+
+def _resolve_pipeline_root() -> Path:
+    """Walk parents looking for the Slice B marker.
+
+    Returns the first parent of this file that contains
+    `scripts/image_gen/__main__.py`. Raises SystemExit if no parent
+    has it — used only on the subprocess launch path so standalone
+    `--help` / `--example` use of this skill remains intact even when
+    cherry-picked outside Mercury.
+    """
+    for parent in Path(__file__).resolve().parents:
+        if (parent / _PIPELINE_MARKER).is_file():
+            return parent
+    raise SystemExit(
+        f"animate-frames: cannot locate Slice B pipeline "
+        f"({_PIPELINE_MARKER}) from any parent of this skill — the "
+        f"skill must live inside a Mercury checkout that includes "
+        f"`scripts/image_gen/` to run the pipeline. (`--help` and "
+        f"`--example` work without it; only `python -m scripts.image_gen` "
+        f"invocation requires the marker.)"
+    )
+
+SCENE_TEMPLATES: dict[str, list[dict]] = {
+    "walking-cycle": [
+        {"index": 0, "scene": "left foot forward, mid-stride, weight on left leg, arms swinging naturally", "filename": "frame_00.png"},
+        {"index": 1, "scene": "passing pose, both feet briefly under body, neutral arm position", "filename": "frame_01.png"},
+        {"index": 2, "scene": "right foot forward, mid-stride, weight on right leg, arms swinging opposite", "filename": "frame_02.png"},
+        {"index": 3, "scene": "passing pose mirrored, both feet briefly under body, neutral arm position", "filename": "frame_03.png"},
+    ],
+    "idle": [
+        {"index": 0, "scene": "relaxed standing pose, arms at sides, neutral expression", "filename": "frame_00.png"},
+        {"index": 1, "scene": "subtle breathing motion, shoulders slightly raised, same neutral expression", "filename": "frame_01.png"},
+    ],
+    "attack-arc": [
+        {"index": 0, "scene": "wind-up pose, weapon raised behind head, weight back, focused expression", "filename": "frame_00.png"},
+        {"index": 1, "scene": "mid-swing, weapon arcing forward at shoulder height, weight transferring forward", "filename": "frame_01.png"},
+        {"index": 2, "scene": "follow-through pose, weapon extended forward at waist height, weight on front foot", "filename": "frame_02.png"},
+    ],
+}
+
+
+def _emit_example(name: str) -> int:
+    template = SCENE_TEMPLATES.get(name)
+    if template is None:
+        sys.stderr.write(
+            f"error: unknown template {name!r}; "
+            f"available: {sorted(SCENE_TEMPLATES)}\n"
+        )
+        return 2
+    json.dump(template, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
+def _print_help() -> int:
+    sys.stdout.write(
+        "animate-frames — Mercury pixel-frame animation skill\n"
+        "\n"
+        "Usage:\n"
+        "  invoke.py --example {walking-cycle|idle|attack-arc} [> scenes.json]\n"
+        "  invoke.py --bible BIBLE --scenes SCENES --out-dir OUT [forwarded args...]\n"
+        "\n"
+        "The first form emits a starter scenes JSON; the second forwards every\n"
+        "argument to `python -m scripts.image_gen` (run that with --help for the\n"
+        "full flag list: --model / --size / --quality / --format / --background /\n"
+        "--timeout / --max-retries / --max-palette / --dhash-threshold /\n"
+        "--ssim-threshold / --loop-closure / --reference-size / --base-image /\n"
+        "--dry-run / --allow-skipped-gates).\n"
+        "\n"
+        "See .mercury/docs/guides/pixel-animation-workflow.md for the full\n"
+        "calling guide, JSON schemas, verify rubric, and examples.\n"
+    )
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    if not args or args[0] in ("-h", "--help"):
+        return _print_help()
+    if args[0] == "--example":
+        if len(args) < 2:
+            sys.stderr.write(
+                f"error: --example requires a template name; "
+                f"available: {sorted(SCENE_TEMPLATES)}\n"
+            )
+            return 2
+        # Reject mixed-mode invocations like `--example idle --out-dir frames`
+        # (Codex Slice C audit Low #1): silently ignoring trailing args
+        # would hide caller mistakes by exiting 0 after printing JSON.
+        # Argus iter-1 Critical (security): never echo the trailing arg
+        # values themselves — a caller who shell-substituted a token or
+        # key (e.g. `--example $OPENAI_API_KEY`) would otherwise see the
+        # secret reflected into stderr / CI logs. Report only the count.
+        if len(args) > 2:
+            # Argus iter-2 Minor (密钥回显): the help suggestion line below
+            # uses `<TEMPLATE>` instead of `args[1]`. Even though args[1]
+            # is the *template name* slot (not the value slot), a caller
+            # could shell-substitute a secret variable into that position
+            # by mistake (e.g. `--example $OPENAI_API_KEY ...`); a static
+            # placeholder removes that residual leak window entirely.
+            sys.stderr.write(
+                f"error: --example takes exactly one template name; "
+                f"got {len(args) - 2} extra argument(s) (values redacted).\n"
+                f"emit a template (`invoke.py --example <TEMPLATE> > scenes.json`, "
+                f"where <TEMPLATE> is one of {sorted(SCENE_TEMPLATES)}) "
+                f"and run the pipeline as a separate invocation.\n"
+            )
+            return 2
+        return _emit_example(args[1])
+    cmd = [sys.executable, "-m", "scripts.image_gen", *args]
+    # Pipeline launch is the ONLY path that needs the Slice B marker —
+    # `--help` / `--example` / argparse-error paths returned earlier
+    # without touching it (Argus iter-8 portability fix).
+    repo_root = _resolve_pipeline_root()
+    # Argus iter-1 Medium: a process-launch failure (interpreter on PATH
+    # misconfigured, permission denied, marker missing) raises OSError
+    # before the child runs. Catch at the boundary and surface a clean
+    # stderr + 127 exit so callers get a stable contract instead of an
+    # unhandled traceback.
+    try:
+        proc = subprocess.run(cmd, cwd=str(repo_root))
+    except OSError as exc:
+        # Argus iter-4 path leak: previously echoed the absolute
+        # REPO_ROOT path, which on shared CI logs would reveal local
+        # filesystem layout. The error category is sufficient for
+        # debugging; layout details can be inspected manually if
+        # needed via the skill's own location.
+        sys.stderr.write(
+            f"error: failed to launch `python -m scripts.image_gen` "
+            f"from the skill's repo root: {exc.__class__.__name__}: {exc.strerror or exc}\n"
+        )
+        return 127
+    return proc.returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main())
