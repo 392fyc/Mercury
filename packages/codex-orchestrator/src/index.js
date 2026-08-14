@@ -47,11 +47,16 @@ function splitStages(args) {
  * 只有当下一步真的需要「所有结果同时在手」时才用它（跨条目去重、合并、
  * 早退判断）。否则用 pipeline —— 屏障会让快的项白等慢的项。
  *
- * @param {Array<() => Promise<any>>} thunks
+ * **取消语义**：opts.signal 会作为参数传给每个 thunk（`t(signal)`）。池子本身
+ * 只在领取下一项之前检查取消状态，**管不了已经跑起来的那一项** —— 想让运行中的
+ * 调用也能被打断，thunk 必须把这个 signal 转交给 runAgent。不转交的话，
+ * 取消之后仍要等它自然结束或超时。
+ *
+ * @param {Array<(signal?:AbortSignal) => Promise<any>>} thunks
  * @param {{concurrency?:number, signal?:AbortSignal}} [opts]
  */
 export async function parallel(thunks, opts = {}) {
-  const settled = await mapWithPool(thunks, (t) => t(), {
+  const settled = await mapWithPool(thunks, (t) => t(opts.signal), {
     concurrency: opts.concurrency ?? defaultConcurrency(),
     signal: opts.signal,
   });
@@ -66,7 +71,8 @@ export async function parallel(thunks, opts = {}) {
  * 「无屏障」是共享池的自然结果 —— 条目 B 的第一阶段和条目 A 的第二阶段
  * 本来就在同一个池子里竞争槽位，谁先就绪谁先跑。
  *
- * 每个阶段收到 (上一阶段结果, 原始条目, 序号)。
+ * 每个阶段收到 (上一阶段结果, 原始条目, 序号, 取消信号)。第四个参数与 parallel 同理：
+ * 想让运行中的调用可被打断，阶段必须把它转交给 runAgent。
  * 任一阶段返回 null/undefined 或抛错，该条目就此丢弃、后续阶段不再执行，
  * 最终结果里留一个 null（失败隔离，不影响其他条目）。
  *
@@ -80,7 +86,7 @@ export async function pipeline(items, ...stagesAndOpts) {
     async (item, i) => {
       let cur = item;
       for (const stage of stages) {
-        cur = await stage(cur, item, i);
+        cur = await stage(cur, item, i, opts.signal);
         if (cur === null || cur === undefined) return null;
       }
       return cur;

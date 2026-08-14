@@ -8,7 +8,7 @@
  * 跑法：node packages/codex-orchestrator/scripts/smoke.js
  */
 
-import { RunLog, runAgent, parallel, pipeline, classify, capFanout } from '../src/index.js';
+import { RunLog, runAgent, parallel, pipeline, classify, capFanout, mapWithPool, sleep } from '../src/index.js';
 
 const LOG_FILE = process.env.ORCH_SMOKE_LOG || null;
 const log = new RunLog({ file: LOG_FILE, runId: 'smoke' });
@@ -49,6 +49,55 @@ results.push(check('认证失败被判为不可重试', classify(new Error('unau
 {
   const out = await parallel([async () => 'a', async () => { throw new Error('boom'); }, async () => 'c']);
   results.push(check('parallel 失败返 null 而非抛出', JSON.stringify(out) === '["a",null,"c"]', JSON.stringify(out)));
+}
+
+// —— 以下四条是回归测试。四个缺陷都是用本编排层审计它自己时查出来的（#571 G6-2），
+//    每条都必须能在缺陷复现时变红，否则测了等于没测。——
+{
+  // 缺陷一：早先 mapWithPool 先 Array.from(items) 物化再干活，无限迭代器会挂死在这一步。
+  function* endless() { let i = 0; while (true) yield i++; }
+  const seen = [];
+  const timer = setTimeout(() => { throw new Error('无限迭代器把池子挂死了'); }, 5000);
+  const ctrl = new AbortController();
+  const task = mapWithPool(endless(), async (v) => {
+    seen.push(v);
+    if (seen.length >= 5) ctrl.abort();
+    return v;
+  }, { concurrency: 2, signal: ctrl.signal });
+  await task;
+  clearTimeout(timer);
+  results.push(check('无限迭代器按需拉取、不预先物化', seen.length >= 5 && seen.length < 100, `取了 ${seen.length} 项`));
+}
+{
+  // 缺陷三：concurrency=NaN 曾让 Array.from({length:NaN}) 产生零个 worker，
+  // 整批静默跳过、返回全 null，既不执行也不报错。
+  let calls = 0;
+  const out = await parallel(
+    [async () => { calls++; return 'x'; }, async () => { calls++; return 'y'; }],
+    { concurrency: NaN }
+  );
+  results.push(check('并发参数为 NaN 时不静默跳过', calls === 2 && JSON.stringify(out) === '["x","y"]', `执行 ${calls} 次 → ${JSON.stringify(out)}`));
+}
+{
+  // 缺陷四：sleep 正常完成时未摘 abort 监听器（{once:true} 只在事件真触发后才自动摘）。
+  const ctrl = new AbortController();
+  let added = 0, removed = 0;
+  const origAdd = ctrl.signal.addEventListener.bind(ctrl.signal);
+  const origRemove = ctrl.signal.removeEventListener.bind(ctrl.signal);
+  ctrl.signal.addEventListener = (...a) => { added++; return origAdd(...a); };
+  ctrl.signal.removeEventListener = (...a) => { removed++; return origRemove(...a); };
+  await sleep(5, ctrl.signal);
+  await sleep(5, ctrl.signal);
+  results.push(check('sleep 正常完成后摘掉 abort 监听器', added === 2 && removed === 2, `注册 ${added} / 移除 ${removed}`));
+}
+{
+  // 缺陷二：parallel/pipeline 未把 signal 传给 thunk 与 stage，
+  // 于是已启动的任务无法被打断。
+  const ctrl = new AbortController();
+  let gotInThunk = null, gotInStage = null;
+  await parallel([async (sig) => { gotInThunk = sig; return 1; }], { signal: ctrl.signal });
+  await pipeline([1], (v, _item, _i, sig) => { gotInStage = sig; return v; }, { signal: ctrl.signal });
+  results.push(check('取消信号传达到 thunk 与 stage', gotInThunk === ctrl.signal && gotInStage === ctrl.signal));
 }
 
 // —— 2. 真实调用 ——

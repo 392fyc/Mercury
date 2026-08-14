@@ -71,13 +71,28 @@ export function backoffMs(attempt, { base = 1000, factor = 2, max = 30000, jitte
   return Math.round(raw - delta + Math.random() * delta * 2);
 }
 
+/**
+ * 可取消的等待。
+ *
+ * 正常完成时**必须**手动摘掉 abort 监听器：`{ once: true }` 只在该事件真的触发过
+ * 之后才自动移除，等待正常结束的情况它不管。而重试退避会把**同一个**外部 signal
+ * 反复用于每一次退避，所以漏摘会让监听器和它闭包住的对象在这个长生命周期 signal 上
+ * 越堆越多。
+ */
 export function sleep(ms, signal) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(new Error('aborted'));
-    const t = setTimeout(resolve, ms);
-    signal?.addEventListener('abort', () => {
-      clearTimeout(t);
-      reject(new Error('aborted'));
-    }, { once: true });
+    let onAbort;
+    const t = setTimeout(() => {
+      if (onAbort) signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    if (signal) {
+      onAbort = () => {
+        clearTimeout(t);
+        reject(new Error('aborted'));
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
   });
 }
