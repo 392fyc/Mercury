@@ -10,7 +10,18 @@ Claude Code 上两组用 **Agent Teams** 实时连携：一方 spawn 另一方�
 
 **这套在 Codex 上不能照搬**，三条硬理由：
 
-1. **工具名不在官方文档里**。`spawn_agent` / `send_input` / `wait_agent` / `close_agent` / `send_message` / `followup_task` 全部只存在于源码与 release notes，官方 subagents 文档对它们零记载 —— 逐字符核对过。这意味着它们是实现细节、随时可改，不能写进依赖代码的稳定假设。而且工具集在 v1 与 v2 之间已经改过一轮名（`send_input` 拆成 `send_message` + `followup_task`）。
+1. **工具名不在官方文档里，但在运行时提示里**（2026-08-14 更正，原措辞过头了）。
+   `spawn_agent` / `followup_task` / `send_message` / `wait_agent` / `interrupt_agent` / `list_agents`
+   在**官方 subagents 文档正文中零记载** —— 逐字符核对过，这一点没变。
+   但同日发现它们**连同完整行为契约都写在 Codex 的运行时系统提示里**（`codex debug prompt-input` 可读）：
+   并发槽数、`fork_turns` 的语义、共享文件系统的可见性、`wait_agent` 应使用分钟级等待，全都写明。
+   所以原来说的「只存在于源码与 release notes」是**不准确的**。
+
+   这不改变结论，但要改变理由的分量：运行时提示对**当前行为**是权威的，
+   拿它当行为依据是可以的（本仓的 dual-verify skill 正是据此写的调用契约）。
+   真正的顾虑退回到**稳定性**：提示内容不是公开契约，随版本改动且不会有迁移公告 ——
+   工具集在 v1 与 v2 之间已经改过一轮名（`send_input` 拆成 `send_message` + `followup_task`）。
+   一次性调用照着运行时提示写没问题；**长期跨组协作的承载物押在它上面则不行**。
 2. **父读不到子的中间状态**。这是最实质的缺口 —— 父 agent 能 spawn、能追加指令、能等结果，但**没有办法主动读一个正在跑的子 agent 的中间产出**。
 3. **没有共享任务列表或可订阅的消息总线**。官方 Issue #21027 挂着无人回应。
 
