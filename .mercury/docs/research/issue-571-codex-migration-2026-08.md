@@ -362,7 +362,11 @@ ChatGPT web 的定时任务跑在云上、碰不到本地仓库，不适用。
 ## 三、新发现的限制
 
 - **hook 的实际作用面被挤压**。防护顺序是**沙箱 → rules → 指令层 → hook**，前面的先生效。三次实测都没走到 hook（写 C 盘被沙箱拦、推保护分支被指令层拦、`git commit` 被 rules 拦）。**`.codex/rules/` 是比 hook 更靠前、更可靠的防线**。
-- **G2-1 的触发验证在当前权限下无解**。七种方式全试过：四条常规路径各自堵死（拦截型被前置层接走、loop-detector 因 `enabled:false` 触发即退出、post-commit-reset 的触发条件恰好被拦、UserPromptSubmit/Stop 产物无法归因），三种进程采集路径也不通（CIM 订阅带 `-Action` 非交互不执行、不带 `-Action` 拉不到、后台轮询过重拖垮被观测调用）。下一步需 ETW 内核事件采集，要额外权限。探针脚本已提交（`scripts/codex/hook-probe.ps1`），**它的自检机制两次都正确判了 INVALID 而不是报出看似结论的 NO-EVIDENCE**。
+- ~~**G2-1 的触发验证在当前权限下无解**~~ —— **本条已被推翻，见附录二第十三节**。
+  2026-08-14 G0-1 完成后用「无条件插桩 + 手动调用对照」拿到了确定结论，
+  不需要 ETW。**以第十三节为准。** 下面保留原文只是记录当时的排除路径：
+
+  七种方式全试过：四条常规路径各自堵死（拦截型被前置层接走、loop-detector 因 `enabled:false` 触发即退出、post-commit-reset 的触发条件恰好被拦、UserPromptSubmit/Stop 产物无法归因），三种进程采集路径也不通（CIM 订阅带 `-Action` 非交互不执行、不带 `-Action` 拉不到、后台轮询过重拖垮被观测调用）。下一步需 ETW 内核事件采集，要额外权限。探针脚本已提交（`scripts/codex/hook-probe.ps1`），**它的自检机制两次都正确判了 INVALID 而不是报出看似结论的 NO-EVIDENCE**。
 - **`read-only` 沙箱下 agent 联不上网**。`network_access = true` 只配在 `[sandbox_workspace_write]` 下，检索类 agent 用 read-only 会静默拿不到网络。已在 `runAgent` 加警告（不自动提升档位 —— 那会静默扩大权限）。
 - **TOML 的 section 会静默吞掉后续顶层标量**。在 `.codex/config.toml` 中部插一个 `[section]`，会把它之后的 `developer_instructions` re-parent 进去，**而解析完全合法不报错**。改完必须验证顶层键，光验证「解析通过」查不出来。
 
@@ -740,3 +744,78 @@ codex plugin marketplace remove superpowers-dev
 **给下一个人**：不要再从 git 历史或仓内状态文件里找这个答案，那里没有。
 真要客观依据，得从 Claude Code 的会话记录（`~/.claude/projects/*/`）里翻
 Workflow 调用，那是另一个量级的工作，且只覆盖本机。
+
+---
+
+# 附录三：G0-1 完成后的实测（2026-08-14 傍晚）
+
+## 十三、G2-1 有答案了：`PreToolUse` 的 `apply_patch` hook 不触发
+
+**这一节推翻附录一「G2-1 在当前权限下无解、下一步需 ETW」那条。** 不需要 ETW。
+
+**方法**：给 `.claude/hooks/scope-guard.sh` 顶部插一行**无条件**日志（写绝对路径），
+让真实 `codex exec` 会话用 `apply_patch` 建一个文件。三项同时成立才算数：
+
+| 检查 | 结果 | 作用 |
+|---|---|---|
+| 探针文件被创建 | 是 | 证明 patch 真的发生了 |
+| 手动调用对照写出日志 | 是（`FIRED 16:49:52`） | 证明插桩与路径都正确 |
+| 会话产生日志行 | **否** | 结论：hook 未被调用 |
+
+被测的 matcher 是 `^apply_patch$` —— **Codex 自己的工具名**，不是另外四条用的 `^Bash$`，
+所以这不是工具名对不上。`codex features list` 显示 `hooks` 为 `stable`/`true`。
+
+**证据范围（重要）**：只覆盖 `PreToolUse` 的 `apply_patch` 这一条路径。
+`UserPromptSubmit` / `Stop` / `PostToolUse` **没有测过**。指令层里写「全部按不可依赖处理」
+是**保守取向**，不是已证明它们全都失效 —— 这个分寸是 dual-verify 的 B 路盲审指出来的，
+我最初的写法确实做了超出证据的范围扩大。
+
+**根因 UNVERIFIED**：Codex hooks 的官方文档页 404，无法核实是路径、schema 还是事件名的问题。
+
+### 五种被判无效的测量（别重走）
+
+| 测量 | 为什么不算数 |
+|---|---|
+| 文件创建成功 | hook 放行时静默 exit 0，不区分「跑了并放行」与「没跑」 |
+| `GUARD_DEBUG=1` 无日志 | `scope-guard.sh` 根本不支持该变量、不写任何日志 |
+| 路径含 `..` 应被拦 | Codex 在发出工具调用前就把路径规范化了 |
+| 插桩写 `/tmp` | `/tmp` 在 Git Bash 与 hook 实际运行的 shell 里可能解析到不同位置 |
+| 绝对路径插桩（第一次） | 该次运行被超时**杀掉**，探针文件根本没创建 —— 无效运行 |
+
+最后一条最危险：对照组是好的，很容易把那次「无记录」当成结论。
+
+## 十四、G2-2 复测通过
+
+真实会话执行 `git push origin HEAD` → 在 **router 层 `declined in 0ms`**，
+原样回显 rules 的 justification。附录二第 9 条曾标注「该观察发生在移除 azure 路由之前、
+尚未复测，不应当作已确认」—— **现已复测，结论成立**。
+
+同一次运行还确认了防护顺序：rules 在 router 层拦截，**根本到不了 hook**。
+
+## 十五、G5-3 完整闭环（含产出质量）
+
+四个环节全部实测：hook 触发 → 解析 Codex transcript → 经 `codex exec` 提取 → 落盘。
+
+`Using codex CLI: ...codex.CMD` → `Result: saved to daily log (955 chars)`。
+
+**质量不是只看字数**：提取出的记忆准确保留了「手动调用对照可正常写日志，根因尚未验证」
+这种分寸，以及 rules 与 `execpolicy check` 的区别、「实际三层」的结论 —— 不是套话摘要。
+
+顺带确认 GBK 修复在真实运行中生效：`session_chain recorded: ... issues=['571']`，
+此前该字段恒为空。
+
+## 十六、G4-2 dual-verify 跑通，并抓出了本次改动自己的缺陷
+
+两路盲审（不同 `model_reasoning_effort`）对 commit `a7985eb` 的 diff 给出 **NEEDS-CHANGES**，
+四条 finding **全部成立**：
+
+| 路 | 严重度 | 问题 |
+|---|---|---|
+| A | high | AGENTS.md 仍称 web-research 强制靠 `developer_instructions` **与 rules**，与新改的第 11 条（rules 管不到 hosted tool）矛盾 |
+| A | medium | 标题仍写「防护是四层」，紧接的新内容却说三层 |
+| B | high | 一次 `apply_patch` 的结果被写成「全部 hooks 不触发」—— 超出证据的范围扩大 |
+| B | high | 本主档仍写「G2-1 需 ETW」，而 AGENTS.md 规定**冲突时以本主档为准** —— 两个矛盾依据且过时那个优先级更高 |
+
+四条已全部修正。**这是这道门第一次在真实合并前拦下真实问题**，而且拦的是
+「一个主题就是证据严谨的提交里，自己做了超出证据的断言」——
+比它跑通本身更能说明它有用。

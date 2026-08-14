@@ -100,13 +100,19 @@ Mercury 原本用 Claude Code 的 Dynamic Workflow（脚本确定性编排数十
 - **项目信任是前提**：`~/.codex/config.toml` 的 `[projects.'<path>']` 条目必须用**普通路径形式**（`D:\Mercury\Mercury`），不能是扩展长度形式（`\\?\D:\...`）。后者会让 Codex 视该项目为 untrusted，从而**跳过整个项目级 `.codex/` 层**——project config、hooks、rules 全部不加载，且没有任何报错。自检：`codex debug prompt-input | grep -c dual-verify` 应 ≥ 1。
 - **hook 在只读沙箱下不要写文件**：实测在 `--sandbox read-only` 下，一旦 hook 尝试写日志，整个工具调用会挂起直到超时（同一条命令从 9 秒变成 200 秒超时，日志文件停留在 0 字节）。调试 hook 时用 `GUARD_DEBUG=1` 需配合可写沙箱档位。
 - **Windows 上工具调用走 pwsh**：实测 Codex 用 `pwsh.exe -Command '...'` 执行，不是 bash。hook 命令若需 Windows 专用形态，用官方的 `command_windows` / `commandWindows` 字段（TOML 两种写法都接受）。同理 `managed_dir` 在 Windows 上叫 `windows_managed_dir`。
-- **防护是四层，顺序是「沙箱 → rules → 指令层 → hook」，前面的先生效。** 2026-08-14 实测三例：往 `C:\Program Files` 写被**沙箱**拦（`patch rejected: writing outside of the project`）；推受保护分支被**指令层**拦（Codex 引用 developer_instructions 第 6 条自行拒绝执行）；`git commit` 被 **`.codex/rules/`** 拦（原样回显了 rules 里的 justification：「Use `powershell -File scripts/codex/git-safe.ps1 commit …` so review and branch guards run first」）。
+- **防护实际是三层，顺序是「沙箱 → rules → 指令层」，前面的先生效。**
+  （原先写的是「四层」并把 hook 算作最后一层，实测后已证伪 —— 见下条。）2026-08-14 实测三例：往 `C:\Program Files` 写被**沙箱**拦（`patch rejected: writing outside of the project`）；推受保护分支被**指令层**拦（Codex 引用 developer_instructions 第 6 条自行拒绝执行）；`git commit` 被 **`.codex/rules/`** 拦（原样回显了 rules 里的 justification：「Use `powershell -File scripts/codex/git-safe.ps1 commit …` so review and branch guards run first」）。
   三次都没走到 hook。**2026-08-14 补测：实际是三层，hook 那层根本不存在。**
   原先以为「只要不被前三层接走，hook 就会生效」，实测推翻了：`apply_patch` 这类
   **不被 rules 覆盖**的操作，hook 同样不触发。方法见下条。
-- **Codex 上的 hook 不触发，不要依赖它**（Issue [#571](https://github.com/392fyc/Mercury/issues/571) / G2-1）。
-  `.codex/hooks.json` 注册了 10 条命令，`codex features list` 显示 `hooks` 为 `stable`/`true`，
-  但 CLI 0.147.0 实测：真实会话里真实发生的 `apply_patch` **没有调用 hook**。
+- **`PreToolUse` 的 `apply_patch` hook 实测不触发；其余事件未测，一并按不可依赖处理**
+  （Issue [#571](https://github.com/392fyc/Mercury/issues/571) / G2-1）。
+  `.codex/hooks.json` 注册了 10 条命令（PreToolUse 5 / PostToolUse 2 / UserPromptSubmit 2 / Stop 1），
+  `codex features list` 显示 `hooks` 为 `stable`/`true`，
+  但 CLI 0.147.0 实测：真实会话里真实发生的 `apply_patch` **没有调用它的 `PreToolUse` hook**。
+  **实测只覆盖了这一条路径** —— `UserPromptSubmit` / `Stop` / `PostToolUse` 三类**没有测过**，
+  不能据此断言它们也不触发。这里要求「按不可依赖处理」是**保守取向**（未验证的护栏不该当作存在），
+  不是已证明它们全都失效。
   **测量方法**（前四种都被判无效，别重走）：给 `scope-guard.sh` 顶部插一行无条件日志 ——
   探针文件确实被创建（证明 patch 真的发生了）、手动调用对照确实写出了日志
   （证明插桩与路径都对），而那次会话没有产生任何日志行。
@@ -115,7 +121,11 @@ Mercury 原本用 Claude Code 的 Dynamic Workflow（脚本确定性编排数十
   router 层 `declined in 0ms` 并原样回显 justification。
 - **`.codex/rules/` 的运行时自动发现是有效的**（上面第三例即证据）。但 **`codex execpolicy check` 这个子命令不做自动发现**，必须显式 `--rules <PATH>` —— 它是独立检查工具，别拿它的行为去推断运行时。
 - **`codex debug prompt-input` 不含 tool 定义**，不能拿它当「某个工具不存在」的证据。
-- **hosted tool 不走本地 hook**：`web_search` 这类工具不触发 PreToolUse/PostToolUse，所以 web-research 的强制只能靠 `developer_instructions` 与 `.codex/rules/` 的指令层，不能靠 hook。
+- **hosted tool 完全没有技术拦截**：`web_search` 这类工具不触发 PreToolUse/PostToolUse，
+  **`.codex/rules/` 同样管不到它** —— rules 匹配的是命令前缀，够不着一个托管工具。
+  所以 web-research 的强制**只剩 `developer_instructions` 的自律**，没有任何东西会拦你。
+  （早先这条写的是「靠 developer_instructions 与 `.codex/rules/` 的指令层」，
+  把 rules 也算了进去，与 `.codex/config.toml` 第 11 条相矛盾 —— 那会让人误以为有规则层兜底。）
 - **沙箱下 `.git` / `.agents` / `.codex` 始终只读** —— Codex 改不了自己的 skill / hook / agent 定义，凡涉及写这三个目录必须在 Codex 之外操作。
 - Codex sandbox may block network access — git push failures are expected, Main Agent handles push.
 - **主次与这里原先写的相反**：`.codex/rules/` 才是 Codex 上唯一实测生效的强制层，
