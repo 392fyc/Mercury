@@ -66,34 +66,22 @@ hooks = true
 [sandbox_workspace_write]
 network_access = true
 
-# MCP servers（项目级；用户级 ~/.codex/config.toml 另配了 obsidian 与 godot）。
-# 从 .mcp.json 迁来 —— Codex 没有独立的 .mcp.json，MCP 声明并入 config.toml。
-# 原先标为「未验证」的两点已于 2026-08-14 查明：
+# MCP servers（项目级）。用户级 `~/.codex/config.toml` 另配了 obsidian 与 godot，
+# 那两条不在这里。本文件当前**不注册任何项目级 MCP server**。
 #
-# ① `$MERCURY_PLAYWRIGHT_STORAGE_STATE` 由谁展开 —— **问错了方向**。展开不是 Codex 做的，
-#    是适配器自己做的：`adapters/playwright-mcp/launch.cjs` 的 `expandEnv()` 同时处理
-#    `%VAR%` / `${VAR}` / `$VAR` 三种写法，并在有 token 未解析时**抛错 fail-closed**。
-#    所以 Codex 展不展开都不影响结果。
+# playwright 已于 2026-08-14 移除（用户决定，Issue #571 / G3-3）。
+# 移除而非修好的理由：它依赖的 `MERCURY_PLAYWRIGHT_STORAGE_STATE` 在进程 / 用户 / 机器
+# 三个层级全都没有设置，适配器 `adapters/playwright-mcp/launch.cjs` 的 `expandEnv()`
+# 因此必然 fail-closed：
+#     config gate rejected launch: unresolved environment variable in path:
+#     "$MERCURY_PLAYWRIGHT_STORAGE_STATE" → "$MERCURY_PLAYWRIGHT_STORAGE_STATE"
+# 这**不是迁移造成的回归** —— `.mcp.json` 里是逐字相同的参数，两个 harness 上都早已起不来。
+# 与其留一条永远起不来的注册（每次调用都要失败一次、还让人误以为这个能力可用），
+# 不如摘掉；要恢复就把该变量指向一个真实的 storage-state 文件再把注册加回来。
+# 适配器代码 `adapters/playwright-mcp/` **保留未删**，恢复时无需重新挂载。
 #
-# ② **但该变量在进程 / 用户 / 机器三个层级全都没有设置**，因此适配器必然拒绝启动：
-#      config gate rejected launch: unresolved environment variable in path:
-#      "$MERCURY_PLAYWRIGHT_STORAGE_STATE" → "$MERCURY_PLAYWRIGHT_STORAGE_STATE"
-#    这**不是迁移造成的回归** —— Claude Code 的 .mcp.json 里是逐字相同的参数，
-#    playwright MCP 在两个 harness 上都早已起不来，只是迁移把它照出来了。
-#    要让它可用，需要把该变量指向一个真实的 storage-state 文件（内含浏览器登录态，
-#    属用户私有路径，这也正是它用环境变量而非硬编码的原因）。这是用户侧决定，未擅自设置。
+# 顺带记录已查明的一点：相对路径 `./adapters/...` 以**启动 MCP 时的工作目录**为解析基准，
+# 不是仓库根 —— 跨仓库启动时会解析到别处。
 #
-# ③ 相对路径 `./adapters/...` 的解析基准：上面那次运行以仓库根为 cwd 成功定位到脚本，
-#    说明基准是启动 MCP 时的工作目录；跨仓库启动时需注意。
-# 未迁的两条：.mcp.json 里的 `codex`（codex mcp-server —— 在 Codex 里配它自己没意义）
-# 与 `mercury-orchestrator`（实现已随 #173/#174 归档到 archive/packages/orchestrator，
-# 端口 7654 上没有任何东西在监听；配置残留另行清理）。
-[mcp_servers.playwright]
-command = "node"
-args = [
-  "./adapters/playwright-mcp/launch.cjs",
-  "--isolated",
-  "--caps=storage",
-  "--storage-state=$MERCURY_PLAYWRIGHT_STORAGE_STATE",
-]
-startup_timeout_sec = 30
+# `.mcp.json` 里另有两条同样不该迁的：`codex`（在 Codex 里配它自己没意义）与
+# `mercury-orchestrator`（实现已随 #173/#174 归档，端口 7654 无监听）。

@@ -37,6 +37,38 @@ Mercury 的部分功能跨仓库运作。以下表格记录外部仓库与 Mercu
 | **Memory layer (user-level)** | `~/.claude/hooks/` + `~/.claude/scripts/` | flush + session-start/end hooks + cost tracker | 运行时独立于任何 git 仓库 |
 | **claude-handoff** | 插件仓库 <https://github.com/392fyc/claude-handoff> | Session handoff / 续接 + `session_chain` SQLite | 本地插件 |
 | **Mercury_KB** | Obsidian vault（路径见 `.handoff-config` 的 `kb_dir`） | 项目专属 KB；handoff 文档落点 | **active** — 经直接文件系统访问 |
+| **superpowers**（用户级插件） | `~/.codex/plugins/cache/superpowers-dev/superpowers/<版本>/` | 方法论 skill 包（14 个），其中 `systematic-debugging` 与 `verification-before-completion` 是 **Codex 侧唯一来源** | **必需依赖，非可选** — 见下方声明 |
+
+### ⚠️ Codex 侧对 superpowers 的硬依赖（换机器必读）
+
+2026-08-14（Issue [#571](https://github.com/392fyc/Mercury/issues/571) / G3-4）删除了
+`.agents/skills/systematic-debugging/` 与 `.agents/skills/verification-before-completion/`
+两个旧镜像，因为 superpowers 插件提供同名且更新的 6.3.0，两份并存会让模型在
+**未文档化的优先级**下乱选。
+
+**代价是这两个质量 skill 在 Codex 侧变成了机器级依赖**：插件装在用户目录、不在仓库里。
+换一台机器或换一个维护者，如果没装插件，它们会**静默从 skill 发现列表消失** ——
+不报错、不提示，只是不再被触发。（此风险由 dual-verify 盲审指出，不是事后补记。）
+
+**新环境必须执行**：
+
+```
+codex plugin marketplace add obra/superpowers
+codex plugin add superpowers@superpowers-dev
+```
+
+**自检**（判据是它进没进模型可见范围，不是磁盘上有没有文件 —— 后者曾把人骗过一次）：
+
+```
+codex debug prompt-input | grep -o 'superpowers/[^/]*/skills/[a-z-]*/SKILL\.md' | sort -u | wc -l
+```
+
+**应返回 14**。返回 0 = 插件未生效，那两个 skill 此刻不可用。
+
+⚠️ 不要用 `grep -c` —— 所有 skill 声明挤在同一个 JSON 行里，`grep -c` 数的是**行数**（会返回 2），
+不是 skill 数量。必须 `grep -o` 逐个抽出来再去重计数。
+
+`.claude/skills/` 下的两份**未删**，Claude Code 侧不受影响。
 
 **跨仓库开发注意事项：**
 - `dev-pipeline` 等流程假设单仓库工作，跨仓库任务需直接实现

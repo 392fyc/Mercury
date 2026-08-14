@@ -177,7 +177,30 @@ with provisioned cache reaches upstream `--version` → `Version 0.0.75`.
 
 ## Run
 
-The server is registered in the repo-root `.mcp.json` under `playwright`:
+> **⚠️ 当前未注册 —— 照下面的配置抄进去之前先读这段。**
+>
+> 2026-08-14（Issue [#571](https://github.com/392fyc/Mercury/issues/571) / G3-3）该 server 的注册
+> 已从 `.mcp.json`（Claude Code 侧）与 `.codex/config.toml`（Codex 侧）**两处一并移除**。
+> 适配器代码本身保留未删，所以恢复只需把下面的配置加回去。
+>
+> **移除原因不是适配器有问题，是它依赖的环境变量从来没被设置过**：
+> `MERCURY_PLAYWRIGHT_STORAGE_STATE` 在进程 / 用户 / 机器三个层级全都为空，
+> 于是 `launch.cjs` 的 `expandEnv()` 每次都按设计 fail-closed：
+>
+> ```
+> config gate rejected launch: unresolved environment variable in path:
+> "$MERCURY_PLAYWRIGHT_STORAGE_STATE" → "$MERCURY_PLAYWRIGHT_STORAGE_STATE"
+> ```
+>
+> 这**不是迁移造成的回归** —— 两个 harness 的配置里是逐字相同的参数，所以它在两边都早已起不来，
+> 只是迁移把它照出来了。与其留一条永远起不来的注册（每次会话失败一次，还让人误以为这个能力可用），
+> 不如摘掉。
+>
+> **要恢复**：先把 `MERCURY_PLAYWRIGHT_STORAGE_STATE` 指向一个真实的 storage-state 文件
+> （内含浏览器登录态，属用户私有路径 —— 这也正是它用环境变量而非硬编码的原因），
+> 再把下面的条目加回 `.mcp.json`。
+
+注册形态（供恢复时参考）：
 
 ```jsonc
 {

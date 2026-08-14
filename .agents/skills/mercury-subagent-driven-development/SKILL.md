@@ -1,9 +1,12 @@
 ---
-name: subagent-driven-development
+name: mercury-subagent-driven-development
 description: >-
-  Execute plans by dispatching fresh subagent per task, with two-stage review
-  (spec compliance then code quality). Use when implementing a multi-task plan
-  within the current session using isolated subagents.
+  Mercury 改造版的 subagent-driven-development：按任务派发全新 subagent，配两段式审查
+  （先查是否符合规格，再查代码质量）。适用于在当前会话内用隔离的 subagent 执行多任务计划。
+  与 superpowers 插件自带的同名 skill **不是同一个** —— 这一份含 Mercury 专属改造
+  （#385 的 context 经济学护栏、Windows 优先的路径处理），所以刻意改名并存，
+  避免同名条目让模型在两份之间按未文档化的优先级乱选。需要上游原版时用
+  superpowers 提供的 `subagent-driven-development`。
 user-invocable: true
 # Controller-side tool contract: Read/Glob/Grep to locate plan + ledger, Agent to
 # dispatch implementer/reviewer subagents, TodoWrite to track tasks, Bash for the
