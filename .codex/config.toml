@@ -4,6 +4,31 @@
 # Ensure web search is always available and live
 web_search = "live"
 
+# 权限姿态（G2-3，Issue #571）。
+#
+# Claude Code 侧对应的是 .claude/settings.local.json 的 defaultMode = bypassPermissions
+# 加 18 条 allow —— 实质是全放行，靠 hook 兜底。**这里刻意不做 1:1 直译**：
+# 把「全放行」搬到 Codex 等于用 --yolo，而 Codex 有更合适的表达方式，
+# 且实测已确认 .codex/rules/ 的运行时自动发现是有效的（它拦住了 git commit，
+# 原样回显了 rules 里的 justification）。
+#
+# 于是姿态改成三层各司其职，而不是「全放行 + 事后拦」：
+#   - sandbox_mode = workspace-write：能改本仓文件，改不了仓外的东西。
+#     写 C:\Program Files 这类操作实测会被沙箱直接拒（patch rejected:
+#     writing outside of the project），不必等 hook。
+#   - approval_policy = on-request：不逐步打断，需要越权时才问。
+#   - 危险的具体命令（受保护分支推送、绕过 guard 的 commit 等）交给 .codex/rules/。
+#
+# 没有配 writable_roots：跨仓库作业时用 --add-dir 显式声明，比常驻放开更清楚。
+# network_access 必须开 —— git push / pnpm install / gh 都要它，
+# 关掉会让整条开发流程在沙箱里失败，而这些操作本身已由 rules 层管着。
+# ⚠️ 只放顶层标量。section（[xxx]）一律写在文件末尾 —— 见下方 [features] 那段注释：
+# TOML 的 section 会捕获其后**所有** key=value 直到下一个 section 头，
+# 在这里插一个 section 会把 developer_instructions 静默 re-parent 进去，
+# 而 **TOML 解析依然合法、不会报任何错**。改完必须验证顶层键，光验证「解析通过」查不出来。
+sandbox_mode = "workspace-write"
+approval_policy = "on-request"
+
 # Mandatory instructions injected into every session
 developer_instructions = """
 MANDATORY: Before writing ANY code that imports an external SDK/API package or references API signatures:
@@ -34,6 +59,12 @@ MANDATORY: Before writing ANY code that imports an external SDK/API package or r
 # See .mercury/docs/research/codex-hooks-adoption-2026-05.md for ADR.
 [features]
 hooks = true
+
+# workspace-write 档位下的细则。network_access 必须开 —— git push / pnpm install / gh
+# 都要它，关掉会让整条开发流程在沙箱里失败，而这些操作本身已由 .codex/rules/ 管着。
+# 没有配 writable_roots：跨仓库作业时用 --add-dir 显式声明，比常驻放开更清楚。
+[sandbox_workspace_write]
+network_access = true
 
 # MCP servers（项目级；用户级 ~/.codex/config.toml 另配了 obsidian 与 godot）。
 # 从 .mcp.json 迁来 —— Codex 没有独立的 .mcp.json，MCP 声明并入 config.toml。
