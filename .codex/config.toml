@@ -34,3 +34,20 @@ MANDATORY: Before writing ANY code that imports an external SDK/API package or r
 # See .mercury/docs/research/codex-hooks-adoption-2026-05.md for ADR.
 [features]
 hooks = true
+
+# MCP servers（项目级；用户级 ~/.codex/config.toml 另配了 obsidian 与 godot）。
+# 从 .mcp.json 迁来 —— Codex 没有独立的 .mcp.json，MCP 声明并入 config.toml。
+# 两处**未验证**：① $MERCURY_PLAYWRIGHT_STORAGE_STATE 这个占位符 Codex 会不会展开；
+# ② 相对路径 ./adapters/... 的解析基准是不是仓库根。首次真实调用时确认。
+# 未迁的两条：.mcp.json 里的 `codex`（codex mcp-server —— 在 Codex 里配它自己没意义）
+# 与 `mercury-orchestrator`（实现已随 #173/#174 归档到 archive/packages/orchestrator，
+# 端口 7654 上没有任何东西在监听；配置残留另行清理）。
+[mcp_servers.playwright]
+command = "node"
+args = [
+  "./adapters/playwright-mcp/launch.cjs",
+  "--isolated",
+  "--caps=storage",
+  "--storage-state=$MERCURY_PLAYWRIGHT_STORAGE_STATE",
+]
+startup_timeout_sec = 30
