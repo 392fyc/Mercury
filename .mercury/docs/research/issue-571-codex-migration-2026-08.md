@@ -676,3 +676,32 @@ manifest 记的上游 SHA 也不同（`d884ae04edeb`）。删掉会丢失 Mercur
 **这里的重名是真冲突**，两条路：改名为 `mercury-subagent-driven-development`，
 或禁用插件那份（**「按 skill 粒度禁用」这个能力未验证**）。
 倾向改名 —— 不依赖未验证能力，且把「这是改造版」写进名字比靠优先级规则更不易出错。
+
+## 十一、回滚清单（2026-08-14 逐一验证过，不是「应该能行」）
+
+本次迁移动过的所有文件都留了改动前备份。**每份都核对过确实是改动前版本**
+（含旧代码、不含新代码），现役文件反向确认含新代码 —— 不是只看了文件存不存在。
+
+| 备份 | 恢复什么 |
+|---|---|
+| `~/.claude/hooks/session-end.py.backup-pre-571-g53` | Codex transcript 解析 + git 调用的 encoding 修复 |
+| `~/.claude/hooks/pre-compact.py.backup-pre-571-g53` | 同上的解析器修复 |
+| `~/.claude/scripts/flush.py.backup-pre-571-g53` | codex 提取路径 |
+| `~/.codex/config.toml.backup-pre-marketplace-20260814` | superpowers 市场注册前 |
+| `~/.codex/config.toml.backup-pre-codex-migration-20260814` | 整个迁移开始前（含 azure 路由） |
+| `~/.codex/auth.json.backup-pre-chatgpt-login-20260814` | 原 API key 凭据 |
+
+**回滚方式**：`mv <备份> <原路径>`（去掉 `.backup-*` 后缀即为原路径）。
+
+**仓内改动**全部在 `feature/TASK-571` 分支上，`git revert` 或不合并 PR #572 即可。
+
+**superpowers 插件**另有专用命令（不是文件回滚）：
+
+```
+codex plugin remove superpowers@superpowers-dev
+codex plugin marketplace remove superpowers-dev
+```
+
+**验证回滚是否生效**：跑 `scripts/codex/memory-layer-tests/` 下的三个脚本 ——
+回滚后 `transcript-parser-verify.py` 的 A 项（Codex 路径能读出内容）应当**失败**，
+因为那正是被回滚掉的能力。若它仍然通过，说明回滚没真正生效。
