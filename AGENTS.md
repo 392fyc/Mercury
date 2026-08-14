@@ -99,7 +99,9 @@ Mercury 原本用 Claude Code 的 Dynamic Workflow（脚本确定性编排数十
 - **项目信任是前提**：`~/.codex/config.toml` 的 `[projects.'<path>']` 条目必须用**普通路径形式**（`D:\Mercury\Mercury`），不能是扩展长度形式（`\\?\D:\...`）。后者会让 Codex 视该项目为 untrusted，从而**跳过整个项目级 `.codex/` 层**——project config、hooks、rules 全部不加载，且没有任何报错。自检：`codex debug prompt-input | grep -c dual-verify` 应 ≥ 1。
 - **hook 在只读沙箱下不要写文件**：实测在 `--sandbox read-only` 下，一旦 hook 尝试写日志，整个工具调用会挂起直到超时（同一条命令从 9 秒变成 200 秒超时，日志文件停留在 0 字节）。调试 hook 时用 `GUARD_DEBUG=1` 需配合可写沙箱档位。
 - **Windows 上工具调用走 pwsh**：实测 Codex 用 `pwsh.exe -Command '...'` 执行，不是 bash。hook 命令若需 Windows 专用形态，用官方的 `command_windows` / `commandWindows` 字段（TOML 两种写法都接受）。同理 `managed_dir` 在 Windows 上叫 `windows_managed_dir`。
-- **`codex execpolicy check` 不做规则自动发现**，必须显式 `--rules <PATH>`。它是独立检查工具；运行时的自动发现是另一条路径，要在真实会话里验证。
+- **防护是四层，顺序是「沙箱 → rules → 指令层 → hook」，前面的先生效。** 2026-08-14 实测三例：往 `C:\Program Files` 写被**沙箱**拦（`patch rejected: writing outside of the project`）；推受保护分支被**指令层**拦（Codex 引用 developer_instructions 第 6 条自行拒绝执行）；`git commit` 被 **`.codex/rules/`** 拦（原样回显了 rules 里的 justification：「Use `powershell -File scripts/codex/git-safe.ps1 commit …` so review and branch guards run first」）。
+  三次都没走到 hook。**结论：在 Codex 上 `.codex/rules/` 是比 hook 更靠前、更可靠的防线，而 hook 的实际作用面比在 Claude Code 上小得多** —— 要让某条 hook 真正起作用，得确认它拦的那类操作没有被前三层先接走。
+- **`.codex/rules/` 的运行时自动发现是有效的**（上面第三例即证据）。但 **`codex execpolicy check` 这个子命令不做自动发现**，必须显式 `--rules <PATH>` —— 它是独立检查工具，别拿它的行为去推断运行时。
 - **`codex debug prompt-input` 不含 tool 定义**，不能拿它当「某个工具不存在」的证据。
 - **hosted tool 不走本地 hook**：`web_search` 这类工具不触发 PreToolUse/PostToolUse，所以 web-research 的强制只能靠 `developer_instructions` 与 `.codex/rules/` 的指令层，不能靠 hook。
 - **沙箱下 `.git` / `.agents` / `.codex` 始终只读** —— Codex 改不了自己的 skill / hook / agent 定义，凡涉及写这三个目录必须在 Codex 之外操作。
