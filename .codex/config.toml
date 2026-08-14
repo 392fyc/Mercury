@@ -83,5 +83,12 @@ network_access = true
 # 顺带记录已查明的一点：相对路径 `./adapters/...` 以**启动 MCP 时的工作目录**为解析基准，
 # 不是仓库根 —— 跨仓库启动时会解析到别处。
 #
-# `.mcp.json` 里另有两条同样不该迁的：`codex`（在 Codex 里配它自己没意义）与
-# `mercury-orchestrator`（实现已随 #173/#174 归档，端口 7654 无监听）。
+# `.mcp.json`（Claude Code 侧）也已于同日清空为 `{"mcpServers": {}}`，原有两条均已移除：
+#   - `mercury-orchestrator`：实现随 #173/#174 归档于 2026-04-06，端口 7654 实测无监听、
+#     连接被主动拒绝；活代码零调用方；`.mercury/state/` 无任何派发或回执记录；
+#     会话工具表里根本没有 `mcp__mercury-orchestrator__*`。
+#     （#517 审计曾以「未运行≠死，可考虑 lazy 注册」保留它，那是 2026-06-27 的推测性判断；
+#     上述证据是 2026-08-14 实测，推翻该保留。）
+#   - `codex`：`mcp__codex__codex` 同样不在会话工具表里。DEC-3 把 T3 层定义为该工具调用，
+#     但那条路**事实上早已迁到直接调 `codex` CLI**（`scripts/codex-sync-audit.sh` 与本次迁移
+#     全程用的都是 CLI）。所以删掉这条不影响 T3，它本来就不是让 T3 工作的东西。
