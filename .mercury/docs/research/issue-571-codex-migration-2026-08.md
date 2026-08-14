@@ -819,3 +819,52 @@ Workflow 调用，那是另一个量级的工作，且只覆盖本机。
 四条已全部修正。**这是这道门第一次在真实合并前拦下真实问题**，而且拦的是
 「一个主题就是证据严谨的提交里，自己做了超出证据的断言」——
 比它跑通本身更能说明它有用。
+
+## 十七、G4-1 autoresearch 跑通，并把 G2-1 的根因推进了一大步
+
+用重建后的 autoresearch（3 角度并行检索 + 逐条独立交叉核实）去查我自己查不到的问题：
+「Codex 0.147.0 的 hooks.json 该放哪、matcher 匹配什么、为什么配置正确却不触发」。
+
+**结果：3 条确认、3 条被推翻、0 条 UNVERIFIED。** 检索**确实拿到了网络内容** ——
+编排层那条「read-only 沙箱下实时检索可能不可用」的警告是保守提示，不是实际故障。
+
+**它独立复核了我的 G2-1 结论**，且走的是完全不同的证据路径：去读本机原始会话记录，
+找到 5 次真实 `tools.apply_patch` 调用、对应记录里没有任何 PreToolUse 或 scope-guard 执行痕迹。
+并且**正确地把根因标成 UNVERIFIED 而不是编一个**。
+
+### 拿到了官方文档（此前 404 是我 URL 试错了）
+
+正确地址是 **`https://learn.chatgpt.com/docs/hooks`**（我先前试的 `/docs/codex/hooks`、
+`/docs/codex/advanced/hooks` 都不存在）。文档明确：
+
+- matcher 作用于 **`tool_name`**；
+- **`apply_patch` 就是补丁操作的规范名**，别名 `Edit` / `Write`，
+  且「hook input still reports `tool_name: apply_patch`」；
+- 配置位置四个都合法：`~/.codex/hooks.json`、`~/.codex/config.toml`、
+  `<repo>/.codex/hooks.json`、`<repo>/.codex/config.toml`，项目级需项目受信任。
+
+**所以 Mercury 的配置按官方文档是正确的** —— 事件名对、matcher 对、位置对、项目已受信任
+（`dual-verify` 计数为 3 证明 `.codex/` 层确实加载了）。配置正确而行为不符，
+这是**文档行为与实测行为的真实分歧**，不是配置错误。
+
+### 用户级 hook 同样没有触发（新证据，但有限定）
+
+`~/.claude/scripts/flush.log` 里每一条 SessionEnd 都来自手动测试（`g53-*` / `diag-*`）。
+登录后跑过至少 8 次真实 `codex exec` 会话（session id 为 UUID 形态），**一条自动触发都没有**。
+
+**限定**：`codex exec` 是**非交互**模式，SessionStart / SessionEnd 在非交互下是否本就不发出，
+本次**没有区分开**。所以这条只能说「非交互 `codex exec` 下未观察到用户级会话 hook 触发」，
+**不能**据此断言用户级 hook 全面失效。（这个分寸是吸取了同日 dual-verify 抓到的
+「超出证据范围扩大」那条教训。）
+
+### 当前对 G2-1 的最强表述
+
+| 层面 | 证据 |
+|---|---|
+| `PreToolUse` / `apply_patch` 不触发 | **两条独立路径确认**：无条件插桩（含手动调用对照）+ 研究 agent 独立读会话记录 |
+| 配置本身正确 | 官方文档逐条对上：事件名、matcher、位置、信任前提 |
+| 非交互下用户级会话 hook 未触发 | 观察到，但**未排除**「非交互本就不发出」这一解释 |
+| 根因 | 仍 **UNVERIFIED**。已排除：feature 未开、文件不存在、事件名错、matcher 错、项目未受信任、路径不合法 |
+
+下一步若要继续追，最经济的是**交互式会话**跑一次（区分「非交互不发事件」与「hook 引擎不工作」），
+而不是继续加进程采集手段。
