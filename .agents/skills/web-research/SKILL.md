@@ -75,14 +75,26 @@ Verify:
 
 Then proceed with implementation using verified signatures.
 
-## Integration with Hooks
+## 强制是怎么落地的（Codex 上与 Claude Code 上不同）
 
-Mercury has automated enforcement via hooks:
-- `web-research-gate.sh` blocks Edit/Write operations containing SDK imports, version claims, or API signatures unless a web research flag was set within the configured TTL (currently 3 minutes; adjustable in the gate script's `THRESHOLD` variable)
-- `post-web-research-flag.sh` automatically sets this flag after WebSearch/WebFetch completes
-- `user-prompt-submit.sh` injects the research protocol reminder when research-intent keywords are detected
+> ⚠️ **在 Codex 上没有任何 hook 在守这条规则。** 下面写清楚哪些还在、哪些已经失效，
+> 免得你以为有个网兜着而放松自觉。
 
-These hooks are a safety net — this skill provides the proactive workflow to follow so you rarely hit the gate.
+**Claude Code 上**（历史形态，仍然有效）：
+- `web-research-gate.sh` 在 Edit/Write 含 SDK import、版本声明或 API 签名时阻断，除非在 TTL 内设过研究标记；
+- `post-web-research-flag.sh` 在 WebSearch/WebFetch 完成后自动设那个标记。
+
+**Codex 上这两条都不生效，而且不是配置疏漏、是没法修的**：官方明文 hosted tool
+（`web_search` 这类）**不走本地 hook 路径**，所以 PreToolUse/PostToolUse 根本收不到它的事件，
+`post-web-research-flag.sh` 永远不会被调用，`web-research-gate.sh` 依赖的时间戳也就永远不会被刷新。
+两个脚本在 `.codex/hooks.json` 里**从未注册**，这是有意的 —— 注册了也只会制造「有人在守」的假象。
+
+**所以 Codex 上唯一的强制层是指令层**：`.codex/config.toml` 的 `developer_instructions`
+第 1–5 条（写 SDK/API 代码前必须先查官方文档、交叉核对 npm/PyPI、GitHub 源码不算数、
+附来源 URL、查不到就标 UNVERIFIED）与第 11 条。指令层没有阻断能力，**它只能提醒，不能拦你**。
+
+结论很直白：**这条规则在 Codex 上完全靠自觉**。本 skill 描述的主动流程不再是「少撞门」的便利，
+而是唯一的执行路径。
 
 > **Single source of truth**: Research-intent keywords are defined in `user-prompt-submit.sh`. This skill's description mirrors those keywords for trigger alignment. When updating keywords, change both locations in the same commit.
 
