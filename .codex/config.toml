@@ -58,7 +58,30 @@ MANDATORY: Before writing ANY code that imports an external SDK/API package or r
 # developer_instructions) under features.* and break Codex config validation.
 # See .mercury/docs/research/codex-hooks-adoption-2026-05.md for ADR.
 [features]
-hooks = true
+# 2026-08-14 由 true 改为 false（Issue #571 / G2-1，用户要求）。
+#
+# **理由：hook 在 Codex 上一条都不触发，留着 true 是「看起来武装、实际不响」的不确定状态。**
+# 用户明确要求：不作用就应当是关闭，而不是静默 —— 避免万一某条路径下它又响了，
+# 跑出一堆没人预期的脚本。
+#
+# 实测依据（2026-08-14，CLI 0.147.0）：给 6 个 hook 脚本插入无条件日志，
+# 并**记录调用方身份**，然后跑真实 codex exec 会话（含 shell 命令 + apply_patch）：
+#   - 该会话确实在干活：apply_patch 建出了文件、git status 也跑了
+#   - 日志里 6 条触发**全部**带 `CLAUDE_PROJECT_DIR`，即全部来自 Claude Code 自身
+#   - **带 Codex 标识的触发：0 条**
+# 覆盖了 hooks.json 注册的全部四类事件：PreToolUse（shell 与 apply_patch 两条路）、
+# PostToolUse、UserPromptSubmit、Stop。
+#
+# ⚠️ 第一版测试是**无效**的：当时插桩只记录「脚本被调用」不记录「谁调的」，
+# 而 `.claude/hooks/` 的脚本是两个 harness 共用的，测出来的是我自己 Claude Code 会话的
+# Bash 调用。必须能归因才算数。
+#
+# 关掉的代价：若上游日后修好 hook，需要把这里改回 true 才会重新生效。
+# `.codex/hooks.json` **保留未删**，接线原样，改回 true 即可恢复。
+#
+# 不影响的部分（已复验）：skills 发现、plugins 加载、`.codex/rules/` 拦截、
+# 沙箱档位 —— 这四者与 hooks 特性无关。
+hooks = false
 
 # workspace-write 档位下的细则。network_access 必须开 —— git push / pnpm install / gh
 # 都要它，关掉会让整条开发流程在沙箱里失败，而这些操作本身已由 .codex/rules/ 管着。
