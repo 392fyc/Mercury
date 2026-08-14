@@ -101,12 +101,27 @@ Mercury 原本用 Claude Code 的 Dynamic Workflow（脚本确定性编排数十
 - **hook 在只读沙箱下不要写文件**：实测在 `--sandbox read-only` 下，一旦 hook 尝试写日志，整个工具调用会挂起直到超时（同一条命令从 9 秒变成 200 秒超时，日志文件停留在 0 字节）。调试 hook 时用 `GUARD_DEBUG=1` 需配合可写沙箱档位。
 - **Windows 上工具调用走 pwsh**：实测 Codex 用 `pwsh.exe -Command '...'` 执行，不是 bash。hook 命令若需 Windows 专用形态，用官方的 `command_windows` / `commandWindows` 字段（TOML 两种写法都接受）。同理 `managed_dir` 在 Windows 上叫 `windows_managed_dir`。
 - **防护是四层，顺序是「沙箱 → rules → 指令层 → hook」，前面的先生效。** 2026-08-14 实测三例：往 `C:\Program Files` 写被**沙箱**拦（`patch rejected: writing outside of the project`）；推受保护分支被**指令层**拦（Codex 引用 developer_instructions 第 6 条自行拒绝执行）；`git commit` 被 **`.codex/rules/`** 拦（原样回显了 rules 里的 justification：「Use `powershell -File scripts/codex/git-safe.ps1 commit …` so review and branch guards run first」）。
-  三次都没走到 hook。**结论：在 Codex 上 `.codex/rules/` 是比 hook 更靠前、更可靠的防线，而 hook 的实际作用面比在 Claude Code 上小得多** —— 要让某条 hook 真正起作用，得确认它拦的那类操作没有被前三层先接走。
+  三次都没走到 hook。**2026-08-14 补测：实际是三层，hook 那层根本不存在。**
+  原先以为「只要不被前三层接走，hook 就会生效」，实测推翻了：`apply_patch` 这类
+  **不被 rules 覆盖**的操作，hook 同样不触发。方法见下条。
+- **Codex 上的 hook 不触发，不要依赖它**（Issue [#571](https://github.com/392fyc/Mercury/issues/571) / G2-1）。
+  `.codex/hooks.json` 注册了 10 条命令，`codex features list` 显示 `hooks` 为 `stable`/`true`，
+  但 CLI 0.147.0 实测：真实会话里真实发生的 `apply_patch` **没有调用 hook**。
+  **测量方法**（前四种都被判无效，别重走）：给 `scope-guard.sh` 顶部插一行无条件日志 ——
+  探针文件确实被创建（证明 patch 真的发生了）、手动调用对照确实写出了日志
+  （证明插桩与路径都对），而那次会话没有产生任何日志行。
+  **根因 UNVERIFIED** —— Codex hooks 的官方文档页 404，无法核实是路径、schema 还是事件名的问题。
+  **Codex 上真正的防线是 `.codex/rules/`**，同一次会话确认：`git push origin HEAD` 在
+  router 层 `declined in 0ms` 并原样回显 justification。
 - **`.codex/rules/` 的运行时自动发现是有效的**（上面第三例即证据）。但 **`codex execpolicy check` 这个子命令不做自动发现**，必须显式 `--rules <PATH>` —— 它是独立检查工具，别拿它的行为去推断运行时。
 - **`codex debug prompt-input` 不含 tool 定义**，不能拿它当「某个工具不存在」的证据。
 - **hosted tool 不走本地 hook**：`web_search` 这类工具不触发 PreToolUse/PostToolUse，所以 web-research 的强制只能靠 `developer_instructions` 与 `.codex/rules/` 的指令层，不能靠 hook。
 - **沙箱下 `.git` / `.agents` / `.codex` 始终只读** —— Codex 改不了自己的 skill / hook / agent 定义，凡涉及写这三个目录必须在 Codex 之外操作。
 - Codex sandbox may block network access — git push failures are expected, Main Agent handles push.
-- Codex hooks are GA since CLI v0.124 (stable v0.128+). Mercury enables `[features] hooks = true` in `.codex/config.toml` and ships hook config at `.codex/hooks.json`. Hook scripts live under `.claude/hooks/` (single source of truth, shared with Claude Code). `.codex/rules/` and `scripts/codex/*.ps1` remain as defense-in-depth fallbacks.
+- **主次与这里原先写的相反**：`.codex/rules/` 才是 Codex 上唯一实测生效的强制层，
+  `scripts/codex/*.ps1` 是第二道；hook **不是**主层，因为它根本不触发（见上条 G2-1 实测）。
+  配置本身保持原样（`[features] hooks = true` + `.codex/hooks.json` + 脚本仍在
+  `.claude/hooks/` 与 Claude Code 共用一份），这样上游修好后无需重新接线 ——
+  但**在它被证实触发之前，任何依赖 hook 的强制都必须视为不存在**。
 
 <!-- MERCURY_AGENTS_MD_TAIL_SENTINEL — 末尾哨兵：本文件有 32 KiB 硬上限且超限静默截断。改动后跑 `codex debug prompt-input | grep -c MERCURY_AGENTS_MD_TAIL_SENTINEL`，返回 0 说明文件已被截断。 -->
