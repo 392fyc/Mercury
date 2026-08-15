@@ -1132,7 +1132,7 @@ def _category_paths(
                 else _secure_files(user_root)
             )
             for path in candidates:
-                evidence = None if category == "skills" else f"approved-source:user-{category}"
+                evidence = f"approved-source:user-{category}"
                 values.append((path, user_root, f"claude-user-{category.rstrip('s')}", evidence))
         repo_relatives = (f".claude/{category}",)
     for root_name, repo_root in repo_roots.items():

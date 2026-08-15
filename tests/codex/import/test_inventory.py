@@ -2318,7 +2318,7 @@ class DecisionAndClassificationTests(unittest.TestCase):
 
             self.assertFalse(output.exists())
 
-    def test_user_setting_is_explicit_but_unknown_skill_requires_evidence(self) -> None:
+    def test_user_settings_and_skills_are_explicit_bulk_import_sources(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory).resolve() / ".claude"
             write_file(home / "settings.json")
@@ -2334,8 +2334,9 @@ class DecisionAndClassificationTests(unittest.TestCase):
             self.assertTrue(
                 all(item.domain_reason == "approved-source:user-setting" for item in settings)
             )
-            self.assertIsNone(skill.disposition)
-            self.assertEqual("unresolved", skill.disposition_status)
+            self.assertEqual("import", skill.disposition)
+            self.assertEqual("provisional", skill.disposition_status)
+            self.assertEqual("approved-source:user-skills", skill.domain_reason)
 
     def test_different_claude_skill_mirror_is_explicitly_excluded(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
