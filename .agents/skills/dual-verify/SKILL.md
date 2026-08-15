@@ -232,6 +232,21 @@ Codex-only: <list or none>
 Final Verdict: PASS | NEEDS-CHANGES
 ```
 
+**只被一方报出的问题，要去查证，不要自动当误报驳回。**
+
+交叉比对的价值恰恰在这里：两路一致的问题通常显而易见，**真正容易漏掉的是只有一路看见的那些**。
+「只有一个 reviewer 提到 → 大概是误报」这个直觉是反的 —— 两路用不同的关注点和
+`model_reasoning_effort` 跑，看见不同的东西本来就是设计意图，不是分歧信号。
+
+实例（2026-08-14，Issue [#571](https://github.com/392fyc/Mercury/issues/571)）：某次两路盲审给出
+4 条 finding，**没有一条是两路都报的**，逐条核实后 4 条全部成立 —— 其中一条指出提交里存在
+「超出证据范围的断言」，另一条指出「改了一处却漏掉平行表述」。若按「单侧=误报」处理，
+这 4 条会全被丢掉。
+
+（本条回收自已退役的 orchestrator skill 库，原 `.mercury/skills/dual-verify/`，
+现归档于 `archive/mercury-orchestrator-skills/dual-verify/`，
+是那 11 个 skill 里唯一一条现役制品未覆盖的内容。）
+
 ## Step 4 — Fix, verify, mark complete
 
 1. Fix all Critical + High issues.

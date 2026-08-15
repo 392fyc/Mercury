@@ -58,7 +58,30 @@ MANDATORY: Before writing ANY code that imports an external SDK/API package or r
 # developer_instructions) under features.* and break Codex config validation.
 # See .mercury/docs/research/codex-hooks-adoption-2026-05.md for ADR.
 [features]
-hooks = true
+# 2026-08-14 由 true 改为 false（Issue #571 / G2-1，用户要求）。
+#
+# **理由：hook 在 Codex 上一条都不触发，留着 true 是「看起来武装、实际不响」的不确定状态。**
+# 用户明确要求：不作用就应当是关闭，而不是静默 —— 避免万一某条路径下它又响了，
+# 跑出一堆没人预期的脚本。
+#
+# 实测依据（2026-08-14，CLI 0.147.0）：给 6 个 hook 脚本插入无条件日志，
+# 并**记录调用方身份**，然后跑真实 codex exec 会话（含 shell 命令 + apply_patch）：
+#   - 该会话确实在干活：apply_patch 建出了文件、git status 也跑了
+#   - 日志里 6 条触发**全部**带 `CLAUDE_PROJECT_DIR`，即全部来自 Claude Code 自身
+#   - **带 Codex 标识的触发：0 条**
+# 覆盖了 hooks.json 注册的全部四类事件：PreToolUse（shell 与 apply_patch 两条路）、
+# PostToolUse、UserPromptSubmit、Stop。
+#
+# ⚠️ 第一版测试是**无效**的：当时插桩只记录「脚本被调用」不记录「谁调的」，
+# 而 `.claude/hooks/` 的脚本是两个 harness 共用的，测出来的是我自己 Claude Code 会话的
+# Bash 调用。必须能归因才算数。
+#
+# 关掉的代价：若上游日后修好 hook，需要把这里改回 true 才会重新生效。
+# `.codex/hooks.json` **保留未删**，接线原样，改回 true 即可恢复。
+#
+# 不影响的部分（已复验）：skills 发现、plugins 加载、`.codex/rules/` 拦截、
+# 沙箱档位 —— 这四者与 hooks 特性无关。
+hooks = false
 
 # workspace-write 档位下的细则。network_access 必须开 —— git push / pnpm install / gh
 # 都要它，关掉会让整条开发流程在沙箱里失败，而这些操作本身已由 .codex/rules/ 管着。
@@ -83,5 +106,12 @@ network_access = true
 # 顺带记录已查明的一点：相对路径 `./adapters/...` 以**启动 MCP 时的工作目录**为解析基准，
 # 不是仓库根 —— 跨仓库启动时会解析到别处。
 #
-# `.mcp.json` 里另有两条同样不该迁的：`codex`（在 Codex 里配它自己没意义）与
-# `mercury-orchestrator`（实现已随 #173/#174 归档，端口 7654 无监听）。
+# `.mcp.json`（Claude Code 侧）也已于同日清空为 `{"mcpServers": {}}`，原有两条均已移除：
+#   - `mercury-orchestrator`：实现随 #173/#174 归档于 2026-04-06，端口 7654 实测无监听、
+#     连接被主动拒绝；活代码零调用方；`.mercury/state/` 无任何派发或回执记录；
+#     会话工具表里根本没有 `mcp__mercury-orchestrator__*`。
+#     （#517 审计曾以「未运行≠死，可考虑 lazy 注册」保留它，那是 2026-06-27 的推测性判断；
+#     上述证据是 2026-08-14 实测，推翻该保留。）
+#   - `codex`：`mcp__codex__codex` 同样不在会话工具表里。DEC-3 把 T3 层定义为该工具调用，
+#     但那条路**事实上早已迁到直接调 `codex` CLI**（`scripts/codex-sync-audit.sh` 与本次迁移
+#     全程用的都是 CLI）。所以删掉这条不影响 T3，它本来就不是让 T3 工作的东西。

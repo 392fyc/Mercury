@@ -5,7 +5,7 @@
 Agent: codex-cli
 Your role is injected by the orchestrator at session start via system prompt (`# Role Assignment: {role}`).
 If no role assignment is received, refer to the dispatch prompt or handoff packet.
-Role definitions: `.claude/agents/{role}.md` (active); legacy YAML archived at `archive/roles/{role}.yaml`
+Codex 原生运行入口：`.codex/agents/{role}.toml`；`.claude/agents/{role}.md` 保留为角色定义源与参考；legacy YAML archived at `archive/roles/{role}.yaml`
 
 ## Navigation
 
@@ -15,7 +15,8 @@ Read these docs on demand when you need the corresponding information:
 |-------|------|
 | **Project direction (最高准则)** | `.mercury/docs/DIRECTION.md` |
 | **Execution plan** | `.mercury/docs/EXECUTION-PLAN.md` |
-| Role definitions & boundaries | `.claude/agents/{role}.md` (active); `archive/roles/{role}.yaml` (archived YAML) |
+| Role definitions & boundaries | `.codex/agents/{role}.toml`（Codex 原生运行入口）；`.claude/agents/{role}.md`（源与参考）；`archive/roles/{role}.yaml`（archived YAML） |
+| Active project memory（本机专用，不纳入公开仓库） | `.mercury/memory/README.md`（存在时） |
 | Git branching rules | `.mercury/docs/guides/git-flow.md` |
 | GitHub Issues workflow | `.mercury/docs/guides/issue-workflow.md` |
 | SoT task workflow (legacy) | `.mercury/docs/guides/sot-workflow.md` |
@@ -27,6 +28,8 @@ Read these docs on demand when you need the corresponding information:
 | Cherry-pick carve-out 细则 | `.mercury/docs/guides/cherry-pick-carve-out.md` |
 | **Codex 迁移总台账 (G0-G6)** | [#571](https://github.com/392fyc/Mercury/issues/571) |
 | **Codex 迁移主档**(目标 + 实测修正；与正文冲突以附录为准) | `.mercury/docs/research/issue-571-codex-migration-2026-08.md` |
+
+需要历史上下文且本机存在 `.mercury/memory/README.md` 时，先按其 index 按需读取；该目录是本机专用记忆，不纳入公开仓库，保护归档和聊天记录也不是活跃记忆。
 
 ## Related Repositories
 
@@ -158,12 +161,25 @@ Mercury 原本用 Claude Code 的 Dynamic Workflow（脚本确定性编排数十
   所以 web-research 的强制**只剩 `developer_instructions` 的自律**，没有任何东西会拦你。
   （早先这条写的是「靠 developer_instructions 与 `.codex/rules/` 的指令层」，
   把 rules 也算了进去，与 `.codex/config.toml` 第 11 条相矛盾 —— 那会让人误以为有规则层兜底。）
-- **沙箱下 `.git` / `.agents` / `.codex` 始终只读** —— Codex 改不了自己的 skill / hook / agent 定义，凡涉及写这三个目录必须在 Codex 之外操作。
+- **`workspace-write` 下 `.git` / `.agents` / `.codex` 只读；`danger-full-access` 下可写**
+  （2026-08-14 实测更正，此前这条写的是「始终只读」「不是配置能解的」，**两句都是错的**）。
+  实测：`workspace-write` 下 `git commit` 报 `Unable to create '.git/index.lock': Permission denied`；
+  换 `danger-full-access` 后同一操作成功。干净测试仓复现，非本仓配置问题。
+- **提高档位不等于裸奔 —— `.codex/rules/` 仍然生效。** 实测 `danger-full-access` 下
+  `git push origin HEAD` 依旧被 router 层 `declined in 0ms` 并回显 justification。
+  原因是两者机制不同：**沙箱管文件系统访问，rules 管哪些命令能被发出**，
+  rules 工作在命令执行之前，不受档位影响。
+- **因此 Codex 能走完整开发链**：`danger-full-access` + `.codex/rules/` 拦截直接 git 命令
+  + 走 `scripts/codex/git-safe.ps1`（内含受保护分支检查）。
+  实证：commit `0a6c08c` 就是 Codex 自己完成暂存与提交产生的。
+  日常仍用 `workspace-write`；**只在确实需要 git 写时才临时升档**。
 - Codex sandbox may block network access — git push failures are expected, Main Agent handles push.
 - **主次与这里原先写的相反**：`.codex/rules/` 才是 Codex 上唯一实测生效的强制层，
   `scripts/codex/*.ps1` 是第二道；hook **不是**主层，因为它根本不触发（见上条 G2-1 实测）。
-  配置本身保持原样（`[features] hooks = true` + `.codex/hooks.json` + 脚本仍在
-  `.claude/hooks/` 与 Claude Code 共用一份），这样上游修好后无需重新接线 ——
-  但**在它被证实触发之前，任何依赖 hook 的强制都必须视为不存在**。
+  **`[features] hooks` 已于 2026-08-14 由 `true` 改为 `false`**（项目级与用户级都改，用户要求）。
+  理由：hook 一条都不触发时留着 `true` 是「看起来武装、实际不响」的不确定状态，
+  万一某条路径下它又响了就会跑出没人预期的脚本 —— 不作用就该关闭，而不是静默。
+  `.codex/hooks.json` 与 `.claude/hooks/` 下的脚本**都保留未删**（后者仍是 Claude Code 的现役强制层，
+  照常工作），上游修好后把该标志改回 `true` 即可恢复接线，无需重新配置。
 
 <!-- MERCURY_AGENTS_MD_TAIL_SENTINEL — 末尾哨兵：本文件有 32 KiB 硬上限且超限静默截断。改动后跑 `codex debug prompt-input | grep -c MERCURY_AGENTS_MD_TAIL_SENTINEL`，返回 0 说明文件已被截断。 -->

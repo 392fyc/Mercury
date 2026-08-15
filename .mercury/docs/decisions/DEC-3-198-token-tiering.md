@@ -23,7 +23,18 @@ Adopt a three-tier model assignment for Mercury sub-agents:
 |---|---|---|---|
 | T1 | Opus 4.6 | Main session (`inherit`) + explicit `model: opus` | main, design, critic |
 | T2 | Sonnet 4.6 | Explicit `model: sonnet` frontmatter | dev, acceptance, research |
-| T3 | Codex gpt-5.4 | `mcp__codex__codex` tool call from any tier | mechanical edits, audit, rescue |
+| T3 | Codex | **`codex exec` CLI 调用**（2026-08-14 更正，见下） | mechanical edits, audit, rescue |
+
+> **T3 机制更正（2026-08-14，Issue [#571](https://github.com/392fyc/Mercury/issues/571)）**：
+> 本表原写 T3 = `mcp__codex__codex` 工具调用。该工具**已不存在于会话工具表中** ——
+> `.mcp.json` 的 `codex` 条目于同日随 MCP 清理移除，而在此之前它的工具也未出现在会话里。
+>
+> **这不是能力损失，是记录追平事实**：T3 这条路早已在实际使用中迁到**直接调 `codex` CLI**
+> （`scripts/codex-sync-audit.sh` 走的就是 CLI；2026-08 的整个 Codex 迁移全程用的也是
+> `codex exec`）。本决策的**分层意图不变**，只是机制栏的写法此前落后于现实。
+>
+> 模型名也一并去掉：原写 `gpt-5.4` 是当时 AOAI 部署的模型，迁到个人 ChatGPT 订阅后
+> 由订阅侧决定，不再固定。
 
 ### Per-agent assignment
 
