@@ -1,6 +1,12 @@
 # Hook Layer Modernization — Claude Code v2.1.x + Codex CLI 0.129+ Audit ADR
 
-> 状态: **生效中** | 制定日期: 2026-05-17 | 决策者: 392fyc (main lane S105) | Closes: [Issue #382](https://github.com/392fyc/Mercury/issues/382)
+> **当前状态（2026-08-15）：项目级 Codex hook 接线已退役。** Mercury 已移除
+> `.codex/hooks.json`、旧 hook probe 与测试脚本，项目 `.codex/config.toml` 不再覆盖
+> `hooks` feature。当前 Codex 强制层是 `.codex/rules/`；`scripts/codex/` 包装脚本与
+> 指令层提供补充约束。`.claude/hooks/` 仍服务 Claude Code。下文是 2026-05-17
+> 对当时 hook 层的审计记录，**不得把旧 Codex 接线、测试或建议当作现行操作指引**。
+>
+> 状态: **历史审计，现行状态已由上方说明取代** | 制定日期: 2026-05-17 | 决策者: 392fyc (main lane S105) | Closes: [Issue #382](https://github.com/392fyc/Mercury/issues/382)
 > Parent context: [Issue #381 tech intel sweep](https://github.com/392fyc/Mercury/issues/381) + `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded_cwd>/memory/research/tech-intel-sweep-2026-05-12.md` (user-level memory, 不在 Mercury repo)
 >
 > **路径约定**: `~/.claude/...` 等价于 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/...`, 沿用 CLAUDE.md §"Related Repositories"。
@@ -11,10 +17,10 @@
 
 ## TL;DR
 
-**Verdict: (b) audit-complete, no code changes**。所有 12 项 vendor 新事件 / API 在当前 Mercury hook 使用 profile 下 **要么不适用，要么属于可观测但非 blocking 的增强**。Mercury 现有 hook 层 (Claude Code `.claude/settings.json` **15 commands** across 5 events + Codex `.codex/hooks.json` **10 commands** across 4 events, 详 §1.2) 与 v2.1.141 / 0.130 baseline 完全兼容, **无回归风险, 无新 gap** (1 item X3 待 operator empirical 确认, 见 §X3)。Issue #382 12 个 checkbox 全部 close-with-rationale, 不产生 follow-up 实施 Issue (仅 1 个 P3 observability candidate 见 §7)。
+**Verdict: (b) audit-complete, no code changes**。所有 12 项 vendor 新事件 / API 在 2026-05-17 的 Mercury hook 使用 profile 下 **要么不适用，要么属于可观测但非 blocking 的增强**。Mercury 当时的 hook 层 (Claude Code `.claude/settings.json` **15 commands** across 5 events + Codex `.codex/hooks.json` **10 commands** across 4 events, 详 §1.2) 与 v2.1.141 / 0.130 baseline 完全兼容, **无回归风险, 无新 gap** (1 item X3 待 operator empirical 确认, 见 §X3)。Issue #382 12 个 checkbox 全部 close-with-rationale, 不产生 follow-up 实施 Issue (仅 1 个 P3 observability candidate 见 §7)。
 
 **12 项 verdict 分布**:
-- **0 项 implement now** — 当前 Mercury usage profile 下无 blocking gap
+- **0 项 implement now** — 审计时的 Mercury usage profile 下无 blocking gap
 - **1 项 verified (empirical) + 1 项 expected-compatible (derivation)** — C7 PreToolUse bypass-deny 不适用 Mercury contract (empirical via grep); X3 `/hooks` TUI listing schema-derived (待 operator empirical 确认)
 - **3 项 not applicable** — Mercury 设计 / 部署模式与新事件 invariant 不重合
 - **7 项 defer with rationale + re-eval trigger** — 增强候选, 标注未来触发条件
@@ -37,7 +43,7 @@
 
 #382 acceptance: "Each checkbox above either implemented OR explicitly closed with rationale ('not applicable because ...')". 12 个 checkbox = 7 (Claude Code v2.1.x) + 5 (Codex CLI 0.128-0.130)。
 
-### 1.2 Mercury 现行 hook surface (audit baseline, verified 2026-05-17)
+### 1.2 Mercury 审计时 hook surface (audit baseline, verified 2026-05-17)
 
 **Repo-level Claude Code (`.claude/settings.json`)** — 5 events, **15 commands** (count = sum of `hooks[].command` entries across all event/matcher groups):
 
@@ -53,7 +59,7 @@
 | Stop | (any) | stop-guard.sh |
 | SubagentStop | `dev` | adapters/mercury-test-gate/hook.cjs |
 
-**Repo-level Codex (`.codex/hooks.json`)** — 4 events, **10 commands** (共享 .claude/hooks/ 脚本 SoT):
+**审计时的 Repo-level Codex (`.codex/hooks.json`)** — 4 events, **10 commands** (共享 .claude/hooks/ 脚本 SoT):
 
 | Event | Matcher | Scripts |
 |-------|---------|---------|
@@ -64,14 +70,14 @@
 | UserPromptSubmit | (any) | session-init.sh + user-prompt-submit.sh |
 | Stop | (any) | stop-guard.sh |
 
-**Codex config (`.codex/config.toml`)** — `[features] hooks = true` (PR #357 S2-side-bug)。
+**审计时的 Codex config (`.codex/config.toml`)** — `[features] hooks = true` (PR #357 S2-side-bug；现已取消该项目级覆盖)。
 
 **Loop-detector contract** (adapters/mercury-loop-detector/hook.cjs):
 - 输出: `{"decision": "block", "reason": "<msg>"}` 或 silent pass (exit 0)
 - 不使用 `"allow"` 或 `"defer"` 决策
 - 触发条件: duplicate_call (3) / same_error (5) / no_progress (5) / read_write_ratio (12, env `MERCURY_LOOP_DETECTOR_MODE=research` 可禁) / 多级 timeout
 
-**Cross-lane SoT 约束**: `.claude/hooks/` 是单一来源, Codex 通过 `.codex/hooks.json` 引用同一组脚本 (per `.mercury/docs/research/codex-hooks-adoption-2026-05.md` ADR, S2-side-bug PR #358)。任何 hook 修改必须同时考虑 Claude Code 与 Codex 两条调用路径的兼容性。
+**审计时的 Cross-lane SoT 约束**: `.claude/hooks/` 是单一来源, Codex 通过 `.codex/hooks.json` 引用同一组脚本 (per `.mercury/docs/research/codex-hooks-adoption-2026-05.md` ADR, S2-side-bug PR #358)。这条双路径约束随项目级 Codex hook 接线退役而失效；`.claude/hooks/` 本身仍服务 Claude Code。
 
 ---
 
@@ -138,10 +144,10 @@ Mercury baseline: Codex CLI 0.129 (PR #357, S2-side-bug 2026-04-30)。窗口内 
 
 **Vendor capability**: v2.1.141 `Setup` event fires before session start (command-type hook only)。triggered by special CLI flags like `claude --init`。
 
-**Mercury current**: `session-init.sh` 跑在 `UserPromptSubmit` event 上, 通过 PID-based flag (`.mercury/state/session-init-${PPID}`) 实现 "fire-once-per-session" 语义。
+**审计时状态（2026-05-17）**: `session-init.sh` 跑在 `UserPromptSubmit` event 上, 通过 PID-based flag (`.mercury/state/session-init-${PPID}`) 实现 "fire-once-per-session" 语义。
 
 **Why defer**:
-1. **Cross-vendor 兼容性**: `Setup` 是 Anthropic-only。Codex 没有等价事件。当前 `session-init.sh` 通过 `.codex/hooks.json` 也注册到 Codex UserPromptSubmit, 两路统一。迁移到 `Setup` 会强制 Anthropic / Codex 分叉脚本路径, 违反 `.mercury/docs/research/codex-hooks-adoption-2026-05.md` SoT 原则。
+1. **Cross-vendor 兼容性**: `Setup` 是 Anthropic-only。Codex 没有等价事件。审计时 `session-init.sh` 通过 `.codex/hooks.json` 也注册到 Codex UserPromptSubmit, 两路统一。迁移到 `Setup` 会强制 Anthropic / Codex 分叉脚本路径, 违反当时 `.mercury/docs/research/codex-hooks-adoption-2026-05.md` 的 SoT 原则。
 2. **语义等价**: 现有 PID flag idempotency 与 `Setup` 的 "fires before session start" 实质等价 — `Setup` 只是省掉了 flag-file 读写, 节约 <1ms, 无 user-visible benefit。
 3. **Setup 触发条件局限**: per v2.1.141 描述 `Setup` 由 `claude --init` 等特殊 CLI flag 触发, **不是默认 session start trigger**。Mercury 多数 session 走默认入口 (`claude` 不带 `--init`), `Setup` 实际不会 fire — 这是 defer 的关键 evidence。
 
@@ -151,10 +157,10 @@ Mercury baseline: Codex CLI 0.129 (PR #357, S2-side-bug 2026-04-30)。窗口内 
 
 **Vendor capability**: v2.1.133。Hook JSON input 含 `effort.level` field, `$CLAUDE_EFFORT` env var 在 hook 子进程 + Bash tool 子进程可读。值范围: `low` / `medium` / `high` / `max` / `xhigh`。
 
-**Mercury current**: Loop-detector `read_write_ratio_threshold` 静态 = 12; `MERCURY_LOOP_DETECTOR_MODE=research` env var 可禁此一项。所有阈值固定, 不按 effort 分层。
+**审计时状态（2026-05-17）**: Loop-detector `read_write_ratio_threshold` 静态 = 12; `MERCURY_LOOP_DETECTOR_MODE=research` env var 可禁此一项。所有阈值固定, 不按 effort 分层。
 
 **Why defer**:
-1. **现行触发率低**: Issue #306 (S5-side-bug) 升级 8 → 12 后, 无 false-positive 报告 (S95-S104 跨 11 sessions 0 误 block)。
+1. **审计时触发率低**: Issue #306 (S5-side-bug) 升级 8 → 12 后, 无 false-positive 报告 (S95-S104 跨 11 sessions 0 误 block)。
 2. **MERCURY_LOOP_DETECTOR_MODE=research escape-hatch 已存在**: 真正需要放宽时, 此 env var 完全 disable read_write_ratio heuristic, 比 per-effort 分层更直接。
 3. **跨 vendor 不对等**: Codex 也有 reasoning effort 但 schema 不同 (`reasoning.effort = minimal/low/medium/high`)。Per-effort 阈值需要在 hook.cjs 同时识别 Anthropic + OpenAI 两套 schema, 复杂度 vs 收益不成比例。
 
@@ -164,25 +170,25 @@ Mercury baseline: Codex CLI 0.129 (PR #357, S2-side-bug 2026-04-30)。窗口内 
 
 **Vendor capability**: `"defer"` decision allows headless sessions to pause + resume; hook acts as middleware re-evaluator。
 
-**Mercury current**: Loop-detector 输出 `{"decision": "block", "reason": "..."}` 或 silent pass。**不使用 `"defer"`**。Mercury 不部署 headless / unattended 模式 (autorun 仍由 interactive Claude Code session 主导)。
+**审计时状态（2026-05-17）**: Loop-detector 输出 `{"decision": "block", "reason": "..."}` 或 silent pass。**不使用 `"defer"`**。Mercury 不部署 headless / unattended 模式 (autorun 仍由 interactive Claude Code session 主导)。
 
 **Why not applicable**:
 1. `"defer"` 唯一 use case 是 headless sessions; Mercury 所有 session 在 interactive 容器中。
 2. Loop-detector contract 不会受 `"defer"` 新决策影响 — 现有 `"block"` + silent pass 两种输出 invariant 不变。
 3. 此 vendor 新事件不需要 Mercury 任何配合。
 
-**Re-eval trigger**: Mercury 引入 headless dispatch (e.g. via `claude --resume <session-id>` 自动化) 时, 重审。当前 0/4 acceptance criteria 含 headless 需求, 无此趋势。
+**Re-eval trigger**: Mercury 引入 headless dispatch (e.g. via `claude --resume <session-id>` 自动化) 时, 重审。审计时 0/4 acceptance criteria 含 headless 需求, 无此趋势。
 
 ### C4 — `PostToolUse` + `PostToolUseFailure` `duration_ms` (DEFER)
 
 **Vendor capability**: v2.1.121。Hook JSON input 新增 `duration_ms` 字段, 表示 tool execution time (不含 permission prompts / PreToolUse hooks)。
 
-**Mercury current**: Loop-detector `last_activity_ts` / `last_progress_ts` 用 `Date.now()` 在 hook fire 时打点, 通过 timestamp delta 近似 stall time。**已经能 detect stuck-on-slow-tool 模式** (per `timeout.cjs` checkMultiLevel)。
+**审计时状态（2026-05-17）**: Loop-detector `last_activity_ts` / `last_progress_ts` 用 `Date.now()` 在 hook fire 时打点, 通过 timestamp delta 近似 stall time。**已经能 detect stuck-on-slow-tool 模式** (per `timeout.cjs` checkMultiLevel)。
 
 **Why defer**:
-1. **现行近似已足够**: `Date.now()` 在 hook 入口打点, 与 vendor 提供的 `duration_ms` 差异 ≤ hook 调度延迟 (~10ms 量级), 不影响 minutes-级 stall detection。
+1. **审计时近似已足够**: `Date.now()` 在 hook 入口打点, 与 vendor 提供的 `duration_ms` 差异 ≤ hook 调度延迟 (~10ms 量级), 不影响 minutes-级 stall detection。
 2. **精度提升边际效应小**: timeout 默认 soft 600s / idle 900s / hard 1800s, 10ms 精度差异在 1800s 量级下 = 0.0006%。
-3. **Failure path 收益更大**: `PostToolUseFailure` `duration_ms` 区分 "fast failure" vs "slow timeout-style failure" 是 future enhancement candidate — 但当前 same_error_threshold = 5 已捕获重复失败模式。
+3. **Failure path 收益更大**: `PostToolUseFailure` `duration_ms` 区分 "fast failure" vs "slow timeout-style failure" 是 future enhancement candidate — 但当时 same_error_threshold = 5 已捕获重复失败模式。
 
 **Re-eval trigger**: timeout heuristic 出现 false-positive (e.g. 误把正常长 build 标为 stall), 此时引入 `duration_ms` 可分离 "long tool" 与 "stuck tool" 信号。
 
@@ -190,7 +196,7 @@ Mercury baseline: Codex CLI 0.129 (PR #357, S2-side-bug 2026-04-30)。窗口内 
 
 **Vendor capability**: v2.1.105 added background monitor support via plugin `monitors` manifest key (declared in `plugin.json` under top-level `monitors`)。auto-arms at session start or skill invoke。
 
-**Mercury current**: Mercury 不是 Claude Code plugin (没有 plugin.json), 而是 user-side workflow / hook 集合。背景轮询用 CronCreate (per `/pr-flow` feedback_pr_flow_canonical.md) 走 Claude Code 主线程的 schedule API, 不是 plugin monitor。
+**审计时状态（2026-05-17）**: Mercury 不是 Claude Code plugin (没有 plugin.json), 而是 user-side workflow / hook 集合。背景轮询用 CronCreate (per `/pr-flow` feedback_pr_flow_canonical.md) 走 Claude Code 主线程的 schedule API, 不是 plugin monitor。
 
 **Why not applicable**:
 1. `Monitor` API 严格 plugin-bundled — Mercury 部署形态 (repo-level config + user-level hooks) 不匹配。
@@ -203,7 +209,7 @@ Mercury baseline: Codex CLI 0.129 (PR #357, S2-side-bug 2026-04-30)。窗口内 
 
 **Vendor capability**: statusline JSON input 新增 `workspace.git_worktree` field, 提供 worktree identity (不是 main repo path 而是 worktree-specific path)。
 
-**Mercury current**: `scripts/lane-assertion.sh` (Δ11 path C) 通过 cwd 解析判断 lane, 与 worktree 路径一一对应 (per Rule 7 v0.1 per-session-files + lane physical worktree)。statusline JSON 当前未被 lane assertion 使用。
+**审计时状态（2026-05-17）**: `scripts/lane-assertion.sh` (Δ11 path C) 通过 cwd 解析判断 lane, 与 worktree 路径一一对应 (per Rule 7 v0.1 per-session-files + lane physical worktree)。statusline JSON 当时未被 lane assertion 使用。
 
 **Why defer**:
 1. **cwd-based detection 已可靠**: S97 PR #378 `scripts/handoff-launch.sh` + S83 Δ10/Δ11 PR #346 已经实测 worktree-aware routing 准确 (60-session determinism per S6-side-multi-lane)。
@@ -216,7 +222,7 @@ Mercury baseline: Codex CLI 0.129 (PR #357, S2-side-bug 2026-04-30)。窗口内 
 
 **Vendor capability**: v2.1.101 fixed `permissions.deny` rules not overriding `PreToolUse` hook 的 `permissionDecision: "ask"` — 修复前 hook 能 downgrade deny 为 prompt; 修复后 deny 不可绕过。
 
-**Mercury current**: Loop-detector 输出 `decision: "block"` 或 silent pass。**不使用 `permissionDecision` 字段** (是另一套 decision schema), 不使用 `"ask"` 决策。
+**审计时状态（2026-05-17）**: Loop-detector 输出 `decision: "block"` 或 silent pass。**不使用 `permissionDecision` 字段** (是另一套 decision schema), 不使用 `"ask"` 决策。
 
 **Why verified (no action)**:
 1. Mercury hook contract 与此 bug fix 完全不重叠。
@@ -233,7 +239,7 @@ Mercury baseline: Codex CLI 0.129 (PR #357, S2-side-bug 2026-04-30)。窗口内 
 
 **Vendor capability**: 0.129 added before-compaction + after-compaction lifecycle hooks。配置在 `.codex/hooks.json` 新 event names (UNVERIFIED exact event name — Codex doc 用 "compaction" 描述但未列 JSON event 名)。
 
-**Mercury current**: User-level `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/pre-compact.py` 走 Claude Code 的 `PreCompact` event (per `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json`)。**Codex 端没有等价 mem0 flush** — mem0 layer 当前是 Claude Code 路径独有 (per CLAUDE.md §Related Repositories)。
+**审计时状态（2026-05-17）**: User-level `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/pre-compact.py` 走 Claude Code 的 `PreCompact` event (per `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json`)。**Codex 端没有等价 mem0 flush** — mem0 layer 当时是 Claude Code 路径独有 (per CLAUDE.md §Related Repositories)。
 
 **Why defer**:
 1. **Codex 端无 mem0 需求**: Codex session 通过 mcp__codex__codex 工具被 Claude Code 主线程调用, 自身的 conversation history 不参与 Mercury memory layer flush。compaction 发生时无 Mercury-side state 需保护。
@@ -246,20 +252,20 @@ Mercury baseline: Codex CLI 0.129 (PR #357, S2-side-bug 2026-04-30)。窗口内 
 
 **Vendor capability**: 0.129。Hook 可在 `PreToolUse` 返回 `additionalContext` 字段, 把动态文本注入到 next turn prompt。
 
-**Mercury current**: Codex 端 mandatory rules 通过 `.codex/config.toml` `developer_instructions` (multi-line literal block) 静态注入。每个 session 启动时全量加载, 后续不变。
+**审计时状态（2026-05-17）**: Codex 端 mandatory rules 通过 `.codex/config.toml` `developer_instructions` (multi-line literal block) 静态注入。每个 session 启动时全量加载, 后续不变。
 
 **Why defer**:
 1. **静态注入已覆盖 mandatory rules**: 11 条 web-research / branch-policy / dual-verify / hooks 规则全部静态加载, 无需 per-tool-call 动态化。
-2. **Dynamic injection 增加 token 成本**: `additionalContext` 每次 `PreToolUse` fire 会重新计费 — Mercury 当前 11-rule 静态注入只算一次, 切换到 dynamic 会 N 倍化。
+2. **Dynamic injection 增加 token 成本**: `additionalContext` 每次 `PreToolUse` fire 会重新计费 — Mercury 审计时的 11-rule 静态注入只算一次, 切换到 dynamic 会 N 倍化。
 3. **Use case 未明确**: 唯一可能的 Mercury-side use case 是 "在特定 Bash 命令前注入 dual-verify 提醒", 但现有 PreToolUse Bash matcher chain (pre-commit-guard + push-guard + pr-create-guard + pr-merge-guard) 已经在 block 决策路径上拦截违规, 不需要 prompt-side 提醒。
 
-**Re-eval trigger**: Mercury 发现需要 per-tool-call 注入(如 context-specific KB reference) 时, 重审。当前 0 信号。
+**Re-eval trigger**: Mercury 发现需要 per-tool-call 注入(如 context-specific KB reference) 时, 重审。审计时为 0 信号。
 
 ### X3 — Codex `/hooks` TUI command (EXPECTED-COMPATIBLE)
 
 **Vendor capability**: 0.129。`/hooks` slash command 列出当前 active hooks, 支持 toggle individual hooks 不编辑 config.toml。
 
-**Mercury current**: Mercury hooks 都在 `.codex/hooks.json` (PreToolUse / PostToolUse / UserPromptSubmit / Stop) — 标准 schema, 完全兼容 `/hooks` TUI listing。
+**审计时状态（2026-05-17）**: Mercury hooks 当时都在 `.codex/hooks.json` (PreToolUse / PostToolUse / UserPromptSubmit / Stop) — 标准 schema, 完全兼容 `/hooks` TUI listing。该文件现已移除。
 
 **Verification mode**: derivation-not-run (schema-compliance based, not empirical /hooks TUI capture in this audit). Empirical verify 留作 operator side-channel — 若 operator 报告 `/hooks` TUI 显示不完整或 missing, 触发 re-audit。
 
@@ -274,11 +280,11 @@ Mercury baseline: Codex CLI 0.129 (PR #357, S2-side-bug 2026-04-30)。窗口内 
 
 **Vendor capability**: 0.128 引入 plugin-bundled hooks 携带 `enablement` 字段 (state tracking + trust metadata); 0.130 仅 expose bundled hooks 列表 in plugin details (per §2.2 vendor table + [Codex 0.130 release notes](https://github.com/openai/codex/releases/tag/rust-v0.130.0))。Issue #382 body 原标 "0.130 plugin-bundled hooks enablement field" 是 Issue side 的 version-pin mislabel — 本 ADR §X4 内容仍 cover 同一 feature, 但 vendor version 修正为 0.128 (enablement field 引入版本)。
 
-**Mercury current**: Mercury 不发布为 Codex plugin。`.codex/hooks.json` 是 project-level config, 由 Codex 直接读取, 不经过 plugin 包装。
+**审计时状态（2026-05-17）**: Mercury 不发布为 Codex plugin。`.codex/hooks.json` 当时是 project-level config, 由 Codex 直接读取, 不经过 plugin 包装。该文件现已移除。
 
 **Why not applicable**:
 1. **Mercury 是 repo-level harness, 不是 distributable plugin** — 与 §C5 Monitor 同类 — 不进入 plugin 分发生态。
-2. **Schema 验证已通过**: Codex 0.130 升级未触发 `.codex/hooks.json` schema 报错 (`codex features list` 显示 hooks=stable/true, 配置加载 OK)。
+2. **当时的 Schema 验证已通过**: Codex 0.130 升级未触发 `.codex/hooks.json` schema 报错 (`codex features list` 当时显示 hooks=stable/true, 配置加载 OK)。
 3. **trust metadata 字段 plugin-only**: project-level hooks 不需要 trust metadata (本地 repo 内容 = trusted)。
 
 **No re-eval needed**, unless §C5 trigger 同时触发 (Mercury → plugin 重构)。
@@ -287,12 +293,12 @@ Mercury baseline: Codex CLI 0.129 (PR #357, S2-side-bug 2026-04-30)。窗口内 
 
 **Vendor capability**: 0.128。permission profiles 提供 built-in defaults (e.g. `workspace-write`, `read-only`); sandbox CLI profile 用于 codex-rescue 等 wrapped agents。
 
-**Mercury current**: codex-rescue agent 是 plugin-namespaced subagent (per `codex:codex-rescue` 在 available agent types 列表; 定义在 codex plugin marketplace, 不在 Mercury repo 内 — 实际加载路径 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/marketplaces/openai-codex/plugins/codex/agents/codex-rescue.md` UNVERIFIED, 但 plugin 注册路径可通过 `claude /plugins list` 查询)。Mercury 当前调用 codex 经由 `scripts/codex-sync-audit.sh` (per `.claude/skills/dual-verify/SKILL.md`) 走 sandbox default profile (UNVERIFIED — `.codex/config.toml` 未显式 set `sandbox_profile`, 应用 Codex 内置 default)。
+**审计时状态（2026-05-17）**: codex-rescue agent 是 plugin-namespaced subagent (per `codex:codex-rescue` 在 available agent types 列表; 定义在 codex plugin marketplace, 不在 Mercury repo 内 — 实际加载路径 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/marketplaces/openai-codex/plugins/codex/agents/codex-rescue.md` UNVERIFIED, 但 plugin 注册路径可通过 `claude /plugins list` 查询)。Mercury 当时调用 codex 经由 `scripts/codex-sync-audit.sh` (per `.claude/skills/dual-verify/SKILL.md`) 走 sandbox default profile (UNVERIFIED — `.codex/config.toml` 未显式 set `sandbox_profile`, 应用 Codex 内置 default)。
 
 **Why defer**:
-1. **当前无 sandbox 回归**: codex-rescue S97 (PR #378 timing) 之后无报错, S102 / S103 dual-verify Codex 多 iter 链全部正常 — 实测 sandbox 配置 working。
+1. **审计时无 sandbox 回归**: codex-rescue S97 (PR #378 timing) 之后无报错, S102 / S103 dual-verify Codex 多 iter 链全部正常 — 实测 sandbox 配置 working。
 2. **0.128 升级未引入 breaking change**: Mercury 在 0.129 baseline 之上稳定运行 16 session (S88 - S104), 0.128 permission profile 默认值与 Mercury 使用模式兼容。
-3. **Audit deferred until regression observed** — 主动审计成本 (per-profile 行为 verify + path grants 列表 vs Mercury 实际 file access pattern 对照) 高, 当前无 trigger。
+3. **Audit deferred until regression observed** — 主动审计成本 (per-profile 行为 verify + path grants 列表 vs Mercury 实际 file access pattern 对照) 高, 审计时无 trigger。
 
 **Re-eval trigger**: codex-rescue 报错涉及 sandbox path access (e.g. "permission denied" 在曾经 working 的路径), 或 Codex CLI 后续版本变更 default profile, 触发审计。
 
@@ -302,7 +308,7 @@ Mercury baseline: Codex CLI 0.129 (PR #357, S2-side-bug 2026-04-30)。窗口内 
 
 虽然 #382 scope = repo-level, 但 vendor 新事件 在 user-level (`${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/`) 有 潜在应用候选 — 这里仅 cross-reference, 不构成 #382 实施 action:
 
-| User-level hook (`${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/...`) | 当前 event | Vendor 新事件 候选 | Cross-ref note |
+| User-level hook (`${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/...`) | 审计时 event | Vendor 新事件 候选 | Cross-ref note |
 |-----------------|-----------|---------------------|----------------|
 | `pre-compact.py` (mem0 flush) | PreCompact (Anthropic) | Codex compaction hooks (X1) | Defer 同 §X1 — Codex 端 mem0 整合远期 |
 | `session-end.py` (mem0 finalize) | SessionEnd (Anthropic) | Codex session-end equivalent (UNVERIFIED) | Out of #382 scope |
@@ -346,7 +352,7 @@ Issue #382 12 个 checkbox **全部 close-with-rationale**:
 
 ### 8.2 No follow-up Issues filed at this checkpoint
 
-per §7 Re-eval Triggers, **7 defer items 全部条件性** — 仅在 trigger 发生时才 re-open。当前无条件触发 → 不 file P3 placeholder Issues (避免 backlog 噪音)。
+per §7 Re-eval Triggers, **7 defer items 全部条件性** — 仅在 trigger 发生时才 re-open。审计时无条件触发 → 不 file P3 placeholder Issues (避免 backlog 噪音)。
 
 §7 P3 observability candidate (operator docs note about `/hooks` TUI) 也不立即 file — wait for actual operator confusion 信号。
 
@@ -366,7 +372,7 @@ per §7 Re-eval Triggers, **7 defer items 全部条件性** — 仅在 trigger �
 
 ### 8.4 Authority / scope
 
-本 ADR 不修改 DIRECTION.md 或 EXECUTION-PLAN.md。所有结论限于 hook layer 当前 usage profile, 不构成 Mercury 长线 direction 改动。
+本 ADR 不修改 DIRECTION.md 或 EXECUTION-PLAN.md。所有结论限于 hook layer 在 2026-05-17 的 usage profile, 不构成 Mercury 长线 direction 改动。
 
 ### 8.5 Notes on UNVERIFIED markers (non-load-bearing)
 

@@ -1,5 +1,12 @@
 # Mercury 工作流迁移到 Codex CLI —— 目标清单
 
+> **当前状态（2026-08-15）：项目级 Codex hook 接线已退役。** Mercury 已移除
+> `.codex/hooks.json`、`scripts/codex/hook-probe.ps1` 与旧 hook 测试脚本，项目
+> `.codex/config.toml` 不再覆盖 `hooks` feature。当前 Codex 强制层是
+> `.codex/rules/`；`scripts/codex/` 包装脚本与指令层提供补充约束。
+> `.claude/hooks/` 仍服务 Claude Code。下文保留 2026-08-14 的迁移时间线、旧接线、
+> probe 与测试结论作为历史证据，**不得把它们当作现行配置或操作指引**。
+
 > 编制日期：2026-08-14。所有版本号与实测结论都锚定这一天，超过两周请重新核对。
 > 这份文档是**目标**不是**步骤**：每条说清「要达成什么状态」和「怎么算达成」，具体怎么做由执行时决定。
 
@@ -37,10 +44,11 @@ Claude 订阅到期，需要把 Mercury 的完整工作流切换到 Codex CLI，
 官方 config reference 明文：**"Untrusted projects skip project-scoped `.codex/` layers,
 including project-local config, hooks, and rules."**
 
-后果：`.codex/config.toml` 的 developer_instructions、`.codex/hooks.json` 的 8 条 hook、
-`.codex/rules/` 的 9 条禁令，**当前三者全部未加载**。SoT 两个仓是普通形式，没这个问题。
+当时的后果：`.codex/config.toml` 的 developer_instructions、当时 `.codex/hooks.json` 的
+8 条 hook、`.codex/rules/` 的 9 条禁令，**三者当时全部未加载**。SoT 两个仓是普通形式，
+没这个问题。该信任问题后来已修复；项目级 hook 注册现已按页首说明退役。
 
-已做：备份在 `~/.codex/config.toml.backup-pre-codex-migration-20260814`；
+截至当时：备份在 `~/.codex/config.toml.backup-pre-codex-migration-20260814`；
 `PokemonAutoChess` 那条已改成普通形式；**Mercury 那条尚未改**。
 
 ### 1.3 四个已查实的结论（推翻了两个原设想）
@@ -352,7 +360,7 @@ ChatGPT web 的定时任务跑在云上、碰不到本地仓库，不适用。
 
 | # | 正文写的 | 实测 |
 |---|---|---|
-| 1 | G2-1「**8 条** hook」 | 实际注册 **10 条**命令（PreToolUse 5、PostToolUse 2、UserPromptSubmit 2、Stop 1）。清单必须从 `hooks.json` 解析生成，不能预设数量 |
+| 1 | G2-1「**8 条** hook」 | 当时的 `hooks.json` 实际注册 **10 条**命令（PreToolUse 5、PostToolUse 2、UserPromptSubmit 2、Stop 1）。当时的清单须从文件解析生成，不能预设数量；该项目级注册现已退役 |
 | 2 | G2-2 判据用 `codex execpolicy check`（不带 `--rules`） | 该子命令在 0.129.0 与 0.147.0 上**都强制要求 `--rules`**，不做自动发现。运行时的自动发现**是有效的**，证据是 Codex 拦 `git commit` 时原样回显了 rules 里的 justification |
 | 3 | G1-1 提到 `project_doc_fallback_filenames` 可让 Codex 读 CLAUDE.md | **实测无效**。它是「AGENTS.md 不存在时的备选」不是「追加读取」，双写不可避免 |
 | 4 | G3-3「/mcp 三个都活」 | 三个应为 obsidian / godot / **playwright**。`mercury-orchestrator` 是死配置 —— 实现早随 #173/#174 归档，端口 7654 无监听，留着只会每次调用刷三次错误 |
@@ -366,7 +374,7 @@ ChatGPT web 的定时任务跑在云上、碰不到本地仓库，不适用。
   2026-08-14 G0-1 完成后用「无条件插桩 + 手动调用对照」拿到了确定结论，
   不需要 ETW。**以第十三节为准。** 下面保留原文只是记录当时的排除路径：
 
-  七种方式全试过：四条常规路径各自堵死（拦截型被前置层接走、loop-detector 因 `enabled:false` 触发即退出、post-commit-reset 的触发条件恰好被拦、UserPromptSubmit/Stop 产物无法归因），三种进程采集路径也不通（CIM 订阅带 `-Action` 非交互不执行、不带 `-Action` 拉不到、后台轮询过重拖垮被观测调用）。下一步需 ETW 内核事件采集，要额外权限。探针脚本已提交（`scripts/codex/hook-probe.ps1`），**它的自检机制两次都正确判了 INVALID 而不是报出看似结论的 NO-EVIDENCE**。
+  七种方式全试过：四条常规路径各自堵死（拦截型被前置层接走、loop-detector 因 `enabled:false` 触发即退出、post-commit-reset 的触发条件恰好被拦、UserPromptSubmit/Stop 产物无法归因），三种进程采集路径也不通（CIM 订阅带 `-Action` 非交互不执行、不带 `-Action` 拉不到、后台轮询过重拖垮被观测调用）。下一步需 ETW 内核事件采集，要额外权限。探针脚本当时已提交（`scripts/codex/hook-probe.ps1`，现已移除），**它的自检机制两次都正确判了 INVALID 而不是报出看似结论的 NO-EVIDENCE**。
 - **`read-only` 沙箱下 agent 联不上网**。`network_access = true` 只配在 `[sandbox_workspace_write]` 下，检索类 agent 用 read-only 会静默拿不到网络。已在 `runAgent` 加警告（不自动提升档位 —— 那会静默扩大权限）。
 - **TOML 的 section 会静默吞掉后续顶层标量**。在 `.codex/config.toml` 中部插一个 `[section]`，会把它之后的 `developer_instructions` re-parent 进去，**而解析完全合法不报错**。改完必须验证顶层键，光验证「解析通过」查不出来。
 

@@ -41,7 +41,7 @@ Recent additions on top of the core phases:
 
 - **Multi-lane development** — multiple isolated work lanes (own worktree + branch + handoff) running in parallel under a 5-lane hard cap (see [Multi-lane development](#multi-lane-development))
 - **Voice agent (experimental)** — local STT/TTS conversation loop under `scripts/voice/` (listen daemon, transcript queue, interruptible playback) exposed to Claude Code via an MCP server
-- **Codex hooks GA** — lifecycle hooks now enforce branch/scope policy for Codex sessions, sharing the same scripts as Claude Code (see [Multi-agent runtimes](#multi-agent-runtimes))
+- **Codex native project layer** — `AGENTS.md`, `.codex/rules/`, and guarded PowerShell wrappers carry branch, review, and task policy (see [Multi-agent runtimes](#multi-agent-runtimes))
 
 ## Architecture at a glance
 
@@ -50,8 +50,8 @@ Mercury (lightweight core — only builds what no external project provides)
 ├── .claude/
 │   ├── agents/        sub-agent role definitions (main, dev, acceptance, critic, design, research, game-*)
 │   ├── skills/        reusable workflow skills (pr-flow, autoresearch, dev-pipeline, dual-verify, ...)
-│   └── hooks/         lifecycle hook scripts (PreToolUse/PostToolUse/UserPromptSubmit/Stop/SubagentStop), wired via settings.json — shared with Codex
-├── .codex/            Codex CLI config + hooks.json (lifecycle hooks GA) + rules/ defense-in-depth
+│   └── hooks/         lifecycle hook scripts (PreToolUse/PostToolUse/UserPromptSubmit/Stop/SubagentStop), wired for Claude Code via settings.json
+├── .codex/            Codex CLI config + agents + rules (project-level hook registrations retired)
 ├── .mercury/
 │   ├── docs/          DIRECTION.md + EXECUTION-PLAN.md + guides/ + research/
 │   ├── templates/     dispatch prompt templates
@@ -78,7 +78,7 @@ Configuration lives at the repo root:
 - [`gh`](https://cli.github.com/) — GitHub CLI for the PR flow
 - `git` (worktree support recommended)
 - Optional, per-agent:
-  - [Codex CLI](https://developers.openai.com/codex/) — for `AGENTS.md`-driven sessions (lifecycle hooks supported, see below)
+  - [Codex CLI](https://developers.openai.com/codex/) — for `AGENTS.md`-driven sessions (see below)
   - [Gemini CLI](https://www.npmjs.com/package/@google/gemini-cli) — for `GEMINI.md`-driven sessions
 
 ### Clone and enter
@@ -89,7 +89,7 @@ cd Mercury
 claude   # launch a Claude Code session at the repo root
 ```
 
-On session start, Claude Code auto-discovers every agent under `.claude/agents/` and every skill under `.claude/skills/`. Hooks are not directory-discovered — they are wired to lifecycle events in `.claude/settings.json` (and `.codex/hooks.json` for Codex), with the scripts living under `.claude/hooks/`. No build step is required.
+On session start, Claude Code auto-discovers every agent under `.claude/agents/` and every skill under `.claude/skills/`. Its hooks are not directory-discovered — they are wired to lifecycle events in `.claude/settings.json`, with the scripts living under `.claude/hooks/`. Codex reads `AGENTS.md`, `.codex/config.toml`, `.codex/agents/`, and `.codex/rules/`; Mercury does not register project-level Codex hooks. No build step is required.
 
 ### Typical first-session checklist
 
@@ -147,7 +147,7 @@ Mercury runs multiple **lanes** in parallel — independent work streams that do
 Mercury is primarily a Claude Code harness, but the same policies are mirrored for other agent CLIs so a task can be handed across runtimes without losing its guardrails.
 
 - **Claude Code** — primary runtime; reads `CLAUDE.md`, auto-discovers `.claude/{agents,skills}` and wires hooks via `.claude/settings.json`
-- **Codex CLI** — reads `AGENTS.md`; lifecycle hooks are **GA** (Codex CLI ≥ v0.124, stable v0.128+) and enabled via `[features] hooks = true` in `.codex/config.toml`. Hook scripts live under `.claude/hooks/` (single source of truth, shared with Claude Code); `.codex/rules/` + `scripts/codex/*.ps1` remain as defense-in-depth, and `.codex/rules/` also enforces what hooks cannot (e.g. the web-research gate)
+- **Codex CLI** — reads `AGENTS.md` and the native `.codex/` project layer. Mercury has retired project-level Codex hook registrations; `.codex/rules/` is the verified command-enforcement layer, `scripts/codex/*.ps1` provides guarded operations, and instructions cover hosted tools that command-prefix rules cannot reach
 - **Gemini / OpenCode** — `GEMINI.md` / `OPENCODE.md` carry the equivalent instruction set
 
 ## Ecosystem

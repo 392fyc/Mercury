@@ -7,7 +7,7 @@ web_search = "live"
 # 权限姿态（G2-3，Issue #571）。
 #
 # Claude Code 侧对应的是 .claude/settings.local.json 的 defaultMode = bypassPermissions
-# 加 18 条 allow —— 实质是全放行，靠 hook 兜底。**这里刻意不做 1:1 直译**：
+# 加 18 条 allow —— 实质是全放行。**这里刻意不做 1:1 直译**：
 # 把「全放行」搬到 Codex 等于用 --yolo，而 Codex 有更合适的表达方式，
 # 且实测已确认 .codex/rules/ 的运行时自动发现是有效的（它拦住了 git commit，
 # 原样回显了 rules 里的 justification）。
@@ -15,14 +15,14 @@ web_search = "live"
 # 于是姿态改成三层各司其职，而不是「全放行 + 事后拦」：
 #   - sandbox_mode = workspace-write：能改本仓文件，改不了仓外的东西。
 #     写 C:\Program Files 这类操作实测会被沙箱直接拒（patch rejected:
-#     writing outside of the project），不必等 hook。
+#     writing outside of the project）。
 #   - approval_policy = on-request：不逐步打断，需要越权时才问。
 #   - 危险的具体命令（受保护分支推送、绕过 guard 的 commit 等）交给 .codex/rules/。
 #
 # 没有配 writable_roots：跨仓库作业时用 --add-dir 显式声明，比常驻放开更清楚。
 # network_access 必须开 —— git push / pnpm install / gh 都要它，
 # 关掉会让整条开发流程在沙箱里失败，而这些操作本身已由 rules 层管着。
-# ⚠️ 只放顶层标量。section（[xxx]）一律写在文件末尾 —— 见下方 [features] 那段注释：
+# ⚠️ 只放顶层标量。section（[xxx]）一律写在文件末尾：
 # TOML 的 section 会捕获其后**所有** key=value 直到下一个 section 头，
 # 在这里插一个 section 会把 developer_instructions 静默 re-parent 进去，
 # 而 **TOML 解析依然合法、不会报任何错**。改完必须验证顶层键，光验证「解析通过」查不出来。
@@ -39,49 +39,12 @@ MANDATORY: Before writing ANY code that imports an external SDK/API package or r
 5. If web_search fails, mark claims as UNVERIFIED
 6. Never commit or push directly on develop, master, or main
 7. If the current branch is protected or does not match feature/TASK-<id> or lane/<lane>/(init|<n>|<n>-<slug>), stop and move the work to a task branch before committing
-8. **Do not rely on Codex hooks.** MEASURED (CLI 0.147.0, 2026-08-14, Issue #571 / G2-1): a real session performing a real `apply_patch` did NOT invoke its `PreToolUse` hook, even though `.codex/hooks.json` registers it and the `hooks` feature flag reads `stable`/`true`. SCOPE OF THAT EVIDENCE: exactly one path. The other three event types registered in hooks.json — `UserPromptSubmit`, `Stop`, `PostToolUse` — were NOT tested, so do not claim they are broken. Treating all of them as unavailable is a conservative posture (an unverified guard should not be counted on), not a proven fact. Method: an unconditional log line was instrumented at the top of scope-guard.sh; the probe file WAS created (so the patch really happened) and the manual-invocation control DID write the log (so the instrumentation and path were correct), yet the session produced no log line. Root cause is UNVERIFIED — the official docs pages for Codex hooks 404 and could not be checked. **The real enforcement layer on Codex is `.codex/rules/`**, which was confirmed in the same session: `git push origin HEAD` was `declined in 0ms` at the router with the rules justification echoed verbatim. Treat `scripts/codex/*.ps1` wrappers and clause #6/#7 self-discipline as the remaining lines, and do not assume any hook will stop you
-9. Defense-in-depth: scripts/codex/*.ps1 wrappers (powershell -File scripts/codex/git-safe.ps1 add/commit/push) remain available as fallback when hooks cannot be relied on (e.g. shell invocation in non-Codex contexts)
+8. Project-level Codex hook registrations are retired and MUST NOT be treated as a guardrail. The enforced project layer is `.codex/rules/`; use `scripts/codex/*.ps1` wrappers for guarded Git operations and follow clauses #6/#7 for branch discipline.
+9. Defense-in-depth: use scripts/codex/*.ps1 wrappers (powershell -File scripts/codex/git-safe.ps1 add/commit/push) for guarded Git operations, including shell invocation outside Codex.
 10. Before every commit on a PR branch, run dual-verify: spawn TWO independent subagents that review the change blind and in parallel, at different `model_reasoning_effort` levels, then compare their findings. Reviewing your own work inside a single agent context does NOT satisfy this gate. (The legacy wording "parallel Claude Code deep-review + Codex code-audit" assumed Claude Code hosted the session; it no longer applies once Codex is the harness — see AGENTS.md and Issue #571.) This gate applies to every milestone commit, not only PR-branch commits, and auto-verify alone does NOT satisfy it. Then run `powershell -File scripts/codex/guard.ps1 mark-review`
-11. Web-research enforcement: Codex hooks do NOT cover web_search tool calls (no handler — see Issue #20204), and `.codex/rules/` does NOT constrain it either — rules match command prefixes, which cannot reach a hosted tool. So clauses #1-5 above are the ONLY enforcement, and they are advisory: nothing will block you. This rule runs on self-discipline on Codex. Verify your own compliance before each external SDK/API claim.
+11. Web-research enforcement: `.codex/rules/` and shell wrappers match command prefixes, so they cannot constrain the hosted web_search tool. Clauses #1-5 above are therefore the only enforcement. Verify your own compliance before each external SDK/API claim.
 12. 用户可见的回复一律用正常、清楚的简体中文完整句子。禁止网络黑话与内部简写 —— 英文缩写和中文圈内话都算，碰到就用平实的话讲清楚。专有名词、命令、接口名、字段名保留原文往往更清楚，保留即可；判断标准是读者能不能看懂，不是句子里有没有英文。宁可多写一句把事情说明白，也不要压缩到看不懂。严禁韩文与日文。代码、commit message、PR body 保持各自既有惯例（英文为主）。
 """
-
-# Enable lifecycle hooks (Codex CLI >= v0.124 GA, stable since v0.128).
-# Hook config lives in .codex/hooks.json (preferred over inline [hooks]).
-# Canonical flag name is `hooks` since Codex PR #20522 (alias of legacy
-# `codex_hooks`); empirically verified via `codex features list` against
-# Codex CLI 0.129.0 — flag stage `stable`, default `true`. Explicit setting
-# documents intent + protects against silent regression if the default flips.
-# Section MUST come AFTER all top-level scalars: TOML section scoping captures
-# every subsequent key=value pair until the next section header — placing
-# [features] earlier would silently re-parent later scalars (e.g.
-# developer_instructions) under features.* and break Codex config validation.
-# See .mercury/docs/research/codex-hooks-adoption-2026-05.md for ADR.
-[features]
-# 2026-08-14 由 true 改为 false（Issue #571 / G2-1，用户要求）。
-#
-# **理由：hook 在 Codex 上一条都不触发，留着 true 是「看起来武装、实际不响」的不确定状态。**
-# 用户明确要求：不作用就应当是关闭，而不是静默 —— 避免万一某条路径下它又响了，
-# 跑出一堆没人预期的脚本。
-#
-# 实测依据（2026-08-14，CLI 0.147.0）：给 6 个 hook 脚本插入无条件日志，
-# 并**记录调用方身份**，然后跑真实 codex exec 会话（含 shell 命令 + apply_patch）：
-#   - 该会话确实在干活：apply_patch 建出了文件、git status 也跑了
-#   - 日志里 6 条触发**全部**带 `CLAUDE_PROJECT_DIR`，即全部来自 Claude Code 自身
-#   - **带 Codex 标识的触发：0 条**
-# 覆盖了 hooks.json 注册的全部四类事件：PreToolUse（shell 与 apply_patch 两条路）、
-# PostToolUse、UserPromptSubmit、Stop。
-#
-# ⚠️ 第一版测试是**无效**的：当时插桩只记录「脚本被调用」不记录「谁调的」，
-# 而 `.claude/hooks/` 的脚本是两个 harness 共用的，测出来的是我自己 Claude Code 会话的
-# Bash 调用。必须能归因才算数。
-#
-# 关掉的代价：若上游日后修好 hook，需要把这里改回 true 才会重新生效。
-# `.codex/hooks.json` **保留未删**，接线原样，改回 true 即可恢复。
-#
-# 不影响的部分（已复验）：skills 发现、plugins 加载、`.codex/rules/` 拦截、
-# 沙箱档位 —— 这四者与 hooks 特性无关。
-hooks = false
 
 # workspace-write 档位下的细则。network_access 必须开 —— git push / pnpm install / gh
 # 都要它，关掉会让整条开发流程在沙箱里失败，而这些操作本身已由 .codex/rules/ 管着。
