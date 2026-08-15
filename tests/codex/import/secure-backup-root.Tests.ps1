@@ -277,7 +277,8 @@ function Initialize-TreeVerificationMetadata {
 
 Describe "secure_backup_root.ps1 security boundary" {
     BeforeAll {
-        (New-Object System.IO.DriveInfo("D:\")).DriveFormat | Should Be "NTFS"
+        $testDrive = [System.IO.Path]::GetPathRoot($script:SharedBase)
+        (New-Object System.IO.DriveInfo($testDrive)).DriveFormat | Should Be "NTFS"
         Add-Type -TypeDefinition $nativeSource
         Test-Path -LiteralPath $script:RealRoot | Should Be $false
         Test-Path -LiteralPath $script:SharedBase -PathType Container | Should Be $true

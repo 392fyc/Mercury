@@ -14,7 +14,9 @@ from pathlib import Path
 def _required_environment_path(name: str) -> Path:
     value = os.environ.get(name)
     if not value:
-        raise RuntimeError(f"{name} must point to the checked-out SoT design repository")
+        raise unittest.SkipTest(
+            f"{name} must point to the checked-out SoT design repository"
+        )
     return Path(value).expanduser().resolve()
 
 
