@@ -5,7 +5,7 @@
 Agent: codex-cli
 Your role is injected by the orchestrator at session start via system prompt (`# Role Assignment: {role}`).
 If no role assignment is received, refer to the dispatch prompt or handoff packet.
-Role definitions: `.claude/agents/{role}.md` (active); legacy YAML archived at `archive/roles/{role}.yaml`
+Codex 原生运行入口：`.codex/agents/{role}.toml`；`.claude/agents/{role}.md` 保留为角色定义源与参考；legacy YAML archived at `archive/roles/{role}.yaml`
 
 ## Navigation
 
@@ -15,7 +15,8 @@ Read these docs on demand when you need the corresponding information:
 |-------|------|
 | **Project direction (最高准则)** | `.mercury/docs/DIRECTION.md` |
 | **Execution plan** | `.mercury/docs/EXECUTION-PLAN.md` |
-| Role definitions & boundaries | `.claude/agents/{role}.md` (active); `archive/roles/{role}.yaml` (archived YAML) |
+| Role definitions & boundaries | `.codex/agents/{role}.toml`（Codex 原生运行入口）；`.claude/agents/{role}.md`（源与参考）；`archive/roles/{role}.yaml`（archived YAML） |
+| Active project memory（本机专用，不纳入公开仓库） | `.mercury/memory/README.md`（存在时） |
 | Git branching rules | `.mercury/docs/guides/git-flow.md` |
 | GitHub Issues workflow | `.mercury/docs/guides/issue-workflow.md` |
 | SoT task workflow (legacy) | `.mercury/docs/guides/sot-workflow.md` |
@@ -27,6 +28,8 @@ Read these docs on demand when you need the corresponding information:
 | Cherry-pick carve-out 细则 | `.mercury/docs/guides/cherry-pick-carve-out.md` |
 | **Codex 迁移总台账 (G0-G6)** | [#571](https://github.com/392fyc/Mercury/issues/571) |
 | **Codex 迁移主档**(目标 + 实测修正；与正文冲突以附录为准) | `.mercury/docs/research/issue-571-codex-migration-2026-08.md` |
+
+需要历史上下文且本机存在 `.mercury/memory/README.md` 时，先按其 index 按需读取；该目录是本机专用记忆，不纳入公开仓库，保护归档和聊天记录也不是活跃记忆。
 
 ## Related Repositories
 
