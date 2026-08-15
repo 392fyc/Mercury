@@ -2,8 +2,12 @@ $ErrorActionPreference = "Stop"
 
 $script:RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..")).Path
 $script:SecureRootScript = Join-Path $script:RepoRoot "scripts\codex\import\secure_backup_root.ps1"
-$script:SharedBase = "D:\Codex-Migration-Backup"
-$script:RealRoot = "D:\Codex-Migration-Backup\2026-08-15-mercury-sot"
+$script:SharedBase = $env:MERCURY_SECURE_BACKUP_TEST_BASE
+if ([string]::IsNullOrWhiteSpace($script:SharedBase)) {
+    throw "MERCURY_SECURE_BACKUP_TEST_BASE must point to the pre-protected NTFS test base."
+}
+$script:SharedBase = [System.IO.Path]::GetFullPath($script:SharedBase)
+$script:RealRoot = Join-Path $script:SharedBase "2026-08-15-mercury-sot"
 $script:Prefix = ".secure-root-tests-{0}-{1}" -f $PID, [guid]::NewGuid().ToString("N")
 $script:TestBaseCapability = [guid]::NewGuid().ToString("N")
 $script:TestBase = Join-Path $script:SharedBase (".secure-root-tests-base-{0}-{1}" -f $PID, $script:TestBaseCapability)

@@ -11,9 +11,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-DESIGN_ROOT = Path(
-    os.environ.get("SOT_DESIGN_ROOT", r"D:\ShipOfTheseus\SoT-fyc-space")
-)
+def _required_environment_path(name: str) -> Path:
+    value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(f"{name} must point to the checked-out SoT design repository")
+    return Path(value).expanduser().resolve()
+
+
+DESIGN_ROOT = _required_environment_path("SOT_DESIGN_ROOT")
 CANONICAL_DOCUMENT = DESIGN_ROOT / "docs" / "mercury-sot-lane-management.md"
 ACCEPTANCE_DOCUMENT = (
     DESIGN_ROOT / "docs" / "migration" / "2026-08-15-codex-lane-acceptance.md"
