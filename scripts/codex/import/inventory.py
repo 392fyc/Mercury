@@ -46,8 +46,11 @@ PRODUCTION_OUTPUT_NAMES = {
     "domain_decisions": "domain-decisions.json",
 }
 SECURE_ROOT_VERIFIER = Path(__file__).absolute().with_name("secure_backup_root.ps1")
-WINDOWS_POWERSHELL = Path(
-    r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+_WINDOWS_ROOT = os.environ.get("SystemRoot") or os.environ.get("WINDIR")
+WINDOWS_POWERSHELL = (
+    Path(_WINDOWS_ROOT) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    if _WINDOWS_ROOT
+    else Path("powershell.exe")
 )
 PRODUCTION_EXPECTED_COUNTS = {
     "chat": 68,

@@ -2088,10 +2088,7 @@ class ProtectedOutputTests(unittest.TestCase):
             with mock.patch.object(inventory, "PRODUCTION_OUTPUT_ROOT", root, create=True):
                 with self.assertRaisesRegex(inventory.ContractError, "EFS|ACL|protected"):
                     verifier(root, runner=runner)
-            self.assertEqual(
-                r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
-                observed_executable[0],
-            )
+            self.assertEqual(os.fspath(inventory.WINDOWS_POWERSHELL), observed_executable[0])
 
     def test_protected_root_verifier_rejects_valid_shape_wrong_owner_and_identity(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
