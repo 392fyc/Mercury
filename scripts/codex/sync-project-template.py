@@ -34,6 +34,22 @@ WINDOWS_RESERVED_BASENAMES = frozenset(
     | {f"lpt{number}" for number in "¹²³"}
 )
 WINDOWS_INVALID_CHARACTERS = frozenset('<>:"|?*')
+GIT_ENVIRONMENT_ALLOWLIST = frozenset(
+    {
+        "PATH",
+        "SYSTEMROOT",
+        "WINDIR",
+        "HOME",
+        "USERPROFILE",
+        "TMP",
+        "TEMP",
+        "LANG",
+        "LC_ALL",
+        "PATHEXT",
+        "COMSPEC",
+    }
+)
+GIT_TIMEOUT_SECONDS = 30
 
 
 class SyncError(Exception):
@@ -72,6 +88,10 @@ class FileState:
     safe_regular: bool
     single_link: bool
     content: bytes | None
+    st_dev: int | None
+    st_ino: int | None
+    st_size: int | None
+    st_mtime_ns: int | None
 
 
 def _sha256(content: bytes) -> str:
@@ -145,11 +165,13 @@ def _clean_git_environment() -> dict[str, str]:
     return {
         key: value
         for key, value in os.environ.items()
-        if not key.upper().startswith("GIT_")
+        if key.upper() in GIT_ENVIRONMENT_ALLOWLIST
     }
 
 
 def _run_git(repository_root: Path, *arguments: str) -> bytes:
+    failure_message: str | None = None
+    result: subprocess.CompletedProcess[bytes] | None = None
     try:
         result = subprocess.run(
             [
@@ -163,12 +185,22 @@ def _run_git(repository_root: Path, *arguments: str) -> bytes:
             stderr=subprocess.PIPE,
             check=False,
             env=_clean_git_environment(),
+            timeout=GIT_TIMEOUT_SECONDS,
         )
-    except OSError as exc:
-        raise SyncError(f"cannot run git: {exc}") from exc
+    except subprocess.TimeoutExpired:
+        failure_message = (
+            f"git command timed out after {GIT_TIMEOUT_SECONDS} seconds"
+        )
+    except OSError:
+        failure_message = "cannot start git command"
+    if failure_message is not None:
+        raise SyncError(failure_message) from None
+    if result is None:
+        raise SyncError("git command did not produce a result") from None
     if result.returncode != 0:
-        detail = result.stderr.decode("utf-8", errors="replace").strip()
-        raise SyncError(detail or f"git {' '.join(arguments)} failed")
+        raise SyncError(
+            f"git command failed with exit code {result.returncode}"
+        ) from None
     return result.stdout
 
 
@@ -311,6 +343,11 @@ def _assert_directory_chain_safe(root: Path, parent: Path) -> None:
         relative = parent.relative_to(root)
     except ValueError as exc:
         raise SyncError("destination escapes the target .codex directory") from exc
+    root_stat = _lstat(root)
+    if root_stat is not None and (
+        _is_reparse_or_symlink(root_stat) or not stat.S_ISDIR(root_stat.st_mode)
+    ):
+        raise SyncError(f"destination parent is not a safe directory: {root}")
     current = root
     for part in relative.parts:
         current = current / part
@@ -341,14 +378,53 @@ def _path_for_destination(codex_root: Path, destination: PurePosixPath) -> Path:
 def _file_state(path: Path) -> FileState:
     file_stat = _lstat(path)
     if file_stat is None:
-        return FileState(False, False, False, None)
+        return FileState(False, False, False, None, None, None, None, None)
     if _is_reparse_or_symlink(file_stat) or not stat.S_ISREG(file_stat.st_mode):
-        return FileState(True, False, False, None)
+        return FileState(
+            True,
+            False,
+            file_stat.st_nlink == 1,
+            None,
+            file_stat.st_dev,
+            file_stat.st_ino,
+            file_stat.st_size,
+            file_stat.st_mtime_ns,
+        )
     try:
         content = path.read_bytes()
     except OSError as exc:
         raise SyncError(f"cannot read destination {path}: {exc}") from exc
-    return FileState(True, True, file_stat.st_nlink == 1, content)
+    after_read_stat = _lstat(path)
+    if after_read_stat is None or _is_reparse_or_symlink(after_read_stat):
+        raise SyncError(f"destination changed while it was inspected: {path}")
+    before_identity = (
+        file_stat.st_mode,
+        file_stat.st_nlink,
+        file_stat.st_dev,
+        file_stat.st_ino,
+        file_stat.st_size,
+        file_stat.st_mtime_ns,
+    )
+    after_identity = (
+        after_read_stat.st_mode,
+        after_read_stat.st_nlink,
+        after_read_stat.st_dev,
+        after_read_stat.st_ino,
+        after_read_stat.st_size,
+        after_read_stat.st_mtime_ns,
+    )
+    if before_identity != after_identity or not stat.S_ISREG(after_read_stat.st_mode):
+        raise SyncError(f"destination changed while it was inspected: {path}")
+    return FileState(
+        True,
+        True,
+        after_read_stat.st_nlink == 1,
+        content,
+        after_read_stat.st_dev,
+        after_read_stat.st_ino,
+        after_read_stat.st_size,
+        after_read_stat.st_mtime_ns,
+    )
 
 
 def _parse_existing_lock(content: bytes) -> ExistingLock:
@@ -390,8 +466,9 @@ def _parse_existing_lock(content: bytes) -> ExistingLock:
         raise SyncError(f"existing lock is invalid: {exc}") from exc
 
 
-def _load_existing_lock(lock_path: Path) -> ExistingLock | None:
-    state = _file_state(lock_path)
+def _load_existing_lock(
+    lock_path: Path, state: FileState
+) -> ExistingLock | None:
     if not state.exists:
         return None
     if not state.safe_regular or not state.single_link or state.content is None:
@@ -466,8 +543,41 @@ def _ensure_safe_directory(path: Path, root: Path) -> None:
             raise SyncError(f"cannot create a safe destination directory: {current}")
 
 
-def _atomic_replace(path: Path, content: bytes, codex_root: Path) -> None:
+def _assert_existing_destination_safe(path: Path) -> None:
+    file_stat = _lstat(path)
+    if file_stat is None:
+        return
+    if _is_reparse_or_symlink(file_stat) or not stat.S_ISREG(file_stat.st_mode):
+        raise SyncError(
+            f"destination changed to an unsafe file before atomic replace: {path}"
+        )
+
+
+def _assert_state_unchanged(path: Path, expected: FileState) -> None:
+    current = _file_state(path)
+    if current != expected:
+        raise SyncError(f"destination changed after synchronization planning: {path}")
+
+
+def _assert_replaced_file_safe(path: Path) -> None:
+    file_stat = _lstat(path)
+    if (
+        file_stat is None
+        or _is_reparse_or_symlink(file_stat)
+        or not stat.S_ISREG(file_stat.st_mode)
+        or file_stat.st_nlink != 1
+    ):
+        raise SyncError(f"atomic replacement did not produce a safe regular file: {path}")
+
+
+def _atomic_replace(
+    path: Path,
+    content: bytes,
+    codex_root: Path,
+    expected_state: FileState,
+) -> None:
     _ensure_safe_directory(path.parent, codex_root)
+    _assert_directory_chain_safe(codex_root, path.parent)
     file_descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
     )
@@ -478,12 +588,24 @@ def _atomic_replace(path: Path, content: bytes, codex_root: Path) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         os.chmod(temporary_path, 0o644)
+        _assert_directory_chain_safe(codex_root, path.parent)
+        _assert_existing_destination_safe(path)
+        _assert_state_unchanged(path, expected_state)
         os.replace(temporary_path, path)
+        _assert_replaced_file_safe(path)
     finally:
         try:
             temporary_path.unlink()
         except FileNotFoundError:
             pass
+
+
+def _unlink_if_unchanged(
+    path: Path, expected_state: FileState, codex_root: Path
+) -> None:
+    _assert_directory_chain_safe(codex_root, path.parent)
+    _assert_state_unchanged(path, expected_state)
+    path.unlink()
 
 
 def _apply(
@@ -494,7 +616,8 @@ def _apply(
 ) -> int:
     codex_root = _codex_root(target)
     lock_path = _path_for_destination(codex_root, template.lock)
-    old_lock = _load_existing_lock(lock_path)
+    lock_state = _file_state(lock_path)
+    old_lock = _load_existing_lock(lock_path, lock_state)
     if old_lock is not None:
         _authenticate_existing_lock(repository_root, template, old_lock)
     new_ownership = {
@@ -513,7 +636,7 @@ def _apply(
                 )
     destinations = _destination_pairs(codex_root, template)
 
-    write_plan: list[tuple[Path, bytes]] = []
+    write_plan: list[tuple[Path, bytes, FileState]] = []
     for item, (destination, content) in zip(template.files, destinations):
         state = _file_state(destination)
         if state.exists and not state.safe_regular:
@@ -528,9 +651,9 @@ def _apply(
                 f"{destination}"
             )
         if not state.exists or not state.single_link or state.content != content:
-            write_plan.append((destination, content))
+            write_plan.append((destination, content, state))
 
-    delete_plan: list[Path] = []
+    delete_plan: list[tuple[Path, FileState]] = []
     if old_lock is not None:
         for destination_text, old_digest in old_lock.files.items():
             if destination_text in new_ownership:
@@ -544,15 +667,14 @@ def _apply(
                 raise SyncError(f"previously owned file is not safe to remove: {destination}")
             if state.content is None or _sha256(state.content) != old_digest:
                 raise SyncError(f"modified previously owned file blocks apply: {destination}")
-            delete_plan.append(destination)
+            delete_plan.append((destination, state))
 
-    for destination, content in write_plan:
-        _atomic_replace(destination, content, codex_root)
-    for destination in delete_plan:
-        destination.unlink()
-    lock_state = _file_state(lock_path)
+    for destination, content, planned_state in write_plan:
+        _atomic_replace(destination, content, codex_root, planned_state)
+    for destination, planned_state in delete_plan:
+        _unlink_if_unchanged(destination, planned_state, codex_root)
     if not lock_state.exists or not lock_state.single_link or lock_state.content != expected_lock:
-        _atomic_replace(lock_path, expected_lock, codex_root)
+        _atomic_replace(lock_path, expected_lock, codex_root, lock_state)
     print(f"applied {len(destinations)} manifest-owned template files")
     return 0
 

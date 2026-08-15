@@ -1,18 +1,286 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import traceback
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPOSITORY_ROOT / "scripts" / "codex" / "sync-project-template.py"
+
+
+def _load_sync_module():
+    module_name = "mercury_sync_project_template_under_test"
+    spec = importlib.util.spec_from_file_location(module_name, SCRIPT)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("cannot load sync-project-template.py for unit tests")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+SYNC_MODULE = _load_sync_module()
+
+
+class SyncImplementationUnitTests(unittest.TestCase):
+    def test_git_subprocess_has_timeout_and_timeout_error_is_sanitized(self) -> None:
+        expired = subprocess.TimeoutExpired(
+            cmd=["git", "secret-argument"], timeout=30
+        )
+        with mock.patch.object(
+            SYNC_MODULE.subprocess, "run", side_effect=expired
+        ) as run:
+            with self.assertRaises(SYNC_MODULE.SyncError) as caught:
+                SYNC_MODULE._run_git(Path("repository"), "cat-file", "-t", "secret")
+
+        self.assertIn("timed out", str(caught.exception))
+        self.assertNotIn("secret", str(caught.exception))
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertIsNone(caught.exception.__context__)
+        self.assertTrue(caught.exception.__suppress_context__)
+        rendered = "".join(
+            traceback.format_exception(
+                type(caught.exception), caught.exception, caught.exception.__traceback__
+            )
+        )
+        self.assertNotIn("secret", rendered)
+        self.assertEqual(run.call_args.kwargs["timeout"], 30)
+
+    def test_git_os_error_does_not_retain_sensitive_exception_context(self) -> None:
+        with mock.patch.object(
+            SYNC_MODULE.subprocess,
+            "run",
+            side_effect=OSError("secret executable or environment detail"),
+        ):
+            with self.assertRaises(SYNC_MODULE.SyncError) as caught:
+                SYNC_MODULE._run_git(
+                    Path("secret-repository"), "cat-file", "-t", "secret-object"
+                )
+
+        self.assertEqual(str(caught.exception), "cannot start git command")
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertIsNone(caught.exception.__context__)
+        rendered = "".join(
+            traceback.format_exception(
+                type(caught.exception), caught.exception, caught.exception.__traceback__
+            )
+        )
+        self.assertNotIn("secret", rendered)
+
+    def test_git_nonzero_exit_does_not_expose_stderr_or_arguments(self) -> None:
+        completed = subprocess.CompletedProcess(
+            args=["git", "secret-argument"],
+            returncode=17,
+            stdout=b"",
+            stderr=b"secret stderr from git",
+        )
+        with mock.patch.object(SYNC_MODULE.subprocess, "run", return_value=completed):
+            with self.assertRaises(SYNC_MODULE.SyncError) as caught:
+                SYNC_MODULE._run_git(
+                    Path("secret-repository"), "cat-file", "-t", "secret-object"
+                )
+
+        self.assertEqual(
+            str(caught.exception), "git command failed with exit code 17"
+        )
+        self.assertIsNone(caught.exception.__cause__)
+
+    def test_git_environment_uses_only_cross_platform_allowlist(self) -> None:
+        provided = {
+            "Path": "path-value",
+            "systemroot": "system-root",
+            "WINDIR": "windows-directory",
+            "HOME": "home-directory",
+            "USERPROFILE": "user-profile",
+            "TMP": "tmp-directory",
+            "temp": "temp-directory",
+            "LANG": "C.UTF-8",
+            "lc_all": "C",
+            "HTTPS_PROXY": "must-not-pass",
+            "SSL_CERT_FILE": "must-not-pass",
+            "SSH_AUTH_SOCK": "must-not-pass",
+            "GIT_DIR": "must-not-pass",
+            "UNRELATED": "must-not-pass",
+        }
+        with mock.patch.dict(SYNC_MODULE.os.environ, provided, clear=True):
+            cleaned = SYNC_MODULE._clean_git_environment()
+
+        self.assertEqual(
+            {key.upper() for key in cleaned},
+            {
+                "PATH",
+                "SYSTEMROOT",
+                "WINDIR",
+                "HOME",
+                "USERPROFILE",
+                "TMP",
+                "TEMP",
+                "LANG",
+                "LC_ALL",
+            },
+        )
+        normalized = {key.upper(): value for key, value in cleaned.items()}
+        self.assertEqual(normalized["PATH"], "path-value")
+        self.assertEqual(normalized["SYSTEMROOT"], "system-root")
+
+    def test_atomic_replace_rechecks_paths_in_security_order(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            codex_root = Path(temporary_directory) / ".codex"
+            destination = codex_root / "agents" / "mercury-dev.toml"
+            destination.parent.mkdir(parents=True)
+            planned_state = SYNC_MODULE._file_state(destination)
+            events: list[str] = []
+
+            real_guard = SYNC_MODULE._assert_directory_chain_safe
+            real_mkstemp = SYNC_MODULE.tempfile.mkstemp
+            real_destination_check = SYNC_MODULE._assert_existing_destination_safe
+            real_replace = SYNC_MODULE.os.replace
+            real_result_check = SYNC_MODULE._assert_replaced_file_safe
+
+            def guard(*args, **kwargs):
+                events.append("guard")
+                return real_guard(*args, **kwargs)
+
+            def make_temp(*args, **kwargs):
+                events.append("mkstemp")
+                return real_mkstemp(*args, **kwargs)
+
+            def destination_check(*args, **kwargs):
+                events.append("destination-check")
+                return real_destination_check(*args, **kwargs)
+
+            def replace(*args, **kwargs):
+                events.append("replace")
+                return real_replace(*args, **kwargs)
+
+            def result_check(*args, **kwargs):
+                events.append("result-check")
+                return real_result_check(*args, **kwargs)
+
+            with (
+                mock.patch.object(
+                    SYNC_MODULE, "_assert_directory_chain_safe", side_effect=guard
+                ),
+                mock.patch.object(
+                    SYNC_MODULE.tempfile, "mkstemp", side_effect=make_temp
+                ),
+                mock.patch.object(
+                    SYNC_MODULE,
+                    "_assert_existing_destination_safe",
+                    side_effect=destination_check,
+                ),
+                mock.patch.object(SYNC_MODULE.os, "replace", side_effect=replace),
+                mock.patch.object(
+                    SYNC_MODULE,
+                    "_assert_replaced_file_safe",
+                    side_effect=result_check,
+                ),
+            ):
+                SYNC_MODULE._atomic_replace(
+                    destination, b"generated\n", codex_root, planned_state
+                )
+
+            self.assertEqual(
+                events,
+                [
+                    "guard",
+                    "mkstemp",
+                    "guard",
+                    "destination-check",
+                    "replace",
+                    "result-check",
+                ],
+            )
+            self.assertEqual(destination.read_bytes(), b"generated\n")
+
+    def test_atomic_replace_aborts_when_destination_recheck_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            codex_root = Path(temporary_directory) / ".codex"
+            destination = codex_root / "agents" / "mercury-dev.toml"
+            destination.parent.mkdir(parents=True)
+            destination.write_bytes(b"before\n")
+            planned_state = SYNC_MODULE._file_state(destination)
+            with (
+                mock.patch.object(
+                    SYNC_MODULE,
+                    "_assert_existing_destination_safe",
+                    side_effect=SYNC_MODULE.SyncError("destination changed"),
+                ),
+                mock.patch.object(SYNC_MODULE.os, "replace") as replace,
+            ):
+                with self.assertRaises(SYNC_MODULE.SyncError):
+                    SYNC_MODULE._atomic_replace(
+                        destination, b"after\n", codex_root, planned_state
+                    )
+
+            replace.assert_not_called()
+            self.assertEqual(destination.read_bytes(), b"before\n")
+
+    def test_atomic_replace_does_not_overwrite_file_appearing_after_missing_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            codex_root = Path(temporary_directory) / ".codex"
+            destination = codex_root / "agents" / "mercury-dev.toml"
+            destination.parent.mkdir(parents=True)
+            planned_state = SYNC_MODULE._file_state(destination)
+            appeared_bytes = b"appeared after planning\n"
+            destination.write_bytes(appeared_bytes)
+
+            with self.assertRaises(SYNC_MODULE.SyncError):
+                SYNC_MODULE._atomic_replace(
+                    destination,
+                    b"generated\n",
+                    codex_root,
+                    planned_state,
+                )
+
+            self.assertEqual(destination.read_bytes(), appeared_bytes)
+            self.assertEqual(
+                [path.name for path in destination.parent.iterdir()],
+                [destination.name],
+            )
+
+    def test_unlink_does_not_delete_file_replaced_after_planning(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            codex_root = Path(temporary_directory) / ".codex"
+            destination = codex_root / "agents" / "mercury-old.toml"
+            destination.parent.mkdir(parents=True)
+            destination.write_bytes(b"planned old content\n")
+            planned_state = SYNC_MODULE._file_state(destination)
+            destination.unlink()
+            replacement_bytes = b"ordinary replacement\n"
+            destination.write_bytes(replacement_bytes)
+
+            with self.assertRaises(SYNC_MODULE.SyncError):
+                SYNC_MODULE._unlink_if_unchanged(
+                    destination, planned_state, codex_root
+                )
+
+            self.assertEqual(destination.read_bytes(), replacement_bytes)
+
+    def test_replaced_file_validation_rejects_hardlink_and_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            hardlink = root / "hardlink"
+            peer = root / "peer"
+            peer.write_bytes(b"shared\n")
+            os.link(peer, hardlink)
+            with self.assertRaises(SYNC_MODULE.SyncError):
+                SYNC_MODULE._assert_replaced_file_safe(hardlink)
+
+            directory = root / "directory"
+            directory.mkdir()
+            with self.assertRaises(SYNC_MODULE.SyncError):
+                SYNC_MODULE._assert_replaced_file_safe(directory)
 
 
 class ProjectTemplateSyncTests(unittest.TestCase):
