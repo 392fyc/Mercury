@@ -1,5 +1,10 @@
 > 作者: 392fyc | 日期: 2026-05-11 | 状态: 草稿，待 main session 审阅
 
+> **当前状态（2026-08-15）：项目级 Codex hooks 已退役。** `.codex/hooks.json`、旧
+> hook probe 与测试脚本已删除，不得依据本文的历史描述重建。当前 Codex 防护由
+> `.codex/rules` 强制，`scripts/codex/` 包装脚本与指令层补充；`.claude/hooks/`
+> 仍服务 Claude Code。本文其他历史案例按原时间背景阅读。
+
 # Mercury harness 设计：让 AI Agent 持续自主工作的轻量框架
 
 ---
@@ -424,7 +429,7 @@ Mercury 目前落地了多种挂载模式，构成了实践中的"适配层谱�
 
 **mem0 user-level memory**（`~/.claude/scripts/mem0_bridge.py` 等）：跨项目的向量记忆层，通过 SessionEnd hook 注入。不在 Mercury repo，通过 #259 governance pattern 在 Mercury Issue 中记录变更。
 
-**Codex CLI integration**（`.codex/hooks.json`，Issue #357 via PR #358，S2-side-bug）：Codex CLI 0.128+ 的 hooks 格式（JSON），9/13 个 `.claude/hooks/` 脚本被移植。这不是 adapter，是配置 cherry-pick——但同样遵循 upstream-manifest 追踪原则。
+**Codex CLI integration（当前）**：Mercury 不再注册项目级 Codex hooks；旧 `.codex/hooks.json`、probe 与测试脚本已删除。现行强制层是 `.codex/rules`，`scripts/codex/` 包装脚本与指令层提供补充约束；`.claude/hooks/` 继续服务 Claude Code。Issue #357 / PR #358 曾将 9/13 个 Claude hook 脚本接到 Codex，该接线仅是历史记录，不得据此恢复。
 
 **Argus review bot**（NAS Docker，参见 `memory/reference_argus_review.md`）：自托管的 PR review bot，不在 Mercury repo，通过 webhook 集成。最重要的"外部项目挂载"之一，但完全不在 `adapters/` 目录下——因为它是独立运行的服务，不是接口转换层。
 

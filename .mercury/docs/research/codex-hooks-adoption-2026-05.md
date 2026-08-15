@@ -1,5 +1,11 @@
 # Codex CLI 0.128+ Hooks Adoption — Mercury side-bug Phase 1 Research ADR
 
+> **当前状态（2026-08-15）：项目级 Codex hook 接线已退役。** Mercury 已移除
+> `.codex/hooks.json`、旧 hook probe 与测试脚本，项目 `.codex/config.toml` 不再覆盖
+> `hooks` feature。当前 Codex 强制层是 `.codex/rules/`；`scripts/codex/` 包装脚本与
+> 指令层提供补充约束。`.claude/hooks/` 仍服务 Claude Code。下文记录的是 2026-05
+> 当时的研究、接线方案与测试证据，**不得作为现行操作指引**。
+
 **Issue**: [#357](https://github.com/392fyc/Mercury/issues/357) (Refs)
 
 **Status**: Phase 1 Research — verdict **CONDITIONAL_GO (Path C — Hybrid)**

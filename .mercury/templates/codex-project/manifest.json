@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "source_repo": "392fyc/Mercury",
+  "lock": "mercury-template.lock",
+  "files": [
+    {
+      "destination": "agents/mercury-acceptance.toml",
+      "source": "agents/mercury-acceptance.toml"
+    },
+    {
+      "destination": "agents/mercury-dev.toml",
+      "source": "agents/mercury-dev.toml"
+    },
+    {
+      "destination": "agents/mercury-reviewer.toml",
+      "source": "agents/mercury-reviewer.toml"
+    },
+    {
+      "destination": "project/mercury-task-contract.md",
+      "source": "project/mercury-task-contract.md"
+    },
+    {
+      "destination": "rules/mercury-git-safety.rules",
+      "source": "rules/mercury-git-safety.rules"
+    }
+  ]
+}

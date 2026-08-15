@@ -1,7 +1,13 @@
 # Codex 原生 Mercury＋SoT 领域完整导入设计
 
+> **当前状态（2026-08-15）：已被后续架构裁决取代，仅作历史设计记录。** 项目级
+> Codex hooks 已退役；`.codex/hooks.json`、旧 hook probe 与测试脚本已删除，不得按
+> 下文步骤重建。当前 Codex 防护由 `.codex/rules` 强制，`scripts/codex/` 包装脚本与
+> 指令层补充；`.claude/hooks/` 仍服务 Claude Code。现行下游项目层决策由 Issue #576
+> 及其交付物承接。
+
 - 日期：2026-08-14
-- 状态：设计已获用户批准；双盲审 PASS，待用户复核
+- 状态：**Superseded / historical**；原设计曾获批准并通过双盲审，现已由 2026-08-15 的 Issue #576 决策取代
 - 总台账：[#571](https://github.com/392fyc/Mercury/issues/571)
 - 目标宿主：Codex Desktop / Codex CLI 0.147.0
 
@@ -217,7 +223,7 @@ handoff、dual-verify 和 hooks smoke；失败时停止任何后续删除或启�
 `.claude/hooks` 不属于泛化删除范围；其 handler 必须先完成下节逐项映射。保留的工作流应是可读
 skill/agent 定义和小型确定性校验脚本，不再存在通用编排层。
 
-### 4.4 Hooks 与 rules
+### 4.4 Hooks 与 rules（历史方案，禁止按此重建）
 
 保留 `.codex/rules` 作为独立命令防线。解析用户级和 Mercury Claude 配置得到的实际事件必须全部
 有去向：

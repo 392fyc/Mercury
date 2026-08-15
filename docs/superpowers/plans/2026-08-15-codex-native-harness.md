@@ -1,5 +1,10 @@
 # Codex-Native Mercury Harness Implementation Plan
 
+> **状态（2026-08-15）：已被 Issue #576 当前决策取代，仅作历史执行记录。** 项目级
+> Codex hooks 已退役；`.codex/hooks.json`、旧 hook probe 与测试脚本已删除，不得执行
+> 下文 hook 重建步骤。当前 Codex 防护由 `.codex/rules` 强制，`scripts/codex/` 包装
+> 脚本与指令层补充；`.claude/hooks/` 仍服务 Claude Code。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace imported Claude-era instructions, skills, agents, hooks, workflow control, and context handling with tested Codex-native equivalents while preserving Mercury's issue, review, and single-writer contracts.
@@ -181,7 +186,7 @@ Expected: schema passes; all five native behaviors pass within declared timeouts
 
 Stage the eight TOMLs, probe, and test; obtain two reviews; commit `feat(TASK-571): verify native Mercury subagents`; push through `git-safe.ps1`.
 
-### Task 4: Implement official-hook payload adapters
+### Task 4: Implement official-hook payload adapters（历史步骤，禁止执行）
 
 **Files:**
 - Create: `scripts/codex/hooks/common.py`

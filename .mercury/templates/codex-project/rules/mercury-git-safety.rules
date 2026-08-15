@@ -1,0 +1,182 @@
+# Portable Git safety contract. The exact switch/checkout rules below catch the
+# common direct forms only; they are not a flag-complete branch-selection guard.
+# Direct Git rules are defense in depth; repository instructions and remote
+# branch protection remain authoritative. Shell trampolines are outside the
+# command-prefix check and must use the repository's controlled entrypoint.
+
+prefix_rule(
+    pattern = ["git", "switch", "develop"],
+    decision = "forbidden",
+    justification = "Use an assigned task branch or a separate worktree; do not work directly on develop.",
+    match = ["git switch develop"],
+)
+
+prefix_rule(
+    pattern = ["git", "switch", "main"],
+    decision = "forbidden",
+    justification = "Use an assigned task branch or a separate worktree; do not work directly on main.",
+    match = ["git switch main"],
+)
+
+prefix_rule(
+    pattern = ["git", "switch", "master"],
+    decision = "forbidden",
+    justification = "Use an assigned task branch or a separate worktree; do not work directly on master.",
+    match = ["git switch master"],
+)
+
+prefix_rule(
+    pattern = ["git", "checkout", "develop"],
+    decision = "forbidden",
+    justification = "Use an assigned task branch or a separate worktree; do not work directly on develop.",
+    match = ["git checkout develop"],
+)
+
+prefix_rule(
+    pattern = ["git", "checkout", "main"],
+    decision = "forbidden",
+    justification = "Use an assigned task branch or a separate worktree; do not work directly on main.",
+    match = ["git checkout main"],
+)
+
+prefix_rule(
+    pattern = ["git", "checkout", "master"],
+    decision = "forbidden",
+    justification = "Use an assigned task branch or a separate worktree; do not work directly on master.",
+    match = ["git checkout master"],
+)
+
+prefix_rule(
+    pattern = ["git", "push"],
+    decision = "forbidden",
+    justification = "Raw pushes, including force-pushes, must use the repository's controlled publication entrypoint and remote branch protection.",
+    match = [
+        "git push",
+        "git push origin HEAD",
+        "git push -f origin main",
+        "git push upstream main",
+        "git push origin HEAD:refs/heads/main",
+    ],
+)
+
+# These listed global-option forms can move the Git subcommand away from argv[1].
+# Deny their direct token prefixes without claiming complete option parsing.
+
+prefix_rule(
+    pattern = ["git", "-c"],
+    decision = "forbidden",
+    justification = "Git global options must use the repository's controlled entrypoint so a later push cannot bypass direct-prefix policy.",
+    match = ["git -c core.askPass=true push"],
+)
+
+prefix_rule(
+    pattern = ["git", "-C"],
+    decision = "forbidden",
+    justification = "Git directory selection must use the repository's controlled entrypoint so a later push cannot bypass direct-prefix policy.",
+    match = ["git -C . push"],
+)
+
+prefix_rule(
+    pattern = ["git", "--no-pager"],
+    decision = "forbidden",
+    justification = "Git global options must use the repository's controlled entrypoint so a later push cannot bypass direct-prefix policy.",
+    match = ["git --no-pager push"],
+)
+
+prefix_rule(
+    pattern = ["git", "--paginate"],
+    decision = "forbidden",
+    justification = "Git global options must use the repository's controlled entrypoint so a later push cannot bypass direct-prefix policy.",
+    match = ["git --paginate push"],
+)
+
+prefix_rule(
+    pattern = ["git", "-p"],
+    decision = "forbidden",
+    justification = "Git global options must use the repository's controlled entrypoint so a later push cannot bypass direct-prefix policy.",
+    match = ["git -p push"],
+)
+
+prefix_rule(
+    pattern = ["git", "-P"],
+    decision = "forbidden",
+    justification = "Git global options must use the repository's controlled entrypoint so a later push cannot bypass direct-prefix policy.",
+    match = ["git -P push"],
+)
+
+prefix_rule(
+    pattern = ["git", "--git-dir"],
+    decision = "forbidden",
+    justification = "Git directory selection must use the repository's controlled entrypoint so a later push cannot bypass direct-prefix policy.",
+    match = ["git --git-dir .git push"],
+)
+
+prefix_rule(
+    pattern = ["git", "--git-dir=.git"],
+    decision = "forbidden",
+    justification = "This listed Git directory token is forbidden so a later push cannot bypass direct-prefix policy.",
+    match = ["git --git-dir=.git push"],
+)
+
+prefix_rule(
+    pattern = ["git", "--work-tree"],
+    decision = "forbidden",
+    justification = "Git directory selection must use the repository's controlled entrypoint so a later push cannot bypass direct-prefix policy.",
+    match = ["git --work-tree . push"],
+)
+
+prefix_rule(
+    pattern = ["git", "--work-tree=."],
+    decision = "forbidden",
+    justification = "This listed Git work-tree token is forbidden so a later push cannot bypass direct-prefix policy.",
+    match = ["git --work-tree=. push"],
+)
+
+prefix_rule(
+    pattern = ["git", "--namespace"],
+    decision = "forbidden",
+    justification = "Git global options must use the repository's controlled entrypoint so a later push cannot bypass direct-prefix policy.",
+    match = ["git --namespace example push"],
+)
+
+prefix_rule(
+    pattern = ["git", "--namespace=foo"],
+    decision = "forbidden",
+    justification = "This listed Git namespace token is forbidden so a later push cannot bypass direct-prefix policy.",
+    match = ["git --namespace=foo push"],
+)
+
+prefix_rule(
+    pattern = ["git", "--config-env"],
+    decision = "forbidden",
+    justification = "Git global options must use the repository's controlled entrypoint so a later push cannot bypass direct-prefix policy.",
+    match = ["git --config-env core.askPass=ASKPASS push"],
+)
+
+prefix_rule(
+    pattern = ["git", "--config-env=core.askPass=ASKPASS"],
+    decision = "forbidden",
+    justification = "This listed Git config-environment token is forbidden so a later push cannot bypass direct-prefix policy.",
+    match = ["git --config-env=core.askPass=ASKPASS push"],
+)
+
+prefix_rule(
+    pattern = ["git", "--no-replace-objects"],
+    decision = "forbidden",
+    justification = "Git global options must use the repository's controlled entrypoint so a later push cannot bypass direct-prefix policy.",
+    match = ["git --no-replace-objects push"],
+)
+
+prefix_rule(
+    pattern = ["git", "--bare"],
+    decision = "forbidden",
+    justification = "This listed Git global option is forbidden so a later push cannot bypass direct-prefix policy.",
+    match = ["git --bare push"],
+)
+
+prefix_rule(
+    pattern = ["git", "--no-optional-locks"],
+    decision = "forbidden",
+    justification = "This listed Git global option is forbidden so a later push cannot bypass direct-prefix policy.",
+    match = ["git --no-optional-locks push"],
+)
