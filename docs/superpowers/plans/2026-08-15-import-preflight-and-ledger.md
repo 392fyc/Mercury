@@ -74,8 +74,8 @@ Expected: root is empty, encrypted, not a reparse point, and its access check li
 - Create: `tests/codex/import/test_inventory.py`
 
 **Interfaces:**
-- Consumes: absolute source roots and a cutoff timestamp.
-- Produces: `AssetRecord(asset_id, source, kind, size, sha256, domain, disposition)` serialized as sorted JSON Lines.
+- Consumes: absolute source roots, a frozen time window, controlled domain decisions, and the immutable inventory-contract SHA-256.
+- Produces: sorted JSON Lines; every nonempty approved `.claude/skills/<name>` junction target member is a canonical real-`.agents` `AssetRecord`, while the alias itself remains a separate frozen relation and is not duplicated as an Import asset.
 
 - [ ] **Step 1: Write failing normalization and classification tests**
 
@@ -100,7 +100,9 @@ Expected: FAIL because `scripts.codex.import.inventory` does not exist.
 
 - [ ] **Step 3: Implement explicit source adapters**
 
-Implement `inventory_paths()`, `inventory_claude_chats()`, `inventory_memories()`, and `inventory_repo_dirty()`. Sort records by `(kind, source)` before assigning output order; compute hashes from file bytes; read only the first user message for domain classification.
+Implement `inventory_paths()`, `inventory_claude_chats()`, `inventory_memories()`, and `inventory_repo_dirty()`. Sort records by canonical namespace/key order; compute stable single-handle hashes; read only the first user message for domain classification. Permit only a direct exact-case same-name Windows junction at `.claude/skills/<name>` whose target is the same user's canonical non-reparse `.agents/skills/<name>`. Never enumerate through the alias. Freeze the link lstat identity/raw target/tag, canonical target identity, and target-member descriptors/content hashes. Empty targets remain visible relations with zero members; nonempty target members are first-class secret-first `AssetRecord`s sourced from the real `.agents` path. All other reparse points fail closed, and contract/summary live rechecks reject link, target, membership, identity, or byte drift.
+
+For every non-secret target member, emit one `AssetRecord` with `domain_reason=already-native-alias/no-import` and relation evidence; known secret containers retain provisional `exclude-secret`. Task 2 records bytes and provenance but does not implement an Import isolation policy or receipt protocol.
 
 - [ ] **Step 4: Prove deterministic fixture output**
 
@@ -110,7 +112,7 @@ Run:
 python -m unittest tests.codex.import.test_inventory -v
 ```
 
-Expected: unit tests pass with deterministic fixture output.
+Expected: deterministic inventory and Windows-only temp-junction inventory tests pass without reading target bytes through the alias.
 
 - [ ] **Step 5: Review, commit, and push the inventory module**
 
@@ -121,8 +123,9 @@ Stage exactly `model.py`, `inventory.py`, and `test_inventory.py`; obtain two re
 Run:
 
 ```powershell
-python scripts/codex/import/inventory.py collect --output "D:\Codex-Migration-Backup\2026-08-15-mercury-sot\assets.jsonl"
-python scripts/codex/import/inventory.py summarize --input "D:\Codex-Migration-Backup\2026-08-15-mercury-sot\assets.jsonl"
+python scripts/codex/import/inventory.py freeze-contract --contract "D:\Codex-Migration-Backup\2026-08-15-mercury-sot\inventory-contract.json" --output "D:\Codex-Migration-Backup\2026-08-15-mercury-sot\assets.jsonl" --metadata "D:\Codex-Migration-Backup\2026-08-15-mercury-sot\assets.metadata.json" --domain-decisions "D:\Codex-Migration-Backup\2026-08-15-mercury-sot\domain-decisions.json" --claude-home "C:\Users\392fy\.claude" --mercury-root "D:\Mercury\Mercury" --godot-root "D:\ShipOfTheseus\Ship_of_Theseus" --design-root "D:\ShipOfTheseus\SoT-fyc-space" --kb-root "D:\ShipOfTheseus\ShipOfTheseus-KB"
+python scripts/codex/import/inventory.py collect --contract "D:\Codex-Migration-Backup\2026-08-15-mercury-sot\inventory-contract.json" --contract-sha256 $contractSha --output "D:\Codex-Migration-Backup\2026-08-15-mercury-sot\assets.jsonl"
+python scripts/codex/import/inventory.py summarize --contract "D:\Codex-Migration-Backup\2026-08-15-mercury-sot\inventory-contract.json" --contract-sha256 $contractSha --input "D:\Codex-Migration-Backup\2026-08-15-mercury-sot\assets.jsonl"
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/codex/import/secure_backup_root.ps1 -VerifyTree "D:\Codex-Migration-Backup\2026-08-15-mercury-sot"
 ```
 
@@ -285,8 +288,9 @@ Record that local backups can restore local Codex state but cannot remove cloud-
 - Create outside Git: `D:\Codex-Migration-Backup\2026-08-15-mercury-sot\import-history.json`
 
 **Interfaces:**
-- Consumes: clean credential gate, verified backups, C free-space gate, Claude standard paths, and quarantined Cursor sources.
+- Consumes: clean credential gate, verified backups, C free-space gate, Claude standard paths, quarantined Cursor sources, and the frozen Task 2 junction relations.
 - Produces: official Import history plus a local run ID and per-item success/failure ledger.
+- Handoff: before official Import, Task 6 must implement and review a reversible isolation tool that makes the two frozen direct same-name Claude skill junction aliases unavailable to Desktop without following their `.agents` targets, then restores and verifies the exact frozen relations after Desktop closes. The concrete tool, receipt schema, process/ACL checks, and recovery protocol belong to Task 6, not Task 2.
 
 - [ ] **Step 1: Implement and test stable destination inventory before opening Import**
 
@@ -308,7 +312,7 @@ Generate a sorted manifest for all 889 source files containing relative path, en
 
 - [ ] **Step 5: Perform the GUI-only official flow**
 
-In Codex Desktop, open Settings > Import, select Claude Code and Cursor, select Tools & setup, every surfaced relevant project (expected Mercury and the Godot game), and every reviewed Mercury + SoT chat. Do not invent project selections for the design library or KB when the UI does not surface them; record each as `not-applicable-not-surfaced` and cover it through instructions, skills, MCP, and KB linkage. Keep automatic updates off. Before selecting Continue, confirm the cloud rollback acceptance. After completion, open Import history and record its timestamp/status and every surfaced failure.
+Only after the Task 6 junction-isolation handoff gate is implemented and proves both frozen aliases unavailable, open Settings > Import, select Claude Code and Cursor, select Tools & setup, every surfaced relevant project (expected Mercury and the Godot game), and every reviewed Mercury + SoT chat. Do not invent project selections for the design library or KB when the UI does not surface them; record each as `not-applicable-not-surfaced` and cover it through instructions, skills, MCP, and KB linkage. Keep automatic updates off. Before selecting Continue, confirm the cloud rollback acceptance. After completion, open Import history and record its timestamp/status and every surfaced failure; close Desktop and use the Task 6 tool to restore and verify both frozen junction relations.
 
 - [ ] **Step 6: Remove temporary Cursor staging recoverably**
 

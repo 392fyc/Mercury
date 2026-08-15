@@ -34,6 +34,18 @@ def write_file(path: Path, content: bytes = b"fixture") -> Path:
     return path
 
 
+def create_junction(link: Path, target: Path) -> Path:
+    link.parent.mkdir(parents=True, exist_ok=True)
+    completed = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", os.fspath(link), os.fspath(target)],
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        raise unittest.SkipTest("junction creation is unavailable")
+    return link
+
+
 def run_git(repo: Path, *args: str) -> str:
     completed = subprocess.run(
         ["git", "-C", os.fspath(repo), *args],
@@ -760,6 +772,15 @@ class ProductionSourceFixtureTests(unittest.TestCase):
             write_file(claude_home / "workflows" / "verify.js")
             write_file(claude_home / "attachments" / "diagram.png")
             write_file(claude_home / "backups" / "settings.json.backup")
+            agents_home = claude_home.parent / ".agents"
+            empty_target = agents_home / "skills" / "empty-target"
+            populated_target = agents_home / "skills" / "mercury-target"
+            empty_target.mkdir(parents=True)
+            target_member = write_file(populated_target / "SKILL.md", b"target-only")
+            create_junction(claude_home / "skills" / "empty-target", empty_target)
+            populated_link = create_junction(
+                claude_home / "skills" / "mercury-target", populated_target
+            )
 
             roots = {
                 "mercury": create_git_repo(base / "Mercury"),
@@ -829,6 +850,36 @@ class ProductionSourceFixtureTests(unittest.TestCase):
             )
             self.assertEqual(contract.expected_counts, manifest.metadata["expected_counts"])
             self.assertFalse(any(record.disposition is None for record in manifest.records))
+            target_record = next(
+                record for record in manifest.records if record.source == target_member.as_posix()
+            )
+            self.assertEqual("claude-user-skill-target", target_record.source_namespace)
+            self.assertEqual("skill", target_record.kind)
+            self.assertEqual("exclude-domain", target_record.disposition)
+            self.assertEqual("domain-decided", target_record.disposition_status)
+            self.assertEqual(
+                "already-native-alias/no-import", target_record.domain_reason
+            )
+            self.assertEqual(
+                "junction-relation:direct-same-name",
+                target_record.decision_evidence,
+            )
+            self.assertEqual(
+                ((populated_link / "SKILL.md").as_posix(),),
+                target_record.observed_mirrors,
+            )
+            self.assertEqual(2, manifest.metadata["skill_junction_mirror_count"])
+            self.assertEqual(
+                [0, 1],
+                [
+                    relation["target_member_count"]
+                    for relation in manifest.metadata["skill_junction_mirrors"]
+                ],
+            )
+            populated_relation = manifest.metadata["skill_junction_mirrors"][1]
+            self.assertEqual(target_member.as_posix(), populated_relation["target_members"][0]["source"])
+            self.assertNotIn("disposition", populated_relation["target_members"][0])
+            self.assertNotIn("asset_id", populated_relation["target_members"][0])
             self.assertEqual(
                 1,
                 sum(
@@ -871,6 +922,43 @@ class ProductionSourceFixtureTests(unittest.TestCase):
                 )
             self.assertEqual(0, freeze_rc)
             contract_sha = json.loads(freeze_stdout.getvalue())["contract_sha256"]
+            frozen_document = inventory.load_inventory_contract(
+                frozen_contract, contract_sha, verify_bindings=True
+            )
+            self.assertEqual(agents_home.as_posix(), frozen_document["agents_home"]["path"])
+            self.assertEqual(2, frozen_document["skill_junction_mirror_count"])
+            self.assertEqual(
+                hashlib.sha256(
+                    inventory._canonical_json(
+                        frozen_document["skill_junction_mirrors"]
+                    ).encode("utf-8")
+                ).hexdigest(),
+                frozen_document["skill_junction_mirrors_sha256"],
+            )
+            target_before = os.stat(target_member)
+            target_original = target_member.read_bytes()
+            target_member.write_bytes(b"other-bytes")
+            os.utime(
+                target_member,
+                ns=(target_before.st_atime_ns, target_before.st_mtime_ns),
+            )
+            with redirect_stderr(io.StringIO()):
+                drift_collect_rc = inventory.main(
+                    [
+                        "collect",
+                        "--contract", os.fspath(frozen_contract),
+                        "--contract-sha256", contract_sha,
+                        "--output", os.fspath(frozen_output),
+                    ]
+                )
+            self.assertNotEqual(0, drift_collect_rc)
+            self.assertFalse(frozen_output.exists())
+            self.assertFalse(frozen_metadata.exists())
+            target_member.write_bytes(target_original)
+            os.utime(
+                target_member,
+                ns=(target_before.st_atime_ns, target_before.st_mtime_ns),
+            )
             with redirect_stdout(io.StringIO()) as collect_stdout:
                 collect_rc = inventory.main(
                     [
@@ -881,7 +969,7 @@ class ProductionSourceFixtureTests(unittest.TestCase):
                     ]
                 )
             self.assertEqual(0, collect_rc)
-            self.assertEqual(452 + 9 + 5 + 4, json.loads(collect_stdout.getvalue())["total"])
+            self.assertEqual(452 + 9 + 5 + 4 + 1, json.loads(collect_stdout.getvalue())["total"])
             self.assertTrue(frozen_output.is_file())
             self.assertTrue(frozen_metadata.is_file())
             with redirect_stdout(io.StringIO()) as summary_stdout:
@@ -898,6 +986,20 @@ class ProductionSourceFixtureTests(unittest.TestCase):
                 json.loads(collect_stdout.getvalue())["total"],
                 json.loads(summary_stdout.getvalue())["total"],
             )
+            late_target_member = write_file(populated_target / "late.md", b"late")
+            try:
+                with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                    drift_summary_rc = inventory.main(
+                        [
+                            "summarize",
+                            "--contract", os.fspath(frozen_contract),
+                            "--contract-sha256", contract_sha,
+                            "--input", os.fspath(frozen_output),
+                        ]
+                    )
+                self.assertNotEqual(0, drift_summary_rc)
+            finally:
+                late_target_member.unlink()
 
             def freeze_for(stem: str) -> tuple[Path, str, Path, Path]:
                 contract_path = base / f"{stem}-contract.json"
@@ -1106,6 +1208,73 @@ class ProductionSourceFixtureTests(unittest.TestCase):
                         contract_sha256=member_sha,
                     )
 
+            with self.subTest(regression="self-consistent-junction-decision-reversal"):
+                decision_contract, decision_sha, decision_output, decision_sidecar = freeze_for(
+                    "forged-junction-decision"
+                )
+                decision_document = inventory.load_inventory_contract(
+                    decision_contract, decision_sha, verify_bindings=True
+                )
+                forged_records = list(legitimate_records)
+                target_index = next(
+                    index
+                    for index, record in enumerate(forged_records)
+                    if record.source_namespace == "claude-user-skill-target"
+                )
+                forged_records[target_index] = replace(
+                    forged_records[target_index],
+                    domain="other",
+                    domain_reason="controlled-decision:synthetic-review",
+                    disposition="exclude-domain",
+                    disposition_status="domain-decided",
+                    decision_evidence="synthetic-review-evidence",
+                )
+                forged_records.sort(key=inventory._record_sort_key)
+                forged_payload = inventory._records_payload(forged_records)
+                forged_metadata = dict(legitimate_metadata)
+                forged_metadata.update(
+                    contract_sha256=decision_sha,
+                    contract_payload_sha256=decision_document["contract_payload_sha256"],
+                    output=decision_document["output"],
+                    tool=decision_document["tool"],
+                    roots=decision_document["roots"],
+                    claude_home=decision_document["claude_home"],
+                    agents_home=decision_document["agents_home"],
+                    window=decision_document["window"],
+                    chat_sessions=decision_document["chat_sessions"],
+                    expected_counts=decision_document["expected"]["counts"],
+                    approved_members_sha256=decision_document["approved_members_sha256"],
+                    approved_member_count=decision_document["approved_member_count"],
+                    skill_junction_mirrors=decision_document["skill_junction_mirrors"],
+                    skill_junction_mirror_count=decision_document[
+                        "skill_junction_mirror_count"
+                    ],
+                    skill_junction_mirrors_sha256=decision_document[
+                        "skill_junction_mirrors_sha256"
+                    ],
+                    actual_counts=dict(
+                        sorted(Counter(item.kind for item in forged_records).items())
+                    ),
+                    record_count=len(forged_records),
+                    records_sha256=hashlib.sha256(forged_payload.encode()).hexdigest(),
+                )
+                forged_manifest = inventory._sealed_manifest(
+                    model.InventoryManifest(forged_metadata, tuple(forged_records))
+                )
+                inventory._write_new(
+                    decision_sidecar,
+                    inventory._canonical_json(forged_manifest.metadata) + "\n",
+                )
+                inventory._write_new(
+                    decision_output, inventory.manifest_to_jsonl(forged_manifest)
+                )
+                with self.assertRaisesRegex(Exception, "approved|decision|member"):
+                    inventory.summarize_manifest(
+                        decision_output,
+                        contract_path=decision_contract,
+                        contract_sha256=decision_sha,
+                    )
+
             forged_contract, forged_sha, forged_output, forged_sidecar = freeze_for("forged-452")
             forged_document = inventory.load_inventory_contract(
                 forged_contract, forged_sha, verify_bindings=True
@@ -1176,6 +1345,36 @@ class ProductionSourceFixtureTests(unittest.TestCase):
                     tamper_output,
                     contract_path=tamper_contract,
                     contract_sha256=tamper_sha,
+                )
+
+            extra_contract, extra_sha, extra_output, extra_sidecar = freeze_for(
+                "unexpected-metadata"
+            )
+            extra_document = inventory.load_inventory_contract(
+                extra_contract, extra_sha, verify_bindings=True
+            )
+            extra_metadata = dict(legitimate_metadata)
+            extra_metadata.update(
+                contract_sha256=extra_sha,
+                contract_payload_sha256=extra_document["contract_payload_sha256"],
+                output=extra_document["output"],
+                tool=extra_document["tool"],
+                unexpected_claim=True,
+            )
+            extra_manifest = inventory._sealed_manifest(
+                model.InventoryManifest(extra_metadata, tuple(legitimate_records))
+            )
+            inventory._write_new(
+                extra_sidecar, inventory._canonical_json(extra_manifest.metadata) + "\n"
+            )
+            inventory._write_new(
+                extra_output, inventory.manifest_to_jsonl(extra_manifest)
+            )
+            with self.assertRaisesRegex(Exception, "schema|field|metadata"):
+                inventory.summarize_manifest(
+                    extra_output,
+                    contract_path=extra_contract,
+                    contract_sha256=extra_sha,
                 )
 
             unstable_contract, unstable_sha, unstable_output, unstable_sidecar = freeze_for(
@@ -1277,6 +1476,304 @@ class ProductionSourceFixtureTests(unittest.TestCase):
             self.assertFalse(git_sidecar.exists())
 
 
+@unittest.skipUnless(os.name == "nt", "Windows junction contract regressions")
+class UserSkillJunctionTests(unittest.TestCase):
+    def _roots(self, base: Path) -> tuple[Path, Path, Path]:
+        home = base / "home" / ".claude"
+        agents_home = base / "home" / ".agents"
+        (home / "skills").mkdir(parents=True)
+        (agents_home / "skills").mkdir(parents=True)
+        return home, agents_home, agents_home / "skills"
+
+    def test_empty_direct_same_name_junction_is_a_visible_relation_not_an_asset(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            home, agents_home, targets = self._roots(Path(directory).resolve())
+            target = targets / "empty-skill"
+            target.mkdir()
+            link = create_junction(home / "skills" / "empty-skill", target)
+
+            records = inventory.inventory_claude_skills(home)
+            relations = inventory._discover_skill_junction_mirrors(home, agents_home)
+
+            self.assertEqual([], records)
+            self.assertEqual(1, len(relations))
+            relation = relations[0]
+            self.assertEqual("claude-user-skill-junction", relation["relation_type"])
+            self.assertEqual(link.as_posix(), relation["link_path"])
+            self.assertEqual(target.as_posix(), relation["canonical_target"])
+            self.assertEqual(0, relation["target_member_count"])
+            self.assertEqual([], relation["target_members"])
+            self.assertEqual(
+                hashlib.sha256(b"[]").hexdigest(), relation["target_members_sha256"]
+            )
+
+    def test_populated_direct_same_name_junction_members_are_canonical_assets(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            home, agents_home, targets = self._roots(Path(directory).resolve())
+            target = targets / "review-skill"
+            member = write_file(target / "SKILL.md", b"review instructions")
+            create_junction(home / "skills" / "review-skill", target)
+
+            records = inventory.inventory_claude_skills(home)
+            relation = inventory._discover_skill_junction_mirrors(home, agents_home)[0]
+
+            self.assertEqual(1, len(records))
+            record = records[0]
+            self.assertEqual(member.as_posix(), record.source)
+            self.assertEqual("claude-user-skill-target", record.source_namespace)
+            self.assertEqual("review-skill/SKILL.md", record.canonical_key)
+            self.assertEqual("skill", record.kind)
+            self.assertEqual("exclude-domain", record.disposition)
+            self.assertEqual("domain-decided", record.disposition_status)
+            self.assertEqual("already-native-alias/no-import", record.domain_reason)
+            self.assertEqual(
+                "junction-relation:direct-same-name",
+                record.decision_evidence,
+            )
+            self.assertEqual(
+                ((home / "skills" / "review-skill" / "SKILL.md").as_posix(),),
+                record.observed_mirrors,
+            )
+            self.assertEqual(1, relation["target_member_count"])
+            descriptor = relation["target_members"][0]
+            self.assertEqual(
+                {
+                    "record_role",
+                    "source",
+                    "source_namespace",
+                    "canonical_key",
+                    "size",
+                    "sha256",
+                    "mtime_ns",
+                    "file_id",
+                },
+                set(descriptor),
+            )
+            self.assertEqual("relation-target-member", descriptor["record_role"])
+            self.assertEqual("claude-user-skill-target", descriptor["source_namespace"])
+            self.assertEqual("review-skill/SKILL.md", descriptor["canonical_key"])
+            self.assertEqual(member.as_posix(), descriptor["source"])
+            self.assertEqual(hashlib.sha256(b"review instructions").hexdigest(), descriptor["sha256"])
+            self.assertNotIn("disposition", descriptor)
+            self.assertNotIn("asset_id", descriptor)
+
+    def test_native_alias_secret_container_keeps_secret_disposition(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            home, _agents_home, targets = self._roots(Path(directory).resolve())
+            target = targets / "secret-skill"
+            write_file(target / ".credentials.json", b'{"fixture":"value"}')
+            create_junction(home / "skills" / "secret-skill", target)
+
+            record = inventory.inventory_claude_skills(home)[0]
+
+            self.assertEqual("exclude-secret", record.disposition)
+            self.assertEqual("provisional", record.disposition_status)
+
+    def test_approved_member_binding_rejects_target_decision_reversal(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            home, agents_home, targets = self._roots(Path(directory).resolve())
+            target = targets / "mercury-skill"
+            write_file(target / "SKILL.md", b"mercury fixture")
+            create_junction(home / "skills" / "mercury-skill", target)
+            record = inventory.inventory_claude_skills(home)[0]
+            self.assertEqual("exclude-domain", record.disposition)
+            members = inventory._approved_members([record])
+            document = {
+                "approved_members": members,
+                "approved_member_count": 1,
+                "approved_members_sha256": inventory._approved_members_sha256(members),
+            }
+            reversed_record = replace(
+                record,
+                domain="other",
+                domain_reason="controlled-decision:synthetic-review",
+                disposition="exclude-domain",
+                disposition_status="domain-decided",
+                decision_evidence="synthetic-review-evidence",
+            )
+
+            with self.assertRaises(inventory.ManifestError):
+                inventory._validate_approved_record_membership(
+                    [reversed_record], document
+                )
+
+    def test_case_only_link_target_name_mismatch_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            home, agents_home, targets = self._roots(Path(directory).resolve())
+            target = targets / "review-skill"
+            target.mkdir()
+            create_junction(home / "skills" / "Review-Skill", target)
+
+            with self.assertRaises(inventory.ReparsePointError):
+                inventory._discover_skill_junction_mirrors(home, agents_home)
+
+    def test_link_target_bytes_membership_and_identity_drift_fail_closed(self) -> None:
+        for mutation in ("link", "bytes", "membership", "target-identity"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
+                home, agents_home, targets = self._roots(Path(directory).resolve())
+                target = targets / "stable-skill"
+                member = write_file(target / "SKILL.md", b"before")
+                link = create_junction(home / "skills" / "stable-skill", target)
+                frozen = inventory._discover_skill_junction_mirrors(home, agents_home)
+
+                if mutation == "link":
+                    os.rmdir(link)
+                    create_junction(link, target)
+                elif mutation == "bytes":
+                    original = os.stat(member)
+                    member.write_bytes(b"after!")
+                    os.utime(member, ns=(original.st_atime_ns, original.st_mtime_ns))
+                elif mutation == "membership":
+                    write_file(target / "added.md", b"added")
+                else:
+                    old_target = targets / "old-stable-skill"
+                    target.rename(old_target)
+                    target.mkdir()
+                    write_file(target / "SKILL.md", b"before")
+
+                with self.assertRaises(inventory.SourceChangedError):
+                    inventory._assert_skill_junction_mirrors(home, agents_home, frozen)
+
+    def test_external_mismatched_chained_cycle_and_nested_reparse_are_rejected(self) -> None:
+        scenarios = ("external", "mismatched", "chained", "cycle", "nested")
+        for scenario in scenarios:
+            with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as directory:
+                base = Path(directory).resolve()
+                home, agents_home, targets = self._roots(base)
+                link_name = "review-skill"
+                link = home / "skills" / link_name
+                cleanup: list[Path] = []
+                if scenario == "external":
+                    target = base / "outside" / link_name
+                    target.mkdir(parents=True)
+                    create_junction(link, target)
+                elif scenario == "mismatched":
+                    target = targets / "different-name"
+                    target.mkdir()
+                    create_junction(link, target)
+                elif scenario == "chained":
+                    real = targets / "real"
+                    real.mkdir()
+                    target = create_junction(targets / link_name, real)
+                    create_junction(link, target)
+                elif scenario == "cycle":
+                    target = targets / link_name
+                    target.mkdir()
+                    create_junction(link, target)
+                    target.rmdir()
+                    create_junction(target, link)
+                    cleanup.extend((target, link))
+                else:
+                    target = targets / link_name
+                    nested_target = targets / "nested-real"
+                    target.mkdir()
+                    nested_target.mkdir()
+                    create_junction(target / "nested", nested_target)
+                    create_junction(link, target)
+
+                try:
+                    with self.assertRaises(inventory.ReparsePointError):
+                        inventory._discover_skill_junction_mirrors(home, agents_home)
+                finally:
+                    for path in cleanup:
+                        try:
+                            os.rmdir(path)
+                        except OSError:
+                            pass
+
+    def test_other_category_and_nested_skill_reparse_remain_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory).resolve()
+            home, _agents_home, _targets = self._roots(base)
+            outside = base / "outside"
+            outside.mkdir()
+            create_junction(home / "hooks" / "linked", outside)
+            regular_skill = home / "skills" / "ordinary"
+            regular_skill.mkdir()
+            create_junction(regular_skill / "nested", outside)
+
+            with self.assertRaises(inventory.ReparsePointError):
+                inventory.inventory_claude_hooks(home)
+            with self.assertRaises(inventory.ReparsePointError):
+                inventory.inventory_claude_skills(home)
+
+    def test_relation_schema_rejects_alias_members_and_self_consistent_tampering(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            home, agents_home, targets = self._roots(Path(directory).resolve())
+            target = targets / "schema-skill"
+            write_file(target / "SKILL.md", b"schema")
+            link = create_junction(home / "skills" / "schema-skill", target)
+            relations = inventory._discover_skill_junction_mirrors(home, agents_home)
+            base_document = {
+                "claude_home": inventory._root_identity(home),
+                "agents_home": inventory._root_identity(agents_home),
+                "skill_junction_mirrors": relations,
+                "skill_junction_mirror_count": 1,
+                "skill_junction_mirrors_sha256": inventory._skill_junction_mirrors_sha256(relations),
+            }
+
+            for mutation in (
+                "alias-source",
+                "extra-field",
+                "wrong-raw-target",
+                "raw-dot-segment",
+                "case-only-target",
+                "boolean-relation-count",
+                "boolean-member-count",
+                "dot-segment",
+                "repeated-separator",
+            ):
+                tampered = json.loads(json.dumps(base_document))
+                relation = tampered["skill_junction_mirrors"][0]
+                if mutation == "alias-source":
+                    relation["target_members"][0]["source"] = (
+                        link / "SKILL.md"
+                    ).as_posix()
+                    relation["target_members_sha256"] = hashlib.sha256(
+                        inventory._canonical_json(relation["target_members"]).encode("utf-8")
+                    ).hexdigest()
+                elif mutation == "extra-field":
+                    relation["target_members"][0]["disposition"] = "import"
+                    relation["target_members_sha256"] = hashlib.sha256(
+                        inventory._canonical_json(relation["target_members"]).encode("utf-8")
+                    ).hexdigest()
+                elif mutation == "wrong-raw-target":
+                    relation["raw_target"] = r"\\?\C:\outside\schema-skill"
+                elif mutation == "raw-dot-segment":
+                    relation["raw_target"] = relation["raw_target"].replace(
+                        "\\schema-skill", "\\.\\schema-skill"
+                    )
+                elif mutation == "case-only-target":
+                    relation["canonical_target"] = relation["canonical_target"].replace(
+                        "schema-skill", "Schema-Skill"
+                    )
+                    relation["raw_target"] = relation["raw_target"].replace(
+                        "schema-skill", "Schema-Skill"
+                    )
+                elif mutation == "boolean-relation-count":
+                    tampered["skill_junction_mirror_count"] = True
+                elif mutation == "boolean-member-count":
+                    relation["target_member_count"] = True
+                else:
+                    member = relation["target_members"][0]
+                    member["canonical_key"] = (
+                        "schema-skill/./SKILL.md"
+                        if mutation == "dot-segment"
+                        else "schema-skill//SKILL.md"
+                    )
+                    relation["target_members_sha256"] = hashlib.sha256(
+                        inventory._canonical_json(relation["target_members"]).encode("utf-8")
+                    ).hexdigest()
+                tampered["skill_junction_mirrors_sha256"] = (
+                    inventory._skill_junction_mirrors_sha256(
+                        tampered["skill_junction_mirrors"]
+                    )
+                )
+                with self.subTest(mutation=mutation):
+                    with self.assertRaises(inventory.ContractError):
+                        inventory._validate_skill_junction_contract(tampered)
+
+
 class CorpusStabilityTests(unittest.TestCase):
     def test_membership_fingerprint_detects_add_delete_rename_swap_and_identity_change(self) -> None:
         mutations = ("add", "delete", "rename", "swap", "identity")
@@ -1331,6 +1828,7 @@ class FrozenContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory).resolve()
             home = base / "home" / ".claude"
+            (home.parent / ".agents" / "skills").mkdir(parents=True)
             projects = home / "projects"
             project_names = {
                 "home": "C--Users-fixture--claude",
@@ -1422,9 +1920,15 @@ class FrozenContractTests(unittest.TestCase):
             self.assertEqual(decisions.as_posix(), document["domain_decisions"]["path"])
             self.assertEqual(output.as_posix(), document["output"]["manifest"])
             self.assertEqual(metadata.as_posix(), document["output"]["metadata"])
-            self.assertEqual(2, document["schema_version"])
+            self.assertEqual(3, document["schema_version"])
+            self.assertEqual((home.parent / ".agents").as_posix(), document["agents_home"]["path"])
+            self.assertEqual([], document["skill_junction_mirrors"])
             self.assertEqual(
-                {"inventory.py", "model.py", "secure_backup_root.ps1"},
+                {
+                    "inventory.py",
+                    "model.py",
+                    "secure_backup_root.ps1",
+                },
                 {Path(item["path"]).name for item in document["tool"]["files"]},
             )
             self.assertRegex(document["contract_payload_sha256"], r"^[0-9a-f]{64}$")
@@ -1635,7 +2139,11 @@ class ProtectedOutputTests(unittest.TestCase):
         repository = Path(inventory.__file__).resolve().parents[3]
         binding = inventory._tool_binding(repository, production=False)
         self.assertEqual(
-            {"inventory.py", "model.py", "secure_backup_root.ps1"},
+            {
+                "inventory.py",
+                "model.py",
+                "secure_backup_root.ps1",
+            },
             {Path(item["path"]).name for item in binding["files"]},
         )
 

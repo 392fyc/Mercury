@@ -63,6 +63,7 @@ PRODUCTION_CHAT_PROJECTS = {
     "godot": "D--ShipOfTheseus-Ship-of-Theseus",
 }
 PRODUCTION_CHAT_GROUP_COUNTS = {"home": 45, "mercury": 14, "godot": 9}
+WINDOWS_JUNCTION_REPARSE_TAG = 0xA0000003
 MEMORY_LAYOUT = {
     "D--Mercury-Mercury": ("mercury", 295, 3),
     "D--ShipOfTheseus-Ship-of-Theseus": ("godot", 57, 0),
@@ -186,6 +187,8 @@ class InventoryContract:
     require_stable_corpus: bool = False
     frozen_contract_sha256: str | None = None
     frozen_tool: Mapping[str, object] | None = None
+    agents_home: Path | None = None
+    skill_junction_mirrors: Sequence[Mapping[str, object]] | None = None
 
     def roots(self) -> dict[str, Path]:
         return {
@@ -274,6 +277,255 @@ def _secure_files(root: Path) -> list[Path]:
 
     visit(root)
     return files
+
+
+def _canonical_junction_target(raw_target: str) -> Path:
+    if not raw_target or "\n" in raw_target:
+        raise ReparsePointError("skill junction target is invalid")
+    normalized = raw_target
+    for prefix in ("\\\\?\\", "\\??\\"):
+        if normalized.startswith(prefix):
+            normalized = normalized[len(prefix) :]
+            break
+    if normalized.upper().startswith("UNC\\"):
+        raise ReparsePointError("skill junction target must be a local absolute path")
+    lexical_parts = normalized.replace("/", "\\").split("\\")
+    if any(part in {"", ".", ".."} for part in lexical_parts[1:]):
+        raise ReparsePointError("skill junction target must be lexically canonical")
+    target = Path(normalized)
+    if not target.is_absolute() or not target.drive:
+        raise ReparsePointError("skill junction target must be a local absolute path")
+    return _absolute_without_resolve(target, label="skill junction target")
+
+
+def _skill_target_member_descriptor(
+    skill_name: str, target: Path, path: Path
+) -> dict[str, object]:
+    snapshot = _snapshot_file(path, approved_root=target)
+    relative = Path(os.path.relpath(path, target)).as_posix()
+    return {
+        "record_role": "relation-target-member",
+        "source": path.as_posix(),
+        "source_namespace": "claude-user-skill-target",
+        "canonical_key": PurePosixPath(skill_name, relative).as_posix(),
+        "size": snapshot.size,
+        "sha256": snapshot.sha256,
+        "mtime_ns": snapshot.mtime_ns,
+        "file_id": snapshot.file_id,
+    }
+
+
+def _discover_skill_junction_mirrors(
+    claude_home: os.PathLike[str] | str,
+    agents_home: os.PathLike[str] | str | None = None,
+) -> list[dict[str, object]]:
+    home = _require_root(claude_home, label="Claude home")
+    skills_root = home / "skills"
+    if not os.path.lexists(skills_root):
+        return []
+    skills_root = _require_root(skills_root, label="Claude user skills root")
+    junctions: list[Path] = []
+    with os.scandir(skills_root) as entries:
+        for entry in sorted(entries, key=lambda item: item.name.casefold()):
+            metadata = entry.stat(follow_symlinks=False)
+            if _is_reparse(metadata):
+                junctions.append(skills_root / entry.name)
+    if not junctions and agents_home is None:
+        return []
+
+    expected_agents = _absolute_without_resolve(
+        home.parent / ".agents", label="expected agents home"
+    )
+    agents = _require_root(
+        agents_home if agents_home is not None else expected_agents,
+        label="agents home",
+    )
+    if not _same_absolute_path(agents, expected_agents):
+        raise ReparsePointError("skill junction agents home is not the same user root")
+    target_root = _require_root(agents / "skills", label="agents skills root")
+
+    relations: list[dict[str, object]] = []
+    for link in junctions:
+        link_before = os.lstat(link)
+        reparse_tag = int(getattr(link_before, "st_reparse_tag", 0))
+        if reparse_tag != WINDOWS_JUNCTION_REPARSE_TAG:
+            raise ReparsePointError(f"non-junction user skill reparse rejected: {link}")
+        try:
+            raw_target = os.readlink(link)
+        except OSError as error:
+            raise ReparsePointError(f"skill junction target cannot be read: {link}") from error
+        canonical_target = _canonical_junction_target(raw_target)
+        expected_target = target_root / link.name
+        if (
+            canonical_target.as_posix() != expected_target.as_posix()
+            or canonical_target.name != link.name
+        ):
+            raise ReparsePointError(
+                f"skill junction target is not the same-name agents skill: {link}"
+            )
+        with os.scandir(target_root) as target_entries:
+            stored_name_matches = [
+                entry.name for entry in target_entries if entry.name == link.name
+            ]
+        if stored_name_matches != [link.name]:
+            raise ReparsePointError(
+                f"skill junction target storage name is not an exact match: {link}"
+            )
+        target = _require_root(expected_target, label="skill junction canonical target")
+        _assert_not_reparse(target, approved_root=target_root)
+        target_before = os.lstat(target)
+        members = sorted(
+            (
+                _skill_target_member_descriptor(link.name, target, path)
+                for path in _secure_files(target)
+            ),
+            key=lambda item: canonical_identity_key(str(item["canonical_key"])),
+        )
+        target_after = os.lstat(target)
+        link_after = os.lstat(link)
+        try:
+            raw_target_after = os.readlink(link)
+        except OSError as error:
+            raise SourceChangedError(f"skill junction changed during snapshot: {link}") from error
+        stable = lambda value: (
+            value.st_dev,
+            value.st_ino,
+            value.st_size,
+            value.st_mtime_ns,
+            int(getattr(value, "st_reparse_tag", 0)),
+        )
+        if (
+            stable(link_before) != stable(link_after)
+            or raw_target_after != raw_target
+            or stable(target_before) != stable(target_after)
+        ):
+            raise SourceChangedError(f"skill junction changed during snapshot: {link}")
+        relations.append(
+            {
+                "relation_type": "claude-user-skill-junction",
+                "link_path": link.as_posix(),
+                "link_identity": {
+                    "file_id": _file_id(link_before),
+                    "size": link_before.st_size,
+                    "mtime_ns": link_before.st_mtime_ns,
+                    "reparse_tag": reparse_tag,
+                },
+                "raw_target": raw_target,
+                "canonical_target": target.as_posix(),
+                "target_identity": {
+                    "file_id": _file_id(target_before),
+                    "size": target_before.st_size,
+                    "mtime_ns": target_before.st_mtime_ns,
+                },
+                "target_member_count": len(members),
+                "target_members": members,
+                "target_members_sha256": hashlib.sha256(
+                    _canonical_json(members).encode("utf-8")
+                ).hexdigest(),
+            }
+        )
+    return sorted(relations, key=lambda item: str(item["link_path"]).casefold())
+
+
+def _skill_junction_mirrors_sha256(
+    relations: Sequence[Mapping[str, object]],
+) -> str:
+    return hashlib.sha256(_canonical_json(list(relations)).encode("utf-8")).hexdigest()
+
+
+def _assert_skill_junction_mirrors(
+    claude_home: Path,
+    agents_home: Path,
+    expected: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    observed = _discover_skill_junction_mirrors(claude_home, agents_home)
+    if observed != list(expected):
+        raise SourceChangedError("Claude user skill junction target member relations changed")
+    return observed
+
+
+def _secure_user_skill_files(
+    root: Path, relations: Sequence[Mapping[str, object]]
+) -> list[Path]:
+    approved = _require_root(root, label="Claude user skills root")
+    allowed = {
+        str(item["link_path"]).casefold(): item
+        for item in relations
+    }
+    seen: set[str] = set()
+    files: list[Path] = []
+    with os.scandir(approved) as entries:
+        for entry in sorted(entries, key=lambda item: item.name.casefold()):
+            metadata = entry.stat(follow_symlinks=False)
+            path = approved / entry.name
+            key = path.as_posix().casefold()
+            if _is_reparse(metadata):
+                relation = allowed.get(key)
+                if relation is None:
+                    raise ReparsePointError(f"reparse point rejected: {path}")
+                metadata = os.lstat(path)
+                if (
+                    _file_id(metadata) != relation["link_identity"]["file_id"]
+                    or int(getattr(metadata, "st_reparse_tag", 0))
+                    != relation["link_identity"]["reparse_tag"]
+                    or os.readlink(path) != relation["raw_target"]
+                ):
+                    raise SourceChangedError(f"skill junction changed during inventory: {path}")
+                seen.add(key)
+                continue
+            if key in allowed:
+                raise SourceChangedError(f"skill junction disappeared during inventory: {path}")
+            if stat.S_ISDIR(metadata.st_mode):
+                files.extend(_secure_files(path))
+            elif stat.S_ISREG(metadata.st_mode):
+                files.append(path)
+    if seen != set(allowed):
+        raise SourceChangedError("frozen skill junction membership changed")
+    return files
+
+
+def _skill_junction_target_records(
+    relations: Sequence[Mapping[str, object]], decisions: DecisionSet
+) -> list[AssetRecord]:
+    records: list[AssetRecord] = []
+    for relation in relations:
+        link = Path(str(relation["link_path"]))
+        for member in relation["target_members"]:
+            source = Path(str(member["source"]))
+            canonical_key = str(member["canonical_key"])
+            snapshot = FileSnapshot(
+                sha256=str(member["sha256"]),
+                size=int(member["size"]),
+                mtime_ns=int(member["mtime_ns"]),
+                file_id=str(member["file_id"]),
+                captured=b"",
+            )
+            domain_match = _domain_match(canonical_key)
+            record = _make_record(
+                source,
+                snapshot,
+                source_namespace="claude-user-skill-target",
+                canonical_key=canonical_key,
+                kind="skill",
+                domain_evidence=(
+                    f"path-domain:{domain_match}" if domain_match else None
+                ),
+                decisions=decisions,
+            )
+            relative = PurePosixPath(canonical_key).parts[1:]
+            updates: dict[str, object] = {
+                "observed_mirrors": ((link / Path(*relative)).as_posix(),)
+            }
+            if record.disposition != "exclude-secret":
+                updates.update(
+                    domain_reason="already-native-alias/no-import",
+                    disposition="exclude-domain",
+                    disposition_status="domain-decided",
+                    decision_evidence="junction-relation:direct-same-name",
+                )
+            record = replace(record, **updates)
+            records.append(record)
+    return sorted(records, key=_record_sort_key)
 
 
 def _membership_fingerprint(root: Path, paths: Iterable[Path]) -> tuple[tuple[object, ...], ...]:
@@ -847,6 +1099,7 @@ def _category_paths(
     repo_roots: Mapping[str, Path],
     *,
     category: str,
+    skill_junction_mirrors: Sequence[Mapping[str, object]] = (),
 ) -> list[tuple[Path, Path, str, str | None]]:
     values: list[tuple[Path, Path, str, str | None]] = []
     if category == "settings":
@@ -873,7 +1126,12 @@ def _category_paths(
     else:
         user_root = claude_home / category
         if user_root.is_dir():
-            for path in _secure_files(user_root):
+            candidates = (
+                _secure_user_skill_files(user_root, skill_junction_mirrors)
+                if category == "skills"
+                else _secure_files(user_root)
+            )
+            for path in candidates:
                 evidence = None if category == "skills" else f"approved-source:user-{category}"
                 values.append((path, user_root, f"claude-user-{category.rstrip('s')}", evidence))
         repo_relatives = (f".claude/{category}",)
@@ -908,12 +1166,18 @@ def _inventory_category(
     category: str,
     kind: str,
     decisions: DecisionSet,
+    skill_junction_mirrors: Sequence[Mapping[str, object]] = (),
 ) -> list[AssetRecord]:
     home = _require_root(claude_home, label="Claude home")
     records: list[AssetRecord] = []
     seen_repo_skill: dict[tuple[str, str], AssetRecord] = {}
     seen_repo_skill_index: dict[tuple[str, str], int] = {}
-    values = _category_paths(home, repo_roots, category=category)
+    values = _category_paths(
+        home,
+        repo_roots,
+        category=category,
+        skill_junction_mirrors=skill_junction_mirrors,
+    )
     if category == "skills":
         for root_name, repo_root in repo_roots.items():
             agents_root = repo_root / ".agents" / "skills"
@@ -1017,8 +1281,30 @@ def inventory_claude_commands(claude_home, repo_roots=(), *, decisions=None):
     return _inventory_category(claude_home, dict(repo_roots), category="commands", kind="command", decisions=decisions or DecisionSet({}))
 
 
-def inventory_claude_skills(claude_home, repo_roots=(), *, decisions=None):
-    return _inventory_category(claude_home, dict(repo_roots), category="skills", kind="skill", decisions=decisions or DecisionSet({}))
+def inventory_claude_skills(
+    claude_home,
+    repo_roots=(),
+    *,
+    decisions=None,
+    skill_junction_mirrors=None,
+):
+    home = _require_root(claude_home, label="Claude home")
+    relations = (
+        _discover_skill_junction_mirrors(home)
+        if skill_junction_mirrors is None
+        else list(skill_junction_mirrors)
+    )
+    decision_set = decisions or DecisionSet({})
+    records = _inventory_category(
+        home,
+        dict(repo_roots),
+        category="skills",
+        kind="skill",
+        decisions=decision_set,
+        skill_junction_mirrors=relations,
+    )
+    records.extend(_skill_junction_target_records(relations, decision_set))
+    return sorted(records, key=_record_sort_key)
 
 
 def inventory_claude_agents(claude_home, repo_roots=(), *, decisions=None):
@@ -1217,6 +1503,16 @@ def _capture_corpus_state(
     contract: InventoryContract,
 ) -> tuple[tuple[object, ...], ...]:
     entries: list[tuple[object, ...]] = []
+    _agents_home, skill_junction_mirrors = _contract_skill_junction_mirrors(
+        home, contract
+    )
+    entries.append(
+        (
+            "skill-junction-mirrors",
+            _canonical_json(skill_junction_mirrors),
+            _skill_junction_mirrors_sha256(skill_junction_mirrors),
+        )
+    )
     projects = _require_root(home / "projects", label="Claude projects root")
     start_ns = None if contract.cutoff is None else _normalize_cutoff(contract.cutoff)[0]
     as_of_ns = None if contract.as_of is None else _normalize_cutoff(contract.as_of)[0]
@@ -1264,7 +1560,14 @@ def _capture_corpus_state(
         "attachments",
         "backups",
     ):
-        values = _category_paths(home, roots, category=category)
+        values = _category_paths(
+            home,
+            roots,
+            category=category,
+            skill_junction_mirrors=(
+                skill_junction_mirrors if category == "skills" else ()
+            ),
+        )
         if category == "skills":
             for name, root in roots.items():
                 agents_root = root / ".agents" / "skills"
@@ -1335,8 +1638,44 @@ def _validate_contract(contract: InventoryContract) -> tuple[Path, dict[str, Pat
         expected_home = _absolute_without_resolve(Path.home() / ".claude", label="expected Claude home")
         if os.path.normcase(os.fspath(home)) != os.path.normcase(os.fspath(expected_home)):
             raise ContractError("production Claude home is not the fixed exact root")
+    if contract.require_stable_corpus and contract.agents_home is None:
+        raise ContractError("frozen collection requires an agents home binding")
+    if contract.agents_home is not None:
+        agents_home = _require_root(contract.agents_home, label="agents home")
+        expected_agents = _absolute_without_resolve(
+            home.parent / ".agents", label="expected agents home"
+        )
+        if not _same_absolute_path(agents_home, expected_agents):
+            raise ContractError("agents home is not the same user canonical root")
     cutoff_ns, cutoff_iso = _normalize_cutoff(contract.cutoff)
     return home, roots, cutoff_ns, cutoff_iso
+
+
+def _contract_skill_junction_mirrors(
+    home: Path, contract: InventoryContract
+) -> tuple[Path | None, list[dict[str, object]]]:
+    expected_agents = _absolute_without_resolve(
+        home.parent / ".agents", label="expected agents home"
+    )
+    agents_home: Path | None
+    if contract.agents_home is not None:
+        agents_home = _require_root(contract.agents_home, label="agents home")
+        if not _same_absolute_path(agents_home, expected_agents):
+            raise ContractError("agents home is not the same user canonical root")
+    elif os.path.lexists(expected_agents):
+        agents_home = _require_root(expected_agents, label="agents home")
+    else:
+        agents_home = None
+
+    frozen = contract.skill_junction_mirrors
+    if frozen is None:
+        observed = _discover_skill_junction_mirrors(home, agents_home)
+        return agents_home, observed
+    if agents_home is None:
+        raise SourceChangedError("frozen agents home is missing")
+    expected = json.loads(_canonical_json(list(frozen)))
+    observed = _assert_skill_junction_mirrors(home, agents_home, expected)
+    return agents_home, observed
 
 
 def _records_payload(records: Sequence[AssetRecord]) -> str:
@@ -1346,17 +1685,15 @@ def _records_payload(records: Sequence[AssetRecord]) -> str:
     )
 
 
-def _member_descriptor(record: AssetRecord) -> dict[str, str]:
-    return {
-        "source_namespace": record.source_namespace,
-        "canonical_key": record.canonical_key,
-        "source": record.source,
-        "kind": record.kind,
-        "sha256": record.sha256,
-    }
+def _member_descriptor(record: AssetRecord) -> dict[str, object]:
+    # The externally SHA-bound contract must cover every field that can affect
+    # scanning, copying, disposition, or later reconciliation.  Keeping the
+    # canonical AssetRecord projection here also prevents schema drift between
+    # the manifest and its approved-member ledger.
+    return record.to_dict()
 
 
-def _approved_members(records: Sequence[AssetRecord]) -> list[dict[str, str]]:
+def _approved_members(records: Sequence[AssetRecord]) -> list[dict[str, object]]:
     return sorted(
         (_member_descriptor(record) for record in records),
         key=lambda item: (
@@ -1366,7 +1703,7 @@ def _approved_members(records: Sequence[AssetRecord]) -> list[dict[str, str]]:
     )
 
 
-def _approved_members_sha256(members: Sequence[Mapping[str, str]]) -> str:
+def _approved_members_sha256(members: Sequence[Mapping[str, object]]) -> str:
     return hashlib.sha256(_canonical_json(list(members)).encode("utf-8")).hexdigest()
 
 
@@ -1774,6 +2111,13 @@ def freeze_inventory_contract(
         )
         protected_root_binding = _verify_protected_root(protected_root)
     home = _require_root(claude_home, label="Claude home")
+    agents_home = _require_root(home.parent / ".agents", label="agents home")
+    expected_agents_home = _absolute_without_resolve(
+        home.parent / ".agents", label="expected agents home"
+    )
+    if not _same_absolute_path(agents_home, expected_agents_home):
+        raise ContractError("agents home is not the same user canonical root")
+    skill_junction_mirrors = _discover_skill_junction_mirrors(home, agents_home)
     if set(roots) != set(PRODUCTION_ROOTS):
         raise ContractError("contract must bind exactly four named roots")
     checked_roots: dict[str, Path] = {}
@@ -1838,6 +2182,8 @@ def freeze_inventory_contract(
         chat_sessions=sessions,
         require_stable_corpus=True,
         frozen_tool=tool_binding,
+        agents_home=agents_home,
+        skill_junction_mirrors=skill_junction_mirrors,
     )
     approved_records = collect_inventory(member_contract).records
     if any(record.disposition is None for record in approved_records):
@@ -1845,10 +2191,11 @@ def freeze_inventory_contract(
     approved_members = _approved_members(approved_records)
     document: dict[str, object] = {
         "record_type": "inventory-contract",
-        "schema_version": 2,
+        "schema_version": 3,
         "production": production,
         "window": {"start": start_iso, "as_of": as_of_iso},
         "claude_home": _root_identity(home),
+        "agents_home": _root_identity(agents_home),
         "roots": {
             name: _root_identity(root) for name, root in sorted(checked_roots.items())
         },
@@ -1866,11 +2213,16 @@ def freeze_inventory_contract(
         "approved_members": approved_members,
         "approved_members_sha256": _approved_members_sha256(approved_members),
         "approved_member_count": len(approved_members),
+        "skill_junction_mirrors": skill_junction_mirrors,
+        "skill_junction_mirror_count": len(skill_junction_mirrors),
+        "skill_junction_mirrors_sha256": _skill_junction_mirrors_sha256(
+            skill_junction_mirrors
+        ),
         "output": {
             "contract": contract_output.as_posix(),
             "manifest": manifest_output.as_posix(),
             "metadata": metadata_output.as_posix(),
-            "schema": "inventory-jsonl-v2",
+            "schema": "inventory-jsonl-v3",
         },
     }
     if protected_root_binding is not None:
@@ -1903,7 +2255,204 @@ def freeze_inventory_contract(
     return contract_sha256
 
 
+def _validate_skill_junction_contract(document: Mapping[str, object]) -> None:
+    home_binding = document.get("claude_home")
+    agents_binding = document.get("agents_home")
+    if not isinstance(home_binding, dict) or not isinstance(agents_binding, dict):
+        raise ContractError("inventory contract user source root binding is invalid")
+    if set(agents_binding) != {"path", "file_id"}:
+        raise ContractError("inventory contract agents home identity is invalid")
+    home_path = _absolute_without_resolve(
+        Path(str(home_binding.get("path"))), label="contract Claude home"
+    )
+    agents_path = _absolute_without_resolve(
+        Path(str(agents_binding.get("path"))), label="contract agents home"
+    )
+    if (
+        agents_path.as_posix() != agents_binding.get("path")
+        or not isinstance(agents_binding.get("file_id"), str)
+        or not agents_binding["file_id"]
+        or not _same_absolute_path(agents_path, home_path.parent / ".agents")
+    ):
+        raise ContractError("inventory contract agents home identity is invalid")
+
+    relations = document.get("skill_junction_mirrors")
+    if (
+        not isinstance(relations, list)
+        or type(document.get("skill_junction_mirror_count")) is not int
+        or document.get("skill_junction_mirror_count") != len(relations)
+        or not re.fullmatch(
+            r"[0-9a-f]{64}", str(document.get("skill_junction_mirrors_sha256", ""))
+        )
+        or _skill_junction_mirrors_sha256(relations)
+        != document.get("skill_junction_mirrors_sha256")
+    ):
+        raise ContractError("inventory contract skill junction binding is invalid")
+    expected_order: list[str] = []
+    seen_links: set[str] = set()
+    seen_targets: set[str] = set()
+    seen_link_identities: set[str] = set()
+    seen_target_identities: set[str] = set()
+    for relation in relations:
+        if not isinstance(relation, dict) or set(relation) != {
+            "relation_type",
+            "link_path",
+            "link_identity",
+            "raw_target",
+            "canonical_target",
+            "target_identity",
+            "target_member_count",
+            "target_members",
+            "target_members_sha256",
+        }:
+            raise ContractError("inventory contract skill junction relation is invalid")
+        link_identity = relation.get("link_identity")
+        target_identity = relation.get("target_identity")
+        if (
+            relation.get("relation_type") != "claude-user-skill-junction"
+            or not isinstance(link_identity, dict)
+            or set(link_identity) != {"file_id", "size", "mtime_ns", "reparse_tag"}
+            or not isinstance(target_identity, dict)
+            or set(target_identity) != {"file_id", "size", "mtime_ns"}
+            or link_identity.get("reparse_tag") != WINDOWS_JUNCTION_REPARSE_TAG
+        ):
+            raise ContractError("inventory contract skill junction identity is invalid")
+        for identity in (link_identity, target_identity):
+            if (
+                not isinstance(identity.get("file_id"), str)
+                or not identity["file_id"]
+                or type(identity.get("size")) is not int
+                or identity["size"] < 0
+                or type(identity.get("mtime_ns")) is not int
+                or identity["mtime_ns"] < 0
+            ):
+                raise ContractError("inventory contract skill junction identity is invalid")
+        link = _absolute_without_resolve(
+            Path(str(relation.get("link_path"))), label="skill junction link"
+        )
+        target = _absolute_without_resolve(
+            Path(str(relation.get("canonical_target"))), label="skill junction target"
+        )
+        if (
+            link.as_posix() != relation.get("link_path")
+            or target.as_posix() != relation.get("canonical_target")
+            or link.parent.as_posix() != (home_path / "skills").as_posix()
+            or target.parent.as_posix() != (agents_path / "skills").as_posix()
+            or link.name != target.name
+        ):
+            raise ContractError("inventory contract skill junction path is invalid")
+        try:
+            raw_target = _canonical_junction_target(str(relation.get("raw_target")))
+        except ReparsePointError as error:
+            raise ContractError("inventory contract skill junction raw target is invalid") from error
+        if raw_target.as_posix() != target.as_posix() or raw_target.name != link.name:
+            raise ContractError("inventory contract skill junction raw target is invalid")
+        link_key = link.as_posix().casefold()
+        target_key = target.as_posix().casefold()
+        link_file_id = str(link_identity["file_id"])
+        target_file_id = str(target_identity["file_id"])
+        if (
+            link_key in seen_links
+            or target_key in seen_targets
+            or link_file_id in seen_link_identities
+            or target_file_id in seen_target_identities
+        ):
+            raise ContractError("inventory contract skill junction relation is duplicated")
+        seen_links.add(link_key)
+        seen_targets.add(target_key)
+        seen_link_identities.add(link_file_id)
+        seen_target_identities.add(target_file_id)
+        expected_order.append(link_key)
+
+        members = relation.get("target_members")
+        if (
+            not isinstance(members, list)
+            or type(relation.get("target_member_count")) is not int
+            or relation.get("target_member_count") != len(members)
+            or not re.fullmatch(r"[0-9a-f]{64}", str(relation.get("target_members_sha256", "")))
+            or hashlib.sha256(_canonical_json(members).encode("utf-8")).hexdigest()
+            != relation.get("target_members_sha256")
+        ):
+            raise ContractError("inventory contract skill target members are invalid")
+        member_order: list[str] = []
+        member_sources: set[str] = set()
+        for member in members:
+            if not isinstance(member, dict) or set(member) != {
+                "record_role",
+                "source",
+                "source_namespace",
+                "canonical_key",
+                "size",
+                "sha256",
+                "mtime_ns",
+                "file_id",
+            }:
+                raise ContractError("inventory contract skill target member is invalid")
+            key = str(member.get("canonical_key"))
+            parts = PurePosixPath(key).parts
+            raw_parts = key.split("/")
+            source = _absolute_without_resolve(
+                Path(str(member.get("source"))), label="skill target member source"
+            )
+            if (
+                member.get("record_role") != "relation-target-member"
+                or member.get("source_namespace") != "claude-user-skill-target"
+                or len(parts) < 2
+                or parts[0] != link.name
+                or "\\" in key
+                or key.startswith("/")
+                or "//" in key
+                or any(part in {"", ".", ".."} for part in raw_parts)
+                or source.as_posix() != member.get("source")
+                or not _same_absolute_path(source, target / Path(*parts[1:]))
+                or type(member.get("size")) is not int
+                or member["size"] < 0
+                or type(member.get("mtime_ns")) is not int
+                or member["mtime_ns"] < 0
+                or not isinstance(member.get("file_id"), str)
+                or not member["file_id"]
+                or not re.fullmatch(r"[0-9a-f]{64}", str(member.get("sha256", "")))
+            ):
+                raise ContractError("inventory contract skill target member is invalid")
+            logical = canonical_identity_key(key)
+            source_key = source.as_posix().casefold()
+            if logical in member_order or source_key in member_sources:
+                raise ContractError("inventory contract skill target members are duplicated")
+            member_order.append(logical)
+            member_sources.add(source_key)
+        if member_order != sorted(member_order):
+            raise ContractError("inventory contract skill target members are not canonical")
+    if expected_order != sorted(expected_order):
+        raise ContractError("inventory contract skill junction relations are not canonical")
+
+
 def _validate_contract_document(document: Mapping[str, object]) -> None:
+    required_fields = {
+        "record_type",
+        "schema_version",
+        "production",
+        "window",
+        "claude_home",
+        "agents_home",
+        "roots",
+        "expected",
+        "chat_projects",
+        "chat_sessions",
+        "domain_decisions",
+        "tool",
+        "approved_members",
+        "approved_members_sha256",
+        "approved_member_count",
+        "skill_junction_mirrors",
+        "skill_junction_mirrors_sha256",
+        "skill_junction_mirror_count",
+        "output",
+        "contract_payload_sha256",
+    }
+    if document.get("production"):
+        required_fields.add("protected_root")
+    if set(document) != required_fields:
+        raise ContractError("inventory contract fields do not match schema")
     if type(document.get("production")) is not bool:
         raise ContractError("inventory contract production flag is invalid")
     expected_window = {
@@ -1912,6 +2461,7 @@ def _validate_contract_document(document: Mapping[str, object]) -> None:
     }
     if document.get("window") != expected_window:
         raise ContractError("inventory contract frozen window is invalid")
+    _validate_skill_junction_contract(document)
     expected = document.get("expected")
     if expected != {
         "chat_groups": PRODUCTION_CHAT_GROUP_COUNTS,
@@ -1998,7 +2548,7 @@ def _validate_contract_document(document: Mapping[str, object]) -> None:
         ):
             raise ContractError("inventory contract tool file digest is invalid")
     if observed_tool_paths != expected_tool_paths:
-        raise ContractError("inventory contract must bind inventory.py and model.py")
+        raise ContractError("inventory contract must bind all reviewed Import tools")
     members = document.get("approved_members")
     if (
         not isinstance(members, list)
@@ -2011,41 +2561,35 @@ def _validate_contract_document(document: Mapping[str, object]) -> None:
         raise ContractError("inventory contract approved member binding is invalid")
     member_keys: set[tuple[str, str]] = set()
     member_sources: set[str] = set()
+    member_ids: set[str] = set()
     member_counts: Counter[str] = Counter()
     expected_member_order: list[tuple[str, str]] = []
     for item in members:
-        if not isinstance(item, dict) or set(item) != {
-            "source_namespace",
-            "canonical_key",
-            "source",
-            "kind",
-            "sha256",
-        }:
+        if not isinstance(item, dict) or set(item) != set(AssetRecord.__dataclass_fields__):
             raise ContractError("inventory contract approved member is invalid")
-        namespace = item.get("source_namespace")
-        key = item.get("canonical_key")
-        source = item.get("source")
-        kind = item.get("kind")
-        sha256 = item.get("sha256")
-        if not all(isinstance(value, str) and value for value in (namespace, key, source, kind)):
-            raise ContractError("inventory contract approved member is invalid")
-        if (
-            "\\" in key
-            or key.startswith("/")
-            or "//" in key
-            or any(part in {"", ".", ".."} for part in PurePosixPath(key).parts)
-            or _absolute_without_resolve(Path(source), label="approved member source").as_posix()
-            != source
-            or "\\" in source
-            or not re.fullmatch(r"[0-9a-f]{64}", str(sha256))
-        ):
+        values = dict(item)
+        if isinstance(values.get("observed_mirrors"), list):
+            values["observed_mirrors"] = tuple(values["observed_mirrors"])
+        try:
+            record = AssetRecord(**values)
+        except (TypeError, ValueError) as error:
+            raise ContractError("inventory contract approved member is invalid") from error
+        if _member_descriptor(record) != item:
             raise ContractError("inventory contract approved member is noncanonical")
+        namespace = record.source_namespace
+        key = record.canonical_key
+        source = record.source
         logical = (namespace.casefold(), canonical_identity_key(key))
-        if logical in member_keys or source.casefold() in member_sources:
+        if (
+            logical in member_keys
+            or source.casefold() in member_sources
+            or record.asset_id in member_ids
+        ):
             raise ContractError("inventory contract approved members contain duplicates")
         member_keys.add(logical)
         member_sources.add(source.casefold())
-        member_counts[kind] += 1
+        member_ids.add(record.asset_id)
+        member_counts[record.kind] += 1
         expected_member_order.append(logical)
     if expected_member_order != sorted(expected_member_order):
         raise ContractError("inventory contract approved members are not canonical")
@@ -2053,7 +2597,11 @@ def _validate_contract_document(document: Mapping[str, object]) -> None:
         if member_counts[kind] != count:
             raise ContractError(f"inventory contract approved {kind} membership is invalid")
     output = document.get("output")
-    if not isinstance(output, dict) or output.get("schema") != "inventory-jsonl-v2":
+    if (
+        not isinstance(output, dict)
+        or set(output) != {"contract", "manifest", "metadata", "schema"}
+        or output.get("schema") != "inventory-jsonl-v3"
+    ):
         raise ContractError("inventory contract output schema is invalid")
     output_paths: list[str] = []
     for field in ("contract", "manifest", "metadata"):
@@ -2115,7 +2663,7 @@ def load_inventory_contract(
         raise ContractError("inventory contract is not valid UTF-8 JSON") from error
     if not isinstance(document, dict) or document.get("record_type") != "inventory-contract":
         raise ContractError("invalid inventory contract header")
-    if document.get("schema_version") != 2:
+    if document.get("schema_version") != 3:
         raise ContractError("unsupported inventory contract schema")
     payload_hash = document.pop("contract_payload_sha256", None)
     observed_payload_hash = hashlib.sha256(_canonical_json(document).encode("utf-8")).hexdigest()
@@ -2148,6 +2696,21 @@ def load_inventory_contract(
         home = _require_root(Path(str(home_binding.get("path"))), label="contract Claude home")
         if _root_identity(home) != home_binding:
             raise ContractError("Claude home identity differs from inventory contract")
+        agents_binding = document.get("agents_home")
+        if not isinstance(agents_binding, dict):
+            raise ContractError("inventory contract agents home binding is invalid")
+        agents_home = _require_root(
+            Path(str(agents_binding.get("path"))), label="contract agents home"
+        )
+        if (
+            _root_identity(agents_home) != agents_binding
+            or not _same_absolute_path(agents_home, home.parent / ".agents")
+        ):
+            raise ContractError("agents home identity differs from inventory contract")
+        expected_relations = document.get("skill_junction_mirrors")
+        if not isinstance(expected_relations, list):
+            raise ContractError("inventory contract skill junction binding is invalid")
+        _assert_skill_junction_mirrors(home, agents_home, expected_relations)
         root_bindings = document.get("roots")
         if not isinstance(root_bindings, dict) or set(root_bindings) != set(PRODUCTION_ROOTS):
             raise ContractError("inventory contract root bindings are invalid")
@@ -2205,6 +2768,9 @@ def collect_inventory(contract: InventoryContract) -> InventoryManifest:
         raise ContractError("frozen collection requires a domain decision file")
     decisions = _load_decisions(contract.domain_decisions)
     repo_roots = {name: root for name, root in roots.items()}
+    agents_home, skill_junction_mirrors = _contract_skill_junction_mirrors(
+        home, contract
+    )
     state_before = (
         _capture_corpus_state(home, roots, contract)
         if contract.require_stable_corpus
@@ -2225,7 +2791,12 @@ def collect_inventory(contract: InventoryContract) -> InventoryManifest:
         inventory_claude_instructions(home, repo_roots, decisions=decisions),
         inventory_claude_hooks(home, repo_roots, decisions=decisions),
         inventory_claude_commands(home, repo_roots, decisions=decisions),
-        inventory_claude_skills(home, repo_roots, decisions=decisions),
+        inventory_claude_skills(
+            home,
+            repo_roots,
+            decisions=decisions,
+            skill_junction_mirrors=skill_junction_mirrors,
+        ),
         inventory_claude_agents(home, repo_roots, decisions=decisions),
         inventory_claude_workflows(home, repo_roots, decisions=decisions),
         inventory_claude_attachments(home, repo_roots, decisions=decisions),
@@ -2280,7 +2851,14 @@ def collect_inventory(contract: InventoryContract) -> InventoryManifest:
         "records_sha256": hashlib.sha256(payload.encode("utf-8")).hexdigest(),
         "domain_decisions_sha256": decisions.sha256,
         "unresolved_count": sum(record.disposition is None for record in records),
+        "skill_junction_mirrors": skill_junction_mirrors,
+        "skill_junction_mirror_count": len(skill_junction_mirrors),
+        "skill_junction_mirrors_sha256": _skill_junction_mirrors_sha256(
+            skill_junction_mirrors
+        ),
     }
+    if agents_home is not None:
+        metadata["agents_home"] = _root_identity(agents_home)
     if contract.as_of is not None:
         metadata["window"] = {
             "start": cutoff_iso,
@@ -2373,6 +2951,8 @@ def _runtime_contract_from_document(
         require_stable_corpus=True,
         frozen_contract_sha256=contract_sha256,
         frozen_tool=tool,
+        agents_home=Path(document["agents_home"]["path"]),
+        skill_junction_mirrors=document["skill_junction_mirrors"],
     )
 
 
@@ -2420,7 +3000,7 @@ def collect_frozen_inventory(
     ) != document:
         raise SourceChangedError("inventory contract bindings changed during collection")
     metadata = dict(manifest.metadata)
-    metadata["schema_version"] = 2
+    metadata["schema_version"] = 3
     metadata["contract_payload_sha256"] = document["contract_payload_sha256"]
     metadata["approved_members_sha256"] = document["approved_members_sha256"]
     metadata["approved_member_count"] = document["approved_member_count"]
@@ -2494,6 +3074,7 @@ def _validate_approved_record_membership(
 def _validate_frozen_records(records: Sequence[AssetRecord], document: Mapping[str, object]) -> None:
     _validate_approved_record_membership(records, document)
     home = Path(document["claude_home"]["path"])
+    agents_home = Path(document["agents_home"]["path"])
     roots = {
         name: Path(binding["path"])
         for name, binding in document["roots"].items()
@@ -2516,6 +3097,13 @@ def _validate_frozen_records(records: Sequence[AssetRecord], document: Mapping[s
         "claude-user-attachment": ("attachment", "attachments"),
         "claude-user-backup": ("backup", "backups"),
     }
+    target_members: dict[str, tuple[Mapping[str, object], Mapping[str, object]]] = {}
+    for relation in document["skill_junction_mirrors"]:
+        for member in relation["target_members"]:
+            target_members[canonical_identity_key(str(member["canonical_key"]))] = (
+                relation,
+                member,
+            )
     by_id = {record.asset_id: record for record in records}
     for record in records:
         expected_source: str
@@ -2557,6 +3145,30 @@ def _validate_frozen_records(records: Sequence[AssetRecord], document: Mapping[s
             )
             relative = parts[1:] if record.source_namespace == "claude-memory" else parts[1:]
             expected_source = (home / "projects" / project / "memory" / Path(*relative)).as_posix()
+        elif record.source_namespace == "claude-user-skill-target":
+            if record.kind != "skill":
+                raise ManifestError("skill target member kind violates its namespace")
+            bound = target_members.get(canonical_identity_key(record.canonical_key))
+            if bound is None:
+                raise ManifestError("skill target member is absent from the frozen relation")
+            relation, member = bound
+            expected_source = _joined_source(
+                agents_home / "skills", record.canonical_key
+            )
+            if (
+                record.source != member.get("source")
+                or record.sha256 != member.get("sha256")
+                or record.size != member.get("size")
+                or record.mtime_ns != member.get("mtime_ns")
+                or record.file_id != member.get("file_id")
+            ):
+                raise ManifestError("skill target member differs from its frozen relation")
+            relative = PurePosixPath(record.canonical_key).parts[1:]
+            expected_observed_mirror = (
+                Path(str(relation["link_path"])) / Path(*relative)
+            ).as_posix()
+            if record.observed_mirrors != (expected_observed_mirror,):
+                raise ManifestError("skill junction observed relation is not canonical")
         elif record.source_namespace in user_kinds:
             expected_kind, directory = user_kinds[record.source_namespace]
             if record.kind != expected_kind:
@@ -2614,12 +3226,16 @@ def _validate_frozen_records(records: Sequence[AssetRecord], document: Mapping[s
             ):
                 raise ManifestError("skill mirror points to an invalid canonical asset")
         if record.observed_mirrors:
-            if record.kind != "skill" or not record.source_namespace.startswith("repo-"):
+            if record.source_namespace == "claude-user-skill-target":
+                if record.observed_mirrors != (expected_observed_mirror,):
+                    raise ManifestError("skill junction observed relation is not canonical")
+            elif record.kind != "skill" or not record.source_namespace.startswith("repo-"):
                 raise ManifestError("observed mirror relation is attached to an invalid asset")
-            root_name = record.source_namespace.removeprefix("repo-")
-            mirror_key = record.canonical_key.replace(".agents/skills/", ".claude/skills/", 1)
-            if record.observed_mirrors != (_joined_source(roots[root_name], mirror_key),):
-                raise ManifestError("observed mirror relation is not canonical")
+            else:
+                root_name = record.source_namespace.removeprefix("repo-")
+                mirror_key = record.canonical_key.replace(".agents/skills/", ".claude/skills/", 1)
+                if record.observed_mirrors != (_joined_source(roots[root_name], mirror_key),):
+                    raise ManifestError("observed mirror relation is not canonical")
 
 
 def summarize_manifest(
@@ -2638,7 +3254,7 @@ def summarize_manifest(
     metadata, records = _parse_manifest(path)
     if metadata.get("record_type") != "inventory-metadata":
         raise ManifestError("manifest header record_type is invalid")
-    expected_schema = 2 if document is not None else 1
+    expected_schema = 3 if document is not None else 1
     if type(metadata.get("schema_version")) is not int or metadata["schema_version"] != expected_schema:
         raise ManifestError("manifest schema_version is unsupported")
     if type(metadata.get("production")) is not bool:
@@ -2749,6 +3365,7 @@ def summarize_manifest(
             "contract_payload_sha256": document["contract_payload_sha256"],
             "window": document["window"],
             "claude_home": document["claude_home"],
+            "agents_home": document["agents_home"],
             "roots": document["roots"],
             "tool": document["tool"],
             "expected_counts": document["expected"]["counts"],
@@ -2756,13 +3373,32 @@ def summarize_manifest(
             "domain_decisions_sha256": document["domain_decisions"]["sha256"],
             "approved_members_sha256": document["approved_members_sha256"],
             "approved_member_count": document["approved_member_count"],
+            "skill_junction_mirrors": document["skill_junction_mirrors"],
+            "skill_junction_mirror_count": document["skill_junction_mirror_count"],
+            "skill_junction_mirrors_sha256": document["skill_junction_mirrors_sha256"],
             "output": document["output"],
         }
         if document.get("protected_root") is not None:
             expected_metadata["protected_root"] = document["protected_root"]
+        expected_metadata_fields = set(expected_metadata) | {
+            "record_type",
+            "schema_version",
+            "cutoff",
+            "actual_counts",
+            "record_count",
+            "records_sha256",
+            "unresolved_count",
+            "corpus_fingerprint_sha256",
+            "sealed_digest",
+        }
+        if set(metadata) != expected_metadata_fields:
+            raise ManifestError("formal manifest metadata fields do not match schema")
         for field, expected in expected_metadata.items():
             if metadata.get(field) != expected:
-                raise ManifestError(f"manifest metadata differs from frozen contract: {field}")
+                qualifier = " relation member binding" if field.startswith("skill_junction_") else ""
+                raise ManifestError(
+                    f"manifest metadata{qualifier} differs from frozen contract: {field}"
+                )
         sealed_digest = metadata.get("sealed_digest")
         unsealed = dict(metadata)
         unsealed.pop("sealed_digest", None)
