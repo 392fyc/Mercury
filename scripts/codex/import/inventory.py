@@ -1206,6 +1206,7 @@ def _inventory_category(
         mirror_of = None
         if category == "skills" and namespace.startswith("repo-"):
             relative = PurePosixPath(key)
+            canonical_key = key
             if relative.parts[:2] == (".claude", "skills"):
                 agents_key = PurePosixPath(".agents", "skills", *relative.parts[2:]).as_posix()
                 logical = (namespace, canonical_identity_key(agents_key))
@@ -1232,10 +1233,6 @@ def _inventory_category(
                         "superseded-claude-skill-mirror",
                         "canonical-agents-skill-present",
                     )
-            elif relative.parts[:2] == (".agents", "skills"):
-                canonical_key = key
-            else:
-                canonical_key = key
         else:
             canonical_key = key
         record = _make_record(
