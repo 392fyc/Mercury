@@ -107,6 +107,9 @@ __pycache__/
 .mercury/docs/guides/argus-review-guide.md
 # .pr_agent.toml is committed (project-scope config for Argus use_repo_settings_file)
 
+# Private active memory (local-only; exclusion must survive cloning)
+/.mercury/memory/
+
 # KB managed separately in parallel directory (D:/Mercury/Mercury_KB), never inside repo
 Mercury_KB/
 
