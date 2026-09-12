@@ -1,43 +1,46 @@
-# Portable task, evidence, and receipt contract
+# Portable task and evidence contract
 
-This contract defines the minimum information exchanged between an orchestrator,
-an implementation worker, and independent reviewers. A project may add fields or
-stricter gates, but it must not silently weaken these requirements.
+This contract supports bounded delegation and independent review when needed.
+The target repository chooses its execution and publication policy. A single
+executor may handle routine work; this template does not require a pipeline or
+two separate model reviews for every task. Invoke a complex workflow or
+multi-stage pipeline only when the user explicitly calls for it or an established
+task plan requires it.
 
-## Task bundle
+## Task input
 
-Before implementation begins, record:
+State the objective, acceptance criteria, relevant contracts, allowed write
+paths, and required verification. For delegated repository work, identify the
+target repository, branch or worktree, and starting revision. Record forbidden
+paths, protected state, and dependencies when relevant. Use a task identifier
+when the project or coordinating agent requires one.
 
-- `task_id` and a bounded `objective`;
-- independently testable `acceptance_criteria`;
-- `target_repository`, `target_branch`, and exact starting `target_head`;
-- `allowed_write_paths` and `forbidden_paths`;
-- governing `contracts`, each with a path or stable identifier and a concise
-  `contract_summary` captured before the first write;
-- required `verification_commands` and protected state that must remain unchanged;
-- dependencies, known constraints, and escalation conditions.
+Resolve routine details from repository context. Report an ambiguity or changed
+branch, HEAD, or governing contract when it can materially change the result;
+pause dependent writes while the mismatch is resolved. Preserve concurrent work.
+Commit and publication actions require explicit inclusion in the assignment and
+completion of the repository's review and guarded Git requirements.
 
-The implementer must stop when the target HEAD, branch, or governing contract no
-longer matches the bundle and the difference can affect the result.
+## Evidence
 
-## Evidence contract
+Each criterion needs a reproducible observation: a command and observed result,
+file-and-line citation, or runtime observation. Identify the candidate revision
+or diff examined; include exit status for commands and collection time when the
+underlying state is mutable. Distinguish direct evidence from inference and keep
+failures, skipped checks, and limitations visible.
 
-Evidence is a reproducible observation, not an assertion. Each item records:
-
-- the acceptance criterion it supports;
-- the command, test, file-and-line citation, or runtime request used;
-- the observed result and exit status when applicable;
-- the target HEAD or candidate revision on which it was collected;
-- collection time when the underlying state is mutable;
-- limitations, skipped checks, and whether the result is direct evidence or an
-  explicitly labelled inference.
-
-Sensitive matches, credentials, and private content must never be copied into a
-receipt. Report their category, affected scope, and disposition instead.
+Never copy credentials, secret-matching text, or private content into evidence.
+Use logical repository identities and repository-relative paths in portable
+records; exclude machine paths, tokens, ports, and transient process state.
 
 ## Implementation receipt
 
-Return a machine-readable object with at least these fields:
+For a routine bounded task, return changed files, criterion-specific evidence,
+commands and results, and limitations. Include branch and commit identifiers
+when relevant; an uncommitted candidate is valid.
+
+Use the following full receipt for cross-repository work, changes requiring
+independent review, or a task that explicitly requests structured exchange:
 
 ```json
 {
@@ -65,17 +68,20 @@ Return a machine-readable object with at least these fields:
 }
 ```
 
-Use repository-relative paths and logical repository identities. Do not store
-local absolute paths, secrets, tokens, service ports, or transient process state.
+## Review and completion
 
-## Review and acceptance
+Choose review depth from the task's risk and repository policy. Substantial
+behavior changes, cross-repository writes, security or permission changes, and
+agent instructions or rules require independent review. The task may choose
+change review, blind acceptance, or both according to the uncertainty involved.
+A workflow explicitly invoked by the user or required by an established task
+plan may specify additional reviewers.
 
-Implementation review checks the candidate diff for correctness, scope,
-maintainability, security, and regression risk. Acceptance is a later blind pass
-against the criteria and receives no implementation reasoning. Both must state
-the exact candidate reviewed and provide fresh evidence for their verdict.
+Independent reviewers inspect the exact candidate and gather fresh evidence;
+the implementer's self-assessment cannot substitute for their evaluation. Blind
+acceptance receives the objective, criteria, candidate, changed files, and
+verification evidence without implementation reasoning.
 
-Completion requires all criteria to pass, required verification to succeed, the
-receipt to be complete, protected state to remain unchanged, and material review
-findings to be resolved. A blocked or skipped check remains visible in the final
-receipt and cannot be converted into a passing claim.
+Completion requires satisfied criteria, successful required verification,
+protected state preserved, and material review findings resolved. Disclose any
+remaining blocked or skipped check without converting it into a passing claim.
