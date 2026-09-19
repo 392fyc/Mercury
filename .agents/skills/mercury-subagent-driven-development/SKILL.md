@@ -86,9 +86,9 @@ Present everything you find as one batched question — each finding beside the 
 
 ## Model Selection
 
-Tailor model capability to task complexity: "Use the least powerful model that can handle each role to conserve cost and increase speed." Mechanical implementation tasks use faster models; integration tasks use standard models; architecture and review tasks use the most capable models.
+By default, omit model and reasoning overrides so implementation agents inherit the calling task's settings. Preserve explicit settings for other project roles. Select a different model only when the user or the established task plan calls for that override; task labels alone do not require a less capable model.
 
-**Always specify the model explicitly when dispatching a subagent.** An omitted model silently inherits your session's model — often the most capable and most expensive — which defeats this section. (This matters most when the session model is a premium tier: a fan-out of subagents each inheriting it multiplies the cost.)
+For Codex fresh-context calls that explicitly select a model, also specify the intended reasoning effort: a model override without an effort override can select that model's default effort instead of inheriting the parent's. When the tool requires full-history forks to inherit settings, omit both overrides. See the [Codex subagent configuration reference](https://learn.chatgpt.com/docs/agent-configuration/subagents).
 
 ## Handling Implementer Status
 
