@@ -11,7 +11,7 @@
 # Options:
 #   --timeout SECONDS         total wait budget (default 600 = 10 min)
 #   --poll-interval SECONDS   polling interval (default 15)
-#   --model MODEL             codex model override (e.g. gpt-5.4-mini, spark)
+#   --model MODEL             codex model override (default: use the runtime default)
 #   --effort EFFORT           reasoning effort (none|minimal|low|medium|high|xhigh)
 #   --write                   allow codex to edit the tree (default: read-only)
 #   --read-only               (default — kept as a no-op alias for clarity)

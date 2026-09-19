@@ -311,8 +311,7 @@ Codex spawns specialized sub-agents in parallel while keeping the main conversat
 
 ### Model Selection Strategy
 
-- `gpt-5.3-codex` (primary reasoning): Code review, security analysis, multi-step implementation, ambiguous requirements
-- `gpt-5.3-codex-spark` (speed-optimized): Exploration, read-heavy scanning, quick summarization
+- Implementation agents inherit the calling task's model and reasoning settings unless the task explicitly requests an override. Choose overrides from models currently available in the runtime; do not route tasks to retired models.
 
 **Reasoning effort levels**: high (complex logic), medium (balanced default), low (straightforward/speed)
 
