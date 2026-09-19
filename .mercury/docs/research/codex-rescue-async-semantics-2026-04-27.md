@@ -110,7 +110,7 @@ Usage: codex-sync-audit.sh <prompt-file> [options]
 Options:
   --timeout SECONDS         total wait budget (default 600)
   --poll-interval SECONDS   polling interval (default 15)
-  --model MODEL             codex model override (e.g. gpt-5.4-mini, spark)
+  --model MODEL             codex model override (default: use the runtime default)
   --effort EFFORT           reasoning effort (none|minimal|low|medium|high|xhigh)
   --read-only               omit --write (codex audit-only, no edits)
   --cwd PATH                workspace root (default: pwd)
