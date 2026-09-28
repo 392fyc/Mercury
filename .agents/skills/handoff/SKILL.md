@@ -20,7 +20,7 @@ handoff — nothing triggers automatically. Follow these steps precisely.
 >
 > In auto mode, outputting the prompt text is necessary but NOT sufficient. The
 > deliverable is a **spawned new session**. Auto mode is NOT complete until you
-> have actually run `bash scripts/handoff-launch.sh ...` (Step 5 Auto mode; a
+> have actually run `bash scripts/handoff-launch.sh ... --harness codex` (Step 5 Auto mode; a
 > bash script — on Windows it runs via Git Bash / the Bash tool) and seen it
 > **exit 0 with its success report** (currently `spawned new tab`). Printing
 > text and ending the turn = the bug the user keeps hitting. There is **no
@@ -42,7 +42,7 @@ Parse `$ARGUMENTS`:
 |---|---|---|
 | `/handoff` (no args) | **manual** | Write doc + output starting prompt in chat. Do NOT launch a new session. Old session stays alive by user choice. |
 | `/handoff <instructions>` | **manual + extra** | Same as manual; put `<instructions>` into the "User Instructions" section of the handoff doc. |
-| `/handoff auto` | **auto** | Write doc + output starting prompt + **auto-launch** new session via `claude` CLI after Pre-Termination Checklist passes. Old session should `/exit` after — auto mode treats the old session as a terminal event. |
+| `/handoff auto` | **auto** | Write doc + output starting prompt + **auto-launch** new session via the `codex` CLI (`handoff-launch.sh --harness codex`) after Pre-Termination Checklist passes. Old session should `/exit` after — auto mode treats the old session as a terminal event. |
 | `/handoff auto <instructions>` | **auto + extra** | Same as auto, with extra instructions embedded. |
 
 Default (no explicit `auto`): manual mode. Never auto-launch without an
@@ -679,9 +679,16 @@ command.
 
 `$HANDOFF_PATH` is the location resolved in **Step 2.0** (`<workspace>/.handoff/`
 or `<kb_dir>/handoff/`, never the global memory dir). Shell variables do NOT
-persist across separate Bash tool calls — if Step 5 runs in a fresh shell,
-re-run the Step 2.0 resolution block first so `$HANDOFF_PATH` is set, or inline
-the concrete resolved path into the `--handoff-doc` argument below.
+persist across separate Bash tool calls. The launcher needs all three of
+`$HANDOFF_PATH`, `$LANE_NAME` and `$WORKTREE_PATH` in the **same shell** that
+runs it: if Step 5 runs in a fresh shell, re-run the Step 2.0 resolution block
+(for `$HANDOFF_PATH`) and then the lane/worktree resolution block above (for
+`$LANE_NAME` and `$WORKTREE_PATH`; it derives the lane of the
+`$HANDOFF_PATH` filename) in that shell first, or inline the concrete resolved
+values into the `--handoff-doc`, `--lane` and `--worktree` arguments below.
+For a named lane, re-apply the `-<lane>` filename suffix when re-running
+Step 2.0 (its default is the main-lane `session-handoff.md`); otherwise
+`$LANE_NAME` silently resolves to `main` and the launch targets the wrong lane.
 
 **SHORT_PROMPT must remain free of `wt`/`tmux` metacharacters** —
 `;` (command separator), `&` (background), `|` (pipe), `\` outside quotes,
@@ -717,8 +724,13 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 bash "$REPO_ROOT/scripts/handoff-launch.sh" \
   --lane "$LANE_NAME" \
   --worktree "$WORKTREE_PATH" \
-  --handoff-doc "$HANDOFF_PATH"
+  --handoff-doc "$HANDOFF_PATH" \
+  --harness codex
 ```
+
+`--harness codex` is required here: without it the launcher falls back to
+`$MERCURY_HANDOFF_HARNESS`, then to `claude`, and would open a Claude Code
+session instead of Codex (Mercury #571 G5, #593).
 
 If the launcher fails (non-zero exit), nothing retries it for you: read its
 stderr, fix the cause, and re-run it before ending the turn.
@@ -754,12 +766,17 @@ on Windows, the canonical handoff-doc path contains backslashes
 only contains `[a-z0-9-]+` per Rule 2.1 + the literal `[`/`]`/`=`
 brackets, none of which are wt/tmux metacharacters.
 
-The positional argument after `--` is the session's first user message —
-documented at <https://code.claude.com/docs/en/cli-reference>. The `--`
-sentinel ensures a prompt beginning with `-` is not parsed as a CLI option
-(<https://github.com/anthropics/claude-code/issues/3844>) — and the
-`[LANE=...]` marker starts with `[` so the sentinel is also defensive
-against any future SHORT_PROMPT variants. The `-d "$WORKTREE_PATH"` flag
+With `--harness codex` (this skill), the launcher runs `codex "<SHORT_PROMPT>"`
+with **no** `--`: the Codex CLI takes the initial prompt as a positional
+argument and starts the interactive session with it
+(<https://developers.openai.com/codex/cli/features>), and adding `--` would
+make it drop the prompt (Mercury #571 G5). The `[LANE=...]` marker starts
+with `[`, so the prompt is never mistaken for an option. For reference, the
+Claude Code harness (`--harness claude`) instead uses `claude -- "<prompt>"`:
+the positional argument after `--` is the session's first user message
+(<https://code.claude.com/docs/en/cli-reference>), and the `--` sentinel
+keeps a prompt beginning with `-` out of option parsing
+(<https://github.com/anthropics/claude-code/issues/3844>). The `-d "$WORKTREE_PATH"` flag
 (wt) / `-c "$WORKTREE_PATH"` flag (tmux) sets the new tab's cwd to the
 lane's worktree, so `~/.claude/projects/<encoded>/` resolves to the
 lane-specific state dir per Rule 5.1.
@@ -835,8 +852,8 @@ the auto path from Step 5 (auto mode).
 - Before terminating (auto mode) verify all pending work has completed.
   Nothing carries over automatically.
 - Manual mode MUST NOT spawn processes. Only the `auto` token (as the
-  first whitespace-delimited argument to `/handoff`) triggers the `claude`
-  CLI launch.
+  first whitespace-delimited argument to `/handoff`) triggers the `codex`
+  CLI launch (via `handoff-launch.sh --harness codex`).
 - The legacy `$AGENTKB_DIR/scripts/handoff-orchestrator.py` path is
   DEPRECATED. Do not invoke it. The `claude-handoff` plugin is the
   canonical session-continuity module
