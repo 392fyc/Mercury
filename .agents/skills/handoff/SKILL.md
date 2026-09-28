@@ -572,10 +572,15 @@ be the launcher call, not a printed prompt.
 > `.mercury/state/auto-handoff-armed` for the Claude Code Stop hook
 > `.claude/hooks/auto-handoff-stop.sh` (Issue #469). This repository registers
 > no Codex hooks, so the flag is never consumed on the Codex side — do NOT
-> write it. A leftover flag in the shared `.mercury/state/` could instead be
-> picked up by a Claude Code session stopping in the same checkout (within the
-> hook's 120-minute staleness window) and spawn an unintended handoff. The only
-> mechanism that spawns the new session is your own launcher call below.
+> write it. If `.mercury/state/auto-handoff-armed` already exists, leave it
+> alone: this skill no longer writes it, so it most likely belongs to a Claude
+> Code session (or an older Codex run), and a Codex session cannot tell whether
+> that handoff is still live. The hook itself disarms any flag older than 120
+> minutes the next time a Claude Code session stops in this checkout. If you
+> believe a newer one is orphaned (it could make a Claude Code session stopping
+> in this checkout spawn an unintended handoff), tell the user and let them
+> decide — do not delete it.
+> The only mechanism that spawns the new session is your own launcher call below.
 
 After Step 5.1 + 5.2, and Pre-Termination Checklist passed:
 
