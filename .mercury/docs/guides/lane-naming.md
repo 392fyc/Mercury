@@ -584,6 +584,9 @@ unconditional infrastructure.
   auto-iso HYBRID mechanism, cost-tracker gap, kill switch)
 - `.claude/skills/handoff/SKILL.md` Step 5 Auto mode for the spawn-side
   contract
+- `.mercury/docs/research/issue-599-cross-harness-lane-isolation-2026-09.md`
+  (ADR, Issue #599) presets how Codex lanes and Claude Code lanes stay
+  isolated, read each other, and exchange messages when they collaborate
 - `scripts/lane-assertion.sh` + `scripts/test-lane-assertion.sh` for the
   consumer-side check (test suite covers happy paths for both lanes,
   every exit-code branch including `worktree_path_duplicate`, marker
