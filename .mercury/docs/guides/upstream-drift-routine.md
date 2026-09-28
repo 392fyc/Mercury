@@ -9,7 +9,7 @@ Mercury 挂载/借鉴了若干外部组件(cherry-pick 的 skill/agent 文件、
 
 | | Tier 1 — 机械漂移 | Tier 2 — LLM staleness 审计 |
 |---|---|---|
-| 工具 | `scripts/upstream-drift-check.sh` | `/mercury-staleness-audit`(`.claude/workflows/mercury-staleness-audit.js`)|
+| 工具 | `scripts/upstream-drift-check.sh` | 按需人工或代理审计(原 `mercury-staleness-audit` Workflow 已于 #579 退役)|
 | 触发 | `.github/workflows/upstream-drift.yml` 月度 cron(+ `workflow_dispatch`)| 人工周期例行(建议季度,或 Tier-1 告警后)|
 | 判定 | 确定性:比较 cherry-pick artifact 的上游 blob SHA(import vs HEAD)→ `CLEAN/CHANGED/UPSTREAM_GONE/SKIP` | LLM + 对抗验证:判「落后多少」「组件是否已失效/disabled」「上游是否 archived」「破坏性变更 Mercury 是否真触达」→ `ACTIVE-RISK/ACTION-NEEDED/ACCEPTABLE-DRIFT/DORMANT-OK/NOT-STALE/UNVERIFIED` |
 | 抓得到 | cherry-pick 文件内容漂移、上游文件被删 | 版本落后幅度、失效/禁用组件仍被引用、上游 archived、纯 transitive 依赖(blob 模型抓不到)|

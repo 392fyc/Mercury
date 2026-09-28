@@ -14,7 +14,7 @@ $ErrorActionPreference = "Stop"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path (Join-Path $scriptDir "..\\..")).Path
-# State dir unified with .claude/hooks/pre-commit-guard.sh:52 (which checks
+# State dir unified with the retired .claude/hooks/pre-commit-guard.sh (which checked
 # "$_PROJECT/.mercury/state/review-passed"). Previously this script wrote to
 # .codex/state/review-passed, which the Bash hook never read — the Codex
 # fallback commit flow was broken on every branch. Mercury Issue #357.

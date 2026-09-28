@@ -1,12 +1,11 @@
 # Mercury Research Quality Gate Configuration
 # Location: .mercury/gates/research-quality.yaml
 # Referenced by:
-#   - .claude/skills/autoresearch/SKILL.md (autoresearch protocol)
 #   - .agents/skills/autoresearch/SKILL.md (Codex autoresearch)
-#   - .claude/skills/web-research/SKILL.md (light gate thresholds)
+#   - user-level Claude web-research skill (light gate thresholds)
 #   - .agents/skills/web-research/SKILL.md (Codex light gate)
-# NOTE: Key thresholds are embedded in the autoresearch skill for standalone
-# zero-dependency operation. When updating thresholds, update both locations.
+# NOTE: The Codex autoresearch skill may embed key thresholds for standalone
+# operation. When updating thresholds, check it as well.
 
 # Tiered research routing
 routing:
@@ -76,7 +75,6 @@ verification:
 
 # Canonical JSONL schema for results-{ISSUE_NUM}.jsonl
 # Single source of truth — referenced by:
-#   - .claude/skills/autoresearch/SKILL.md (Results JSONL section)
 #   - .agents/skills/autoresearch/SKILL.md (Results JSONL section)
 jsonl_schema:
   file_pattern: "results-{ISSUE_NUM}.jsonl"   # Mercury mode

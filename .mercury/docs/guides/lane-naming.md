@@ -477,7 +477,7 @@ audit trail; operators may archive it manually if no longer needed.
 
 ### Δ10 — `/handoff:auto` worktree integration (Issue [#345](https://github.com/392fyc/Mercury/issues/345))
 
-The `handoff` skill (`.claude/skills/handoff/SKILL.md` Step 5 Auto mode) now
+The `handoff` skill (Codex: `.agents/skills/handoff/SKILL.md`; Claude: user-level `handoff`; Step 5 Auto mode) now
 auto-resolves the active lane's `Worktree path` from `LANES.md` and uses it
 as the new tab's cwd:
 
@@ -582,7 +582,7 @@ unconditional infrastructure.
   convention for Claude Code's agent view UI layer on top of Mercury
   per-cwd lane isolation (bare bg dispatch, monitoring, hook lifecycle,
   auto-iso HYBRID mechanism, cost-tracker gap, kill switch)
-- `.claude/skills/handoff/SKILL.md` Step 5 Auto mode for the spawn-side
+- `.agents/skills/handoff/SKILL.md` Step 5 Auto mode for the spawn-side
   contract
 - `scripts/lane-assertion.sh` + `scripts/test-lane-assertion.sh` for the
   consumer-side check (test suite covers happy paths for both lanes,

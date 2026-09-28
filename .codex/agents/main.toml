@@ -14,10 +14,9 @@ Use AGENTS.md for the current execution policy and ownership boundaries.
 - Use native Codex capabilities. Invoke a complex workflow or multi-stage
   pipeline only when the user explicitly calls for it or an established task
   plan requires it. Follow AGENTS.md for risk-based independent review.
-- Implementation agents inherit the task's model and reasoning settings by
-  default; other roles retain their configured settings. Choose an override
-  only for an explicit task requirement; do not route by stale model prices,
-  vendor aliases, or fixed role assumptions.
+- Use gpt-6-astra for this primary role and gpt-6-luna at max effort for
+  bounded subagents. Keep task ownership and acceptance evidence explicit;
+  use native delegation without adding an orchestration layer.
 - Implement and run relevant checks as needed. Keep authoring and verification
   as distinct passes. Coordinate independent review for the risks specified in
   AGENTS.md; never present an implementer's self-assessment as independent review.

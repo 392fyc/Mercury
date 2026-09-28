@@ -1,10 +1,10 @@
 # 由 .claude/agents/game-researcher.md 转换而来（Issue #571 / G3-2）。
 # Claude 侧的 tools 白名单在 Codex 上没有对应字段，改用 sandbox_mode 表达。
-# model 刻意不设：Claude 的 sonnet/opus/haiku 在 Codex 上无对应值，且订阅侧模型名待定，
-# 让它继承会话模型，避免写死一个错的名字。
 # 原 tools: WebSearch, Read
 
 name = "game-researcher"
+model = "gpt-6-luna"
+model_reasoning_effort = "max"
 description = """Game-design information aggregator. Accepts a tactical-RPG / game-mechanics question and returns structured raw data with citations — genre precedents, platform references, community discussion, known patterns. No judgment, no final decision. Paired with game-analyst + game-critic for SoT-style production trials."""
 sandbox_mode = "read-only"
 web_search = "live"   # 原 tools 含 WebSearch/WebFetch

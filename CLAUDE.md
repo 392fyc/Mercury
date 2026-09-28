@@ -1,146 +1,21 @@
-# Mercury — Claude Code
+# Mercury：Claude Code 项目约定
 
-## Identity
+@AGENTS.md
 
-Agent: Claude Code
-Role definitions: `.claude/agents/{role}.md` (Phase 0 已完成迁移)
-Archived: `.mercury/roles/*.yaml` → `archive/roles/`
+## Claude Code 适配
 
-## Navigation
+上面的 AGENTS.md 是共享项目规则。里面有关 Codex 宿主、Codex 工具和 Codex 模型的指派只适用于 Codex；不要据此推断 Claude Code 的工具、权限或模型能力。
 
-Read these docs on demand when you need the corresponding information:
+- Claude 主会话按 Opus（别名 opus）运行。项目文件不会修改全局默认模型；启动 Claude Code 时应选择 opus。
+- 执行与研究角色使用 Sonnet（别名 sonnet）；关键设计、审查与验收角色使用 Opus（别名 opus）。具体分配见 .claude/agents/。
+- 当前主会话就是 Mercury 主代理，不要创建或调用冗余的 main 子代理。
+- 优先由主会话直接完成。只有任务确实适合独立分工，且用户要求或已确定计划需要时，才使用范围明确的子代理。角色描述用于发现匹配角色，不代表每次匹配都要自动分派。
+- 子代理须收到目标、允许写入路径、验收条件和必要上下文。执行者尊重授权边界、保留并发改动；研究、设计、批评和验收角色按各自职责工作。
+- Claude Code 的工具和访问权限由 Claude Code 当前运行配置、用户授权及实际可用工具决定。只读角色通过原生 disallowedTools 禁用 Edit、Write；这不构成操作系统级隔离，Bash 等工具仍受当前宿主权限控制。角色说明是行为指引，不会授予额外权限；不得把 Codex 工具名、沙箱字段或权限效果直接套用到 Claude。
+- 继续使用仓库既有 Git 保护入口 scripts/codex/git-safe.ps1。所有 Git 写操作按 AGENTS.md 执行，并通过该脚本的 add、commit、push 子命令；不要用未保护的 Git 写入替代。只读 Git 检查按任务需要进行。
+- 按风险和仓库规则选择检查与独立审查。普通任务不默认启动多阶段流水线，也不强制双路审查。复杂流程仅在用户明确调用或已确定计划要求时使用。
+- 技能按其用途按需加载；与用户明确请求匹配的任务技能可直接使用。复杂流程技能仅在用户明确调用或已确定计划要求时使用。流程技能不得自行提交、推送、合并、发布、轮询或启动后台工作；这些动作仍须有当前任务授权并符合仓库规则。
+- 项目通过用户级只读 SessionStart 机制定位记忆；本项目不额外注册流程 hooks 或后台任务，也不自动写入记忆。
+- 与用户沟通使用清楚、完整的简体中文。代码标识符和专有名词可保留英文。
 
-| Topic | Path |
-|-------|------|
-| **Project direction (最高准则)** | `.mercury/docs/DIRECTION.md` |
-| **Execution plan** | `.mercury/docs/EXECUTION-PLAN.md` |
-| Agent definitions | `.claude/agents/*.md` |
-| Role definitions (archived) | `archive/roles/*.yaml` |
-| Git branching rules | `.mercury/docs/guides/git-flow.md` |
-| GitHub Issues workflow | `.mercury/docs/guides/issue-workflow.md` |
-| SoT task workflow (legacy, for reference) | `.mercury/docs/guides/sot-workflow.md` |
-| KB directory structure | `.mercury/docs/guides/kb-structure.md` |
-| Dispatch prompt templates | `.mercury/templates/` |
-| Architecture research (PR #162) | `.mercury/docs/research/issue-158-architecture-evaluation.md` |
-| Agent view dispatch convention (multi-lane × bg sessions) | `.mercury/docs/guides/agent-view-dispatch.md` |
-| **Dynamic Workflow 模板库 + 触发/保存/复用约定** | `.claude/workflows/README.md` |
-| 四原语选型矩阵 + budget-scaling 规则 | `.claude/agents/main.md` §编排升级 |
-| **大规模 fan-out context 护栏 + skill 迁移决策/基线** | `.mercury/docs/guides/fanout-and-skill-migration-guardrails.md` |
-| Cherry-pick carve-out 细则(CLI-scaffold: tauri/vite/shadcn) | `.mercury/docs/guides/cherry-pick-carve-out.md` |
-| **Fable 5 额度调度策略 + statusline 近似告警(ADR)** | `.mercury/docs/research/issue-535-fable5-scheduling-2026-07.md` |
-| **Codex CLI 迁移主档(G0-G6 目标 + 实测修正,与正文冲突以附录为准)** | `.mercury/docs/research/issue-571-codex-migration-2026-08.md` |
-
-## Ultracode 与 Dynamic Workflows
-
-Mercury 用 Claude Code 原生 **Dynamic Workflow**(确定性多 agent 编排,JS 脚本,后台跑数十到数百 subagent,中间结果留脚本变量)处理「一个会话 context 装不下」或「编排值得沉淀成可重跑脚本」的任务。模板库宿主在 `.claude/workflows/`(随 repo 分发),约定与护栏见该目录 README。环境要求 Claude Code v2.1.154+。
-
-**何时触发 Workflow(升级判据)**:
-- **应触发**:repo 级审计/扫描(多文件 fan-out)、大规模迁移/codemod(数十+站点)、需多源交叉核查的研究(≥3 源对照)、需多角度起草再裁决的硬计划、需对抗式验证以滤除「看似对实则错」结论的审查。
-- **不必触发**(用线性 dev-pipeline / 单 subagent / skill):单文件改动、1-2 源快速查证、机械单步操作、已 well-scoped 的单任务实现。
-- 选型矩阵(Subagents vs Skills vs Agent Teams vs Workflows)+ budget-scaling 量化规则见 `.claude/agents/main.md` §编排升级。
-
-**触发方式**:① prompt 含关键词 `ultracode`(单任务 opt-in;v2.1.160 前为 `workflow`)或自然语言「用 workflow 跑」;② `/effort ultracode`(会话持久 = xhigh + 每个实质任务自动编排,新会话重置,`/effort high` 退回);③ `/<name>` 复用已存模板。
-
-> **持久 ultracode 仅 `/effort ultracode` 内置命令可设**(官方文档:ultracode 是会话级 effort 设置,新会话重置)。handoff `--startup-keyword ultracode` 等关键词注入只触发**单轮** opt-in,不激活持久模式。触发方式全表见 `.claude/workflows/README.md` §触发方式。
-
-**硬护栏(对齐 [#385](https://github.com/392fyc/Mercury/issues/385) context 经济学,所有 Workflow 模板必须遵守)**:
-- 不 pre-inject 全量文档进 subagent context —— 传**路径 + 任务**,agent 自己 Read(bulk injection 永久抢占 cache slot)。
-- fan-out 设显式上限 + 被丢弃工作量必 `log()`(禁静默截断)。
-- Haiku 路径注入切片 ≤50K token(200K ctx 硬 cliff);Codex/GPT-5.5 路径 272K cliff 越线整 session 翻倍。
-- runtime 兜底 ≤16 并发 / 1000 agent per run。
-- **dual-verify 仍是合并门**:Workflow 产出代码改动照样跑 `/dual-verify` + PR 到 develop,不绕过任何 hook 回归。
-
-## Fable 5 额度调度策略(#535)
-
-用户会话主模型若选 Fable 5(`claude-fable-5`,$10/$50 per M,≈2×Opus;Pro/Max/Team 及部分 Enterprise 订阅当前含至多「周额度 50%」份额 through 7/7,之后转 usage-credits),**主循环全程烧 Fable**(`main=inherit`)。省 Fable 的杠杆在**主循环模型选择 + 分层派活**,不在改 agent 定义(盘点:无 agent 硬编码 `model: fable`)。完整 ADR 见 Navigation 表的调度策略文档。
-
-**六层分层原则(大杠杆 → 补充)**:
-- **L0 主循环默认 Opus 4.8**:日常编排 / dev-pipeline / 研究综合用 Opus 做 driver;只在最难环节会话内 `/model fable` 临时切,用完切回。(Mercury 不替用户选 `/model`;这是工作习惯建议 + statusline 预警 + 分层约定共同支撑。)
-- **L1 subagent 分层**(现状已达标):新增 agent 默认不写 `model: fable`;需 Fable 级能力优先 `opus`,确有必要才显式 `fable` 且在 PR 说明理由。
-- **L2 Fable 只用于最难环节**:架构综合 / 长程多步裁决 / Argus 反复卡不过的复杂 review 深析 / 跨仓库不可逆决策推演 / 需 1M context 一次性容纳的超大上下文综合。其余一律 Opus 4.8 及以下。
-- **L3 Workflow per-stage 模型分层**:finder / 机械 / 分类 stage 用 `opts.model:'sonnet'|'haiku'`,只最硬的 judge / synthesis / adversarial 裁决 stage 才 `'fable'`(否则会话主模型是 Fable 时,整个 Workflow 数十个 agent 全烧 Fable)。
-- **L4 advisor 模式**(原生 advisor 工具,pilot → [#506](https://github.com/392fyc/Mercury/issues/506)):**#506 既定 pilot 配置 = cheap-main + Opus-advisor(降本)**。省 Fable 的扩展设想 = Opus-main + Fable-advisor(只在关键决策点 consult Fable),但 **Fable 作为 advisor model 的 CLI 支持性 UNVERIFIED**,仅作 #506 的可选扩展验证点、非其既定范围。**勿越界接线** —— advisor 是服务端单请求原生工具,禁写 Messages-API wrapper / MCP / skill 包装;落地归 #506。
-- **L5 `/effort` 第二层**:用 Fable 时默认低/中 effort,只裁决点升 high/max。
-
-**statusline Fable 额度显示**:官方 statusline schema **无 per-model / Fable 字段** → 无法精确显示剩余周额度;精确显示 = 上游功能请求(监控 changelog)。本地近似告警(cost-tracker 累计本周 Fable 估算花费 + `MERCURY_FABLE_WEEKLY_BUDGET_USD` 软预算颜色告警;**实现在用户级 `~/.claude/`、不在本 repo,走 #259 治理**)为 env-gated 可选项,**精度受限**(客户端估算 ≠ 服务端真实额度百分比;7/7 后 usage-credits 切换会改变分母语义,需按新计费重设阈值)。
-
-## Related Repositories
-
-Mercury 的部分功能跨仓库运作。以下表格记录外部仓库与 Mercury 的关系。
-
-| Repo | Location | Purpose | 关系 |
-|------|----------|---------|------|
-| **Memory layer (user-level)** | `~/.claude/hooks/` + `~/.claude/scripts/` | flush + session-start/end hooks + cost tracker (#361) | 运行时独立于任何 git 仓库；cost-tracker per-session jsonl 在 `~/.claude/scripts/cost-tracker/`（mem0 层已于 #518 退役） |
-| **claude-handoff** | 插件仓库 <https://github.com/392fyc/claude-handoff> | Session handoff / 续接 + `session_chain` SQLite | 作为本地插件挂载在 `~/.claude/settings.json` marketplace |
-| **AgentKB** *(retired)* | `$AGENTKB_DIR`（本机 unset） | 旧 Memory 层（Karpathy-style KB），#252 被 mem0 取代；mem0 自身已 #518 退役 → 当前长期记忆=文件式 | **已退役**（运行时 de-ref 完成、AGENTKB_DIR unset、kb-lint 已归档、mem0_migrate 已删）；salvage 审计见 `.mercury/docs/research/agentkb-fork-salvage-audit-2026-04-17.md` |
-| **Mercury_KB** | Obsidian vault（路径见 `.handoff-config` 的 `kb_dir`） | 项目专属 KB；现为 handoff 文档落点（#475，经 `.handoff-config` kb_dir 接线） | **active** — 经直接文件系统访问（非 obsidian MCP）；旧「已归档」表述 stale，#517 审计对齐 |
-
-**跨仓库开发注意事项：**
-- `dev-pipeline` 等 skill 假设单仓库工作，跨仓库任务需直接实现
-- 用户级 hooks / scripts 变更不走 Mercury PR 流程。相关路径里 `~/.claude` 等价于 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}`；命令示例可任选一种书写，env 形式在多账户 / CI 下更可移植
-- 新环境验证: 文件存在性 + 钩子注册 + 库可导入三层检查：
-  1. `ls "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/scripts/"` 看到 `pre-compact.py`/`session-end.py`/`flush.py`/`cost_tracker.py` 即为 #361 后状态（`mem0_hooks.py`/`mem0_bridge.py` 已于 #518 退役删除）
-  2. `grep -c session-end.py "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"` 应返回 ≥1（钩子在 SessionEnd matcher 注册）；`grep AGENTKB "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"` 应返回 0 行
-  3. `python -c "import sys; sys.path.insert(0, r'${CLAUDE_CONFIG_DIR:-$HOME/.claude}/scripts'); import cost_tracker; print(cost_tracker.session_log_path('verify-smoke'))"` 应打印 `cost-tracker/verify-smoke.jsonl` 路径（导入 + 路径解析 OK）
-- 安装依赖: `cd "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" && uv sync` 建立 `.venv/`（mem0ai/qdrant-client 已于 #518 退役从依赖移除）
-- 回滚通道: `MERCURY_COST_TRACKER_DISABLED=1` 即可 no-op cost-tracker 路径（mem0 层已 #518 退役,原 `MERCURY_MEM0_DISABLED`/`AGENTKB_MEM0_DISABLED` 开关随之移除）
-- Cost tracker (#361) env vars (canonical 实现见 `~/.claude/scripts/cost_tracker.py` `PRICING` / `_disabled()` / `ceiling_advisory()` / `detect_tier_misuse()`)：`MERCURY_SESSION_COST_CEILING_USD=NN.NN` 触发 statusline 颜色阶梯 (绿 <70% / 黄 70-89% / 红 ≥90%)；`MERCURY_TIER_MISUSE_THRESHOLD` (默认 2000) 控制 opus 小任务 advisory 阈值；`MERCURY_COST_TRACKER_DISABLED=1` 软关 `write_session_summary()` 写路径（statusline 段落另在 hook 内独立 gate）
-
-**用户级变更治理（避免"仓库外漂移"）：**
-- **变更记录位置**: 每次修改 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/`、`.../scripts/`、`.../settings.json` 时，在 Mercury 内开对应 Issue（类似 #259），在 Issue 下记录"命令清单 + 最终 diff 摘要 + 验证步骤"。Issue 关闭即成为该用户级变更的权威记录
-- **验证清单（必须全部通过）**:
-  1. `settings.json` JSON 合法（`python -c "import json,os; json.load(open(os.path.expandvars('${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json')))"`）
-  2. 每个涉及的 hook 脚本在合成 stdin 下 exit 0（见 #259 PR body 的验证示例）
-  3. 相关单测或 smoke test 通过
-  4. 一次真实 hook 触发观察无回归
-- **回滚步骤**: 所有用户级变更前先 `CC="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; cp "$CC/settings.json" "$CC/settings.json.backup-pre-<issue>"`；发现回归时 `mv` 回去即可
-- **环境依赖审计**: 定期跑 `grep -rE "AGENTKB_DIR|\$AGENTKB" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/"` 确认未遗漏旧路径引用
-
-## MUST
-
-- **Direction first**: all development decisions must align with `.mercury/docs/DIRECTION.md`. When in doubt, consult the direction document.
-- **Issue-first workflow**: every task must have a GitHub Issue before work begins. PRs must reference the Issue (`Closes #N` / `Fixes #N` / `Resolves #N` / `Refs #N`). Agent progress updates go on the Issue as comments.
-- **Commit at every checkpoint**: every milestone must be committed and pushed.
-- **Dual-verify before commit**: every milestone must pass `/dual-verify` (parallel Claude Code deep-review + Codex code-audit) before committing. Do not use `/auto-verify` alone as the pre-commit gate.
-- **Web search before SDK/API code**: before writing ANY code that imports an external SDK, references an API signature, or claims a package version, you MUST use WebSearch/WebFetch to verify against the vendor's official documentation. GitHub source code alone is NOT sufficient. If verification is not possible, mark claims as UNVERIFIED.
-- **Chinese for all user-facing responses (normal, clear)**: reply to the user in clear, normal Simplified Chinese for everything — milestones included, not only completion messages. Use plain, complete sentences; avoid cryptic jargon and internet slang (English shorthand or Chinese alike). Keeping English proper nouns / commands / technical terms is fine — the test is reader comprehension, not absence of English. Code, commit messages, and PR bodies keep their own conventions (English where established). Detailed style rules live in the user-level `clear-chinese` output style.
-- **PR to develop**: all code merges into develop must go through a PR. Direct push to develop is forbidden.
-- **Install to D drive**: install software to `D:\Program Files`, not C drive.
-- **Modular design**: every new feature must be independently detachable. If it cannot be used outside Mercury, the coupling is too deep.
-- **External-project adapters under `adapters/<vendor-name>/` MUST stay under 200 lines.** If an external integration needs more than that, rethink the mounting approach. This rule does NOT apply to Mercury-internal tooling under `scripts/` — internal tooling implements the protocol that lives in this repo and isn't trying to mount anything external, so it has no LOC cap (size by need). This rule also does NOT apply to `mercury-gui/` — the Phase 6 GUI is Mercury-internal tooling (a Tauri 2 desktop shell, not an external-project adapter), so it has no LOC cap (size by need). Aligns with `.mercury/docs/DIRECTION.md` §"适配层规范" (scopes the 200-line rule to the `adapters/{project-name}/` layer) and §8-2 (calls "adapter ≤200 LOC 是硬约束" specifically about the `mercury-test-gate` adapter); section anchors are cited instead of literal line numbers, which drift as DIRECTION.md changes. CLAUDE.md previously had a loose phrasing that Argus mis-applied to `scripts/`. Empirical drivers — **`scripts/` carve-out**: PR #338 (`scripts/codex-sync-audit.sh` ~360 LOC) and PR #346 (`scripts/lane-assertion.sh` ~440 LOC) both hit Argus nit-loops on the adapter-size finding, requiring iter-3+ escape-hatch / disagree replies before APPROVED. **`mercury-gui/` carve-out**: the Phase 6 GUI MVP chain (PRs #421/#424/#425) and PR #450 (`mercury-gui/src-tauri/src/data/watcher.rs`, #423) hit the same mis-applied adapter-size finding on GUI files, each resolved by DISAGREE-cite citing this carve-out (#450 saw the LOC nit re-raised twice; Argus accepted both DISAGREE-cites). The carve-out's authority chain is systematized in the #446 ADR (`.mercury/docs/research/issue-446-mercury-gui-structural-split-2026-05.md`, §6 Recommendation item 2), which concluded NO-GO on splitting `mercury-gui/` to silence the nit — the correct fix is the reviewer rule scoping recorded here, not restructuring internal code.
-- **No self-research**: if an external project can solve the problem, mount it via submodule rather than reimplementing.
-
-## DO NOT
-
-- Do not build custom orchestrator layers — use Claude Code native sub-agents and skills.
-- Do not guess SDK/CLI APIs from training data.
-- Do not install software to C drive.
-- Do not commit without running `/dual-verify`.
-- Do not create PRs without an associated GitHub Issue.
-- Do not build features that assume the model is weak — design for upward compatibility.
-- Do not create **external-project adapters** under `adapters/<vendor-name>/` exceeding 200 lines — rethink the mounting approach if this happens. (Mercury-internal tooling under `scripts/` is exempt — see the MUST bullet "External-project adapters under `adapters/<vendor-name>/` MUST stay under 200 lines" above for the carve-out and authority chain.)
-- Do not write literal tool-call XML markers (bare invoke / function_calls / parameter tags) into Claude-context files (`CLAUDE.md`, `AGENTS.md`, `.claude/**`, `.mercury/docs/**`, memory, handoffs) — one literal marker seeds the Opus-4.8 self-poisoning leak that hangs a turn with no output ([#527](https://github.com/392fyc/Mercury/issues/527)). Escape them (`&lt;` / `&gt;`, or split the keyword); `scripts/toolcall-xml-lint.sh` (wired into auto-verify CI) keeps the count at zero.
-
-## Cherry-pick protocol
-
-When cherry-picking any file from an external project into Mercury, the SAME commit must include:
-
-> See [§Carve-out: CLI-generated scaffolding](#carve-out-cli-generated-scaffolding) below before applying rules 1-6 to files produced by `pnpm dlx shadcn@latest add`, `pnpm create tauri-app`, or `pnpm create vite`.
-
-1. **Manifest entry**: add to `.mercury/state/upstream-manifest.json` — fields: `path`, `scope` (`"project"` for repo files, `"user"` for `~/.claude/` global files), `upstream_repo`, `upstream_path`, `upstream_sha_at_import` (verify via `gh api repos/{owner}/{repo}/commits/{sha}`), `upstream_license`, `import_pr`, `import_date`, `import_rationale`, `last_drift_check` (null).
-2. **SKILL.md frontmatter**: add `upstream_source`, `upstream_sha`, `upstream_license`, `cherry_picked_in`, `cherry_picked_at` fields.
-3. **Script header**: add 5-line comment block after shebang — `UPSTREAM`, `SOURCE`, `SHA`, `DATE`, `ISSUE`.
-4. **Config/template files** (e.g. `*.example`, CLAUDE snippets): add `# Based on <upstream> (LICENSE) SHA: <sha>` attribution comment at top of file.
-5. **License gate**: only cherry-pick MIT, Apache-2.0, or other permissive licenses. Record in manifest.
-6. **SHA verification**: `upstream_sha_at_import` must be verified via `gh api` before committing. Never record from memory. Mark `UNKNOWN_VERIFY_MANUALLY` only if API is unreachable; list in PR body.
-
-Drift monitoring: run `bash scripts/upstream-drift-check.sh` periodically to detect upstream changes.
-
-### Carve-out: CLI-generated scaffolding
-
-CLI 生成器*产出*文件(而非从 upstream commit 摘取)→ 从 cherry-pick rules 1-6 获豁免,分两类。完整表格、规则、local-path guard、authority chain 见 **[`.mercury/docs/guides/cherry-pick-carve-out.md`](.mercury/docs/guides/cherry-pick-carve-out.md)**:
-
-- **Category A — 纯脚手架**(`pnpm create tauri-app` / `pnpm create vite`):一次性项目骨架。**必需** = PR body provenance 行(精确 CLI + version)+ license check。**不需** = manifest 条目 / per-file `Based on` / drift 监控。
-- **Category B — registry-item 导入**(`pnpm dlx shadcn@latest add <name|url|path>`,任意 registry item 类型):更严的 PR body provenance,须标明 item-name/URL/local-path arg + source identifier + license + 非-component item 类型。**不需** = manifest / per-file 归属 / drift 监控。**local-path add 在 resolved path 落在 Mercury 工作树外 / submodule 下 / 包管理器暂存目录 / 外部临时 checkout 时,回退到完整 cherry-pick 协议**(存疑则 default-deny)。
-
-reviewer 若 flag 某 CLI-scaffold 文件缺归属 → **DISAGREE-cite 该 guide**(本 carve-out 解决 Phase 6 GUI repeat-DISAGREE 模式)。未列入该 guide 的生成器 → 视作常规 cherry-pick(完整 rules 1-6),直至经 PR 扩展该 guide 归类。
+本文件只记录 Claude Code 的项目适配，不修改或替代共享 AGENTS.md。

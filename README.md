@@ -4,7 +4,7 @@ Mercury is a **Claude Code harness framework** for keeping AI coding agents work
 
 Mercury solves the things Claude Code alone does not:
 
-- Session continuity when context fills up (auto-handoff to a fresh session)
+- Session continuity when context fills up (handoff to a fresh session)
 - Cross-session, cross-project long-term memory
 - Quality gates for unattended long-running work
 
@@ -47,9 +47,9 @@ Recent additions on top of the core phases:
 ```
 Mercury (lightweight core — only builds what no external project provides)
 ├── .claude/
-│   ├── agents/        sub-agent role definitions (main, dev, acceptance, critic, design, research, game-*)
-│   ├── skills/        reusable workflow skills (pr-flow, autoresearch, dev-pipeline, dual-verify, ...)
-│   └── hooks/         lifecycle hook scripts (PreToolUse/PostToolUse/UserPromptSubmit/Stop/SubagentStop), wired for Claude Code via settings.json
+│   ├── agents/        sub-agent role definitions (dev, acceptance, critic, design, research, game-*)
+│   ├── skills/        opt-in workflow skills (pr-flow, autoresearch, dev-pipeline, dual-verify, ...)
+│   └── settings.json  permission rules only; no project hooks are registered
 ├── .codex/            Codex CLI config + agents + rules (project-level hook registrations retired)
 ├── .mercury/
 │   ├── docs/          DIRECTION.md + EXECUTION-PLAN.md + guides/ + research/
@@ -88,49 +88,39 @@ cd Mercury
 claude   # launch a Claude Code session at the repo root
 ```
 
-On session start, Claude Code auto-discovers every agent under `.claude/agents/` and every skill under `.claude/skills/`. Its hooks are not directory-discovered — they are wired to lifecycle events in `.claude/settings.json`, with the scripts living under `.claude/hooks/`. Codex reads `AGENTS.md`, `.codex/config.toml`, `.codex/agents/`, and `.codex/rules/`; Mercury does not register project-level Codex hooks. No build step is required.
+On session start, Claude Code auto-discovers every agent under `.claude/agents/` and every skill under `.claude/skills/`. Mercury registers no project-level Claude Code hooks; `.claude/settings.json` only carries permission rules. Codex reads `AGENTS.md`, `.codex/config.toml`, `.codex/agents/`, and `.codex/rules/`; Mercury does not register project-level Codex hooks. No build step is required.
 
 ### Typical first-session checklist
 
-1. Read `CLAUDE.md` (auto-surfaced by Claude Code) — enforces issue-first workflow, dual-verify before commit, PR-to-`develop` rule
+1. Read `CLAUDE.md` (auto-surfaced by Claude Code; it imports `AGENTS.md`) — issue-first workflow, guarded Git writes via `scripts/codex/git-safe.ps1`, PR-to-`develop` rule
 2. Read `.mercury/docs/DIRECTION.md` — project charter and module definitions
-3. Skim `.claude/skills/` — available workflows (`pr-flow`, `autoresearch`, `dev-pipeline`, `dual-verify`, `caveman-toggle`, ...)
+3. Skim `.claude/skills/` — opt-in workflows (`pr-flow`, `autoresearch`, `dev-pipeline`, `dual-verify`, ...); each runs only when you ask for it or an agreed plan requires it
 4. Run your first task via the `dev-pipeline` skill: it dispatches a `dev` sub-agent, then an `acceptance` sub-agent, and returns a blind-review verdict
 
 ## Skills and sub-agents
 
 The skills under `.claude/skills/` and sub-agents under `.claude/agents/` are **detachable** — each directory is self-contained and can be copied into another Claude Code project. Skill frontmatter lists the trigger phrases in English and Chinese. Treat the directory contents as the authoritative list; the snapshot below is current as of this writing and intentionally not a pinned count.
 
-Skills (11 at time of writing):
+Skills (6 at time of writing), all opt-in:
 
 | Skill | Purpose |
 |-------|---------|
-| `dev-pipeline` | Main → Dev sub-agent → Acceptance sub-agent with blind review |
-| `pr-flow` | End-to-end PR lifecycle: create → poll Argus → fix → merge |
-| `dual-verify` | Parallel Claude Code deep-review + Codex code-audit (mandatory pre-commit per CLAUDE.md) |
-| `autoresearch` | Multi-round web research with a mechanical quality gate |
-| `web-research` | Mandatory web verification protocol for any SDK/API/CLI claim |
-| `handoff` | Session-to-session handoff document + ready-to-paste starting prompt |
-| `systematic-debugging` | Root-cause-first debugging workflow |
-| `subagent-driven-development` | Execute a plan via fresh sub-agent per task, two-stage review |
-| `verification-before-completion` | Hard evidence-before-claims checkpoint before "done" |
+| `dev-pipeline` | One bounded implementation followed by independent acceptance |
+| `pr-flow` | A single requested PR stage: check a PR, handle Argus comments, or run one step |
+| `dual-verify` | Optional review in two independent contexts, not a default gate |
+| `autoresearch` | Bounded multi-round research with coverage, sources and open questions |
 | `animate-frames` | Pixel-frame animation pipeline (sprite sequences) via the `gpt-image-2` adapter |
-| `caveman-toggle` | Persistent concise-output mode |
+| `sot-pixel-pipeline` | Pixel asset generation for portraits, icons, cut-ins and board pieces |
 
-Sub-agents (9): `main`, `dev`, `acceptance`, `critic`, `design`, `research`, plus three game-design agents (`game-researcher`, `game-analyst`, `game-critic`) cherry-picked from `msitarzewski/agency-agents`.
+`web-research` and `handoff` are provided as user-level skills rather than from this repository.
+
+Sub-agents (8): `dev`, `acceptance`, `critic`, `design`, `research`, plus three game-design agents (`game-researcher`, `game-analyst`, `game-critic`) cherry-picked from `msitarzewski/agency-agents`. The main session acts as the Mercury main agent; there is no separate `main` sub-agent.
 
 ## Hooks
 
-`.claude/settings.json` wires hook scripts (under `.claude/hooks/`) to lifecycle events:
+Mercury registers no project-level hooks for Claude Code or Codex. Git safety is enforced by the permission rules in `.claude/settings.json`, `.codex/rules/`, and the guarded wrappers `scripts/codex/git-safe.ps1` and `scripts/codex/guard.ps1`. Memory location is supplied by a user-level `SessionStart` hook that only returns paths; see [Ecosystem](#ecosystem).
 
-- `session-init.sh` — context injection on `UserPromptSubmit` (date, KB index, memory snapshots)
-- `pre-commit-guard.sh`, `pr-create-guard.sh`, `pr-merge-guard.sh`, `push-guard.sh` — `PreToolUse` (Bash) branch policies + dual-verify gate
-- `scope-guard.sh` (`PreToolUse` on Edit/Write), `post-commit-reset.sh`, `post-review-flag.sh`, `post-web-research-flag.sh` — scope enforcement and state-flag lifecycle (`PostToolUse`)
-- `stop-guard.sh`, `auto-handoff-stop.sh` — `Stop`; plus `research-stop-nudge.sh` on `SubagentStop`
-
-(Cross-session memory and compaction hooks — `pre-compact.py`, `session-end.py` — run at the **user level** under `~/.claude/hooks/`, not in this repo; see [Ecosystem](#ecosystem).)
-
-`adapters/mercury-loop-detector/` and `adapters/mercury-test-gate/` implement mechanical Stop-hook enforcement via exit codes (registered on `PostToolUse` and `SubagentStop` respectively). Per DIRECTION.md §八-1, this is the only exit-code-based mechanical Stop-hook implementation known to us in the Claude Code ecosystem — an ecosystem gap identified during Phase 2-1 evaluation.
+`adapters/mercury-loop-detector/` and `adapters/mercury-test-gate/` remain available as standalone adapters that implement mechanical Stop-hook enforcement via exit codes; they are not registered by default. Per DIRECTION.md §八-1, this is the only exit-code-based mechanical Stop-hook implementation known to us in the Claude Code ecosystem — an ecosystem gap identified during Phase 2-1 evaluation.
 
 ## Multi-lane development
 
@@ -145,7 +135,7 @@ Mercury runs multiple **lanes** in parallel — independent work streams that do
 
 Mercury is primarily a Claude Code harness, but the same policies are mirrored for other agent CLIs so a task can be handed across runtimes without losing its guardrails.
 
-- **Claude Code** — primary runtime; reads `CLAUDE.md`, auto-discovers `.claude/{agents,skills}` and wires hooks via `.claude/settings.json`
+- **Claude Code** — primary runtime; reads `CLAUDE.md` (which imports `AGENTS.md`), auto-discovers `.claude/{agents,skills}`, and applies the permission rules in `.claude/settings.json`
 - **Codex CLI** — reads `AGENTS.md` and the native `.codex/` project layer. Mercury has retired project-level Codex hook registrations; `.codex/rules/` is the verified command-enforcement layer, `scripts/codex/*.ps1` provides guarded operations, and instructions cover hosted tools that command-prefix rules cannot reach
 - **Gemini / OpenCode** — `GEMINI.md` / `OPENCODE.md` carry the equivalent instruction set
 
@@ -158,17 +148,17 @@ Some Mercury capabilities run as separate, independently-deployable layers rathe
 | **claude-handoff** | Local plugin ([392fyc/claude-handoff](https://github.com/392fyc/claude-handoff)) | Session handoff / continuation + `session_chain` SQLite — backs Phase 4 |
 | **Memory layer** | User-level `~/.claude/hooks/` + `~/.claude/scripts/` | mem0 + Qdrant adapter, session-start/end/pre-compact hooks, cost tracker — backs Phase 3 |
 | **Argus** | Self-hosted PR review bot | Automated PR review on GitHub; pairs with `dual-verify` and the `pr-flow` skill |
-| **oh-my-claudecode (OMC)** | Claude Code plugin — enabled in committed `.claude/settings.json` (`enabledPlugins`) | Multi-agent orchestration companion: UltraQA cycling, agent teams, deep-research, skill lifecycle. Adopted as a plugin (DEC-4 "Path β"); its LLM-level `SubagentStop` gate complements Mercury's mechanical `mercury-test-gate` adapter. **Opt-in & reversible** — after cloning, run `/plugin marketplace add https://github.com/Yeachan-Heo/oh-my-claudecode`, then `/plugin install oh-my-claudecode@omc`, then `/reload-plugins` (marketplace-add only registers the catalog — the explicit install step is what fetches the plugin); to opt out, set it `false` in your gitignored `.claude/settings.local.json` (local settings take precedence over the committed project setting), so Mercury runs without it and the shared config is never touched. |
+| **oh-my-claudecode (OMC)** | Optional Claude Code plugin — not enabled in the committed `.claude/settings.json` | Multi-agent orchestration companion: UltraQA cycling, agent teams, deep-research, skill lifecycle. Adopted as a plugin (DEC-4 "Path β"); its LLM-level `SubagentStop` gate complements Mercury's mechanical `mercury-test-gate` adapter. **Opt-in & reversible** — after cloning, run `/plugin marketplace add https://github.com/Yeachan-Heo/oh-my-claudecode`, then `/plugin install oh-my-claudecode@omc`, then `/reload-plugins` (marketplace-add only registers the catalog — the explicit install step is what fetches the plugin); it is not enabled in the committed settings, so enable it only in your gitignored `.claude/settings.local.json`; Mercury runs without it and the shared config is never touched. |
 
-User-level changes (anything under `~/.claude/`) are governed separately from project PRs — see the "用户级变更治理" section of [`CLAUDE.md`](CLAUDE.md) for the issue-tracking + rollback discipline.
+User-level changes (anything under `~/.claude/`) are governed separately from project PRs — see "Git and local safety" in [`AGENTS.md`](AGENTS.md) for the backup, rollback and issue-tracking discipline.
 
-> **OMC is a plugin, not a `modules/` mount.** Phase 2-1 evaluated OMC (alongside GSD / Superpowers / OpenSpace) against a mechanical Stop-hook criterion and deferred it (PR #195) for two reasons: OMC's gate is LLM-level rather than a mechanical exit-code check, and OMC ships **plugin-only with no git-submodule path** — which did not fit the then-strict "mount as a submodule under `modules/`" reading of the mount-first principle. That is why `modules/` stays empty. OMC was later adopted on its *supported* axis — a Claude Code **plugin** (DEC-4 "Path β"), recorded in `.claude/settings.json`. So Mercury *does* use OMC as a plugin companion; it simply is not (and cannot be) vendored as a submodule. The plugin stays **opt-in** — override it to `false` in your gitignored `.claude/settings.local.json` (it takes precedence over the committed project setting) and Mercury runs unchanged: a convenience companion, not a hard dependency. See [External project mounts](#external-project-mounts) for the submodule philosophy.
+> **OMC is a plugin, not a `modules/` mount.** Phase 2-1 evaluated OMC (alongside GSD / Superpowers / OpenSpace) against a mechanical Stop-hook criterion and deferred it (PR #195) for two reasons: OMC's gate is LLM-level rather than a mechanical exit-code check, and OMC ships **plugin-only with no git-submodule path** — which did not fit the then-strict "mount as a submodule under `modules/`" reading of the mount-first principle. That is why `modules/` stays empty. OMC was later adopted on its *supported* axis — a Claude Code **plugin** (DEC-4 "Path β"); the committed `.claude/settings.json` no longer enables it. So Mercury *does* use OMC as a plugin companion; it simply is not (and cannot be) vendored as a submodule. The plugin stays **opt-in** — enable it in your gitignored `.claude/settings.local.json` if you want it; Mercury runs unchanged without it: a convenience companion, not a hard dependency. See [External project mounts](#external-project-mounts) for the submodule philosophy.
 
 ## External project mounts
 
 Mercury's mount philosophy (DIRECTION.md §四): build the minimum in-house; mount external projects via git submodule under `modules/` with a thin `adapters/<name>/` translation layer (≤200 LOC). Phase 2-1 evaluated four candidates (GSD, Superpowers, OMC, OpenSpace) against a narrow Stop-hook acceptance criterion; all four were REJECT or DEFER on that criterion, so `modules/` is currently empty. Other value from those projects has been cherry-picked individually (see `.mercury/state/upstream-manifest.json` and `scripts/upstream-drift-check.sh`).
 
-When files from an external project are cherry-picked into Mercury, the cherry-pick protocol in [`CLAUDE.md`](CLAUDE.md) is the canonical source for the required attribution / manifest / drift discipline. Two adjacent cases (one-shot CLI scaffolding and registry-based per-item imports) have a narrower carve-out — CLAUDE.md keeps a summary; the authoritative full rules live in [`.mercury/docs/guides/cherry-pick-carve-out.md`](.mercury/docs/guides/cherry-pick-carve-out.md). This README does not restate the rules; consult those docs for current details.
+When files from an external project are cherry-picked into Mercury, the upstream import protocol in [`AGENTS.md`](AGENTS.md) is the canonical source for the required attribution / manifest / drift discipline. Two adjacent cases (one-shot CLI scaffolding and registry-based per-item imports) have a narrower carve-out — AGENTS.md keeps a summary; the authoritative full rules live in [`.mercury/docs/guides/cherry-pick-carve-out.md`](.mercury/docs/guides/cherry-pick-carve-out.md). This README does not restate the rules; consult those docs for current details.
 
 ## Example files
 
@@ -181,15 +171,7 @@ Two `.example` files ship at the repo root. They serve two different tracking mo
 
 ### Caveman mode (local, gitignored)
 
-Persistent concise-output style based on [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) (MIT). Activate via the `caveman-toggle` skill:
-
-```
-/caveman-on          # enable lite mode (default)
-/caveman-on full     # enable full mode
-/caveman-off         # disable
-```
-
-Or manually: `cp CLAUDE.local.md.example CLAUDE.local.md`.
+Persistent concise-output style based on [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) (MIT). Activate it by copying the example: `cp CLAUDE.local.md.example CLAUDE.local.md`.
 
 ### PR review bot (committed)
 
@@ -216,7 +198,7 @@ The following directories preserve the pre-pivot orchestrator/GUI architecture a
 - `archive/roles/*.yaml` — old role definitions (migrated to `.claude/agents/*.md`)
 - `archive/agents/`, `archive/skills/`, `archive/docs/` — pre-pivot content
 
-`packages/core/` still exists at the repo root for any shared types that may still be consumed. `mercury.config.json` / `mercury.config.example.json` remain as legacy config — only `obsidian.vaultName` / `obsidian.vaultPath` are still read (by `session-init.sh`), and removal is pending mem0 migration cleanup.
+`packages/core/` still exists at the repo root for any shared types that may still be consumed. `mercury.config.json` / `mercury.config.example.json` remain as legacy config — only `obsidian.vaultName` / `obsidian.vaultPath` remain for reference; the `session-init.sh` hook that read them was retired in #579.
 
 (Note: the early `mercury-gui/` GUI MVP at the repo root is distinct from the archived pre-pivot `archive/packages/gui/`.)
 
