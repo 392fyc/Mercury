@@ -8,11 +8,15 @@
 #      first prompt (or BOOTSTRAP_PROMPT env var). Set by the /handoff:auto
 #      skill on the SHORT_PROMPT, per `feedback_handoff_short_prompt_only.md`
 #      lessons learned.
-#   2. cwd-encoded — Claude Code derives `~/.claude/projects/<encoded-cwd>/`
-#      from the cwd of the `claude` invocation (slash-to-dash encoding,
-#      empirically observed; reference:
-#      https://code.claude.com/docs/en/claude-directory). The encoded form
-#      MUST match the lane's worktree path encoded.
+#   2. cwd-encoded — the session cwd MUST be the lane's worktree (compared
+#      after slash-to-dash encoding). Harness-neutral invariant; what the
+#      cwd routes differs per harness (Issue #599 ADR, decision
+#      "lane-assertion 与 harness 无关"):
+#      - Claude Code derives `~/.claude/projects/<encoded-cwd>/` (session
+#        transcripts) from the cwd of the `claude` invocation; reference:
+#        https://code.claude.com/docs/en/claude-directory
+#      - Codex CLI keeps sessions under `$CODEX_HOME/sessions/` (not per cwd);
+#        the cwd scopes `codex resume --last` and the working tree itself.
 #   3. git current branch — MUST match the lane's branch-prefix convention:
 #      - main: `feature/lane-main/TASK-<N>-*` OR `feature/TASK-<N>-*` (legacy)
 #        OR `lane/main/<N>-<slug>` (Rule 2.1, future) OR `develop` itself
@@ -321,9 +325,12 @@ $PROG: BLOCKED — cwd does not match lane '$LANE_NAME' worktree path.
   actual cwd:        $ACTUAL_CWD
   expected worktree: $WORKTREE_PATH
 This is the share-cwd routing-bleed failure mode (Issue #342). The session
-is reading the wrong lane's project state (~/.claude/projects/<encoded>/).
-Resolution: cd to the lane worktree before launching claude:
-  cd "$WORKTREE_PATH" && claude
+is not running in this lane's checkout, so its cwd-derived state (Claude
+Code: ~/.claude/projects/<encoded>/; Codex: which sessions resume --last
+picks) is not this lane's.
+Resolution: cd to the lane worktree, then relaunch the lane's own CLI:
+  cd "$WORKTREE_PATH" && claude     # Claude Code lane
+  cd "$WORKTREE_PATH" && codex      # Codex lane
 Soft-disable: export MERCURY_LANE_ASSERT_DISABLED=1
 EOF
   fi
