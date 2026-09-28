@@ -357,13 +357,16 @@ fi
 
 # 20. Dry-run COMMAND output contains the positional-arg form (Unix only):
 #     bash -c 'claude -- "$1"' _ <prompt>  (not bash -c "claude -- <prompt>")
+#     The dry-run prints the tmux command as a copy-pasteable shell string,
+#     so inside its outer double quotes the script reads 'claude -- \"\$1\"'
+#     (Mercury Issue #595).
 #     On Windows the dry-run COMMAND shows the wt path, not tmux — skip there.
 _PLATFORM_TEST20="$(uname -s 2>/dev/null || echo "unknown")"
 case "$_PLATFORM_TEST20" in
   Darwin|Linux)
     assert_exit_and_contains \
       "dry-run COMMAND uses positional-arg form (claude -- \"\$1\")" \
-      0 'claude -- "$1"' \
+      0 'claude -- \"\$1\"' \
       bash "$LAUNCH_SCRIPT" \
         --lane "test" \
         --worktree "$FAKE_WORKTREE" \
@@ -432,11 +435,20 @@ esac
 #   claude -- "<prompt>"   需要 `--` 分隔符
 #   codex "<prompt>"       位置参数，`codex --help` 的用法行是 `codex [OPTIONS] [PROMPT]`
 # 给 codex 照抄 `--` 会让 prompt 被当成 flag 解析而丢掉，所以两条形态都要钉住。
+#
+# dry-run 的 COMMAND 行在两个平台上引号写法不同（Mercury Issue #595）：
+#   Windows (wt)   ... -- claude -- "<prompt>"
+#   Unix (tmux)    ... "bash -c 'claude -- \"\$1\"' _ <prompt>"  —— 外层双引号内转义
+# 按与 launcher 相同的 uname 判断选取期望的引号，断言意图不变。
+case "$(uname -s 2>/dev/null || echo "unknown")" in
+  Darwin|Linux) DRY_Q='\"' ;;
+  *)            DRY_Q='"' ;;
+esac
 
 # 22. 默认 harness 必须仍是 claude —— 加功能不应顺带改掉现役默认。
 assert_exit_and_contains \
   "default harness is still claude (no behavior change)" \
-  0 'claude -- "' \
+  0 "claude -- ${DRY_Q}" \
   bash "$LAUNCH_SCRIPT" \
     --lane "test" \
     --worktree "$FAKE_WORKTREE" \
@@ -458,7 +470,7 @@ assert_exit_and_contains \
 CODEX_CMD_OUT="$(bash "$LAUNCH_SCRIPT" \
   --lane "test" --worktree "$FAKE_WORKTREE" --handoff-doc "$FAKE_HANDOFF" \
   --harness codex --dry-run 2>&1 | grep '^COMMAND:')"
-if echo "$CODEX_CMD_OUT" | grep -qF 'codex "' && ! echo "$CODEX_CMD_OUT" | grep -qF 'codex -- '; then
+if echo "$CODEX_CMD_OUT" | grep -qF -- "codex ${DRY_Q}" && ! echo "$CODEX_CMD_OUT" | grep -qF 'codex -- '; then
   echo "PASS: codex form omits the '--' separator"
   PASS_COUNT=$((PASS_COUNT + 1))
 else
