@@ -116,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
         # Reject mixed-mode invocations like `--example idle --out-dir frames`
-        # (Codex Slice C audit Low #1): silently ignoring trailing args
+        # (Mercury audit Low #1): silently ignoring trailing args
         # would hide caller mistakes by exiting 0 after printing JSON.
         # Argus iter-1 Critical (security): never echo the trailing arg
         # values themselves — a caller who shell-substituted a token or

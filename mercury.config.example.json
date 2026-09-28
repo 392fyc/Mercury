@@ -28,7 +28,7 @@
       "id": "codex-cli",
       "integration": "sdk",
       "maxConcurrentSessions": 2,
-      "model": "gpt-5.4",
+      "model": "gpt-6-luna",
       "restrictions": [],
       "roles": [
         "dev",

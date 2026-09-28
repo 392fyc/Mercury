@@ -164,11 +164,11 @@ Phase 6 empirical (S99 ADR §#4):
 | Hook event | Fires in bg session? | Mercury hooks affected |
 |------------|----------------------|------------------------|
 | `SessionStart` | ✅ | mem0 SessionStart, agentkb session-start, OMC SessionStart |
-| `UserPromptSubmit` | ✅ | `.claude/hooks/user-prompt-submit.sh` |
-| `PreToolUse` | ✅ | loop-detector, push-guard |
+| `UserPromptSubmit` | ✅ | none (the project hook was retired in #579) |
+| `PreToolUse` | ✅ | none registered by the project (loop-detector remains an unregistered adapter) |
 | `PostToolUse` | ✅ | mem0 PostToolUse, OMC post-tool-use |
 | `PostToolUseFailure` | ✅ | OMC post-tool-use-failure |
-| `Stop` | ✅ | settings.json line 120 `Stop: []` empty — Mercury registers **0** hooks here; only OMC plugins fire |
+| `Stop` | ✅ | none — the project registers no hooks; only user-level or plugin hooks fire |
 | **`SessionEnd`** | **❌** | **cost_tracker.write_session_summary, mem0 flush — all SKIPPED for bg** |
 | `SubagentStop` | ❌ | does not fire for `--bg --agent X` (template selection ≠ nested dispatch) |
 | `PreCompact` | ⚠️ UNVERIFIED | short Phase 6 sessions did not trigger compaction |

@@ -1,153 +1,54 @@
 {
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/scope-guard.sh\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/web-research-gate.sh\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/web-research-extended-gate.sh\"",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/pre-commit-guard.sh\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/push-guard.sh\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/pr-create-guard.sh\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/pr-merge-guard.sh\"",
-            "timeout": 15
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": ".*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR/adapters/mercury-loop-detector/hook.cjs\"",
-            "timeout": 10
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/post-commit-reset.sh\"",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "Skill|Agent",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/post-review-flag.sh\"",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "WebSearch|WebFetch",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/post-web-research-flag.sh\"",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-init.sh\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/user-prompt-submit.sh\"",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/stop-guard.sh\"",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/auto-handoff-stop.sh\"",
-            "timeout": 30
-          }
-        ]
-      }
-    ],
-    "SubagentStop": [
-      {
-        "matcher": "dev",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR/adapters/mercury-test-gate/hook.cjs\"",
-            "timeout": 360
-          }
-        ]
-      },
-      {
-        "matcher": "research",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/research-stop-nudge.sh\"",
-            "timeout": 5
-          }
-        ]
-      }
+  "permissions": {
+    "deny": [
+      "Bash(git add)",
+      "Bash(git add *)",
+      "Bash(git commit)",
+      "Bash(git commit *)",
+      "Bash(git push)",
+      "Bash(git push *)",
+      "Bash(git switch)",
+      "Bash(git switch *)",
+      "Bash(git checkout)",
+      "Bash(git checkout *)",
+      "Bash(git merge)",
+      "Bash(git merge *)",
+      "Bash(git rebase)",
+      "Bash(git rebase *)",
+      "Bash(git reset)",
+      "Bash(git reset *)",
+      "Bash(git stash)",
+      "Bash(git stash *)",
+      "PowerShell(git add)",
+      "PowerShell(git add *)",
+      "PowerShell(git commit)",
+      "PowerShell(git commit *)",
+      "PowerShell(git push)",
+      "PowerShell(git push *)",
+      "PowerShell(git switch)",
+      "PowerShell(git switch *)",
+      "PowerShell(git checkout)",
+      "PowerShell(git checkout *)",
+      "PowerShell(git merge)",
+      "PowerShell(git merge *)",
+      "PowerShell(git rebase)",
+      "PowerShell(git rebase *)",
+      "PowerShell(git reset)",
+      "PowerShell(git reset *)",
+      "PowerShell(git stash)",
+      "PowerShell(git stash *)",
+      "Bash(git -C * add)",
+      "Bash(git -C * add *)",
+      "Bash(git -C * commit)",
+      "Bash(git -C * commit *)",
+      "Bash(git -C * push)",
+      "Bash(git -C * push *)",
+      "PowerShell(git -C * add)",
+      "PowerShell(git -C * add *)",
+      "PowerShell(git -C * commit)",
+      "PowerShell(git -C * commit *)",
+      "PowerShell(git -C * push)",
+      "PowerShell(git -C * push *)"
     ]
-  },
-  "language": "zh-CN",
-  "enabledPlugins": {
-    "codex@openai-codex": true,
-    "claude-hud@claude-hud": true,
-    "oh-my-claudecode@omc": true
   }
 }

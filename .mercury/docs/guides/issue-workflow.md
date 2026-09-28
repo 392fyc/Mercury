@@ -5,7 +5,7 @@ GitHub Issues is the single source of truth for all task tracking in Mercury.
 ## Rules
 
 1. **Every task starts as an Issue** — no work without an Issue number
-2. **PRs must reference Issues** — accepted keywords are defined in [pr-create-guard.sh](../../../.claude/hooks/pr-create-guard.sh): `Closes #N` / `Fixes #N` / `Resolves #N` (auto-close) or `Refs #N` (manual close)
+2. **PRs must reference Issues** — accepted keywords, per [AGENTS.md](../../../AGENTS.md): `Closes #N` / `Fixes #N` / `Resolves #N` (auto-close) or `Refs #N` (manual close)
 3. **Agent progress updates** — post comments on the Issue at milestone completion
 4. **No agent-memory-only tasks** — if it's worth doing, it's worth an Issue
 
@@ -32,7 +32,7 @@ GitHub Issues is the single source of truth for all task tracking in Mercury.
 
 ## Enforcement
 
-- [`.claude/hooks/pr-create-guard.sh`](../../../.claude/hooks/pr-create-guard.sh) blocks PRs without `--assignee`, `--label`, `--base develop`, and a recognized Issue reference keyword (see Rule 2 above)
+- [AGENTS.md](../../../AGENTS.md) requires every PR to reference its Issue; Argus flags a missing reference (`.pr_agent.toml`). The former `pr-create-guard.sh` hook was retired in #579.
 - [CLAUDE.md](../../../CLAUDE.md) MUST rule: "Issue-first workflow"
 - Agents post milestone comments via `gh issue comment`
 

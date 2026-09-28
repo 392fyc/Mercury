@@ -1,10 +1,10 @@
 # 由 .claude/agents/game-analyst.md 转换而来（Issue #571 / G3-2）。
 # Claude 侧的 tools 白名单在 Codex 上没有对应字段，改用 sandbox_mode 表达。
-# model 刻意不设：Claude 的 sonnet/opus/haiku 在 Codex 上无对应值，且订阅侧模型名待定，
-# 让它继承会话模型，避免写死一个错的名字。
 # 原 tools: Read, Glob, Grep
 
 name = "game-analyst"
+model = "gpt-6-luna"
+model_reasoning_effort = "max"
 description = """Game-design feasibility analyst. Takes game-researcher output + project context (Godot 4, solo dev, tactical RPG scale) and returns feasibility score + top 3 risks + recommendation set. Does NOT make the final decision — paired with game-critic for adversarial validation before human sign-off."""
 sandbox_mode = "read-only"
 

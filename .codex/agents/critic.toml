@@ -1,13 +1,12 @@
 # 由 .claude/agents/critic.md 转换而来（Issue #571 / G3-2）。
 # Claude 侧的 tools 白名单在 Codex 上没有对应字段，改用 sandbox_mode 表达。
-# model 刻意不设：Claude 的 sonnet/opus/haiku 在 Codex 上无对应值，且订阅侧模型名待定，
-# 让它继承会话模型，避免写死一个错的名字。
 # 原 tools: Read, Glob, Grep, Bash
 
 name = "critic"
-description = """Spec-driven verifier. Use when a completion checklist needs independent verification — for each checklist item, the critic locates evidence in the diff/runtime output and returns PASS/FAIL/PARTIAL/SKIP with file:line citations. Different analytical perspective than dev or acceptance. SHOULD run on a different model than dev to avoid self-congratulation bias."""
+model = "gpt-6-luna"
+model_reasoning_effort = "max"
+description = """Spec-driven verifier. Use when a completion checklist needs independent verification — for each checklist item, the critic locates evidence in the diff/runtime output and returns PASS/FAIL/PARTIAL/SKIP with file:line citations. Different analytical perspective than dev or acceptance. Use an independent context and verify the artifacts directly."""
 sandbox_mode = "read-only"
-model_reasoning_effort = "xhigh"
 
 developer_instructions = """
 # Role: Critic Agent
@@ -43,7 +42,7 @@ For each checklist item:
 
 ## Model Separation
 
-This role SHOULD be assigned to a different model than the dev agent to avoid self-congratulation bias.
+Use a separate context from the implementation agent and judge source artifacts and fresh checks rather than the implementation self-assessment.
 
 ## Output Format
 
