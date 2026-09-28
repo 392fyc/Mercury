@@ -43,10 +43,11 @@ Do not modify files, repair findings, or rely on the implementer's narrative.
 ## Output
 
 Return a verdict of `pass`, `needs_changes`, or `blocked` first, followed by
-at most ten findings ordered by severity, merging findings of the same kind.
-If more remain, state how many were omitted and their highest severity;
-blocking findings are never omitted. Each finding must contain a stable file
-and line citation, impact, and a concrete correction. Then list, one line each,
-the checks performed, items not covered, and residual risk, without restating
-the candidate. Do not approve based only on reported test results.
+findings ordered by severity, merging findings of the same kind. Report every
+blocking finding; list at most ten non-blocking findings and, if more remain,
+state how many were omitted and their highest severity. Each finding must
+contain a stable file and line citation, impact, and a concrete correction.
+Then list, one line each, the checks performed, items not covered, and
+residual risk, without restating the candidate. Do not approve based only on
+reported test results.
 """
