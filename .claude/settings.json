@@ -48,7 +48,31 @@
       "PowerShell(git -C * commit)",
       "PowerShell(git -C * commit *)",
       "PowerShell(git -C * push)",
-      "PowerShell(git -C * push *)"
+      "PowerShell(git -C * push *)",
+      "Bash(git -C * switch)",
+      "Bash(git -C * switch *)",
+      "Bash(git -C * checkout)",
+      "Bash(git -C * checkout *)",
+      "Bash(git -C * merge)",
+      "Bash(git -C * merge *)",
+      "Bash(git -C * rebase)",
+      "Bash(git -C * rebase *)",
+      "Bash(git -C * reset)",
+      "Bash(git -C * reset *)",
+      "Bash(git -C * stash)",
+      "Bash(git -C * stash *)",
+      "PowerShell(git -C * switch)",
+      "PowerShell(git -C * switch *)",
+      "PowerShell(git -C * checkout)",
+      "PowerShell(git -C * checkout *)",
+      "PowerShell(git -C * merge)",
+      "PowerShell(git -C * merge *)",
+      "PowerShell(git -C * rebase)",
+      "PowerShell(git -C * rebase *)",
+      "PowerShell(git -C * reset)",
+      "PowerShell(git -C * reset *)",
+      "PowerShell(git -C * stash)",
+      "PowerShell(git -C * stash *)"
     ]
   }
 }
