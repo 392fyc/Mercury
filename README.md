@@ -40,7 +40,6 @@ Per [`EXECUTION-PLAN.md`](.mercury/docs/EXECUTION-PLAN.md), Phase 6 is explicitl
 Recent additions on top of the core phases:
 
 - **Multi-lane development** — multiple isolated work lanes (own worktree + branch + handoff) running in parallel under a 5-lane hard cap (see [Multi-lane development](#multi-lane-development))
-- **Voice agent (experimental)** — local STT/TTS conversation loop under `scripts/voice/` (listen daemon, transcript queue, interruptible playback) exposed to Claude Code via an MCP server
 - **Codex native project layer** — `AGENTS.md`, `.codex/rules/`, and guarded PowerShell wrappers carry branch, review, and task policy (see [Multi-agent runtimes](#multi-agent-runtimes))
 
 ## Architecture at a glance
@@ -57,7 +56,7 @@ Mercury (lightweight core — only builds what no external project provides)
 │   ├── templates/     dispatch prompt templates
 │   └── gates/         quality-gate configurations
 ├── adapters/          Mercury-owned hook/gate/integration adapters (≤200 LOC each for external mounts)
-├── scripts/           maintenance scripts (lane-*, worktree-reaper, mem0 hooks, codex guardrails, voice/, ...)
+├── scripts/           maintenance scripts (lane-*, worktree-reaper, mem0 hooks, codex guardrails, ...)
 ├── mercury-gui/       early desktop GUI MVP — Tauri 2 + React (Phase 6 is on-demand)
 └── modules/           reserved for mounted external projects (currently empty — see External project mounts)
 ```
@@ -129,7 +128,7 @@ Sub-agents (9): `main`, `dev`, `acceptance`, `critic`, `design`, `research`, plu
 - `scope-guard.sh` (`PreToolUse` on Edit/Write), `post-commit-reset.sh`, `post-review-flag.sh`, `post-web-research-flag.sh` — scope enforcement and state-flag lifecycle (`PostToolUse`)
 - `stop-guard.sh`, `auto-handoff-stop.sh` — `Stop`; plus `research-stop-nudge.sh` on `SubagentStop`
 
-(Cross-session memory and compaction hooks — `pre-compact.py`, `session-end.py` — run at the **user level** under `~/.claude/hooks/`, not in this repo; see [Ecosystem](#ecosystem). The experimental voice integration ships scripts under `scripts/voice/` + `.claude/hooks/voice-*.sh` that are not wired into the committed `settings.json` by default.)
+(Cross-session memory and compaction hooks — `pre-compact.py`, `session-end.py` — run at the **user level** under `~/.claude/hooks/`, not in this repo; see [Ecosystem](#ecosystem).)
 
 `adapters/mercury-loop-detector/` and `adapters/mercury-test-gate/` implement mechanical Stop-hook enforcement via exit codes (registered on `PostToolUse` and `SubagentStop` respectively). Per DIRECTION.md §八-1, this is the only exit-code-based mechanical Stop-hook implementation known to us in the Claude Code ecosystem — an ecosystem gap identified during Phase 2-1 evaluation.
 
