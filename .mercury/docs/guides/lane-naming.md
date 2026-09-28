@@ -1,14 +1,16 @@
 # Lane Naming + Capacity — `feedback_lane_protocol.md` Rule 2 & HARD-CAP
 
 Implements the **Rule 2 short branch prefix** delta (v0.1 Delta 6, Issue
-[#313](https://github.com/392fyc/Mercury/issues/313)) and the **HARD-CAP at 5
-active lanes** delta (v0.1 Delta 7, Issue
-[#314](https://github.com/392fyc/Mercury/issues/314)).
+[#313](https://github.com/392fyc/Mercury/issues/313)). It also records the
+former **HARD-CAP** delta (v0.1 Delta 7, Issue
+[#314](https://github.com/392fyc/Mercury/issues/314)), which was **removed**
+by Issue [#605](https://github.com/392fyc/Mercury/issues/605): lanes are no
+longer capped (see §Δ7).
 
 ## Why two deltas in one guide
 
-Both shape the lane registry: Δ6 controls how branches are named, Δ7 controls
-how many lanes can exist concurrently. Operators reason about "what lane do I
+Both shape the lane registry: Δ6 controls how branches are named, Δ7 used to
+control how many lanes could exist concurrently (removed in #605). Operators reason about "what lane do I
 open / what do I name its branch" in one mental motion; one combined guide is
 shorter than two cross-referenced ones.
 
@@ -75,6 +77,8 @@ activity remain valid signals, and the AND-gate verdict still requires three
 stale signals before flagging stale.
 
 ## Δ7 — HARD-CAP at 5 active lanes
+
+> **Superseded (2026-09, Issue [#605](https://github.com/392fyc/Mercury/issues/605)).** Lanes are no longer capped ([#599 ADR](../research/issue-599-cross-harness-lane-isolation-2026-09.md) D1). `lane-spawn.sh` no longer refuses at the cap, and `lane-cap-check.sh` only reports the count unless you pass `--max N`. This section is kept as the historical record. Current `lane-cap-check.sh` usage: with no flags it prints the active count with verdict `uncapped` and exits 0; `--max N` (a positive integer) opts in to a threshold of your own, with verdict `within_cap` / `exceeded` and exit 1 when exceeded.
 
 ### Cap value
 
@@ -601,7 +605,8 @@ unconditional infrastructure.
 scripts/test-lane-cap-check.sh
 ```
 
-32 cases covering arg validation, within-cap, boundary (count == max),
+Cases covering arg validation, the default no-cap mode (`uncapped`, exit 0,
+JSON `"max":null`), within-cap, boundary (count == max),
 exceeded, custom max, closed-lane exclusion, JSON output validity (including
 quote/backslash hostile lane names), parser robustness (orphan-no-status
 WARN, zombie-in-Closed-section exclusion), and empty Active Lanes section.

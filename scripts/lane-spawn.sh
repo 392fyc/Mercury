@@ -6,7 +6,7 @@
 # semantics; this is NOT cryptographic atomicity):
 #   1. Validate <lane>, <issue>, optional --short / --slug args
 #   2. Refuse if <lane> already appears in LANES.md "## Active Lanes" section
-#   3. Refuse if active-lane count is at HARD-CAP=5 (Rule 7 Delta 7 / Issue #314)
+#   3. (No lane-count cap: the Delta 7 HARD-CAP was removed by Issue #605 / #599 ADR D1)
 #   4. Claim Issue via scripts/lane-claim.sh (Rule 1.1 probe-after-write, #309)
 #   5. Create branch `lane/<short>/<issue>-<slug>` off origin/develop (Rule 2.1)
 #   6. Write per-lane handoff template at <memory-dir>/session-handoff-<lane>.md
@@ -25,10 +25,11 @@
 #                         [--short SHORT] [--slug SLUG]
 #                         [--memory-dir PATH] [--lanes-file PATH]
 #                         [--repo-root PATH] [--repo OWNER/REPO]
-#                         [--no-claim] [--no-branch]
+#                         [--harness claude|codex] [--no-claim] [--no-branch]
 #                         [--dry-run] [--yes]
 #
 # Defaults:
+#   --harness        claude (which CLI drives this lane; written to LANES.md)
 #   --short          first 8 chars of <lane> after stripping non-[a-z0-9-]
 #   --slug           lowercased Issue title with non-[a-z0-9-] → "-",
 #                    truncated so total branch ≤40 chars (Rule 2.1)
@@ -39,7 +40,7 @@
 #
 # Exit codes:
 #   0  spawn succeeded (or --dry-run path completed)
-#   1  state failure (lane exists / cap reached / Issue not found / handoff
+#   1  state failure (lane exists / short collision / Issue not found / handoff
 #      exists / lane-claim conflict / branch exists / git step failure /
 #      awk LANES.md insert failure / user aborted at confirm prompt)
 #   2  argument or environment error (invalid flag / missing gh / cannot
@@ -63,6 +64,7 @@ NO_CLAIM=0
 NO_BRANCH=0
 DRY_RUN=0
 YES=0
+HARNESS=claude
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -72,12 +74,13 @@ while [ $# -gt 0 ]; do
     --lanes-file)  shift; [ $# -gt 0 ] || die "--lanes-file needs a value"; LANES_FILE="$1"; shift ;;
     --repo-root)   shift; [ $# -gt 0 ] || die "--repo-root needs a value"; REPO_ROOT="$1"; shift ;;
     --repo)        shift; [ $# -gt 0 ] || die "--repo needs a value"; REPO="$1"; shift ;;
+    --harness)     shift; [ $# -gt 0 ] || die "--harness needs a value"; HARNESS="$1"; shift ;;
     --no-claim)    NO_CLAIM=1; shift ;;
     --no-branch)   NO_BRANCH=1; shift ;;
     --dry-run)     DRY_RUN=1; shift ;;
     --yes)         YES=1; shift ;;
     -h|--help)
-      sed -n '2,38p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '2,39p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     --) shift
         if [ -z "$LANE" ]   && [ $# -gt 0 ]; then LANE="$1"; shift; fi
@@ -102,6 +105,11 @@ case "$LANE" in
 esac
 case "$ISSUE" in
   ''|*[!0-9]*|0) die "issue must be a positive integer: '$ISSUE'" ;;
+esac
+# Which CLI drives the lane (#599 ADR D1: one harness per lane).
+case "$HARNESS" in
+  claude|codex) ;;
+  *) die "--harness must be claude or codex: '$HARNESS'" ;;
 esac
 
 # Memory dir resolution mirrors lane-close.sh / lane-sweep.sh.
@@ -139,7 +147,7 @@ case "$SHORT" in
 esac
 [ "${#SHORT}" -le 8 ] || die "--short must be ≤8 chars: '$SHORT' (${#SHORT} chars)"
 
-# Active-lane uniqueness + cap check via LANES.md.
+# Active-lane uniqueness check via LANES.md (no lane-count cap, #605).
 # Fail-fast on a malformed registry: the spawn ceremony writes a new section
 # under "## Active Lanes" via awk in step 8. If that header is missing, the
 # awk insert silently no-ops, and a successful spawn would have already
@@ -162,8 +170,9 @@ parse_active_lanes() {
 }
 ACTIVE_LANES=$(parse_active_lanes "$LANES_FILE")
 
-# HARD-CAP enforcement counts lanes whose Status resolves to `active`, mirroring
-# scripts/lane-cap-check.sh (Rule 7 reference impl). Counting `### ` headings
+# Informational active-lane count (shown in --dry-run; no cap is enforced,
+# #605). Counts lanes whose Status resolves to `active`, mirroring
+# scripts/lane-cap-check.sh. Counting `### ` headings
 # alone would over-count paused/deprecated rows that linger in the Active Lanes
 # section. awk walks each lane block and emits the lane name only when the
 # block's first **Status** line is exactly `active`.
@@ -200,10 +209,6 @@ EXISTING_SHORTS=$(awk '
 ' "$LANES_FILE")
 if printf '%s\n' "$EXISTING_SHORTS" | grep -qxF "$SHORT"; then
   fail "short name '$SHORT' already in use by another active lane (pass --short)"
-fi
-
-if [ "$ACTIVE_COUNT" -ge 5 ]; then
-  fail "HARD-CAP at 5 active lanes reached ($ACTIVE_COUNT/5) — close one before spawning lane '$LANE' (Rule 7 Delta 7 / Issue #314)"
 fi
 
 # Resolve repo (only when claim or slug-derivation needs gh).
@@ -262,7 +267,7 @@ fi
 
 # Dry-run gate — print intent and exit before any external mutations.
 if [ "$DRY_RUN" -eq 1 ]; then
-  printf '[dry-run] lane=%s issue=%s short=%s slug=%s\n' "$LANE" "$ISSUE" "$SHORT" "$SLUG"
+  printf '[dry-run] lane=%s issue=%s short=%s slug=%s harness=%s\n' "$LANE" "$ISSUE" "$SHORT" "$SLUG" "$HARNESS"
   printf '[dry-run] branch=%s (%d chars, cap=%d)\n' "$BRANCH" "${#BRANCH}" "$MAX_BRANCH"
   printf '[dry-run] memory-dir=%s\n' "$MEMORY_DIR"
   printf '[dry-run] handoff=%s\n' "$HANDOFF_FILE"
@@ -390,7 +395,8 @@ printf 'lane-spawn: wrote handoff %s\n' "$HANDOFF_FILE"
 # form works on both. Honor $TMPDIR for sandboxed CI environments.
 TMP_LANES=$(mktemp "${TMPDIR:-/tmp}/lane-spawn.XXXXXX")
 awk -v lane="$LANE" -v branch="$BRANCH" -v issue="$ISSUE" \
-    -v handoff="session-handoff-${LANE}.md" -v short="$SHORT" -v today="$TODAY" '
+    -v handoff="session-handoff-${LANE}.md" -v short="$SHORT" -v today="$TODAY" \
+    -v harness="$HARNESS" '
   BEGIN { saw_active = 0; in_active = 0; printed = 0 }
   /^## Active Lanes/ { saw_active = 1; in_active = 1; print; next }
   /^## / && in_active && !printed {
@@ -398,6 +404,7 @@ awk -v lane="$LANE" -v branch="$BRANCH" -v issue="$ISSUE" \
     print "### `" lane "`"
     print ""
     print "- **Short name**: `" short "`"
+    print "- **Harness**: `" harness "`"
     print "- **Branch**: `" branch "`"
     print "- **Handoff file**: `" handoff "`"
     print "- **Status**: `active`"
@@ -416,6 +423,7 @@ awk -v lane="$LANE" -v branch="$BRANCH" -v issue="$ISSUE" \
       print "### `" lane "`"
       print ""
       print "- **Short name**: `" short "`"
+      print "- **Harness**: `" harness "`"
       print "- **Branch**: `" branch "`"
       print "- **Handoff file**: `" handoff "`"
       print "- **Status**: `active`"

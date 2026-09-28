@@ -12,7 +12,8 @@
 #      after slash-to-dash encoding). Harness-neutral invariant; what the
 #      cwd routes differs per harness (Issue #599 ADR, decision
 #      "lane-assertion 与 harness 无关"):
-#      - Claude Code derives `~/.claude/projects/<encoded-cwd>/` (session
+#      - Claude Code derives `projects/<encoded-cwd>/` under
+#        `${CLAUDE_CONFIG_DIR:-~/.claude}` (session
 #        transcripts) from the cwd of the `claude` invocation; reference:
 #        https://code.claude.com/docs/en/claude-directory
 #      - Codex CLI keeps sessions under `$CODEX_HOME/sessions/` (not per cwd);
@@ -326,8 +327,8 @@ $PROG: BLOCKED — cwd does not match lane '$LANE_NAME' worktree path.
   expected worktree: $WORKTREE_PATH
 This is the share-cwd routing-bleed failure mode (Issue #342). The session
 is not running in this lane's checkout, so its cwd-derived state (Claude
-Code: ~/.claude/projects/<encoded>/; Codex: which sessions resume --last
-picks) is not this lane's.
+Code: projects/<encoded>/ under \$CLAUDE_CONFIG_DIR, default ~/.claude;
+Codex: which sessions resume --last picks) is not this lane's.
 Resolution: cd to the lane worktree, then relaunch the lane's own CLI:
   cd "$WORKTREE_PATH" && claude     # Claude Code lane
   cd "$WORKTREE_PATH" && codex      # Codex lane

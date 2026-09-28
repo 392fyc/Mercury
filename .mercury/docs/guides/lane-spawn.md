@@ -16,9 +16,9 @@ ceremony atomic from a single command.
 
 | # | Step | Source of truth | Failure semantics |
 |---|------|-----------------|-------------------|
-| 1 | Validate args (`<lane>`, `<issue>`, optional `--short`/`--slug`) | local | exit 2 if invalid; nothing mutated |
+| 1 | Validate args (`<lane>`, `<issue>`, optional `--short`/`--slug`/`--harness`) | local | exit 2 if invalid; nothing mutated |
 | 2 | Refuse if `<lane>` already in `LANES.md` Active Lanes | `LANES.md` | exit 1; nothing mutated |
-| 3 | Refuse if active count ≥ 5 (Rule 7 Delta 7 / Issue #314) | `LANES.md` | exit 1; nothing mutated |
+| 3 | *(removed)* No lane-count cap since Issue #605 (the former Delta 7 HARD-CAP) | — | — |
 | 4 | Refuse if `<short>` already in use by another active lane | `LANES.md` | exit 1; nothing mutated |
 | 5 | Claim Issue via `lane-claim.sh` (Rule 1.1 probe-after-write) | GitHub | exit 1 on conflict; later steps skipped |
 | 6 | Create branch `lane/<short>/<issue>-<slug>` off `origin/develop` | local git | exit 1 on existing branch / missing origin/develop; later steps skipped |
@@ -36,7 +36,7 @@ scripts/lane-spawn.sh <lane> <issue>
                       [--short SHORT] [--slug SLUG]
                       [--memory-dir PATH] [--lanes-file PATH]
                       [--repo-root PATH] [--repo OWNER/REPO]
-                      [--no-claim] [--no-branch]
+                      [--harness claude|codex] [--no-claim] [--no-branch]
                       [--dry-run] [--yes]
 ```
 
@@ -50,12 +50,19 @@ scripts/lane-spawn.sh <lane> <issue>
 | `--lanes-file PATH` | Override LANES.md location (default: `<memory-dir>/LANES.md`). |
 | `--repo-root PATH` | Override repo root (default: `git rev-parse --show-toplevel`). |
 | `--repo OWNER/REPO` | Pin GitHub repo for `gh` calls. Defaults to `gh repo view` / `GH_REPO`. |
+| `--harness claude\|codex` | Which CLI drives the lane; written as `- **Harness**:` in the new `LANES.md` section. Default: `claude`. See the [#599 ADR](../research/issue-599-cross-harness-lane-isolation-2026-09.md) D1. |
 | `--no-claim` | Skip the `lane-claim.sh` step (useful for offline/manual claim). |
 | `--no-branch` | Skip the `git branch` step (useful when branch is created elsewhere). |
 | `--dry-run` | Print intended actions and exit before any state-mutating command. **Note**: `gh repo view` and `gh issue view` may still be invoked *before* the dry-run gate to resolve repo target and derive the slug from the Issue title. To stay fully offline, combine with `--no-claim --slug <slug>` (and `--repo OWNER/REPO` if `gh repo view` is unavailable). |
 | `--yes` | Skip the interactive confirm prompt. Required in non-interactive contexts. |
 | `MERCURY_MEMORY_DIR` (env) | Same as `--memory-dir`. |
 | `GH_REPO` (env) | Same as `--repo`. |
+
+Example: open a Codex-driven lane (solo by default; see the [#599 ADR](../research/issue-599-cross-harness-lane-isolation-2026-09.md) for pairing):
+
+```bash
+scripts/lane-spawn.sh art 612 --short art --harness codex
+```
 
 ### Branch naming (Rule 2.1)
 
@@ -92,7 +99,7 @@ or delete the prior handoff first.
 | Exit | Meaning |
 |------|---------|
 | `0` | Spawn succeeded, or `--dry-run` path completed. |
-| `1` | Validation failed: lane already exists / cap reached / short collision / Issue not found / handoff exists / aborted at confirm prompt. Local state may be partially mutated when failure occurs **after** step 5 — read the script output to see exact stop point. |
+| `1` | Validation failed: lane already exists / short collision / Issue not found / handoff exists / aborted at confirm prompt. Local state may be partially mutated when failure occurs **after** step 5 — read the script output to see exact stop point. |
 | `2` | Argument error / missing `gh` or `jq` / cannot resolve repo or memory dir / awk LANES.md edit failure. |
 
 ## Examples
@@ -133,7 +140,8 @@ Runs offline (no `gh`, no live LANES.md, no live git) and exercises:
 - Dry-run exits 0 + does not mutate LANES.md / handoff file
 - Duplicate-lane refusal (`lane` already in Active Lanes)
 - Short-name collision refusal (cross-lane uniqueness)
-- HARD-CAP=5 enforcement
+- No lane-count cap: spawning still succeeds when many lanes are already active (#605)
+- `--harness`: `codex` recorded (both the mid-file and end-of-file insert paths), default `claude`, invalid or missing value rejected, shown in `--dry-run`
 - Happy-path with `--no-claim --no-branch`: handoff written, LANES.md
   appended, other lanes' Status untouched
 - Handoff overwrite guard: refuses + LANES.md NOT mutated

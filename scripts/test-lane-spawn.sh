@@ -3,7 +3,8 @@
 #
 # Builds synthetic LANES.md + memory dir, exercises argument validation,
 # dry-run, --no-claim/--no-branch happy path, duplicate-lane refusal,
-# HARD-CAP=5 detection, short-name uniqueness, and handoff overwrite guard.
+# no lane-count cap (#605), --harness, short-name uniqueness, and handoff
+# overwrite guard.
 # Tests run offline (no gh / no live Issue probe). Exit 0 if all pass.
 
 set -u
@@ -154,20 +155,81 @@ RC3=$?
 [ "$RC3" = "1" ] && pass "duplicate short name rejected (exit=1)" \
   || fail "duplicate short should refuse: exit=$RC3 out=$OUT3"
 
-# ---- HARD-CAP=5 detection ----
+# ---- no lane-count cap (#605; Delta 7 HARD-CAP removed) ----
 echo
-echo "[hard-cap]"
+echo "[no-cap]"
 MEM4="$TMP/mem4"; mkdir -p "$MEM4"; write_fixture_lanes_at_cap "$MEM4/LANES.md"
 mkdir -p "$TMP/repo4"
 OUT4=$("$SCRIPT" lane6 203 --short l6 --slug "x" --no-claim --no-branch --yes \
         --memory-dir "$MEM4" --lanes-file "$MEM4/LANES.md" \
         --repo-root "$TMP/repo4" 2>&1)
 RC4=$?
-[ "$RC4" = "1" ] && pass "HARD-CAP=5 enforced (exit=1)" \
-  || fail "cap check failed: exit=$RC4 out=$OUT4"
+[ "$RC4" = "0" ] && pass "spawn succeeds with 5 active lanes already registered (no cap)" \
+  || fail "spawn should not be capped: exit=$RC4 out=$OUT4"
+case "$(cat "$MEM4/LANES.md")" in
+  *"### \`lane6\`"*) pass "sixth lane section appended" ;;
+  *) fail "sixth lane section missing after uncapped spawn" ;;
+esac
 case "$OUT4" in
-  *HARD-CAP*) pass "cap-check error message mentions HARD-CAP" ;;
-  *) fail "cap-check error message missing 'HARD-CAP': $OUT4" ;;
+  *HARD-CAP*) fail "output still mentions HARD-CAP: $OUT4" ;;
+  *) pass "no HARD-CAP message" ;;
+esac
+
+# ---- --harness (#605 / #599 ADR D1) ----
+echo
+echo "[harness]"
+MEMH="$TMP/memh"; mkdir -p "$MEMH" "$TMP/repoh"; write_fixture_lanes "$MEMH/LANES.md"
+OUTH=$("$SCRIPT" artlane 206 --short art --slug "x" --harness codex --no-claim --no-branch --yes \
+        --memory-dir "$MEMH" --lanes-file "$MEMH/LANES.md" --repo-root "$TMP/repoh" 2>&1)
+RCH=$?
+[ "$RCH" = "0" ] && pass "--harness codex spawn exit 0" || fail "--harness codex exit=$RCH out=$OUTH"
+HSEC=$(awk '/^### `artlane`/{s=1; next} /^### / && s {exit} s' "$MEMH/LANES.md")
+case "$HSEC" in
+  *"- **Harness**: \`codex\`"*) pass "Harness: codex recorded in the new lane section" ;;
+  *) fail "Harness field missing/wrong in artlane section: $HSEC" ;;
+esac
+OUTD=$("$SCRIPT" deflane 207 --short defl --slug "x" --no-claim --no-branch --yes \
+        --memory-dir "$MEMH" --lanes-file "$MEMH/LANES.md" --repo-root "$TMP/repoh" 2>&1)
+DSEC=$(awk '/^### `deflane`/{s=1; next} /^### / && s {exit} s' "$MEMH/LANES.md")
+case "$DSEC" in
+  *"- **Harness**: \`claude\`"*) pass "default harness recorded as claude" ;;
+  *) fail "default Harness not claude: $DSEC ($OUTD)" ;;
+esac
+OUTB=$("$SCRIPT" badlane 208 --short badl --slug "x" --harness gemini --no-claim --no-branch --yes \
+        --memory-dir "$MEMH" --lanes-file "$MEMH/LANES.md" --repo-root "$TMP/repoh" 2>&1)
+RCB=$?
+[ "$RCB" = "2" ] && pass "invalid --harness rejected (exit=2)" || fail "invalid --harness exit=$RCB out=$OUTB"
+case "$OUTB" in
+  *"--harness must be claude or codex"*) pass "invalid --harness error names the allowed values" ;;
+  *) fail "invalid --harness error message unexpected: $OUTB" ;;
+esac
+OUTM=$("$SCRIPT" misslane 210 --short miss --slug "x" --no-claim --no-branch --yes \
+        --memory-dir "$MEMH" --lanes-file "$MEMH/LANES.md" --repo-root "$TMP/repoh" --harness 2>&1)
+RCM=$?
+case "$RCM:$OUTM" in
+  "2:"*"--harness needs a value"*) pass "--harness without value rejected" ;;
+  *) fail "--harness without value: exit=$RCM out=$OUTM" ;;
+esac
+# EOF insert branch: Active Lanes is the last "## " section of LANES.md.
+MEME="$TMP/meme"; mkdir -p "$MEME" "$TMP/repoe"
+printf '# Lanes\n\n## Active Lanes\n\n### `solo`\n\n- **Short name**: `solo`\n- **Status**: `active`\n' > "$MEME/LANES.md"
+OUTE=$("$SCRIPT" eoflane 211 --short eofl --slug "x" --harness codex --no-claim --no-branch --yes \
+        --memory-dir "$MEME" --lanes-file "$MEME/LANES.md" --repo-root "$TMP/repoe" 2>&1)
+RCE=$?
+ESEC=$(awk '/^### `eoflane`/{s=1; next} /^### / && s {exit} s' "$MEME/LANES.md")
+case "$RCE:$ESEC" in
+  "0:"*"- **Harness**: \`codex\`"*) pass "EOF-branch insert records Harness" ;;
+  *) fail "EOF-branch insert missing Harness: exit=$RCE sec=$ESEC out=$OUTE" ;;
+esac
+case "$(cat "$MEMH/LANES.md")" in
+  *"### \`badlane\`"*) fail "invalid --harness still mutated LANES.md" ;;
+  *) pass "LANES.md untouched on invalid --harness" ;;
+esac
+OUTDR=$("$SCRIPT" drylane 209 --short dryl --slug "x" --harness codex --no-claim --no-branch --dry-run \
+        --memory-dir "$MEMH" --lanes-file "$MEMH/LANES.md" --repo-root "$TMP/repoh" 2>&1)
+case "$OUTDR" in
+  *"harness=codex"*) pass "--dry-run shows harness" ;;
+  *) fail "--dry-run missing harness: $OUTDR" ;;
 esac
 
 # ---- happy path with --no-claim --no-branch --yes ----

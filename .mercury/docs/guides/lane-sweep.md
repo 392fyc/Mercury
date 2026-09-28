@@ -101,10 +101,10 @@ side-experiment        45d          38d           52d         stale
 
 ## Recommended cadence
 
-- **Manual**: run before opening a new lane to confirm capacity (Rule 7 cap-5).
-- **Cron**: monthly is sufficient for v0.1 — the threshold is 14d, the cap is 5
-  lanes, and the worst-case cost of a missed sweep is operator confusion (not
-  data loss).
+- **Manual**: run before opening a new lane to see which existing lanes are
+  stale (there is no lane-count cap since Issue #605).
+- **Cron**: monthly is sufficient for v0.1 — the threshold is 14d, and the
+  worst-case cost of a missed sweep is operator confusion (not data loss).
 
 A cron registration is **not** committed by default. Operators who want
 unattended sweeping can install a scheduled job manually:

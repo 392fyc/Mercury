@@ -62,6 +62,9 @@ assert_exit 0 "--help"                     "$SCRIPT" --help
 assert_exit 2 "unknown flag rejected"      "$SCRIPT" --bogus
 assert_exit 2 "--max zero rejected"        "$SCRIPT" --max 0 --memory-dir "$TMP"
 assert_exit 2 "--max non-numeric rejected" "$SCRIPT" --max abc --memory-dir "$TMP"
+assert_exit 2 "--max empty string rejected (not silently uncapped)" "$SCRIPT" --max "" --memory-dir "$TMP"
+assert_exit 2 "--max leading zero rejected (keeps JSON valid)" "$SCRIPT" --max 007 --memory-dir "$TMP"
+assert_exit 2 "--max without value rejected" "$SCRIPT" --memory-dir "$TMP" --max
 assert_exit 2 "--format invalid rejected"  "$SCRIPT" --format yaml --memory-dir "$TMP"
 assert_exit 2 "missing memory dir rejected" "$SCRIPT" --memory-dir "$TMP/nope"
 assert_exit 2 "missing lanes-file rejected" "$SCRIPT" --lanes-file "$TMP/nope.md" --memory-dir "$TMP"
@@ -91,7 +94,29 @@ OUT_6=$("$SCRIPT" --memory-dir "$MEM" --max 5 2>&1)
 RC_6=$?
 [ "$RC_6" = "1" ] && pass "6 active / max 5 → exit 1" || fail "6/5 exit=$RC_6"
 assert_contains "verdict exceeded"   "exceeded"     "$OUT_6"
-assert_contains "resolution hint"    "protocol-violation" "$OUT_6"
+assert_contains "threshold note"     "threshold" "$OUT_6"
+
+# ---- default: no cap (#605) ----
+echo
+echo "[no-cap-default]"
+write_fixture_lanes "$MEM/LANES.md" 9
+OUT_NC=$("$SCRIPT" --memory-dir "$MEM" 2>&1)
+RC_NC=$?
+[ "$RC_NC" = "0" ] && pass "9 active / no --max → exit 0 (no cap)" || fail "no-cap exit=$RC_NC out=$OUT_NC"
+assert_contains "verdict uncapped"   "uncapped" "$OUT_NC"
+assert_contains "count reported"     "9 active" "$OUT_NC"
+OUT_NCJ=$("$SCRIPT" --memory-dir "$MEM" --format json 2>&1)
+RC_NCJ=$?
+[ "$RC_NCJ" = "0" ] && pass "json no-cap exit 0" || fail "json no-cap exit=$RC_NCJ"
+assert_contains "json max is null"   '"max":null' "$OUT_NCJ"
+assert_contains "json verdict uncapped" '"verdict":"uncapped"' "$OUT_NCJ"
+if command -v python3 >/dev/null 2>&1; then
+  if printf '%s' "$OUT_NCJ" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["max"] is None and d["active_count"]==9' 2>/dev/null; then
+    pass "json no-cap output is parseable (max=null, count=9)"
+  else
+    fail "json no-cap output invalid: $OUT_NCJ"
+  fi
+fi
 
 # Custom max
 write_fixture_lanes "$MEM/LANES.md" 4
