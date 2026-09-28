@@ -61,7 +61,7 @@ Mercury (lightweight core — only builds what no external project provides)
 └── modules/           reserved for mounted external projects (currently empty — see External project mounts)
 ```
 
-`adapters/` currently holds four adapters: `mercury-loop-detector` and `mercury-test-gate` (mechanical Stop-hook gates), `gpt-image-2` (pixel-asset generation), and `playwright-mcp` (browser automation mount).
+`adapters/` currently holds three adapters: `mercury-loop-detector` and `mercury-test-gate` (mechanical Stop-hook gates) and `playwright-mcp` (browser automation mount).
 
 Configuration lives at the repo root:
 
@@ -101,7 +101,7 @@ On session start, Claude Code auto-discovers every agent under `.claude/agents/`
 
 The skills under `.claude/skills/` and sub-agents under `.claude/agents/` are **detachable** — each directory is self-contained and can be copied into another Claude Code project. Skill frontmatter lists the trigger phrases in English and Chinese. Treat the directory contents as the authoritative list; the snapshot below is current as of this writing and intentionally not a pinned count.
 
-Skills (6 at time of writing), all opt-in:
+Skills (4 at time of writing), all opt-in:
 
 | Skill | Purpose |
 |-------|---------|
@@ -109,8 +109,6 @@ Skills (6 at time of writing), all opt-in:
 | `pr-flow` | A single requested PR stage: check a PR, handle Argus comments, or run one step |
 | `dual-verify` | Optional review in two independent contexts, not a default gate |
 | `autoresearch` | Bounded multi-round research with coverage, sources and open questions |
-| `animate-frames` | Pixel-frame animation pipeline (sprite sequences) via the `gpt-image-2` adapter |
-| `sot-pixel-pipeline` | Pixel asset generation for portraits, icons, cut-ins and board pieces |
 
 `web-research` and `handoff` are provided as user-level skills rather than from this repository.
 

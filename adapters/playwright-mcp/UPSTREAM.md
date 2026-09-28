@@ -11,7 +11,7 @@ one-time manual step (see adapter README §Setup).
 
 This is the **third mount mode** in Mercury's adapter policy — an
 **npm-version-pinned MCP server (runtime-only)** — alongside (1) git submodule
-to `modules/` and (2) `uvx git+<repo>@<SHA>` runtime-only (gpt-image-2). See
+to `modules/` and (2) `uvx git+<repo>@<SHA>` runtime-only (first used by the since-removed gpt-image-2 adapter). See
 `adapters/README.md` §约束 + `.mercury/docs/DIRECTION.md` §四.
 
 ## Pin

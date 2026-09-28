@@ -217,7 +217,7 @@ Codex 日常默认原生自主执行，实施与审查深度按任务风险选�
 外部项目按以下三类受治理的挂载模式之一接入，**默认首选 git submodule**：
 
 1. **git submodule（默认）** — 每个外部项目作为 git submodule 挂载到 `modules/` 目录下（详见下方"挂载方式: Git Submodule"）。
-2. **uvx git+SHA runtime-only** — runtime-only 依赖经 `uvx --from git+<repo>@<SHA>` 引用（首例 `adapters/gpt-image-2/`），不 vendoring 源码，按 git commit SHA pin。
+2. **uvx git+SHA runtime-only** — runtime-only 依赖经 `uvx --from git+<repo>@<SHA>` 引用（首例为 `adapters/gpt-image-2/`，已随 #586 移除），不 vendoring 源码，按 git commit SHA pin。
 3. **npm-version-pinned MCP server（runtime-only）** — runtime-only 的 MCP server 经 npm 按版本解析挂载（如 `npx @playwright/mcp@<pinned-version>` 或等价的 `npm install --prefix <repo 外 cache>`），首例 `adapters/playwright-mcp/`（playwright-mcp / Issue #154）。
 
 模式 2、3 同为 runtime-only 例外，均须满足：
