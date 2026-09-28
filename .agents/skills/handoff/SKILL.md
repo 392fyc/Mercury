@@ -90,16 +90,21 @@ root cause of the Issue #544 fidelity incident.
 
 Two sources:
 
-1. **Durable memory** — the auto-memory directory holds `MEMORY.md`,
-   `LANES.md`, and checkpoints:
+1. **Durable memory** — in the Codex harness, start with
+   `.mercury/memory/README.md` when present and load the entries it indexes
+   on demand (AGENTS.md §Ownership and memory; local, private, gitignored).
+   The lane registry `LANES.md` is separate: the lane scripts and Step 5 read
+   it at one fixed path, not a per-cwd directory:
    ```
-   ~/.claude/projects/<encoded_cwd>/memory/
+   ${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}/LANES.md
    ```
-   Where `<encoded_cwd>` is the cwd with `:` `\` `/` replaced by `-`, leading
-   `-` stripped. Glob for `*.md`. Read checkpoints + project memories.
+   (the default is the Claude Code memory dir shared on this machine; nothing
+   in the Codex harness sets `MERCURY_MEMORY_DIR`). Read checkpoints + project
+   memories there as well if the user keeps them in that dir.
 2. **Previous handoff doc** — resolve via Step 2.0 (`<workspace>/.handoff/` or
    `<kb_dir>/handoff/`) and read the prior `session-handoff*.md` there. Legacy
-   sessions may still have it under the memory dir above — read whichever
+   sessions may still have it in a Claude Code memory dir under
+   `~/.claude/projects/` (e.g. the shared `LANES.md` dir above) — read whichever
    exists (prefer the Step 2.0 location).
 
 ### Layer 3: Project documentation (if present)
@@ -171,8 +176,8 @@ Pick **one** primary task + one secondary fallback. Never produce a menu.
 ### Step 2.0: Resolve handoff storage location (run once; reused by Step 5)
 
 The handoff doc is **transient working state**, so it lives **with the
-workspace/KB — never** under the global `~/.claude/projects/<encoded>/memory/`
-dir (that path holds only durable memory: `MEMORY.md`, `LANES.md`, checkpoints).
+workspace/KB — never** in a durable memory dir (`.mercury/memory/`, or the
+shared `LANES.md` dir resolved in Layer 2; those hold only durable memory).
 Resolve the storage dir in this order and reuse `$HANDOFF_PATH` everywhere:
 
 ```bash
@@ -603,12 +608,15 @@ not be installed, or the runtime may have failed silently. The explicit
 **SHORT_PROMPT contract (Δ11 — Path C lane assertion)**:
 
 The prompt MUST start with a `[LANE=<name>]` marker as its first
-whitespace-delimited token. The new session's startup checks (via
-`scripts/lane-assertion.sh`) verify three-way alignment between this marker,
-the cwd-encoded project state dir, and the current git branch prefix. If
-the marker is missing or any pair disagrees, the assertion fails fast and
-guides recovery — preventing the share-cwd routing-bleed failure mode
-(Issue #342, S13-side-multi-lane forensic record).
+whitespace-delimited token. `scripts/lane-assertion.sh` verifies three-way
+alignment between this marker, the session cwd (which must match the lane's
+`Worktree path` in `LANES.md` after slash-encoding), and the current git
+branch prefix. If the
+marker is missing or any pair disagrees, the assertion fails fast and guides
+recovery — preventing the share-cwd routing-bleed failure mode (Issue #342,
+S13-side-multi-lane forensic record). No hook runs it automatically when
+the new session starts (the Codex harness registers none): run it through
+the pre-launch smoke check below (recommended).
 
 ```bash
 # Resolve the active lane:
@@ -622,8 +630,8 @@ case "$HANDOFF_BASENAME" in
 esac
 
 # Resolve the worktree path from LANES.md (Rule 5.1, Issue #342).
-# This is the cwd that wt/tmux must launch the new session at — its
-# encoding determines ~/.claude/projects/<encoded>/ project state dir.
+# This is the cwd that wt/tmux must launch the new session at, so that
+# lane-assertion's cwd check passes and the lane branch is checked out there.
 LANES_FILE="${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}/LANES.md"
 WORKTREE_PATH_RAW=$(awk -v lane="$LANE_NAME" '
 BEGIN { in_section=0; in_fence=0 }
@@ -678,7 +686,7 @@ way the receiver's first-action fidelity diff travels in the doc, not the launch
 command.
 
 `$HANDOFF_PATH` is the location resolved in **Step 2.0** (`<workspace>/.handoff/`
-or `<kb_dir>/handoff/`, never the global memory dir). Shell variables do NOT
+or `<kb_dir>/handoff/`, never a durable memory dir). Shell variables do NOT
 persist across separate Bash tool calls. The launcher needs all three of
 `$HANDOFF_PATH`, `$LANE_NAME` and `$WORKTREE_PATH` in the **same shell** that
 runs it: if Step 5 runs in a fresh shell, re-run the Step 2.0 resolution block
@@ -778,8 +786,9 @@ the positional argument after `--` is the session's first user message
 keeps a prompt beginning with `-` out of option parsing
 (<https://github.com/anthropics/claude-code/issues/3844>). The `-d "$WORKTREE_PATH"` flag
 (wt) / `-c "$WORKTREE_PATH"` flag (tmux) sets the new tab's cwd to the
-lane's worktree, so `~/.claude/projects/<encoded>/` resolves to the
-lane-specific state dir per Rule 5.1.
+lane's worktree per Rule 5.1, so the new session works on that lane's
+checkout and branch, and lane-assertion's cwd check (cwd matches the lane
+`Worktree path` after slash-encoding) holds.
 
 After spawning the new process, do NOT continue producing output in the old
 session. The old session's job is done. Advise user to `/exit` (or close
@@ -860,9 +869,10 @@ the auto path from Step 5 (auto mode).
   (<https://github.com/392fyc/claude-handoff>).
 - **Δ10/Δ11 (Issue #345)** — auto-mode SHORT_PROMPT MUST start with
   `[LANE=<name>]` marker, and `wt -d` / `tmux -c` MUST be set to the
-  lane's `Worktree path` field from `LANES.md` (Rule 5.1). The new
-  session's `scripts/lane-assertion.sh` validates three-way alignment
-  (marker × cwd-encoded × branch prefix) at startup. Soft-disable via
+  lane's `Worktree path` field in `LANES.md` (Rule 5.1).
+  `scripts/lane-assertion.sh` validates three-way alignment
+  (marker × cwd matching the lane worktree × branch prefix); in the Codex harness it
+  runs only via the Step 5 pre-launch smoke check. Soft-disable via
   `MERCURY_LANE_ASSERT_DISABLED=1`. See
   `.mercury/docs/guides/lane-naming.md` §Lane workspace isolation
   Δ10/Δ11 sub-sections for the full contract.
