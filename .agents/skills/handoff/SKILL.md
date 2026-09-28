@@ -23,12 +23,12 @@ handoff — nothing triggers automatically. Follow these steps precisely.
 > have actually run `bash scripts/handoff-launch.sh ...` (Step 5 Auto mode; a
 > bash script — on Windows it runs via Git Bash / the Bash tool) and seen it
 > **exit 0 with its success report** (currently `spawned new tab`). Printing
-> text and ending the turn = the bug the user keeps hitting. A mechanical safety
-> net now exists (`.claude/hooks/auto-handoff-stop.sh`, Issue #469): if you ARM
-> it first (Step 5-auto.0) and then stop while still armed, it runs the launcher
-> for you. But the net only catches you if you armed BEFORE printing the prompt,
-> and it does not replace your duty — the launcher call is still YOUR
-> responsibility and MUST be the final substantive action of the turn (trivial
+> text and ending the turn = the bug the user keeps hitting. There is **no
+> mechanical safety net** here: no Stop hook runs the launcher for you (the
+> Claude Code `.claude/hooks/auto-handoff-stop.sh` of Issue #469 is not part
+> of the Codex harness), so nothing spawns the new session if you stop early.
+> The launcher call is entirely YOUR responsibility and MUST be the final
+> substantive action of the turn (trivial
 > state writes/cleanup may follow, but no further task work).
 >
 > Self-check before you end an auto-mode turn: "Did I run handoff-launch.sh and
@@ -568,35 +568,14 @@ top of this skill). This applies equally to an autorun/ralph/ultrawork run that
 was told to auto-handoff on completion: the loop's final substantive act MUST
 be the launcher call, not a printed prompt.
 
-#### Step 5-auto.0: ARM the mechanical safety net FIRST (Mercury #469)
-
-There is a Stop hook (`.claude/hooks/auto-handoff-stop.sh`) that mechanically
-runs the launcher if you stop while a handoff is *armed*. It is a safety net for
-exactly the recurring bug above — but it can only catch you if you **arm it
-before you print the prompt**. So, the moment you enter auto mode (right after
-Step 2 wrote the doc):
-
-1. Resolve `LANE_NAME`, `WORKTREE_PATH`, `HANDOFF_PATH` — run the resolution
-   block in the launch pattern below **now** (it needs no spawn).
-2. Write the arm flag (key=value; consumed + deleted by the Stop hook). This
-   snippet defines `REPO_ROOT` itself — do NOT rely on it being set by the later
-   launch snippet, which runs after this point:
-
-```bash
-REPO_ROOT="$(git rev-parse --show-toplevel)"
-mkdir -p "$REPO_ROOT/.mercury/state"
-{
-  printf 'lane=%s\n' "$LANE_NAME"
-  printf 'handoff_doc=%s\n' "$HANDOFF_PATH"
-  printf 'worktree=%s\n' "$WORKTREE_PATH"
-} > "$REPO_ROOT/.mercury/state/auto-handoff-armed"
-```
-
-Now even if you stop early, the new session still spawns. The arm flag lives in
-`.mercury/state/` (already gitignored) and is cleared on launch. This is the
-permanent mechanical fix for Issue #469 — but it does NOT excuse you from
-running the launcher yourself: arming is the net, the launcher call below is
-still your job (and it disarms atomically on success).
+> **No arming step.** Earlier revisions had a "Step 5-auto.0" that wrote
+> `.mercury/state/auto-handoff-armed` for the Claude Code Stop hook
+> `.claude/hooks/auto-handoff-stop.sh` (Issue #469). This repository registers
+> no Codex hooks, so the flag is never consumed on the Codex side — do NOT
+> write it. A leftover flag in the shared `.mercury/state/` could instead be
+> picked up by a Claude Code session stopping in the same checkout (within the
+> hook's 120-minute staleness window) and spawn an unintended handoff. The only
+> mechanism that spawns the new session is your own launcher call below.
 
 After Step 5.1 + 5.2, and Pre-Termination Checklist passed:
 
@@ -733,14 +712,11 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 bash "$REPO_ROOT/scripts/handoff-launch.sh" \
   --lane "$LANE_NAME" \
   --worktree "$WORKTREE_PATH" \
-  --handoff-doc "$HANDOFF_PATH" \
-  && rm -f "$REPO_ROOT/.mercury/state/auto-handoff-armed"
+  --handoff-doc "$HANDOFF_PATH"
 ```
 
-The `&& rm -f ...auto-handoff-armed` disarms the Step 5-auto.0 safety net
-**atomically** in the same command — on launcher success the flag is gone before
-you can yield, so the Stop hook sees no flag and does not double-spawn. If the
-launcher fails, the flag stays armed and the Stop hook handles the retry.
+If the launcher fails (non-zero exit), nothing retries it for you: read its
+stderr, fix the cause, and re-run it before ending the turn.
 
 This script:
 - Constructs SHORT_PROMPT canonically with `[LANE=<name>]` marker preserved
@@ -836,10 +812,10 @@ the auto path from Step 5 (auto mode).
   as the final substantive action. Ending the turn after only printing text is
   the #1 recurring auto-handoff bug (see top-of-skill banner).
 - Do NOT add automatic hooks for SessionEnd or PreCompact — handoff is
-  **explicit only**. The mechanical reliability fix is a *Stop* hook
-  (`.claude/hooks/auto-handoff-stop.sh`, Issue #469) that fires ONLY when auto
-  mode has explicitly armed it (Step 5-auto.0) — it never auto-handoffs an
-  un-armed session, so "explicit only" is preserved.
+  **explicit only**. This skill registers no hooks at all (the Claude Code
+  *Stop* hook `.claude/hooks/auto-handoff-stop.sh` of Issue #469 is not part
+  of the Codex harness and is never armed by this skill); auto-mode reliability
+  rests on running the launcher yourself as the final substantive action.
 - **Mode-scoped termination is SESSION-scoped, not turn-scoped**: auto mode
   treats handoff as a terminal event for the old session (spawn new → /exit
   old), and terminal means **across every later turn**, not just the spawn
