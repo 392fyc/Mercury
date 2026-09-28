@@ -10,7 +10,8 @@
 #      lessons learned.
 #   2. cwd-encoded — the session cwd MUST be the lane's worktree (compared
 #      after slash-to-dash encoding). Harness-neutral invariant; what the
-#      cwd routes differs per harness (Issue #599 ADR, decision "lane-assertion is harness-neutral"):
+#      cwd routes differs per harness (Issue #599 ADR, decision
+#      "lane-assertion 与 harness 无关"):
 #      - Claude Code derives `~/.claude/projects/<encoded-cwd>/` (session
 #        transcripts) from the cwd of the `claude` invocation; reference:
 #        https://code.claude.com/docs/en/claude-directory
