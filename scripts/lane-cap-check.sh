@@ -1,19 +1,17 @@
 #!/usr/bin/env bash
-# scripts/lane-cap-check.sh — Mercury multi-lane capacity advisory.
-# Implements Rule 7 HARD-CAP of feedback_lane_protocol.md (v0.1 Delta 7,
-# Issue #314).
+# scripts/lane-cap-check.sh — Mercury active-lane count report.
+# Originally the Rule 7 HARD-CAP check (v0.1 Delta 7, Issue #314). The
+# lane-count cap was removed by Issue #605 (#599 ADR D1: lanes are uncapped).
 #
-# Counts the number of `Status: active` lanes in LANES.md. The protocol
-# caps active lanes at 5 (Miller's 7±2 working memory + Google multi-agent
-# 3-5 optimal + Personal Kanban WIP limits 3-5). Exceeding the cap requires
-# either closing an existing lane OR opening an Issue with the
-# `protocol-violation` label requesting a cap raise.
+# Counts the number of `Status: active` lanes in LANES.md and reports them.
+# By default there is NO cap: the verdict is `uncapped` and the exit code
+# is 0. Pass `--max N` to opt in to a threshold of your own; the verdict is
+# then `within_cap` / `exceeded` and exit code 1 signals "exceeded" so a
+# caller that wants a gate (CI step / pre-commit hook) can use it.
 #
-# This script is ADVISORY — it reports the count + verdict and uses exit
-# code 1 to signal "cap exceeded" so callers can opt-in to gating (CI step
-# / pre-commit hook). The script itself never installs hooks or modifies
-# LANES.md. Hard mechanical enforcement is intentionally out of scope: the
-# cap is sociotechnical (operator + maintainer review), and side lanes
+# This script is ADVISORY: it never installs hooks or modifies LANES.md.
+# It reports; any gating is up to the caller that passes --max. Hard
+# mechanical enforcement is intentionally out of scope, since side lanes
 # cannot easily install or modify shared hooks.
 #
 # Usage:
@@ -23,13 +21,12 @@
 # Defaults:
 #   --lanes-file   <memory-dir>/LANES.md
 #   --memory-dir   ${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}
-#   --max          5
+#   --max          (none: count-only, no cap)
 #   --format       text
 #
 # Exit codes:
-#   0  count <= max (within cap)
-#   1  count >  max (cap exceeded — requires close-existing OR
-#      protocol-violation Issue per Rule 7)
+#   0  no --max given (count-only), or count <= max
+#   1  --max given and count > max
 #   2  invalid args / lanes-file missing / memory dir missing
 
 set -u
@@ -51,7 +48,7 @@ json_string() {
   printf '"%s"' "$s"
 }
 
-MAX=5
+MAX=""
 FORMAT=text
 LANES_FILE=""
 MEMORY_DIR=""
@@ -65,20 +62,26 @@ while [ $# -gt 0 ]; do
                    [ -n "$1" ] || die "--memory-dir requires a non-empty path"
                    MEMORY_DIR="$1"; shift ;;
     --max)         shift; [ $# -gt 0 ] || die "--max needs a value"
+                   [ -n "$1" ] || die "--max must be a positive integer: ''"
                    MAX="$1"; shift ;;
     --format)      shift; [ $# -gt 0 ] || die "--format needs a value"
                    FORMAT="$1"; shift ;;
     -h|--help)
-      sed -n '2,32p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     -*) die "unknown flag: $1" ;;
     *)  die "unexpected positional argument: $1" ;;
   esac
 done
 
-case "$MAX" in
-  ''|*[!0-9]*|0) die "--max must be a positive integer: '$MAX'" ;;
-esac
+# A set --max must be a positive integer without leading zeros, so it is
+# emitted verbatim as a valid JSON number and compared as decimal.
+if [ -n "$MAX" ]; then
+  case "$MAX" in
+    [1-9]|[1-9]*[0-9]) case "$MAX" in *[!0-9]*) die "--max must be a positive integer: '$MAX'" ;; esac ;;
+    *) die "--max must be a positive integer: '$MAX'" ;;
+  esac
+fi
 case "$FORMAT" in
   text|json) ;;
   *) die "--format must be text or json (got '$FORMAT')" ;;
@@ -152,7 +155,9 @@ if [ -n "$ACTIVE_LANES" ]; then
   COUNT=$(printf '%s\n' "$ACTIVE_LANES" | grep -c .)
 fi
 
-if [ "$COUNT" -le "$MAX" ]; then
+if [ -z "$MAX" ]; then
+  VERDICT="uncapped"
+elif [ "$COUNT" -le "$MAX" ]; then
   VERDICT="within_cap"
 else
   VERDICT="exceeded"
@@ -174,16 +179,20 @@ if [ "$FORMAT" = "json" ]; then
 $ACTIVE_LANES
 EOF
   fi
-  printf '{"max":%d,"active_count":%d,"verdict":"%s","lanes":[%s]}\n' \
-    "$MAX" "$COUNT" "$VERDICT" "$JSON_LANES"
+  printf '{"max":%s,"active_count":%d,"verdict":"%s","lanes":[%s]}\n' \
+    "${MAX:-null}" "$COUNT" "$VERDICT" "$JSON_LANES"
 else
-  printf 'lane-cap-check: %d active lane(s), cap=%d → %s\n' "$COUNT" "$MAX" "$VERDICT"
+  if [ -z "$MAX" ]; then
+    printf 'lane-cap-check: %d active lane(s), no cap → %s\n' "$COUNT" "$VERDICT"
+  else
+    printf 'lane-cap-check: %d active lane(s), cap=%d → %s\n' "$COUNT" "$MAX" "$VERDICT"
+  fi
   if [ -n "$ACTIVE_LANES" ]; then
     printf '  active: %s\n' "$(printf '%s' "$ACTIVE_LANES" | tr '\n' ',' | sed 's/,$//')"
   fi
   if [ "$VERDICT" = "exceeded" ]; then
-    printf '  resolution: close an existing lane OR open Issue with `protocol-violation` label requesting cap raise (per feedback_lane_protocol.md HARD-CAP §)\n'
+    printf '  note: over the --max %d threshold you passed (no built-in cap since #605)\n' "$MAX"
   fi
 fi
 
-[ "$VERDICT" = "within_cap" ] && exit 0 || exit 1
+[ "$VERDICT" = "exceeded" ] && exit 1 || exit 0

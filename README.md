@@ -39,7 +39,7 @@ Per [`EXECUTION-PLAN.md`](.mercury/docs/EXECUTION-PLAN.md), Phase 6 is explicitl
 
 Recent additions on top of the core phases:
 
-- **Multi-lane development** — multiple isolated work lanes (own worktree + branch + handoff) running in parallel under a 5-lane hard cap (see [Multi-lane development](#multi-lane-development))
+- **Multi-lane development** — multiple isolated work lanes (own worktree + branch + handoff) running in parallel, driven by Claude Code or Codex, with no lane-count cap (see [Multi-lane development](#multi-lane-development))
 - **Codex native project layer** — `AGENTS.md`, `.codex/rules/`, and guarded PowerShell wrappers carry branch, review, and task policy (see [Multi-agent runtimes](#multi-agent-runtimes))
 
 ## Architecture at a glance
@@ -125,8 +125,8 @@ Mercury registers no project-level hooks for Claude Code or Codex. Git safety is
 Mercury runs multiple **lanes** in parallel — independent work streams that don't step on each other. Each lane owns a git worktree, a branch namespace, and a handoff document, so concurrent sessions (e.g. an architecture lane and a bug-fix lane) stay isolated.
 
 - **Branch prefix**: `lane/<short>/<N>-<slug>` (≤40 chars; a legacy `feature/lane-<lane>/...` form is still accepted)
-- **Hard cap**: 5 active lanes, grounded in working-memory / coordination-overhead research (see [`lane-naming.md`](.mercury/docs/guides/lane-naming.md))
-- **Tooling**: `scripts/lane-*.sh` (spawn / claim / close / sweep) + `lane-assertion.sh`, `lane-cap-check.sh` enforce the protocol mechanically
+- **No lane-count cap**: open as many lanes as you need; the former Δ7 hard cap was removed in [#605](https://github.com/392fyc/Mercury/issues/605). A lane is driven by Claude Code or Codex (`--harness`) and works solo by default or pairs with another lane (see the [cross-harness lane ADR](.mercury/docs/research/issue-599-cross-harness-lane-isolation-2026-09.md))
+- **Tooling**: `scripts/lane-*.sh` (spawn / claim / close / sweep) + `lane-assertion.sh` enforce the protocol mechanically; `lane-cap-check.sh` reports the active-lane count
 - **Lane guides**: [`lane-spawn.md`](.mercury/docs/guides/lane-spawn.md), [`lane-claim.md`](.mercury/docs/guides/lane-claim.md), [`lane-close.md`](.mercury/docs/guides/lane-close.md), [`lane-sweep.md`](.mercury/docs/guides/lane-sweep.md), [`lane-emergency-escalation.md`](.mercury/docs/guides/lane-emergency-escalation.md)
 
 ## Multi-agent runtimes

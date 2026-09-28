@@ -52,7 +52,7 @@ non-atomic claim. 7 deltas required for safe v1 promotion.
 | 4 | 4.1 | P2 | new | Emergency spec-change escalation if main idle > 48h |
 | 5 | 7 | **P0 BREAKING** | replace | Per-session files instead of append-only index |
 | 6 | 2 | P3 | modify | Shorter branch prefix `lane/<short>/<N>-*` |
-| 7 | (cap) | doc-only | new | HARD-CAP at 5 active lanes |
+| 7 | (cap) | doc-only | new | HARD-CAP at 5 active lanes (**superseded by #605: no cap**) |
 
 ## Delta 1 — Rule 1.1 probe-after-write (P1)
 
@@ -163,6 +163,8 @@ IDE autocomplete + URL pasting suffer.
 - [Best practices for naming Git branches (Graphite)](https://graphite.com/guides/git-branch-naming-conventions)
 
 ## Delta 7 — HARD-CAP at 5 active lanes (doc-only)
+
+> **Superseded (2026-09, Issue [#605](https://github.com/392fyc/Mercury/issues/605)):** the lane-count cap was removed; see `.mercury/docs/research/issue-599-cross-harness-lane-isolation-2026-09.md` D1. Kept as history.
 
 **Mechanism**: `LANES.md` MUST NOT exceed 5 active lanes. Attempting to open lane #6 requires:
 1. Closing existing lane first, OR
