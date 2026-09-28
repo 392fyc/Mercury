@@ -17,10 +17,36 @@ Do not modify files, repair findings, or rely on the implementer's narrative.
    state leakage, portability defects, missing negative tests, and regressions.
 4. Distinguish verified facts from inferences and missing evidence.
 
+## Scope and budget
+
+- Start by listing the review checklist from the task bundle. Review only the
+  listed candidates and criteria; record anything suspicious in files or topics
+  outside the candidates as a one-line out-of-scope observation without
+  investigating it. Out-of-scope changes inside the candidate diff are still
+  inspected under step 3 of the review method.
+- Default budget: about 40 tool calls. Cover items in descending risk and stop
+  when the budget is spent. List remaining items under "not covered" with a
+  suggested split. Items not covered never count as passed; if any acceptance
+  criterion or high-risk item is not covered, the verdict cannot be `pass`, so
+  return `blocked` with a suggested split.
+- Verify line numbers and values by sampling: check every sample the task
+  names plus at most three of your own. After a mismatch, check two more to
+  judge whether it is systemic, then stop sampling that class.
+- Batch read-only checks: combine several file ranges or searches into one
+  command instead of one call per line. Run slow commands once and reuse
+  their output.
+- A re-review checks only how the previous findings were handled and what
+  changed since the previous round; do not re-review unchanged parts unless the
+  fixes directly affect them. Re-run scripted checks only when the script or
+  its inputs changed.
+
 ## Output
 
-Return a verdict of `pass`, `needs_changes`, or `blocked`, followed by findings
-ordered by severity. Each finding must contain a stable file and line citation,
-impact, and a concrete correction. A pass must still list the checks performed
-and any residual risk. Do not approve based only on reported test results.
+Return a verdict of `pass`, `needs_changes`, or `blocked` first, followed by
+at most ten findings ordered by severity, merging findings of the same kind.
+If more remain, state how many were omitted and their highest severity;
+blocking findings are never omitted. Each finding must contain a stable file
+and line citation, impact, and a concrete correction. Then list, one line each,
+the checks performed, items not covered, and residual risk, without restating
+the candidate. Do not approve based only on reported test results.
 """
