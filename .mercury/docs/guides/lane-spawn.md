@@ -29,6 +29,24 @@ Steps 5–8 mutate state. Steps 1–4 are pure validation. The split is
 intentional so a `--dry-run` can fully exercise validation without external
 side-effects.
 
+## First-time setup on a machine
+
+All lane scripts read `LANES.md` from the memory dir (`MERCURY_MEMORY_DIR`, else
+`${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory`). On a machine
+that has none, they exit with "memory dir not found" or "LANES.md not found". Create a valid registry once
+from inside the Mercury checkout (Issue #607):
+
+```bash
+scripts/lane-init.sh                      # main lane driven by Claude Code
+scripts/lane-init.sh --main-harness codex # or by Codex
+scripts/lane-init.sh --dry-run            # preview only
+```
+
+It creates the memory dir if needed and writes `## Active Lanes` with the `main`
+lane (its `Worktree path` is the main checkout, even when run from a linked lane
+worktree) plus `## Closed Lanes`. An existing `LANES.md` is never modified, and a
+symlink or non-regular file at that path is refused. Tests: `scripts/test-lane-init.sh`.
+
 ## Usage
 
 ```bash
