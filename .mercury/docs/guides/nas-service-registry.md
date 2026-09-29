@@ -23,7 +23,7 @@
 - **validate-registry.sh satisfies the drift-detection AC**: it enumerates what
   docker is *actually* running and reconciles against the registry, catching the
   three failure modes a push structurally misses — a project deployed without
-  ever calling register (`sot-codex`), a hand-typed `containers[]` that went
+  ever calling register, a hand-typed `containers[]` that went
   stale (`argus` missing `argus-selfcheck-scheduler`), and an occupied host port
   nobody reserved (`8400`).
 

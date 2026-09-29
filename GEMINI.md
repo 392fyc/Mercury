@@ -14,7 +14,6 @@ Read these docs on demand when you need the corresponding information:
 | Topic | Path |
 |-------|------|
 | Role definitions & boundaries | `.mercury/roles/{role}.yaml` |
-| SoT task workflow | `.mercury/docs/guides/sot-workflow.md` |
 | Git branching rules | `.mercury/docs/guides/git-flow.md` |
 | KB directory structure | `.mercury/docs/guides/kb-structure.md` |
 | Project architecture | `.mercury/docs/guides/architecture.md` |
@@ -39,7 +38,7 @@ Read these docs on demand when you need the corresponding information:
 - Do not commit without code review.
 - Do not guess SDK/CLI APIs from training data.
 - Do not install software to C drive. (Windows only; skip on non-Windows environments.)
-- Do not bypass the SoT task flow.
+- Do not bypass the issue-first task flow in AGENTS.md.
 - Do not execute work outside your assigned role.
 
 ## Agent-Specific Notes

@@ -1,7 +1,7 @@
 /**
  * Mercury Core Types
  *
- * SoT Role Model:
+ * Role model:
  * - Main Agent = Orchestrator (user-configurable) — user talks to this only
  * - Sub Agents (Codex, opencode, Gemini) = Workers — receive tasks, return results
  *
@@ -277,7 +277,7 @@ export interface MercuryEvent<T = unknown> {
   parentEventId?: string;
 }
 
-// ─── Task Orchestration (SoT Pattern) ───
+// ─── Task Orchestration ───
 
 /** Agents First: structured agent identity for inter-agent communication */
 export interface TaskAssignee {
@@ -370,7 +370,7 @@ export interface DoDVerification {
   verifiedItems: { item: string; passed: boolean; reason?: string }[];
 }
 
-/** SoT task bundle: tracks a unit of work through its full lifecycle. */
+/** Task bundle: tracks a unit of work through its full lifecycle. */
 export interface TaskBundle {
   taskId: string;
   title: string;

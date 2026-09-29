@@ -286,7 +286,7 @@ governed by Rule 6.
   branches per Rule 2.1 where compatible.
 - The lane MUST still claim Mercury Issues via the `lane:<name>` label
   (where `<name>` matches the full lane name in LANES.md, e.g.
-  `lane:side-sot`, `lane:side-bug` — see `.mercury/docs/guides/lane-claim.md`)
+  `lane:side-bug` — see `.mercury/docs/guides/lane-claim.md`)
   for any Mercury-side work (e.g. cross-repo coordination tickets);
   in-host work tracking lives in the host repo's own ledger (KB, Issues,
   etc.) per host convention and is OPAQUE to Mercury LANES.md.
@@ -298,19 +298,19 @@ governed by Rule 6.
   in `scripts/lane-spawn.sh` or fixtures); the field exists so future
   user-scope asset migrations have a manual audit anchor.
 
-First dogfood: `side-sot` lane (worktree at `<host-repo-root>/<host-repo>`,
+First dogfood: the first cross-repo lane (worktree at `<host-repo-root>/<host-repo>`,
 opened 2026-05-10 per [#374](https://github.com/392fyc/Mercury/issues/374)).
-The `side-sot` LANES.md section lives in user-memory at
+Its LANES.md section lives in user-memory at
 `<canonical>/LANES.md` (where `<canonical>` resolves per the §"Operational
 expectation" rules above — not in the Mercury repo), so the dogfood
 reference cannot be cross-checked against repo content from this branch
 alone. To verify the companion edit at audit time:
 
-- Read the user-memory LANES.md `### \`side-sot\`` section directly (path
+- Read that lane's section in the user-memory LANES.md directly (path
   resolves via `MERCURY_MEMORY_DIR` or its default — see §"Operational
   expectation" above);
 - Issue [#374](https://github.com/392fyc/Mercury/issues/374) body links the
-  full side-sot section content as a comment for repo-side audit anchor;
+  full lane section content as a comment for repo-side audit anchor;
 - This guide change and the user-memory companion edit MUST land in the
   same Mercury session (atomicity is operator-enforced, not tooling-enforced).
 
