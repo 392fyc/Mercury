@@ -47,7 +47,7 @@ Recent additions on top of the core phases:
 ```
 Mercury (lightweight core — only builds what no external project provides)
 ├── .claude/
-│   ├── agents/        sub-agent role definitions (dev, acceptance, critic, design, research, game-*)
+│   ├── agents/        sub-agent role definitions (dev, acceptance, critic, design, research)
 │   ├── skills/        opt-in workflow skills (pr-flow, autoresearch, dev-pipeline, dual-verify, ...)
 │   └── settings.json  permission rules only; no project hooks are registered
 ├── .codex/            Codex CLI config + agents + rules (project-level hook registrations retired)
@@ -112,7 +112,7 @@ Skills (4 at time of writing), all opt-in:
 
 `web-research` and `handoff` are provided as user-level skills rather than from this repository.
 
-Sub-agents (8): `dev`, `acceptance`, `critic`, `design`, `research`, plus three game-design agents (`game-researcher`, `game-analyst`, `game-critic`) cherry-picked from `msitarzewski/agency-agents`. The main session acts as the Mercury main agent; there is no separate `main` sub-agent.
+Sub-agents (5): `dev`, `acceptance`, `critic`, `design`, `research`. The game-design agents moved to Ship of Theseus (#586). The main session acts as the Mercury main agent; there is no separate `main` sub-agent.
 
 ## Hooks
 

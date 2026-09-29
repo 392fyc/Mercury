@@ -144,7 +144,7 @@ def vault_root() -> Path:
 def resolve_in_vault(root: Path, rel: str) -> Path:
     """Join `rel` under `root`, refusing anything that lands outside.
 
-    Same containment rule as scripts/sot_id_map/sources.py: resolve first,
+    Same containment rule as the retired scripts/sot_id_map/sources.py: resolve first,
     then check, so a `..`-laden path or a symlink/junction cannot walk out of
     the vault and read or overwrite an unrelated file. `root` is already
     resolved by `vault_root`.
