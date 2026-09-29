@@ -55,7 +55,7 @@ reserved_ports:
 EOF
 }
 
-# docker stub for auto-derive: sot-codex has two containers (multi-file compose).
+# docker stub for auto-derive: demo-app has two containers (multi-file compose).
 make_docker_stub() {
   cat > "$1" <<'EOF'
 #!/bin/sh
@@ -65,8 +65,8 @@ fmt=""
 while [ $# -gt 0 ]; do case "$1" in --format) shift; fmt="$1"; shift ;; *) shift ;; esac; done
 # project|Names form (auto-derive)
 cat <<'ROWS'
-sot-codex|sot-codex-tunnel-1
-sot-codex|sot-codex-app-1
+demo-app|demo-app-tunnel-1
+demo-app|demo-app-app-1
 argus|argus
 argus|argus-tunnel
 argus|argus-selfcheck-scheduler
@@ -116,15 +116,15 @@ run_register() {
 # === Test 1: register a NEW service → REGISTER-OK, upserted, port reserved ===
 REG1="$TEST_ROOT/r1.yaml"
 write_baseline_registry "$REG1"
-run_register "$REG1" --name sot-codex --port 8400 --subdomain sot \
-  --url https://sot.fyc-space.uk --containers "sot-codex-tunnel-1,sot-codex-app-1" \
-  --purpose "SoT codex"
+run_register "$REG1" --name demo-app --port 8400 --subdomain demo \
+  --url https://demo.example.com --containers "demo-app-tunnel-1,demo-app-app-1" \
+  --purpose "Demo app"
 assert_rc "new_service_ok" 0
-assert_out_contains "new_service_marker" "REGISTER-OK sot-codex"
-assert_file_contains "new_service_in_file" "  sot-codex:" "$REG1"
+assert_out_contains "new_service_marker" "REGISTER-OK demo-app"
+assert_file_contains "new_service_in_file" "  demo-app:" "$REG1"
 assert_file_contains "new_service_port" "    port: 8400" "$REG1"
 # containers[] is rendered SORTED (byte-identical regardless of input order).
-assert_file_contains "new_service_containers" "containers: [sot-codex-app-1, sot-codex-tunnel-1]" "$REG1"
+assert_file_contains "new_service_containers" "containers: [demo-app-app-1, demo-app-tunnel-1]" "$REG1"
 # Port reserved.
 assert_file_contains "new_port_reserved" "- 8400" "$REG1"
 
@@ -140,9 +140,9 @@ assert_file_contains "sibling_argus_kept" "containers: [argus, argus-tunnel]" "$
 
 # === Test 3: idempotency — re-register same args → byte-identical services.yaml ===
 SNAP=$(cat "$REG1")
-run_register "$REG1" --name sot-codex --port 8400 --subdomain sot \
-  --url https://sot.fyc-space.uk --containers "sot-codex-tunnel-1,sot-codex-app-1" \
-  --purpose "SoT codex"
+run_register "$REG1" --name demo-app --port 8400 --subdomain demo \
+  --url https://demo.example.com --containers "demo-app-tunnel-1,demo-app-app-1" \
+  --purpose "Demo app"
 assert_rc "idempotent_ok" 0
 if [ "$(cat "$REG1")" = "$SNAP" ]; then pass_case; else
   fail_case "idempotent_byte_identical (re-register changed the file)"
@@ -181,10 +181,10 @@ assert_out_contains "reserved_unowned_inreserved" "reserved_ports"
 # === Test 7: --containers auto-derive from docker (multi-container project) ===
 REG7="$TEST_ROOT/r7.yaml"
 write_baseline_registry "$REG7"
-run_register "$REG7" --name sot-codex --port 8400
+run_register "$REG7" --name demo-app --port 8400
 assert_rc "autoderive_ok" 0
-# Stub returns sot-codex-tunnel-1 + sot-codex-app-1; rendered SORTED.
-assert_file_contains "autoderive_containers" "containers: [sot-codex-app-1, sot-codex-tunnel-1]" "$REG7"
+# Stub returns demo-app-tunnel-1 + demo-app-app-1; rendered SORTED.
+assert_file_contains "autoderive_containers" "containers: [demo-app-app-1, demo-app-tunnel-1]" "$REG7"
 
 # === Test 8: upsert REPLACES an existing service subtree (not duplicate) ===
 REG8="$TEST_ROOT/r8.yaml"
@@ -214,7 +214,7 @@ assert_rc "missing_port_err" 1
 # === Test 10: a .bak timestamped backup is created on write ===
 REG10="$TEST_ROOT/r10.yaml"
 write_baseline_registry "$REG10"
-run_register "$REG10" --name sot-codex --port 8400 --containers "sot-codex-app-1"
+run_register "$REG10" --name demo-app --port 8400 --containers "demo-app-app-1"
 assert_rc "bak_write_ok" 0
 CASES=$((CASES+1))
 if [ -f "$REG10.bak-20260623-000000" ]; then PASS=$((PASS+1)); else
@@ -242,7 +242,7 @@ assert_file_contains "merge_override_keep_url" "    url: https://argus.fyc-space
 
 # === Test 12: auto-derive idempotency under shuffled docker enumeration order ===
 # Two docker stubs return the SAME container set in DIFFERENT orders. Registering
-# sot-codex (no --containers) against each must yield a byte-identical file
+# demo-app (no --containers) against each must yield a byte-identical file
 # (containers[] is sorted, so order in docker output is irrelevant).
 STUB_A="$TEST_ROOT/docker-A.sh"
 STUB_B="$TEST_ROOT/docker-B.sh"
@@ -251,8 +251,8 @@ cat > "$STUB_A" <<'EOF'
 cmd="$1"; shift; [ "$cmd" = "ps" ] || exit 1
 while [ $# -gt 0 ]; do case "$1" in --format) shift; shift ;; *) shift ;; esac; done
 cat <<'ROWS'
-sot-codex|sot-codex-app-1
-sot-codex|sot-codex-tunnel-1
+demo-app|demo-app-app-1
+demo-app|demo-app-tunnel-1
 ROWS
 EOF
 cat > "$STUB_B" <<'EOF'
@@ -260,19 +260,19 @@ cat > "$STUB_B" <<'EOF'
 cmd="$1"; shift; [ "$cmd" = "ps" ] || exit 1
 while [ $# -gt 0 ]; do case "$1" in --format) shift; shift ;; *) shift ;; esac; done
 cat <<'ROWS'
-sot-codex|sot-codex-tunnel-1
-sot-codex|sot-codex-app-1
+demo-app|demo-app-tunnel-1
+demo-app|demo-app-app-1
 ROWS
 EOF
 chmod +x "$STUB_A" "$STUB_B"
 REG12A="$TEST_ROOT/r12a.yaml"; REG12B="$TEST_ROOT/r12b.yaml"
 write_baseline_registry "$REG12A"; write_baseline_registry "$REG12B"
 ld="$TEST_ROOT/lock-12a"
-LAST_OUT=$(REGISTRY_FILE="$REG12A" REGISTRY_DOCKER="$STUB_A" REGISTRY_LOCKDIR="$ld" sh "$SCRIPT" --name sot-codex --port 8400 2>&1) && LAST_RC=0 || LAST_RC=$?
+LAST_OUT=$(REGISTRY_FILE="$REG12A" REGISTRY_DOCKER="$STUB_A" REGISTRY_LOCKDIR="$ld" sh "$SCRIPT" --name demo-app --port 8400 2>&1) && LAST_RC=0 || LAST_RC=$?
 rmdir "$ld" 2>/dev/null || true
 assert_rc "shuffle_a_ok" 0
 ld="$TEST_ROOT/lock-12b"
-LAST_OUT=$(REGISTRY_FILE="$REG12B" REGISTRY_DOCKER="$STUB_B" REGISTRY_LOCKDIR="$ld" sh "$SCRIPT" --name sot-codex --port 8400 2>&1) && LAST_RC=0 || LAST_RC=$?
+LAST_OUT=$(REGISTRY_FILE="$REG12B" REGISTRY_DOCKER="$STUB_B" REGISTRY_LOCKDIR="$ld" sh "$SCRIPT" --name demo-app --port 8400 2>&1) && LAST_RC=0 || LAST_RC=$?
 rmdir "$ld" 2>/dev/null || true
 assert_rc "shuffle_b_ok" 0
 CASES=$((CASES+1))
@@ -281,7 +281,7 @@ if [ "$(cat "$REG12A")" = "$(cat "$REG12B")" ]; then PASS=$((PASS+1)); else
   [ "$VERBOSE" = "1" ] && diff "$REG12A" "$REG12B" >&2
 fi
 # And the sorted rendering is deterministic.
-assert_file_contains "shuffle_sorted" "containers: [sot-codex-app-1, sot-codex-tunnel-1]" "$REG12A"
+assert_file_contains "shuffle_sorted" "containers: [demo-app-app-1, demo-app-tunnel-1]" "$REG12A"
 
 # === Test 13: precise sibling preservation — replacing a MIDDLE service leaves
 # the bytes before/after it (blank separators, inline comments, neighbor blocks)
@@ -339,12 +339,12 @@ assert_file_contains "sibling_beta_replaced" "    purpose: REPLACED middle" "$RE
 REG14="$TEST_ROOT/r14.yaml"
 write_baseline_registry "$REG14"
 HAZ='deploy #42: needs "review" & care'
-run_register "$REG14" --name sot-codex --port 8400 --containers "sot-codex-app-1" --purpose "$HAZ"
+run_register "$REG14" --name demo-app --port 8400 --containers "demo-app-app-1" --purpose "$HAZ"
 assert_rc "escape_ok" 0
 # The value must be double-quoted (it carries a '#').
 assert_file_contains "escape_quoted" '    purpose: "deploy #42:' "$REG14"
 # Read it back through the same lib reader the rest of the suite uses.
-READBACK=$(REGISTRY_FILE="$REG14" sh -c '. "'"$REPO_ROOT"'/scripts/lib/registry-sh.sh"; reg_get_field sot-codex purpose')
+READBACK=$(REGISTRY_FILE="$REG14" sh -c '. "'"$REPO_ROOT"'/scripts/lib/registry-sh.sh"; reg_get_field demo-app purpose')
 CASES=$((CASES+1))
 if [ "$READBACK" = "$HAZ" ]; then PASS=$((PASS+1)); else
   FAIL=$((FAIL+1)); printf 'FAIL: escape_readback (got: %s)\n' "$READBACK" >&2
@@ -358,7 +358,7 @@ REG15="$TEST_ROOT/r15.yaml"
 write_baseline_registry "$REG15"
 BEFORE15=$(cat "$REG15")
 NL=$(printf 'line1\nline2')
-run_register "$REG15" --name sot-codex --port 8400 --purpose "$NL"
+run_register "$REG15" --name demo-app --port 8400 --purpose "$NL"
 assert_rc "newline_rejected" 1
 CASES=$((CASES+1))
 if [ "$(cat "$REG15")" = "$BEFORE15" ]; then PASS=$((PASS+1)); else
@@ -371,19 +371,19 @@ fi
 REG16="$TEST_ROOT/r16.yaml"
 write_baseline_registry "$REG16"
 DASH='- dash lead'
-run_register "$REG16" --name sot-codex --port 8400 --containers "sot-codex-app-1" --purpose "$DASH"
+run_register "$REG16" --name demo-app --port 8400 --containers "demo-app-app-1" --purpose "$DASH"
 assert_rc "lead_dash_ok" 0
 # (a) Rendered as a double-quoted scalar, NOT a bare block-sequence indicator.
 assert_file_contains "lead_dash_quoted" '    purpose: "- dash lead"' "$REG16"
 # (b) Reads back to the original value via the lib reader.
-RB_DASH=$(REGISTRY_FILE="$REG16" sh -c '. "'"$REPO_ROOT"'/scripts/lib/registry-sh.sh"; reg_get_field sot-codex purpose')
+RB_DASH=$(REGISTRY_FILE="$REG16" sh -c '. "'"$REPO_ROOT"'/scripts/lib/registry-sh.sh"; reg_get_field demo-app purpose')
 CASES=$((CASES+1))
 if [ "$RB_DASH" = "$DASH" ]; then PASS=$((PASS+1)); else
   FAIL=$((FAIL+1)); printf 'FAIL: lead_dash_readback (got: %s)\n' "$RB_DASH" >&2
 fi
 # (c) Idempotent: re-register same value → byte-identical file.
 SNAP16=$(cat "$REG16")
-run_register "$REG16" --name sot-codex --port 8400 --containers "sot-codex-app-1" --purpose "$DASH"
+run_register "$REG16" --name demo-app --port 8400 --containers "demo-app-app-1" --purpose "$DASH"
 assert_rc "lead_dash_idempotent_ok" 0
 CASES=$((CASES+1))
 if [ "$(cat "$REG16")" = "$SNAP16" ]; then PASS=$((PASS+1)); else
@@ -395,10 +395,10 @@ fi
 REG16Q="$TEST_ROOT/r16q.yaml"
 write_baseline_registry "$REG16Q"
 QLEAD='? q lead'
-run_register "$REG16Q" --name sot-codex --port 8400 --containers "sot-codex-app-1" --purpose "$QLEAD"
+run_register "$REG16Q" --name demo-app --port 8400 --containers "demo-app-app-1" --purpose "$QLEAD"
 assert_rc "lead_q_ok" 0
 assert_file_contains "lead_q_quoted" '    purpose: "? q lead"' "$REG16Q"
-RB_Q=$(REGISTRY_FILE="$REG16Q" sh -c '. "'"$REPO_ROOT"'/scripts/lib/registry-sh.sh"; reg_get_field sot-codex purpose')
+RB_Q=$(REGISTRY_FILE="$REG16Q" sh -c '. "'"$REPO_ROOT"'/scripts/lib/registry-sh.sh"; reg_get_field demo-app purpose')
 CASES=$((CASES+1))
 if [ "$RB_Q" = "$QLEAD" ]; then PASS=$((PASS+1)); else
   FAIL=$((FAIL+1)); printf 'FAIL: lead_q_readback (got: %s)\n' "$RB_Q" >&2
@@ -412,7 +412,7 @@ BEFORE17=$(cat "$REG17")
 ld="$TEST_ROOT/lock-17"
 LAST_OUT=$(REGISTRY_FILE="$REG17" REGISTRY_DOCKER="$STUB" REGISTRY_LOCKDIR="$ld" \
            MERCURY_REGISTER_TIMESTAMP='../evil' \
-           sh "$SCRIPT" --name sot-codex --port 8400 --containers "sot-codex-app-1" 2>&1) \
+           sh "$SCRIPT" --name demo-app --port 8400 --containers "demo-app-app-1" 2>&1) \
   && LAST_RC=0 || LAST_RC=$?
 rmdir "$ld" 2>/dev/null || true
 assert_rc "bak_traversal_rejected" 1
@@ -432,7 +432,7 @@ CASES=$((CASES+1))
 if ln -s "$REG18_REAL" "$REG18_LINK" 2>/dev/null && [ -L "$REG18_LINK" ]; then
   PASS=$((PASS+1))
   BEFORE18=$(cat "$REG18_REAL")
-  run_register "$REG18_LINK" --name sot-codex --port 8400 --containers "sot-codex-app-1"
+  run_register "$REG18_LINK" --name demo-app --port 8400 --containers "demo-app-app-1"
   assert_rc "symlink_rejected" 1
   assert_out_contains "symlink_marker" "must not be a symlink"
   CASES=$((CASES+1))
@@ -473,7 +473,7 @@ fi
 # must reg_die cleanly, NOT crash on a second shift over an empty arg set. ===
 REG20="$TEST_ROOT/r20.yaml"
 write_baseline_registry "$REG20"
-run_register "$REG20" --name sot-codex --port 8400 --subdomain
+run_register "$REG20" --name demo-app --port 8400 --subdomain
 assert_rc "trailing_flag_no_value" 1
 assert_out_contains "trailing_flag_marker" "--subdomain requires a value"
 

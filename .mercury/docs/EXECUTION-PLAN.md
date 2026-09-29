@@ -142,7 +142,7 @@ adapters/         # 适配层
 - 完成 .claude/agents/dev.md、acceptance.md 的 sub-agent 定义（Phase 0 已创建基础版）
 - 创建 dev-pipeline skill: 一键触发 Main → Dev → Acceptance 链
 - 编写 dispatch 模板（复用 .mercury/templates/ 现有资产）
-- 在 SoT 游戏项目或其他真实项目上验证
+- 在真实的下游项目上验证
 
 ### 1-2. pr-flow 增强
 - 当前 pr-flow 已有基础，增强为全流程：

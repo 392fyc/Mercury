@@ -439,11 +439,11 @@ class ProjectTemplateSyncTests(unittest.TestCase):
         self.assertEqual(before, self._tree_snapshot(self.target))
         self.assertFalse((self.target / ".codex").exists())
 
-    def test_apply_then_check_is_idempotent_and_preserves_sot_overlay(self) -> None:
-        sot_agent = self.target / ".codex" / "agents" / "sot-designlib.toml"
-        sot_agent.parent.mkdir(parents=True)
-        sot_bytes = b'name = "sot-designlib"\r\n'
-        sot_agent.write_bytes(sot_bytes)
+    def test_apply_then_check_is_idempotent_and_preserves_downstream_overlay(self) -> None:
+        downstream_agent = self.target / ".codex" / "agents" / "downstream-lane.toml"
+        downstream_agent.parent.mkdir(parents=True)
+        downstream_bytes = b'name = "downstream-lane"\r\n'
+        downstream_agent.write_bytes(downstream_bytes)
         first_apply = self._run("apply")
         first_snapshot = self._tree_snapshot(self.target)
         check = self._run("check")
@@ -453,7 +453,7 @@ class ProjectTemplateSyncTests(unittest.TestCase):
         self.assertEqual(check.returncode, 0, check.stderr)
         self.assertEqual(second_apply.returncode, 0, second_apply.stderr)
         self.assertEqual(first_snapshot, second_snapshot)
-        self.assertEqual(sot_agent.read_bytes(), sot_bytes)
+        self.assertEqual(downstream_agent.read_bytes(), downstream_bytes)
 
     def test_lock_is_mercury_owned_deterministic_portable_and_complete(self) -> None:
         result = self._run("apply")
@@ -558,9 +558,9 @@ class ProjectTemplateSyncTests(unittest.TestCase):
         lock = self.target / ".codex" / "mercury-template.lock"
         lock.parent.mkdir(parents=True)
         lock.write_bytes(b"unknown owner\n")
-        sot = self.target / ".codex" / "agents" / "sot-kb.toml"
-        sot.parent.mkdir(parents=True)
-        sot.write_bytes(b"sot-owned\n")
+        downstream = self.target / ".codex" / "agents" / "downstream-kb.toml"
+        downstream.parent.mkdir(parents=True)
+        downstream.write_bytes(b"downstream-owned\n")
         before = self._tree_snapshot(self.target)
         result = self._run("apply")
         self.assertEqual(result.returncode, 2)
@@ -583,19 +583,19 @@ class ProjectTemplateSyncTests(unittest.TestCase):
         )
 
     def test_apply_without_lock_can_claim_equal_hardlinked_content_safely(self) -> None:
-        sot_overlay = self.target / ".codex" / "agents" / "sot-overlay.toml"
+        downstream_overlay = self.target / ".codex" / "agents" / "downstream-overlay.toml"
         generated = self.target / ".codex" / "agents" / "mercury-dev.toml"
-        sot_overlay.parent.mkdir(parents=True)
+        downstream_overlay.parent.mkdir(parents=True)
         expected = b'name = "mercury-dev"\n'
-        sot_overlay.write_bytes(expected)
-        os.link(sot_overlay, generated)
+        downstream_overlay.write_bytes(expected)
+        os.link(downstream_overlay, generated)
         self.assertGreater(os.lstat(generated).st_nlink, 1)
 
         result = self._run("apply")
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(generated.read_bytes(), expected)
-        self.assertEqual(sot_overlay.read_bytes(), expected)
+        self.assertEqual(downstream_overlay.read_bytes(), expected)
         self.assertEqual(os.lstat(generated).st_nlink, 1)
         self.assertTrue(
             (self.target / ".codex" / "mercury-template.lock").is_file()
@@ -698,7 +698,7 @@ class ProjectTemplateSyncTests(unittest.TestCase):
     def test_old_lock_cannot_claim_non_mercury_or_traversal_paths(self) -> None:
         self.assertEqual(self._run("apply").returncode, 0)
         lock_path = self.target / ".codex" / "mercury-template.lock"
-        for illegal in ("agents/sot-designlib.toml", "../mercury-escape.toml"):
+        for illegal in ("agents/downstream-lane.toml", "../mercury-escape.toml"):
             with self.subTest(illegal=illegal):
                 lock = json.loads(lock_path.read_bytes())
                 lock["files"][illegal] = "0" * 64
@@ -714,17 +714,17 @@ class ProjectTemplateSyncTests(unittest.TestCase):
     def test_hardlinked_generated_file_is_drift_and_apply_replaces_only_its_link(self) -> None:
         self.assertEqual(self._run("apply").returncode, 0)
         generated = self.target / ".codex" / "agents" / "mercury-dev.toml"
-        sot_file = self.target / ".codex" / "agents" / "sot-overlay.toml"
-        sot_bytes = generated.read_bytes()
-        sot_file.write_bytes(sot_bytes)
+        downstream_file = self.target / ".codex" / "agents" / "downstream-overlay.toml"
+        downstream_bytes = generated.read_bytes()
+        downstream_file.write_bytes(downstream_bytes)
         generated.unlink()
-        os.link(sot_file, generated)
+        os.link(downstream_file, generated)
         self.assertGreater(os.lstat(generated).st_nlink, 1)
         check = self._run("check")
         apply = self._run("apply")
         self.assertEqual(check.returncode, 1)
         self.assertEqual(apply.returncode, 0, apply.stderr)
-        self.assertEqual(sot_file.read_bytes(), sot_bytes)
+        self.assertEqual(downstream_file.read_bytes(), downstream_bytes)
         self.assertEqual(os.lstat(generated).st_nlink, 1)
         self.assertEqual(self._run("check").returncode, 0)
 
@@ -762,7 +762,7 @@ class ProjectTemplateSyncTests(unittest.TestCase):
 
     def test_manifest_rejects_non_mercury_destinations_and_traversal(self) -> None:
         invalid_files = [
-            [{"source": "agents/mercury-dev.toml", "destination": "agents/sot-designlib.toml"}],
+            [{"source": "agents/mercury-dev.toml", "destination": "agents/downstream-lane.toml"}],
             [{"source": "agents/mercury-dev.toml", "destination": "../agents/mercury-dev.toml"}],
             [{"source": "../outside/mercury-dev.toml", "destination": "agents/mercury-dev.toml"}],
         ]
@@ -790,7 +790,7 @@ class ProjectTemplateSyncTests(unittest.TestCase):
         for index, invalid_lock in enumerate(
             (
                 "template.lock",
-                "sot-template.lock",
+                "downstream-template.lock",
                 "project/mercury-template.lock",
                 "../mercury-template.lock",
                 "mercury\\template.lock",

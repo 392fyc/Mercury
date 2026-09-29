@@ -8,7 +8,7 @@
 - **Shell**: Rust (Tauri)
 - **Orchestrator**: Node.js sidecar (JSON-RPC 2.0 over stdio)
 - **SDK Adapters**: 包装 Agent CLI (Claude Code, Codex, opencode, Gemini CLI)。Codex 使用 MCP 协议 (`codex mcp-server`)，其他 adapter 使用各自的 CLI 集成方式
-- **Task Flow**: SoT (Ship of Theseus) orchestration pattern
+- **Task Flow**: issue-first task orchestration (Main → Dev → Acceptance)
 
 ## 数据流
 

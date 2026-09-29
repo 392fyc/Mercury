@@ -11,7 +11,7 @@ import { laneMatchesFilter, matchesJob, parseFilter } from "@/lib/filter";
 import type { JobState, Lane } from "@/lib/types";
 
 // Canonical lane order for v1
-const CANONICAL_LANES = ["main", "side-bug", "side-sot", "health"];
+const CANONICAL_LANES = ["main", "side-bug", "health"];
 
 interface LaneTableProps {
   jobsByLane: Record<string, JobState[]>;

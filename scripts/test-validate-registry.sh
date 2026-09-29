@@ -81,8 +81,8 @@ case "$fmt" in
   *Ports*)
     # 4-field: Names|project|working_dir|Ports
     cat <<'ROWS'
-sot-codex-tunnel-1|sot-codex|/share/CACHEDEV1_DATA/homes/392fyc/sot-codex|
-sot-codex-app-1|sot-codex|/share/CACHEDEV1_DATA/homes/392fyc/sot-codex|0.0.0.0:8400->8000/tcp
+demo-app-tunnel-1|demo-app|/share/apps/demo-app|
+demo-app-app-1|demo-app|/share/apps/demo-app|0.0.0.0:8400->8000/tcp
 argus-selfcheck-scheduler|argus|/share/homes/392fyc/argus|
 argus|argus|/share/homes/392fyc/argus|0.0.0.0:3000->3000/tcp
 argus-tunnel|argus|/share/homes/392fyc/argus|
@@ -91,8 +91,8 @@ ROWS
   *)
     # 2-field project|Names (register auto-derive)
     cat <<'ROWS'
-sot-codex|sot-codex-tunnel-1
-sot-codex|sot-codex-app-1
+demo-app|demo-app-tunnel-1
+demo-app|demo-app-app-1
 argus|argus-selfcheck-scheduler
 argus|argus
 argus|argus-tunnel
@@ -138,9 +138,9 @@ write_baseline_registry "$REG1"
 run_validate "$REG1" "$STUB"
 assert_rc "drift_exit_nonzero" 1
 assert_out_contains "drift_marker" "VALIDATE-DRIFT"
-# Core assertion 1: sot-codex project not in registry.
-assert_out_contains "unregistered_sot_codex" "[UNREGISTERED-PROJECT]"
-assert_out_contains "unregistered_sot_codex_name" "sot-codex"
+# Core assertion 1: demo-app project not in registry.
+assert_out_contains "unregistered_demo_app" "[UNREGISTERED-PROJECT]"
+assert_out_contains "unregistered_demo_app_name" "demo-app"
 # Core assertion 2: argus containers[] missing argus-selfcheck-scheduler.
 assert_out_contains "container_set_drift" "[CONTAINER-SET-DRIFT]"
 assert_out_contains "container_set_drift_selfcheck" "argus-selfcheck-scheduler"
@@ -176,12 +176,12 @@ services:
     url: https://argus.fyc-space.uk
     containers: [argus, argus-tunnel, argus-selfcheck-scheduler]
     purpose: PR review
-  sot-codex:
+  demo-app:
     port: 8400
-    subdomain: sot
-    url: https://sot.fyc-space.uk
-    containers: [sot-codex-tunnel-1, sot-codex-app-1]
-    purpose: SoT codex
+    subdomain: demo
+    url: https://demo.example.com
+    containers: [demo-app-tunnel-1, demo-app-app-1]
+    purpose: Demo app
   ssh-tunnel:
     port: 22
     subdomain: ssh
@@ -190,7 +190,7 @@ services:
 
 reserved_ports:
   - 3000  # argus
-  - 8400  # sot-codex
+  - 8400  # demo-app
   - 22    # ssh
 EOF
 run_validate "$REG5" "$STUB"
@@ -214,10 +214,10 @@ services:
     port: 3000
     containers: [argus, argus-tunnel, argus-selfcheck-scheduler]
     purpose: PR review
-  sot-codex:
+  demo-app:
     port: 8400
-    containers: [sot-codex-tunnel-1, sot-codex-app-1]
-    purpose: SoT codex
+    containers: [demo-app-tunnel-1, demo-app-app-1]
+    purpose: Demo app
   ghost:
     port: 9999
     compose: /share/homes/392fyc/ghost/docker-compose.yml
@@ -226,7 +226,7 @@ services:
 
 reserved_ports:
   - 3000  # argus
-  - 8400  # sot-codex
+  - 8400  # demo-app
   - 9999  # ghost
 EOF
 run_validate "$REG5B" "$STUB"

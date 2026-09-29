@@ -22,8 +22,8 @@
 
 ## Ownership and memory
 
-- Mercury owns its harness and `.mercury/templates/codex-project/` source. SoT owns its game code, domain rules, and overlays. KB and design-library writes require their own authorized scope.
-- Downstream files declared by the template manifest are generated. Read the template README and use `scripts/codex/sync-project-template.py` check/apply from a recorded Mercury commit with its authenticated lock. Do not hand-edit generated SoT files or overwrite downstream overlays.
+- Mercury owns its harness and `.mercury/templates/codex-project/` source. Downstream projects own their code, domain rules, and overlays. KB and design-library writes require their own authorized scope.
+- Downstream files declared by the template manifest are generated. Read the template README and use `scripts/codex/sync-project-template.py` check/apply from a recorded Mercury commit with its authenticated lock. Do not hand-edit generated downstream files or overwrite downstream overlays.
 - For prior context, start with `.mercury/memory/README.md` when present and load indexed entries on demand. This is local private memory, excluded from the public repository. Protected archives and chat records are not active memory.
 - Mercury_KB remains active; its configured location is in `.handoff-config`. Consult `.mercury/docs/guides/kb-structure.md` when working with KB structure.
 

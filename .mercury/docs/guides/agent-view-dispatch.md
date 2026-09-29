@@ -86,7 +86,7 @@ claude --bg "<prompt>"
 cd <lane-worktree>
 claude --bg "<prompt>"
 
-# side-sot (cross-repo, Mercury team value: D:/ShipOfTheseus/Ship_of_Theseus):
+# cross-repo lane (host repository worktree):
 cd <lane-worktree>
 claude --bg "<prompt>"
 ```
@@ -140,7 +140,7 @@ claude agents                              # all lanes (TUI)
 claude agents --cwd <lane-worktree>        # filter to one lane
                                            # main         → D:/Mercury/Mercury
                                            # side-bug     → D:/Mercury/Mercury-side-bug
-                                           # side-sot     → D:/ShipOfTheseus/Ship_of_Theseus
+                                           # cross-repo   → <host-repo-worktree>
 ```
 
 **`claude agents` is a TUI subcommand.** S99 empirical (Phase 6 probe
@@ -376,8 +376,8 @@ cd <lane-worktree> && claude --bg "<prompt>"
 # side-bug lane          → Mercury team value: D:/Mercury/Mercury-side-bug
 cd <lane-worktree> && claude --bg "<prompt>"
 
-# side-sot lane          → Mercury team value: D:/ShipOfTheseus/Ship_of_Theseus
-# (cross-repo, host Godot game repo)
+# cross-repo lane        → <host-repo-worktree>
+# (lane hosted in another repository)
 cd <lane-worktree> && claude --bg "<prompt>"
 
 # health lane — conversation-only, no worktree (see LANES.md §`health`).
