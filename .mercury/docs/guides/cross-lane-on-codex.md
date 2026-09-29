@@ -1,8 +1,8 @@
-# Codex 下的跨组协作方式（Mercury ↔ SoT）
+# Codex 下的跨 lane 协作方式
 
 > Issue [#571](https://github.com/392fyc/Mercury/issues/571) / G5-2。编制日期 2026-08-14。
-> 这份文档只讲**迁到 Codex 之后有什么变化**；分工边界、字段归属、超界转交协议仍以
-> `D:/ShipOfTheseus/SoT-fyc-space/docs/mercury-sot-lane-management.md` 为准（那是 SoT 的域，本文不覆盖它）。
+> 这份文档只讲**迁到 Codex 之后有什么变化**；分工边界、字段归属、超界转交协议以协作双方各自仓库的合同为准，本文不覆盖。
+> 最初针对 Mercury 与 SoT 两组编写（历史版本存于 SoT KB 归档），现为通用约定，[#599](https://github.com/392fyc/Mercury/issues/599) 的 lane 收件箱沿用本文的条目格式与纪律。
 
 ## 变了什么
 
@@ -29,14 +29,14 @@ Claude Code 上两组用 **Agent Teams** 实时连携：一方 spawn 另一方�
 
 ## 怎么做
 
-载体是现成的：`D:/ShipOfTheseus/SoT-fyc-space/docs/cross-lane-inbox.md`（42 KB，本来就是干这个的）。
+载体是各 lane 的收件箱文件：按 [#599](https://github.com/392fyc/Mercury/issues/599)，有结对的 lane 各有一个 `lane-inbox-<lane>.md`，放在 `LANES.md` 同目录。
 
 **两条约定**：
 
 - **会话开始时读**：先看收件箱顶部有没有对方留给自己的新条目（倒序，最新在上）。
 - **会话结束前写**：把这一轮的交付、发现、需要对方做的事追加成一条。
 
-**条目格式**（沿用文件里已有的写法，不要另造）：
+**条目格式**（按本文规定的格式，不要另造）：
 
 ```
 ## YYYY-MM-DD · 组名 · 类型：一句话标题
