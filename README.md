@@ -112,7 +112,7 @@ Skills (4 at time of writing), all opt-in:
 
 `web-research` and `handoff` are provided as user-level skills rather than from this repository.
 
-Sub-agents (5): `dev`, `acceptance`, `critic`, `design`, `research`. The game-design agents moved to Ship of Theseus (#586). The main session acts as the Mercury main agent; there is no separate `main` sub-agent.
+Sub-agents (5): `dev`, `acceptance`, `critic`, `design`, `research`. The game-design agents moved out of Mercury (Mercury #586): the Codex copies to Ship of Theseus `.codex/agents/` (392fyc/Ship_of_Theseus#41), and the Claude copies to the user-level `~/.claude/agents/`. The main session acts as the Mercury main agent; there is no separate `main` sub-agent.
 
 ## Hooks
 
