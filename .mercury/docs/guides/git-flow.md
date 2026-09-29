@@ -70,4 +70,4 @@ type: feat / fix / refactor / chore / docs
 | | `git push --force` |
 | | Direct writes to master / develop / main |
 
-This table is policy. For Claude sessions, `.claude/settings.json` hard-denies only `push`, `switch`, `checkout`, `merge`, `rebase` and `stash` (plain and `git -C` forms); `git add`, `git commit` and `git reset` follow the normal permission flow and any user-level allow rules (#601). Mercury Git writes still go through `scripts/codex/git-safe.ps1`.
+This table is policy. For Claude sessions, `.claude/settings.json` hard-denies only `push`, `checkout`, `merge`, `rebase` and `stash` (plain and `git -C` forms); `git add`, `git commit`, `git reset` and `git switch` follow the normal permission flow and any user-level allow rules (#601). Mercury Git writes still go through `scripts/codex/git-safe.ps1`.
