@@ -327,6 +327,12 @@ if [ "$YES" -eq 0 ]; then
   fi
 fi
 
+# Prepare the handoff dir BEFORE any side effect (claim, branch): the unified
+# handoff dir may not exist yet, and failing to create it after steps 1-2
+# would leave a half-spawned lane.
+mkdir -p "$HANDOFF_DIR" 2>/dev/null && [ -w "$HANDOFF_DIR" ] \
+  || fail "cannot create or write handoff dir $HANDOFF_DIR (nothing mutated)"
+
 # Step 1: claim Issue (Rule 1.1 wrapper).
 if [ "$NO_CLAIM" -eq 0 ]; then
   CLAIM_SCRIPT="$REPO_ROOT/scripts/lane-claim.sh"
@@ -354,8 +360,6 @@ fi
 # LANES.md mutation in step 4 — leaving step 4 to run on a missing handoff
 # would create a registry row pointing at a file that never existed.
 TODAY=$(date -u +'%Y-%m-%d')
-mkdir -p "$HANDOFF_DIR" 2>/dev/null \
-  || fail "cannot create handoff dir $HANDOFF_DIR (LANES.md NOT mutated)"
 if ! cat > "$HANDOFF_FILE" <<EOF
 ---
 name: session_handoff_${LANE}

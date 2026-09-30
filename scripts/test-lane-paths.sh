@@ -111,6 +111,24 @@ bash "$REPO_ROOT/scripts/lane-spawn.sh" dangle 9 --short dangle --slug x --no-cl
 eq "lane-spawn refuses a dangling symlink at the handoff path" "$?" "1"
 [ ! -e "$TMP/outside-target.md" ] && pass "nothing written through the dangling symlink" || fail "wrote through symlink"
 
+git -C "$A" update-ref refs/remotes/origin/develop HEAD  # lets step 2 create a branch
+RO="$TMP/ro-parent"; mkdir -p "$RO"; chmod 555 "$RO"
+if [ ! -w "$RO" ]; then  # root ignores permissions; skip there
+  OUT=$(bash "$REPO_ROOT/scripts/lane-spawn.sh" rotest 10 --short rotest --slug x --no-claim --yes \
+        --handoff-dir "$RO/handoff" --repo-root "$AW" 2>&1); RC=$?
+  eq "unwritable handoff dir -> spawn fails" "$RC" "1"
+  git -C "$AW" rev-parse --verify --quiet refs/heads/lane/rotest/10-x >/dev/null \
+    && fail "branch created before the handoff dir check" || pass "no branch created when the handoff dir is unusable"
+else
+  HD_FILE="$TMP/hd-file"; : > "$HD_FILE"
+  OUT=$(bash "$REPO_ROOT/scripts/lane-spawn.sh" rotest 10 --short rotest --slug x --no-claim --yes \
+        --handoff-dir "$HD_FILE" --repo-root "$AW" 2>&1); RC=$?
+  eq "handoff dir path is a file -> spawn fails" "$RC" "1"
+  git -C "$AW" rev-parse --verify --quiet refs/heads/lane/rotest/10-x >/dev/null \
+    && fail "branch created before the handoff dir check" || pass "no branch created when the handoff dir is unusable"
+fi
+chmod 755 "$RO"
+
 echo
 echo "[lane-init --main-worktree picks that project's lane home]"
 MC="$CLAUDE_CONFIG_DIR/projects/$(enc "$TMP/work/Proj-C")/memory"
