@@ -119,5 +119,24 @@ eq "non-ASCII path encodes bytewise regardless of locale" \
    "$(LC_ALL=C.UTF-8 bash -c ". '$REPO_ROOT/scripts/lib/lane-paths.sh'; lane_encode_project_dir \"/\$(printf '\\351')x\"")" "--x"
 
 echo
+echo "[lossy encoding: colliding projects get distinct registries]"
+AD="$TMP/work/Proj.A"; mkproj "$AD"
+MAD=$("$CLI" memory-dir --repo-root "$AD")
+[ "$MAD" != "$MA" ] && pass "Proj.A does not reuse Proj-A's registry" || fail "Proj.A collides with Proj-A ($MAD)"
+case "$MAD" in "$CLAUDE_CONFIG_DIR/projects/$(enc "$AD")-lh"*/memory) pass "collision falls back to a hashed sibling dir" ;; *) fail "unexpected dir $MAD" ;; esac
+(cd "$AD" && bash "$REPO_ROOT/scripts/lane-init.sh" >/dev/null 2>&1)
+[ -f "$MAD/LANES.md" ] && pass "lane-init in Proj.A writes its own registry" || fail "lane-init did not write $MAD/LANES.md"
+eq "Proj-A still resolves the plain dir" "$("$CLI" memory-dir --repo-root "$A")" "$MA"
+eq "Proj.A resolves the same hashed dir again" "$("$CLI" memory-dir --repo-root "$AD")" "$MAD"
+LEG="$TMP/legacy-cfg"; mkdir -p "$LEG/projects/-x-Proj/memory"
+printf '## Active Lanes\n\n### `main`\n\n- **Worktree path**: `\\x\\Proj\\`\n' > "$LEG/projects/-x-Proj/memory/LANES.md"
+eq "same checkout written with backslashes is not a collision" \
+   "$(CLAUDE_CONFIG_DIR="$LEG" bash -c ". '$REPO_ROOT/scripts/lib/lane-paths.sh'; lane_memory_dir_for_main /x/Proj")" "$LEG/projects/-x-Proj/memory"
+printf '## Active Lanes\n\n### `main`\n\n- **Worktree path**: `/d/Mercury/Mercury`\n' > "$LEG/projects/-x-Proj/memory/LANES.md"
+mkdir -p "$LEG/projects/D--Mercury-Mercury/memory"; cp "$LEG/projects/-x-Proj/memory/LANES.md" "$LEG/projects/D--Mercury-Mercury/memory/"
+eq "MSYS-form record of D:/Mercury/Mercury is the same checkout" \
+   "$(CLAUDE_CONFIG_DIR="$LEG" bash -c ". '$REPO_ROOT/scripts/lib/lane-paths.sh'; lane_memory_dir_for_main D:/Mercury/Mercury")" "$LEG/projects/D--Mercury-Mercury/memory"
+
+echo
 printf '%d pass / %d fail\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

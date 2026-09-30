@@ -659,6 +659,8 @@ else
   _MAIN="$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"
   [ -n "$_MAIN" ] || { echo "ERROR: cannot resolve the lane registry (not in a checkout; set MERCURY_MEMORY_DIR)" >&2; exit 1; }
   command -v cygpath >/dev/null 2>&1 && _MAIN="$(cygpath -m "$_MAIN")"
+  # Plain dir only; scripts/lib/lane-paths.sh also moves a project whose
+  # encoded name collides with another project's registry to a hashed dir.
   LANES_FILE="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/$(printf '%s' "$_MAIN" | LC_ALL=C sed 's/[^A-Za-z0-9]/-/g')/memory/LANES.md"
 fi
 WORKTREE_PATH_RAW=$(awk -v lane="$LANE_NAME" '

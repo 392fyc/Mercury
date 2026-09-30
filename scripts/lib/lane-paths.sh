@@ -6,8 +6,9 @@
 # MAIN checkout (first entry of `git worktree list`), never on the current
 # worktree, so every lane of a project resolves the same paths and each
 # project gets its own registry. The encoding below is lossy (Proj-A, Proj.A
-# and "Proj A" map to the same dir, exactly as Claude Code's own project dirs
-# do), so keep main-checkout paths distinct in their ASCII letters/digits.
+# and "Proj A" map to the same dir, as Claude Code's own project dirs do);
+# lane_memory_dir_for_main detects that through the registry's recorded main
+# worktree and moves the later project to a hashed sibling dir.
 # Submodule / --separate-git-dir checkouts report their git dir as the first
 # entry and are not supported as lane homes.
 #
@@ -46,15 +47,51 @@ lane_encode_project_dir() {
   printf '%s' "$1" | LC_ALL=C sed 's/[^A-Za-z0-9]/-/g'
 }
 
+# lane_norm_path <path> — comparison key: '/' separators, no trailing '/',
+# MSYS /d/... as d:/..., lower case (paths that encode alike differ only in
+# non-alphanumerics, so case folding never merges two real projects).
+lane_norm_path() {
+  printf '%s' "$1" | tr '\134' '/' | sed -e 's#/*$##' -e 's#^/\([A-Za-z]\)/#\1:/#' -e 's#^/\([A-Za-z]\)$#\1:#' \
+    | tr '[:upper:]' '[:lower:]'
+}
+
+# lane_registered_main <LANES.md> — the `main` lane's Worktree path recorded
+# in a registry, as written; empty when absent.
+lane_registered_main() {
+  [ -f "$1" ] || return 0
+  awk '
+    /^```/ { fence = !fence; next }
+    fence { next }
+    /^### `/ { in_main = ($0 ~ /^### `main`/); next }
+    /^## / { in_main = 0; next }
+    in_main && /\*\*Worktree path\*\*/ {
+      if (match($0, /`[^`]+`/)) { print substr($0, RSTART + 1, RLENGTH - 2); exit }
+    }
+  ' "$1" | tr -d '\r'
+}
+
 # lane_memory_dir_for_main <main checkout path> — no git needed.
+# The encoding is lossy (Proj-A and Proj.A both become ...Proj-A). When the
+# plain dir already holds a LANES.md whose `main` lane is a DIFFERENT checkout,
+# this project uses <encoded>-lh<cksum of its path> instead, so two projects
+# never share a registry; non-colliding projects keep the plain dir.
 lane_memory_dir_for_main() {
   if [ -n "${MERCURY_MEMORY_DIR:-}" ]; then
     printf '%s\n' "$MERCURY_MEMORY_DIR"
     return 0
   fi
   [ -n "${1:-}" ] || return 1
-  printf '%s/projects/%s/memory\n' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" \
-    "$(lane_encode_project_dir "$1")"
+  local base enc main reg sum
+  base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"
+  enc=$(lane_encode_project_dir "$1")
+  main=$(lane_norm_path "$1")
+  reg=$(lane_registered_main "$base/$enc/memory/LANES.md")
+  if [ -n "$reg" ] && [ "$(lane_norm_path "$reg")" != "$main" ]; then
+    sum=$(printf '%s' "$main" | cksum | cut -d' ' -f1)
+    printf '%s/%s-lh%s/memory\n' "$base" "$enc" "$sum"
+    return 0
+  fi
+  printf '%s/%s/memory\n' "$base" "$enc"
 }
 
 # lane_memory_dir [dir]
