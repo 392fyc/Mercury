@@ -18,10 +18,9 @@
 operators dispatch and monitor background sessions (`claude --bg ...`,
 `/bg`, `@<agent>` mentions, `claude --bg --agent <name>`) from a single
 interactive terminal. Mercury runs a **multi-lane** model
-(`feedback_lane_protocol.md` v1 + `LANES.md` registry — both canonical
-at `<canonical>/`, the user-memory dir, NOT files in this repo; see
-[`lane-naming.md`](lane-naming.md) §"Operational expectation" for the
-`<canonical>` resolution) where each lane has its own long-lived worktree
+(rules: [lane-protocol.md](lane-protocol.md); registry: `LANES.md` in the
+project's lane home, a user-memory dir, NOT a file in this repo —
+`scripts/lane-paths.sh lanes-file` prints it) where each lane has its own long-lived worktree
 and per-cwd session state.
 
 The two concepts are **orthogonal**: lane = long-lived scope (跨周/跨月);

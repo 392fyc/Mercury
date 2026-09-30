@@ -129,4 +129,4 @@ Tests use synthetic fixtures only — no GitHub or live LANES.md interaction.
 
 - Issue [#311](https://github.com/392fyc/Mercury/issues/311) — acceptance criteria
 - [v0.1 Delta companion](../lane-protocol-v0.1-deltas.md#delta-3--rule-32-tmp-dir-auto-prune-p2) — full rationale
-- `feedback_lane_protocol.md` Rule 6 (LANES.md section ownership)
+- [lane-protocol.md](lane-protocol.md) Rule 6 (LANES.md section ownership)

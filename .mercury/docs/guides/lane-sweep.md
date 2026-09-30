@@ -59,7 +59,7 @@ of the owning lane (Rule 6 ownership). The script's contract is:
 > Here are the lanes that meet the stale criteria. The owning lane should
 > decide whether to flip its own section to `closed`.
 
-This matches the `feedback_lane_protocol.md` constraint that "only the owning
+This matches the [lane protocol](lane-protocol.md) constraint that "only the owning
 lane edits its own section". Auto-edit would create a backdoor for one lane
 to modify another lane's metadata.
 

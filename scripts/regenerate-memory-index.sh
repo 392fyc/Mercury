@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/regenerate-memory-index.sh — Mercury memory-index regeneration.
 # Implements Phase F.A (Issue #329, additive — landed) and Phase F.B (Issue #330,
-# in-place cutover) of feedback_lane_protocol.md Rule 7 REPLACE (v0.1 Delta 5,
+# in-place cutover) of lane protocol Rule 7 (.mercury/docs/guides/lane-protocol.md) REPLACE (v0.1 Delta 5,
 # parent epic #315).
 #
 # Reads a Mercury user-memory directory and emits a regenerated index document

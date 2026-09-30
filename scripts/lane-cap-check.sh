@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scripts/lane-cap-check.sh — Mercury active-lane count report.
-# Originally the Rule 7 HARD-CAP check (v0.1 Delta 7, Issue #314). The
+# Originally the Δ7 HARD-CAP check (v0.1 Delta 7, Issue #314). The
 # lane-count cap was removed by Issue #605 (#599 ADR D1: lanes are uncapped).
 #
 # Counts the number of `Status: active` lanes in LANES.md and reports them.

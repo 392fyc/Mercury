@@ -129,7 +129,7 @@ Tests do not touch real GitHub — safe to run in CI on every commit.
 ## Source references
 
 - Issue [#309](https://github.com/392fyc/Mercury/issues/309) — acceptance criteria
-- [Multi-lane protocol research design doc](../research/multi-lane-protocol-2026-04-25.md) — repo-side authority for the v0 7 rules (the protocol is also mirrored in user-memory `feedback_lane_protocol.md`, which is per-machine and not web-accessible)
+- [Multi-lane protocol research design doc](../research/multi-lane-protocol-2026-04-25.md) — design research for the original rules; the rule authority is the in-repo index [lane-protocol.md](lane-protocol.md)
 - [v0.1 Delta companion](../lane-protocol-v0.1-deltas.md#delta-1--rule-11-probe-after-write-p1)
 - [GitHub Releases API race condition (devactivity.com)](https://devactivity.com/insights/mastering-github-releases-avoiding-race-conditions-for-enhanced-engineering-productivity/)
 - [GitHub community discussion #9252 — concurrency group bug](https://github.com/orgs/community/discussions/9252)

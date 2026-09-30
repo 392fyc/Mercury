@@ -179,6 +179,6 @@ Runs offline (no `gh`, no live LANES.md, no live git) and exercises:
 - Issue [#313](https://github.com/392fyc/Mercury/issues/313),
   [#314](https://github.com/392fyc/Mercury/issues/314) — Rule 2.1 short
   prefix + HARD-CAP=5 (merged via PR #328)
-- `feedback_lane_protocol.md` — full protocol (v0 + v0.1 + v0.2)
+- [lane-protocol.md](lane-protocol.md) — rule index (where each rule is defined and enforced)
 - [`lane-claim.md`](./lane-claim.md), [`lane-close.md`](./lane-close.md),
   [`lane-sweep.md`](./lane-sweep.md) — sibling ceremonies

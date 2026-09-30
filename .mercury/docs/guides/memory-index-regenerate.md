@@ -2,7 +2,7 @@
 
 Implements **Phase F.A** (Issue [#329](https://github.com/392fyc/Mercury/issues/329) — additive,
 landed) AND **Phase F.B** (Issue [#330](https://github.com/392fyc/Mercury/issues/330) — in-place
-cutover, BREAKING) of `feedback_lane_protocol.md` Rule 7 REPLACE (v0.1 Delta 5, parent epic
+cutover, BREAKING) of [lane protocol](lane-protocol.md) Rule 7 REPLACE (v0.1 Delta 5, parent epic
 [#315](https://github.com/392fyc/Mercury/issues/315)).
 
 ## What Phase F.A is

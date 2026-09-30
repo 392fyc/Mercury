@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scripts/lane-sweep.sh — Mercury multi-lane stale-lane detection (report only).
-# Implements Rule 3.1 of feedback_lane_protocol.md (v0.1 Delta 2, Issue #310).
+# Implements Rule 3.1 of the lane protocol (.mercury/docs/guides/lane-protocol.md) (v0.1 Delta 2, Issue #310).
 #
 # A lane is "stale" if ALL THREE criteria are simultaneously older than the
 # threshold (default 14 days):
