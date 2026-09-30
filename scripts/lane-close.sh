@@ -25,7 +25,7 @@
 #                         [--close-issue --issue N [--rationale TEXT] [--repo OWNER/REPO]]
 #
 # Defaults:
-#   --memory-dir   ${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}
+#   --memory-dir   $MERCURY_MEMORY_DIR, else the project's lane home (scripts/lane-paths.sh memory-dir)
 #   --lanes-file   <memory-dir>/LANES.md
 #   --repo-root    `git rev-parse --show-toplevel`
 #   --tmp-dir      <repo-root>/.tmp/lane-<lane>
@@ -43,6 +43,10 @@
 #   2  invalid args / missing lanes-file / cannot resolve repo root
 
 set -u
+
+LANE_PATHS_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/lane-paths.sh"
+# shellcheck source=lib/lane-paths.sh
+. "$LANE_PATHS_LIB"  # per-project lane home (#613)
 
 die()  { printf 'lane-close: %s\n' "$1" >&2; exit 2; }
 warn() { printf 'lane-close WARN: %s\n' "$1" >&2; }
@@ -111,7 +115,8 @@ if [ "$CLOSE_ISSUE" -eq 0 ] && { [ -n "$ISSUE_NUM" ] || [ -n "$RATIONALE" ] || [
 fi
 
 if [ -z "$MEMORY_DIR" ]; then
-  MEMORY_DIR="${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}"
+  MEMORY_DIR=$(lane_memory_dir "${REPO_ROOT:-.}") \
+    || die "cannot resolve this project's lane memory dir (run inside a checkout, pass --memory-dir, or set MERCURY_MEMORY_DIR)"
 fi
 if [ -z "$LANES_FILE" ]; then LANES_FILE="$MEMORY_DIR/LANES.md"; fi
 [ -f "$LANES_FILE" ] || die "LANES.md not found: $LANES_FILE"

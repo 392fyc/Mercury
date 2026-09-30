@@ -31,8 +31,9 @@ side-effects.
 
 ## First-time setup on a machine
 
-All lane scripts read `LANES.md` from the memory dir (`MERCURY_MEMORY_DIR`, else
-`${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory`). On a machine
+All lane scripts read `LANES.md` from the project's lane home (`MERCURY_MEMORY_DIR`, else
+`${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded main checkout>/memory`; print it with
+`scripts/lane-paths.sh lanes-file`, Issue #613). Every project has its own. On a machine
 that has none, they exit with "memory dir not found" or "LANES.md not found". Create a valid registry once
 from inside the Mercury checkout (Issue #607):
 
@@ -64,10 +65,11 @@ scripts/lane-spawn.sh <lane> <issue>
 | `<issue>` (positional) | GitHub Issue number to claim. Positive integer. |
 | `--short SHORT` | Override short branch prefix (Rule 2.1, ≤8 chars, `[a-z0-9-]+`). Default: lane name lowercased + filtered + truncated. |
 | `--slug SLUG` | Override branch slug. Default: derived from Issue title via `gh issue view`. |
-| `--memory-dir PATH` | Override memory dir. Defaults to `MERCURY_MEMORY_DIR` env, then `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory`. |
+| `--memory-dir PATH` | Override memory dir. Defaults to `MERCURY_MEMORY_DIR` env, then the project's lane home `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded main checkout>/memory` (`scripts/lane-paths.sh memory-dir`; `D--Mercury-Mercury` for `D:/Mercury/Mercury`; #613). |
 | `--lanes-file PATH` | Override LANES.md location (default: `<memory-dir>/LANES.md`). |
 | `--repo-root PATH` | Override repo root (default: `git rev-parse --show-toplevel`). |
 | `--repo OWNER/REPO` | Pin GitHub repo for `gh` calls. Defaults to `gh repo view` / `GH_REPO`. |
+| `--handoff-dir PATH` | Where the handoff template is written. Default: the project's handoff dir (`scripts/lane-paths.sh handoff-dir`: `<kb_dir>/handoff` per the main checkout's `.handoff-config`, else `<main checkout>/.handoff`; #613). Falls back to `<memory-dir>` when the project cannot be resolved. |
 | `--harness claude\|codex` | Which CLI drives the lane; written as `- **Harness**:` in the new `LANES.md` section. Default: `claude`. See the [#599 ADR](../research/issue-599-cross-harness-lane-isolation-2026-09.md) D1. |
 | `--no-claim` | Skip the `lane-claim.sh` step (useful for offline/manual claim). |
 | `--no-branch` | Skip the `git branch` step (useful when branch is created elsewhere). |
@@ -107,8 +109,9 @@ section is appended at end-of-file.
 
 ### Handoff overwrite protection
 
-Step 7 refuses to write if `<memory-dir>/session-handoff-<lane>.md`
-already exists. This protects in-flight session state from being clobbered
+Step 7 refuses to write if `session-handoff-<lane>.md` already exists in
+the handoff dir (`--handoff-dir`, else `scripts/lane-paths.sh handoff-dir`)
+or as a legacy copy in `<memory-dir>`. This protects in-flight session state from being clobbered
 by an accidental re-spawn under the same lane name. To re-spawn, archive
 or delete the prior handoff first.
 

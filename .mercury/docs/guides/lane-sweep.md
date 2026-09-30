@@ -22,7 +22,7 @@ the same time (default threshold: 14 days):
 | Signal | Source | Stale criterion |
 |--------|--------|-----------------|
 | Branch activity | `git for-each-ref` on `feature/lane-<lane>/*` (and legacy `feature/TASK-*` for main) | newest committerdate > 14d ago, or no matching refs |
-| Handoff activity | mtime of `<memory-dir>/session-handoff[-<lane>].md` | mtime > 14d ago, or file missing |
+| Handoff activity | mtime of `session-handoff[-<lane>].md` in the project's handoff dir (`scripts/lane-paths.sh handoff-dir`, or `--handoff-dir`; not auto-resolved when `--memory-dir` is given) plus the legacy `<memory-dir>` copy — newest wins | mtime > 14d ago, or file missing |
 | Issue activity | `gh issue list --label "lane:<lane>" --state all` newest `updatedAt` | > 14d ago, or no matching Issues |
 
 Each signal is independently classified `fresh` or `stale`. Lane verdict is
@@ -44,7 +44,7 @@ scripts/lane-sweep.sh [--lanes-file PATH] [--memory-dir PATH]
 | `--days N` | Override the staleness threshold (default 14). |
 | `--format text\|json` | Output format (default `text` — table). |
 | `--lanes-file PATH` | Override LANES.md location. Defaults to `<memory-dir>/LANES.md`. |
-| `--memory-dir PATH` | Override memory dir. Defaults to `MERCURY_MEMORY_DIR` env, then `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory`. |
+| `--memory-dir PATH` | Override memory dir. Defaults to `MERCURY_MEMORY_DIR` env, then the project's lane home `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded main checkout>/memory` (`scripts/lane-paths.sh memory-dir`; `D--Mercury-Mercury` for `D:/Mercury/Mercury`; #613). |
 | `--repo OWNER/REPO` | Pin the GitHub repo for Issue activity probe. Defaults to `gh repo view` resolution. |
 | `--repo-root PATH` | Pin the local checkout for `git for-each-ref` branch-activity probing. Defaults to `git rev-parse --show-toplevel` from cwd; pass explicitly when invoking the script outside the Mercury checkout (CI, cron from a different cwd). |
 | `--no-issue-check` | Skip the GitHub Issue probe (offline mode / fast tests). |

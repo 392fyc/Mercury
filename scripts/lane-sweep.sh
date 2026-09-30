@@ -15,13 +15,14 @@
 # mutates `LANES.md`. The owning lane is responsible for any status flip.
 #
 # Usage:
-#   scripts/lane-sweep.sh [--lanes-file PATH] [--memory-dir PATH]
+#   scripts/lane-sweep.sh [--lanes-file PATH] [--memory-dir PATH] [--handoff-dir PATH]
 #                         [--days N] [--repo OWNER/REPO] [--repo-root PATH]
 #                         [--format text|json] [--no-issue-check]
 #
 # Defaults:
 #   --lanes-file   <memory-dir>/LANES.md
-#   --memory-dir   ${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}
+#   --memory-dir   $MERCURY_MEMORY_DIR, else the project's lane home (scripts/lane-paths.sh memory-dir)
+#   --handoff-dir  the project's handoff dir (scripts/lane-paths.sh handoff-dir); not auto-resolved with --memory-dir; legacy <memory-dir> copies are also read
 #   --days         14
 #   --repo         resolved at runtime via `gh repo view` (or GH_REPO env)
 #   --repo-root    `git rev-parse --show-toplevel` from cwd; pin explicitly
@@ -34,6 +35,10 @@
 
 set -u
 
+LANE_PATHS_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/lane-paths.sh"
+# shellcheck source=lib/lane-paths.sh
+. "$LANE_PATHS_LIB"  # per-project lane home (#613)
+
 die()  { printf 'lane-sweep: %s\n' "$1" >&2; exit 2; }
 warn() { printf 'lane-sweep WARN: %s\n' "$1" >&2; }
 
@@ -41,8 +46,10 @@ DAYS=14
 FORMAT=text
 LANES_FILE=""
 MEMORY_DIR=""
+MEMORY_DIR_GIVEN=0
 REPO=""
 REPO_ROOT=""
+HANDOFF_DIR=""
 NO_ISSUE_CHECK=0
 
 while [ $# -gt 0 ]; do
@@ -50,12 +57,13 @@ while [ $# -gt 0 ]; do
     --days)         shift; [ $# -gt 0 ] || die "--days needs a value"; DAYS="$1"; shift ;;
     --format)       shift; [ $# -gt 0 ] || die "--format needs a value"; FORMAT="$1"; shift ;;
     --lanes-file)   shift; [ $# -gt 0 ] || die "--lanes-file needs a value"; LANES_FILE="$1"; shift ;;
-    --memory-dir)   shift; [ $# -gt 0 ] || die "--memory-dir needs a value"; MEMORY_DIR="$1"; shift ;;
+    --memory-dir)   shift; [ $# -gt 0 ] || die "--memory-dir needs a value"; MEMORY_DIR="$1"; MEMORY_DIR_GIVEN=1; shift ;;
+    --handoff-dir)  shift; [ $# -gt 0 ] || die "--handoff-dir needs a value"; HANDOFF_DIR="$1"; shift ;;
     --repo)         shift; [ $# -gt 0 ] || die "--repo needs a value"; REPO="$1"; shift ;;
     --repo-root)    shift; [ $# -gt 0 ] || die "--repo-root needs a value"; REPO_ROOT="$1"; shift ;;
     --no-issue-check) NO_ISSUE_CHECK=1; shift ;;
     -h|--help)
-      sed -n '2,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '2,34p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     -*) die "unknown flag: $1" ;;
     *)  die "unexpected positional argument: $1" ;;
@@ -85,9 +93,19 @@ esac
 # directory (used by the test harness); otherwise honor MERCURY_MEMORY_DIR env
 # override; otherwise fall back to the canonical Claude Code path.
 if [ -z "$MEMORY_DIR" ]; then
-  MEMORY_DIR="${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}"
+  MEMORY_DIR=$(lane_memory_dir "${REPO_ROOT:-.}") \
+    || die "cannot resolve this project's lane memory dir (run inside a checkout, pass --memory-dir, or set MERCURY_MEMORY_DIR)"
 fi
 [ -d "$MEMORY_DIR" ] || die "memory dir not found: $MEMORY_DIR (set --memory-dir or MERCURY_MEMORY_DIR)"
+
+# Unified handoff dir (#613): --handoff-dir, else the project's handoff dir
+# (scripts/lane-paths.sh handoff-dir); the legacy memory-dir copy is also read.
+# An explicit --memory-dir names a registry that may belong to no checkout
+# (fixtures, another machine's copy): only its own legacy handoffs count
+# unless --handoff-dir is also given.
+if [ -z "$HANDOFF_DIR" ] && [ "$MEMORY_DIR_GIVEN" -eq 0 ]; then
+  HANDOFF_DIR=$(lane_handoff_dir "${REPO_ROOT:-.}" 2>/dev/null) || HANDOFF_DIR=""
+fi
 
 if [ -z "$LANES_FILE" ]; then
   LANES_FILE="$MEMORY_DIR/LANES.md"
@@ -149,20 +167,24 @@ branch_last_ts() {
     "${patterns[@]}" 2>/dev/null | head -n1
 }
 
+# Newest mtime of a lane's handoff: the unified handoff dir (#613) first, the
+# legacy <memory-dir> copy as fallback; empty when neither exists.
+handoff_newest_ts() {
+  local name="$1" f ts best=""
+  for f in ${HANDOFF_DIR:+"$HANDOFF_DIR/$name"} "$MEMORY_DIR/$name"; do
+    [ -f "$f" ] || continue
+    ts=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo "")
+    if [ -n "$ts" ] && { [ -z "$best" ] || [ "$ts" -gt "$best" ]; }; then best="$ts"; fi
+  done
+  printf '%s\n' "$best"
+}
+
 # mtime of session-handoff[-<lane>].md. main lane file has no suffix.
 handoff_last_ts() {
-  local lane="$1"
-  local file
-  if [ "$lane" = "main" ]; then
-    file="$MEMORY_DIR/session-handoff.md"
+  if [ "$1" = "main" ]; then
+    handoff_newest_ts "session-handoff.md"
   else
-    file="$MEMORY_DIR/session-handoff-${lane}.md"
-  fi
-  if [ -f "$file" ]; then
-    # Portable mtime: try GNU stat then BSD stat.
-    stat -c %Y "$file" 2>/dev/null || stat -f %m "$file" 2>/dev/null || echo ""
-  else
-    echo ""
+    handoff_newest_ts "session-handoff-${1}.md"
   fi
 }
 

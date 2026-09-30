@@ -32,7 +32,7 @@ scripts/lane-close.sh <lane-name>
 | `--force-cross-lane` | Suppress the warning emitted when the current branch does not match `feature/lane-<lane>/*`. Useful when closing from `develop` after a PR merge. |
 | `--dry-run` | Print intended actions without modifying `LANES.md` or removing the tmp dir. |
 | `--lanes-file PATH` | Override LANES.md location. Defaults to `<memory-dir>/LANES.md`. |
-| `--memory-dir PATH` | Override memory dir. Defaults to `MERCURY_MEMORY_DIR` env, then `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory`. |
+| `--memory-dir PATH` | Override memory dir. Defaults to `MERCURY_MEMORY_DIR` env, then the project's lane home `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded main checkout>/memory` (`scripts/lane-paths.sh memory-dir`; `D--Mercury-Mercury` for `D:/Mercury/Mercury`; #613). |
 | `--tmp-dir PATH` | Override the tmp dir to remove. Defaults to `<repo-root>/.tmp/lane-<lane>`. |
 | `--repo-root PATH` | Override repo root. Defaults to `git rev-parse --show-toplevel`. |
 | `MERCURY_MEMORY_DIR` (env) | Same effect as `--memory-dir`. |

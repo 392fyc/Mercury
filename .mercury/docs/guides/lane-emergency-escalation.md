@@ -34,7 +34,9 @@ All of:
 3. Main lane has been idle for 48+ hours — defined objectively as **all three**
    of:
    - No commits to `feature/lane-main/*` or legacy `feature/TASK-*` branches
-   - No edits to `<memory-dir>/session-handoff.md`
+   - No edits to `session-handoff.md` in the project's handoff dir
+     (`scripts/lane-paths.sh handoff-dir`, or `--handoff-dir`) or its legacy
+     `<memory-dir>` copy
    - No `updatedAt` change on any Issue carrying the `lane:main` label
 
 The optional helper `scripts/check-main-idle.sh` checks all three signals and
@@ -132,7 +134,7 @@ scripts/check-main-idle.sh [--hours N] [--memory-dir PATH]
 | Flag | Effect |
 |------|--------|
 | `--hours N` | Idleness threshold in hours (default 48). |
-| `--memory-dir PATH` | Override memory dir. Defaults to `MERCURY_MEMORY_DIR` env, then `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory`. |
+| `--memory-dir PATH` | Override memory dir. Defaults to `MERCURY_MEMORY_DIR` env, then the project's lane home `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded main checkout>/memory` (`scripts/lane-paths.sh memory-dir`; `D--Mercury-Mercury` for `D:/Mercury/Mercury`; #613). |
 | `--repo OWNER/REPO` | Pin the GitHub repo. Defaults to `gh repo view` resolution. |
 | `--repo-root PATH` | Pin the local checkout for `git for-each-ref` branch-activity probing. Defaults to `git rev-parse --show-toplevel` from cwd; pass explicitly when invoking outside the Mercury checkout. |
 | `--no-issue-check` | Skip GitHub Issue probe. Useful in CI without `gh` auth. Note: skipping this signal makes the verdict less reliable — issue activity is one of three signals, and absence is treated as "stale" for that signal. |

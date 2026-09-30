@@ -45,7 +45,7 @@
 #                                      [--format text|diff] [--in-place]
 #
 # Defaults:
-#   --memory-dir   ${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}
+#   --memory-dir   $MERCURY_MEMORY_DIR, else the project's lane home (scripts/lane-paths.sh memory-dir)
 #   --output       <memory-dir>/INDEX.generated.md  (use - to write to stdout;
 #                  ignored when --in-place is set)
 #   --format       text  (diff = compare fresh regenerate against existing INDEX.generated.md
@@ -67,6 +67,10 @@
 #      (Issue #516 symlink-hijack guard)
 
 set -u
+
+LANE_PATHS_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/lane-paths.sh"
+# shellcheck source=lib/lane-paths.sh
+. "$LANE_PATHS_LIB"  # per-project lane home (#613)
 
 # Phase F.C lock-in (Issue #331): stamp environment so PreToolUse write-guard
 # can identify script-driven runs and short-circuit allow. Defense-in-depth —
@@ -117,7 +121,8 @@ if [ "$IN_PLACE" = "1" ]; then
 fi
 
 if [ -z "$MEMORY_DIR" ]; then
-  MEMORY_DIR="${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}"
+  MEMORY_DIR=$(lane_memory_dir ".") \
+    || die "cannot resolve this project's lane memory dir (run inside a checkout, pass --memory-dir, or set MERCURY_MEMORY_DIR)"
 fi
 [ -d "$MEMORY_DIR" ] || die "memory dir not found: $MEMORY_DIR (set --memory-dir or MERCURY_MEMORY_DIR)"
 

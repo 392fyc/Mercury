@@ -33,7 +33,7 @@
 | 转录文件格式 | 内部格式,会随版本变,脚本不要直接解析〔官方 S1〕 | 未文档化;正式的程序化接口是 app-server 的 `thread/list` / `thread/read` / `thread/resume`〔官方摘要 S6〕 |
 | 同一会话被两处同时续写 | 两个终端不 fork 地续同一会话,消息会交错写进同一份转录〔官方 S1〕 | **未核实**,按同等风险处理 |
 
-仓内现状(#596 已核实):`LANES.md` 是**一份共享注册表**,路径 `${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}/LANES.md`。`lane-spawn.sh`、`lane-close.sh`、`lane-sweep.sh`、`lane-cap-check.sh`、`lane-assertion.sh` 和两边 handoff skill 的 Step 5 都读这里(`lane-status.sh`、`lane-claim.sh` 不读),Codex 侧没有任何配置去改它。`lane-assertion.sh` 的 cwd 检查只比较「编码后的 cwd」与「编码后的 lane worktree 路径」,检查逻辑与 harness 无关。
+仓内现状(#596 已核实;#613 起改为按项目推导):`LANES.md` 是**每个项目一份的共享注册表**,路径 `${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<编码后的主 checkout 路径>/memory}/LANES.md`,可用 `scripts/lane-paths.sh lanes-file` 打印(Mercury 在 `D:/Mercury/Mercury` 时即原来的 `D--Mercury-Mercury`)。`lane-spawn.sh`、`lane-close.sh`、`lane-sweep.sh`、`lane-cap-check.sh`、`lane-assertion.sh` 和两边 handoff skill 的 Step 5 都读这里(`lane-status.sh`、`lane-claim.sh` 不读),Codex 侧没有任何配置去改它。`lane-assertion.sh` 的 cwd 检查只比较「编码后的 cwd」与「编码后的 lane worktree 路径」,检查逻辑与 harness 无关。
 
 ## 3. 决策
 
@@ -59,9 +59,9 @@
 
 **禁止在自己的 lane 里续写别的 lane 的会话**:不 fork 的 `claude --resume <对方编号>`、`codex resume <对方编号>`、`codex resume --all` 选中对方会话,都不允许。要看对方会话,用 D3 的只读或分叉方式。
 
-交接文档的位置目前有两处:handoff skill 按 Step 2.0 放在工作区的 `.handoff/` 或 KB;`lane-spawn.sh` / `lane-sweep.sh` 仍按 `LANES.md` 所在目录处理。读对方交接文档时先找 Step 2.0 位置,找不到再看 `LANES.md` 所在目录。统一位置留给 P1。
+交接文档的位置已统一(#613):每个项目一个交接目录,由项目的**主 checkout** 决定——主 checkout 的 `.handoff-config` 指定了存在的 `kb_dir` 时为 `<kb_dir>/handoff`,否则为 `<主 checkout>/.handoff`;所有 lane / worktree、handoff skill、`lane-spawn.sh`、`lane-sweep.sh`、`check-main-idle.sh` 都用同一个解析器(`scripts/lane-paths.sh handoff-dir`)。旧位置(lane worktree 自己的 `.handoff/`、`LANES.md` 所在目录)只作回退读取。
 
-**#596 的遗留问题在此裁决:`LANES.md` 保持两边共享,不给 Codex 单独设一份。** 理由:结对协作要求双方看到同一份 lane 表,拆成两份反而要同步。建议(不在本期执行):两边都显式设置同一个 `MERCURY_MEMORY_DIR`,不再依赖 Claude 的默认路径碰巧相同。
+**#596 的遗留问题在此裁决:`LANES.md` 保持两边共享,不给 Codex 单独设一份。** 理由:结对协作要求双方看到同一份 lane 表,拆成两份反而要同步。#613 起两边都通过同一个解析器按项目的主 checkout 推导注册表位置,不再需要手动设置 `MERCURY_MEMORY_DIR`;它只作为单项目时的全局覆盖,同时处理多个项目时应保持未设置,否则所有项目会共用一份注册表。
 
 私有记忆 `.mercury/memory/` 是每个 checkout 各自一份(gitignored),各 worktree 互不可见,**不作为跨 lane 通道**。
 
@@ -170,7 +170,7 @@ cwd 检查保护的不变量是「会话的 cwd 就是 lane worktree」,对两�
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | P0 | 本 ADR + #600 lane-assertion 文案 | 本 PR |
-| P1 | 移除 Δ7 HARD-CAP:`lane-spawn.sh` 第 3 步的拒绝及 `test-lane-spawn.sh` 对应用例;`lane-cap-check.sh` 决定删除还是改为只报数量(同时处理 `lane-assertion.sh` 与 `test-lane-assertion.sh` 里引用它的注释、`test-lane-cap-check.sh`);同步 `README.md`、`.mercury/docs/guides/lane-spawn.md`、`lane-naming.md` Δ7、`.mercury/docs/lane-protocol-v0.1-deltas.md` Δ7、`protocol-violation` 标签说明;用户级 `feedback_lane_protocol.md` Rule 7 按 #259 的用户级变更流程另行修改;把 D4 的接收方规则以同一段文字写进 `AGENTS.md` 与 `CLAUDE.md`;核实两边取当前会话编号的方法;新字段落地:`lane-spawn.sh --harness`;`lane-status.sh` 现在不读 `LANES.md`,要显示 Harness / Session / Peers 得先接入它;统一交接文档位置;实测 R3 分叉会话的运行目录;核实 `codex exec fork`;调研如何识别「当前是哪个 CLI」,再决定 lane-assertion 是否校验 Harness | 待开 Issue |
+| P1 | 移除 Δ7 HARD-CAP:`lane-spawn.sh` 第 3 步的拒绝及 `test-lane-spawn.sh` 对应用例;`lane-cap-check.sh` 决定删除还是改为只报数量(同时处理 `lane-assertion.sh` 与 `test-lane-assertion.sh` 里引用它的注释、`test-lane-cap-check.sh`);同步 `README.md`、`.mercury/docs/guides/lane-spawn.md`、`lane-naming.md` Δ7、`.mercury/docs/lane-protocol-v0.1-deltas.md` Δ7、`protocol-violation` 标签说明;用户级 `feedback_lane_protocol.md` Rule 7 按 #259 的用户级变更流程另行修改;把 D4 的接收方规则以同一段文字写进 `AGENTS.md` 与 `CLAUDE.md`;核实两边取当前会话编号的方法;新字段落地:`lane-spawn.sh --harness`;`lane-status.sh` 现在不读 `LANES.md`,要显示 Harness / Session / Peers 得先接入它;统一交接文档位置(#613 已完成,并改为按项目解析注册表与交接目录);实测 R3 分叉会话的运行目录;核实 `codex exec fork`;调研如何识别「当前是哪个 CLI」,再决定 lane-assertion 是否校验 Harness | 部分完成(#605 / #608 / #613),其余待开 Issue |
 | P2 | `scripts/lane-msg.sh`(`send` / `read` 两个子命令)包装 M1:自动生成来源标记(lane 名和 Harness 取自 `LANES.md`,`SESSION` 取自正在运行的会话本身,不取 `LANES.md` 里的 `Session`)、读取时按 `FROM-LANE` / `HARNESS` 校验标记、写入加文件锁 | 待开 Issue |
 | P3 | 试点:美术 lane(Codex)× 天赋设计 lane(Claude)完成一轮真实往返,按结果修订本 ADR | 待开 Issue |
 
