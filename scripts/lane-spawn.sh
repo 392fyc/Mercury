@@ -279,10 +279,12 @@ if [ -z "$HANDOFF_DIR" ]; then
 fi
 HANDOFF_FILE="$HANDOFF_DIR/session-handoff-${LANE}.md"
 LEGACY_HANDOFF="$MEMORY_DIR/session-handoff-${LANE}.md"
-if [ "$LEGACY_HANDOFF" != "$HANDOFF_FILE" ] && [ -e "$LEGACY_HANDOFF" ]; then
+if [ "$LEGACY_HANDOFF" != "$HANDOFF_FILE" ] && { [ -e "$LEGACY_HANDOFF" ] || [ -L "$LEGACY_HANDOFF" ]; }; then
   fail "legacy handoff file already exists: $LEGACY_HANDOFF (lane name in use — move or delete first)"
 fi
-if [ -e "$HANDOFF_FILE" ]; then
+# -L too: a dangling symlink passes -e and the write would follow it out of
+# the handoff dir.
+if [ -e "$HANDOFF_FILE" ] || [ -L "$HANDOFF_FILE" ]; then
   fail "handoff file already exists: $HANDOFF_FILE (refusing to overwrite — move or delete first)"
 fi
 

@@ -106,6 +106,11 @@ touch "$MA/session-handoff-legacy.md"
 bash "$REPO_ROOT/scripts/lane-spawn.sh" legacy 8 --short legacy --slug x --no-claim --no-branch --yes --repo-root "$AW" >/dev/null 2>&1
 eq "lane-spawn refuses a lane whose legacy memory-dir handoff exists" "$?" "1"
 
+ln -s "$TMP/outside-target.md" "$KB/handoff/session-handoff-dangle.md"
+bash "$REPO_ROOT/scripts/lane-spawn.sh" dangle 9 --short dangle --slug x --no-claim --no-branch --yes --repo-root "$AW" >/dev/null 2>&1
+eq "lane-spawn refuses a dangling symlink at the handoff path" "$?" "1"
+[ ! -e "$TMP/outside-target.md" ] && pass "nothing written through the dangling symlink" || fail "wrote through symlink"
+
 echo
 echo "[lane-init --main-worktree picks that project's lane home]"
 MC="$CLAUDE_CONFIG_DIR/projects/$(enc "$TMP/work/Proj-C")/memory"
