@@ -157,4 +157,4 @@ fixture report fields, and JSON output structure.
 - Issue [#312](https://github.com/392fyc/Mercury/issues/312) — acceptance criteria
 - [v0.1 Delta companion](../lane-protocol-v0.1-deltas.md#delta-4--rule-41-emergency-spec-change-escalation-p2)
 - [Overcoming the Pitfalls of the Spotify Model](https://medium.com/@ss-tech/overcoming-the-pitfalls-of-the-spotify-model-8e09edc9583b)
-- `feedback_lane_protocol.md` Rule 4 (DIRECTION/EXECUTION-PLAN exclusivity)
+- [lane-protocol.md](lane-protocol.md) Rule 4 (DIRECTION/EXECUTION-PLAN exclusivity)

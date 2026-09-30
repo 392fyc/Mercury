@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scripts/lane-close.sh — Mercury multi-lane close ceremony.
-# Implements Rule 3.2 of feedback_lane_protocol.md (v0.1 Delta 3, Issue #311).
+# Implements Rule 3.2 of the lane protocol (.mercury/docs/guides/lane-protocol.md) (v0.1 Delta 3, Issue #311).
 #
 # Atomically:
 #   1. Validate <lane> exists in LANES.md, status != closed

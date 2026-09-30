@@ -51,7 +51,7 @@
 #
 # Reference docs:
 #   - .mercury/docs/guides/lane-naming.md §Lane workspace isolation
-#   - feedback_lane_protocol.md Rule 5.1 (Per-lane state separation)
+#   - .mercury/docs/guides/lane-protocol.md Rule 5.1 (Per-lane state separation)
 #   - Issue #342 (routing-bleed forensic record)
 #   - Issue #345 (this assertion implementation)
 
@@ -262,7 +262,7 @@ if [ -z "$WORKTREE_PATH_RAW" ]; then
   else
     cat >&2 <<EOF
 $PROG: BLOCKED — lane '$LANE_NAME' has no Worktree path field in LANES.md.
-Per feedback_lane_protocol.md Rule 5.1 (landed S15-side-multi-lane Issue
+Per lane protocol Rule 5.1 (.mercury/docs/guides/lane-protocol.md) (landed S15-side-multi-lane Issue
 #342), every active lane MUST declare a Worktree path field. Add the
 field to the lane's section in:
   $LANES_FILE

@@ -699,7 +699,7 @@ in_section && /\*\*Worktree path\*\*/ {
 ' "$LANES_FILE")
 if [ -z "$WORKTREE_PATH_RAW" ]; then
   echo "ERROR: lane '$LANE_NAME' has no Worktree path field in $LANES_FILE" >&2
-  echo "       Add it per feedback_lane_protocol.md Rule 5.1 before auto-handoff." >&2
+  echo "       Add it per lane protocol Rule 5.1 (.mercury/docs/guides/lane-protocol.md) before auto-handoff." >&2
   exit 1
 fi
 # Reject duplicate Worktree path bullets — first-wins would silently route

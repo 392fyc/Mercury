@@ -372,7 +372,7 @@ originSessionId: spawn-${LANE}-${ISSUE}-${TODAY}
 
 ## Starting Prompt
 
-This is Mercury **lane '${LANE}'** session 1 (lane info in \`LANES.md\` + \`feedback_lane_protocol.md\`).
+This is Mercury **lane '${LANE}'** session 1 (lane info in \`LANES.md\` + \`.mercury/docs/guides/lane-protocol.md\`).
 
 ### 当前状态
 
@@ -392,7 +392,7 @@ This is Mercury **lane '${LANE}'** session 1 (lane info in \`LANES.md\` + \`feed
 
 ### 关键参考
 
-- \`memory/feedback_lane_protocol.md\` v0+v0.1+v0.2 — 7+ rules
+- \`.mercury/docs/guides/lane-protocol.md\` — lane rule index (Rules 1–8)
 - \`memory/LANES.md\` — lane registry
 - Issue #${ISSUE} body — task spec
 

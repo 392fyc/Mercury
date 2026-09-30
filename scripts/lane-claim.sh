@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scripts/lane-claim.sh — Mercury multi-lane Issue claim with probe-after-write.
-# Implements Rule 1.1 of feedback_lane_protocol.md (v0.1 Delta 1, Issue #309).
+# Implements Rule 1.1 of the lane protocol (.mercury/docs/guides/lane-protocol.md) (v0.1 Delta 1, Issue #309).
 #
 # Adds `lane:<lane>` label (+ @me assignee) to <issue-number>, then re-queries
 # Issue labels. If post-write count of `lane:*` labels > 1, aborts non-zero

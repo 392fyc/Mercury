@@ -3,7 +3,7 @@
 **Status**: PROPOSED — pending main lane S74+ decision
 **Source**: S1-side-multi-lane research (Issue #292)
 **Companion to**: `.mercury/docs/research/multi-lane-protocol-2026-04-25.md` (full design doc)
-**Mirror of**: user-memory `feedback_lane_protocol.md` v0.1 Delta Proposal section
+**Mirror of** (historical): the user-memory `feedback_lane_protocol.md` v0.1 Delta Proposal section. That file was lost in the #579 migration; the rule authority is now [guides/lane-protocol.md](guides/lane-protocol.md) (#618)
 
 ---
 
@@ -19,21 +19,20 @@ There are two related artifacts with **non-overlapping scopes**:
 
 | Artifact | Location | Scope | Lifecycle |
 |----------|----------|-------|-----------|
-| **v0 protocol rules** (Rules 1–7) | user-memory `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded_cwd>/memory/feedback_lane_protocol.md` (where `<encoded_cwd>` is the host-specific path-encoded form of the project working directory; discover at runtime — see Verification commands § for the discovery snippet) | **AUTHORITATIVE** for v0 rules currently in force | Stable; updated by main-lane decisions |
+| **Rules in force** (Rules 1–8 and sub-rules) | repo `.mercury/docs/guides/lane-protocol.md` (#618; replaces the lost user-memory `feedback_lane_protocol.md`) | **AUTHORITATIVE** for the rules currently in force and where each is enforced | Updated in the same PR as the guide or script that changes a rule |
 | **v0.1 delta proposal** (this file) | repo `.mercury/docs/lane-protocol-v0.1-deltas.md` | **AUTHORITATIVE** for the proposed deltas under review | Pending main-lane decision; archives once accepted/rejected |
 
 **Single precedence rule**: each artifact owns its declared scope. They never overlap, so
 "conflict" between them is a category error.
 
-- "What is Rule 5 today?" → answer from user-memory `feedback_lane_protocol.md` (v0 authority)
+- "What is Rule 5 today?" → answer from [guides/lane-protocol.md](guides/lane-protocol.md) (rule authority)
 - "What does the v0.1 proposal change about Rule 5?" → answer from this file (delta authority)
 - "What will Rule 5 be in v1?" → answer = (v0 rules) ⊕ (accepted deltas after main-lane decision)
   documented in a future v1 doc
 
-The v0 user-memory file also contains a "v0.1 Delta Proposal" working-cache section that mirrors
-this file's content. **If that working cache and this file ever diverge, this file wins** (scope:
-delta proposal). The v0 rules section in the same user-memory file is unaffected by this rule —
-it remains authoritative for v0.
+Historical note: the lost user-memory file also held a "v0.1 Delta Proposal" working-cache
+section mirroring this file. Where any surviving copy differs, this file wins for the deltas and
+the rule index wins for the rules in force.
 
 ## Verdict
 
@@ -195,28 +194,12 @@ Main lane S74+ to decide:
 
 ## Verification commands
 
-PR reviewers running on the original operator's machine can independently verify the parallel
-proposal in user-memory layer. **Note**: `<encoded_cwd>` is host-specific and operator-specific
-(computed by Claude Code at session start). Discover at runtime instead of guessing:
-
-```bash
-ENCODED_CWD=$(ls "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/" | grep -i 'mercury' | head -1)
-MEM_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/${ENCODED_CWD}/memory"
-test -f "$MEM_DIR/feedback_lane_protocol.md" \
-  && grep -q "v0.1 Delta Proposal" "$MEM_DIR/feedback_lane_protocol.md" \
-  && echo "OK: v0.1 delta section present in user memory" \
-  || echo "ABSENT: user-memory file missing or unmodified"
-```
-
-**Reviewers without access to the original operator's user-memory** (different machine, CI bot,
-fresh clone) cannot run this check — that is by design, since user-memory is per-machine. For
-those reviewers, **this repo file alone is sufficient as the authoritative proposal** — it
-mirrors all content needed for main-lane decision. The verification command exists only as a
-sanity check that the original operator's user-memory was correctly updated alongside this PR;
-its failure does not invalidate the proposal.
+The original check compared this file with the user-memory copy on the operator's machine. That
+copy is gone (#579), so there is nothing to compare against: this repo file is the proposal of
+record, and [guides/lane-protocol.md](guides/lane-protocol.md) records which deltas are in force.
 
 ## Cross-references
 
 - Full research: `.mercury/docs/research/multi-lane-protocol-2026-04-25.md`
 - Issue: [#292](https://github.com/392fyc/Mercury/issues/292)
-- v0 protocol rules in force (read-only reference): user-memory `feedback_lane_protocol.md`. As of this PR, the user-memory file ALSO contains an appended "v0.1 Delta Proposal" working-cache section mirroring this file's content (see Authority scoping §). For a self-contained snapshot of the 7 v0 rules without leaving repo, see research doc §"Protocol 7 rules (subject under evaluation)".
+- Rules in force: [guides/lane-protocol.md](guides/lane-protocol.md) (#618). It replaces the lost user-memory `feedback_lane_protocol.md`.

@@ -22,7 +22,7 @@ $stateDir = Join-Path $repoRoot ".mercury\\state"
 $reviewFlag = Join-Path $stateDir "review-passed"
 $protectedBranches = @("develop", "main", "master")
 # Accept feature/TASK-* (legacy) and the lane branch forms used in practice
-# under Mercury's multi-lane v1 protocol (feedback_lane_protocol Rule 2.1):
+# under Mercury's multi-lane v1 protocol (.mercury/docs/guides/lane-protocol.md Rule 2.1):
 #   - lane/<lane-name>/init               — scaffold branch (e.g. lane/side-bug/init)
 #   - lane/<lane-name>/<n>                — issue-only suffix
 #   - lane/<lane-name>/<n>-<slug>         — typical work branch (e.g. lane/side-bug/357-codex-hooks)

@@ -1,4 +1,4 @@
-# Lane Naming + Capacity — `feedback_lane_protocol.md` Rule 2 & HARD-CAP
+# Lane Naming + Capacity — lane protocol Rule 2 & HARD-CAP
 
 Implements the **Rule 2 short branch prefix** delta (v0.1 Delta 6, Issue
 [#313](https://github.com/392fyc/Mercury/issues/313)). It also records the
@@ -83,7 +83,7 @@ stale signals before flagging stale.
 ### Cap value
 
 `LANES.md` MUST NOT exceed **5 active lanes** simultaneously. The cap is
-declared in `feedback_lane_protocol.md` and enforced advisorily by
+declared in the lane protocol ([lane-protocol.md](lane-protocol.md)) and enforced advisorily by
 `scripts/lane-cap-check.sh`.
 
 ### Why 5
@@ -152,7 +152,7 @@ When exceeded:
 ```
 lane-cap-check: 6 active lane(s), cap=5 → exceeded
   active: main,side-mlane,side-foo,side-bar,side-baz,side-qux
-  resolution: close an existing lane OR open Issue with `protocol-violation` label requesting cap raise (per feedback_lane_protocol.md HARD-CAP §)
+  resolution: close an existing lane OR open Issue with `protocol-violation` label requesting cap raise (historical: HARD-CAP removed by #605)
 ```
 
 ### `protocol-violation` GitHub label
@@ -207,7 +207,7 @@ cwd-encoded project state directory is also distinct.
 > **Path notation in this §**: examples use `<repo-root>` as a placeholder
 > for the parent directory operators put their Mercury checkouts under
 > (e.g. Mercury team's documented value is `D:/Mercury` per
-> [`CLAUDE.md`](../../CLAUDE.md) §MUST "Install software to `D:\Program Files`,
+> [`CLAUDE.md`](../../../CLAUDE.md) §MUST "Install software to `D:\Program Files`,
 > not C drive"; on Unix this might be `~/repos`). Concrete `D:/Mercury/...`
 > paths shown later are the team's actual values; substitute your own
 > `<repo-root>` when reading. The lane protocol does not impose `D:/Mercury`
@@ -576,7 +576,7 @@ session-scoped only; it does not persist.
 This Issue scope keeps assertion as a manual / agent-as-first-action step
 to validate the contract in production. If proven stable across ≥3 sessions
 of real auto-handoff usage, follow-up work may wire it into a user-level
-SessionStart hook per `feedback_lane_protocol.md` Rule 5.1 §F.C governance
+SessionStart hook per [lane protocol](lane-protocol.md) Rule 5.1 §F.C governance
 pattern (analogous to Issue #259 deployment for mem0). The deferred-hook
 choice is intentional: a SessionStart-time assertion that runs by default
 needs a track record of low false-positive rate before it becomes
@@ -584,7 +584,7 @@ unconditional infrastructure.
 
 ### Cross-references
 
-- `feedback_lane_protocol.md` Rule 5.1 (sub-rule of Rule 5: Per-lane state
+- [lane-protocol.md](lane-protocol.md) Rule 5.1 (sub-rule of Rule 5: Per-lane state
   separation) formalizes the worktree path convention as protocol; §5.1.1
   + §5.1.2 cover the Δ10/Δ11 contracts
 - `LANES.md` Governance §Lane workspace isolation declares each lane MUST
