@@ -93,19 +93,22 @@ Two sources:
 1. **Durable memory** — in the Codex harness, start with
    `.mercury/memory/README.md` when present and load the entries it indexes
    on demand (AGENTS.md §Ownership and memory; local, private, gitignored).
-   The lane registry `LANES.md` is separate: the lane scripts and Step 5 read
-   it at one fixed path, not a per-cwd directory:
+   The lane registry `LANES.md` is separate: every project has ONE lane home,
+   shared by all of its lanes / worktrees and by both harnesses (Issue #613):
    ```
-   ${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}/LANES.md
+   bash scripts/lane-paths.sh lanes-file
+   # = ${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded main checkout>/memory}/LANES.md
    ```
-   (the default is the Claude Code memory dir shared on this machine; nothing
-   in the Codex harness sets `MERCURY_MEMORY_DIR`). Read checkpoints + project
-   memories there as well if the user keeps them in that dir.
-2. **Previous handoff doc** — resolve via Step 2.0 (`<workspace>/.handoff/` or
-   `<kb_dir>/handoff/`) and read the prior `session-handoff*.md` there. Legacy
-   sessions may still have it in a Claude Code memory dir under
-   `~/.claude/projects/` (e.g. the shared `LANES.md` dir above) — read whichever
-   exists (prefer the Step 2.0 location).
+   `<encoded main checkout>` is the project's main checkout (first entry of
+   `git worktree list`) with every non-alphanumeric character replaced by `-`
+   (for `D:/Mercury/Mercury`: `D--Mercury-Mercury`). Leave `MERCURY_MEMORY_DIR`
+   unset when working on several projects. Read checkpoints + project memories
+   there as well if the user keeps them in that dir.
+2. **Previous handoff doc** — resolve via Step 2.0 (the project's
+   `<main checkout>/.handoff/` or `<kb_dir>/handoff/`) and read the prior
+   `session-handoff*.md` there. Legacy sessions may still have it in a lane
+   worktree's own `.handoff/` or in the project's `LANES.md` dir above — read
+   whichever exists (prefer the Step 2.0 location).
 
 ### Layer 3: Project documentation (if present)
 
@@ -176,21 +179,30 @@ Pick **one** primary task + one secondary fallback. Never produce a menu.
 ### Step 2.0: Resolve handoff storage location (run once; reused by Step 5)
 
 The handoff doc is **transient working state**, so it lives **with the
-workspace/KB — never** in a durable memory dir (`.mercury/memory/`, or the
-shared `LANES.md` dir resolved in Layer 2; those hold only durable memory).
-Resolve the storage dir in this order and reuse `$HANDOFF_PATH` everywhere:
+project/KB — never** in a durable memory dir (`.mercury/memory/`, or the
+project's `LANES.md` dir resolved in Layer 2; those hold only durable memory).
+There is ONE handoff dir per project, shared by every lane and worktree, so a
+lane worktree resolves the same dir as the main lane (Issue #613). Resolve it
+and reuse `$HANDOFF_PATH` everywhere:
 
 ```bash
-# Order:
-#   1. <workspace>/.handoff-config (gitignored marker) with `kb_dir=<path>`
+# Order (MAIN = the project's main checkout, first entry of `git worktree list`):
+#   1. MAIN/.handoff-config (gitignored marker) with `kb_dir=<path>`
 #      pointing at an existing dir  → HANDOFF_DIR=<kb_dir>/handoff
-#   2. otherwise                    → HANDOFF_DIR=<workspace>/.handoff
+#   2. otherwise                    → HANDOFF_DIR=MAIN/.handoff
 # Both dirs + .handoff-config itself are gitignored. Never committed.
-WORKSPACE="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+#   Outside any git checkout, MAIN = the current directory.
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+if [ -f "$REPO_ROOT/scripts/lane-paths.sh" ] && git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+  HANDOFF_DIR="$(bash "$REPO_ROOT/scripts/lane-paths.sh" handoff-dir --repo-root "$REPO_ROOT")" || exit 1
+else
+# Project without Mercury's scripts (or no checkout at all): the same rule, inline.
+MAIN="$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"
+[ -n "$MAIN" ] || MAIN="$REPO_ROOT"
 KB_DIR=""
-if [ -f "$WORKSPACE/.handoff-config" ]; then
+if [ -f "$MAIN/.handoff-config" ]; then
   KB_DIR=$(sed -n 's/^[[:space:]]*kb_dir[[:space:]]*=[[:space:]]*//p' \
-            "$WORKSPACE/.handoff-config" | head -1)
+            "$MAIN/.handoff-config" | head -1)
   # Cleanup order matters: trailing whitespace FIRST, then quotes, then slashes
   # (a trailing space after a closing quote would otherwise defeat quote-strip).
   KB_DIR="${KB_DIR%"${KB_DIR##*[![:space:]]}"}"       # 1) strip trailing whitespace
@@ -200,7 +212,8 @@ fi
 if [ -n "$KB_DIR" ] && [ -d "$KB_DIR" ]; then
   HANDOFF_DIR="$KB_DIR/handoff"
 else
-  HANDOFF_DIR="$WORKSPACE/.handoff"
+  HANDOFF_DIR="$MAIN/.handoff"
+fi
 fi
 mkdir -p "$HANDOFF_DIR"
 
@@ -208,12 +221,14 @@ mkdir -p "$HANDOFF_DIR"
 HANDOFF_PATH="$HANDOFF_DIR/session-handoff.md"   # multi-lane: append -<lane> before .md
 ```
 
-`.handoff-config` format (one `kb_dir=` line; use **forward slashes** so Git
-Bash resolves it; absolute path — substitute your own KB location):
+`.handoff-config` lives in the project's **main checkout** (one per project;
+a copy in a lane worktree is ignored). Format: one `kb_dir=` line; use
+**forward slashes** so Git Bash resolves it; absolute path — substitute your
+own KB location. Give each project its own KB dir so handoffs never collide:
 ```
 kb_dir=/absolute/path/to/your-project-KB
 ```
-No marker file ⇒ no KB ⇒ handoff falls back to `<workspace>/.handoff/`.
+No marker file ⇒ no KB ⇒ handoff falls back to `<main checkout>/.handoff/`.
 
 ### Step 2.1: Write the document
 
@@ -551,7 +566,7 @@ Always do **both** of these — never skip either:
 1. **Output the Starting Prompt section directly in chat** — PRIMARY
    artifact. User pastes it verbatim as the first message of a new session.
 2. **Save the full handoff document** to `$HANDOFF_PATH` (resolved in Step 2.0
-   — `<workspace>/.handoff/` or `<kb_dir>/handoff/`). The next session loads it
+   — `<main checkout>/.handoff/` or `<kb_dir>/handoff/`). The next session loads it
    via the explicit `Read` directive in the SHORT_PROMPT (auto mode) or by the
    user pasting the prompt (manual mode) — NOT via auto-memory injection.
 
@@ -632,7 +647,20 @@ esac
 # Resolve the worktree path from LANES.md (Rule 5.1, Issue #342).
 # This is the cwd that wt/tmux must launch the new session at, so that
 # lane-assertion's cwd check passes and the lane branch is checked out there.
-LANES_FILE="${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}/LANES.md"
+# One registry per project, shared by all of its lanes (Issue #613).
+# Cross-repo lanes (host repo without the registry) set MERCURY_MEMORY_DIR to
+# the owning project's lane home; the inline fallback honours it too.
+_TOP="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+if [ -f "$_TOP/scripts/lane-paths.sh" ]; then
+  LANES_FILE="$(bash "$_TOP/scripts/lane-paths.sh" lanes-file --repo-root "$_TOP")" || exit 1
+elif [ -n "${MERCURY_MEMORY_DIR:-}" ]; then
+  LANES_FILE="$MERCURY_MEMORY_DIR/LANES.md"
+else
+  _MAIN="$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"
+  [ -n "$_MAIN" ] || { echo "ERROR: cannot resolve the lane registry (not in a checkout; set MERCURY_MEMORY_DIR)" >&2; exit 1; }
+  command -v cygpath >/dev/null 2>&1 && _MAIN="$(cygpath -m "$_MAIN")"
+  LANES_FILE="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/$(printf '%s' "$_MAIN" | LC_ALL=C sed 's/[^A-Za-z0-9]/-/g')/memory/LANES.md"
+fi
 WORKTREE_PATH_RAW=$(awk -v lane="$LANE_NAME" '
 BEGIN { in_section=0; in_fence=0 }
 /^```/ { in_fence = !in_fence; next }
@@ -685,7 +713,7 @@ pastes the doc's Starting Prompt, which contains the self-check line). Either
 way the receiver's first-action fidelity diff travels in the doc, not the launch
 command.
 
-`$HANDOFF_PATH` is the location resolved in **Step 2.0** (`<workspace>/.handoff/`
+`$HANDOFF_PATH` is the location resolved in **Step 2.0** (`<main checkout>/.handoff/`
 or `<kb_dir>/handoff/`, never a durable memory dir). Shell variables do NOT
 persist across separate Bash tool calls. The launcher needs all three of
 `$HANDOFF_PATH`, `$LANE_NAME` and `$WORKTREE_PATH` in the **same shell** that

@@ -18,7 +18,7 @@
 #                        [--main-harness claude|codex] [--dry-run]
 #
 # Defaults:
-#   --memory-dir     ${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}
+#   --memory-dir     $MERCURY_MEMORY_DIR, else the project's lane home (scripts/lane-paths.sh memory-dir)
 #                    (created if missing; LANES.md goes inside it)
 #   --main-worktree  the main checkout (first entry of `git worktree list`),
 #                    also when run from a linked lane worktree; must be absolute
@@ -31,6 +31,10 @@
 #      not a regular file / memory dir unusable / cannot create or write
 
 set -u
+
+LANE_PATHS_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/lane-paths.sh"
+# shellcheck source=lib/lane-paths.sh
+. "$LANE_PATHS_LIB"  # per-project lane home (#613)
 
 die() { printf 'lane-init: %s\n' "$1" >&2; exit 2; }
 
@@ -61,17 +65,11 @@ case "$MAIN_HARNESS" in
   *) die "--main-harness must be claude or codex: '$MAIN_HARNESS'" ;;
 esac
 
-if [ -z "$MEMORY_DIR" ]; then
-  MEMORY_DIR="${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}"
-fi
-LANES_FILE="$MEMORY_DIR/LANES.md"
-
 if [ -z "$MAIN_WORKTREE" ]; then
   # The main checkout is the first entry of `git worktree list`, also when this
   # runs from a linked lane worktree (--show-toplevel would return that one).
-  MAIN_WORKTREE=$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')
-  [ -n "$MAIN_WORKTREE" ] \
-    || die "cannot resolve the main worktree (run inside the Mercury checkout or pass --main-worktree)"
+  MAIN_WORKTREE=$(lane_main_worktree ".") \
+    || die "cannot resolve the main worktree (run inside the project's checkout or pass --main-worktree)"
 fi
 case "$MAIN_WORKTREE" in
   /*|[A-Za-z]:/*|[A-Za-z]:\\*) ;;
@@ -80,6 +78,19 @@ esac
 case "$MAIN_WORKTREE" in
   *'`'*|*$'\n'*) die "--main-worktree must not contain backticks or newlines: '$MAIN_WORKTREE'" ;;
 esac
+
+if [ -z "$MEMORY_DIR" ]; then
+  # The lane home belongs to the project whose main checkout is recorded
+  # below, so derive it from that path (no git needed for --main-worktree).
+  MEMORY_DIR=$(lane_memory_dir_for_main "$MAIN_WORKTREE") \
+    || die "cannot resolve the lane memory dir (pass --memory-dir or set MERCURY_MEMORY_DIR)"
+  if [ -n "${MERCURY_MEMORY_DIR:-}" ]; then
+    DERIVED=$(MERCURY_MEMORY_DIR='' lane_memory_dir_for_main "$MAIN_WORKTREE")
+    [ "$DERIVED" = "$MERCURY_MEMORY_DIR" ] \
+      || printf 'lane-init WARN: MERCURY_MEMORY_DIR=%s overrides this project'"'"'s lane home %s; every project sharing that variable shares one registry\n' "$MERCURY_MEMORY_DIR" "$DERIVED" >&2
+  fi
+fi
+LANES_FILE="$MEMORY_DIR/LANES.md"
 
 if [ -e "$MEMORY_DIR" ] && [ ! -d "$MEMORY_DIR" ]; then
   die "memory dir exists but is not a directory: $MEMORY_DIR"
@@ -137,7 +148,5 @@ fi
 
 printf 'lane-init: created %s (main lane: harness=%s, worktree=%s)\n' \
   "$LANES_FILE" "$MAIN_HARNESS" "$MAIN_WORKTREE"
-if [ -z "${MERCURY_MEMORY_DIR:-}" ]; then
-  printf 'lane-init: tip: set MERCURY_MEMORY_DIR to this directory for both Claude Code and Codex so neither relies on the default path.\n'
-fi
+printf 'lane-init: this is the lane home of the project at %s; other projects get their own (scripts/lane-paths.sh memory-dir).\n' "$MAIN_WORKTREE"
 exit 0

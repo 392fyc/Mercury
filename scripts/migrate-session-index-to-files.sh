@@ -26,7 +26,7 @@
 #   scripts/migrate-session-index-to-files.sh [--memory-dir PATH] [--force] [--dry-run]
 #
 # Defaults:
-#   --memory-dir   ${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}
+#   --memory-dir   $MERCURY_MEMORY_DIR, else the project's lane home (scripts/lane-paths.sh memory-dir)
 #   --force        overwrite existing per-session files (default: skip)
 #   --dry-run      print intended writes to stdout, do not touch disk
 #
@@ -41,6 +41,10 @@
 # exit code 1 here AND add the corresponding `exit 1` path.
 
 set -u
+
+LANE_PATHS_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/lane-paths.sh"
+# shellcheck source=lib/lane-paths.sh
+. "$LANE_PATHS_LIB"  # per-project lane home (#613)
 
 die()  { printf 'migrate-session-index: %s\n' "$1" >&2; exit 2; }
 warn() { printf 'migrate-session-index WARN: %s\n' "$1" >&2; }
@@ -65,7 +69,8 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "$MEMORY_DIR" ]; then
-  MEMORY_DIR="${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}"
+  MEMORY_DIR=$(lane_memory_dir ".") \
+    || die "cannot resolve this project's lane memory dir (run inside a checkout, pass --memory-dir, or set MERCURY_MEMORY_DIR)"
 fi
 [ -d "$MEMORY_DIR" ] || die "memory dir not found: $MEMORY_DIR"
 

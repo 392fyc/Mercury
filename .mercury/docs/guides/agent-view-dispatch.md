@@ -394,9 +394,9 @@ Each lane's `Worktree path` field lives in `LANES.md` — a canonical
 #388 acceptance criterion to "cross-link to LANES.md" is therefore
 satisfied by **textual reference** rather than a markdown link target,
 since `LANES.md` is unreachable via repo-relative path. Operators
-locate it via `$MERCURY_MEMORY_DIR/LANES.md` (or the
-`${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory/LANES.md`
-fallback). See lane-naming.md §"Worktree path convention" + §"Cross-repo
+locate it with `scripts/lane-paths.sh lanes-file` (`$MERCURY_MEMORY_DIR/LANES.md`,
+else the project's lane home
+`${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded main checkout>/memory/LANES.md`; #613). See lane-naming.md §"Worktree path convention" + §"Cross-repo
 lane variant" for canonical pathing rules.
 
 Operators on machines other than the Mercury team's default substitute

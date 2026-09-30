@@ -57,6 +57,10 @@
 
 set -u
 
+LANE_PATHS_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/lane-paths.sh"
+# shellcheck source=lib/lane-paths.sh
+. "$LANE_PATHS_LIB"  # per-project lane home (#613)
+
 PROG="lane-assertion.sh"
 
 die() {
@@ -130,7 +134,8 @@ done
 
 # ── memory dir + LANES.md resolution (mirrors lane-cap-check.sh) ─
 if [ -z "$MEMORY_DIR" ]; then
-  MEMORY_DIR="${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}"
+  MEMORY_DIR=$(lane_memory_dir "${REPO_ROOT:-${CWD_OVERRIDE:-.}}") \
+    || die "cannot resolve this project's lane memory dir (run inside a checkout, pass --memory-dir, or set MERCURY_MEMORY_DIR)" 5
 fi
 [ -d "$MEMORY_DIR" ] || die "memory dir not found: $MEMORY_DIR (set --memory-dir or MERCURY_MEMORY_DIR)" 5
 [ -z "$LANES_FILE" ] && LANES_FILE="$MEMORY_DIR/LANES.md"

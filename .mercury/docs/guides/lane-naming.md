@@ -127,7 +127,7 @@ scripts/lane-cap-check.sh [--lanes-file PATH] [--memory-dir PATH]
 | `--max N` | Override the cap (default 5). |
 | `--format text\|json` | Output format. |
 | `--lanes-file PATH` | Override LANES.md location. |
-| `--memory-dir PATH` | Override memory dir. Defaults to `MERCURY_MEMORY_DIR` env, then `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory`. |
+| `--memory-dir PATH` | Override memory dir. Defaults to `MERCURY_MEMORY_DIR` env, then the project's lane home `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded main checkout>/memory` (`scripts/lane-paths.sh memory-dir`; `D--Mercury-Mercury` for `D:/Mercury/Mercury`; #613). |
 | `MERCURY_MEMORY_DIR` (env) | Same effect as `--memory-dir`. |
 
 Exit `0` if count ≤ max, exit `1` if exceeded, exit `2` on argument or
@@ -297,6 +297,14 @@ governed by Rule 6.
   This is a documentation-only convention (no schema/tooling enforcement
   in `scripts/lane-spawn.sh` or fixtures); the field exists so future
   user-scope asset migrations have a manual audit anchor.
+- **Lane home (#613)**: lane scripts resolve the registry from the main
+  checkout of the repo they run in, so from the host repo they would look
+  for the host's own lane home. Start cross-repo lane sessions with
+  `MERCURY_MEMORY_DIR` set to the owning project's lane home, as a one-shot
+  prefix (`MERCURY_MEMORY_DIR="$(bash <mercury>/scripts/lane-paths.sh
+  memory-dir --repo-root <mercury>)" claude ...`), never in a shared
+  settings env block; the handoff skill's Step 5 honours the same variable
+  when the host repo has no `scripts/lane-paths.sh`.
 
 First dogfood: the first cross-repo lane (worktree at `<host-repo-root>/<host-repo>`,
 opened 2026-05-10 per [#374](https://github.com/392fyc/Mercury/issues/374)).
@@ -372,11 +380,11 @@ at runtime, not the literals shown):
 - `<encoded-cwd>` = your platform's encoding of `<repo-root>/Mercury-<short>`
   (Mercury team example: `D--Mercury-Mercury-side-mlane` for
   `D:/Mercury/Mercury-side-mlane`)
-- `<canonical>` = whatever `MERCURY_MEMORY_DIR` resolves to at runtime, with
-  the script default falling back to
-  `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory`
+- `<canonical>` = the project's lane home, `scripts/lane-paths.sh memory-dir`:
+  `MERCURY_MEMORY_DIR` if set, else
+  `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded main checkout>/memory`
   (Mercury team example: `~/.claude/projects/D--Mercury-Mercury/memory` —
-  encoded for the repo's main checkout path)
+  encoded for the repo's main checkout path; each project gets its own, #613)
 
 **Per-cwd (Claude Code core, automatic):** session transcripts under
 `~/.claude/projects/<encoded-cwd>/` (Claude Code provides the exact
@@ -396,9 +404,10 @@ specific filename pattern or layout — read it from the payload).
   `<canonical>/sessions/S<N>-<lane>.md` (side lanes) — per-session
   frontmatter + body; lane-suffixed files visibly partition ownership
   while sharing one directory
-- `<canonical>/session-handoff.md` (main lane) +
-  `<canonical>/session-handoff-<lane>.md` (side lanes) — per-lane
-  handoff files in the same dir
+- `<handoff-dir>/session-handoff.md` (main lane) +
+  `<handoff-dir>/session-handoff-<lane>.md` (side lanes) — per-lane
+  handoff files, kept in the project's handoff dir
+  (`scripts/lane-paths.sh handoff-dir`, #613), not in `<canonical>`
 - The canonical path is anchored by two converging mechanisms:
   `scripts/regenerate-memory-index.sh` reads the `MERCURY_MEMORY_DIR`
   env var explicitly (default fallback shown in `<canonical>` resolution

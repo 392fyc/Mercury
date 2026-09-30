@@ -9,7 +9,7 @@
 #   3. (No lane-count cap: the Delta 7 HARD-CAP was removed by Issue #605 / #599 ADR D1)
 #   4. Claim Issue via scripts/lane-claim.sh (Rule 1.1 probe-after-write, #309)
 #   5. Create branch `lane/<short>/<issue>-<slug>` off origin/develop (Rule 2.1)
-#   6. Write per-lane handoff template at <memory-dir>/session-handoff-<lane>.md
+#   6. Write per-lane handoff template at <handoff-dir>/session-handoff-<lane>.md
 #      (refuse to overwrite if file exists — protect prior session state)
 #   7. Append a new lane section to LANES.md (own section per Rule 6)
 #
@@ -23,7 +23,7 @@
 # Usage:
 #   scripts/lane-spawn.sh <lane> <issue>
 #                         [--short SHORT] [--slug SLUG]
-#                         [--memory-dir PATH] [--lanes-file PATH]
+#                         [--memory-dir PATH] [--lanes-file PATH] [--handoff-dir PATH]
 #                         [--repo-root PATH] [--repo OWNER/REPO]
 #                         [--harness claude|codex] [--no-claim] [--no-branch]
 #                         [--dry-run] [--yes]
@@ -33,8 +33,9 @@
 #   --short          first 8 chars of <lane> after stripping non-[a-z0-9-]
 #   --slug           lowercased Issue title with non-[a-z0-9-] → "-",
 #                    truncated so total branch ≤40 chars (Rule 2.1)
-#   --memory-dir     ${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}
+#   --memory-dir     $MERCURY_MEMORY_DIR, else the project's lane home (scripts/lane-paths.sh memory-dir)
 #   --lanes-file     <memory-dir>/LANES.md
+#   --handoff-dir    the project's handoff dir (scripts/lane-paths.sh handoff-dir; #613)
 #   --repo-root      `git rev-parse --show-toplevel`
 #   --repo           resolved via `gh repo view` or GH_REPO env
 #
@@ -47,6 +48,10 @@
 #      resolve repo or memory dir / unsafe --lanes-file path)
 
 set -u
+
+LANE_PATHS_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/lane-paths.sh"
+# shellcheck source=lib/lane-paths.sh
+. "$LANE_PATHS_LIB"  # per-project lane home (#613)
 
 die()  { printf 'lane-spawn: %s\n' "$1" >&2; exit 2; }
 warn() { printf 'lane-spawn WARN: %s\n' "$1" >&2; }
@@ -65,6 +70,7 @@ NO_BRANCH=0
 DRY_RUN=0
 YES=0
 HARNESS=claude
+HANDOFF_DIR=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -72,6 +78,7 @@ while [ $# -gt 0 ]; do
     --slug)        shift; [ $# -gt 0 ] || die "--slug needs a value"; SLUG="$1"; shift ;;
     --memory-dir)  shift; [ $# -gt 0 ] || die "--memory-dir needs a value"; MEMORY_DIR="$1"; shift ;;
     --lanes-file)  shift; [ $# -gt 0 ] || die "--lanes-file needs a value"; LANES_FILE="$1"; shift ;;
+    --handoff-dir) shift; [ $# -gt 0 ] || die "--handoff-dir needs a value"; HANDOFF_DIR="$1"; shift ;;
     --repo-root)   shift; [ $# -gt 0 ] || die "--repo-root needs a value"; REPO_ROOT="$1"; shift ;;
     --repo)        shift; [ $# -gt 0 ] || die "--repo needs a value"; REPO="$1"; shift ;;
     --harness)     shift; [ $# -gt 0 ] || die "--harness needs a value"; HARNESS="$1"; shift ;;
@@ -80,7 +87,7 @@ while [ $# -gt 0 ]; do
     --dry-run)     DRY_RUN=1; shift ;;
     --yes)         YES=1; shift ;;
     -h|--help)
-      sed -n '2,39p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     --) shift
         if [ -z "$LANE" ]   && [ $# -gt 0 ]; then LANE="$1"; shift; fi
@@ -114,7 +121,8 @@ esac
 
 # Memory dir resolution mirrors lane-close.sh / lane-sweep.sh.
 if [ -z "$MEMORY_DIR" ]; then
-  MEMORY_DIR="${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}"
+  MEMORY_DIR=$(lane_memory_dir "${REPO_ROOT:-.}") \
+    || die "cannot resolve this project's lane memory dir (run inside a checkout, pass --memory-dir, or set MERCURY_MEMORY_DIR)"
 fi
 [ -d "$MEMORY_DIR" ] || die "memory dir not found: $MEMORY_DIR (set --memory-dir or MERCURY_MEMORY_DIR)"
 if [ -z "$LANES_FILE" ]; then LANES_FILE="$MEMORY_DIR/LANES.md"; fi
@@ -260,7 +268,20 @@ if [ "${#SLUG}" -gt "$SLUG_BUDGET" ]; then
 fi
 BRANCH="${PREFIX}${SLUG}"
 
-HANDOFF_FILE="$MEMORY_DIR/session-handoff-${LANE}.md"
+# Unified handoff dir (#613): --handoff-dir, else the project's handoff dir;
+# when the project cannot be resolved (e.g. --repo-root is not a checkout),
+# fall back to the legacy <memory-dir> location.
+if [ -z "$HANDOFF_DIR" ]; then
+  HANDOFF_DIR=$(lane_handoff_dir "$REPO_ROOT" 2>/dev/null) || {
+    HANDOFF_DIR="$MEMORY_DIR"
+    warn "cannot resolve the project's handoff dir; using legacy $MEMORY_DIR"
+  }
+fi
+HANDOFF_FILE="$HANDOFF_DIR/session-handoff-${LANE}.md"
+LEGACY_HANDOFF="$MEMORY_DIR/session-handoff-${LANE}.md"
+if [ "$LEGACY_HANDOFF" != "$HANDOFF_FILE" ] && [ -e "$LEGACY_HANDOFF" ]; then
+  fail "legacy handoff file already exists: $LEGACY_HANDOFF (lane name in use — move or delete first)"
+fi
 if [ -e "$HANDOFF_FILE" ]; then
   fail "handoff file already exists: $HANDOFF_FILE (refusing to overwrite — move or delete first)"
 fi
@@ -331,6 +352,8 @@ fi
 # LANES.md mutation in step 4 — leaving step 4 to run on a missing handoff
 # would create a registry row pointing at a file that never existed.
 TODAY=$(date -u +'%Y-%m-%d')
+mkdir -p "$HANDOFF_DIR" 2>/dev/null \
+  || fail "cannot create handoff dir $HANDOFF_DIR (LANES.md NOT mutated)"
 if ! cat > "$HANDOFF_FILE" <<EOF
 ---
 name: session_handoff_${LANE}

@@ -6,7 +6,8 @@
 # (default 48h) and returns "idle" only when ALL THREE are simultaneously
 # older than the threshold (logical AND, not maximum):
 #   1. Newest commit on `feature/lane-main/*` or legacy `feature/TASK-*` refs
-#   2. mtime of `<memory-dir>/session-handoff.md`
+#   2. mtime of the main lane's session-handoff.md (unified handoff dir, #613;
+#      legacy <memory-dir> copy also read)
 #   3. Newest `updatedAt` of any Issue carrying the `lane:main` label
 #
 # AND-gate prevents a single missing-data signal from producing a false
@@ -16,13 +17,14 @@
 # Rule 4.1.
 #
 # Usage:
-#   scripts/check-main-idle.sh [--hours N] [--memory-dir PATH]
+#   scripts/check-main-idle.sh [--hours N] [--memory-dir PATH] [--handoff-dir PATH]
 #                              [--repo OWNER/REPO] [--repo-root PATH]
 #                              [--no-issue-check] [--format text|json]
 #
 # Defaults:
 #   --hours        48
-#   --memory-dir   ${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}
+#   --memory-dir   $MERCURY_MEMORY_DIR, else the project's lane home (scripts/lane-paths.sh memory-dir)
+#   --handoff-dir  the project's handoff dir (scripts/lane-paths.sh handoff-dir); not auto-resolved with --memory-dir
 #   --repo         resolved at runtime via `gh repo view` (or GH_REPO env)
 #   --repo-root    `git rev-parse --show-toplevel` from cwd; pin explicitly
 #                  when running outside the Mercury checkout
@@ -36,25 +38,32 @@
 
 set -u
 
+LANE_PATHS_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/lane-paths.sh"
+# shellcheck source=lib/lane-paths.sh
+. "$LANE_PATHS_LIB"  # per-project lane home (#613)
+
 die() { printf 'check-main-idle: %s\n' "$1" >&2; exit 2; }
 
 HOURS=48
 FORMAT=text
 MEMORY_DIR=""
+MEMORY_DIR_GIVEN=0
 REPO=""
 REPO_ROOT=""
+HANDOFF_DIR=""
 NO_ISSUE_CHECK=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --hours)        shift; [ $# -gt 0 ] || die "--hours needs a value"; HOURS="$1"; shift ;;
-    --memory-dir)   shift; [ $# -gt 0 ] || die "--memory-dir needs a value"; MEMORY_DIR="$1"; shift ;;
+    --memory-dir)   shift; [ $# -gt 0 ] || die "--memory-dir needs a value"; MEMORY_DIR="$1"; MEMORY_DIR_GIVEN=1; shift ;;
+    --handoff-dir)  shift; [ $# -gt 0 ] || die "--handoff-dir needs a value"; HANDOFF_DIR="$1"; shift ;;
     --repo)         shift; [ $# -gt 0 ] || die "--repo needs a value"; REPO="$1"; shift ;;
     --repo-root)    shift; [ $# -gt 0 ] || die "--repo-root needs a value"; REPO_ROOT="$1"; shift ;;
     --format)       shift; [ $# -gt 0 ] || die "--format needs a value"; FORMAT="$1"; shift ;;
     --no-issue-check) NO_ISSUE_CHECK=1; shift ;;
     -h|--help)
-      sed -n '2,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '2,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     -*) die "unknown flag: $1" ;;
     *)  die "unexpected positional argument: $1" ;;
@@ -80,7 +89,8 @@ case "$FORMAT" in
 esac
 
 if [ -z "$MEMORY_DIR" ]; then
-  MEMORY_DIR="${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}"
+  MEMORY_DIR=$(lane_memory_dir "${REPO_ROOT:-.}") \
+    || die "cannot resolve this project's lane memory dir (run inside a checkout, pass --memory-dir, or set MERCURY_MEMORY_DIR)"
 fi
 [ -d "$MEMORY_DIR" ] || die "memory dir not found: $MEMORY_DIR"
 
@@ -112,12 +122,26 @@ branch_ts=$(git -C "$REPO_ROOT" for-each-ref --sort=-committerdate --format='%(c
   2>/dev/null | head -n1)
 
 # 2. Handoff mtime — main file is unsuffixed.
-handoff_file="$MEMORY_DIR/session-handoff.md"
-if [ -f "$handoff_file" ]; then
-  handoff_ts=$(stat -c %Y "$handoff_file" 2>/dev/null || stat -f %m "$handoff_file" 2>/dev/null || echo "")
-else
-  handoff_ts=""
+# Unified handoff dir (#613): --handoff-dir, else the project's handoff dir
+# (scripts/lane-paths.sh handoff-dir); the legacy memory-dir copy is also read.
+# An explicit --memory-dir names a registry that may belong to no checkout
+# (fixtures, another machine's copy): only its own legacy handoffs count
+# unless --handoff-dir is also given.
+if [ -z "$HANDOFF_DIR" ] && [ "$MEMORY_DIR_GIVEN" -eq 0 ]; then
+  HANDOFF_DIR=$(lane_handoff_dir "${REPO_ROOT:-.}" 2>/dev/null) || HANDOFF_DIR=""
 fi
+# Newest mtime of a lane's handoff: the unified handoff dir (#613) first, the
+# legacy <memory-dir> copy as fallback; empty when neither exists.
+handoff_newest_ts() {
+  local name="$1" f ts best=""
+  for f in ${HANDOFF_DIR:+"$HANDOFF_DIR/$name"} "$MEMORY_DIR/$name"; do
+    [ -f "$f" ] || continue
+    ts=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo "")
+    if [ -n "$ts" ] && { [ -z "$best" ] || [ "$ts" -gt "$best" ]; }; then best="$ts"; fi
+  done
+  printf '%s\n' "$best"
+}
+handoff_ts=$(handoff_newest_ts "session-handoff.md")
 
 # 3. Issue activity — `lane:main` label.
 # Distinguish "no Issues with this label" (legitimate empty) from "probe

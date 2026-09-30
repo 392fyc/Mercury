@@ -49,7 +49,7 @@ scripts/regenerate-memory-index.sh [--memory-dir PATH] [--output PATH]
 
 | Flag | Effect |
 |------|--------|
-| `--memory-dir PATH` | Override memory dir. Defaults to `MERCURY_MEMORY_DIR` env, then `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory`. |
+| `--memory-dir PATH` | Override memory dir. Defaults to `MERCURY_MEMORY_DIR` env, then the project's lane home `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded main checkout>/memory` (`scripts/lane-paths.sh memory-dir`; `D--Mercury-Mercury` for `D:/Mercury/Mercury`; #613). |
 | `--output PATH` | Override output path. Defaults to `<memory-dir>/INDEX.generated.md`. Use `-` to write to stdout. |
 | `--format text\|diff` | `text` (default) writes regenerated content. `diff` compares the fresh regenerate against the existing `<memory-dir>/INDEX.generated.md` snapshot from a prior text-mode run and reports drift (exit 0 = no drift, exit 1 = drift detected). Does **not** compare against canonical `MEMORY.md` / `SESSION_INDEX.md` — those are read-only inputs in Phase F.A. |
 | `MERCURY_MEMORY_DIR` (env) | Same as `--memory-dir`. |
@@ -412,7 +412,7 @@ state (e.g. stray rows, missing markers, content drift):
 **历史示例 — 勿执行（`.pre-cutover.bak` 已 #517 删除；见上方 RETIRED）**:
 
 ```text
-MEM_DIR="${MERCURY_MEMORY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory}"
+MEM_DIR="$(scripts/lane-paths.sh memory-dir)"   # project lane home (#613)
 cp "$MEM_DIR/SESSION_INDEX.md.pre-cutover.bak" "$MEM_DIR/SESSION_INDEX.md"
 cp "$MEM_DIR/MEMORY.md.pre-cutover.bak"        "$MEM_DIR/MEMORY.md"
 ```

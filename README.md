@@ -126,7 +126,8 @@ Mercury runs multiple **lanes** in parallel — independent work streams that do
 
 - **Branch prefix**: `lane/<short>/<N>-<slug>` (≤40 chars; a legacy `feature/lane-<lane>/...` form is still accepted)
 - **No lane-count cap**: open as many lanes as you need; the former Δ7 hard cap was removed in [#605](https://github.com/392fyc/Mercury/issues/605). A lane is driven by Claude Code or Codex (`--harness`) and works solo by default or pairs with another lane (see the [cross-harness lane ADR](.mercury/docs/research/issue-599-cross-harness-lane-isolation-2026-09.md))
-- **First-time setup**: run `scripts/lane-init.sh` once per machine to create the lane registry (`LANES.md`)
+- **First-time setup**: run `scripts/lane-init.sh` once per project per machine to create that project's lane registry (`LANES.md`)
+- **One lane home per project**: registry and handoff docs are resolved from the project's main checkout, shared by all of its lanes and both harnesses; print them with `scripts/lane-paths.sh memory-dir` and `scripts/lane-paths.sh handoff-dir` ([#613](https://github.com/392fyc/Mercury/issues/613))
 - **Tooling**: `scripts/lane-*.sh` (init / spawn / claim / close / sweep) + `lane-assertion.sh` enforce the protocol mechanically; `lane-cap-check.sh` reports the active-lane count
 - **Lane guides**: [`lane-spawn.md`](.mercury/docs/guides/lane-spawn.md), [`lane-claim.md`](.mercury/docs/guides/lane-claim.md), [`lane-close.md`](.mercury/docs/guides/lane-close.md), [`lane-sweep.md`](.mercury/docs/guides/lane-sweep.md), [`lane-emergency-escalation.md`](.mercury/docs/guides/lane-emergency-escalation.md)
 

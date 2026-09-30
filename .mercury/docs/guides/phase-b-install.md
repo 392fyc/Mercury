@@ -47,7 +47,8 @@ After spawn:
   #317 Copilot iter 2 contention-avoidance; assign manually if you want
   GitHub UI ownership)
 - Branch `lane/<short>/<issue>-<slug>` created (off `origin/develop`)
-- Handoff template at `<memory-dir>/session-handoff-<lane>.md`
+- Handoff template at `<handoff-dir>/session-handoff-<lane>.md`
+  (`scripts/lane-paths.sh handoff-dir`)
 - New section appended to `LANES.md` (own section per Rule 6)
 
 Switch to the branch and start work:
@@ -174,7 +175,7 @@ different surfaces (statusline + lane-status.json vs lane lifecycle).
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `MERCURY_MEMORY_DIR` | `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/D--Mercury-Mercury/memory` | Override memory dir for all three scripts |
+| `MERCURY_MEMORY_DIR` | the project's lane home, `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded main checkout>/memory` (`scripts/lane-paths.sh memory-dir`, #613) | Global override of the memory dir for all three scripts; leave unset when working on several projects |
 | `GH_REPO` | (resolved via `gh repo view`) | Pin GitHub repo for `gh` calls |
 | `MERCURY_LANE_STALE_MIN` | `15` | (Phase A) staleness gate for `lane-status.sh` — unrelated to B3's `--days` |
 
