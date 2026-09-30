@@ -103,6 +103,21 @@ Inspect output:
 jq '.' .mercury/state/lane-status.json
 ```
 
+Each lane also carries a `registry` object read from the project's
+`LANES.md` (Issue #616). It always has the keys `short`, `harness`
+(lower-cased; default `claude`), `session`, `peers` (list), `status`,
+`branch`, `worktree`, `handoff` and `inbox`; a field missing from
+`LANES.md` is `null`. Each value is the first backticked group of the
+field's bullet, so notes such as `(per Rule 5.1)` or a trailing comment
+are ignored. Registered lanes without a `lane:*` label are listed too;
+labelled lanes that are not registered get `registry: null`.
+`lane/<short>/*` branches (Rule 2.1) count next to the legacy
+`feature/lane-<id>/*`; without a registered short name the lane name is
+used, as `lane-assertion.sh` does. The registry is `--lanes-file PATH`,
+else `MERCURY_LANES_FILE`, else the project's lane home
+(`scripts/lane-paths.sh lanes-file`). A missing registry only warns and
+leaves `registry: null`.
+
 ### Cron registration (via Claude Code `CronCreate` tool)
 
 **Do NOT register from the script** — registration is user-driven via Claude Code:
@@ -170,5 +185,6 @@ rm -f .mercury/state/auto-run-paused
 | `MERCURY_PAUSE_THRESHOLD` | `95` | 5h usage % at which auto-run pauses |
 | `MERCURY_WARN_THRESHOLD` | `85` | 5h usage % at which display turns yellow |
 | `MERCURY_LANE_STALE_MIN` | `15` | Minutes after which a lane is considered stale |
+| `MERCURY_LANES_FILE` | (project lane home) | `LANES.md` that `lane-status.sh` reads; `--lanes-file` wins over it (#616) |
 | `CLAUDE_PROJECT_DIR` | (injected by Claude Code) | Repo root override for statusline |
 | `MERCURY_TEST_REPO_ROOT` | (unset) | Test isolation override for both scripts |
