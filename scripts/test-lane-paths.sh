@@ -133,6 +133,13 @@ case "$MAD" in "$CLAUDE_CONFIG_DIR/projects/$(enc "$AD")-lh"*/memory) pass "coll
 [ -f "$MAD/LANES.md" ] && pass "lane-init in Proj.A writes its own registry" || fail "lane-init did not write $MAD/LANES.md"
 eq "Proj-A still resolves the plain dir" "$("$CLI" memory-dir --repo-root "$A")" "$MA"
 eq "Proj.A resolves the same hashed dir again" "$("$CLI" memory-dir --repo-root "$AD")" "$MAD"
+# The handoff skill's inline Step 5 fallback (projects without these scripts)
+# must resolve the same registry as the resolver, collisions included.
+awk '/^# Cross-repo lanes \(host repo/{f=1} f{print} /^fi$/ && f{exit}' \
+  "$REPO_ROOT/.agents/skills/handoff/SKILL.md" > "$TMP/step5.sh"
+printf 'printf %%s "$LANES_FILE"\n' >> "$TMP/step5.sh"
+eq "skill Step 5 fallback = resolver (collision case)" "$(cd "$AD" && bash "$TMP/step5.sh")" "$MAD/LANES.md"
+eq "skill Step 5 fallback = resolver (plain case)" "$(cd "$AW" && bash "$TMP/step5.sh")" "$MA/LANES.md"
 LEG="$TMP/legacy-cfg"; mkdir -p "$LEG/projects/-x-Proj/memory"
 printf '## Active Lanes\n\n### `main`\n\n- **Worktree path**: `\\x\\Proj\\`\n' > "$LEG/projects/-x-Proj/memory/LANES.md"
 eq "same checkout written with backslashes is not a collision" \

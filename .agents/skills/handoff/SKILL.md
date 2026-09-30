@@ -659,14 +659,16 @@ else
   _MAIN="$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"
   [ -n "$_MAIN" ] || { echo "ERROR: cannot resolve the lane registry (not in a checkout; set MERCURY_MEMORY_DIR)" >&2; exit 1; }
   command -v cygpath >/dev/null 2>&1 && _MAIN="$(cygpath -m "$_MAIN")"
-  LANES_FILE="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/$(printf '%s' "$_MAIN" | LC_ALL=C sed 's/[^A-Za-z0-9]/-/g')/memory/LANES.md"
-  # The encoding is lossy (Proj-A / Proj.A). Without the resolver's hashed
-  # fallback, refuse a registry whose `main` lane is another checkout.
-  _norm() { printf '%s' "$1" | tr '\134' '/' | sed -e 's#/*$##' -e 's#^/\([A-Za-z]\)/#\1:/#' | tr '[:upper:]' '[:lower:]'; }
+  _ENC="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/$(printf '%s' "$_MAIN" | LC_ALL=C sed 's/[^A-Za-z0-9]/-/g')"
+  LANES_FILE="$_ENC/memory/LANES.md"
+  # Same rule as scripts/lib/lane-paths.sh: the encoding is lossy (Proj-A /
+  # Proj.A), so when the plain dir's `main` lane is another checkout this
+  # project's registry is <encoded>-lh<cksum of its normalised path>.
+  _norm() { printf '%s' "$1" | tr '\134' '/' | sed -e 's#/*$##' -e 's#^/\([A-Za-z]\)/#\1:/#' -e 's#^/\([A-Za-z]\)$#\1:#' | tr '[:upper:]' '[:lower:]'; }
   _REG="$(awk '/^```/{f=!f;next} f{next} /^### `/{m=($0~/^### `main`/);next} /^## /{m=0;next}
     m && /\*\*Worktree path\*\*/ && match($0,/`[^`]+`/){print substr($0,RSTART+1,RLENGTH-2);exit}' "$LANES_FILE" 2>/dev/null | tr -d '\r')"
   if [ -n "$_REG" ] && [ "$(_norm "$_REG")" != "$(_norm "$_MAIN")" ]; then
-    echo "ERROR: $LANES_FILE belongs to $_REG, not $_MAIN; set MERCURY_MEMORY_DIR to this project's lane home" >&2; exit 1
+    LANES_FILE="$_ENC-lh$(_norm "$_MAIN" | cksum | cut -d' ' -f1)/memory/LANES.md"
   fi
 fi
 WORKTREE_PATH_RAW=$(awk -v lane="$LANE_NAME" '
