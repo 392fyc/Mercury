@@ -76,7 +76,7 @@ if [ -n "$LANES_FILE" ] && [ -f "$LANES_FILE" ]; then
   #   - **Worktree path** (per Rule 5.1): `D:/x` (materialized 2026-05-04)
   # Any other ### heading ends the current lane section.
   registry_tsv="$(tr -d '\r' < "$LANES_FILE" | awk '
-    /^```/ { fence = !fence; next }
+    /^[[:space:]]*(```|~~~)/ { fence = !fence; next }
     fence { next }
     /^## / { active = ($0 ~ /^## Active Lanes/); lane = ""; next }
     active && /^### / {

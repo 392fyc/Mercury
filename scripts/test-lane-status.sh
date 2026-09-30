@@ -312,7 +312,7 @@ cat > "$REG" <<'LANES'
 - **Short name**: `main`
 - **Harness**: `codex`
 - **Session**: `019edfd4-fbf0-7100-a982-2ab5bdf125fb`
-- **Worktree path**: `D:/Mercury/Mercury`
+- **Worktree path**: `/work/example-project`
 - **Status**: `active`
 
 ### `art`
@@ -327,6 +327,14 @@ cat > "$REG" <<'LANES'
 ### `fenced`
 - **Harness**: `codex`
 ```
+
+~~~
+### `tildefenced`
+~~~
+
+  ```
+### `indentfenced`
+  ```
 
 ## Closed Lanes
 
@@ -354,6 +362,8 @@ reg_check "T_REG peers split into a list" '.lanes[] | select(.name=="art") | .re
 reg_check "T_REG unlabelled lane has no issues" '.lanes[] | select(.name=="art") | .issues == []'
 reg_check "T_REG lane/<short>/ branches counted (Rule 2.1)" '.lanes[] | select(.name=="art") | [.branches[].ref] == ["lane/art/12-palette"]'
 reg_check "T_REG fenced example not parsed" '[.lanes[].name] | index("fenced") == null'
+reg_check "T_REG ~~~ fenced example not parsed" '[.lanes[].name] | index("tildefenced") == null'
+reg_check "T_REG indented fence example not parsed" '[.lanes[].name] | index("indentfenced") == null'
 reg_check "T_REG closed lanes not listed" '[.lanes[].name] | index("old") == null'
 reg_check "T_REG each lane appears once" '([.lanes[].name] | length) == ([.lanes[].name] | unique | length)'
 PRINT_R=$(MERCURY_LANES_FILE="$REG" bash "$LANE_STATUS" --print 2>/dev/null || true)
@@ -403,7 +413,7 @@ cat > "$REG2" <<'LANES'
 ### `main` (default lane)
 
 - **Handoff file**: `session-handoff.md`
-- **Worktree path** (per Rule 5.1, Issue #342): `D:/Mercury/Mercury` — main lane canonical
+- **Worktree path** (per Rule 5.1, Issue #342): `/work/example-project` — main lane canonical
 - **Status**: `active` (since 2026-09-01)
 - **Status**: `closed`
 
@@ -425,7 +435,7 @@ LANES
 set +e
 MERCURY_LANES_FILE="$REG2" bash "$LANE_STATUS" 2>/dev/null
 set -e
-reg_check "T_REG2 annotated bullet read (worktree)" '.lanes[] | select(.name=="main") | .registry.worktree == "D:/Mercury/Mercury"'
+reg_check "T_REG2 annotated bullet read (worktree)" '.lanes[] | select(.name=="main") | .registry.worktree == "/work/example-project"'
 reg_check "T_REG2 trailing note dropped (status)" '.lanes[] | select(.name=="main") | .registry.status == "active"'
 reg_check "T_REG2 first occurrence of a field wins" '.lanes[] | select(.name=="main") | .registry.status == "active"'
 reg_check "T_REG2 annotated Short name read" '.lanes[] | select(.name=="art") | .registry.short == "art"'
