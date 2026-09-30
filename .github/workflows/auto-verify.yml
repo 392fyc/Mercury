@@ -65,3 +65,15 @@ jobs:
 
       - name: Self-test the linter
         run: bash scripts/test-toolcall-xml-lint.sh
+
+  lane-receiver-rule:
+    name: Cross-lane receiver rule (#615)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Both harnesses load the same receiver rule
+        run: bash scripts/check-lane-receiver-rule.sh
+
+      - name: Self-test the check
+        run: bash scripts/test-check-lane-receiver-rule.sh
