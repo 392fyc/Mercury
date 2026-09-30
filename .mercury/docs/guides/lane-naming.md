@@ -82,7 +82,7 @@ stale signals before flagging stale.
 
 ### Cap value
 
-`LANES.md` MUST NOT exceed **5 active lanes** simultaneously. The cap was
+Historical (not in force since #605): `LANES.md` was not allowed to exceed **5 active lanes** simultaneously. The cap was
 declared in the lane protocol (now indexed in [lane-protocol.md](lane-protocol.md)) and enforced advisorily by
 `scripts/lane-cap-check.sh`.
 
