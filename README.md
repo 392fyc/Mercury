@@ -129,7 +129,7 @@ Mercury runs multiple **lanes** in parallel — independent work streams that do
 - **First-time setup**: run `scripts/lane-init.sh` once per project per machine to create that project's lane registry (`LANES.md`)
 - **One lane home per project**: registry and handoff docs are resolved from the project's main checkout, shared by all of its lanes and both harnesses; print them with `scripts/lane-paths.sh memory-dir` and `scripts/lane-paths.sh handoff-dir` ([#613](https://github.com/392fyc/Mercury/issues/613))
 - **Tooling**: `scripts/lane-*.sh` (init / spawn / claim / close / sweep) + `lane-assertion.sh` enforce the protocol mechanically; `lane-cap-check.sh` reports the active-lane count
-- **Lane guides**: [`lane-spawn.md`](.mercury/docs/guides/lane-spawn.md), [`lane-claim.md`](.mercury/docs/guides/lane-claim.md), [`lane-close.md`](.mercury/docs/guides/lane-close.md), [`lane-sweep.md`](.mercury/docs/guides/lane-sweep.md), [`lane-emergency-escalation.md`](.mercury/docs/guides/lane-emergency-escalation.md)
+- **Lane guides**: [`lane-protocol.md`](.mercury/docs/guides/lane-protocol.md) (rule index), [`lane-spawn.md`](.mercury/docs/guides/lane-spawn.md), [`lane-claim.md`](.mercury/docs/guides/lane-claim.md), [`lane-close.md`](.mercury/docs/guides/lane-close.md), [`lane-sweep.md`](.mercury/docs/guides/lane-sweep.md), [`lane-emergency-escalation.md`](.mercury/docs/guides/lane-emergency-escalation.md)
 
 ## Multi-agent runtimes
 

@@ -1,6 +1,6 @@
 # Multi-Lane Protocol — v0.1 Delta Proposal (PR-auditable companion)
 
-**Status**: PROPOSED — pending main lane S74+ decision
+**Status**: HISTORICAL — the protocol (v1, including accepted deltas) was accepted on 2026-05-03 (#347); the rules in force are indexed in [guides/lane-protocol.md](guides/lane-protocol.md) (#618)
 **Source**: S1-side-multi-lane research (Issue #292)
 **Companion to**: `.mercury/docs/research/multi-lane-protocol-2026-04-25.md` (full design doc)
 **Mirror of** (historical): the user-memory `feedback_lane_protocol.md` v0.1 Delta Proposal section. That file was lost in the #579 migration; the rule authority is now [guides/lane-protocol.md](guides/lane-protocol.md) (#618)
@@ -20,15 +20,14 @@ There are two related artifacts with **non-overlapping scopes**:
 | Artifact | Location | Scope | Lifecycle |
 |----------|----------|-------|-----------|
 | **Rules in force** (Rules 1–8 and sub-rules) | repo `.mercury/docs/guides/lane-protocol.md` (#618; replaces the lost user-memory `feedback_lane_protocol.md`) | **AUTHORITATIVE** for the rules currently in force and where each is enforced | Updated in the same PR as the guide or script that changes a rule |
-| **v0.1 delta proposal** (this file) | repo `.mercury/docs/lane-protocol-v0.1-deltas.md` | **AUTHORITATIVE** for the proposed deltas under review | Pending main-lane decision; archives once accepted/rejected |
+| **v0.1 delta proposal** (this file) | repo `.mercury/docs/lane-protocol-v0.1-deltas.md` | Record of the proposed deltas and their evidence | Historical: decided with v1 on 2026-05-03 (#347) |
 
-**Single precedence rule**: each artifact owns its declared scope. They never overlap, so
-"conflict" between them is a category error.
+**Single precedence rule**: for what is in force today, the rule index wins; this file is the
+record of why each delta was proposed.
 
 - "What is Rule 5 today?" → answer from [guides/lane-protocol.md](guides/lane-protocol.md) (rule authority)
 - "What does the v0.1 proposal change about Rule 5?" → answer from this file (delta authority)
-- "What will Rule 5 be in v1?" → answer = (v0 rules) ⊕ (accepted deltas after main-lane decision)
-  documented in a future v1 doc
+- "What is Rule 5 in v1?" → v1 (v0 rules plus the accepted deltas) is what the rule index records
 
 Historical note: the lost user-memory file also held a "v0.1 Delta Proposal" working-cache
 section mirroring this file. Where any surviving copy differs, this file wins for the deltas and

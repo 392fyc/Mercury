@@ -110,8 +110,8 @@ fi
 CONTENT=$(cat <<EOF
 # Mercury Lanes Registry
 
-Created by scripts/lane-init.sh (Issue #607). Lane rules: see the #599 ADR
-(.mercury/docs/research/issue-599-cross-harness-lane-isolation-2026-09.md).
+Created by scripts/lane-init.sh (Issue #607). Lane rules:
+.mercury/docs/guides/lane-protocol.md (cross-harness: the #599 ADR).
 Each lane edits only its own section.
 
 ## Active Lanes

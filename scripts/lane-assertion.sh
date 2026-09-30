@@ -262,8 +262,8 @@ if [ -z "$WORKTREE_PATH_RAW" ]; then
   else
     cat >&2 <<EOF
 $PROG: BLOCKED — lane '$LANE_NAME' has no Worktree path field in LANES.md.
-Per lane protocol Rule 5.1 (.mercury/docs/guides/lane-protocol.md) (landed S15-side-multi-lane Issue
-#342), every active lane MUST declare a Worktree path field. Add the
+Per lane protocol Rule 5.1 (.mercury/docs/guides/lane-protocol.md; landed in
+Issue #342), every active lane MUST declare a Worktree path field. Add the
 field to the lane's section in:
   $LANES_FILE
 Soft-disable: export MERCURY_LANE_ASSERT_DISABLED=1

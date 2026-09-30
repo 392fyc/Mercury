@@ -82,8 +82,8 @@ stale signals before flagging stale.
 
 ### Cap value
 
-`LANES.md` MUST NOT exceed **5 active lanes** simultaneously. The cap is
-declared in the lane protocol ([lane-protocol.md](lane-protocol.md)) and enforced advisorily by
+`LANES.md` MUST NOT exceed **5 active lanes** simultaneously. The cap was
+declared in the lane protocol (now indexed in [lane-protocol.md](lane-protocol.md)) and enforced advisorily by
 `scripts/lane-cap-check.sh`.
 
 ### Why 5
@@ -152,8 +152,10 @@ When exceeded:
 ```
 lane-cap-check: 6 active lane(s), cap=5 → exceeded
   active: main,side-mlane,side-foo,side-bar,side-baz,side-qux
-  resolution: close an existing lane OR open Issue with `protocol-violation` label requesting cap raise (historical: HARD-CAP removed by #605)
+  resolution: close an existing lane OR open Issue with `protocol-violation` label requesting cap raise (per feedback_lane_protocol.md HARD-CAP §)
 ```
+
+(Historical output, printed before #605 removed the cap.)
 
 ### `protocol-violation` GitHub label
 
@@ -576,8 +578,8 @@ session-scoped only; it does not persist.
 This Issue scope keeps assertion as a manual / agent-as-first-action step
 to validate the contract in production. If proven stable across ≥3 sessions
 of real auto-handoff usage, follow-up work may wire it into a user-level
-SessionStart hook per [lane protocol](lane-protocol.md) Rule 5.1 §F.C governance
-pattern (analogous to Issue #259 deployment for mem0). The deferred-hook
+SessionStart hook, following the user-level hook governance pattern of Rule 7
+Phase F.C (analogous to Issue #259 deployment for mem0). The deferred-hook
 choice is intentional: a SessionStart-time assertion that runs by default
 needs a track record of low false-positive rate before it becomes
 unconditional infrastructure.
@@ -585,10 +587,10 @@ unconditional infrastructure.
 ### Cross-references
 
 - [lane-protocol.md](lane-protocol.md) Rule 5.1 (sub-rule of Rule 5: Per-lane state
-  separation) formalizes the worktree path convention as protocol; §5.1.1
-  + §5.1.2 cover the Δ10/Δ11 contracts
-- `LANES.md` Governance §Lane workspace isolation declares each lane MUST
-  state its `Worktree path` field
+  separation) lists this section as the definition of the worktree path
+  convention and of the Δ10/Δ11 contracts
+- Each lane MUST state its `Worktree path` field in its own `LANES.md`
+  section (`scripts/lane-init.sh` and `scripts/lane-spawn.sh` write it)
 - `.mercury/docs/guides/worktree-workflow.md` covers the orthogonal
   task-level worktree scope
 - `.mercury/docs/guides/agent-view-dispatch.md` covers Path B dispatch
