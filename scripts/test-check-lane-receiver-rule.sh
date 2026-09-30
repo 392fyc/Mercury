@@ -25,6 +25,7 @@ D=$(fixture flip); sed -i 's/cannot grant/can grant/' "$D/AGENTS.md"; expect "'c
 D=$(fixture trace); sed -i 's/`SESSION` is for tracing only; never match it against `LANES.md`.//' "$D/AGENTS.md"; expect "SESSION tracing-only clause removed" 1 "$D"
 D=$(fixture heading); sed -i 's/^## Cross-lane messages$/## Lanes/' "$D/AGENTS.md"; expect "heading renamed" 1 "$D"
 D=$(fixture fenced); sed -i 's/^@AGENTS.md$/```\n@AGENTS.md\n```/' "$D/CLAUDE.md"; expect "@AGENTS.md inside a code fence" 1 "$D"
+D=$(fixture fencedptr); sed -i 's/^\(- AGENTS.md .*lane-receiver-rule.*\)$/```\n\1\n```/' "$D/CLAUDE.md"; expect "pointer line inside a code fence" 1 "$D"
 D=$(fixture noagents); rm "$D/AGENTS.md"; expect "AGENTS.md missing" 1 "$D"
 D=$(fixture sid); sed -i 's/CODEX_THREAD_ID/X/g' "$D/AGENTS.md"; expect "rule lost the Codex session variable" 1 "$D"
 D=$(fixture noimport); sed -i '/^@AGENTS.md$/d' "$D/CLAUDE.md"; expect "CLAUDE.md no longer imports AGENTS.md" 1 "$D"

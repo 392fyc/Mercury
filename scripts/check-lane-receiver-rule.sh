@@ -43,5 +43,6 @@ tr -d '\r' < "$A" | grep -qx '## Cross-lane messages' || err "AGENTS.md lost the
 # unfenced `@AGENTS.md` lines.
 tr -d '\r' < "$C" | awk '/^[[:space:]]*(```|~~~)/{f=!f;next} !f && $0=="@AGENTS.md"{n++} END{exit n?0:1}' \
   || err "CLAUDE.md no longer imports AGENTS.md (an unfenced @AGENTS.md line)"
-grep -q 'lane-receiver-rule' "$C" || err "CLAUDE.md lost the pointer that the receiver rule applies to Claude Code"
+tr -d '\r' < "$C" | awk '/^[[:space:]]*(```|~~~)/{f=!f;next} !f && /lane-receiver-rule/{n++} END{exit n?0:1}' \
+  || err "CLAUDE.md lost the pointer that the receiver rule applies to Claude Code (an unfenced line naming lane-receiver-rule)"
 echo "check-lane-receiver-rule: PASS — AGENTS.md holds the rule; CLAUDE.md imports it and points to it."
