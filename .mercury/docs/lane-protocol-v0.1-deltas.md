@@ -3,7 +3,7 @@
 **Status**: HISTORICAL — the protocol (v1, including accepted deltas) was accepted on 2026-05-03 (#347); the rules in force are indexed in [guides/lane-protocol.md](guides/lane-protocol.md) (#618)
 **Source**: S1-side-multi-lane research (Issue #292)
 **Companion to**: `.mercury/docs/research/multi-lane-protocol-2026-04-25.md` (full design doc)
-**Mirror of** (historical): the user-memory `feedback_lane_protocol.md` v0.1 Delta Proposal section. That file was lost in the #579 migration; the rule authority is now [guides/lane-protocol.md](guides/lane-protocol.md) (#618)
+**Mirror of** (historical): the v0.1 Delta Proposal section of the old user-memory lane protocol file. That file was lost in the #579 migration; the rule authority is now [guides/lane-protocol.md](guides/lane-protocol.md) (#618)
 
 ---
 
@@ -19,7 +19,7 @@ There are two related artifacts with **non-overlapping scopes**:
 
 | Artifact | Location | Scope | Lifecycle |
 |----------|----------|-------|-----------|
-| **Rules in force** (Rules 1–8 and sub-rules) | repo `.mercury/docs/guides/lane-protocol.md` (#618; replaces the lost user-memory `feedback_lane_protocol.md`) | **AUTHORITATIVE** for the rules currently in force and where each is enforced | Updated in the same PR as the guide or script that changes a rule |
+| **Rules in force** (Rules 1–8 and sub-rules) | repo `.mercury/docs/guides/lane-protocol.md` (#618; replaces the lost user-memory protocol file) | **AUTHORITATIVE** for the rules currently in force and where each is enforced | Updated in the same PR as the guide or script that changes a rule |
 | **v0.1 delta proposal** (this file) | repo `.mercury/docs/lane-protocol-v0.1-deltas.md` | Record of the proposed deltas and their evidence | Historical: decided with v1 on 2026-05-03 (#347) |
 
 **Single precedence rule**: for what is in force today, the rule index wins; this file is the
@@ -201,4 +201,4 @@ record, and [guides/lane-protocol.md](guides/lane-protocol.md) records which del
 
 - Full research: `.mercury/docs/research/multi-lane-protocol-2026-04-25.md`
 - Issue: [#292](https://github.com/392fyc/Mercury/issues/292)
-- Rules in force: [guides/lane-protocol.md](guides/lane-protocol.md) (#618). It replaces the lost user-memory `feedback_lane_protocol.md`.
+- Rules in force: [guides/lane-protocol.md](guides/lane-protocol.md) (#618). It replaces the lost user-memory protocol file.
