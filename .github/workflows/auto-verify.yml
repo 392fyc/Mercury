@@ -5,6 +5,14 @@ on:
     branches: [develop, master]
 
 jobs:
+  template-contract:
+    name: Portable Harness contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test template synchronization, provenance and PR merge gates
+        run: python -B -m unittest discover -s tests/codex/project_template -p 'test_*.py'
+
   typecheck:
     name: Type Check
     runs-on: ubuntu-latest

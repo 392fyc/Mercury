@@ -4,8 +4,10 @@ This directory is the source for a small generated Codex layer that downstream
 repositories can adopt without copying Mercury's project configuration.
 
 The manifest publishes only the declared `mercury-*` files into the target
-repository's `.codex` directory. Downstream-owned agents, rules, skills, and
-project documents are overlays and remain outside the generator's ownership.
+repository's `.codex` directory. Read `project/mercury-harness-ownership.md`
+for the ownership boundary: Mercury owns the declared `mercury-*` files and
+lock, while each downstream repository owns its domain skills, configuration,
+and workflows.
 
 ## Contents
 
@@ -13,7 +15,7 @@ project documents are overlays and remain outside the generator's ownership.
 - `rules/`: repository-independent Git safety rules. They block the listed
   direct `git push` and Git global-option token forms; each downstream
   repository supplies its own controlled publication entrypoint.
-- `project/`: the task, evidence, and receipt exchange contract.
+- `project/`: the harness ownership and task, evidence, and receipt contracts.
 - `manifest.json`: the deterministic allowlist for generated files and the
   explicitly declared, schema-fixed `mercury-template.lock` basename consumed
   by the sync tool.
@@ -44,12 +46,14 @@ Use `check` to inspect drift without writing and use the explicit `apply` mode
 to update a target. Never copy this directory by hand: the generated
 `.codex/mercury-template.lock`, explicitly declared by `manifest.json` and
 fixed by the manifest schema, is part of the provenance and ownership
-contract. When an updated manifest drops a generated path, `apply` removes it
-only if its content still matches the previous lock; a downstream modification
-is reported as a conflict before any generated file is changed. A pre-existing
-lock from another `source_repo`, or one that cannot be reconstructed byte for
-byte from its recorded Mercury commit, is rejected before any write or
-deletion.
+contract. During an update, an existing managed file may be replaced only when
+it still matches the previous lock or already contains the new template bytes
+(so an interrupted apply can resume). A downstream edit is reported as a
+conflict before any file is changed. When an updated manifest drops a generated
+path, `apply` removes it only if its content still matches the previous lock.
+A pre-existing lock from another `source_repo`, or one that cannot be
+reconstructed byte for byte from its recorded Mercury commit, is rejected
+before any write or deletion.
 
 `apply` replaces each generated file atomically within its destination
 directory and writes the authenticated lock last. The operation is not a

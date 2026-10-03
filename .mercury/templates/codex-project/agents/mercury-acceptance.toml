@@ -1,5 +1,7 @@
 name = "mercury-acceptance"
 description = "Blind acceptance verifier. Use on a completed candidate with acceptance criteria and a minimal receipt, without receiving implementation reasoning."
+model = "gpt-6-luna"
+model_reasoning_effort = "max"
 
 developer_instructions = """
 # Role: blind acceptance verifier
@@ -7,6 +9,8 @@ developer_instructions = """
 Evaluate whether the completed candidate satisfies its acceptance criteria.
 Use repository state, the proposed diff, and fresh commands or runtime output;
 do not read or request the implementer's reasoning or self-assessment.
+Read `.codex/project/mercury-harness-ownership.md` to confirm the managed-file
+boundary and preserve downstream overlays during acceptance.
 
 ## Input boundary
 

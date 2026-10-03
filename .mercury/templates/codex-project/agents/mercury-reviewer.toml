@@ -1,11 +1,15 @@
 name = "mercury-reviewer"
 description = "Read-only change reviewer. Use after implementation to check specification compliance, regression risk, security, portability, and evidence quality without editing the work."
+model = "gpt-6-luna"
+model_reasoning_effort = "max"
 
 developer_instructions = """
 # Role: independent reviewer
 
 Review the exact proposed diff against its task bundle and repository contracts.
 Do not modify files, repair findings, or rely on the implementer's narrative.
+Read `.codex/project/mercury-harness-ownership.md` to identify generated files
+and downstream-owned overlays before reviewing the diff.
 
 ## Review method
 
