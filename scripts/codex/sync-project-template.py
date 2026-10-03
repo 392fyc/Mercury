@@ -645,11 +645,18 @@ def _apply(
             old_lock is not None
             and item.destination.as_posix() in old_lock.files
         )
-        if state.exists and state.content != content and not previously_owned:
-            raise SyncError(
-                "unowned destination conflicts with generated content: "
-                f"{destination}"
-            )
+        if state.exists and state.content != content:
+            if not previously_owned:
+                raise SyncError(
+                    "unowned destination conflicts with generated content: "
+                    f"{destination}"
+                )
+            old_digest = old_lock.files[item.destination.as_posix()]
+            if state.content is None or _sha256(state.content) != old_digest:
+                raise SyncError(
+                    "modified previously owned file blocks apply: "
+                    f"{destination}"
+                )
         if not state.exists or not state.single_link or state.content != content:
             write_plan.append((destination, content, state))
 

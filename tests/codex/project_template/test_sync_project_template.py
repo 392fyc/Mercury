@@ -420,7 +420,10 @@ class ProjectTemplateSyncTests(unittest.TestCase):
     @staticmethod
     def _remove_directory_link(link: Path) -> None:
         if os.path.lexists(link):
-            os.rmdir(link)
+            if link.is_symlink():
+                link.unlink()
+            else:
+                os.rmdir(link)
 
     @staticmethod
     def _tree_snapshot(root: Path) -> dict[str, bytes]:
@@ -601,15 +604,36 @@ class ProjectTemplateSyncTests(unittest.TestCase):
             (self.target / ".codex" / "mercury-template.lock").is_file()
         )
 
-    def test_apply_can_overwrite_drift_at_an_authenticated_owned_destination(self) -> None:
+    def test_apply_refuses_modified_owned_file_before_any_write(self) -> None:
         self.assertEqual(self._run("apply").returncode, 0)
         generated = self.target / ".codex" / "agents" / "mercury-dev.toml"
         generated.write_bytes(b"owned drift\n")
+        overlay = self.target / ".codex" / "project" / "downstream-overlay.md"
+        overlay.write_bytes(b"downstream overlay\n")
+        before = self._tree_snapshot(self.target)
 
         result = self._run("apply")
 
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("modified previously owned file", result.stderr)
+        self.assertEqual(before, self._tree_snapshot(self.target))
+
+    def test_apply_recovers_when_a_partial_apply_already_wrote_new_content(self) -> None:
+        self.assertEqual(self._run("apply").returncode, 0)
+        (self.template / "agents" / "mercury-dev.toml").write_bytes(
+            b'name = "mercury-dev-v2"\n'
+        )
+        (self.template / "project" / "mercury-task-contract.md").write_bytes(
+            b"# Task contract v2\n"
+        )
+        self.commit = self._commit("update generated files")
+
+        # Model interruption after replacing the first file but before the lock.
+        generated = self.target / ".codex" / "agents" / "mercury-dev.toml"
+        generated.write_bytes(b'name = "mercury-dev-v2"\n')
+        result = self._run("apply")
+
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(generated.read_bytes(), b'name = "mercury-dev"\n')
         self.assertEqual(self._run("check").returncode, 0)
 
     def test_apply_does_not_overwrite_new_destination_absent_from_old_ownership(self) -> None:

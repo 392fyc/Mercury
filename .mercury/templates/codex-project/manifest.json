@@ -16,6 +16,10 @@
       "source": "agents/mercury-reviewer.toml"
     },
     {
+      "destination": "project/mercury-harness-ownership.md",
+      "source": "project/mercury-harness-ownership.md"
+    },
+    {
       "destination": "project/mercury-task-contract.md",
       "source": "project/mercury-task-contract.md"
     },

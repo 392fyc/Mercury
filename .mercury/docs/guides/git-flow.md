@@ -32,7 +32,7 @@ the guard to use an unsupported branch name.
    `scripts/codex/git-safe.ps1 commit/push` for delivery. Changed staged content
    requires renewed review and a fresh mark; the mark alone is not review evidence.
 4. The assigned delivery owner opens the Issue-linked PR into `develop`; the
-   configured review bot performs its asynchronous PR review.
+   coordinating agent invokes `/pr-flow` for independent native subagent review.
 5. Resolve review findings and complete required checks and approvals before the
    coordinating agent merges through the guarded PR flow.
 6. Milestone release: PR `develop` → `master`.
@@ -52,6 +52,13 @@ Both `develop` and `master` have branch protection rules enabled:
 
 PRs must receive at least one approved review (from the configured review bot or
 an authorized human reviewer) before merging, along with all required checks.
+
+The current user-authorized temporary exception is in
+`.agents/skills/pr-flow/SKILL.md`: Main Agent may bypass a missing GitHub approval
+after native independent review of the exact head, successful CI, zero review
+threads and no outstanding changes requested. Use `guard.ps1 pre-merge` with
+`-NativeReviewReceipt` first. The local receipt records evidence; it does not
+create a GitHub approval or authorize merging. Keep branch protection enabled.
 
 ## Commit Format
 
