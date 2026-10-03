@@ -420,7 +420,10 @@ class ProjectTemplateSyncTests(unittest.TestCase):
     @staticmethod
     def _remove_directory_link(link: Path) -> None:
         if os.path.lexists(link):
-            os.rmdir(link)
+            if link.is_symlink():
+                link.unlink()
+            else:
+                os.rmdir(link)
 
     @staticmethod
     def _tree_snapshot(root: Path) -> dict[str, bytes]:
