@@ -31,10 +31,12 @@ CI；任务分支上的 dispatch 则运行该分支完整的 CI 文件。
 
 ## 认证与运行条件
 
-工作流默认使用该仓的 `GITHUB_TOKEN`，权限限定为内容、PR、Actions 写入。
+工作流默认使用该仓的 `GITHUB_TOKEN`，权限限定为内容、PR、Actions 写入，
+以及 Checks、Commit statuses 读取，以核对当前提交的全部检查结果。
 仓库必须允许 Actions 创建 PR；脚本不使用批准审查权限。
 若配置可选秘密 `MERCURY_SYNC_TOKEN`，应使用仅限目标仓的 GitHub App
-安装令牌或细粒度 PAT，具备 Contents、Pull requests、Actions 写入权限。
+安装令牌或细粒度 PAT，具备 Contents、Pull requests、Actions 写入，
+以及 Checks、Commit statuses 读取权限。
 凭据通过 GitHub Secrets 本地配置，不进入仓库、回执或聊天。
 
 GitHub 文档说明 `GITHUB_TOKEN` 创建的 PR 检查可能需要人工批准；显式
