@@ -181,7 +181,7 @@ def consider_merge(source: Path, target: Path, repo: str, pr: dict,
 
 
 def update(source: Path, target: Path, repo: str, base: str,
-           issue: int, reviewer: str) -> None:
+           issue: int, reviewer: str, publish_only: bool = False) -> None:
     module = sync_module(source)
     if git(target, "status", "--porcelain"):
         raise UpdateError("target must be an exclusively owned clean checkout")
@@ -205,6 +205,9 @@ def update(source: Path, target: Path, repo: str, base: str,
             run(["gh", "workflow", "run", "ci.yml", "--repo", repo,
                  "--ref", pr["headRefName"]])
             print("recovered missing CI dispatch; leaving PR for a later check")
+            return
+        if publish_only:
+            print(f"PR #{pr['number']} is waiting for Main Agent native subagent review")
             return
         consider_merge(source, target, repo, pr, reviewer, module)
         return
@@ -262,6 +265,8 @@ def main() -> int:
     parser.add_argument("--base", default="develop")
     parser.add_argument("--issue", required=True, type=int)
     parser.add_argument("--reviewer", default="argus-review[bot]")
+    parser.add_argument("--publish-only", action="store_true",
+                        help="publish and verify updates; leave merging to Main Agent review")
     args = parser.parse_args()
     if (re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", args.repo) is None
             or args.base != "develop" or args.issue < 1
@@ -269,7 +274,7 @@ def main() -> int:
         parser.error("invalid repository, integration branch, issue or reviewer")
     try:
         update(Path(__file__).resolve().parents[2], args.target.resolve(),
-               args.repo, args.base, args.issue, args.reviewer)
+               args.repo, args.base, args.issue, args.reviewer, args.publish_only)
     except Exception as exc:
         # Never echo subprocess stderr, arguments, URLs with credentials or env.
         detail = str(exc) if isinstance(exc, UpdateError) else type(exc).__name__

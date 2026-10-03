@@ -22,6 +22,22 @@ def green_checks():
 
 
 class MergeGates(unittest.TestCase):
+    def test_publish_only_verifies_existing_pr_and_never_considers_merge(self):
+        pr = {"number": 7, "headRefName": "codex/mercury-sync-a", "headRefOid": "b"}
+        def fake_git(target, *args):
+            if args[0] == "status" or args[0] == "merge-base":
+                return ""
+            return "a"
+        with mock.patch.object(MODULE, "sync_module", return_value=object()), \
+             mock.patch.object(MODULE, "git", side_effect=fake_git), \
+             mock.patch.object(MODULE, "run", side_effect=[json.dumps([pr]), json.dumps([{"headSha": "b"}])]), \
+             mock.patch.object(MODULE, "validate_pr_tree") as tree, \
+             mock.patch.object(MODULE, "consider_merge") as merge:
+            MODULE.update(Path("source"), Path("target"), "owner/repo", "develop", 43,
+                          "argus-review[bot]", publish_only=True)
+            tree.assert_called_once()
+            merge.assert_not_called()
+
     def test_approval_must_match_current_head_and_named_independent_reviewer(self):
         review = {"user": {"login": "argus-review[bot]"}, "state": "APPROVED", "commit_id": "a"}
         self.assertTrue(MODULE.approval_ready([review], "a", "argus-review[bot]"))
