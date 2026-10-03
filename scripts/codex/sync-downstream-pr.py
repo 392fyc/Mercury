@@ -261,11 +261,11 @@ def main() -> int:
     parser.add_argument("--repo", required=True)
     parser.add_argument("--base", default="develop")
     parser.add_argument("--issue", required=True, type=int)
-    parser.add_argument("--reviewer", default="argus-review")
+    parser.add_argument("--reviewer", default="argus-review[bot]")
     args = parser.parse_args()
     if (re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", args.repo) is None
             or args.base != "develop" or args.issue < 1
-            or re.fullmatch(r"[A-Za-z0-9_-]+", args.reviewer) is None):
+            or re.fullmatch(r"[A-Za-z0-9_-]+(?:\[bot\])?", args.reviewer) is None):
         parser.error("invalid repository, integration branch, issue or reviewer")
     try:
         update(Path(__file__).resolve().parents[2], args.target.resolve(),

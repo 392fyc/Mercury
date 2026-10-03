@@ -23,19 +23,19 @@ def green_checks():
 
 class MergeGates(unittest.TestCase):
     def test_approval_must_match_current_head_and_named_independent_reviewer(self):
-        review = {"user": {"login": "argus-review"}, "state": "APPROVED", "commit_id": "a"}
-        self.assertTrue(MODULE.approval_ready([review], "a", "argus-review"))
-        self.assertFalse(MODULE.approval_ready([review], "b", "argus-review"))
+        review = {"user": {"login": "argus-review[bot]"}, "state": "APPROVED", "commit_id": "a"}
+        self.assertTrue(MODULE.approval_ready([review], "a", "argus-review[bot]"))
+        self.assertFalse(MODULE.approval_ready([review], "b", "argus-review[bot]"))
         self.assertFalse(MODULE.approval_ready([review], "a", "other"))
 
     def test_any_current_rejection_blocks_and_dismissal_removes_approval(self):
-        reviews = [{"user": {"login": "argus-review"}, "state": "APPROVED", "commit_id": "a"},
+        reviews = [{"user": {"login": "argus-review[bot]"}, "state": "APPROVED", "commit_id": "a"},
                    {"user": {"login": "human"}, "state": "CHANGES_REQUESTED", "commit_id": "a"}]
-        self.assertFalse(MODULE.approval_ready(reviews, "a", "argus-review"))
+        self.assertFalse(MODULE.approval_ready(reviews, "a", "argus-review[bot]"))
         reviews.append({"user": {"login": "human"}, "state": "DISMISSED", "commit_id": "a"})
-        self.assertTrue(MODULE.approval_ready(reviews, "a", "argus-review"))
-        reviews.append({"user": {"login": "argus-review"}, "state": "DISMISSED", "commit_id": "a"})
-        self.assertFalse(MODULE.approval_ready(reviews, "a", "argus-review"))
+        self.assertTrue(MODULE.approval_ready(reviews, "a", "argus-review[bot]"))
+        reviews.append({"user": {"login": "argus-review[bot]"}, "state": "DISMISSED", "commit_id": "a"})
+        self.assertFalse(MODULE.approval_ready(reviews, "a", "argus-review[bot]"))
 
     def test_no_checks_pending_failed_skipped_and_unknown_results_block(self):
         self.assertFalse(MODULE.checks_ready([]))
@@ -54,12 +54,12 @@ class MergeGates(unittest.TestCase):
     def test_merge_rechecks_tree_and_binds_exact_head_without_bypass(self):
         pr = {"number": 1, "headRefOid": "a", "statusCheckRollup": green_checks(),
               "mergeable": "MERGEABLE", "isDraft": False}
-        approval = [{"user": {"login": "argus-review"}, "state": "APPROVED", "commit_id": "a"}]
+        approval = [{"user": {"login": "argus-review[bot]"}, "state": "APPROVED", "commit_id": "a"}]
         with mock.patch.object(MODULE, "validate_pr_tree") as tree, \
              mock.patch.object(MODULE, "api", return_value=approval), \
              mock.patch.object(MODULE, "current_checks", return_value=green_checks()), \
              mock.patch.object(MODULE, "run") as run:
-            MODULE.consider_merge(Path("source"), Path("target"), "owner/repo", pr, "argus-review", None)
+            MODULE.consider_merge(Path("source"), Path("target"), "owner/repo", pr, "argus-review[bot]", None)
             tree.assert_called_once()
             command = run.call_args.args[0]
             self.assertEqual(command[-2:], ["--match-head-commit", "a"])
@@ -81,7 +81,7 @@ class MergeGates(unittest.TestCase):
         with mock.patch.object(MODULE, "validate_pr_tree", side_effect=MODULE.UpdateError("bad tree")), \
              mock.patch.object(MODULE, "api") as api, mock.patch.object(MODULE, "run") as run:
             with self.assertRaises(MODULE.UpdateError):
-                MODULE.consider_merge(Path("s"), Path("t"), "o/r", {}, "argus-review", None)
+                MODULE.consider_merge(Path("s"), Path("t"), "o/r", {}, "argus-review[bot]", None)
             api.assert_not_called()
             run.assert_not_called()
 
