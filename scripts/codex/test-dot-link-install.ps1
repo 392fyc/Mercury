@@ -18,7 +18,11 @@ $backupLine = @($installed | Where-Object { $_ -like 'Installed dot-link; backup
 if ($backupLine.Count -ne 1) { throw 'Installation did not return exactly one backup.' }
 $backup = $backupLine[0].Substring('Installed dot-link; backup: '.Length)
 $receipt = Get-Content -LiteralPath (Join-Path $backup 'installation.json') -Raw | ConvertFrom-Json
-if ($receipt.private_key_copied -or $receipt.files.Count -ne 4) { throw 'Unexpected installation inventory.' }
+$protocol = Join-Path $testRoot '.agents/skills/dot-link/references/receiver-protocol.md'
+$sourceProtocol = Join-Path $PSScriptRoot '../../.agents/skills/dot-link/references/receiver-protocol.md'
+if (-not (Test-Path -LiteralPath $protocol -PathType Leaf)) { throw 'Receiver protocol was not installed.' }
+if ((Get-FileHash -LiteralPath $protocol -Algorithm SHA256).Hash -cne (Get-FileHash -LiteralPath $sourceProtocol -Algorithm SHA256).Hash) { throw 'Installed receiver protocol bytes differ from source.' }
+if ($receipt.private_key_copied -or $receipt.files.Count -ne 5) { throw 'Unexpected installation inventory.' }
 if (-not [IO.File]::ReadAllText($global).StartsWith($original.TrimEnd("`r", "`n"))) { throw 'Existing user rules changed.' }
 if (Test-Path -LiteralPath (Join-Path $testRoot '.codex/dot-link/identity/private.pem')) { throw 'Installer unexpectedly created a signing key.' }
 $originalEntry = @($receipt.files | Where-Object { $_.existed })[0]
@@ -40,6 +44,7 @@ if (-not (Test-Path -LiteralPath $global)) { throw 'Rejected rollback partially 
 [IO.File]::WriteAllBytes($skill, $skillBytes)
 & $hostExecutable -NoProfile -File $installer -UserRoot $testRoot -Rollback -BackupPath $backup | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Rollback failed after restoring installed bytes.' }
+if (Test-Path -LiteralPath $protocol) { throw 'Rollback left the newly installed receiver protocol behind.' }
 if ([IO.File]::ReadAllText($global) -cne $original) { throw 'Rollback did not restore original bytes.' }
 $rolledBack = Get-Content -LiteralPath (Join-Path $backup 'installation.json') -Raw | ConvertFrom-Json
 if ($rolledBack.status -ne 'rolled_back' -or -not $rolledBack.rolled_back_at) { throw 'Rollback did not persist its completion receipt.' }
