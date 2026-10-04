@@ -452,8 +452,10 @@ def _verify_command(
     acceptance_status = "verified_unaccepted"
     if accept:
         acceptance_status = _accept_once(ledger_path, body, signed_body, pin["key_id"])
-    authorized = pin["authorization_status"] == "active"
-    execution_allowed = acceptance_status == "accepted" and authorized and body["type"] == "TASK"
+    identity_trusted = pin["authorization_status"] == "active"
+    ready_for_authorization_review = (
+        acceptance_status == "accepted" and identity_trusted and body["type"] == "TASK"
+    )
     return {
         "status": acceptance_status,
         "verification": {
@@ -463,11 +465,13 @@ def _verify_command(
         },
         "authorization": {
             "status": pin["authorization_status"],
-            "authorized": authorized,
+            "identity_trusted": identity_trusted,
+            "task_authorization_checked": False,
         },
         "acceptance": {
             "status": acceptance_status,
-            "execution_allowed": execution_allowed,
+            "ready_for_authorization_review": ready_for_authorization_review,
+            "execution_allowed": False,
             "payload_executed": False,
         },
         "verified_body": body,

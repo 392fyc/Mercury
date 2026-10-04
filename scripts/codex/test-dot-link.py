@@ -192,12 +192,15 @@ class DotLinkEndToEndTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "verified_unaccepted")
         self.assertEqual(result["verification"]["status"], "verified")
-        self.assertFalse(result["authorization"]["authorized"])
+        self.assertFalse(result["authorization"]["identity_trusted"])
+        self.assertFalse(result["authorization"]["task_authorization_checked"])
+        self.assertFalse(result["acceptance"]["ready_for_authorization_review"])
         self.assertFalse(result["acceptance"]["execution_allowed"])
         self.assertEqual(result["verified_body"]["payload"]["instruction"], "review this bounded change")
 
         active = self._verify(self.active_pin, envelope)
-        self.assertTrue(active["authorization"]["authorized"])
+        self.assertTrue(active["authorization"]["identity_trusted"])
+        self.assertFalse(active["authorization"]["task_authorization_checked"])
         self.assertEqual(active["acceptance"]["status"], "verified_unaccepted")
         self.assertFalse(active["acceptance"]["execution_allowed"])
 
@@ -279,13 +282,16 @@ class DotLinkEndToEndTests(unittest.TestCase):
             self.active_pin, initial, "--ledger", str(ledger), "--accept"
         )
         self.assertEqual(accepted["acceptance"]["status"], "accepted")
-        self.assertTrue(accepted["acceptance"]["execution_allowed"])
+        self.assertTrue(accepted["acceptance"]["ready_for_authorization_review"])
+        self.assertFalse(accepted["authorization"]["task_authorization_checked"])
+        self.assertFalse(accepted["acceptance"]["execution_allowed"])
         self.assertFalse(accepted["acceptance"]["payload_executed"])
 
         duplicate = self._verify(
             self.active_pin, initial, "--ledger", str(ledger), "--accept"
         )
         self.assertEqual(duplicate["acceptance"]["status"], "duplicate")
+        self.assertFalse(duplicate["acceptance"]["ready_for_authorization_review"])
         self.assertFalse(duplicate["acceptance"]["execution_allowed"])
 
         request_conflict = self._sign(

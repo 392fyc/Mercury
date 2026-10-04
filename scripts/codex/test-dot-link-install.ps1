@@ -57,3 +57,6 @@ if ([IO.File]::ReadAllText($malformedGlobal) -cne $utf8.GetString($malformedByte
 if (Test-Path -LiteralPath (Join-Path $malformedRoot '.agents/skills/dot-link/SKILL.md')) { throw 'Rejected installation partially installed the skill.' }
 if (Test-Path -LiteralPath (Join-Path $malformedRoot '.codex/dot-link/config.json')) { throw 'Rejected installation partially wrote the config.' }
 Write-Output ('PASS: isolated installation, preflight failures, later-edit protection, byte-exact rollback and receipt; evidence: ' + $testRoot)
+# GitHub's PowerShell wrapper propagates the final native process exit code.
+# The last negative test intentionally failed; all assertions have now passed.
+$global:LASTEXITCODE = 0

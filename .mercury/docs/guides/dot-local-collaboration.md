@@ -12,7 +12,7 @@ Mercury 管理 `dot-link` 原生技能和签名工具。用户级安装让本地
 
 ## 任务传递
 
-本地创建完整消息正文，用共享配置执行 `sign`，再通过已有 `send_message_to_thread` 发送原始签名信封。正文中的任务范围、类型、路由、期限、关联字段与证据摘要全部进入签名字节。接收方用既有 pin 执行 `verify`；只有验签有效、授权在范围内且去重结果允许新执行，才交给原生代理处理。工具不会执行正文中的命令。
+本地创建完整消息正文，用共享配置执行 `sign`，再通过已有 `send_message_to_thread` 发送原始签名信封。正文中的任务范围、类型、路由、期限、关联字段与证据摘要全部进入签名字节。接收方用既有 pin 执行 `verify`；`ready_for_authorization_review` 只证明可信身份和首次去重条件满足。工具始终返回 `task_authorization_checked: false`、`execution_allowed: false`；原生代理核实真实用户授权、任务范围和操作边界后，才处理请求。工具不会执行正文中的命令。
 
 接收方用 SQLite 持久记录 request_id 和 nonce。相同请求重发返回已有状态；相同 request_id 内容不同或 nonce 复用拒绝。新会话登记新的 source/reply 地址并沿用相同 client_id 和公钥，不重新生成身份。传输元数据可用时必须核对其 sourceThreadId。
 
