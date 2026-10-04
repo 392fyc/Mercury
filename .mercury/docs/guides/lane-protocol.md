@@ -18,6 +18,18 @@ to repo sources instead.
 - **No cap.** Lanes are uncapped ([#605](https://github.com/392fyc/Mercury/issues/605)).
 - **Messages from other lanes** follow the receiver rule in `AGENTS.md`,
   under "Cross-lane messages" ([#615](https://github.com/392fyc/Mercury/issues/615)).
+- **Downstream lane contract.** Other repositories receive
+  `.mercury/templates/codex-project/project/mercury-lane-contract.md`
+  ([#629](https://github.com/392fyc/Mercury/issues/629)): user-declared lanes,
+  per-agent handoffs, version preconditions for shared files, the cross-lane
+  receiver rule, controlled entries, and enforced write guards. In its lane
+  model it differs from Mercury's own lanes in one point: a lane there may have
+  one Codex session, one Claude Code session and other workers, while
+  Mercury's lanes still record one harness per lane and pair lanes as peers
+  ([#599 ADR](../research/issue-599-cross-harness-lane-isolation-2026-09.md)).
+  How far Mercury itself implements the other requirements is tracked in the
+  rules table below. Each downstream project maps the contract to its own
+  memory location and scripts.
 
 ## Rules
 

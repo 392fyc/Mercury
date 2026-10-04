@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.0 - 2026-10-05
+
+- Add a portable lane contract for repositories that run several lanes and
+  agents in parallel: user-declared lanes, per-agent handoffs, version
+  preconditions for shared files, cross-lane provenance, controlled entries,
+  and enforced write guards for read-only roles.
+
 ## 1.1.0 - 2026-10-03
 
 - Add an explicit Mercury ownership contract and pin portable worker role
