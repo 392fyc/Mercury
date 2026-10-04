@@ -1,0 +1,30 @@
+name: Dot Link Check
+
+on:
+  pull_request:
+    paths:
+      - '.agents/skills/dot-link/**'
+      - 'scripts/codex/*dot-link*'
+      - '.github/workflows/dot-link-check.yml'
+  push:
+    branches: [develop]
+    paths:
+      - '.agents/skills/dot-link/**'
+      - 'scripts/codex/*dot-link*'
+      - '.github/workflows/dot-link-check.yml'
+
+jobs:
+  signed-messages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python scripts/codex/test-dot-link.py
+  windows-install:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - shell: pwsh
+        run: ./scripts/codex/test-dot-link-install.ps1
