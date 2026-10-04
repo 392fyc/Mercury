@@ -20,6 +20,10 @@
       "source": "project/mercury-harness-ownership.md"
     },
     {
+      "destination": "project/mercury-lane-contract.md",
+      "source": "project/mercury-lane-contract.md"
+    },
+    {
       "destination": "project/mercury-task-contract.md",
       "source": "project/mercury-task-contract.md"
     },

@@ -15,7 +15,8 @@ and workflows.
 - `rules/`: repository-independent Git safety rules. They block the listed
   direct `git push` and Git global-option token forms; each downstream
   repository supplies its own controlled publication entrypoint.
-- `project/`: the harness ownership and task, evidence, and receipt contracts.
+- `project/`: the harness ownership, lane, and task, evidence, and receipt
+  contracts.
 - `manifest.json`: the deterministic allowlist for generated files and the
   explicitly declared, schema-fixed `mercury-template.lock` basename consumed
   by the sync tool.
