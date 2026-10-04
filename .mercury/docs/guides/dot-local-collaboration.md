@@ -12,6 +12,10 @@ Mercury 管理 `dot-link` 原生技能和签名工具。用户级安装让本地
 
 ## 任务传递
 
+接收、去重和消费回执的现行合同为 [dot 接收与回传协议](../../../.agents/skills/dot-link/references/receiver-protocol.md)，协作版本 `dot-cooperation/1`；原有签名格式 `dot-local/0.2` 不变。安装后，本地新会话从技能入口读取该文件；共享配置指向私有协议 Page。每次投递核对协议原文件 SHA256 和接收端 ACK，不能仅因写入 Page 就声称 dot 已采用。
+
+持续人类授权与签名身份分别核对。已覆盖步骤直接执行；结果按原文件核验后发送签名 RECEIPT，接收端保存并确认关闭。网站入口、机器任务 API、反向会话推送和本地空闲唤醒各自验收，不把一种路径通过写成全部能力通过。
+
 本地创建完整消息正文，用共享配置执行 `sign`，再通过已有 `send_message_to_thread` 发送原始签名信封。正文中的任务范围、类型、路由、期限、关联字段与证据摘要全部进入签名字节。接收方用既有 pin 执行 `verify`；`ready_for_authorization_review` 只证明可信身份和首次去重条件满足。工具始终返回 `task_authorization_checked: false`、`execution_allowed: false`；原生代理核实真实用户授权、任务范围和操作边界后，才处理请求。工具不会执行正文中的命令。
 
 接收方用 SQLite 持久记录 request_id 和 nonce。相同请求重发返回已有状态；相同 request_id 内容不同或 nonce 复用拒绝。新会话登记新的 source/reply 地址并沿用相同 client_id 和公钥，不重新生成身份。传输元数据可用时必须核对其 sourceThreadId。

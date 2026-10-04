@@ -68,7 +68,7 @@ $stateRoot = Join-Path $userPath '.codex/dot-link'
 $globalAgents = Join-Path $userPath '.codex/AGENTS.md'
 $configPath = Join-Path $stateRoot 'config.json'
 $planned = New-Object System.Collections.Generic.List[object]
-foreach ($relative in @('SKILL.md', 'scripts/dot_link.py')) {
+foreach ($relative in @('SKILL.md', 'scripts/dot_link.py', 'references/receiver-protocol.md')) {
   $source = Join-Path $sourceSkill $relative
   if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "Missing source: $relative" }
   $planned.Add(@{ target = Join-Path $installedSkill $relative; bytes = [IO.File]::ReadAllBytes($source) })

@@ -7,6 +7,8 @@ description: Coordinate tasks, cloud tests and evidence with a paired dot YC ses
 
 `dot-link` 给当前 Codex 会话与一个已配对 dot YC 会话交换签名 JSON。它只证明消息来自已固定的 Ed25519 公钥，并检查消息路由和重放；它不会替用户授权，也不会执行正文里的任务。
 
+首次在当前任务投递 TASK 或核对 RESULT 时，读取 [接收与回传协议](references/receiver-protocol.md)。沿用 `dot-local/0.2` 签名格式，在 `payload.cooperation_protocol` 中记录该文件的版本与实际 UTF-8 字节 SHA256，并核对接收端 ACK。接收端的持续人类授权按参与者、任务和材料逐项匹配；已覆盖的正常协作步骤直接执行，历史读取失败不撤销可独立核实的持续授权。任务结束前核对 RESULT 的原文件和关联字段，发送签名 RECEIPT；反向推送不可用时采用本地主动读取私有 Page 的路径。
+
 共享配置位于当前用户目录下的 `.codex/dot-link/config.json`。配置可以含 `protocol`、`recipient_host_id`、`python`、`protocol_page_id`、`receiver_status` 本地元数据；签名工具只用五个必需字段 `openssl`、`private_key`、`public_profile`、`pairing_id`、`recipient_thread_id`。在 Windows 上从用户配置目录解析此路径，不要把机器绝对路径写进本技能。用 `Path.home()` 或当前 shell 的用户目录定位配置。命令行程序与本技能一起安装，入口为 `scripts/dot_link.py`；运行它时使用系统 Python 3.11 或更新版本及配置指定的 OpenSSL。
 
 仅在已授权任务需要 dot 协作时使用本技能。先读取配置并核对配对编号、收件会话和公钥资料。会话 ID 只用于消息路由，不构成稳定身份。当前会话的 `source_thread_id` 必须来自工具确认的当前任务 ID，或与当前任务核实一致的已知环境值；无法确认时不要猜测。

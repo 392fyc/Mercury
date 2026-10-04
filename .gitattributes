@@ -21,3 +21,6 @@
 # `git ls-files --eol` reported the binary as `i/-text w/-text` in BOTH cases, so that
 # output is not evidence of binary safety — only comparing bytes is.
 .claude/workflows/** text=auto eol=lf
+
+# The cooperation contract is exchanged by exact UTF-8 byte digest across hosts.
+.agents/skills/dot-link/references/receiver-protocol.md text eol=lf
