@@ -47,18 +47,20 @@ Both `develop` and `master` have branch protection rules enabled:
 | Rule | develop | master |
 |------|---------|--------|
 | Require PR before merge | Yes | Yes |
-| Required approving reviews | 1 | 1 |
+| Required approving reviews | 0 (temporary, #632) | 0 (temporary, #632) |
 | Dismiss stale reviews | Yes | Yes |
 
-PRs must receive at least one approved review (from the configured review bot or
-an authorized human reviewer) before merging, along with all required checks.
-
-The current user-authorized temporary exception is in
-`.agents/skills/pr-flow/SKILL.md`: Main Agent may bypass a missing GitHub approval
-after native independent review of the exact head, successful CI, zero review
-threads and no outstanding changes requested. Use `guard.ps1 pre-merge` with
-`-NativeReviewReceipt` first. The local receipt records evidence; it does not
-create a GitHub approval or authorize merging. Keep branch protection enabled.
+While Argus is unavailable, the required approval count is temporarily 0
+(#632): the repository owner opens these PRs and GitHub does not let an author
+approve their own PR. The temporary merge rule is in
+`.agents/skills/pr-flow/SKILL.md`: native independent review of the exact head,
+successful CI, zero review threads, no outstanding changes requested,
+`guard.ps1 pre-merge` with `-NativeReviewReceipt`, and the user's explicit
+confirmation in chat for that PR. Merge normally, never with `--admin`. The
+local receipt records evidence; it does not create a GitHub approval or
+authorize merging. The rule covers PRs into `develop` only; a release PR into
+`master` needs separate user authorization. When Argus returns, set the count
+back to 1 before re-enabling Argus review mode.
 
 ## Commit Format
 
