@@ -13,7 +13,7 @@
 ## Git and local safety
 
 - Keep unrelated changes. Stage explicit files only. Do not reset, stash, rewrite history, force-push, or remove other work to simplify a task.
-- Use task branches accepted by `scripts/codex/guard.ps1`: `feature/TASK-<id>` or `lane/<lane>/(init|<n>|<n>-<slug>)`. Never commit or push directly to `develop`, `main`, or `master`. Merge into `develop` through a PR with required approval and checks.
+- Use task branches accepted by `scripts/codex/guard.ps1`: `feature/TASK-<id>` or `lane/<lane>/(init|<n>|<n>-<slug>)`. Never commit or push directly to `develop`, `main`, or `master`. Merge into `develop` through a PR under the merge rule in `.agents/skills/pr-flow/SKILL.md`: independent review of the exact head, all checks green, zero review threads (resolved ones count), no outstanding changes requested, `guard.ps1 pre-merge` passing, and the user's explicit confirmation in chat.
 - For Git writes, use `powershell -File scripts/codex/git-safe.ps1 add/commit/push`, including outside Codex. Before commit: stage intended files, inspect that staged diff, complete required checks and review, then run `powershell -File scripts/codex/guard.ps1 mark-review`. Changed staged content needs renewed review and a fresh mark. The mark records a snapshot, not review evidence.
 - Preserve the sandbox and command rules. Request scoped access when needed; never bypass a denial through another shell. Use `.codex/rules/` and guarded scripts. This project has no hook registrations; check current official documentation before changing runtime wiring.
 - On Windows, install software under `D:\Program Files`. Keep machine paths and local state out of portable templates.

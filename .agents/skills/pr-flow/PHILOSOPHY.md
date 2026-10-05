@@ -1,6 +1,8 @@
 # Why pr-flow Exists
 
 > Methodology document behind Mercury's `pr-flow` skill. Targets external readers who want to understand the design decisions, not just the operational steps.
+>
+> **Current status (2026-10):** the Argus review bot described below is excluded for now. Reviews are done by native independent subagents and merges follow the rule in `SKILL.md`; the Argus-specific contract below is kept as design history.
 
 ## The problem
 

@@ -32,7 +32,7 @@ GitHub Issues is the single source of truth for all task tracking in Mercury.
 
 ## Enforcement
 
-- [AGENTS.md](../../../AGENTS.md) requires every PR to reference its Issue; Argus flags a missing reference (`.pr_agent.toml`). The former `pr-create-guard.sh` hook was retired in #579.
+- [AGENTS.md](../../../AGENTS.md) requires every PR to reference its Issue; check it during the independent review. (Argus used to flag a missing reference via `.pr_agent.toml`; the Argus bot is excluded for now.) The former `pr-create-guard.sh` hook was retired in #579.
 - [CLAUDE.md](../../../CLAUDE.md) MUST rule: "Issue-first workflow"
 - Agents post milestone comments via `gh issue comment`
 
