@@ -20,14 +20,37 @@ class UpdateError(Exception):
 REQUIRED_CHECK_NAMES = {"Godot headless 回归", "仓库契约与采集配置测试"}
 
 
+# Strip credentials from diagnostics: tokens, userinfo in URLs and auth headers.
+_SECRET = re.compile(r"gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,}"
+                     r"|(?<=://)[^\s/@]+@|(?i:authorization:)\s*\S+(?:\s+\S+)?")
+
+
+def redact(text: str, limit: int) -> str:
+    text = _SECRET.sub("<redacted>", text.replace("\r", "")).strip()
+    return text if len(text) <= limit else "..." + text[-limit:]
+
+
+def describe(args: list[str]) -> str:
+    """Name the failing command without long values such as PR bodies or queries."""
+    # Redact each argument before truncating so a cut can never expose part of a secret.
+    shown = [Path(args[0]).name]
+    for arg in args[1:8]:
+        arg = _SECRET.sub("<redacted>", arg).replace("x-access-token:", "<redacted>")
+        shown.append(arg if len(arg) <= 80 else arg[:77] + "...")
+    return redact(" ".join(shown) + (" ..." if len(args) > 8 else ""), 300)
+
+
 def run(args: list[str], cwd: Path | None = None) -> str:
     try:
         result = subprocess.run(args, cwd=cwd, capture_output=True, text=True,
-                                encoding="utf-8", timeout=120)
-    except (OSError, subprocess.TimeoutExpired):
-        raise UpdateError("cannot complete automation command") from None
+                                encoding="utf-8", errors="replace", timeout=120)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise UpdateError(f"cannot complete automation command: {describe(args)} "
+                          f"({type(error).__name__})") from None
     if result.returncode:
-        raise UpdateError(f"automation command failed (exit {result.returncode})")
+        detail = redact((result.stderr or "").strip() or result.stdout or "", 600)
+        raise UpdateError(f"automation command failed (exit {result.returncode}): "
+                          f"{describe(args)}" + (f"\n{detail}" if detail else ""))
     return result.stdout.strip()
 
 
@@ -37,6 +60,15 @@ def git(target: Path, *args: str) -> str:
 
 def changed_paths(target: Path, *revisions: str) -> list[str]:
     return [p for p in git(target, "diff", "--name-only", "-z", *revisions).split("\0") if p]
+
+
+def pending_paths(target: Path) -> list[str]:
+    """Working-tree changes to commit: modified tracked files plus new untracked files.
+
+    `git diff` alone misses a file that a manifest update adds for the first time.
+    """
+    untracked = git(target, "ls-files", "--others", "--exclude-standard", "-z")
+    return sorted(set(changed_paths(target)) | {p for p in untracked.split("\0") if p})
 
 
 def api(repo: str, endpoint: str) -> object:
@@ -229,13 +261,21 @@ def update(source: Path, target: Path, repo: str, base: str,
          "--target", str(target)])
     paths = [".codex/mercury-template.lock"] + [f".codex/{p}" for p in
              sorted(set(old_lock.files) | {i.destination.as_posix() for i in template.files})]
-    changed = changed_paths(target)
+    changed = pending_paths(target)
     if not changed or not set(changed) <= set(paths):
         raise UpdateError("synchronization changed unexpected files")
     git(target, "add", "--", *changed)
     git(target, "-c", "user.name=Mercury Sync", "-c",
         "user.email=41898282+github-actions[bot]@users.noreply.github.com", "commit",
         "-m", f"chore(harness): consume Mercury {source_commit[:12]}")
+    # A managed file ignored by the downstream .gitignore would be silently left out.
+    expected = [".codex/mercury-template.lock"] + [
+        f".codex/{i.destination.as_posix()}" for i in template.files]
+    listed = git(target, "ls-files", "-z", "--", *expected)
+    tracked = {p for p in listed.split("\0") if p}
+    if set(expected) - tracked or pending_paths(target):
+        raise UpdateError("generated files are not all committed; "
+                          "check the downstream .gitignore")
     run(["pwsh", "-NoProfile", "-File", str(target / "scripts/codex/sot-publish.ps1")],
         cwd=target)
     body = (f"Consume the manifest-generated Harness from "
@@ -276,7 +316,7 @@ def main() -> int:
         update(Path(__file__).resolve().parents[2], args.target.resolve(),
                args.repo, args.base, args.issue, args.reviewer, args.publish_only)
     except Exception as exc:
-        # Never echo subprocess stderr, arguments, URLs with credentials or env.
+        # Subprocess output and arguments reach this point only through redact()/describe().
         detail = str(exc) if isinstance(exc, UpdateError) else type(exc).__name__
         print(f"sync stopped: {detail}", file=sys.stderr)
         return 2
