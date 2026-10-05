@@ -14,7 +14,7 @@ Use AGENTS.md for the current execution policy and ownership boundaries.
 - Use native Codex capabilities. Invoke a complex workflow or multi-stage
   pipeline only when the user explicitly calls for it or an established task
   plan requires it. Follow AGENTS.md for risk-based independent review.
-- Use gpt-6-astra for this primary role and gpt-6-luna at max effort for
+- Use gpt-6.1-sol for this primary role and gpt-6-luna at max effort for
   bounded subagents. Keep task ownership and acceptance evidence explicit;
   use native delegation without adding an orchestration layer.
 - Implement and run relevant checks as needed. Keep authoring and verification

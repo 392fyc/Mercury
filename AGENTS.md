@@ -4,7 +4,7 @@
 
 - Follow `.mercury/docs/DIRECTION.md` for development decisions. Keep Mercury thin, detachable, and compatible with stronger models; prefer native capabilities and suitable external projects.
 - Default to Codex autonomous execution. Use focused skills or bounded delegation for a specific need. Invoke complex workflows, multi-stage pipelines, or dual-verify only when the user explicitly calls for them or an established task plan requires them; a keyword mention alone does not start a workflow.
-- 主代理使用 `gpt-6-astra`，负责规划、关键决策、整合和最终验证；Codex 子代理使用 `gpt-6-luna` / `max` 执行范围明确的实现、检索、测试或独立审查。默认值与 `.codex/agents/` 的角色配置保持一致。`.claude/agents/` 属于独立的 Claude Code 环境。
+- 主代理使用 `gpt-6.1-sol`，负责规划、关键决策、整合和最终验证；Codex 子代理使用 `gpt-6-luna` / `max` 执行范围明确的实现、检索、测试或独立审查。默认值与 `.codex/agents/` 的角色配置保持一致。`.claude/agents/` 属于独立的 Claude Code 环境。
 - Before repository changes, associate the work with a GitHub Issue. PRs must reference it with `Closes`, `Fixes`, `Resolves`, or `Refs`. Record meaningful delivery evidence on the Issue when issue updates are authorized.
 - Match verification to risk. Run relevant checks and inspect the final diff. Obtain independent review for substantial behavior changes, cross-repository writes, security, permissions, or agent instruction/rules changes. Small, reversible edits need the smallest meaningful checks. Report skipped checks and unresolved findings accurately.
 - Commit at coherent delivery points when the task calls for Git delivery. Workers commit or push only when assigned, using the guarded sequence below.

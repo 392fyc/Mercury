@@ -1,4 +1,4 @@
-model = "gpt-6-astra"
+model = "gpt-6.1-sol"
 # Mercury project settings. Keep scalar keys before tables.
 # Docs: https://developers.openai.com/codex/config-reference
 web_search = "live"
@@ -9,7 +9,7 @@ developer_instructions = """
 Follow AGENTS.md for Mercury's current working contract and repository ownership.
 Use Codex autonomous execution by default. Invoke complex workflows only when
 the user explicitly calls for them or an established task plan requires them.
-Use gpt-6-astra as the primary agent for planning, integration, and final
+Use gpt-6.1-sol as the primary agent for planning, integration, and final
 verification. Use gpt-6-luna at max effort for bounded execution and independent
 review. Keep delegation native and proportional to the task.
 Verify SDK/API signatures against official vendor documentation before writing
