@@ -30,7 +30,8 @@ REGISTRY_SCHEMA = "mercury-native-event-probe-registry/1"
 AUTH_SCHEMA = "direct-human-native-probe-authorization/1"
 BODY_SCHEMA = "native-event-probe/1"
 RECIPIENT = "mercury-local"
-MODEL = "gpt-6.1-sol"
+# Temporary compatibility pin for the synthetic CLI receiver only.
+MODEL = "gpt-6-sol"
 PROVIDER = "openai"
 CODEX_CLI_VERSION = "0.156.1"
 PROBE_KIND = "updated"
@@ -64,6 +65,12 @@ NATIVE_EVENT_TYPES = {
     "turn.completed", "turn.failed",
 }
 NATIVE_ITEM_TYPES = {"agent_message", "reasoning"}
+# CLI 0.156.1 serializes this startup WarningEvent as an error item even though
+# the disabled host is the required capability boundary for this pure probe.
+DISABLED_HOST_STARTUP_WARNING = (
+    "Code Mode is unavailable because code-mode host is disabled. "
+    "Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`."
+)
 DISABLED_CODEX_FEATURES = (
     "shell_tool",
     "view_image",
@@ -80,6 +87,9 @@ DISABLED_CODEX_FEATURES = (
     "hooks",
     "memories",
     "sleep_tool",
+    "code_mode_only",
+    "code_mode",
+    "code_mode_prewarm",
     "code_mode_host",
     "artifact",
     "goals",
@@ -123,9 +133,9 @@ OUTPUT_SCHEMA: dict[str, Any] = {
         "request_id": {"type": "string", "maxLength": 128},
         "challenge": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"},
         "body_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-        "executed": {"const": True},
-        "godot_executed": {"const": False},
-        "production_modified": {"const": False},
+        "executed": {"type": "boolean", "const": True},
+        "godot_executed": {"type": "boolean", "const": False},
+        "production_modified": {"type": "boolean", "const": False},
     },
 }
 
@@ -720,6 +730,8 @@ class CodexBackend:
             "project_root_markers=[]",
             "--config",
             "tools.experimental_request_user_input.enabled=false",
+            "--config",
+            "suppress_unstable_features_warning=true",
             "--cd",
             str(policy.worker_root),
         ]
@@ -784,13 +796,15 @@ class CodexBackend:
 
         last_message: bytes | None = None
         try:
-            _check_components(output_path)
+            _check_components(output_path, allow_missing_leaf=True)
             info = output_path.stat()
             if _is_reparse(info) or not stat.S_ISREG(info.st_mode) or info.st_size > MAX_MESSAGE_BYTES:
                 return NativeResult(process.returncode or 1, stdout, None, "invalid_last_message_file")
             last_message = output_path.read_bytes()
         except FileNotFoundError:
             pass
+        except DispatchError:
+            return NativeResult(process.returncode or 1, stdout, None, "last_message_path_invalid")
         except OSError:
             return NativeResult(process.returncode or 1, stdout, None, "last_message_unavailable")
         return NativeResult(process.returncode, stdout, last_message)
@@ -826,12 +840,25 @@ def _parse_completed_turn(stdout: bytes, last_message: bytes | None) -> tuple[di
         records.append(record)
     if not records:
         raise DispatchError("native event stream is empty")
-    for record in records:
+    expected_warning = {
+        "type": "item.completed",
+        "item": {"id": "item_0", "type": "error", "message": DISABLED_HOST_STARTUP_WARNING},
+    }
+    if (
+        len(records) < 4 or records[0].get("type") != "thread.started"
+        or records[1] != expected_warning or records[2].get("type") != "turn.started"
+        or sum(record.get("type") == "thread.started" for record in records) != 1
+        or sum(record.get("type") == "turn.started" for record in records) != 1
+    ):
+        raise DispatchError("native turn lacks the pinned disabled-host startup diagnostic")
+    for index, record in enumerate(records):
         event_type = record.get("type")
         if not isinstance(event_type, str) or event_type not in NATIVE_EVENT_TYPES:
             raise DispatchError("native event stream contains an unsupported event type")
         if event_type.startswith("item."):
             item = record.get("item")
+            if index == 1:
+                continue
             if (
                 not isinstance(item, dict)
                 or not isinstance(item.get("type"), str)

@@ -133,16 +133,16 @@ $schema = [ordered]@{
     properties = [ordered]@{
         event_id = @{ type = 'string'; maxLength = 128 }; task_id = @{ type = 'string'; maxLength = 128 }; request_id = @{ type = 'string'; maxLength = 128 }
         challenge = @{ type = 'string'; pattern = '^[A-Za-z0-9_-]{43}$' }; body_sha256 = @{ type = 'string'; pattern = '^[0-9a-f]{64}$' }
-        executed = @{ const = $true }
-        godot_executed = @{ const = $false }
-        production_modified = @{ const = $false }
+        executed = @{ type = 'boolean'; const = $true }
+        godot_executed = @{ type = 'boolean'; const = $false }
+        production_modified = @{ type = 'boolean'; const = $false }
     }
 }
 Write-NewJson (Join-Path $workerRoot 'receipt.schema.json') $schema
 Write-NewJson (Join-Path $workerRoot 'registry.json') ([ordered]@{ schema = 'mercury-native-event-probe-registry/1'; entries = @() })
 Write-NewJson $policyFile ([ordered]@{
     schema = 'mercury-local-event-dispatch/1'; recipient = $Recipient
-    client_config = $bridgeFile; codex_exe = $CodexExe; model = 'gpt-6.1-sol'; provider = 'openai'
+    client_config = $bridgeFile; codex_exe = $CodexExe; model = 'gpt-6-sol'; provider = 'openai'
     worker_root = $workerRoot; ledger_path = (Join-Path $workerRoot 'ledger.sqlite3')
     registry_path = (Join-Path $workerRoot 'registry.json'); output_schema_path = (Join-Path $workerRoot 'receipt.schema.json')
     poll_interval_seconds = 30; native_timeout_seconds = 180; initial_after = $InitialAfter

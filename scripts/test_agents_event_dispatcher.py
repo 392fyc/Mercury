@@ -58,7 +58,7 @@ class FakeBackend:
         return self.result or successful_native_result()
 
 
-def successful_native_result(receipt: dict[str, object] | None = None) -> dispatcher_module.NativeResult:
+def successful_native_result(receipt: dict[str, object] | None = None, *, startup_warning: bool = True) -> dispatcher_module.NativeResult:
     receipt_value = receipt or {
         "event_id": "evt-probe-01",
         "task_id": "task-probe-01",
@@ -76,6 +76,9 @@ def successful_native_result(receipt: dict[str, object] | None = None) -> dispat
         {"type": "item.completed", "item": {"id": "message-1", "type": "agent_message", "text": message}},
         {"type": "turn.completed", "turn_id": "native-turn-1"},
     ]
+    if startup_warning:
+        events.insert(1, {"type": "item.completed", "item": {
+            "id": "item_0", "type": "error", "message": dispatcher_module.DISABLED_HOST_STARTUP_WARNING}})
     return dispatcher_module.NativeResult(0, b"\n".join(encoded(item) for item in events) + b"\n", message.encode("utf-8"))
 
 
@@ -216,6 +219,16 @@ class DispatcherFixture:
 
 
 class DispatcherTests(unittest.TestCase):
+    def test_receipt_schema_has_explicit_api_property_types(self):
+        schema = dispatcher_module.OUTPUT_SCHEMA
+        self.assertEqual(set(schema['required']), set(schema['properties']))
+        for name, definition in schema['properties'].items():
+            with self.subTest(property=name):
+                expected_type = 'boolean' if name in {'executed', 'godot_executed', 'production_modified'} else 'string'
+                self.assertEqual(definition.get('type'), expected_type)
+                if expected_type == 'boolean':
+                    self.assertIs(type(definition['const']), bool)
+
     def setUp(self) -> None:
         self.fixture = DispatcherFixture()
         self.system_config_paths = patch.object(
@@ -509,6 +522,58 @@ class DispatcherTests(unittest.TestCase):
         self.assertEqual(result.status, "blocked")
         self.assertEqual(queue.consume_calls, [])
 
+    def test_exact_disabled_host_startup_warning_can_precede_completed_receipt(self):
+        result = self.fixture.valid_backend().result
+        assert result is not None
+        queue = FakeQueue([self.fixture.event()])
+        backend = FakeBackend(result)
+        with self.fixture.dispatcher(queue, backend) as receiver:
+            outcome = receiver.run_once()
+        self.assertEqual(outcome.status, "server_consumed")
+        self.assertEqual(len(backend.calls), 1)
+        self.assertEqual(queue.consume_calls, [self.fixture.event_id])
+
+    def test_startup_warning_exception_rejects_changed_repeated_or_late_errors(self):
+        result = successful_native_result(self.fixture.receipt(), startup_warning=False)
+        lines = result.stdout.splitlines()
+        warning = {"type": "item.completed", "item": {
+            "id": "item_0", "type": "error", "message": dispatcher_module.DISABLED_HOST_STARTUP_WARNING}}
+        original = encoded(warning)
+        changed_message = encoded({**warning, "item": {**warning["item"], "message": "different error"}})
+        changed_id = encoded({**warning, "item": {**warning["item"], "id": "item_1"}})
+        extra_field = encoded({**warning, "unexpected": True})
+        variants = [
+            lines,
+            [lines[0], changed_message, *lines[1:]],
+            [lines[0], changed_id, *lines[1:]],
+            [lines[0], extra_field, *lines[1:]],
+            [lines[0], original, original, *lines[1:]],
+            [*lines[:2], original, *lines[2:]],
+            [original, *lines],
+            [lines[0], original, *lines[1:-1], encoded({"type": "turn.failed"})],
+        ]
+        for index, records in enumerate(variants):
+            with self.subTest(variant=index):
+                with self.assertRaises(dispatcher_module.DispatchError):
+                    dispatcher_module._parse_completed_turn(b"\n".join(records), result.last_message)
+
+    def test_other_errors_and_tools_remain_rejected_after_pinned_warning(self):
+        result = successful_native_result(self.fixture.receipt())
+        lines = result.stdout.splitlines()
+        forbidden = [
+            {"type": "error", "message": "API error"},
+            {"type": "item.completed", "item": {"id": "item_1", "type": "error", "message": "other warning"}},
+            {"type": "item.completed", "item": {"id": "item_1", "type": "command_execution"}},
+            {"type": "tool.operation.started"},
+            {"type": "turn.failed"},
+        ]
+        for record in forbidden:
+            with self.subTest(record=record):
+                with self.assertRaises(dispatcher_module.DispatchError):
+                    dispatcher_module._parse_completed_turn(
+                        b"\n".join([*lines[:3], encoded(record), *lines[3:]]), result.last_message
+                    )
+
     def test_server_consumed_without_local_receipt_is_blocked(self):
         queue = FakeQueue([self.fixture.event(status="consumed")])
         backend = FakeBackend()
@@ -546,6 +611,7 @@ class DispatcherTests(unittest.TestCase):
                 "project_doc_max_bytes=0",
                 "project_root_markers=[]",
                 "tools.experimental_request_user_input.enabled=false",
+                "suppress_unstable_features_warning=true",
             ],
         )
         self.assertNotIn("--provider", argv)
@@ -729,6 +795,33 @@ class DispatcherTests(unittest.TestCase):
         with self.assertRaises(SystemExit) as result:
             dispatcher_module.main(["--loop", str(dispatcher_module.MAX_LOOP_COUNT + 1)])
         self.assertEqual(result.exception.code, 2)
+
+    def test_missing_native_receipt_preserves_exit_code_and_stream(self):
+        code_home = self.fixture.base / ".codex"
+        code_home.mkdir()
+        raw = b'{"type":"error","message":"test-only startup failure"}\n'
+        version_output = dispatcher_module.subprocess.CompletedProcess([], 0, b"codex-cli 0.156.1\n", b"")
+        for exit_code in (0, 7):
+            with self.subTest(exit_code=exit_code):
+                class MissingReceiptProcess:
+                    returncode = exit_code
+
+                    def __init__(self, _argv, **kwargs):
+                        kwargs["stdout"].write(raw)
+
+                    def poll(self):
+                        return self.returncode
+
+                with patch.dict(os.environ, {"CODEX_HOME": str(code_home)}):
+                    with patch.object(dispatcher_module.subprocess, "run", return_value=version_output):
+                        with patch.object(dispatcher_module.subprocess, "Popen", side_effect=MissingReceiptProcess):
+                            result = dispatcher_module.CodexBackend().run(
+                                self.fixture.policy, "fixed", self.fixture.root / ".missing-receipt.json"
+                            )
+                self.assertEqual(result.returncode, exit_code)
+                self.assertEqual(result.stdout, raw)
+                self.assertIsNone(result.last_message)
+                self.assertIsNone(result.error)
 
 
 if __name__ == "__main__":

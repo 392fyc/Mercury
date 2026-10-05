@@ -32,7 +32,7 @@ The policy is one UTF-8 JSON object with exactly these fields:
   "recipient": "mercury-local",
   "client_config": "C:\\Users\\OWNER\\.codex\\dot-link\\event-runtime\\bridge.json",
   "codex_exe": "D:\\Program Files\\MercuryAgentReceiver\\codex.exe",
-  "model": "gpt-6.1-sol",
+  "model": "gpt-6-sol",
   "provider": "openai",
   "worker_root": "C:\\Users\\OWNER\\.codex\\dot-link\\event-dispatch",
   "ledger_path": "C:\\Users\\OWNER\\.codex\\dot-link\\event-dispatch\\ledger.sqlite3",
@@ -44,7 +44,7 @@ The policy is one UTF-8 JSON object with exactly these fields:
 }
 ```
 
-`client_config` points to the existing local bridge configuration, whose values must match `~/.codex/dot-link/event-policy/targets.json`. Queue authentication remains on the NAS. The initial `1` is an installation-time cursor seed for a new, separate ledger; it preserves the already observed queue position and avoids replaying the prior probe. Later cursor values are stored only in SQLite. Allowed poll intervals are 5 through 300 seconds, and native timeouts are 10 through 1800 seconds.
+`client_config` points to the existing local bridge configuration, whose values must match `~/.codex/dot-link/event-policy/targets.json`. Queue authentication remains on the NAS. `initial_after` is the verified queue position used to seed a new, separate ledger; the example value `1` must be replaced with the current position. Do not skip unknown work or treat an acknowledged failed notification as a successful task. Later cursor values are stored only in SQLite. Allowed poll intervals are 5 through 300 seconds, and native timeouts are 10 through 1800 seconds.
 
 The runtime executable must be the absolute `codex.exe` copied beneath the protected native install root. It is invoked directly with an argument array and `shell=False`; no shell wrapper, `.cmd` file, event-derived executable, or provider alias is accepted. This Codex CLI version selects the OpenAI provider with `--config model_provider="openai"`; it does not expose a `--provider` option. `--ignore-user-config` prevents user MCP and prompt configuration from widening this synthetic worker; Codex CLI help states that authentication still uses `CODEX_HOME`. The controller accepts only Codex CLI version `0.156.1`; it runs `codex.exe --version` before the first model turn in each process and caches that check for subsequent turns in the same bounded loop.
 
@@ -125,7 +125,7 @@ The SHA-256 is computed over the exact UTF-8 bytes on disk. The controller verif
 The controlled invocation uses a fixed argument list equivalent to:
 
 ```text
-<absolute codex.exe> exec --ephemeral --sandbox read-only --skip-git-repo-check --ignore-user-config --strict-config --json --output-schema <trusted receipt.schema.json> --output-last-message <random controlled file under worker_root> --model gpt-6.1-sol --config model_provider="openai" --config web_search="disabled" --config project_doc_max_bytes=0 --config project_root_markers=[] --config tools.experimental_request_user_input.enabled=false --cd <worker_root> --disable shell_tool --disable view_image --disable apps --disable enable_mcp_apps --disable plugins --disable browser_use --disable browser_use_external --disable computer_use --disable image_generation --disable standalone_web_search --disable multi_agent --disable multi_agent_v2 --disable hooks --disable memories --disable sleep_tool --disable code_mode_host --disable artifact --disable goals --enable skip_host_skill_discovery <fixed instruction plus verified JSON data>
+<absolute codex.exe> exec --ephemeral --sandbox read-only --skip-git-repo-check --ignore-user-config --strict-config --json --output-schema <trusted receipt.schema.json> --output-last-message <random controlled file under worker_root> --model gpt-6-sol --config model_provider="openai" --config web_search="disabled" --config project_doc_max_bytes=0 --config project_root_markers=[] --config tools.experimental_request_user_input.enabled=false --config suppress_unstable_features_warning=true --cd <worker_root> --disable shell_tool --disable view_image --disable apps --disable enable_mcp_apps --disable plugins --disable browser_use --disable browser_use_external --disable computer_use --disable image_generation --disable standalone_web_search --disable multi_agent --disable multi_agent_v2 --disable hooks --disable memories --disable sleep_tool --disable code_mode_only --disable code_mode --disable code_mode_prewarm --disable code_mode_host --disable artifact --disable goals --enable skip_host_skill_discovery <fixed instruction plus verified JSON data>
 ```
 
 The output schema file must exactly match the schema embedded in the controller:
@@ -152,14 +152,16 @@ The output schema file must exactly match the schema embedded in the controller:
     "request_id": { "type": "string", "maxLength": 128 },
     "challenge": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" },
     "body_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-    "executed": { "const": true },
-    "godot_executed": { "const": false },
-    "production_modified": { "const": false }
+    "executed": { "type": "boolean", "const": true },
+    "godot_executed": { "type": "boolean", "const": false },
+    "production_modified": { "type": "boolean", "const": false }
   }
 }
 ```
 
-The controller passes `--strict-config`, disables the listed shell, MCP, app, browser, image, multi-agent, hook, memory, sleep, artifact, and goal features before inference, and disables web search and experimental user-input requests through explicit configuration. It also enables `skip_host_skill_discovery` so host skills are not injected. These controls are pinned to the reviewed CLI version; they are not a claim that the model protocol exposes no tool declarations. The controller accepts a run only if the process exits zero, every JSONL event and item type is on the controller's explicit allowlist, JSONL includes exactly one `turn.completed` event and exactly one completed `agent_message`, the output-last-message file matches that completed message, no failed/interrupted turn is present, and the strict receipt exactly matches the protected registration. Unknown event or item types fail closed. Codex's JSONL output is decoded as UTF-8; native output is never decoded using a Windows console code page.
+The controller passes `--strict-config`, disables the listed shell, MCP, app, browser, image, multi-agent, hook, memory, sleep, artifact, and goal features before inference, and disables web search and experimental user-input requests through explicit configuration. It also enables `skip_host_skill_discovery` so host skills are not injected. These controls are pinned to the reviewed CLI version; they are not a claim that the model protocol exposes no tool declarations. The controller accepts a run only if the process exits zero, every JSONL record satisfies its explicit allowlist or the single startup diagnostic exception below, JSONL includes exactly one `turn.completed` event and exactly one completed `agent_message`, the output-last-message file matches that completed message, no failed/interrupted turn is present, and the strict receipt exactly matches the protected registration. Unknown event or item types fail closed. Codex's JSONL output is decoded as UTF-8; native output is never decoded using a Windows console code page.
+
+CLI `0.156.1` can select `CodeModeOnly` from model metadata even with the Code Mode feature flags false. The host and execution environments remain disabled. This pure notification probe requires no Code Mode execution. The CLI serializes its disabled-host startup warning as an `item.completed` error item. The parser requires exactly that pinned message and field set with ID `item_0`, once at record index 1, between one `thread.started` and one `turn.started`. It retains the original diagnostic bytes. Missing, changed, repeated or later warnings, other errors, tool items and failed turns are rejected. Recognition of this startup diagnostic never substitutes for a successful completed receipt. Model metadata, feature flags and execution capability are separate controls.
 
 SQLite records the `running` claim durably before spawn. An interrupted or unsuccessful run becomes blocked and is never retried automatically. A verified receipt is committed with `synchronous=FULL` before queue consumption. If consumption fails or the process stops after the receipt commit, a later poll retries consumption without invoking Codex. Local receipt verification and remote server consumption are separate states. The cursor advances only after a valid gateway response with the same event ID and `status: "consumed"`.
 
@@ -180,3 +182,5 @@ python -B scripts/agents_event_dispatcher.py --loop 12
 ```
 
 An empty poll produces no output and invokes no model. This worker requires a registered probe and authenticated Codex CLI access. It must not be presented as desktop-chat continuation or as a Claude turn.
+
+The synthetic CLI receiver temporarily pins `gpt-6-sol`, which the authenticated CLI model catalog advertises. `gpt-6.1-sol` was rejected by the CLI account with HTTP 400. This compatibility pin does not change the desktop main-agent or default subagent models. The documented unstable-feature warning is suppressed at startup; the distinct disabled-host diagnostic is retained under the strict exception above.
