@@ -409,12 +409,12 @@ Phase 2-1 评估了 4 个外部项目的 hook 能力，发现 Claude Code hook �
 Phase 2 的最终架构揭示了 agent 质量门禁的**三层模型**：
 
 ```
-Layer 3: 人类审查 (Argus PR review, 用户确认)
+Layer 3: 独立审查与人类确认 (原生独立子代理审阅 PR, 用户在聊天中确认合并)
 Layer 2: LLM-level 自律 (OMC Ralph loop, Superpowers verification-before-completion)
 Layer 1: Mechanical enforcement (mercury-test-gate exit-code check)
 ```
 
-每层独立运行，任一层可阻止低质量输出。Layer 1 是基础保障（bypass-proof），Layer 2 增加灵活性，Layer 3 提供最终人类判断。未来 Mercury 模块设计应遵循此层级 — 新门禁优先放在 Layer 1，不足时上浮。
+每层独立运行，任一层可阻止低质量输出。Layer 1 是基础保障（bypass-proof），Layer 2 增加灵活性，Layer 3 提供最终人类判断。Layer 3 最初由 Argus 审阅机器人承担；Argus 现已暂时排除，合并条件见 `.agents/skills/pr-flow/SKILL.md`（#636）。未来 Mercury 模块设计应遵循此层级 — 新门禁优先放在 Layer 1，不足时上浮。
 
 ---
 
