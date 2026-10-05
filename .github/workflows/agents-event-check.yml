@@ -6,6 +6,10 @@ on:
       - 'scripts/agents_gateway/**'
       - 'scripts/agents_event_client.py'
       - 'scripts/test_agents_event_client.py'
+      - 'scripts/agents_event_dispatcher.py'
+      - 'scripts/test_agents_event_dispatcher.py'
+      - 'scripts/install_agents_event_dispatcher.ps1'
+      - 'scripts/agents_dispatcher/**'
       - '.github/workflows/agents-event-check.yml'
   push:
     branches: [develop]
@@ -13,6 +17,10 @@ on:
       - 'scripts/agents_gateway/**'
       - 'scripts/agents_event_client.py'
       - 'scripts/test_agents_event_client.py'
+      - 'scripts/agents_event_dispatcher.py'
+      - 'scripts/test_agents_event_dispatcher.py'
+      - 'scripts/install_agents_event_dispatcher.ps1'
+      - 'scripts/agents_dispatcher/**'
       - '.github/workflows/agents-event-check.yml'
 
 permissions:
@@ -31,3 +39,13 @@ jobs:
           python-version: '3.11'
       - run: python -B -m unittest scripts.agents_gateway.test_server -v
       - run: python -B -m unittest discover -s scripts -p test_agents_event_client.py -v
+      - run: python -B -m unittest discover -s scripts -p test_agents_event_dispatcher.py -v
+      - name: Parse Windows installer
+        shell: pwsh
+        run: |
+          $parseErrors = $null
+          $parseTokens = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $PWD 'scripts/install_agents_event_dispatcher.ps1'),
+            [ref]$parseTokens, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
