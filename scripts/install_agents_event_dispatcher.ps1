@@ -142,7 +142,7 @@ Write-NewJson (Join-Path $workerRoot 'receipt.schema.json') $schema
 Write-NewJson (Join-Path $workerRoot 'registry.json') ([ordered]@{ schema = 'mercury-native-event-probe-registry/1'; entries = @() })
 Write-NewJson $policyFile ([ordered]@{
     schema = 'mercury-local-event-dispatch/1'; recipient = $Recipient
-    client_config = $bridgeFile; codex_exe = $CodexExe; model = 'gpt-6-sol'; provider = 'openai'
+    client_config = $bridgeFile; codex_exe = $CodexExe; model = 'gpt-6-luna'; provider = 'openai'
     worker_root = $workerRoot; ledger_path = (Join-Path $workerRoot 'ledger.sqlite3')
     registry_path = (Join-Path $workerRoot 'registry.json'); output_schema_path = (Join-Path $workerRoot 'receipt.schema.json')
     poll_interval_seconds = 30; native_timeout_seconds = 180; initial_after = $InitialAfter

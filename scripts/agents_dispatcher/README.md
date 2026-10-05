@@ -32,7 +32,7 @@ The policy is one UTF-8 JSON object with exactly these fields:
   "recipient": "mercury-local",
   "client_config": "C:\\Users\\OWNER\\.codex\\dot-link\\event-runtime\\bridge.json",
   "codex_exe": "D:\\Program Files\\MercuryAgentReceiver\\codex.exe",
-  "model": "gpt-6-sol",
+  "model": "gpt-6-luna",
   "provider": "openai",
   "worker_root": "C:\\Users\\OWNER\\.codex\\dot-link\\event-dispatch",
   "ledger_path": "C:\\Users\\OWNER\\.codex\\dot-link\\event-dispatch\\ledger.sqlite3",
@@ -125,7 +125,7 @@ The SHA-256 is computed over the exact UTF-8 bytes on disk. The controller verif
 The controlled invocation uses a fixed argument list equivalent to:
 
 ```text
-<absolute codex.exe> exec --ephemeral --sandbox read-only --skip-git-repo-check --ignore-user-config --strict-config --json --output-schema <trusted receipt.schema.json> --output-last-message <random controlled file under worker_root> --model gpt-6-sol --config model_provider="openai" --config web_search="disabled" --config project_doc_max_bytes=0 --config project_root_markers=[] --config tools.experimental_request_user_input.enabled=false --config suppress_unstable_features_warning=true --cd <worker_root> --disable shell_tool --disable view_image --disable apps --disable enable_mcp_apps --disable plugins --disable browser_use --disable browser_use_external --disable computer_use --disable image_generation --disable standalone_web_search --disable multi_agent --disable multi_agent_v2 --disable hooks --disable memories --disable sleep_tool --disable code_mode_only --disable code_mode --disable code_mode_prewarm --disable code_mode_host --disable artifact --disable goals --enable skip_host_skill_discovery <fixed instruction plus verified JSON data>
+<absolute codex.exe> exec --ephemeral --sandbox read-only --skip-git-repo-check --ignore-user-config --strict-config --json --output-schema <trusted receipt.schema.json> --output-last-message <random controlled file under worker_root> --model gpt-6-luna --config model_provider="openai" --config model_reasoning_effort="max" --config web_search="disabled" --config project_doc_max_bytes=0 --config project_root_markers=[] --config tools.experimental_request_user_input.enabled=false --config suppress_unstable_features_warning=true --cd <worker_root> --disable shell_tool --disable view_image --disable apps --disable enable_mcp_apps --disable plugins --disable browser_use --disable browser_use_external --disable computer_use --disable image_generation --disable standalone_web_search --disable multi_agent --disable multi_agent_v2 --disable hooks --disable memories --disable sleep_tool --disable code_mode_only --disable code_mode --disable code_mode_prewarm --disable code_mode_host --disable artifact --disable goals --enable skip_host_skill_discovery <fixed instruction plus verified JSON data>
 ```
 
 The output schema file must exactly match the schema embedded in the controller:
@@ -183,4 +183,4 @@ python -B scripts/agents_event_dispatcher.py --loop 12
 
 An empty poll produces no output and invokes no model. This worker requires a registered probe and authenticated Codex CLI access. It must not be presented as desktop-chat continuation or as a Claude turn.
 
-The synthetic CLI receiver temporarily pins `gpt-6-sol`, which the authenticated CLI model catalog advertises. `gpt-6.1-sol` was rejected by the CLI account with HTTP 400. This compatibility pin does not change the desktop main-agent or default subagent models. The documented unstable-feature warning is suppressed at startup; the distinct disabled-host diagnostic is retained under the strict exception above.
+The synthetic CLI receiver uses the existing project worker default `gpt-6-luna` with `max` reasoning. Global main-agent and subagent settings remain unchanged. The documented unstable-feature warning is suppressed at startup; the distinct disabled-host diagnostic is retained under the strict exception above.

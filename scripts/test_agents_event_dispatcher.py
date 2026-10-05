@@ -607,6 +607,7 @@ class DispatcherTests(unittest.TestCase):
             config_values,
             [
                 'model_provider="openai"',
+                'model_reasoning_effort="max"',
                 'web_search="disabled"',
                 "project_doc_max_bytes=0",
                 "project_root_markers=[]",

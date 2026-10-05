@@ -30,8 +30,8 @@ REGISTRY_SCHEMA = "mercury-native-event-probe-registry/1"
 AUTH_SCHEMA = "direct-human-native-probe-authorization/1"
 BODY_SCHEMA = "native-event-probe/1"
 RECIPIENT = "mercury-local"
-# Temporary compatibility pin for the synthetic CLI receiver only.
-MODEL = "gpt-6-sol"
+# Existing project default for this bounded native worker.
+MODEL = "gpt-6-luna"
 PROVIDER = "openai"
 CODEX_CLI_VERSION = "0.156.1"
 PROBE_KIND = "updated"
@@ -722,6 +722,8 @@ class CodexBackend:
             MODEL,
             "--config",
             'model_provider="openai"',
+            "--config",
+            'model_reasoning_effort="max"',
             "--config",
             'web_search="disabled"',
             "--config",
