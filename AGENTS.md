@@ -10,6 +10,13 @@
 - Commit at coherent delivery points when the task calls for Git delivery. Workers commit or push only when assigned, using the guarded sequence below.
 - Reply in clear, complete Simplified Chinese. Keep useful technical names unchanged; code, commit messages, and PR bodies follow their existing conventions.
 
+## Scope, verification, and completion
+
+Use .mercury/templates/codex-project/project/mercury-task-contract.md for
+bounded scope, test relevance, evidence reuse, provenance-check triggers,
+review, and completion. Read its details when needed for these decisions;
+it does not add a mandatory workflow or weaken governing requirements.
+
 ## Git and local safety
 
 - Keep unrelated changes. Stage explicit files only. Do not reset, stash, rewrite history, force-push, or remove other work to simplify a task.

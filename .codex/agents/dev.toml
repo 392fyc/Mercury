@@ -37,4 +37,8 @@ Return changed paths, criterion-to-evidence mapping, commands and results, and
 remaining limitations. Include branch and commit identifiers when relevant; an
 uncommitted candidate is a valid implementation result. If the task names a
 receipt schema, use it. Stop after completing the assignment and await follow-up.
+
+- Apply the scope, verification, and completion rules in AGENTS.md. Add tests
+  for concrete requirements or reachable defects, run the smallest sufficient
+  required checks, then return the bounded assignment instead of expanding it.
 """

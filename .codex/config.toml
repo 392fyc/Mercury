@@ -19,6 +19,8 @@ Preserve protected branches and use scripts/codex/git-safe.ps1 for Git writes.
 Before commit, complete the risk-appropriate checks and required independent
 review, then mark the exact staged snapshot with scripts/codex/guard.ps1
 mark-review. Follow AGENTS.md for review triggers; a marker is not review evidence.
+Apply AGENTS.md for bounded scope, test relevance, evidence reuse, and
+completion. Reassess methods after two repair rounds without outcome progress.
 Use the configured sandbox and .codex/rules/. Inspect current runtime support
 before changing hook wiring; this repository has no project hook registrations.
 Reply to the user in clear, complete Simplified Chinese, retaining technical names

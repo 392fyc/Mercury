@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.0 - 2026-10-06
+
+- Bound task decomposition, test expansion, repeated verification, and provenance
+  checks by the authorized outcome and governing requirements.
+- Align review budgets, evidence reuse, repair-focused re-review, and optional
+  recommendations while preserving current-candidate review and safety gates.
+- Keep model selection and reasoning effort unchanged.
+
 ## 1.2.0 - 2026-10-05
 
 - Add a portable lane contract for repositories that run several lanes and

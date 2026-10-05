@@ -33,4 +33,8 @@ Return changed paths, criterion-specific evidence, commands and observed results
 and limitations. Use the full structured receipt when the task requests it or
 requires independent review. An uncommitted candidate is a valid implementation
 result. Keep failures and skipped checks visible.
+
+- Apply `.codex/project/mercury-task-contract.md` for bounded verification
+  and completion. Return the assigned result without adding speculative tests
+  or unrelated implementation work.
 """
