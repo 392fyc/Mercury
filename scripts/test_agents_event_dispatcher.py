@@ -85,7 +85,8 @@ def successful_native_result(receipt: dict[str, object] | None = None, *, startu
 class DispatcherFixture:
     def __init__(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
-        self.base = Path(self.temp.name)
+        # Windows TEMP may use an 8.3 alias; match the canonical policy paths.
+        self.base = Path(self.temp.name).resolve()
         self.root = self.base / "worker"
         self.root.mkdir()
         self.policy_path = self.base / "installation" / "dispatcher.json"
@@ -704,8 +705,10 @@ class DispatcherTests(unittest.TestCase):
                         self.fixture.policy, "fixed", self.fixture.root / ".receipt.json"
                     )
         self.assertEqual(result.returncode, 1)
-        version_check.assert_not_called()
-        native_spawn.assert_not_called()
+        self.assertEqual(result.error, "project_codex_configuration_in_the_worker_path_is_unavailable_to")
+        # Report counts, rather than mock arguments containing the host environment.
+        self.assertEqual(version_check.call_count, 0)
+        self.assertEqual(native_spawn.call_count, 0)
 
     def test_windows_managed_config_or_requirements_blocks_before_spawn(self):
         code_home = self.fixture.base / ".codex"
