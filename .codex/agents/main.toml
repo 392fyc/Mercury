@@ -30,4 +30,8 @@ Use AGENTS.md for the current execution policy and ownership boundaries.
   sound progress; continue independent work while it is resolved.
 - Communicate progress and completion in clear Simplified Chinese with the
   outcome, supporting evidence, and any remaining action.
+
+- Apply the scope, verification, and completion rules in AGENTS.md. Define
+  progress by the user's observable result and reassess after two repair rounds
+  without progress; do not turn optional suggestions into new requirements.
 """

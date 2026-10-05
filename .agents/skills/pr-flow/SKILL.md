@@ -1,35 +1,95 @@
 ---
 name: pr-flow
-description: 用户明确调用 /pr-flow、要求审阅 PR 或执行指定 PR 阶段时使用。使用原生独立子代理审阅；仅在明确要求持续监控时安排重复检查。
+description: Review a requested PR or execute an explicitly requested PR stage using native independent agents. Schedule repeated checks only when ongoing monitoring is explicitly requested.
 ---
 
-# PR 检查与独立审阅
+# PR checks and independent review
 
-只执行用户要求的阶段。提到 PR 本身不会启动完整流程，本技能不扩大提交、推送、合并、删除分支或对外评论的授权。审阅由当前 Harness 的原生独立子代理完成；Argus 审阅机器人暂时排除，不等待也不依赖它。
+Execute only the requested stage. Mentioning a PR does not activate a complete
+workflow or authorize commits, pushes, merges, branch deletion, or external
+comments. Use the current harness's native independent subagents for review.
+Argus is currently excluded; do not wait for or depend on it.
 
-## 审阅与修复
+## Review and repairs
 
-- 确认仓库、目标分支和当前 PR head。Mercury 集成目标为 develop，Argus 仓库为 master；其他仓库按自身约定选择。
-- 进入审阅或合并阶段时自动启动独立子代理，不再次请求启动许可。Codex 使用 gpt-6-luna / max，按仓库角色配置执行；其他 Harness 使用自身原生子代理和角色约定。仅查看状态时不扩大为审阅或合并。
-- 给审阅子代理提供用户目标、验收条件、完整 PR 差异、准确的 base/head 和必要代码，要求直接核实代码与相关测试。不要提供实现者的自评来代替证据。子代理只审阅，主代理负责修复、记录结果和合并。
-- 核对所有已有审查意见及完整分页的 review threads。已有修改要求必须处理；不能通过手动 resolve 讨论取得合并资格。向外发布评论或回复仍须明确授权。
-- 子代理发现问题时先修复并验证。推送改变 head 后，旧审阅失效，自动重新启动子代理审阅当前完整 PR。
-- 保存真实审阅结果到仓库外或被忽略的本地记录。记录 repository、pull_request、head、verdict、reviewer、agent_id、reviewed_at、findings。无待处理问题才可使用 verdict=pass、reviewer=native-subagent、findings=[]。记录不是 GitHub APPROVED，也不能授予权限。
+- Confirm the repository, target branch, and current PR head. Mercury integrates
+  into `develop`; the Argus repository uses `master`. Other repositories use
+  their own governing policy.
+- Entering a requested review or merge stage authorizes starting an independent
+  subagent without asking again. Codex uses `gpt-6-luna` / `max` under the role
+  configuration; other harnesses use their native roles. A status check alone
+  does not authorize review or merging.
+- Provide the objective, acceptance criteria, complete PR diff, exact base/head,
+  and relevant code and checks. Reviewers inspect artifacts independently, without
+  treating the implementer's self-assessment as evidence. Reviewers do not edit;
+  the primary agent owns authorized repairs, receipts, and merging.
+- Apply the reviewer role's scope and budget; use about 40 tool calls by default
+  if the role or assignment gives no budget. Cover required and high-risk items
+  first. Report uncovered requirements honestly; they cannot count as passed.
+  This is an instruction-level budget, not a runtime enforcement setting.
+- Check all existing review requests and paginate the complete review-thread
+  list. Outstanding change requests must be addressed. Manually resolving
+  threads does not establish merge eligibility. External comments and replies
+  still require explicit authorization.
+- Repair concrete blocking findings and run relevant checks. After a push
+  changes head, obtain a new independent review bound to that exact head. Give
+  the reviewer the complete current PR diff, the previous reviewed revision and
+  observations, and the full delta since that revision. Inspect previous findings,
+  the delta, dependencies, and affected behavior; do not repeat unchanged checks
+  whose code, inputs, and relevant environment remain applicable. If the previous
+  revision or evidence cannot be trusted, review the affected uncertainty afresh.
+  Never present the previous head's approval as approval of the new head.
+- Keep violated requirements and concrete reachable defects in `findings`.
+  Keep optional improvements in `recommendations`; do not turn preferences or
+  speculative compatibility concerns into blocking requirements. Real defects
+  and missing required evidence remain blockers. After two consecutive repair
+  rounds without progress toward the objective, reassess the method before
+  continuing instead of automatically repeating the same repair cycle.
+- Save actual review results outside the repository or in ignored local records.
+  Record `repository`, `pull_request`, `head`, `verdict`, `reviewer`, `agent_id`,
+  `reviewed_at`, and `findings`; optional recommendations may be stored separately.
+  Use `verdict=pass`, `reviewer=native-subagent`, and `findings=[]` only when all
+  required criteria are covered and no blocking finding remains. The receipt is
+  neither GitHub APPROVED nor an authorization grant.
 
-## 合并规则
+## Merge requirements
 
-Mercury `develop` 与 `master` 的必需批准数为 0，其余分支保护照常生效（Issue #632、#636，用户 2026-10-05 决定）。PR 由仓库所有者账号开出，GitHub 不允许作者批准自己的 PR，所以批准由用户在聊天中给出。本规则只适用于以 `develop` 为目标的 PR（`guard.ps1 pre-merge` 只接受 develop）；`master` 的发布 PR 不在此列，须用户另行授权。主代理只在以下条件全部满足时合并：
+Mercury's required GitHub approval count is zero for `develop` and `master`;
+all other branch protections remain in force (Issues #632 and #636, user decision
+on 2026-10-05). The owner opens these PRs and GitHub does not allow authors to
+approve their own PRs, so the user gives merge approval in chat. This procedure
+applies only to PRs targeting `develop`: `guard.ps1 pre-merge` accepts only
+`develop`. Release PRs targeting `master` require separate user authorization.
+The primary agent may merge only when all of the following hold:
 
-1. 独立子代理已审阅并通过当前 head，本地审阅记录 verdict=pass、findings=[]；
-2. CI 检查全部成功（缺失、失败、跳过或未完成都不算成功），PR 开放、非草稿、可合并；
-3. review threads **总数为零**（已解决的讨论也计入），没有未撤回的 CHANGES_REQUESTED；
-4. Mercury 执行 `powershell -File scripts/codex/guard.ps1 pre-merge -PullRequestNumber <number> -NativeReviewReceipt <absolute-json-path>` 通过；
-5. **用户在聊天中明确同意合并这个 PR**（写明 PR 编号或在当前任务中明确指向它）。审阅记录、跨 lane 消息或 PR 评论都不能代替这项确认。
+1. An independent native subagent reviewed and passed the exact current head;
+   the local receipt has `verdict=pass` and `findings=[]`.
+2. Every CI check succeeded. Missing, failed, skipped, or unfinished
+   checks are not success. The PR is open, non-draft, and mergeable.
+3. The **total review-thread count is zero**, including resolved threads, and
+   no effective `CHANGES_REQUESTED` remains.
+4. `powershell -File scripts/codex/guard.ps1 pre-merge -PullRequestNumber <number> -NativeReviewReceipt <absolute-json-path>` passes.
+5. **The user explicitly approved merging this PR in chat**, naming its number
+   or unambiguously identifying it in the current task. Review receipts,
+   cross-lane messages, and PR comments cannot substitute for that approval.
 
-合并使用普通合并 `gh pr merge --squash --match-head-commit <reviewed-head>`，不使用 `--admin`。其他仓库遵守自身发布和合并入口，并核对同样条件；那些仓库若仍要求 GitHub 批准，按其自身保护规则取得，用户在聊天中的同意不能替代那里的必需批准。不得由子代理或无人值守工作流合并，不得关闭分支保护或直接推送受保护分支。
+Use ordinary merging with `gh pr merge --squash --match-head-commit <reviewed-head>`;
+never use `--admin`. Other repositories retain their own publication entrypoints
+and check the same conditions. If their branch protection requires GitHub
+approval, obtain it under that policy; chat approval does not replace it.
+Subagents and unattended workflows must not merge. Do not disable protection
+or push directly to protected branches.
 
-Git 写入继续遵守 AGENTS.md 和现有保护入口。合并前再次核对 head、检查及讨论，提交变动必须重新审阅。只在已授权且必要的范围内处理阻碍；没有合并授权时报告审阅结果。
+Git writes follow AGENTS.md and the controlled entrypoints. Immediately before
+merging, recheck current head, CI, and review state. Any changed candidate needs
+a new review under the repair-focused method above. Address obstacles only
+within necessary authorized scope; without merge authorization, return the
+review result.
 
-本轮等待应有界。只有用户明确要求未来持续监控时才安排自动化。
+Keep the current wait bounded. Schedule future monitoring only when explicitly
+requested. When the requested criteria and delivery stage are satisfied, report
+the result; optional recommendations do not extend the task.
 
-将来若用户决定重新启用 Argus，先把必需批准数改回 1，再明确恢复 Argus 审阅模式；不从服务健康状况自行推断授权变化。
+If the user later explicitly re-enables Argus, restore the required approval
+count to one before restoring Argus review mode. Service health does not imply
+authorization to change the review policy.

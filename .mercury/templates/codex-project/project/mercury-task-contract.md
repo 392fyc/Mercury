@@ -21,6 +21,41 @@ pause dependent writes while the mismatch is resolved. Preserve concurrent work.
 Commit and publication actions require explicit inclusion in the assignment and
 completion of the repository's review and guarded Git requirements.
 
+## Scope, verification, and completion
+
+- Derive acceptance criteria, allowed write paths, and required checks from the
+  user's objective and governing contracts. Do not invent acceptance criteria
+  to justify speculative hardening. A short task needs no separate plan file.
+- Organize work into coherent, independently verifiable outcomes. Do not split
+  each line, field, or assertion into a separate delegation or review cycle.
+- Add tests only for a stated requirement, a reproduced defect, or a concrete
+  failure reachable through the changed behavior. For reversible, low-impact
+  edits, avoid tests that merely mirror the implementation. Existing required
+  checks and relevant security or data-integrity tests remain mandatory.
+- Once required checks pass, repeat or broaden verification only for changed
+  inputs, failures, or an unresolved concern supported by evidence. Reuse an
+  observed result only while its code, inputs, and relevant environment remain
+  applicable; recheck mutable publication state at the required delivery gate.
+- Record out-of-scope observations without investigating or implementing them.
+  If one prevents the authorized objective, explain the dependency and the
+  smallest necessary scope decision; continue work that does not depend on it.
+- Judge progress by the requested outcome, not the number of tests, receipts,
+  hashes, or review rounds. After two consecutive repair rounds without progress
+  toward that outcome, reassess the approach before continuing. Use a simpler
+  in-scope approach when justified; request a decision only when authorization,
+  a governing contract, or a material missing choice prevents sound progress.
+- Run provenance or hash checks when required for an import, installation,
+  upgrade, synchronization, publication, or evidence-backed drift investigation.
+  Use the governing verifier and its stated threat model. Do not rebuild an
+  equivalent verifier, broaden compatibility guarantees, or re-audit unchanged
+  layers without a task-relevant reason. Preserve required exact-byte checks,
+  review-to-candidate binding, and shared-file write preconditions.
+- When acceptance criteria, required checks, and required independent review
+  are satisfied, perform the authorized delivery steps and report the result.
+  Optional improvements do not extend the task. If a budget, missing access, or
+  unresolved requirement prevents completion, disclose the gap; never count
+  unexamined or failed requirements as passed.
+
 ## Evidence
 
 Each criterion needs a reproducible observation: a command and observed result,

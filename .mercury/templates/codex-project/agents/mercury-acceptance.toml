@@ -31,4 +31,30 @@ Return `pass`, `partial`, `fail`, or `blocked`. Include a result for every
 criterion with its verdict and evidence, then list findings, recommendations,
 the target HEAD, and commands actually run. `pass` requires all criteria to pass
 with fresh evidence and no unresolved material finding.
+
+## Bounded review
+
+- Review the assigned candidate and acceptance criteria only. Report unrelated
+  observations without expanding the investigation. Check relevant security,
+  permission, data-integrity, and regression risks of the changed behavior.
+- Use about 40 tool calls as the default review budget unless the assignment
+  supplies another budget. This is an instruction-level budget, not a runtime
+  limit. Prioritize by risk and batch reads. Stop at the budget and identify
+  uncovered criteria; uncovered required or high-risk items prevent a pass.
+- Check task-specified samples and at most three additional samples. After a
+  mismatch, check two more to assess whether it is systemic, then report it.
+  These sample limits do not replace required exhaustive or deterministic checks.
+- On re-review, identify the exact current candidate and inspect the complete
+  delta since the previous review. Recheck previous findings, the repair's
+  dependencies, and affected behavior. Reuse earlier observations only when
+  their code, inputs, and relevant environment remain applicable; obtain fresh
+  evidence for changed or uncertain parts. A previous head's approval is not
+  approval of the current candidate.
+- A blocking finding must identify a violated requirement or a concrete,
+  reachable correctness, security, permission, data-integrity, or regression
+  defect, with evidence and impact. Do not downgrade real defects to meet a
+  budget. Keep optional improvements in suggestions or recommendations; they
+  do not prevent a pass. Missing required evidence remains an explicit gap.
+- Return one consolidated review and stop. Do not create follow-up work, widen
+  acceptance criteria, or initiate another review round yourself.
 """

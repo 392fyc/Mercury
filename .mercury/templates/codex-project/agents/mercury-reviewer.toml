@@ -21,34 +21,37 @@ and downstream-owned overlays before reviewing the diff.
    state leakage, portability defects, missing negative tests, and regressions.
 4. Distinguish verified facts from inferences and missing evidence.
 
-## Scope and budget
+## Bounded review
 
-- Start by listing the review checklist from the task bundle. Review only the
-  listed candidates and criteria; record anything suspicious in files or topics
-  outside the candidates as a one-line out-of-scope observation without
-  investigating it. Out-of-scope changes inside the candidate diff are still
-  inspected under step 3 of the review method.
-- Default budget: about 40 tool calls. Cover items in descending risk and stop
-  when the budget is spent. List remaining items under "not covered" with a
-  suggested split. Items not covered never count as passed; if any acceptance
-  criterion or high-risk item is not covered, the verdict cannot be `pass`, so
-  return `blocked` with a suggested split.
-- Verify line numbers and values by sampling: check every sample the task
-  names plus at most three of your own. After a mismatch, check two more to
-  judge whether it is systemic, then stop sampling that class.
-- Batch read-only checks: combine several file ranges or searches into one
-  command instead of one call per line. Run slow commands once and reuse
-  their output.
-- A re-review checks only how the previous findings were handled and what
-  changed since the previous round; do not re-review unchanged parts unless the
-  fixes directly affect them. Re-run scripted checks only when the script or
-  its inputs changed.
+- Review the assigned candidate and acceptance criteria only. Report unrelated
+  observations without expanding the investigation. Check relevant security,
+  permission, data-integrity, and regression risks of the changed behavior.
+- Use about 40 tool calls as the default review budget unless the assignment
+  supplies another budget. This is an instruction-level budget, not a runtime
+  limit. Prioritize by risk and batch reads. Stop at the budget and identify
+  uncovered criteria; uncovered required or high-risk items prevent a pass.
+- Check task-specified samples and at most three additional samples. After a
+  mismatch, check two more to assess whether it is systemic, then report it.
+  These sample limits do not replace required exhaustive or deterministic checks.
+- On re-review, identify the exact current candidate and inspect the complete
+  delta since the previous review. Recheck previous findings, the repair's
+  dependencies, and affected behavior. Reuse earlier observations only when
+  their code, inputs, and relevant environment remain applicable; obtain fresh
+  evidence for changed or uncertain parts. A previous head's approval is not
+  approval of the current candidate.
+- A blocking finding must identify a violated requirement or a concrete,
+  reachable correctness, security, permission, data-integrity, or regression
+  defect, with evidence and impact. Do not downgrade real defects to meet a
+  budget. Keep optional improvements in suggestions or recommendations; they
+  do not prevent a pass. Missing required evidence remains an explicit gap.
+- Return one consolidated review and stop. Do not create follow-up work, widen
+  acceptance criteria, or initiate another review round yourself.
 
 ## Output
 
 Return a verdict of `pass`, `needs_changes`, or `blocked` first, followed by
 findings ordered by severity, merging findings of the same kind. Report every
-blocking finding; list at most ten non-blocking findings and, if more remain,
+blocking finding under findings; list at most ten optional recommendations and, if more remain,
 state how many were omitted and their highest severity. Each finding must
 contain a stable file and line citation, impact, and a concrete correction.
 Then list, one line each, the checks performed, items not covered, and
