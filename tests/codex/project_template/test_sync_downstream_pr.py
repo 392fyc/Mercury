@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -100,6 +101,51 @@ class MergeGates(unittest.TestCase):
                 MODULE.consider_merge(Path("s"), Path("t"), "o/r", {}, "argus-review[bot]", None)
             api.assert_not_called()
             run.assert_not_called()
+
+
+class Diagnostics(unittest.TestCase):
+    def test_failure_names_command_and_keeps_redacted_stderr_tail(self):
+        token = "ghs_" + "a" * 30
+        script = ("import sys; sys.stderr.write('fatal: unable to access "
+                  f"https://x-access-token:{token}@github.com/o/r: denied'); sys.exit(3)")
+        with self.assertRaises(MODULE.UpdateError) as caught:
+            MODULE.run([sys.executable, "-c", script])
+        message = str(caught.exception)
+        self.assertIn("exit 3", message)
+        self.assertIn(Path(sys.executable).name, message)
+        self.assertIn("denied", message)
+        self.assertNotIn(token, message)
+        self.assertNotIn("x-access-token:", message)
+
+    def test_long_arguments_and_auth_headers_are_not_echoed(self):
+        described = MODULE.describe(["gh", "api", "graphql", "-f", "query=" + "x" * 500,
+                                     "-H", "Authorization: Bearer ghp_" + "b" * 36])
+        self.assertLess(len(described), 300)
+        self.assertNotIn("x" * 100, described)
+        self.assertNotIn("ghp_", described)
+
+    def test_new_untracked_manifest_file_is_pending(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            MODULE.git(repo, "init", "--initial-branch=develop")
+            MODULE.git(repo, "config", "user.name", "Test")
+            MODULE.git(repo, "config", "user.email", "test@example.invalid")
+            (repo / ".gitignore").write_text("ignored.txt\n", encoding="utf-8")
+            (repo / ".codex").mkdir()
+            (repo / ".codex/mercury-template.lock").write_text("old\n", encoding="utf-8")
+            MODULE.git(repo, "add", "--", ".gitignore", ".codex")
+            MODULE.git(repo, "commit", "-m", "initial")
+            (repo / ".codex/mercury-template.lock").write_text("new\n", encoding="utf-8")
+            (repo / ".codex/project").mkdir()
+            (repo / ".codex/project/mercury-new-contract.md").write_text("new\n", encoding="utf-8")
+            (repo / "ignored.txt").write_text("x\n", encoding="utf-8")
+            self.assertEqual(MODULE.pending_paths(repo), [
+                ".codex/mercury-template.lock", ".codex/project/mercury-new-contract.md"])
+            # A managed file the manifest dropped is still reported, so `git add --` stages it.
+            (repo / ".codex/mercury-template.lock").unlink()
+            self.assertIn(".codex/mercury-template.lock", MODULE.pending_paths(repo))
+            MODULE.git(repo, "add", "--", *MODULE.pending_paths(repo))
+            self.assertEqual(MODULE.pending_paths(repo), [])
 
 
 class GitTreeVerification(unittest.TestCase):
