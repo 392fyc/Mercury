@@ -147,10 +147,10 @@ adapters/         # 适配层
 ### 1-2. pr-flow 增强
 - 当前 pr-flow 已有基础，增强为全流程：
   - 创建 PR（含 Issue 引用）
-  - 轮询 review bot (Argus)
+  - 启动原生独立子代理审阅当前 head（原计划为轮询 Argus 审阅机器人，Argus 现已暂时排除，#636）
   - 读取所有 review 线程
-  - 自动修复 + 回复
-  - 等待 approval → merge
+  - 自动修复；对外回复评论须用户明确授权
+  - 按 pr-flow 合并规则合并（含用户在聊天中的确认）
 - 确保可独立于 Mercury 其他模块使用
 
 ### 1-3. 方法论文档
