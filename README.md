@@ -19,7 +19,7 @@ The earlier README described a Tauri/Vue desktop application with a Node.js orch
 - **Not** a closed system — every skill, hook, agent, and adapter is designed to be lifted out and used in another repo
 - **Not** "weak-model" software — features are designed for upward compatibility with stronger models, never around current limitations
 
-The lone exception to "not an application" is an early **desktop GUI** MVP (`mercury-gui/`) — a Tauri 2 shell that observes Mercury's own runtime state. It is Mercury-internal tooling explored ahead of the on-demand Phase 6 trigger, not the resurrected pre-pivot product.
+Mercury no longer builds its own GUI: the GUI is provided by Agent Orchestrator (#645). The earlier self-built GUI can be recovered from Git history.
 
 ## Current status (snapshot — 2026-06)
 
@@ -33,9 +33,9 @@ Mercury is built phase by phase against [`EXECUTION-PLAN.md`](.mercury/docs/EXEC
 | **Phase 3** | Memory layer — mem0 + Qdrant cross-session/cross-project memory (user-level) | ✅ Complete |
 | **Phase 4** | Session continuity — `claude-handoff` session-chain, worktree-per-task, compact-prevention, stall detection | ✅ Complete |
 | ~~**Phase 5**~~ | ~~Notify hub — Telegram channel~~ — **abandoned & removed** ([#512](https://github.com/392fyc/Mercury/issues/512)): the Telegram/Channels approach is gated by Anthropic's server-side `tengu_harbor` rollout flag (unavailable on personal accounts), so the subsystem was stripped | ❌ Removed |
-| **Phase 6** | Desktop GUI — evaluated on-demand after Phase 1-4 are stable | ⚪ On-demand |
+| **Phase 6** | GUI — provided by Agent Orchestrator; Mercury builds no GUI of its own (#645) | ⚪ Not planned |
 
-Per [`EXECUTION-PLAN.md`](.mercury/docs/EXECUTION-PLAN.md), Phase 6 is explicitly **on-demand and not in the committed roadmap**. An early `mercury-gui/` MVP (Tauri 2 + React) nonetheless exists in-tree as exploratory work ahead of any formal trigger.
+Per [`EXECUTION-PLAN.md`](.mercury/docs/EXECUTION-PLAN.md), Phase 6 is not in the committed roadmap. The GUI is provided by Agent Orchestrator, and Mercury no longer builds its own GUI (#645); the earlier `mercury-gui/` MVP is available through Git history.
 
 Recent additions on top of the core phases:
 
@@ -57,7 +57,6 @@ Mercury (lightweight core — only builds what no external project provides)
 │   └── gates/         quality-gate configurations
 ├── adapters/          Mercury-owned hook/gate/integration adapters (≤200 LOC each for external mounts)
 ├── scripts/           maintenance scripts (lane-*, worktree-reaper, mem0 hooks, codex guardrails, ...)
-├── mercury-gui/       early desktop GUI MVP — Tauri 2 + React (Phase 6 is on-demand)
 └── modules/           reserved for mounted external projects (currently empty — see External project mounts)
 ```
 
@@ -192,15 +191,13 @@ Persistent concise-output style based on [JuliusBrussee/caveman](https://github.
 
 ## Legacy / archived components
 
-The following directories preserve the pre-pivot orchestrator/GUI architecture and are not part of the active runtime. They are kept in-tree for historical reference and potential cherry-pick; do not edit them in active PRs.
+The following directories preserve the pre-pivot orchestrator architecture and are not part of the active runtime. They are kept in-tree for historical reference and potential cherry-pick; do not edit them in active PRs.
 
-- `archive/packages/{gui,orchestrator,sdk-adapters,poc}/` — old Tauri/Vue/Node.js stack
+- `archive/packages/{orchestrator,sdk-adapters,poc}/` — old Node.js stack (the archived GUI package was removed in #645; see Git history)
 - `archive/roles/*.yaml` — old role definitions (migrated to `.claude/agents/*.md`)
 - `archive/agents/`, `archive/skills/`, `archive/docs/` — pre-pivot content
 
 `packages/core/` still exists at the repo root for any shared types that may still be consumed. `mercury.config.json` / `mercury.config.example.json` remain as legacy config — only `obsidian.vaultName` / `obsidian.vaultPath` remain for reference; the `session-init.sh` hook that read them was retired in #579.
-
-(Note: the early `mercury-gui/` GUI MVP at the repo root is distinct from the archived pre-pivot `archive/packages/gui/`.)
 
 ## License
 

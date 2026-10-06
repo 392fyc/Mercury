@@ -22,7 +22,7 @@ Mercury 是一套**让 AI Agent 能持续、自主、高质量地工作的 harne
 
 - 不是 orchestrator — 不再自建编排层管理 agent "做什么"
 - 不是 Agent CLI wrapper — 不再包装 Claude Code / Codex 的 CLI（注: Session Continuity 模块可能使用 CLI 监控作为实现手段，但 Mercury 本身不是 wrapper 产品）
-- 不是桌面应用 — GUI 仅为多 session 并行管理面板，不是核心
+- 不是桌面应用 — Mercury 不自建 GUI；多 session 管理由 Agent Orchestrator 或 CLI 承担（#645）
 - 不是封闭系统 — 每个模块可独立拆卸，可嵌入任何项目
 
 ### 最终目标
@@ -160,7 +160,7 @@ Codex 日常默认原生自主执行，实施与审查深度按任务风险选�
 **技术方向**:
 - .claude/agents/ sub-agent 定义 (从 Mercury role YAML 转换)
 - Dispatch prompt 模板 (.mercury/templates/)
-- Session 并行由 GUI 或 CLI 管理
+- Session 并行由 Agent Orchestrator 或 CLI 管理（#645）
 
 **自研理由**: 角色定义、dispatch 模板、流水线编排是 Mercury 方法论的核心体现。
 
@@ -185,9 +185,11 @@ Codex 日常默认原生自主执行，实施与审查深度按任务风险选�
 
 ---
 
-### GUI（多 session 并行管理面板）
+### GUI（历史）
 
-**定位**: 非核心模块。为多 session 并行开发提供可视化管理。
+**现状（#645）**: GUI 改由 Agent Orchestrator 提供，Mercury 不再自建 GUI；旧 `mercury-gui/` 与 `archive/packages/gui/` 已删除，可通过 Git 历史追溯。本节以下内容均为历史阶段记录。
+
+**定位（历史）**: 非核心模块。为多 session 并行开发提供可视化管理。
 
 **职责**:
 - Session 列表 + 状态总览
@@ -199,7 +201,7 @@ Codex 日常默认原生自主执行，实施与审查深度按任务风险选�
 - 不作为 agent 的控制面板
 - 不包含业务逻辑
 
-**技术方向**: v1 已交付（Phase 6 MVP，2026-05）；GUI 仍为非核心模块（见本节定位/职责/不做）。
+**技术方向（历史）**: v1 已交付（Phase 6 MVP，2026-05）；GUI 仍为非核心模块（见本节定位/职责/不做）。
 
 - **v1 交付物**: `mercury-gui/` 是基于 Tauri 2 的桌面壳，提供 Snapshot 与 Issues/PRs 两个标签页（多 lane 状态总览 + Issue/PR 看板），打包为 Windows MSI + NSIS。
 - **实现链**: Issues #413–#416 → PRs #421/#422/#424/#425（scaffold → 读侧数据层 → snapshot 视图 → Issue/PR 看板）。
@@ -269,7 +271,7 @@ adapters/
 | 组件 | 理由 |
 |---|---|
 | packages/orchestrator/ | 被 Session Continuity + Dev Pipeline 替代 |
-| packages/gui/ | 暂缓，未来按需重启（Phase 6 可能从 archive/ 取出复用） |
+| packages/gui/ | 暂缓（历史记录；#645 已删除，GUI 由 Agent Orchestrator 提供，旧实现见 Git 历史） |
 | packages/sdk-adapters/ | 被原生方案替代 |
 | packages/poc/ | 早期概念验证，已完成使命 |
 | .mercury/docs/codex-main-agent-roadmap.md | 方向已变 |

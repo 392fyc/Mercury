@@ -59,7 +59,7 @@ CLI tools that fetch named items from a versioned registry. Each `add` invocatio
 
 **Local-path guard — when local-path adds fall back to full cherry-pick protocol**
 
-The local-path arg form is intended for Mercury-internal registry items (e.g., a path under `mercury-gui/` or a sibling Mercury repo path). It is NOT a back door for importing arbitrary external-project files via a local checkout.
+The local-path arg form is intended for Mercury-internal registry items (e.g., a sibling Mercury repo path). It is NOT a back door for importing arbitrary external-project files via a local checkout.
 
 A local-path add **falls back to the full cherry-pick protocol (rules 1-6)** when ANY of these conditions hold. Resolve the source path with `git rev-parse --show-toplevel` for the Mercury repo root (or `realpath` on the path arg) before applying the test — symlinks, `..` traversal, and absolute paths are all normalized this way:
 
