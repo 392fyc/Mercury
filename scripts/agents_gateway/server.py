@@ -918,6 +918,14 @@ class Gateway:
             params = {}
         if not isinstance(params, dict):
             raise RpcFault(-32602, "Invalid params")
+        request_meta = params.get("_meta", {})
+        if not isinstance(request_meta, dict):
+            raise RpcFault(-32602, "Invalid params")
+        modern = method == "server/discover" or request_meta.get(
+            "io.modelcontextprotocol/protocolVersion"
+        ) == MCP_VERSION
+        # Protocol metadata is separate from domain arguments and permissions.
+        params = {key: value for key, value in params.items() if key != "_meta"}
         try:
             if method == "server/discover":
                 result = {
@@ -996,6 +1004,10 @@ class Gateway:
             raise RpcFault(code, "Forbidden" if code == -32012 else "Invalid params") from exc
         if not has_id:
             return None
+        if modern:
+            result["resultType"] = "complete"
+            if method in {"server/discover", "tools/list"}:
+                result.update(ttlMs=0, cacheScope="private")
         return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
     def make_handler(self) -> type[BaseHTTPRequestHandler]:

@@ -416,6 +416,64 @@ class GatewayTests(unittest.TestCase):
         self.assertTrue(self.gateway.process_outbox_once())
         self.assertEqual(self.gateway.list_events("local")["events"][0]["status"], "sent")
 
+    def test_modern_results_and_protocol_metadata(self) -> None:
+        meta = {
+            "io.modelcontextprotocol/protocolVersion": server.MCP_VERSION,
+            "io.modelcontextprotocol/clientCapabilities": {},
+        }
+        for method in ["server/discover", "tools/list", "events/list", "tools/call"]:
+            params: dict[str, object] = {"_meta": meta}
+            if method == "tools/call":
+                params.update(name="read_queue", arguments={})
+            response = self.gateway.rpc(
+                self.local, {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+            )
+            self.assertEqual(response["result"]["resultType"], "complete")
+            if method in {"server/discover", "tools/list"}:
+                self.assertEqual(response["result"]["ttlMs"], 0)
+                self.assertEqual(response["result"]["cacheScope"], "private")
+
+        subscribed = self.gateway.rpc(
+            self.local,
+            {
+                "jsonrpc": "2.0", "id": 2, "method": "events/subscribe",
+                "params": {
+                    "_meta": meta, "name": server.EVENT_NAME,
+                    "arguments": {"recipient": "local"},
+                    "delivery": {
+                        "mode": "webhook", "url": "https://callback.example.test/hook",
+                        "secret": "whsec_" + base64.b64encode(b"s" * 32).decode(),
+                    },
+                },
+            },
+        )
+        self.assertEqual(subscribed["result"]["resultType"], "complete")
+        unsubscribed = self.gateway.rpc(
+            self.local,
+            {
+                "jsonrpc": "2.0", "id": 3, "method": "events/unsubscribe",
+                "params": {
+                    "_meta": meta, "name": server.EVENT_NAME,
+                    "arguments": {"recipient": "local"},
+                    "delivery": {"mode": "webhook", "url": "https://callback.example.test/hook"},
+                },
+            },
+        )
+        self.assertEqual(unsubscribed["result"]["resultType"], "complete")
+        with self.assertRaises(server.RpcFault) as malformed:
+            self.gateway.rpc(
+                self.local,
+                {"jsonrpc": "2.0", "id": 4, "method": "tools/list", "params": {"_meta": []}},
+            )
+        self.assertEqual(malformed.exception.code, -32602)
+
+    def test_legacy_tool_results_keep_existing_shape(self) -> None:
+        for method in ["initialize", "tools/list", "events/list"]:
+            response = self.gateway.rpc(self.local, {"jsonrpc": "2.0", "id": 1, "method": method})
+            self.assertNotIn("resultType", response["result"])
+            self.assertNotIn("ttlMs", response["result"])
+            self.assertNotIn("cacheScope", response["result"])
+
     def test_mcp_discovery_tools_events_and_self_only_subscription(self) -> None:
         discover = self.gateway.rpc(self.local, {"jsonrpc": "2.0", "id": 1, "method": "server/discover"})
         self.assertEqual(discover["result"]["resultType"], "complete")

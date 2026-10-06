@@ -1,5 +1,10 @@
 # Change log
 
+## Unreleased
+
+- Include modern completion and private cache fields so MCP 2026-07-28 clients can decode discovery and tool results.
+- Separate request protocol metadata from event subscription arguments while retaining legacy response shapes and recipient authorization.
+
 ## 0.1.0 — 2026-10-04
 
 - Add authenticated recipient queues, fixed task metadata, persistent deduplication and explicit consumption.
