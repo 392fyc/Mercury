@@ -93,6 +93,23 @@ def canonical_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+def subscription_status(status: str, reason: str = "") -> None:
+    """Log fixed categories only, never callback URLs, secrets or request data."""
+    safe_status = status if status in {"received", "rejected", "accepted"} else "other"
+    safe_reason = reason if reason in {
+        "invalid_url", "dns_failure", "non_public_address", "timeout", "tls_error",
+        "connection_refused", "http_4xx", "http_5xx", "challenge_failed",
+    } else "other"
+    record = {"component": "agents_gateway", "action": "subscribe", "status": safe_status}
+    if reason:
+        record["reason"] = safe_reason
+    try:
+        print(canonical_json(record), flush=True)
+    except (OSError, ValueError):
+        # Diagnostic output must not change subscription persistence or RPC results.
+        pass
+
+
 def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
@@ -613,9 +630,11 @@ class Gateway:
         url = delivery["url"]
         if not isinstance(url, str):
             raise GatewayError("invalid_callback_url")
+        subscription_status("received")
         try:
             self.callback_transport.validate_url(url)
         except UnsafeCallback as exc:
+            subscription_status("rejected", str(exc))
             raise GatewayError("invalid_callback_url") from exc
         secret_b64, secret = self._check_whsec(delivery["secret"])
         cursor = params.get("cursor")
@@ -628,7 +647,12 @@ class Gateway:
             raise GatewayError("invalid_ttl")
         granted_ms = max(MIN_TTL_MS, min(ttl, MAX_TTL_MS))
         subscription_id = self._subscription_id(principal["id"], url, name, arguments)
-        self._verify_callback(principal, subscription_id, url, secret)
+        try:
+            self._verify_callback(principal, subscription_id, url, secret)
+        except RpcFault as exc:
+            reason = exc.data.get("reason", "other") if isinstance(exc.data, dict) else "other"
+            subscription_status("rejected", reason if isinstance(reason, str) else "other")
+            raise
         now = self.clock()
         expires_at = now + granted_ms / 1000
         arguments_json = canonical_json(arguments)
@@ -651,6 +675,7 @@ class Gateway:
                     now,
                 ),
             )
+        subscription_status("accepted")
         return {
             "id": subscription_id,
             "refreshBefore": format_time(expires_at),
