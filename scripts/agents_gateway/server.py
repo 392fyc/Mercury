@@ -373,6 +373,58 @@ def format_time(epoch: float) -> str:
     return datetime.fromtimestamp(epoch, timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+class RelayWebhookClient:
+    """Send callbacks via an explicitly configured, private NAS-only relay."""
+
+    def __init__(self, origin: str):
+        parsed = urlsplit(origin)
+        if (parsed.scheme != "http" or parsed.path not in ("", "/") or
+                parsed.username or parsed.password or parsed.query or parsed.fragment):
+            raise ValueError("invalid_private_relay")
+        address = ipaddress.ip_address(parsed.hostname or "")
+        if not address.is_private or address.is_unspecified or address.is_multicast:
+            raise ValueError("invalid_private_relay")
+        self.host, self.port = str(address), parsed.port or 80
+
+    def exchange(self, path: str, value: dict[str, Any]) -> dict[str, Any]:
+        connection = http.client.HTTPConnection(self.host, self.port, timeout=CALLBACK_TIMEOUT_SECONDS + 2)
+        try:
+            connection.request("POST", path, canonical_json(value).encode(), {"Content-Type": "application/json"})
+            response = connection.getresponse()
+            raw = response.read(2 * MAX_CALLBACK_RESPONSE_BYTES + 4097)
+            if len(raw) > 2 * MAX_CALLBACK_RESPONSE_BYTES + 4096:
+                raise UnsafeCallback("connection_refused")
+            result = parse_json(raw)
+            if not isinstance(result, dict):
+                raise UnsafeCallback("connection_refused")
+            if response.status != 200:
+                reason = result.get("error")
+                if reason == "timeout":
+                    raise TimeoutError("relay_timeout")
+                if reason == "tls_error":
+                    raise ssl.SSLError("relay_tls_error")
+                raise UnsafeCallback(reason if reason in {"invalid_url", "dns_failure", "non_public_address"} else "connection_refused")
+            return result
+        finally:
+            connection.close()
+
+    def validate_url(self, url: str) -> None:
+        callback_host_and_port(url)
+        if self.exchange("/validate", {"url": url}) != {"ok": True}:
+            raise UnsafeCallback("connection_refused")
+
+    def post(self, url: str, headers: dict[str, str], body: bytes, timeout: int) -> tuple[int, bytes]:
+        callback_host_and_port(url)
+        result = self.exchange("/deliver", {"url": url, "headers": headers,
+                               "body_b64": base64.b64encode(body).decode(), "timeout": timeout})
+        if set(result) != {"status", "body_b64"} or type(result["status"]) is not int or not 100 <= result["status"] <= 599:
+            raise UnsafeCallback("connection_refused")
+        raw = base64.b64decode(result["body_b64"], validate=True)
+        if len(raw) > MAX_CALLBACK_RESPONSE_BYTES:
+            raise UnsafeCallback("connection_refused")
+        return result["status"], raw
+
+
 class Gateway:
     def __init__(
         self,
@@ -1151,7 +1203,8 @@ class Gateway:
 
 
 def serve(args: argparse.Namespace) -> None:
-    gateway = Gateway(args.config, args.database)
+    transport = RelayWebhookClient(args.callback_relay) if args.callback_relay else None
+    gateway = Gateway(args.config, args.database, callback_transport=transport)
     try:
         gateway.principals()
     except ConfigError:
@@ -1181,6 +1234,7 @@ def main() -> None:
     parser.add_argument("--database", default="./agents_gateway.sqlite3", help="SQLite queue/outbox path")
     parser.add_argument("--host", default="127.0.0.1", help="bind address; default loopback")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--callback-relay", help="explicit private HTTP relay origin; default direct safe HTTPS")
     args = parser.parse_args()
     if not (1 <= args.port <= 65535):
         parser.error("--port must be between 1 and 65535")

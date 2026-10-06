@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add an opt-in fixed-peer callback relay that preserves internal queue isolation and reuses public-address, pinned HTTPS and certificate validation.
+
 - Report fixed subscription outcome categories without logging callback URLs, secrets, request identifiers or request bodies.
 - Include modern completion and private cache fields so MCP 2026-07-28 clients can decode discovery and tool results.
 - Separate request protocol metadata from event subscription arguments while retaining legacy response shapes and recipient authorization.
