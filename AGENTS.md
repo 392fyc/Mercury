@@ -39,7 +39,7 @@ it does not add a mandatory workflow or weaken governing requirements.
 ## External dependencies and imports
 
 - Before SDK/API code or package-version claims, verify vendor documentation through web search; verify package versions and publication status in the relevant registry. Cite the supporting sources. Source repositories alone are insufficient; mark unverified claims explicitly if verification is unavailable.
-- External integrations use `adapters/<vendor>/` and stay under 200 lines. Internal `scripts/` and `mercury-gui/` tooling is exempt from that adapter limit. Features and modules must remain independently detachable.
+- External integrations use `adapters/<vendor>/` and stay under 200 lines. Internal `scripts/` tooling is exempt from that adapter limit. Features and modules must remain independently detachable.
 - Default to pinned Git submodules under `modules/`. Runtime-only `uvx git+SHA` and exact-version npm MCP packages are allowed with a permissive license, `.mercury/state/upstream-manifest.json` entry, `adapters/<vendor>/UPSTREAM.md`, and drift monitoring. Never use floating npm versions for these mounts.
 - In agent-context files, escape tool-call XML markers with `&lt;` and `&gt;` rather than writing literal tags. Run `scripts/toolcall-xml-lint.sh` for relevant changes.
 

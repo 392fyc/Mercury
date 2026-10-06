@@ -38,9 +38,8 @@ Phase 4: Session Continuity
 Phase 5: Notify Hub — 已废弃移除 (#512)
   Telegram/Channels 方案被 Anthropic 服务端 tengu_harbor 灰度门卡死（个人账户不可用），整体剥离
 
-Phase 6: GUI
-  可用: 全部模块
-  解锁: 多 session 可视化管理 ← 里程碑: Mercury 完整体验
+Phase 6: GUI — 不实施 (#645)
+  GUI 改由 Agent Orchestrator 提供，Mercury 不再自建 GUI
 ```
 
 ---
@@ -346,6 +345,8 @@ adapters/         # 适配层
 
 ## Phase 6: GUI（按需启动）
 
+> **现状（#645）**: GUI 改由 Agent Orchestrator 提供，Mercury 不再自建 GUI；旧 `mercury-gui/` 与 `archive/packages/gui/` 已删除，可通过 Git 历史追溯。以下为历史规划记录。
+
 **前置条件**: Phase 1-4 核心模块稳定运行后评估是否需要（原 Phase 5 Notify Hub 已废弃移除，见 #512）。
 
 **可用开发模式**: Mercury 完整能力栈
@@ -370,7 +371,7 @@ adapters/         # 适配层
 | Phase 3 | 2-3 | Phase 1（使用 dev pipeline） | Mode A → Mode B |
 | Phase 4 | 3-4 | Phase 2 + Phase 3 | Mode C → Mode B |
 | ~~Phase 5~~ | — | — | 已废弃移除 (#512) |
-| Phase 6 | TBD | Phase 1-4 | Mode A → Mode B |
+| ~~Phase 6~~ | — | — | 不实施，GUI 由 Agent Orchestrator 提供 (#645) |
 
 ### 每个 Phase 的标准流程
 1. 创建 GitHub Issue 描述 Phase 目标

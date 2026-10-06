@@ -4,7 +4,7 @@ prefix_rule(
     decision = "forbidden",
     justification = "Use `powershell -File scripts/codex/git-safe.ps1 add <path> [more paths...]` with explicit paths.",
     match = [
-        "git add packages/gui/src/main.ts",
+        "git add packages/example/src/main.ts",
         "git add --all",
         "git add -A",
         "git add .",
