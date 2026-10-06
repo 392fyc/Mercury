@@ -12,7 +12,8 @@ import sys
 import tempfile
 import threading
 import unittest
-from contextlib import redirect_stderr
+from unittest.mock import patch
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -416,6 +417,64 @@ class GatewayTests(unittest.TestCase):
         self.assertTrue(self.gateway.process_outbox_once())
         self.assertEqual(self.gateway.list_events("local")["events"][0]["status"], "sent")
 
+    def test_modern_results_and_protocol_metadata(self) -> None:
+        meta = {
+            "io.modelcontextprotocol/protocolVersion": server.MCP_VERSION,
+            "io.modelcontextprotocol/clientCapabilities": {},
+        }
+        for method in ["server/discover", "tools/list", "events/list", "tools/call"]:
+            params: dict[str, object] = {"_meta": meta}
+            if method == "tools/call":
+                params.update(name="read_queue", arguments={})
+            response = self.gateway.rpc(
+                self.local, {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+            )
+            self.assertEqual(response["result"]["resultType"], "complete")
+            if method in {"server/discover", "tools/list"}:
+                self.assertEqual(response["result"]["ttlMs"], 0)
+                self.assertEqual(response["result"]["cacheScope"], "private")
+
+        subscribed = self.gateway.rpc(
+            self.local,
+            {
+                "jsonrpc": "2.0", "id": 2, "method": "events/subscribe",
+                "params": {
+                    "_meta": meta, "name": server.EVENT_NAME,
+                    "arguments": {"recipient": "local"},
+                    "delivery": {
+                        "mode": "webhook", "url": "https://callback.example.test/hook",
+                        "secret": "whsec_" + base64.b64encode(b"s" * 32).decode(),
+                    },
+                },
+            },
+        )
+        self.assertEqual(subscribed["result"]["resultType"], "complete")
+        unsubscribed = self.gateway.rpc(
+            self.local,
+            {
+                "jsonrpc": "2.0", "id": 3, "method": "events/unsubscribe",
+                "params": {
+                    "_meta": meta, "name": server.EVENT_NAME,
+                    "arguments": {"recipient": "local"},
+                    "delivery": {"mode": "webhook", "url": "https://callback.example.test/hook"},
+                },
+            },
+        )
+        self.assertEqual(unsubscribed["result"]["resultType"], "complete")
+        with self.assertRaises(server.RpcFault) as malformed:
+            self.gateway.rpc(
+                self.local,
+                {"jsonrpc": "2.0", "id": 4, "method": "tools/list", "params": {"_meta": []}},
+            )
+        self.assertEqual(malformed.exception.code, -32602)
+
+    def test_legacy_tool_results_keep_existing_shape(self) -> None:
+        for method in ["initialize", "tools/list", "events/list"]:
+            response = self.gateway.rpc(self.local, {"jsonrpc": "2.0", "id": 1, "method": method})
+            self.assertNotIn("resultType", response["result"])
+            self.assertNotIn("ttlMs", response["result"])
+            self.assertNotIn("cacheScope", response["result"])
+
     def test_mcp_discovery_tools_events_and_self_only_subscription(self) -> None:
         discover = self.gateway.rpc(self.local, {"jsonrpc": "2.0", "id": 1, "method": "server/discover"})
         self.assertEqual(discover["result"]["resultType"], "complete")
@@ -448,6 +507,58 @@ class GatewayTests(unittest.TestCase):
                 },
             )
         self.assertEqual(forbidden.exception.code, -32012)
+
+    def test_subscription_failures_log_categories_without_request_secrets(self) -> None:
+        httpd, thread, base = self.start_http()
+        request = {
+            "jsonrpc": "2.0", "id": "sensitive-request-id", "method": "events/subscribe",
+            "params": {
+                "name": server.EVENT_NAME,
+                "arguments": {"recipient": "local"},
+                "delivery": {
+                    "mode": "webhook", "url": "https://callback.example.test/sensitive-path?key=sensitive-query",
+                    "secret": "whsec_" + base64.b64encode(b"s" * 32).decode(),
+                },
+            },
+        }
+        try:
+            for owner, target, failure, expected in (
+                (self.transport.validator, "resolver", socket.gaierror(-3, "sensitive-exception-text"), "dns_failure"),
+                (self.transport, "post", TimeoutError("sensitive-exception-text"), "timeout"),
+                (self.transport, "validate_url", server.UnsafeCallback("sensitive-exception-text"), "other"),
+            ):
+                with self.subTest(reason=expected):
+                    output = io.StringIO()
+                    with patch.object(owner, target, side_effect=failure), redirect_stdout(output):
+                        status, response = self.request(base + "/mcp", "local-token", "POST", request)
+                    self.assertEqual(status, 200)
+                    self.assertIn("error", response)
+                    rows = [json.loads(line) for line in output.getvalue().splitlines()]
+                    self.assertEqual(rows, [
+                        {"component": "agents_gateway", "action": "subscribe", "status": "received"},
+                        {"component": "agents_gateway", "action": "subscribe", "status": "rejected", "reason": expected},
+                    ])
+                    for secret in ("local-token", "whsec_", "sensitive-path", "sensitive-query", "sensitive-request-id", "sensitive-exception-text"):
+                        self.assertNotIn(secret, output.getvalue())
+                    self.assertEqual(self.gateway.db.execute("SELECT count(*) FROM subscriptions").fetchone()[0], 0)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
+
+    def test_subscription_succeeds_when_diagnostic_output_fails(self) -> None:
+        class FailedOutput:
+            def __init__(self, error: type[Exception]):
+                self.error = error
+
+            def write(self, _text: str) -> None:
+                raise self.error("diagnostic stream unavailable")
+
+        for error in (OSError, ValueError):
+            with self.subTest(error=error), redirect_stdout(FailedOutput(error)):
+                subscription = self.subscribe_local()
+            self.assertIsInstance(subscription["id"], str)
+            self.assertEqual(self.gateway.db.execute("SELECT count(*) FROM subscriptions").fetchone()[0], 1)
 
     def test_http_handler_exception_is_redacted_from_stderr(self) -> None:
         httpd, thread, _base = self.start_http()

@@ -2,11 +2,11 @@
 
 This small Python service carries fixed task metadata into a durable SQLite queue. A configured publisher can write only to named recipients; each reader is fixed to the principal identified by its bearer token. It does not run a model, start or execute tasks, accept commands, or interpret callback response bodies.
 
-This is a local queue implementation with an MCP Events webhook path behind an internal bearer-token check. It does **not** implement OAuth 2.1, protected-resource metadata, Cloudflare Access, or the ChatGPT/dot machine identity flow. The internal bearer check does not establish compatibility with a private OpenAI MCP connection. The initial production mode is the local polling queue; dot authentication, webhook subscription, and an actual dot-triggered run remain pending. Do not expose the service directly to the Internet. External access requires the separately managed Cloudflare Access and machine-identity layer.
+This is a local queue implementation with an MCP Events webhook path behind an internal bearer-token check. It does **not** implement OAuth 2.1, protected-resource metadata, Cloudflare Access, or the ChatGPT/dot machine identity flow. A deployment must independently verify its private OpenAI connection, subscription challenge, recipient binding and actual event-triggered execution. Local tests do not establish those runtime states. Do not expose the service directly to the Internet. External access requires the separately managed Cloudflare Access and machine-identity layer.
 
-The planned NAS container has no public route or callback egress. Webhook subscriptions cannot activate in that deployment; leave event-driven dot delivery pending until the separate identity and network path is reviewed and enabled.
+Keep the queue container internal-only. Subscriptions need a separately reviewed outbound callback path. The optional fixed-peer relay provides that path without mounting queue state, principal configuration or credentials in the relay; it is disabled unless explicitly configured.
 
-The protocol examples and event method shapes follow the [OpenAI MCP Events guide](https://developers.openai.com/plugins/build/mcp-events), including the `2026-07-28` discovery version, callback challenge, Standard Webhooks signature headers, finite subscriptions, and retry rules. This source has not been connected to a real dot or ChatGPT callback, so external interoperability remains unverified.
+The protocol examples and event method shapes follow the [OpenAI MCP Events guide](https://developers.openai.com/plugins/build/mcp-events), including the `2026-07-28` discovery version, callback challenge, Standard Webhooks signature headers, finite subscriptions, and retry rules. External callback delivery and agent wakeup require runtime acceptance against the configured connection.
 
 ## Configuration and start
 
@@ -37,7 +37,13 @@ From the repository root, start it with:
 python scripts/agents_gateway/server.py --config <read-only-principals.json> --database <private-state-path>/agents_gateway.sqlite3
 ```
 
-Options are `--host` (default `127.0.0.1`) and `--port` (default `8765`). The default binds only to loopback. A reverse proxy can connect locally; keep its access controls outside this service. No deployment files, reverse-proxy rules, or credential files are included here.
+Options are `--host` (default `127.0.0.1`), `--port` (default `8765`), and optional `--callback-relay` (an explicitly trusted private HTTP origin). The default binds only to loopback. A reverse proxy can connect locally; keep its access controls outside this service. No deployment files, reverse-proxy rules, or credential files are included here.
+
+## Optional callback relay
+
+`callback_relay.py --peer <fixed-queue-container-ip> --host <private-bind-address>` listens on port 8766 by default. Keep it on the private queue network and a separate outbound bridge, with no published host/public ports. Mount only the two source files; run as a non-root user with a read-only filesystem, no capabilities or privilege escalation, and bounded resources. Source-IP checks rely on the trusted private container network and trusted Docker administration, not Internet authentication.
+
+Start the gateway with `--callback-relay http://<fixed-relay-ip>:8766` only after reviewing and authorizing that deployment. The relay validates HTTPS public destinations, pins resolved addresses, verifies hostname certificates, refuses redirects, and forwards only the original bounded body and five webhook headers. It never receives signing keys or bearer credentials. The relay process has external connectivity; its application rejects non-public callback destinations. Default direct transport behavior is unchanged.
 
 ## Event format and queue API
 
@@ -95,7 +101,7 @@ Subscriptions have a finite expiry: one hour by default, at most 24 hours, and a
 Run the isolated standard-library tests with:
 
 ```powershell
-python -B -m unittest scripts.agents_gateway.test_server -v
+python -B -m unittest discover -s scripts/agents_gateway -p 'test_*.py' -v
 ```
 
 Tests inject an in-memory callback transport and deterministic public DNS answers. They exercise the local validation and signature code; they do not send a real webhook or prove dot/OAuth/Cloudflare compatibility. The service is designed for a single process on one host. Use the same private SQLite file for restarts; concurrent active replicas and multi-host delivery are not supported.
