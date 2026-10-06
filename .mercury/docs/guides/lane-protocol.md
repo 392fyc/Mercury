@@ -11,7 +11,15 @@ to repo sources instead.
 - **Lane home.** There is one lane home per project, resolved from the project's
   main checkout: `scripts/lane-paths.sh lanes-file` / `handoff-dir`
   ([#613](https://github.com/392fyc/Mercury/issues/613)). Create it with
-  `scripts/lane-init.sh`.
+  `scripts/lane-init.sh`. A project whose main checkout keeps Mercury active
+  memory binds its lane home there with a one-line
+  `.mercury/memory/lane-home` file (for Mercury itself:
+  `projects/D--Mercury-Mercury`, the bucket the SessionStart hook resolves),
+  so the hook, the lane scripts and the registry agree
+  ([#644](https://github.com/392fyc/Mercury/issues/644)). The bound directory
+  must already exist inside `.mercury/memory`; an invalid binding is an error,
+  never a silent fallback. The memory-index scripts resolve through the same
+  binding.
 - **Lane kinds.** A lane is either solo (no `Peers`) or paired with other lanes.
   Each lane is run by one harness (`claude` or `codex`). Cross-harness rules
   are in the [#599 ADR](../research/issue-599-cross-harness-lane-isolation-2026-09.md).
