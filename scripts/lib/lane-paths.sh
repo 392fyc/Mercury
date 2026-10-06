@@ -14,6 +14,13 @@
 #
 #   memory dir   (LANES.md, per-session files)
 #       $MERCURY_MEMORY_DIR if set, else
+#       the project binding: when the MAIN checkout has a one-line
+#       .mercury/memory/lane-home file, the directory it names relative to
+#       .mercury/memory (e.g. projects/D--Mercury-Mercury). .mercury/memory is
+#       the project's private active memory (gitignored), so the binding is
+#       per project and per machine. An invalid binding (empty, '.',
+#       absolute, '..', backslash, missing, or resolving outside
+#       .mercury/memory) is an error, never a silent fallback (#644). Else
 #       ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded main checkout>/memory
 #       <encoded> = every non-alphanumeric char of the path replaced by '-',
 #       the same rule Claude Code uses for its own project dirs, so for
@@ -70,6 +77,38 @@ lane_registered_main() {
   ' "$1" | tr -d '\r'
 }
 
+# lane_bound_memory_dir <main checkout path> — the project binding.
+# Returns 1 with no output when there is no binding file; returns 2 with a
+# message on stderr when the file exists but is invalid.
+lane_bound_memory_dir() {
+  local f rel
+  f="$1/.mercury/memory/lane-home"
+  [ -f "$f" ] || return 1
+  rel=$(sed -n '1{s/\r$//;s/^[[:space:]]*//;s/[[:space:]]*$//;p;}' "$f")
+  local root real
+  case "$rel" in
+    ""|.|./*|/*|*..*|*'\'*|[A-Za-z]:*)
+      printf 'lane-paths: invalid lane-home binding in %s; fix or delete that file\n' "$f" >&2
+      return 2 ;;
+  esac
+  rel="${rel%/}"
+  if [ ! -d "$1/.mercury/memory/$rel" ]; then
+    printf 'lane-paths: lane-home binding names a missing directory %s; fix or delete %s\n' "$rel" "$f" >&2
+    return 2
+  fi
+  # The bound directory must stay inside .mercury/memory even through links.
+  if ! root=$(cd "$1/.mercury/memory" && pwd -P) || ! real=$(cd "$1/.mercury/memory/$rel" && pwd -P); then
+    printf 'lane-paths: cannot resolve the lane-home binding; fix or delete %s\n' "$f" >&2
+    return 2
+  fi
+  case "$real" in
+    "$root"/*) ;;
+    *) printf 'lane-paths: lane-home binding leaves .mercury/memory; fix or delete %s\n' "$f" >&2
+       return 2 ;;
+  esac
+  printf '%s/.mercury/memory/%s\n' "$1" "$rel"
+}
+
 # lane_memory_dir_for_main <main checkout path> — no git needed.
 # The encoding is lossy (Proj-A and Proj.A both become ...Proj-A). When the
 # plain dir already holds a LANES.md whose `main` lane is a DIFFERENT checkout,
@@ -81,7 +120,12 @@ lane_memory_dir_for_main() {
     return 0
   fi
   [ -n "${1:-}" ] || return 1
-  local base enc main reg sum
+  local base enc main reg sum rc=0
+  lane_bound_memory_dir "$1" || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    2) return 1 ;;
+  esac
   base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"
   enc=$(lane_encode_project_dir "$1")
   main=$(lane_norm_path "$1")

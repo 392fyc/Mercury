@@ -127,7 +127,7 @@ scripts/lane-cap-check.sh [--lanes-file PATH] [--memory-dir PATH]
 | `--max N` | Override the cap (default 5). |
 | `--format text\|json` | Output format. |
 | `--lanes-file PATH` | Override LANES.md location. |
-| `--memory-dir PATH` | Override memory dir. Defaults to `MERCURY_MEMORY_DIR` env, then the project's lane home `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded main checkout>/memory` (`scripts/lane-paths.sh memory-dir`; `D--Mercury-Mercury` for `D:/Mercury/Mercury`; #613). |
+| `--memory-dir PATH` | Override memory dir. Defaults to `MERCURY_MEMORY_DIR` env, then the project binding `.mercury/memory/lane-home` in the main checkout (#644), then the project's lane home `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded main checkout>/memory` (`scripts/lane-paths.sh memory-dir`; `D--Mercury-Mercury` for `D:/Mercury/Mercury`; #613). |
 | `MERCURY_MEMORY_DIR` (env) | Same effect as `--memory-dir`. |
 
 Exit `0` if count ≤ max, exit `1` if exceeded, exit `2` on argument or

@@ -168,5 +168,32 @@ eq "MSYS-form record of D:/Mercury/Mercury is the same checkout" \
    "$(CLAUDE_CONFIG_DIR="$LEG" bash -c ". '$REPO_ROOT/scripts/lib/lane-paths.sh'; lane_memory_dir_for_main D:/Mercury/Mercury")" "$LEG/projects/D--Mercury-Mercury/memory"
 
 echo
+echo "[project binding: .mercury/memory/lane-home (#644)]"
+P="$TMP/work/Proj-P"; mkproj "$P"
+git -C "$P" worktree add -q -b lane/p/init "$TMP/work/Proj-P-lane" >/dev/null 2>&1
+PW="$TMP/work/Proj-P-lane"
+mkdir -p "$P/.mercury/memory/projects/D--Legacy-Id"
+printf 'projects/D--Legacy-Id\n' > "$P/.mercury/memory/lane-home"
+MP=$("$CLI" main-worktree --repo-root "$P")  # host path form (C:/... on Git for Windows)
+eq "binding selects the bound bucket" "$("$CLI" memory-dir --repo-root "$P")" "$MP/.mercury/memory/projects/D--Legacy-Id"
+eq "binding is read from the main checkout by a linked worktree" \
+   "$("$CLI" lanes-file --repo-root "$PW")" "$MP/.mercury/memory/projects/D--Legacy-Id/LANES.md"
+printf 'projects/D--Legacy-Id/\r\n' > "$P/.mercury/memory/lane-home"
+eq "trailing slash and CRLF are tolerated" "$("$CLI" memory-dir --repo-root "$P")" "$MP/.mercury/memory/projects/D--Legacy-Id"
+eq "MERCURY_MEMORY_DIR still wins over the binding" \
+   "$(MERCURY_MEMORY_DIR=/x/y "$CLI" memory-dir --repo-root "$P")" "/x/y"
+for bad in '../escape' '/abs/path' 'C:/abs' 'projects\D--Legacy-Id' 'projects/missing' '' '.' './projects/D--Legacy-Id'; do
+  printf '%s\n' "$bad" > "$P/.mercury/memory/lane-home"
+  if out=$("$CLI" memory-dir --repo-root "$P" 2>/dev/null); then
+    fail "invalid binding '$bad' must not resolve (got '$out')"
+  else
+    pass "invalid binding '$bad' is an error, not a silent fallback"
+  fi
+done
+rm -f "$P/.mercury/memory/lane-home"
+eq "no binding file keeps the Claude Code project dir" \
+   "$("$CLI" memory-dir --repo-root "$P")" "$CLAUDE_CONFIG_DIR/projects/$(enc "$MP")/memory"
+
+echo
 printf '%d pass / %d fail\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
