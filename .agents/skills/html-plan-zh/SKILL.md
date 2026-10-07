@@ -4,7 +4,7 @@ description: 用一个可交互的 HTML 页面写中文实施计划：一棵论�
 upstream_source: "https://github.com/anthropics/claude-plugins-community/tree/main/html-plan"
 upstream_sha: "88003be1129c09381d27100b37a8fdc21b3214bf"
 upstream_license: "MIT"
-cherry_picked_in: 655
+cherry_picked_in: 656
 cherry_picked_at: "2026-10-07"
 ---
 
