@@ -42,5 +42,17 @@
       "PowerShell(git -C * stash)",
       "PowerShell(git -C * stash *)"
     ]
+  },
+  "enabledPlugins": {
+    "html-plan@claude-community": true
+  },
+  "extraKnownMarketplaces": {
+    "claude-community": {
+      "source": {
+        "source": "github",
+        "repo": "anthropics/claude-plugins-community"
+      },
+      "autoUpdate": false
+    }
   }
 }
