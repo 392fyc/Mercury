@@ -1,0 +1,299 @@
+<!doctype html>
+<!-- Based on anthropics/claude-plugins-community html-plan (MIT) SHA: 88003be1129c09381d27100b37a8fdc21b3214bf — Mercury #655 中文版：行文、示意界面与决策译为中文，代码与结构不变 -->
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>定时发送计划</title>
+<link rel="stylesheet" href="../runtime/htmlplan.css">
+<script src="../runtime/htmlplan.js" defer></script>
+<style data-mock-shared>
+  .ui { font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; color: #1c1b19; background: #fff; border: 1px solid #ddd8cc; border-radius: 10px; overflow: hidden; }
+  .ui .hd { padding: 9px 14px; border-bottom: 1px solid #eee9dd; font-weight: 650; display: flex; gap: 8px; align-items: baseline; } .ui .hd small { color: #8a8578; font-weight: 400; }
+  .ui .ln { padding: 7px 14px; border-bottom: 1px solid #f3efe6; color: #5f5a4f; } .ui .ln b { color: #1c1b19; font-weight: 600; }
+  .ui .body { padding: 12px 14px; color: #5f5a4f; min-height: 46px; }
+  .ui .ft { display: flex; gap: 8px; align-items: center; padding: 10px 14px; border-top: 1px solid #eee9dd; background: #faf8f3; }
+  .ui .btn { font-weight: 600; font-size: 13px; padding: 7px 12px; border-radius: 7px; border: 1px solid #ddd8cc; background: #fff; } .ui .btn.pri { background: #1c1b19; color: #fff; border-color: #1c1b19; }
+  .ui .menu { margin: 0 14px 12px auto; width: 230px; border: 1px solid #ddd8cc; border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,.12); background: #fff; } .ui .menu div { padding: 7px 12px; } .ui .menu div + div { border-top: 1px solid #f3efe6; } .ui .menu .on { background: #f6ede9; }
+  .ui .row { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 9px 14px; border-bottom: 1px solid #f3efe6; } .ui .row small { color: #8a8578; } .ui .row .t { color: #b4541f; font-weight: 600; font-size: 13px; } .ui .row .acts { grid-column: 1 / -1; color: #8a8578; font-size: 12.5px; }
+  .ui .ok { color: #1f7a52; font-weight: 650; } .ui .bad { color: #b42318; font-weight: 650; } .ui .dim { color: #8a8578; }
+</style>
+<body>
+
+<header>
+  <h1>PostBox 定时发送</h1>
+  <doc-changes new="5" changed="4"></doc-changes>
+  <details class="thread"><summary>缘由 · 2 条请求</summary>
+    <doc-quote via="prompt" from="用户">在写信界面加上稍后发送。我要能取消它，而且绝不能提前发出去</doc-quote>
+    <doc-quote via="doc" from="客服记录">很多人晚上写回复，但不希望对方晚上收到</doc-quote>
+  </details>
+</header>
+
+<main>
+<doc-plan>
+
+<!-- ═════ 1 ═════ -->
+<doc-claim>
+  <p>用户可以在写信界面选一个发送时间。</p>
+  <doc-mock frame="none" w="440"><template>
+<div class="ui">
+  <div class="ln">收件人 <b>dana@example.com</b></div>
+  <div class="ln">主题 <b>今天的会议记录</b></div>
+  <div class="body">这是我们商定的内容……</div>
+  <div class="menu" data-ref="menu"><div>明天上午 <span class="dim">· 8:00</span></div><div class="on">周一上午 <span class="dim">· 8:00</span></div><div>选择日期和时间……</div></div>
+  <div class="ft"><span class="btn pri">发送</span><span class="btn" data-ref="later">稍后发送 ▾</span></div>
+</div></template>
+    <doc-pin ref="later" title="新按钮">“发送”保持不变。</doc-pin>
+  </doc-mock>
+
+  <doc-claim>
+    <p>“稍后发送”只保存邮件和时间，不会立即发送。</p>
+    <doc-calls title="创建定时邮件" caption="点第二个调用，打开它的代码。">
+<script type="text/plain">
+~ <Composer/>                                  @ web/src/composer/Composer.tsx:41
++   <**SendLaterMenu**/>                       @ web/src/composer/SendLaterMenu.tsx:12
++     POST /api/scheduled                      @ web/src/api/scheduled.ts:9
++ **createScheduled**(req)                     @ server/src/scheduled/routes.ts:18
++   **assertUnderLimit**(userId)               @ server/src/scheduled/limits.ts:6
++   **buildScheduled**(body, session)          @ server/src/scheduled/build.ts:10
++   insert into scheduled_messages             @ server/src/scheduled/store.ts:22
+</script>
+    </doc-calls>
+    <doc-claim at="server/src/scheduled/routes.ts:18">
+      <p><b>routes.ts:18</b> · createScheduled()</p>
+      <doc-code title="routes.ts · 草案" lang="ts">
+<script type="text/plain">
+export async function createScheduled(req: Request) {
+  const session = requireSession(req)
+  await assertUnderLimit(session.userId)        // throws at 50
+  const row = buildScheduled(await req.json(), session)
+  await store.insert(row)
+  return json({ id: row.id, sendAt: row.sendAt }, 201)
+}
+</script>
+      </doc-code>
+    </doc-claim>
+  </doc-claim>
+
+  <doc-claim>
+    <p>服务器设置归属用户和状态，客户端不能设置。</p>
+    <doc-code title="build.ts · 草案" lang="ts" hl="4-5">
+<script type="text/plain">
+export function buildScheduled(body: Body, session: Session): Scheduled {
+  return {
+    id: randomUUID(),
+    userId: session.userId,
+    status: 'scheduled',
+    sendAt: toUtc(body.sendAt, session.timeZone),
+    message: pick(body, ['to', 'subject', 'html']),
+    attempts: 0,
+  }
+}
+</script>
+      <doc-pin line="5" title="取自会话，绝不取自请求体"></doc-pin>
+    </doc-code>
+  </doc-claim>
+
+  <doc-claim>
+    <p>每个用户最多保存 50 封定时邮件。</p>
+    <doc-code title="limits.ts · 草案" lang="ts">
+<script type="text/plain">
+export async function assertUnderLimit(userId: string) {
+  if (await store.countScheduled(userId) >= 50) throw new LimitError(50)
+}
+</script>
+    </doc-code>
+    <doc-ask id="limit">
+      <p>每个用户最多保存多少封定时邮件？</p>
+      <div class="opts-row">
+        <label><input type="radio" name="limit" value="50" checked> 50</label>
+        <label><input type="radio" name="limit" value="500"> 500</label>
+        <label><input type="radio" name="limit" value="none"> 不限</label>
+      </div>
+    </doc-ask>
+  </doc-claim>
+</doc-claim>
+
+<!-- ═════ 2 ═════ -->
+<doc-claim>
+  <p>用户在一个列表里查看和修改定时邮件。</p>
+  <doc-mock frame="none" w="440"><template>
+<div class="ui">
+  <div class="hd">定时邮件 <small>2</small></div>
+  <div class="row"><b>今天的会议记录</b><span class="t">周一 8:00</span><small>发给 dana@example.com</small><span></span><span class="acts" data-ref="acts">编辑 · 立即发送 · 取消</span></div>
+  <div class="row"><b>三月账单</b><span class="t">4 月 1 日 9:30</span><small>发给 billing@example.com</small></div>
+</div></template>
+    <doc-pin ref="acts" anchor="r" offset="14,0" title="三个操作">见 2.2。</doc-pin>
+  </doc-mock>
+
+  <doc-claim>
+    <p>新文件夹按发送时间先后列出定时邮件。</p>
+    <doc-calls title="列表" caption="只有一次查询，只读当前用户的行。">
+<script type="text/plain">
+~ <Sidebar/>                                   @ web/src/nav/Sidebar.tsx:30
++   <**ScheduledFolder**/>                     @ web/src/scheduled/ScheduledFolder.tsx:14
++     GET /api/scheduled                       @ web/src/api/scheduled.ts:21
++ **listScheduled**(req)                       @ server/src/scheduled/routes.ts:34
++   select … where user_id = $1 order by send_at   @ server/src/scheduled/store.ts:40
+</script>
+    </doc-calls>
+  </doc-claim>
+
+  <doc-claim>
+    <p>邮件开始发送前，三个操作都可以用。</p>
+    <doc-calls title="操作" caption="每个操作都先检查状态。">
+<script type="text/plain">
++ <**ScheduledRow**/>                          @ web/src/scheduled/ScheduledRow.tsx:9
++   Edit → PATCH /api/scheduled/:id            @ server/src/scheduled/routes.ts:48
++   Send now → **sendNow**(id)                 @ server/src/scheduled/routes.ts:66
++   Cancel → **cancelScheduled**(id)           @ server/src/scheduled/routes.ts:80
+</script>
+    </doc-calls>
+  </doc-claim>
+</doc-claim>
+
+<!-- ═════ 3 ═════ -->
+<doc-claim>
+  <p>邮件只在设定时间发送，发送失败的邮件会保留。</p>
+  <doc-machine name="msg" caption="绿色虚线是新增的部分。">
+<script type="text/plain">
+machine msg initial scheduled
+state scheduled   # 已保存，等待发送时间。
+state sending     # worker 已领取。
+state sent      final   # 移入已发送。
+state failed      # 保留，并记录错误。
+state cancelled final   # 回到草稿箱。
+
+| scheduled | sending | sent |
+| cancelled | failed  | .    |
+
+scheduled -due->    sending   : at send_at
+sending   -ok->     sent      : 250
+sending   -fail->   failed    : error
+scheduled -cancel-> cancelled : Cancel
+failed    -cancel-> cancelled : Cancel
++ failed  -retry->  sending   : retry ×3
+</script>
+    <div data-state="scheduled"><doc-mock frame="none" w="400"><template><div class="ui"><div class="row"><b>今天的会议记录</b><span class="t">周一 8:00</span><small>发给 dana@example.com</small><span></span><span class="acts">编辑 · 立即发送 · 取消</span></div></div></template></doc-mock></div>
+    <div data-state="sending"><doc-mock frame="none" w="400"><template><div class="ui"><div class="row"><b>今天的会议记录</b><span class="dim">发送中……</span><small>发给 dana@example.com</small></div></div></template></doc-mock></div>
+    <div data-state="sent"><doc-mock frame="none" w="400"><template><div class="ui"><div class="hd">已发送</div><div class="row"><b>今天的会议记录</b><span class="ok">周一 8:00</span><small>发给 dana@example.com</small></div></div></template></doc-mock></div>
+    <div data-state="failed"><doc-mock frame="none" w="400"><template><div class="ui"><div class="row"><b>今天的会议记录</b><span class="bad">未发送</span><small>邮件服务器拒收。</small><span></span><span class="acts">重试 · 取消</span></div></div></template></doc-mock></div>
+    <div data-state="cancelled"><doc-mock frame="none" w="400"><template><div class="ui"><div class="hd">草稿箱</div><div class="row"><b>今天的会议记录</b><span class="dim">草稿</span><small>发给 dana@example.com</small></div></div></template></doc-mock></div>
+  </doc-machine>
+
+  <doc-claim>
+    <p>worker 每分钟领取一次到期的邮件。</p>
+    <doc-calls title="worker" caption="直接调用现有的发送函数，不修改它。">
+<script type="text/plain">
++ **runScheduledSends**()                      @ server/src/scheduled/worker.ts:12
++   **claimDue**(now, 100)                     @ server/src/scheduled/store.ts:58
++   sendMessage(message)                       @ server/src/mail/send.ts:20
++   if ok → markSent(id)                       @ server/src/scheduled/store.ts:74
++   else markFailed(id, error)                 @ server/src/scheduled/store.ts:82
+</script>
+    </doc-calls>
+    <doc-claim at="server/src/scheduled/store.ts:58">
+      <p><b>store.ts:58</b> · claimDue()</p>
+      <doc-code title="store.ts · 草案" lang="sql">
+<script type="text/plain">
+UPDATE scheduled_messages SET status = 'sending'
+WHERE id IN (
+  SELECT id FROM scheduled_messages
+  WHERE status = 'scheduled' AND send_at <= $1
+  ORDER BY send_at LIMIT $2
+  FOR UPDATE SKIP LOCKED
+)
+RETURNING *;
+</script>
+        <doc-pin line="6" title="两个 worker 不会领取同一行"></doc-pin>
+      </doc-code>
+    </doc-claim>
+  </doc-claim>
+
+  <doc-claim>
+    <p>取消先于 worker 领取时，取消生效。</p>
+    <doc-code title="store.ts · 草案" lang="sql">
+<script type="text/plain">
+UPDATE scheduled_messages SET status = 'cancelled'
+WHERE id = $1 AND user_id = $2 AND status IN ('scheduled', 'failed')
+RETURNING id;   -- no row back: too late, tell the user
+</script>
+    </doc-code>
+  </doc-claim>
+
+  <doc-claim>
+    <p>发送失败后自动重试，仍失败就交给用户处理。</p>
+    <doc-calls title="重试" caption="由同一个 worker 领取。">
+<script type="text/plain">
+~ runScheduledSends()                          @ server/src/scheduled/worker.ts:12
+?   claimRetries(now)                          @ server/src/scheduled/store.ts:96   -- attempts < 3, 5 minutes apart
+</script>
+    </doc-calls>
+    <doc-ask id="retry">
+      <p>发送失败后要自动重试吗？</p>
+      <label><input type="radio" name="retry" value="3" checked> 要，重试 3 次，每次间隔 5 分钟</label>
+      <label><input type="radio" name="retry" value="no"> 不要 <small>由用户点“重试”</small></label>
+    </doc-ask>
+  </doc-claim>
+</doc-claim>
+
+<!-- ═════ 4 ═════ -->
+<doc-claim>
+  <p>定时邮件发送失败时，系统通知用户。</p>
+  <doc-mock frame="none" w="400"><template>
+<div class="ui"><div class="row"><span><span class="bad">未发送</span> · 今天的会议记录</span><span class="dim">8:16</span><small>已重试 3 次，邮件留在“定时邮件”里。</small></div></div></template>
+  </doc-mock>
+  <doc-ask id="notify">
+    <p>用什么方式通知用户？</p>
+    <label><input type="radio" name="notify" value="app" checked> 只在应用内通知</label>
+    <label><input type="radio" name="notify" value="both"> 应用内通知加邮件 <small>多一个邮件模板</small></label>
+    <label><input type="radio" name="notify" value="none"> 不通知 <small>去掉论断 4</small></label>
+  </doc-ask>
+  <doc-claim>
+    <p>最后一次重试失败时，系统添加一条通知。</p>
+    <doc-calls title="通知" caption="使用现有的通知功能。">
+<script type="text/plain">
+~ markFailed(id, error)                        @ server/src/scheduled/store.ts:82
++   if (attempts >= 3) notify(userId, …)       @ server/src/notify/notify.ts:15
+</script>
+    </doc-calls>
+  </doc-claim>
+</doc-claim>
+
+<!-- ═════ 共用 · 不改动 ═════ -->
+<doc-claim aux="shared">
+  <p>共用：一张新表。</p>
+  <doc-schema id="table" lang="sql" title="migrations/0042_scheduled_messages.sql" caption="时间一律按 UTC 存储。">
+<script type="text/plain">
+CREATE TABLE scheduled_messages (
+  id          uuid PRIMARY KEY,
+  user_id     uuid NOT NULL REFERENCES users(id),
+  status      text NOT NULL CHECK (status IN
+                ('scheduled','sending','sent','failed','cancelled')),
+  send_at     timestamptz NOT NULL,
+  message     jsonb NOT NULL,          -- to, subject, html
+  attempts    int  NOT NULL DEFAULT 0,
+  last_error  text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX scheduled_due ON scheduled_messages (status, send_at);
+</script>
+  </doc-schema>
+  <doc-ask id="keep">
+    <p>已发送和已取消的行保留多久？</p>
+    <label><input type="radio" name="keep" value="30" checked> 30 天，之后删除</label>
+    <label><input type="radio" name="keep" value="forever"> 永久保留</label>
+  </doc-ask>
+</doc-claim>
+
+<doc-claim aux="scope">
+  <p>不改动：普通发送、草稿、邮件服务商。</p>
+  <ul>
+    <li><code>sendMessage()</code> 原样调用。</li>
+    <li>草稿继续用自己的表。</li>
+    <li>不支持周期发送：一封邮件只发一次。</li>
+  </ul>
+</doc-claim>
+
+</doc-plan>
+</main>
+</body>
+</html>
