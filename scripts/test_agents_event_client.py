@@ -8,6 +8,28 @@ from unittest.mock import patch
 import agents_event_client as client
 
 
+class FakeResponse:
+    status = 200
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def read(self, _limit):
+        return b'{"ok":true}'
+
+
+class FakeOpener:
+    def __init__(self):
+        self.requests = []
+
+    def open(self, request, timeout):
+        self.requests.append((request, timeout))
+        return FakeResponse()
+
+
 class ClientBoundaryTests(unittest.TestCase):
     def policy_copy(self, config):
         policy = config.parent / 'policy.json'
@@ -90,6 +112,74 @@ class ClientBoundaryTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     client.through_ssh(config, 'list', {})
                 run.assert_not_called()
+
+    def test_rest_operation_mapping_keeps_event_paths_and_adds_fixed_ledger_paths(self):
+        with tempfile.TemporaryDirectory() as folder:
+            token_file = Path(folder) / 'credential'
+            token_file.write_text('a' * 32, encoding='utf-8')
+            opener = FakeOpener()
+            metadata = {
+                'generation': '7d52c2a2-8c11-4de1-9407-45782dcd8f19', 'pairing_id': 'pair-1',
+                'key_id': 'key-1', 'client_id': 'codex-main', 'recipient_thread_id': 'thread-1',
+                'task_id': 'task-17', 'request_id': 'request-23', 'attempt': 1, 'nonce': 'nonce-1',
+                'body_sha256': 'a' * 64, 'expires_at': '2030-03-17T17:46:40Z', 'protocol_sha256': 'b' * 64,
+            }
+            cases = [
+                ('list', {'after': 2}, 'GET', '/api/events?after=2'),
+                ('publish', {'event_id': 'evt', 'kind': 'updated'}, 'POST', '/api/events'),
+                ('consume', {'event_id': 'evt'}, 'POST', '/api/consumed'),
+                ('ledger-status', {'request_id': 'req/1'}, 'GET', '/api/tasks/status?request_id=req%2F1'),
+                ('admit', metadata, 'POST', '/api/tasks/admit'),
+                ('claim', {'request_id': 'request-23', 'body_sha256': 'a' * 64,
+                           'generation': metadata['generation']}, 'POST', '/api/tasks/claim'),
+                ('transition', {'request_id': 'request-23', 'body_sha256': 'a' * 64,
+                                'generation': metadata['generation'], 'expected_state': 'claimed',
+                                'state': 'started', 'evidence_sha256': 'b' * 64},
+                 'POST', '/api/tasks/transition'),
+            ]
+            with patch.object(client.urllib.request, 'build_opener', return_value=opener):
+                for operation, payload, method, expected_path in cases:
+                    with self.subTest(operation=operation):
+                        self.assertEqual(
+                            client.request('https://gateway.example', token_file, operation, payload),
+                            {'ok': True},
+                        )
+                        request, timeout = opener.requests[-1]
+                        parsed = client.urllib.parse.urlsplit(request.full_url)
+                        self.assertEqual(request.get_method(), method)
+                        self.assertEqual(parsed.path + (('?' + parsed.query) if parsed.query else ''), expected_path)
+                        self.assertLessEqual(timeout, 20)
+
+    def test_ledger_status_rejects_unmapped_query_fields(self):
+        with tempfile.TemporaryDirectory() as folder:
+            token_file = Path(folder) / 'credential'
+            token_file.write_text('a' * 32, encoding='utf-8')
+            with patch.object(client.urllib.request, 'build_opener') as opener:
+                with self.assertRaises(ValueError):
+                    client.request('https://gateway.example', token_file, 'ledger-status', {'recipient': 'other'})
+                opener.assert_not_called()
+
+    def test_new_operations_reuse_the_existing_fixed_ssh_route(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            config = root / 'bridge.json'
+            config.write_text(json.dumps({'ssh_host': 'nas.example', 'container': 'agents-events',
+                                         'principal': 'local-agent', 'docker': '/opt/docker',
+                                         'docker_config': '/private/docker'}))
+            policy = self.policy_copy(config)
+            payload = {'request_id': 'request-23'}
+            with patch.object(client, 'POLICY_FILE', policy), patch.object(
+                client.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, b'{"ok":true}', b'')
+            ) as run:
+                result = client.through_ssh(config, 'ledger-status', payload)
+            self.assertEqual(result, {'ok': True})
+            argv = run.call_args.args[0]
+            self.assertEqual(argv[:5], ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15'])
+            self.assertEqual(argv[5], 'nas.example')
+            self.assertIn('agents-events', argv[-1])
+            self.assertIn('/credentials/local-agent.token', argv[-1])
+            self.assertTrue(argv[-1].endswith('ledger-status'))
+            self.assertEqual(run.call_args.kwargs['input'], b'{"request_id": "request-23"}')
 
 
 if __name__ == '__main__':

@@ -197,6 +197,14 @@ def _validate_body(body: dict[str, Any], *, now: dt.datetime | None = None) -> N
     current = now or dt.datetime.now(dt.timezone.utc)
     if deadline <= current:
         raise DotLinkError("签名消息已过期")
+    cooperation = body["payload"].get("cooperation_protocol", {})
+    if isinstance(cooperation, dict) and cooperation.get("version") == "dot-cooperation/2":
+        try:
+            uuid.UUID(body["payload"].get("replay_generation", ""))
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise DotLinkError("v2 请求必须绑定 replay_generation") from exc
+        if deadline > current + dt.timedelta(hours=24):
+            raise DotLinkError("v2 请求期限不得超过 24 小时")
 
 
 def _canonical_json(value: dict[str, Any]) -> bytes:
@@ -367,20 +375,22 @@ def _decode_base64(value: Any, field: str) -> bytes:
 
 
 def _accept_once(ledger_path: str | Path, body: dict[str, Any], signed_body: bytes, key_id: str) -> str:
+    cooperation = body["payload"].get("cooperation_protocol", {})
+    if isinstance(cooperation, dict) and cooperation.get("version") == "dot-cooperation/2":
+        raise DotLinkError("v2 必须使用持久服务 claim_task；本地账本不能授予启动许可")
     request_id = body["request_id"]
     nonce = body["nonce"]
     digest = hashlib.sha256(signed_body).hexdigest()
     try:
-        connection = sqlite3.connect(str(ledger_path), timeout=30, isolation_level=None)
+        # Opening an absent path must never silently erase replay history.
+        path = Path(ledger_path).resolve()
+        connection = sqlite3.connect(path.as_uri() + "?mode=rw", uri=True, timeout=30, isolation_level=None)
     except sqlite3.Error as exc:
         raise DotLinkError("无法打开 replay ledger") from exc
     try:
         connection.execute("PRAGMA synchronous=FULL")
-        connection.execute(
-            "CREATE TABLE IF NOT EXISTS dot_link_acceptance ("
-            "request_id TEXT PRIMARY KEY, nonce TEXT NOT NULL UNIQUE, "
-            "signed_body_sha256 TEXT NOT NULL, key_id TEXT NOT NULL, accepted_at TEXT NOT NULL)"
-        )
+        if connection.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+            raise DotLinkError("replay ledger 完整性检查失败")
         connection.execute("BEGIN IMMEDIATE")
         row = connection.execute(
             "SELECT nonce, signed_body_sha256 FROM dot_link_acceptance WHERE request_id = ?",
@@ -478,6 +488,34 @@ def _verify_command(
     }
 
 
+def _admission_command(pin_path: str, envelope_path: str, openssl: str, output_path: str) -> dict[str, Any]:
+    """Derive fixed metadata from a verified TASK; this does not authorize or claim it."""
+    result = _verify_command(pin_path, envelope_path, openssl, None, None, False)
+    body = result["verified_body"]
+    protocol = body["payload"].get("cooperation_protocol", {})
+    if not isinstance(protocol, dict) or protocol.get("version") != "dot-cooperation/2":
+        raise DotLinkError("admission 只接受 dot-cooperation/2")
+    if not result["authorization"]["identity_trusted"] or body["type"] != "TASK":
+        raise DotLinkError("admission 必须是已固定身份的 TASK")
+    digest = protocol.get("sha256", "")
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise DotLinkError("协议 SHA256 无效")
+    if body["task_id"] is None or body["attempt"] is None:
+        raise DotLinkError("TASK 必须包含 task_id 与 attempt")
+    metadata = {key: body[key] for key in (
+        "pairing_id", "key_id", "client_id", "recipient_thread_id", "task_id", "request_id",
+        "attempt", "nonce", "expires_at",
+    )}
+    metadata.update(generation=body["payload"]["replay_generation"],
+                    body_sha256=result["verification"]["signed_body_sha256"], protocol_sha256=digest)
+    try:
+        Path(output_path).write_bytes(_canonical_json(metadata) + b"\n")
+    except OSError as exc:
+        raise DotLinkError("无法写入 admission 元数据") from exc
+    return {"status": "metadata_prepared", "request_id": body["request_id"],
+            "body_sha256": metadata["body_sha256"], "execution_allowed": False}
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="dot-local/0.2 的 Ed25519 签名与验签工具")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -495,6 +533,11 @@ def _parser() -> argparse.ArgumentParser:
     verify_parser.add_argument("--transport-source")
     verify_parser.add_argument("--ledger")
     verify_parser.add_argument("--accept", action="store_true")
+    admission_parser = commands.add_parser("admission", help="从已验签 TASK 导出持久服务登记元数据")
+    admission_parser.add_argument("--pin", required=True)
+    admission_parser.add_argument("--envelope", required=True)
+    admission_parser.add_argument("--openssl", required=True)
+    admission_parser.add_argument("--out", required=True)
     return parser
 
 
@@ -508,6 +551,8 @@ def main(argv: list[str] | None = None) -> int:
             result = _create_identity(args.state_dir, args.openssl)
         elif args.command == "sign":
             result = _sign_command(args.config, args.body, args.out)
+        elif args.command == "admission":
+            result = _admission_command(args.pin, args.envelope, args.openssl, args.out)
         else:
             result = _verify_command(
                 args.pin, args.envelope, args.openssl, args.transport_source, args.ledger, args.accept

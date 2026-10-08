@@ -8,11 +8,13 @@ import datetime as dt
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from contextlib import closing
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -277,6 +279,11 @@ class DotLinkEndToEndTests(unittest.TestCase):
 
     def test_replay_ledger_duplicate_request_conflict_and_nonce_reuse(self):
         ledger = self.root / "ledger.sqlite"
+        # A known pre-existing legacy ledger can be inspected, never silently initialized.
+        with closing(sqlite3.connect(ledger)) as connection:
+            connection.execute("CREATE TABLE dot_link_acceptance (request_id TEXT PRIMARY KEY, "
+                               "nonce TEXT NOT NULL UNIQUE, signed_body_sha256 TEXT NOT NULL, "
+                               "key_id TEXT NOT NULL, accepted_at TEXT NOT NULL)")
         initial = self._sign("ledger-first", self._body())
         accepted = self._verify(
             self.active_pin, initial, "--ledger", str(ledger), "--accept"
@@ -311,6 +318,46 @@ class DotLinkEndToEndTests(unittest.TestCase):
             self.active_pin, nonce_reuse, "--ledger", str(ledger), "--accept", expect=2
         )
         self.assertIn("nonce", result.stderr)
+
+    def test_missing_and_empty_legacy_ledger_fail_closed(self):
+        envelope = self._sign("missing-ledger", self._body())
+        missing = self.root / "missing-ledger.sqlite"
+        self._verify(self.active_pin, envelope, "--ledger", str(missing), "--accept", expect=2)
+        self.assertFalse(missing.exists())
+        empty = self.root / "empty-ledger.sqlite"
+        empty.write_bytes(b"")
+        self._verify(self.active_pin, envelope, "--ledger", str(empty), "--accept", expect=2)
+        with closing(sqlite3.connect(empty)) as connection:
+            self.assertEqual(connection.execute("SELECT name FROM sqlite_master").fetchall(), [])
+
+    def test_v2_admission_is_verified_metadata_not_execution(self):
+        payload = {"cooperation_protocol": {"version": "dot-cooperation/2", "sha256": "b" * 64},
+                   "replay_generation": "00000000-0000-4000-8000-000000000002"}
+        envelope = self._sign("v2-admission", self._body(payload=payload))
+        output = self.root / "admission.json"
+        result = json.loads(run_cli("admission", "--pin", str(self.active_pin), "--envelope", str(envelope),
+                                   "--openssl", str(OPENSSL), "--out", str(output)).stdout)
+        self.assertFalse(result["execution_allowed"])
+        data = json.loads(output.read_bytes())
+        self.assertEqual(data["generation"], payload["replay_generation"])
+        self.assertEqual(data["protocol_sha256"], "b" * 64)
+        self.assertEqual(data["nonce"], "nonce-001")
+        self.assertNotIn("payload", data)
+        self._verify(self.active_pin, envelope, "--ledger", str(self.root / "v2-local.sqlite"), "--accept", expect=2)
+        self.assertFalse((self.root / "v2-local.sqlite").exists())
+        run_cli("admission", "--pin", str(self.pending_pin), "--envelope", str(envelope),
+                "--openssl", str(OPENSSL), "--out", str(output), expect=2)
+
+    def test_v2_generation_and_lifetime_are_required(self):
+        payload = {"cooperation_protocol": {"version": "dot-cooperation/2", "sha256": "b" * 64}}
+        raw = json.dumps(self._body(payload=payload), separators=(",", ":"), sort_keys=True).encode()
+        envelope = self._resign_raw_body(raw, "v2-no-generation")
+        self._verify(self.active_pin, envelope, expect=2)
+        payload["replay_generation"] = "00000000-0000-4000-8000-000000000002"
+        far = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=2)).isoformat().replace("+00:00", "Z")
+        raw = json.dumps(self._body(payload=payload, expires_at=far), separators=(",", ":"), sort_keys=True).encode()
+        envelope = self._resign_raw_body(raw, "v2-long-lifetime")
+        self._verify(self.active_pin, envelope, expect=2)
 
     def test_same_key_verifies_message_from_new_source_thread(self):
         envelope = self._sign(

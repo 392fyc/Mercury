@@ -18,6 +18,7 @@ from pathlib import Path
 MAX_BYTES = 262144
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,95}\Z")
 POLICY_FILE = Path.home() / '.codex' / 'dot-link' / 'event-policy' / 'targets.json'
+OPERATIONS = ('list', 'publish', 'consume', 'ledger-status', 'admit', 'claim', 'transition')
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -43,6 +44,20 @@ def request(base: str, token_file: Path, operation: str, payload: dict) -> dict:
         path, data, method = '/api/events', json.dumps(payload, separators=(',', ':')).encode(), 'POST'
     elif operation == 'consume':
         path, data, method = '/api/consumed', json.dumps(payload, separators=(',', ':')).encode(), 'POST'
+    elif operation == 'ledger-status':
+        if set(payload) - {'request_id'}:
+            raise ValueError('ledger-status accepts only request_id')
+        request_id = payload.get('request_id')
+        if request_id is not None and not isinstance(request_id, str):
+            raise ValueError('request_id must be a string')
+        query = urllib.parse.urlencode({'request_id': request_id}) if request_id is not None else ''
+        path, data, method = '/api/tasks/status' + (('?' + query) if query else ''), None, 'GET'
+    elif operation == 'admit':
+        path, data, method = '/api/tasks/admit', json.dumps(payload, separators=(',', ':')).encode(), 'POST'
+    elif operation == 'claim':
+        path, data, method = '/api/tasks/claim', json.dumps(payload, separators=(',', ':')).encode(), 'POST'
+    elif operation == 'transition':
+        path, data, method = '/api/tasks/transition', json.dumps(payload, separators=(',', ':')).encode(), 'POST'
     else:
         raise ValueError('Unknown operation')
     if data is not None and len(data) > MAX_BYTES:
@@ -67,6 +82,8 @@ def request(base: str, token_file: Path, operation: str, payload: dict) -> dict:
 def through_ssh(config_file: Path, operation: str, payload: dict) -> dict:
     # Installation-owned policy is not an event or CLI input. The installer must
     # restrict Windows ACLs to the owner, SYSTEM and Administrators.
+    if operation not in OPERATIONS:
+        raise ValueError('Unknown operation')
     policy_file = POLICY_FILE
     if any(path.is_symlink() for path in (policy_file, policy_file.parent, policy_file.parent.parent)):
         raise ValueError('Installation policy must not use symbolic links')
@@ -114,7 +131,7 @@ def main() -> int:
     mode.add_argument('--url')
     parser.add_argument('--token-file', type=Path)
     parser.add_argument('--payload-file', type=Path)
-    parser.add_argument('operation', choices=['list', 'publish', 'consume'])
+    parser.add_argument('operation', choices=OPERATIONS)
     args = parser.parse_args()
     try:
         raw = args.payload_file.read_bytes() if args.payload_file else sys.stdin.buffer.read(MAX_BYTES + 1)

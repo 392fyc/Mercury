@@ -96,6 +96,30 @@ The only event is `agent.update`, and its required subscription argument `recipi
 
 Subscriptions have a finite expiry: one hour by default, at most 24 hours, and at least one minute. A requested null or shorter lifetime still receives a finite grant. Subscription state and the SQLite outbox survive process restarts. Expired or revoked subscriptions stop receiving events. Transient delivery failures retry with exponential backoff for at most five attempts; `410` and `413` are terminal. Each attempt retains the same body bytes and event ID, and signs those bytes with a fresh timestamp. A 2xx callback acknowledges receipt only. The response body is ignored.
 
+## Optional task ledger
+
+The task ledger is a separate, pre-provisioned SQLite database and read-only policy file. Enable it only by supplying both paths:
+
+```powershell
+python scripts/agents_gateway/server.py --config <read-only-principals.json> --database <private-state-path>/agents_gateway.sqlite3 --task-ledger <provisioned-task-ledger.sqlite3> --task-ledger-policy <read-only-task-ledger-policy.json>
+```
+
+Leave both options unset to keep the task ledger disabled. Supplying only one option, an unavailable ledger database or policy, or an unavailable optional ledger module makes startup fail. The service checks that both files already exist as regular files and never initializes or repairs the ledger database. Provision and back up that database through the ledger's local administration interface; do not place ledger state in the event queue database.
+
+When enabled, the MCP tools `task_ledger_status`, `claim_task`, and `transition_task` are added alongside the unchanged event tools. Their argument fields are fixed:
+
+| Tool | Fields |
+|---|---|
+| `task_ledger_status` | Optional `request_id` |
+| `claim_task` | `request_id`, `body_sha256`, `generation` |
+| `transition_task` | `request_id`, `body_sha256`, `generation`, `expected_state`, `state`, `evidence_sha256`; optional `result_page_id` |
+
+`task_ledger_status` reads metadata for the authenticated principal. `claim_task` and `transition_task` record only the fixed request, generation, state, and hash metadata. Callers must use the native dot-link agent to verify message signatures and required human authorization before claiming. The ledger checks the fixed principal identities, policy, and state transitions. A successful claim may return the one-time `start_granted` flag; it is a ledger result, not task execution. The gateway and ledger do not execute tasks, run commands, or interpret task bodies.
+
+Admission is REST-only: the authenticated sender principal calls `POST /api/tasks/admit` with exactly the ledger metadata fields `generation`, `pairing_id`, `key_id`, `client_id`, `recipient_thread_id`, `task_id`, `request_id`, `attempt`, `nonce`, `body_sha256`, `expires_at`, and `protocol_sha256`. Authenticated `GET /api/tasks/status` accepts an optional `request_id`; `POST /api/tasks/claim` and `POST /api/tasks/transition` accept the corresponding fixed tool arguments. Each route passes the authenticated principal ID to the ledger, which enforces sender/receiver identity and policy. The client offers `ledger-status`, `admit`, `claim`, and `transition` operation mappings; `--ssh-config` continues to use the existing fixed host/container/principal policy and the container's read-only token file.
+
+The task ledger does not add a task runner or replace event delivery. The existing `read_queue`, `mark_consumed`, `publish_update`, and `agent.update` event meanings remain unchanged.
+
 ## Checks and limits
 
 Run the isolated standard-library tests with:

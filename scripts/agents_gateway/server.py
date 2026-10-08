@@ -19,6 +19,7 @@ import json
 import os
 import re
 import socket
+import stat
 import sqlite3
 import ssl
 import sys
@@ -54,6 +55,22 @@ CALLBACK_TIMEOUT_SECONDS = 10
 TOKEN_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$")
 OPAQUE_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,255}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+TASK_GENERATION_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
+try:
+    from task_ledger import METADATA_FIELDS as TASK_ADMISSION_FIELDS
+    from task_ledger import STATES as TASK_LEDGER_STATES
+    from task_ledger import TaskLedger, TaskLedgerError
+except ModuleNotFoundError as exc:
+    if exc.name != "task_ledger":
+        raise
+    TaskLedger = None  # type: ignore[assignment,misc]
+    TASK_ADMISSION_FIELDS = frozenset()
+    TASK_LEDGER_STATES = frozenset()
+
+    class TaskLedgerError(Exception):
+        """Fallback type used while the optional task-ledger module is absent."""
 
 
 class GatewayError(Exception):
@@ -136,6 +153,124 @@ def _safe_text(value: Any, field: str, maximum: int = 128) -> str:
     if any(ord(char) < 32 or ord(char) == 127 for char in value):
         raise GatewayError(f"invalid_{field}")
     return value
+
+
+def _task_request_id(value: Any) -> str:
+    request_id = _safe_text(value, "request_id", 256)
+    if not OPAQUE_ID_RE.fullmatch(request_id):
+        raise GatewayError("invalid_request_id")
+    return request_id
+
+
+def _task_generation(value: Any) -> str:
+    generation = _safe_text(value, "generation", 36)
+    if not TASK_GENERATION_RE.fullmatch(generation):
+        raise GatewayError("invalid_generation")
+    try:
+        if str(uuid.UUID(generation)) != generation:
+            raise ValueError
+    except ValueError as exc:
+        raise GatewayError("invalid_generation") from exc
+    return generation
+
+
+def _task_hash(value: Any, field: str) -> str:
+    digest = _safe_text(value, field, 64)
+    if not SHA256_RE.fullmatch(digest):
+        raise GatewayError(f"invalid_{field}")
+    return digest
+
+
+def validate_task_status_arguments(arguments: Any) -> str | None:
+    if not isinstance(arguments, dict) or set(arguments) - {"request_id"}:
+        raise GatewayError("invalid_arguments")
+    if "request_id" not in arguments:
+        return None
+    return _task_request_id(arguments["request_id"])
+
+
+def validate_task_claim_arguments(arguments: Any) -> tuple[str, str, str]:
+    required = {"request_id", "body_sha256", "generation"}
+    if not isinstance(arguments, dict) or set(arguments) != required:
+        raise GatewayError("invalid_arguments")
+    return (
+        _task_request_id(arguments["request_id"]),
+        _task_hash(arguments["body_sha256"], "body_sha256"),
+        _task_generation(arguments["generation"]),
+    )
+
+
+def validate_task_transition_arguments(arguments: Any) -> tuple[str, str, str, str, str, str | None]:
+    required = {
+        "request_id", "body_sha256", "generation", "expected_state", "state", "evidence_sha256",
+    }
+    allowed = required | {"result_page_id"}
+    if not isinstance(arguments, dict) or not required <= set(arguments) or set(arguments) - allowed:
+        raise GatewayError("invalid_arguments")
+    expected_state = _safe_text(arguments["expected_state"], "expected_state", 32)
+    state = _safe_text(arguments["state"], "state", 32)
+    if expected_state not in TASK_LEDGER_STATES or state not in TASK_LEDGER_STATES:
+        raise GatewayError("invalid_state")
+    result_page_id = None
+    if "result_page_id" in arguments:
+        result_page_id = _safe_text(arguments["result_page_id"], "result_page_id", 256)
+        if not OPAQUE_ID_RE.fullmatch(result_page_id):
+            raise GatewayError("invalid_result_page_id")
+    return (
+        _task_request_id(arguments["request_id"]),
+        _task_hash(arguments["body_sha256"], "body_sha256"),
+        _task_generation(arguments["generation"]),
+        expected_state,
+        state,
+        result_page_id,
+    )
+
+
+TASK_LEDGER_ERROR_STATUS = {
+    "metadata_invalid": 400,
+    "metadata_schema_invalid": 400,
+    "request_id_invalid": 400,
+    "claim_invalid": 400,
+    "transition_invalid": 400,
+    "state_invalid": 400,
+    "evidence_invalid": 400,
+    "result_reference_invalid": 400,
+    "identity_schema_invalid": 400,
+    "paths_must_differ": 400,
+    "principal_forbidden": 409,
+    "ledger_inactive": 409,
+    "ledger_archive_only": 409,
+    "metadata_policy_mismatch": 409,
+    "request_conflict": 409,
+    "nonce_conflict": 409,
+    "attempt_conflict": 409,
+    "task_unresolved": 409,
+    "attempt_not_next": 409,
+    "metadata_conflict": 409,
+    "request_expired": 409,
+    "request_ttl_exceeded": 409,
+    "request_not_found": 409,
+    "generation_mismatch": 409,
+    "request_binding_mismatch": 409,
+    "claim_conflict": 409,
+    "state_conflict": 409,
+    "transition_forbidden": 409,
+    "policy_unavailable": 503,
+    "policy_invalid": 503,
+    "policy_schema_invalid": 503,
+    "storage_unavailable": 503,
+    "storage_corrupt": 503,
+    "storage_schema_invalid": 503,
+    "storage_marker_mismatch": 503,
+}
+
+
+def task_ledger_gateway_error(exc: TaskLedgerError) -> GatewayError:
+    code = str(exc)
+    status = TASK_LEDGER_ERROR_STATUS.get(code)
+    if status is None:
+        return GatewayError("task_ledger_unavailable", 503)
+    return GatewayError(code, status)
 
 
 def validate_event(payload: Any) -> dict[str, Any]:
@@ -432,11 +567,13 @@ class Gateway:
         database_path: str,
         callback_transport: Any | None = None,
         clock: Callable[[], float] = time.time,
+        task_ledger: Any | None = None,
     ):
         self.config_path = os.path.abspath(config_path)
         self.database_path = os.path.abspath(database_path)
         self.clock = clock
         self.callback_transport = callback_transport or SafeWebhookClient()
+        self.task_ledger = task_ledger
         os.makedirs(os.path.dirname(self.database_path) or ".", mode=0o700, exist_ok=True)
         self.db_lock = threading.RLock()
         self.db = sqlite3.connect(self.database_path, check_same_thread=False, isolation_level=None)
@@ -485,6 +622,7 @@ class Gateway:
             CREATE INDEX IF NOT EXISTS outbox_due ON outbox(state, next_attempt, lease_until);
             """
         )
+
         try:
             os.chmod(self.database_path, 0o600)
         except OSError:
@@ -907,8 +1045,21 @@ class Gateway:
         with self.db_lock:
             self.db.close()
 
+    def _task_ledger_call(self, method: str, *args: Any) -> dict[str, Any]:
+        if self.task_ledger is None:
+            raise GatewayError("task_ledger_unavailable", 503)
+        if method not in {"status", "admit", "claim", "transition"}:
+            raise GatewayError("task_ledger_unavailable", 503)
+        try:
+            result = getattr(self.task_ledger, method)(*args)
+        except TaskLedgerError as exc:
+            raise task_ledger_gateway_error(exc) from None
+        if not isinstance(result, dict):
+            raise GatewayError("task_ledger_unavailable", 503)
+        return result
+
     def _tool_definitions(self) -> list[dict[str, Any]]:
-        return [
+        tools = [
             {
                 "name": "read_queue",
                 "description": "Read the authenticated principal's event queue. This never switches recipients.",
@@ -950,6 +1101,77 @@ class Gateway:
                 },
             },
         ]
+        if self.task_ledger is not None:
+            tools.extend([
+                {
+                    "name": "task_ledger_status",
+                    "description": "Read task-ledger metadata for the authenticated principal; this does not execute a task.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "request_id": {"type": "string", "maxLength": 256,
+                                           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"},
+                        },
+                        "additionalProperties": False,
+                    },
+                    "annotations": {
+                        "readOnlyHint": True,
+                        "destructiveHint": False,
+                        "openWorldHint": False,
+                    },
+                },
+                {
+                    "name": "claim_task",
+                    "description": "Record a task claim after native dot-link signature verification and required human authorization; this does not execute a task.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "request_id": {"type": "string", "maxLength": 256,
+                                           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"},
+                            "body_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                            "generation": {"type": "string", "format": "uuid",
+                                           "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
+                        },
+                        "required": ["request_id", "body_sha256", "generation"],
+                        "additionalProperties": False,
+                    },
+                    "annotations": {
+                        "readOnlyHint": False,
+                        "destructiveHint": False,
+                        "openWorldHint": False,
+                    },
+                },
+                {
+                    "name": "transition_task",
+                    "description": "Record one compare-and-set task state transition with fixed evidence metadata; this does not execute a task.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "request_id": {"type": "string", "maxLength": 256,
+                                           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"},
+                            "body_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                            "generation": {"type": "string", "format": "uuid",
+                                           "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
+                            "expected_state": {"type": "string", "enum": sorted(TASK_LEDGER_STATES)},
+                            "state": {"type": "string", "enum": sorted(TASK_LEDGER_STATES)},
+                            "evidence_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                            "result_page_id": {"type": "string", "maxLength": 256,
+                                                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"},
+                        },
+                        "required": [
+                            "request_id", "body_sha256", "generation", "expected_state", "state",
+                            "evidence_sha256",
+                        ],
+                        "additionalProperties": False,
+                    },
+                    "annotations": {
+                        "readOnlyHint": False,
+                        "destructiveHint": False,
+                        "openWorldHint": False,
+                    },
+                },
+            ])
+        return tools
 
     def _event_definition(self) -> dict[str, Any]:
         payload_properties: dict[str, Any] = {
@@ -1046,6 +1268,23 @@ class Gateway:
                     elif tool_name == "publish_update":
                         event, duplicate = self.publish(principal, arguments)
                         result = {"event": event, "duplicate": duplicate}
+                    elif tool_name == "task_ledger_status" and self.task_ledger is not None:
+                        request_id = validate_task_status_arguments(arguments)
+                        result = self._task_ledger_call("status", principal["id"], request_id)
+                    elif tool_name == "claim_task" and self.task_ledger is not None:
+                        request_id, body_sha256, generation = validate_task_claim_arguments(arguments)
+                        result = self._task_ledger_call(
+                            "claim", principal["id"], request_id, body_sha256, generation
+                        )
+                    elif tool_name == "transition_task" and self.task_ledger is not None:
+                        request_id, body_sha256, generation, expected_state, state, result_page_id = (
+                            validate_task_transition_arguments(arguments)
+                        )
+                        evidence_sha256 = _task_hash(arguments["evidence_sha256"], "evidence_sha256")
+                        result = self._task_ledger_call(
+                            "transition", principal["id"], request_id, body_sha256, generation,
+                            expected_state, state, evidence_sha256, result_page_id,
+                        )
                     else:
                         raise RpcFault(-32602, "Unknown tool")
                 except GatewayError as exc:
@@ -1131,6 +1370,32 @@ class Gateway:
                     else:
                         self.send_json(200, {"status": "ok"})
                     return
+                if parsed.path == "/api/tasks/status":
+                    if gateway.task_ledger is None:
+                        self.send_json(404, {"error": "not_found"})
+                        return
+                    try:
+                        principal = self.principal()
+                    except ConfigError:
+                        self.send_json(503, {"error": "service_unavailable"})
+                        return
+                    if principal is None:
+                        self.send_json(401, {"error": "unauthorized"})
+                        return
+                    try:
+                        query = parse_qs(parsed.query, keep_blank_values=True, strict_parsing=True)
+                        if set(query) - {"request_id"} or any(len(values) != 1 for values in query.values()):
+                            raise GatewayError("invalid_query")
+                        request_id = validate_task_status_arguments(
+                            {"request_id": query["request_id"][0]} if "request_id" in query else {}
+                        )
+                        result = gateway._task_ledger_call("status", principal["id"], request_id)
+                        self.send_json(200, result)
+                    except GatewayError as exc:
+                        self.send_json(exc.status, {"error": exc.message})
+                    except ValueError:
+                        self.send_json(400, {"error": "invalid_query"})
+                    return
                 if parsed.path != "/api/events":
                     self.send_json(404, {"error": "not_found"})
                     return
@@ -1158,7 +1423,10 @@ class Gateway:
                 if parsed.query:
                     self.send_json(400, {"error": "query_not_allowed"})
                     return
-                if parsed.path not in ("/mcp", "/api/events", "/api/consumed"):
+                task_routes = {
+                    "/api/tasks/admit", "/api/tasks/claim", "/api/tasks/transition",
+                } if gateway.task_ledger is not None else set()
+                if parsed.path not in ({"/mcp", "/api/events", "/api/consumed"} | task_routes):
                     self.send_json(404, {"error": "not_found"})
                     return
                 try:
@@ -1181,6 +1449,27 @@ class Gateway:
                         row = gateway.mark_consumed(principal["id"], request["event_id"])
                         self.send_json(200, {"event_id": row["event_id"], "status": "consumed"})
                         return
+                    if parsed.path == "/api/tasks/admit":
+                        if not isinstance(request, dict) or set(request) != TASK_ADMISSION_FIELDS:
+                            raise GatewayError("invalid_task_metadata")
+                        self.send_json(200, gateway._task_ledger_call("admit", principal["id"], request))
+                        return
+                    if parsed.path == "/api/tasks/claim":
+                        request_id, body_sha256, generation = validate_task_claim_arguments(request)
+                        self.send_json(200, gateway._task_ledger_call(
+                            "claim", principal["id"], request_id, body_sha256, generation
+                        ))
+                        return
+                    if parsed.path == "/api/tasks/transition":
+                        (request_id, body_sha256, generation, expected_state, state, result_page_id) = (
+                            validate_task_transition_arguments(request)
+                        )
+                        evidence_sha256 = _task_hash(request["evidence_sha256"], "evidence_sha256")
+                        self.send_json(200, gateway._task_ledger_call(
+                            "transition", principal["id"], request_id, body_sha256, generation,
+                            expected_state, state, evidence_sha256, result_page_id,
+                        ))
+                        return
                     try:
                         response = gateway.rpc(principal, request)
                     except RpcFault as exc:
@@ -1202,9 +1491,33 @@ class Gateway:
         return Handler
 
 
-def serve(args: argparse.Namespace) -> None:
+def load_task_ledger(database_path: str | None, policy_path: str | None) -> Any | None:
+    if database_path is None and policy_path is None:
+        return None
+    if not database_path or not policy_path or TaskLedger is None:
+        raise ConfigError("task_ledger_configuration_invalid")
+    for path in (database_path, policy_path):
+        try:
+            mode = os.lstat(path).st_mode
+        except OSError as exc:
+            raise ConfigError("task_ledger_unavailable") from exc
+        if not stat.S_ISREG(mode):
+            raise ConfigError("task_ledger_configuration_invalid")
+    try:
+        ledger = TaskLedger(database_path, policy_path)
+        policy = ledger.policy()
+    except Exception as exc:
+        # The optional ledger must be provisioned before startup. The gateway
+        # never initializes or repairs its database on the service path.
+        raise ConfigError("task_ledger_configuration_invalid") from exc
+    if not isinstance(policy, dict):
+        raise ConfigError("task_ledger_configuration_invalid")
+    return ledger
+
+
+def serve(args: argparse.Namespace, task_ledger: Any | None = None) -> None:
     transport = RelayWebhookClient(args.callback_relay) if args.callback_relay else None
-    gateway = Gateway(args.config, args.database, callback_transport=transport)
+    gateway = Gateway(args.config, args.database, callback_transport=transport, task_ledger=task_ledger)
     try:
         gateway.principals()
     except ConfigError:
@@ -1235,10 +1548,19 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1", help="bind address; default loopback")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--callback-relay", help="explicit private HTTP relay origin; default direct safe HTTPS")
+    parser.add_argument("--task-ledger", help="pre-provisioned task-ledger SQLite database")
+    parser.add_argument("--task-ledger-policy", help="read-only task-ledger policy JSON")
     args = parser.parse_args()
     if not (1 <= args.port <= 65535):
         parser.error("--port must be between 1 and 65535")
-    serve(args)
+    if bool(args.task_ledger) != bool(args.task_ledger_policy):
+        parser.error("--task-ledger and --task-ledger-policy must be configured together")
+    try:
+        ledger = load_task_ledger(args.task_ledger, args.task_ledger_policy)
+    except ConfigError:
+        print("agents_gateway task_ledger_configuration_error", file=sys.stderr, flush=True)
+        raise SystemExit(2)
+    serve(args, task_ledger=ledger)
 
 
 if __name__ == "__main__":

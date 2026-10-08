@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import datetime as dt
 import hashlib
 import hmac
 import http.client
@@ -63,6 +64,39 @@ class FakeWebhookClient:
         return status, b""
 
 
+class FakeTaskLedger:
+    def __init__(self):
+        self.calls: list[tuple[object, ...]] = []
+        self.failure: str | None = None
+
+    def policy(self) -> dict[str, object]:
+        return {"schema_version": 1, "activated": True}
+
+    def _record(self, operation: str, *args: object) -> dict[str, object]:
+        self.calls.append((operation, *args))
+        if self.failure:
+            raise server.TaskLedgerError(self.failure)
+        return {"operation": operation, "principal": args[0], "arguments": list(args[1:])}
+
+    def status(self, principal: str, request_id: str | None = None) -> dict[str, object]:
+        return self._record("status", principal, request_id)
+
+    def admit(self, principal: str, metadata: dict[str, object]) -> dict[str, object]:
+        return self._record("admit", principal, metadata)
+
+    def claim(self, principal: str, request_id: str, body_sha256: str, generation: str) -> dict[str, object]:
+        return self._record("claim", principal, request_id, body_sha256, generation)
+
+    def transition(
+        self, principal: str, request_id: str, body_sha256: str, generation: str,
+        expected_state: str, state: str, evidence_sha256: str, result_page_id: str | None = None,
+    ) -> dict[str, object]:
+        return self._record(
+            "transition", principal, request_id, body_sha256, generation,
+            expected_state, state, evidence_sha256, result_page_id,
+        )
+
+
 def make_config(path: Path, local_token: str = "local-token", dot_token: str = "dot-token") -> None:
     config = {
         "principals": [
@@ -97,6 +131,25 @@ def sample_event(event_id: str = "evt-001", recipient: str = "local", **changes:
     }
     payload.update(changes)
     return payload
+
+
+def sample_task_metadata(**changes: object) -> dict[str, object]:
+    metadata: dict[str, object] = {
+        "generation": "7d52c2a2-8c11-4de1-9407-45782dcd8f19",
+        "pairing_id": "pair-1",
+        "key_id": "key-1",
+        "client_id": "codex-main",
+        "recipient_thread_id": "thread-1",
+        "task_id": "task-17",
+        "request_id": "request-23",
+        "attempt": 1,
+        "nonce": "nonce-1",
+        "body_sha256": "a" * 64,
+        "expires_at": "2030-03-17T17:46:40Z",
+        "protocol_sha256": "b" * 64,
+    }
+    metadata.update(changes)
+    return metadata
 
 
 class GatewayTests(unittest.TestCase):
@@ -474,6 +527,236 @@ class GatewayTests(unittest.TestCase):
             self.assertNotIn("resultType", response["result"])
             self.assertNotIn("ttlMs", response["result"])
             self.assertNotIn("cacheScope", response["result"])
+
+    def test_task_ledger_tools_are_opt_in_and_keep_event_tools_unchanged(self) -> None:
+        disabled = self.gateway.rpc(self.local, {"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+        self.assertEqual(
+            {tool["name"] for tool in disabled["result"]["tools"]},
+            {"read_queue", "mark_consumed", "publish_update"},
+        )
+
+        ledger = FakeTaskLedger()
+        self.gateway.task_ledger = ledger
+        enabled = self.gateway.rpc(self.local, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+        tools = {tool["name"]: tool for tool in enabled["result"]["tools"]}
+        self.assertEqual(
+            set(tools),
+            {"read_queue", "mark_consumed", "publish_update", "task_ledger_status", "claim_task", "transition_task"},
+        )
+        self.assertNotIn("admit", tools)
+        self.assertNotIn("execute_task", tools)
+        self.assertEqual(tools["task_ledger_status"]["annotations"]["readOnlyHint"], True)
+        self.assertEqual(
+            set(tools["claim_task"]["inputSchema"]["required"]),
+            {"request_id", "body_sha256", "generation"},
+        )
+        self.assertEqual(
+            set(tools["transition_task"]["inputSchema"]["required"]),
+            {"request_id", "body_sha256", "generation", "expected_state", "state", "evidence_sha256"},
+        )
+        self.assertFalse(tools["claim_task"]["inputSchema"]["additionalProperties"])
+
+    def test_task_ledger_tool_validation_and_principal_binding(self) -> None:
+        ledger = FakeTaskLedger()
+        self.gateway.task_ledger = ledger
+
+        def call(name: str, arguments: dict[str, object]) -> dict[str, object]:
+            response = self.gateway.rpc(self.local, {
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": name, "arguments": arguments},
+            })
+            return response["result"]["structuredContent"]
+
+        self.assertEqual(call("task_ledger_status", {"request_id": "request-23"})["operation"], "status")
+        generation = "7d52c2a2-8c11-4de1-9407-45782dcd8f19"
+        self.assertEqual(call("claim_task", {
+            "request_id": "request-23", "body_sha256": "a" * 64, "generation": generation,
+        })["operation"], "claim")
+        self.assertEqual(call("transition_task", {
+            "request_id": "request-23", "body_sha256": "a" * 64, "generation": generation,
+            "expected_state": "running", "state": "delivered", "evidence_sha256": "b" * 64,
+        })["operation"], "transition")
+        self.assertEqual([entry[1] for entry in ledger.calls], ["local", "local", "local"])
+
+        before = len(ledger.calls)
+        invalid = [
+            ("task_ledger_status", {"request_id": "request-23", "recipient": "sender"}, "invalid_arguments"),
+            ("claim_task", {"request_id": "request-23", "body_sha256": "A" * 64,
+                             "generation": generation}, "invalid_body_sha256"),
+            ("claim_task", {"request_id": "request-23", "body_sha256": "a" * 64, "generation": generation,
+                            "command": "run"}, "invalid_arguments"),
+            ("transition_task", {
+                "request_id": "request-23", "body_sha256": "a" * 64, "generation": generation,
+                "expected_state": "running", "state": "delivered", "evidence_sha256": "bad",
+            }, "invalid_evidence_sha256"),
+        ]
+        for name, arguments, error in invalid:
+            with self.subTest(name=name, arguments=arguments):
+                self.assertEqual(call(name, arguments), {"error": error})
+        self.assertEqual(len(ledger.calls), before)
+
+    def test_task_ledger_rest_routes_are_authenticated_metadata_only(self) -> None:
+        ledger = FakeTaskLedger()
+        self.gateway.task_ledger = ledger
+        httpd, thread, base = self.start_http()
+        try:
+            status, response = self.request(base + "/api/tasks/status?request_id=request-23", "local-token")
+            self.assertEqual(status, 200)
+            self.assertEqual(response["operation"], "status")
+
+            status, denied = self.request(base + "/api/tasks/admit", method="POST", body=sample_task_metadata())
+            self.assertEqual(status, 401)
+            self.assertEqual(denied, {"error": "unauthorized"})
+
+            status, admitted = self.request(
+                base + "/api/tasks/admit", "local-token", "POST", sample_task_metadata()
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(admitted["operation"], "admit")
+            self.assertEqual(ledger.calls[-1][1], "local")
+
+            status, rejected = self.request(
+                base + "/api/tasks/admit", "local-token", "POST",
+                sample_task_metadata(unreviewed="must-not-be-forwarded"),
+            )
+            self.assertEqual(status, 400)
+            self.assertEqual(rejected, {"error": "invalid_task_metadata"})
+            self.assertEqual(ledger.calls[-1][0], "admit")
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
+
+    def test_task_ledger_startup_refuses_missing_database_without_constructing(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            policy = root / "policy.json"
+            policy.write_text("{}", encoding="utf-8")
+            missing_db = root / "missing-ledger.sqlite3"
+            with patch.object(server, "TaskLedger") as constructor:
+                with self.assertRaises(server.ConfigError):
+                    server.load_task_ledger(str(missing_db), str(policy))
+                constructor.assert_not_called()
+            self.assertFalse(missing_db.exists())
+            self.assertIsNone(server.load_task_ledger(None, None))
+
+    def test_task_ledger_errors_map_only_fixed_safe_statuses(self) -> None:
+        ledger = FakeTaskLedger()
+        self.gateway.task_ledger = ledger
+        httpd, thread, base = self.start_http()
+        try:
+            ledger.failure = "claim_conflict"
+            status, response = self.request(
+                base + "/api/tasks/claim", "local-token", "POST",
+                {"request_id": "request-23", "body_sha256": "a" * 64,
+                 "generation": "7d52c2a2-8c11-4de1-9407-45782dcd8f19"},
+            )
+            self.assertEqual(status, 409)
+            self.assertEqual(response, {"error": "claim_conflict"})
+
+            ledger.failure = "claim_invalid"
+            status, response = self.request(
+                base + "/api/tasks/claim", "local-token", "POST",
+                {"request_id": "request-23", "body_sha256": "a" * 64,
+                 "generation": "7d52c2a2-8c11-4de1-9407-45782dcd8f19"},
+            )
+            self.assertEqual(status, 400)
+            self.assertEqual(response, {"error": "claim_invalid"})
+
+            ledger.failure = "caller-controlled-secret"
+            status, response = self.request(base + "/api/tasks/status", "local-token")
+            self.assertEqual(status, 503)
+            self.assertEqual(response, {"error": "task_ledger_unavailable"})
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
+
+    def test_task_ledger_routes_are_not_exposed_when_disabled(self) -> None:
+        httpd, thread, base = self.start_http()
+        try:
+            status, response = self.request(
+                base + "/api/tasks/admit", "local-token", "POST", sample_task_metadata()
+            )
+            self.assertEqual(status, 404)
+            self.assertEqual(response, {"error": "not_found"})
+            status, response = self.request(base + "/api/tasks/status", "local-token")
+            self.assertEqual(status, 404)
+            self.assertEqual(response, {"error": "not_found"})
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
+
+    def test_real_task_ledger_enforces_admission_and_one_time_start_grant(self) -> None:
+        if server.TaskLedger is None:
+            self.skipTest("optional task-ledger module is unavailable")
+        ledger_db = self.root / "task-ledger.sqlite3"
+        policy_path = self.root / "task-ledger-policy.json"
+        identity = {
+            "pairing_id": "pairing-623",
+            "key_id": "sha256:" + "a" * 64,
+            "client_id": "client-623",
+            "sender_principal": "local",
+            "receiver_principal": "dot",
+            "recipient_thread_id": "dot-thread-623",
+            "protocol_sha256": "b" * 64,
+            "max_ttl_seconds": 3600,
+        }
+        policy = server.TaskLedger.initialize(ledger_db, policy_path, identity, activate=True)
+        self.gateway.task_ledger = server.load_task_ledger(str(ledger_db), str(policy_path))
+        expires = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=10))
+        expires = expires.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        metadata = sample_task_metadata(
+            generation=policy["generation"], pairing_id=identity["pairing_id"], key_id=identity["key_id"],
+            client_id=identity["client_id"], recipient_thread_id=identity["recipient_thread_id"],
+            expires_at=expires, protocol_sha256=identity["protocol_sha256"],
+        )
+        httpd, thread, base = self.start_http()
+        try:
+            status, admitted = self.request(base + "/api/tasks/admit", "local-token", "POST", metadata)
+            self.assertEqual(status, 200)
+            self.assertEqual(admitted["state"], "admitted")
+            self.assertFalse(admitted["human_authorization_checked"])
+            self.assertFalse(admitted["start_granted"])
+
+            status, denied = self.request(base + "/api/tasks/admit", "dot-token", "POST", metadata)
+            self.assertEqual(status, 409)
+            self.assertEqual(denied, {"error": "principal_forbidden"})
+
+            claim = {"request_id": metadata["request_id"], "body_sha256": metadata["body_sha256"],
+                     "generation": policy["generation"]}
+            status, wrong_role = self.request(base + "/api/tasks/claim", "local-token", "POST", claim)
+            self.assertEqual(status, 409)
+            self.assertEqual(wrong_role, {"error": "principal_forbidden"})
+
+            status, started = self.request(base + "/api/tasks/claim", "dot-token", "POST", claim)
+            self.assertEqual(status, 200)
+            self.assertTrue(started["start_granted"])
+            self.assertEqual(started["execution_start_count"], 1)
+            self.assertFalse(started["human_authorization_checked"])
+
+            status, replay = self.request(base + "/api/tasks/claim", "dot-token", "POST", claim)
+            self.assertEqual(status, 200)
+            self.assertFalse(replay["start_granted"])
+            self.assertEqual(replay["execution_start_count"], 1)
+
+            transition = {
+                **claim,
+                "expected_state": "running",
+                "state": "delivered",
+                "evidence_sha256": "c" * 64,
+                "result_page_id": "page-623",
+            }
+            status, delivered = self.request(
+                base + "/api/tasks/transition", "dot-token", "POST", transition
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(delivered["state"], "delivered")
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
 
     def test_mcp_discovery_tools_events_and_self_only_subscription(self) -> None:
         discover = self.gateway.rpc(self.local, {"jsonrpc": "2.0", "id": 1, "method": "server/discover"})
