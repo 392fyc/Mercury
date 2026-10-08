@@ -1269,20 +1269,20 @@ class Gateway:
                         event, duplicate = self.publish(principal, arguments)
                         result = {"event": event, "duplicate": duplicate}
                     elif tool_name == "task_ledger_status" and self.task_ledger is not None:
-                        request_id = validate_task_status_arguments(arguments)
-                        result = self._task_ledger_call("status", principal["id"], request_id)
+                        task_request_id = validate_task_status_arguments(arguments)
+                        result = self._task_ledger_call("status", principal["id"], task_request_id)
                     elif tool_name == "claim_task" and self.task_ledger is not None:
-                        request_id, body_sha256, generation = validate_task_claim_arguments(arguments)
+                        task_request_id, body_sha256, generation = validate_task_claim_arguments(arguments)
                         result = self._task_ledger_call(
-                            "claim", principal["id"], request_id, body_sha256, generation
+                            "claim", principal["id"], task_request_id, body_sha256, generation
                         )
                     elif tool_name == "transition_task" and self.task_ledger is not None:
-                        request_id, body_sha256, generation, expected_state, state, result_page_id = (
+                        (task_request_id, body_sha256, generation, expected_state, state, result_page_id) = (
                             validate_task_transition_arguments(arguments)
                         )
                         evidence_sha256 = _task_hash(arguments["evidence_sha256"], "evidence_sha256")
                         result = self._task_ledger_call(
-                            "transition", principal["id"], request_id, body_sha256, generation,
+                            "transition", principal["id"], task_request_id, body_sha256, generation,
                             expected_state, state, evidence_sha256, result_page_id,
                         )
                     else:

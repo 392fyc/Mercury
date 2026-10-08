@@ -595,6 +595,46 @@ class GatewayTests(unittest.TestCase):
                 self.assertEqual(call(name, arguments), {"error": error})
         self.assertEqual(len(ledger.calls), before)
 
+    def test_task_ledger_tools_preserve_numeric_and_string_json_rpc_ids(self) -> None:
+        self.gateway.task_ledger = FakeTaskLedger()
+        generation = "7d52c2a2-8c11-4de1-9407-45782dcd8f19"
+        tool_calls = [
+            ("task_ledger_status", {}, "status"),
+            ("task_ledger_status", {"request_id": "request-23"}, "status"),
+            (
+                "claim_task",
+                {"request_id": "request-23", "body_sha256": "a" * 64, "generation": generation},
+                "claim",
+            ),
+            (
+                "transition_task",
+                {
+                    "request_id": "request-23",
+                    "body_sha256": "a" * 64,
+                    "generation": generation,
+                    "expected_state": "running",
+                    "state": "delivered",
+                    "evidence_sha256": "b" * 64,
+                },
+                "transition",
+            ),
+        ]
+
+        for rpc_id in (72, "rpc-id-73"):
+            for tool_name, arguments, operation in tool_calls:
+                with self.subTest(rpc_id=rpc_id, tool_name=tool_name, arguments=arguments):
+                    response = self.gateway.rpc(
+                        self.local,
+                        {
+                            "jsonrpc": "2.0",
+                            "id": rpc_id,
+                            "method": "tools/call",
+                            "params": {"name": tool_name, "arguments": arguments},
+                        },
+                    )
+                    self.assertEqual(response["id"], rpc_id)
+                    self.assertEqual(response["result"]["structuredContent"]["operation"], operation)
+
     def test_task_ledger_rest_routes_are_authenticated_metadata_only(self) -> None:
         ledger = FakeTaskLedger()
         self.gateway.task_ledger = ledger
