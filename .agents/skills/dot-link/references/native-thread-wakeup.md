@@ -67,6 +67,28 @@ authorized subscription, verifies the full message and independent human
 authorization, and follows the receiver protocol. HELLO remains read-only;
 a TASK starts only after the existing ledger grants its single claim.
 
+### Complete request discovery on a shared Page
+
+Put the current request's exact signed-envelope reference, byte count and digest,
+task/request IDs, expiry, source/reply IDs and paired receiver root in a readable
+ordinary Page index. Anchor the original source's native adoption to a separate
+block for that request and retain its exact block, thread and message IDs. These
+locators provide discovery and routing; they are not authorization or a substitute
+for the complete signed original and independently readable human source.
+
+If a comment listing reports `truncated`, do not infer that the request is absent.
+Read the current Page index, retrieve the exact original reference, and read the
+native adoption with the observed `block_id` filter. Verify its original source
+and unchanged task binding. Do not keep increasing the limit on an endpoint that
+still truncates or replace original evidence with the notification's summary.
+
+A verified locator repair may publish one permitted `updated` event for the same
+request. Preserve its signed bytes, nonce, expiry, generation, ledger and execution
+count. Already-claimed or completed requests reuse the recorded outcome; a locator
+update never grants another execution. Record actual original-root processing and
+the unique ledger claim separately from callback delivery. Leave unavailable
+native turn/run fields unknown rather than inferring an idle wakeup.
+
 After preserving a result, the dot uses a verified, in-scope native notification
 or continuation tool to notify the original local conversation. The tool must
 not require dot execution on the personal computer for a cloud-only task.
