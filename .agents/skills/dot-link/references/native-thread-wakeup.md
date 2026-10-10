@@ -109,6 +109,31 @@ in the already-authorized private location and report the precise capability
 or permission blocker. That preserves evidence delivery but leaves source
 wakeup BLOCKED or NOT_TESTED. It is not an automatic-return implementation.
 
+### Reviewed candidate and signed-byte identities
+
+For a reviewed TASK or RECEIPT, deliver the existing review-to-signature binding
+evidence with the original packet. Identify separately:
+
+- The exact reviewed input file reference, byte count and digest.
+- The independent review's exact original reference, byte count and digest,
+  binding its verdict to that reviewed input and scope.
+- The final canonical signed-body byte count and digest, and the complete signed
+  envelope's exact reference, byte count and digest.
+- The installed signer's actual transformation: identify added, removed and
+  changed fields and preserve the existing checks comparing complete field
+  values. Any injected fixed identity or recipient fields must match the reviewed
+  route and current pin. JSON normalization can change the byte count and digest;
+  it does not establish unchanged field values by itself.
+
+Reuse the current signer, verifier and established binding checks. Do not create
+another signature verifier, infer review approval from a valid signature, or
+silently change reviewed scope, inputs, destinations, nonce or expiry. A semantic
+change needs review bound to the changed candidate. When only binding evidence
+is missing, provide the unchanged existing reviewed input, review and
+transformation originals through the authorized API and native adoption. Preserve
+the signed envelope, request and ledger; do not re-sign, re-claim or re-execute
+merely to clarify their different serialized-byte identities.
+
 ### Task-scoped wait in an active native executor
 
 An authorized local Codex conversation can wait for a registered result inside
