@@ -98,6 +98,19 @@ embed unrestricted commands. Observe whether the source is idle before this
 test. An already-running source can receive a steering message, but that does
 not prove an idle source automatically started a new turn.
 
+When the task authorizes an existing event-service return queue, the original
+dot must publish the result notification through its own exposed `publish_update`
+tool after adopting the preserved RESULT. Use only the verified recipient and
+original TASK's `task_id`, `request_id`, `body_sha256` and fixed `result_page_id`;
+retain one event identity and the exact publication response. A known native
+thread-send failure does not establish that this separate queue route is
+unavailable. Do not repeat the refused thread send or publish from local
+credentials to impersonate the dot. A saved Page, delivered ledger state or
+publication success alone is not proof of receiver consumption or wakeup.
+Verify the recipient's actual queue event and exact original source binding;
+keep a missing or refused notification route explicit while finishing authorized
+original readback and receipt delivery.
+
 The resumed original conversation reads the full result through the authorized
 API path, verifies its provenance, bindings, raw byte counts and digests, and
 sends the signed consumption receipt. Consume the notification only after the
