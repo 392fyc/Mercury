@@ -8,12 +8,30 @@ The task station carries event identifiers, optional result Page references and 
 | --- | --- | --- |
 | Local dedicated Codex worker | Plain Python queue polling; starts `codex exec` only for a registered synthetic probe | Actual authenticated turn, durable verified receipt, server consumption and duplicate-cache evidence |
 | Current Codex desktop chat | Native heartbeat, if explicitly enabled | Native automation actually runs in that chat; creating a schedule alone is insufficient |
+| Active native Codex executor | Task-scoped non-model queue wait, followed by its existing native sender | Registered event matches; exact idle source starts a new turn; verified originals and durable receipt precede consumption; the owning executor stays running |
+| Original local Codex source | Verified native notification or in-scope continuation | Exact authorized source ID, idle original thread starts a new turn, API original readback and signed receipt; cloud-only tests require a route without dot access to the personal computer |
 | dot / Cloud Work | MCP Events webhook | Private OAuth, discovery, subscription, callback challenge and actual cloud turn all pass |
 | Claude Code | Future adapter for its own authenticated CLI or session | Separate implementation and runtime verification required |
 
 The dedicated worker is a new ephemeral CLI conversation. It does not resume the desktop chat or send a desktop notification. Polling is not an instantaneous webhook. An HTTP 2xx callback is not proof of an agent turn. Do not guess internal app-server addresses or describe a CLI worker as desktop continuation.
 
+For bidirectional continuation, read the [native source-thread supplement](../../../.agents/skills/dot-link/references/native-thread-wakeup.md). Existing paired installations can install it with `scripts/codex/install-dot-link.ps1 -WakeupGuideOnly -ExpectedSkillSha256 <reviewed-current-skill-sha256>`, preserving their activated protocol and stable identity. Keep execution location and result notification separate: cloud-only testing does not require personal-computer Allow access, and a local reply address does not authorize local execution by the dot. A missing scoped notification tool remains a concrete blocker; installing instructions is not runtime wakeup acceptance. Keep paused temporary heartbeat followups paused.
+
 The first dispatcher version accepts only owner-registered synthetic local notification probes. It does not execute Godot tests or real dot tasks. Unknown, expired or mismatched events remain unexecuted. Real task routing requires a separate reviewed adapter that validates full signed messages, original files, human authorization, task scope and the existing closure ledger.
+
+For a pending authorized result, the existing native executor can await a bounded
+queue waiter and call its own `send_message_to_thread` after an exact registered
+event arrives. Empty waits invoke no model. The sender uses the already verified
+recipient and result locator, never event-derived commands or authority. Await
+every command session to completion before inspecting its exit code. Preserve
+uncertain publication/send outcomes, recover by identity, and do not replay the
+task. A source receipt must be durable before consumption; duplicates use cache.
+
+This is a task-scoped return mode, not a standalone background service. It stops
+when its owning native executor stops. Keep the execution cell awaited while it
+is active; do not claim a cell continues after its turn ends. Its original-source
+turn can be verified separately from the unresolved case where both local
+conversations are idle. Keep paused heartbeat followups paused.
 
 ## Queue and credentials
 

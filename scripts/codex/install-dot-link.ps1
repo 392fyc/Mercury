@@ -8,6 +8,8 @@ param(
   [string]$RecipientThreadId,
   [string]$RecipientHostId = 'durable',
   [string]$ProtocolPageId,
+  [switch]$WakeupGuideOnly,
+  [string]$ExpectedSkillSha256,
   [switch]$Rollback,
   [string]$BackupPath
 )
@@ -55,11 +57,13 @@ if ($Rollback) {
   exit 0
 }
 
+if (-not $WakeupGuideOnly) {
 foreach ($value in @($PythonPath, $OpenSslPath, $PairingId, $RecipientThreadId)) {
   if ([string]::IsNullOrWhiteSpace($value)) { throw 'Installation requires PythonPath, OpenSslPath, PairingId and RecipientThreadId.' }
 }
 foreach ($program in @($PythonPath, $OpenSslPath)) {
   if (-not (Test-Path -LiteralPath $program -PathType Leaf)) { throw "Runtime not found: $program" }
+}
 }
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $sourceSkill = Join-Path $repoRoot '.agents/skills/dot-link'
@@ -68,7 +72,38 @@ $stateRoot = Join-Path $userPath '.codex/dot-link'
 $globalAgents = Join-Path $userPath '.codex/AGENTS.md'
 $configPath = Join-Path $stateRoot 'config.json'
 $planned = New-Object System.Collections.Generic.List[object]
-foreach ($relative in @('SKILL.md', 'scripts/dot_link.py', 'references/receiver-protocol.md')) {
+if ($WakeupGuideOnly) {
+  $skillPath = Join-Path $installedSkill 'SKILL.md'
+  $sourceGuide = Join-Path $sourceSkill 'references/native-thread-wakeup.md'
+  foreach ($path in @($skillPath, $sourceGuide)) {
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing supplement input: $path" }
+  }
+  $originalSkillBytes = [IO.File]::ReadAllBytes($skillPath)
+  $hasher = [Security.Cryptography.SHA256]::Create()
+  try { $skillDigest = ([BitConverter]::ToString($hasher.ComputeHash($originalSkillBytes))).Replace('-', '').ToLowerInvariant() }
+  finally { $hasher.Dispose() }
+  if ($ExpectedSkillSha256 -notmatch '^[0-9a-f]{64}$' -or $skillDigest -cne $ExpectedSkillSha256) { throw 'Installed skill differs from the expected reviewed snapshot.' }
+  $originalSkill = $utf8.GetString($originalSkillBytes)
+  $sourceText = [IO.File]::ReadAllText((Join-Path $sourceSkill 'SKILL.md'))
+  $beginGuide = '<!-- DOT-LINK-NATIVE-WAKEUP:START -->'
+  $endGuide = '<!-- DOT-LINK-NATIVE-WAKEUP:END -->'
+  $sourceStart = $sourceText.IndexOf($beginGuide, [StringComparison]::Ordinal)
+  $sourceEnd = $sourceText.IndexOf($endGuide, [StringComparison]::Ordinal)
+  if ($sourceStart -lt 0 -or $sourceEnd -lt $sourceStart) { throw 'Source supplement reference is missing.' }
+  $reference = $sourceText.Substring($sourceStart, $sourceEnd + $endGuide.Length - $sourceStart)
+  $startGuide = $originalSkill.IndexOf($beginGuide, [StringComparison]::Ordinal)
+  $finishGuide = $originalSkill.IndexOf($endGuide, [StringComparison]::Ordinal)
+  if (($startGuide -lt 0) -ne ($finishGuide -lt 0)) { throw 'Incomplete installed supplement block.' }
+  if ($startGuide -ge 0) {
+    if ($finishGuide -lt $startGuide -or $originalSkill.IndexOf($beginGuide, $startGuide + $beginGuide.Length, [StringComparison]::Ordinal) -ge 0 -or $originalSkill.IndexOf($endGuide, $finishGuide + $endGuide.Length, [StringComparison]::Ordinal) -ge 0) { throw 'Ambiguous installed supplement block.' }
+    $updatedSkill = $originalSkill.Substring(0, $startGuide) + $reference + $originalSkill.Substring($finishGuide + $endGuide.Length)
+  } else { $updatedSkill = $originalSkill + "`n" + $reference + "`n" }
+  $guidePath = Join-Path $installedSkill 'references/native-thread-wakeup.md'
+  $priorGuideDigest = if (Test-Path -LiteralPath $guidePath -PathType Leaf) { (Get-FileHash -LiteralPath $guidePath -Algorithm SHA256).Hash.ToLowerInvariant() } else { $null }
+  $planned.Add(@{ target = $skillPath; bytes = $utf8.GetBytes($updatedSkill); original_sha256 = $skillDigest })
+  $planned.Add(@{ target = $guidePath; bytes = [IO.File]::ReadAllBytes($sourceGuide); original_sha256 = $priorGuideDigest })
+} else {
+foreach ($relative in @('SKILL.md', 'scripts/dot_link.py', 'references/receiver-protocol.md', 'references/native-thread-wakeup.md')) {
   $source = Join-Path $sourceSkill $relative
   if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "Missing source: $relative" }
   $planned.Add(@{ target = Join-Path $installedSkill $relative; bytes = [IO.File]::ReadAllBytes($source) })
@@ -108,8 +143,16 @@ if ($start -ge 0) {
   $updated = $original.Substring(0, $start) + $block + $original.Substring($finish + $end.Length)
 } else { $updated = $original + "`n" + $block + "`n" }
 $planned.Add(@{ target = $globalAgents; bytes = $utf8.GetBytes($updated) })
+}
 
 $backupRoot = Join-Path $userPath ('.codex/backups/dot-link-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+function Assert-PlannedOriginal($Item) {
+  if ($Item.ContainsKey('original_sha256')) {
+    $digest = if (Test-Path -LiteralPath $Item.target -PathType Leaf) { (Get-FileHash -LiteralPath $Item.target -Algorithm SHA256).Hash.ToLowerInvariant() } else { $null }
+    if ($digest -cne $Item.original_sha256) { throw 'Supplement input changed; preserve the current installation and review again.' }
+  }
+}
+foreach ($item in $planned) { Assert-PlannedOriginal $item }
 New-Item -ItemType Directory -Path $backupRoot | Out-Null
 $entries = New-Object System.Collections.Generic.List[object]
 foreach ($item in $planned) {
@@ -128,6 +171,7 @@ Write-Receipt $receipt $receiptPath
 try {
   for ($i = 0; $i -lt $planned.Count; $i++) {
     $item = $planned[$i]
+    Assert-PlannedOriginal $item
     $parent = Split-Path -Parent $item.target
     if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent | Out-Null }
     [IO.File]::WriteAllBytes($item.target, $item.bytes)
