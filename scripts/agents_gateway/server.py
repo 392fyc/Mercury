@@ -18,6 +18,7 @@ import ipaddress
 import json
 import os
 import re
+import secrets
 import socket
 import stat
 import sqlite3
@@ -47,6 +48,7 @@ MAX_CONFIG_BYTES = 64 * 1024
 MAX_BODY_BYTES = 32 * 1024
 MAX_CALLBACK_RESPONSE_BYTES = 16 * 1024
 MAX_QUEUE_PAGE = 100
+MAX_EVENT_CURSOR_LENGTH = 128
 DEFAULT_TTL_MS = 60 * 60 * 1000
 MIN_TTL_MS = 60 * 1000
 MAX_TTL_MS = 24 * 60 * 60 * 1000
@@ -55,6 +57,7 @@ CALLBACK_TIMEOUT_SECONDS = 10
 TOKEN_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$")
 OPAQUE_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,255}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+EVENT_CURSOR_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")
 TASK_GENERATION_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 )
@@ -620,6 +623,16 @@ class Gateway:
                 UNIQUE(event_id, subscription_id)
             );
             CREATE INDEX IF NOT EXISTS outbox_due ON outbox(state, next_attempt, lease_until);
+            CREATE TABLE IF NOT EXISTS event_cursors (
+                token TEXT NOT NULL UNIQUE,
+                principal_id TEXT NOT NULL,
+                subscription_id TEXT NOT NULL REFERENCES subscriptions(id),
+                event_name TEXT NOT NULL,
+                arguments_json TEXT NOT NULL,
+                seq INTEGER NOT NULL CHECK(seq >= 0),
+                created_at REAL NOT NULL,
+                UNIQUE(principal_id, subscription_id, event_name, arguments_json, seq)
+            );
             """
         )
 
@@ -714,21 +727,155 @@ class Gateway:
     def mark_consumed(self, principal_id: str, event_id: str) -> dict[str, Any]:
         event_id = _safe_text(event_id, "event_id")
         with self.db_lock:
-            cursor = self.db.execute(
-                "UPDATE events SET status='consumed' WHERE event_id=? "
-                "AND json_extract(payload_json,'$.recipient')=?",
-                (event_id, principal_id),
-            )
-            if cursor.rowcount != 1:
-                raise GatewayError("event_not_found", 404)
-            row = self.db.execute("SELECT * FROM events WHERE event_id=?", (event_id,)).fetchone()
-            return self._event_row(row)
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                cursor = self.db.execute(
+                    "UPDATE events SET status='consumed' WHERE event_id=? "
+                    "AND json_extract(payload_json,'$.recipient')=?",
+                    (event_id, principal_id),
+                )
+                if cursor.rowcount != 1:
+                    raise GatewayError("event_not_found", 404)
+                # Queue consumption suppresses notifications that have not yet been
+                # handed to a callback. It remains independent of callback delivery
+                # state and task-ledger transitions.
+                self.db.execute(
+                    "UPDATE outbox SET state='cancelled',last_error='consumed',lease_until=NULL "
+                    "WHERE event_id=? AND state IN ('pending','sending')",
+                    (event_id,),
+                )
+                row = self.db.execute("SELECT * FROM events WHERE event_id=?", (event_id,)).fetchone()
+                self.db.execute("COMMIT")
+                return self._event_row(row)
+            except Exception:
+                if self.db.in_transaction:
+                    self.db.execute("ROLLBACK")
+                raise
 
     def _subscription_id(
         self, principal_id: str, url: str, name: str, arguments: dict[str, Any]
     ) -> str:
         identity = canonical_json([principal_id, url, name, arguments]).encode("utf-8")
         return "sub_" + hashlib.sha256(identity).hexdigest()[:32]
+
+    @staticmethod
+    def _validate_cursor_shape(cursor: Any) -> None:
+        if cursor is None:
+            return
+        if (
+            not isinstance(cursor, str)
+            or len(cursor) > MAX_EVENT_CURSOR_LENGTH
+            or not EVENT_CURSOR_RE.fullmatch(cursor)
+        ):
+            raise GatewayError("invalid_cursor")
+
+    def _matching_event_head_locked(self, principal_id: str) -> int:
+        row = self.db.execute(
+            "SELECT COALESCE(MAX(seq),0) AS head FROM events "
+            "WHERE json_extract(payload_json,'$.recipient')=?",
+            (principal_id,),
+        ).fetchone()
+        return int(row["head"])
+
+    def _safe_watermark_locked(self, principal_id: str, subscription_id: str) -> int:
+        head = self._matching_event_head_locked(principal_id)
+        pending = self.db.execute(
+            "SELECT MIN(e.seq) AS first_unsettled FROM outbox o "
+            "JOIN events e ON e.event_id=o.event_id "
+            "WHERE o.subscription_id=? AND o.state IN ('pending','sending')",
+            (subscription_id,),
+        ).fetchone()
+        if pending["first_unsettled"] is not None:
+            return max(0, min(head, int(pending["first_unsettled"]) - 1))
+        return head
+
+    def _mint_cursor_locked(
+        self,
+        principal_id: str,
+        subscription_id: str,
+        event_name: str,
+        arguments_json: str,
+        seq: int,
+    ) -> str:
+        row = self.db.execute(
+            "SELECT token FROM event_cursors WHERE principal_id=? AND subscription_id=? "
+            "AND event_name=? AND arguments_json=? AND seq=?",
+            (principal_id, subscription_id, event_name, arguments_json, seq),
+        ).fetchone()
+        if row is not None:
+            return str(row["token"])
+        token = secrets.token_urlsafe(32)
+        self.db.execute(
+            "INSERT INTO event_cursors(token,principal_id,subscription_id,event_name,arguments_json,seq,created_at) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (token, principal_id, subscription_id, event_name, arguments_json, seq, self.clock()),
+        )
+        return token
+
+    def _resolve_cursor(
+        self,
+        cursor: Any,
+        principal_id: str,
+        subscription_id: str,
+        event_name: str,
+        arguments_json: str,
+    ) -> int | None:
+        self._validate_cursor_shape(cursor)
+        if cursor is None:
+            return None
+        with self.db_lock:
+            row = self.db.execute(
+                "SELECT principal_id,subscription_id,event_name,arguments_json,seq "
+                "FROM event_cursors WHERE token=?",
+                (cursor,),
+            ).fetchone()
+            if (
+                row is None
+                or row["principal_id"] != principal_id
+                or row["subscription_id"] != subscription_id
+                or row["event_name"] != event_name
+                or row["arguments_json"] != arguments_json
+            ):
+                raise GatewayError("invalid_cursor")
+            seq = int(row["seq"])
+            if seq > self._matching_event_head_locked(principal_id):
+                raise GatewayError("invalid_cursor")
+            return seq
+
+    def _restore_outbox_after_cursor_locked(
+        self,
+        principal_id: str,
+        subscription_id: str,
+        recipient: str,
+        cursor_seq: int,
+        now: float,
+    ) -> None:
+        rows = self.db.execute(
+            "SELECT e.event_id FROM events e WHERE e.seq>? "
+            "AND json_extract(e.payload_json,'$.recipient')=? AND e.status!='consumed' "
+            "ORDER BY e.seq",
+            (cursor_seq, recipient),
+        ).fetchall()
+        for event in rows:
+            prior = self.db.execute(
+                "SELECT state FROM outbox WHERE event_id=? AND subscription_id=?",
+                (event["event_id"], subscription_id),
+            ).fetchone()
+            if prior is None:
+                self.db.execute(
+                    "INSERT INTO outbox(event_id,subscription_id,state,next_attempt) VALUES(?,?,'pending',?)",
+                    (event["event_id"], subscription_id, now),
+                )
+            elif prior["state"] in {"cancelled", "sent"}:
+                # A valid older cursor explicitly requests replay. Keep failed rows terminal,
+                # especially permanent 410/413 responses; pending backoff and active leases
+                # remain unchanged so renewal cannot defeat retry bounds or ordering.
+                self.db.execute(
+                    "UPDATE outbox SET state='pending',attempts=0,next_attempt=?,lease_until=NULL,"
+                    "last_status=NULL,last_error=NULL WHERE event_id=? AND subscription_id=? "
+                    "AND state IN ('cancelled','sent')",
+                    (now, event["event_id"], subscription_id),
+                )
 
     @staticmethod
     def _check_whsec(value: Any) -> tuple[str, bytes]:
@@ -808,6 +955,8 @@ class Gateway:
             "name", "arguments", "delivery", "cursor", "ttlMs"
         }:
             raise GatewayError("invalid_subscribe_params")
+        cursor = params.get("cursor")
+        self._validate_cursor_shape(cursor)
         name = params.get("name")
         if name != EVENT_NAME:
             raise GatewayError("unknown_event")
@@ -820,16 +969,7 @@ class Gateway:
         url = delivery["url"]
         if not isinstance(url, str):
             raise GatewayError("invalid_callback_url")
-        subscription_status("received")
-        try:
-            self.callback_transport.validate_url(url)
-        except UnsafeCallback as exc:
-            subscription_status("rejected", str(exc))
-            raise GatewayError("invalid_callback_url") from exc
         secret_b64, secret = self._check_whsec(delivery["secret"])
-        cursor = params.get("cursor")
-        if cursor is not None:
-            raise GatewayError("cursor_not_supported")
         ttl = params.get("ttlMs", DEFAULT_TTL_MS)
         if ttl is None:
             ttl = DEFAULT_TTL_MS
@@ -837,6 +977,18 @@ class Gateway:
             raise GatewayError("invalid_ttl")
         granted_ms = max(MIN_TTL_MS, min(ttl, MAX_TTL_MS))
         subscription_id = self._subscription_id(principal["id"], url, name, arguments)
+        arguments_json = canonical_json(arguments)
+        # Resolve the opaque cursor and its exact scope before callback validation,
+        # challenge delivery, or any subscription/outbox write.
+        cursor_seq = self._resolve_cursor(
+            cursor, principal["id"], subscription_id, name, arguments_json
+        )
+        subscription_status("received")
+        try:
+            self.callback_transport.validate_url(url)
+        except UnsafeCallback as exc:
+            subscription_status("rejected", str(exc))
+            raise GatewayError("invalid_callback_url") from exc
         try:
             self._verify_callback(principal, subscription_id, url, secret)
         except RpcFault as exc:
@@ -845,31 +997,45 @@ class Gateway:
             raise
         now = self.clock()
         expires_at = now + granted_ms / 1000
-        arguments_json = canonical_json(arguments)
         with self.db_lock:
-            self.db.execute(
-                "INSERT INTO subscriptions(id,principal_id,principal_fingerprint,url,name,arguments_json,secret_b64,expires_at,active,created_at,updated_at) "
-                "VALUES(?,?,?,?,?,?,?,?,1,?,?) "
-                "ON CONFLICT(id) DO UPDATE SET principal_fingerprint=excluded.principal_fingerprint, "
-                "secret_b64=excluded.secret_b64,expires_at=excluded.expires_at,active=1,updated_at=excluded.updated_at",
-                (
-                    subscription_id,
-                    principal["id"],
-                    principal["token_sha256"],
-                    url,
-                    name,
-                    arguments_json,
-                    secret_b64,
-                    expires_at,
-                    now,
-                    now,
-                ),
-            )
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                self.db.execute(
+                    "INSERT INTO subscriptions(id,principal_id,principal_fingerprint,url,name,arguments_json,secret_b64,expires_at,active,created_at,updated_at) "
+                    "VALUES(?,?,?,?,?,?,?,?,1,?,?) "
+                    "ON CONFLICT(id) DO UPDATE SET principal_fingerprint=excluded.principal_fingerprint, "
+                    "secret_b64=excluded.secret_b64,expires_at=excluded.expires_at,active=1,updated_at=excluded.updated_at",
+                    (
+                        subscription_id,
+                        principal["id"],
+                        principal["token_sha256"],
+                        url,
+                        name,
+                        arguments_json,
+                        secret_b64,
+                        expires_at,
+                        now,
+                        now,
+                    ),
+                )
+                if cursor_seq is not None:
+                    self._restore_outbox_after_cursor_locked(
+                        principal["id"], subscription_id, arguments["recipient"], cursor_seq, now
+                    )
+                watermark = self._safe_watermark_locked(principal["id"], subscription_id)
+                response_cursor = self._mint_cursor_locked(
+                    principal["id"], subscription_id, name, arguments_json, watermark
+                )
+                self.db.execute("COMMIT")
+            except Exception:
+                if self.db.in_transaction:
+                    self.db.execute("ROLLBACK")
+                raise
         subscription_status("accepted")
         return {
             "id": subscription_id,
             "refreshBefore": format_time(expires_at),
-            "cursor": None,
+            "cursor": response_cursor,
             "truncated": False,
         }
 
@@ -920,16 +1086,31 @@ class Gateway:
             self.db.execute("BEGIN IMMEDIATE")
             row = self.db.execute(
                 "SELECT o.id AS outbox_id,o.event_id,o.subscription_id,o.attempts,e.payload_json,e.created_at,e.status AS event_status, "
-                "s.principal_id,s.principal_fingerprint,s.url,s.secret_b64,s.expires_at,s.active "
+                "e.seq AS event_seq,s.principal_id,s.principal_fingerprint,s.url,s.secret_b64,s.expires_at,s.active, "
+                "s.name,s.arguments_json "
                 "FROM outbox o JOIN events e ON e.event_id=o.event_id "
                 "JOIN subscriptions s ON s.id=o.subscription_id "
                 "WHERE ((o.state='pending' AND o.next_attempt<=?) OR (o.state='sending' AND o.lease_until<=?)) "
-                "ORDER BY o.id LIMIT 1",
-                (now, now),
+                "AND NOT EXISTS (SELECT 1 FROM outbox older_o "
+                "JOIN events older_e ON older_e.event_id=older_o.event_id "
+                "JOIN subscriptions older_s ON older_s.id=older_o.subscription_id "
+                "WHERE older_o.subscription_id=o.subscription_id AND older_e.seq<e.seq "
+                "AND older_e.status!='consumed' "
+                "AND older_o.state IN ('pending','sending') AND older_s.active=1 AND older_s.expires_at>?) "
+                "ORDER BY e.seq,o.id LIMIT 1",
+                (now, now, now),
             ).fetchone()
             if row is None:
                 self.db.execute("COMMIT")
                 return False
+            if row["event_status"] == "consumed":
+                self.db.execute(
+                    "UPDATE outbox SET state='cancelled',last_error='consumed',lease_until=NULL "
+                    "WHERE id=? AND state IN ('pending','sending')",
+                    (row["outbox_id"],),
+                )
+                self.db.execute("COMMIT")
+                return True
             owner = principals.get(row["principal_id"])
             if (
                 not row["active"]
@@ -953,7 +1134,37 @@ class Gateway:
                 "UPDATE outbox SET state='sending',attempts=?,lease_until=? WHERE id=?",
                 (attempt, now + CALLBACK_TIMEOUT_SECONDS + 5, row["outbox_id"]),
             )
+            event_cursor = self._mint_cursor_locked(
+                row["principal_id"],
+                row["subscription_id"],
+                row["name"],
+                row["arguments_json"],
+                int(row["event_seq"]),
+            )
             self.db.execute("COMMIT")
+
+        # Consumption or unsubscribe may race with the claim transaction. Recheck
+        # immediately before starting network I/O so an already-cancelled row is not
+        # sent. A request already in flight cannot be recalled; conditional completion
+        # updates below ensure it will not be retried after cancellation.
+        with self.db_lock:
+            current = self.db.execute(
+                "SELECT o.state,e.status AS event_status FROM outbox o "
+                "JOIN events e ON e.event_id=o.event_id WHERE o.id=?",
+                (row["outbox_id"],),
+            ).fetchone()
+            if current is None or current["state"] != "sending" or current["event_status"] == "consumed":
+                if (
+                    current is not None
+                    and current["state"] == "sending"
+                    and current["event_status"] == "consumed"
+                ):
+                    self.db.execute(
+                        "UPDATE outbox SET state='cancelled',last_error='consumed',lease_until=NULL "
+                        "WHERE id=? AND state='sending'",
+                        (row["outbox_id"],),
+                    )
+                return True
 
         event = json.loads(row["payload_json"])
         envelope = {
@@ -961,7 +1172,7 @@ class Gateway:
             "name": EVENT_NAME,
             "timestamp": format_time(row["created_at"]),
             "data": event,
-            "cursor": None,
+            "cursor": event_cursor,
         }
         body = canonical_json(envelope).encode("utf-8")
         timestamp = str(int(now))
@@ -1006,25 +1217,29 @@ class Gateway:
         finished = self.clock()
         with self.db_lock:
             if failure is None:
-                self.db.execute(
-                    "UPDATE outbox SET state='sent',last_status=?,last_error=NULL,lease_until=NULL WHERE id=?",
+                completed = self.db.execute(
+                    "UPDATE outbox SET state='sent',last_status=?,last_error=NULL,lease_until=NULL "
+                    "WHERE id=? AND state='sending'",
                     (status, row["outbox_id"]),
-                )
-                self.db.execute(
-                    "UPDATE events SET status='sent' WHERE event_id=? AND status='pending' "
-                    "AND EXISTS(SELECT 1 FROM outbox WHERE event_id=? AND state='sent') "
-                    "AND NOT EXISTS(SELECT 1 FROM outbox WHERE event_id=? AND state IN ('pending','sending'))",
-                    (row["event_id"], row["event_id"], row["event_id"]),
-                )
+                ).rowcount
+                if completed:
+                    self.db.execute(
+                        "UPDATE events SET status='sent' WHERE event_id=? AND status='pending' "
+                        "AND EXISTS(SELECT 1 FROM outbox WHERE event_id=? AND state='sent') "
+                        "AND NOT EXISTS(SELECT 1 FROM outbox WHERE event_id=? AND state IN ('pending','sending'))",
+                        (row["event_id"], row["event_id"], row["event_id"]),
+                    )
             elif transient and attempt < MAX_DELIVERY_ATTEMPTS:
                 delay = min(2 ** (attempt - 1), 30)
                 self.db.execute(
-                    "UPDATE outbox SET state='pending',next_attempt=?,last_status=?,last_error=?,lease_until=NULL WHERE id=?",
+                    "UPDATE outbox SET state='pending',next_attempt=?,last_status=?,last_error=?,lease_until=NULL "
+                    "WHERE id=? AND state='sending'",
                     (finished + delay, status, failure, row["outbox_id"]),
                 )
             else:
                 self.db.execute(
-                    "UPDATE outbox SET state='failed',last_status=?,last_error=?,lease_until=NULL WHERE id=?",
+                    "UPDATE outbox SET state='failed',last_status=?,last_error=?,lease_until=NULL "
+                    "WHERE id=? AND state='sending'",
                     (status, failure, row["outbox_id"]),
                 )
         return True

@@ -177,6 +177,7 @@ class GatewayTests(unittest.TestCase):
         self,
         ttl_ms: int | None = 60_000,
         url: str = "https://callback.example.test/events?key=private-query",
+        cursor: str | None = None,
     ) -> dict[str, object]:
         args: dict[str, object] = {
             "name": server.EVENT_NAME,
@@ -186,7 +187,7 @@ class GatewayTests(unittest.TestCase):
                 "url": url,
                 "secret": "whsec_" + base64.b64encode(b"s" * 32).decode("ascii"),
             },
-            "cursor": None,
+            "cursor": cursor,
         }
         if ttl_ms is not None:
             args["ttlMs"] = ttl_ms
@@ -332,7 +333,7 @@ class GatewayTests(unittest.TestCase):
         self.transport.statuses = [503, 204]
         result = self.subscribe_local(ttl_ms=0)
         self.assertTrue(result["id"].startswith("sub_"))
-        self.assertEqual(result["cursor"], None)
+        self.assertRegex(result["cursor"], server.EVENT_CURSOR_RE)
         verification_url, verify_headers, verify_body = self.transport.requests[0]
         verification = json.loads(verify_body)
         raw_secret = b"s" * 32
@@ -387,6 +388,247 @@ class GatewayTests(unittest.TestCase):
         self.assertFalse(self.gateway.process_outbox_once())
         self.assertEqual(len(self.transport.requests), 1)  # verification only
         self.assertEqual(self.gateway.list_events("local")["events"][0]["status"], "pending")
+
+    def test_cursor_recovers_expiry_gap_after_sqlite_restart(self) -> None:
+        initial = self.subscribe_local(ttl_ms=60_000)
+        cursor = initial["cursor"]
+        self.clock.advance(61)
+        self.gateway.publish(self.sender, sample_event())
+        with self.gateway.db_lock:
+            self.assertEqual(self.gateway.db.execute("SELECT COUNT(*) FROM outbox").fetchone()[0], 0)
+
+        self.gateway.close()
+        self.gateway = server.Gateway(
+            str(self.config_path), str(self.db_path), self.transport, self.clock
+        )
+        renewed = self.subscribe_local(ttl_ms=120_000, cursor=cursor)
+        self.assertEqual(renewed["id"], initial["id"])
+        with self.gateway.db_lock:
+            row = self.gateway.db.execute("SELECT state FROM outbox").fetchone()
+            safe_cursor = self.gateway.db.execute(
+                "SELECT seq FROM event_cursors WHERE token=?", (renewed["cursor"],)
+            ).fetchone()
+        self.assertEqual(row["state"], "pending")
+        self.assertEqual(safe_cursor["seq"], 0)
+        self.assertTrue(self.gateway.process_outbox_once())
+        delivery = [
+            json.loads(request[2]) for request in self.transport.requests
+            if json.loads(request[2]).get("eventId") == "evt-001"
+        ]
+        self.assertEqual(len(delivery), 1)
+        self.assertEqual(delivery[0]["data"]["event_id"], "evt-001")
+        self.assertRegex(delivery[0]["cursor"], server.EVENT_CURSOR_RE)
+        with self.gateway.db_lock:
+            delivered_cursor = self.gateway.db.execute(
+                "SELECT seq FROM event_cursors WHERE token=?", (delivery[0]["cursor"],)
+            ).fetchone()
+        self.assertEqual(delivered_cursor["seq"], 1)
+
+    def test_null_cursor_starts_at_safe_current_baseline_without_history(self) -> None:
+        self.gateway.publish(self.sender, sample_event(event_id="evt-old"))
+        baseline = self.subscribe_local()
+        with self.gateway.db_lock:
+            cursor_row = self.gateway.db.execute(
+                "SELECT seq FROM event_cursors WHERE token=?", (baseline["cursor"],)
+            ).fetchone()
+            self.assertEqual(self.gateway.db.execute("SELECT COUNT(*) FROM outbox").fetchone()[0], 0)
+        self.assertEqual(cursor_row["seq"], 1)
+        self.assertFalse(self.gateway.process_outbox_once())
+
+        self.gateway.publish(self.sender, sample_event(event_id="evt-new"))
+        self.assertTrue(self.gateway.process_outbox_once())
+        delivered = [
+            json.loads(request[2])["eventId"] for request in self.transport.requests
+            if json.loads(request[2]).get("eventId")
+        ]
+        self.assertEqual(delivered, ["evt-new"])
+
+    def test_cursor_scope_and_shape_are_checked_before_callback_or_write(self) -> None:
+        first = self.subscribe_local()
+        request_count = len(self.transport.requests)
+        with self.assertRaises(server.GatewayError) as wrong_subscription:
+            self.subscribe_local(
+                cursor=first["cursor"], url="https://different.example.test/events"
+            )
+        self.assertEqual(wrong_subscription.exception.message, "invalid_cursor")
+        with self.assertRaises(server.GatewayError) as wrong_type:
+            self.subscribe_local(cursor=7)  # type: ignore[arg-type]
+        self.assertEqual(wrong_type.exception.message, "invalid_cursor")
+        with self.assertRaises(server.GatewayError) as too_long:
+            self.subscribe_local(cursor="A" * (server.MAX_EVENT_CURSOR_LENGTH + 1))
+        self.assertEqual(too_long.exception.message, "invalid_cursor")
+        self.assertEqual(len(self.transport.requests), request_count)
+        with self.gateway.db_lock:
+            self.assertEqual(
+                self.gateway.db.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0], 1
+            )
+
+        foreign_params = {
+            "name": server.EVENT_NAME,
+            "arguments": {"recipient": "dot"},
+            "delivery": {
+                "mode": "webhook",
+                "url": "https://callback.example.test/events?key=private-query",
+                "secret": "whsec_" + base64.b64encode(b"s" * 32).decode("ascii"),
+            },
+            "cursor": first["cursor"],
+        }
+        with self.assertRaises(server.GatewayError) as wrong_principal:
+            self.gateway.subscribe(self.dot, foreign_params)
+        self.assertEqual(wrong_principal.exception.message, "invalid_cursor")
+        self.assertEqual(len(self.transport.requests), request_count)
+
+    def test_cursor_replay_excludes_consumed_and_duplicate_events(self) -> None:
+        initial = self.subscribe_local(ttl_ms=60_000)
+        self.clock.advance(61)
+        event = sample_event()
+        self.gateway.publish(self.sender, event)
+        self.gateway.mark_consumed("local", "evt-001")
+        renewed = self.subscribe_local(ttl_ms=120_000, cursor=initial["cursor"])
+        self.assertRegex(renewed["cursor"], server.EVENT_CURSOR_RE)
+        duplicate, was_duplicate = self.gateway.publish(self.sender, event)
+        self.assertTrue(was_duplicate)
+        self.assertEqual(duplicate["status"], "consumed")
+        with self.gateway.db_lock:
+            self.assertEqual(self.gateway.db.execute("SELECT COUNT(*) FROM outbox").fetchone()[0], 0)
+        self.assertFalse(self.gateway.process_outbox_once())
+
+    def test_consumption_cancels_pending_callback_across_refresh_without_blocking_next_event(self) -> None:
+        initial = self.subscribe_local()
+        first_event = sample_event(event_id="evt-consumed")
+        self.gateway.publish(self.sender, first_event)
+        with self.gateway.db_lock:
+            row = self.gateway.db.execute(
+                "SELECT state FROM outbox WHERE event_id='evt-consumed'"
+            ).fetchone()
+        self.assertEqual(row["state"], "pending")
+
+        self.gateway.mark_consumed("local", "evt-consumed")
+        with self.gateway.db_lock:
+            row = self.gateway.db.execute(
+                "SELECT state,last_error FROM outbox WHERE event_id='evt-consumed'"
+            ).fetchone()
+        self.assertEqual((row["state"], row["last_error"]), ("cancelled", "consumed"))
+
+        first_refresh = self.subscribe_local(cursor=initial["cursor"])
+        second_refresh = self.subscribe_local(cursor=initial["cursor"])
+        self.assertEqual(first_refresh["cursor"], second_refresh["cursor"])
+        with self.gateway.db_lock:
+            cursor_row = self.gateway.db.execute(
+                "SELECT seq FROM event_cursors WHERE token=?", (first_refresh["cursor"],)
+            ).fetchone()
+        self.assertEqual(cursor_row["seq"], 1)
+
+        self.gateway.publish(self.sender, sample_event(event_id="evt-next"))
+        self.assertTrue(self.gateway.process_outbox_once())
+        deliveries = [
+            json.loads(request[2])["eventId"] for request in self.transport.requests
+            if json.loads(request[2]).get("eventId")
+        ]
+        self.assertEqual(deliveries, ["evt-next"])
+
+        duplicate, was_duplicate = self.gateway.publish(self.sender, first_event)
+        self.assertTrue(was_duplicate)
+        self.assertEqual(duplicate["status"], "consumed")
+        with self.gateway.db_lock:
+            self.assertEqual(
+                self.gateway.db.execute(
+                    "SELECT COUNT(*) FROM outbox WHERE event_id='evt-consumed'"
+                ).fetchone()[0],
+                1,
+            )
+
+    def test_valid_cursor_reactivates_cancelled_outbox(self) -> None:
+        initial = self.subscribe_local()
+        self.gateway.publish(self.sender, sample_event())
+        unsubscribe = {
+            "name": server.EVENT_NAME,
+            "arguments": {"recipient": "local"},
+            "delivery": {"mode": "webhook", "url": "https://callback.example.test/events?key=private-query"},
+        }
+        self.gateway.unsubscribe(self.local, unsubscribe)
+        with self.gateway.db_lock:
+            row = self.gateway.db.execute("SELECT state FROM outbox").fetchone()
+        self.assertEqual(row["state"], "cancelled")
+
+        self.subscribe_local(cursor=initial["cursor"])
+        with self.gateway.db_lock:
+            row = self.gateway.db.execute("SELECT state,attempts FROM outbox").fetchone()
+        self.assertEqual((row["state"], row["attempts"]), ("pending", 0))
+        self.assertTrue(self.gateway.process_outbox_once())
+        self.assertEqual(
+            [json.loads(request[2])["eventId"] for request in self.transport.requests if json.loads(request[2]).get("eventId")],
+            ["evt-001"],
+        )
+
+    def test_explicit_older_cursor_replays_accepted_event_idempotently(self) -> None:
+        initial = self.subscribe_local()
+        self.gateway.publish(self.sender, sample_event())
+        self.assertTrue(self.gateway.process_outbox_once())
+        first_delivery = next(
+            request[2] for request in self.transport.requests if json.loads(request[2]).get("eventId") == "evt-001"
+        )
+        with self.gateway.db_lock:
+            row = self.gateway.db.execute("SELECT state FROM outbox").fetchone()
+        self.assertEqual(row["state"], "sent")
+
+        self.subscribe_local(cursor=initial["cursor"])
+        with self.gateway.db_lock:
+            row = self.gateway.db.execute("SELECT state FROM outbox").fetchone()
+        self.assertEqual(row["state"], "pending")
+        self.assertTrue(self.gateway.process_outbox_once())
+        deliveries = [
+            request[2] for request in self.transport.requests
+            if json.loads(request[2]).get("eventId") == "evt-001"
+        ]
+        self.assertEqual(len(deliveries), 2)
+        self.assertEqual(deliveries[0], deliveries[1])
+        self.assertEqual(first_delivery, deliveries[1])
+
+    def test_cursor_replay_does_not_reopen_terminal_410_or_413(self) -> None:
+        initial = self.subscribe_local()
+        self.gateway.publish(self.sender, sample_event())
+        self.transport.statuses = [410]
+        self.assertTrue(self.gateway.process_outbox_once())
+        renewed = self.subscribe_local(cursor=initial["cursor"])
+        self.assertRegex(renewed["cursor"], server.EVENT_CURSOR_RE)
+        with self.gateway.db_lock:
+            row = self.gateway.db.execute("SELECT state,attempts,last_status FROM outbox").fetchone()
+        self.assertEqual((row["state"], row["attempts"], row["last_status"]), ("failed", 1, 410))
+        self.assertFalse(self.gateway.process_outbox_once())
+
+        second = self.gateway.publish(self.sender, sample_event(event_id="evt-002"))[0]
+        self.transport.statuses = [413]
+        self.assertTrue(self.gateway.process_outbox_once())
+        with self.gateway.db_lock:
+            row = self.gateway.db.execute(
+                "SELECT state,attempts,last_status FROM outbox WHERE event_id=?", (second["event_id"],)
+            ).fetchone()
+        self.assertEqual((row["state"], row["attempts"], row["last_status"]), ("failed", 1, 413))
+        self.subscribe_local(cursor=initial["cursor"])
+        with self.gateway.db_lock:
+            row = self.gateway.db.execute(
+                "SELECT state,attempts,last_status FROM outbox WHERE event_id=?", (second["event_id"],)
+            ).fetchone()
+        self.assertEqual((row["state"], row["attempts"], row["last_status"]), ("failed", 1, 413))
+        self.assertFalse(self.gateway.process_outbox_once())
+
+    def test_outbox_retries_preserve_per_subscription_event_order(self) -> None:
+        self.subscribe_local()
+        self.transport.statuses = [503, 204, 204]
+        self.gateway.publish(self.sender, sample_event(event_id="evt-001"))
+        self.gateway.publish(self.sender, sample_event(event_id="evt-002"))
+        self.assertTrue(self.gateway.process_outbox_once())
+        # The first event is in backoff, so a later due event cannot pass it.
+        self.assertFalse(self.gateway.process_outbox_once())
+        self.clock.advance(1)
+        self.assertTrue(self.gateway.process_outbox_once())
+        self.assertTrue(self.gateway.process_outbox_once())
+        deliveries = [
+            json.loads(request[2])["eventId"] for request in self.transport.requests
+            if json.loads(request[2]).get("eventId")
+        ]
+        self.assertEqual(deliveries, ["evt-001", "evt-001", "evt-002"])
 
     def test_revoked_principal_cancels_outbox(self) -> None:
         self.subscribe_local()
