@@ -443,6 +443,490 @@ class GatewayTests(unittest.TestCase):
         ]
         self.assertEqual(delivered, ["evt-new"])
 
+    def test_new_callback_subscription_emits_one_non_authoritative_reconciliation_signal(self) -> None:
+        ledger = FakeTaskLedger()
+        self.gateway.task_ledger = ledger
+        old_url = "https://callback-old.example.test/events"
+        new_url = "https://callback-new.example.test/events"
+        old_subscription = self.subscribe_local(url=old_url)
+        self.gateway.unsubscribe(
+            self.local,
+            {
+                "name": server.EVENT_NAME,
+                "arguments": {"recipient": "local"},
+                "delivery": {"mode": "webhook", "url": old_url},
+            },
+        )
+        original_payload = sample_event(
+            event_id="evt-original", result_page_id="page-original"
+        )
+        original, duplicate = self.gateway.publish(self.sender, original_payload)
+        self.assertFalse(duplicate)
+
+        first = self.subscribe_local(url=new_url)
+        self.assertNotEqual(first["id"], old_subscription["id"])
+        with self.gateway.db_lock:
+            original_after = self.gateway.db.execute(
+                "SELECT * FROM events WHERE event_id='evt-original'"
+            ).fetchone()
+            signal_rows = self.gateway.db.execute(
+                "SELECT * FROM events WHERE publisher_id=?",
+                (server.RECONCILIATION_PUBLISHER_ID,),
+            ).fetchall()
+            outbox_rows = self.gateway.db.execute(
+                "SELECT * FROM outbox WHERE subscription_id=?", (first["id"],)
+            ).fetchall()
+            first_cursor = self.gateway.db.execute(
+                "SELECT seq FROM event_cursors WHERE token=?", (first["cursor"],)
+            ).fetchone()
+
+        self.assertEqual(original_after["payload_json"], server.canonical_json(original_payload))
+        self.assertEqual(original_after["publisher_id"], "sender")
+        self.assertEqual(original_after["status"], "pending")
+        self.assertEqual(len(signal_rows), 1)
+        self.assertEqual(len(outbox_rows), 1)
+        signal = json.loads(signal_rows[0]["payload_json"])
+        expected_event_id = server.Gateway._reconciliation_event_id(
+            original["event_id"], self.local["id"], server.EVENT_NAME,
+            server.canonical_json({"recipient": "local"}),
+        )
+        self.assertEqual(signal, {
+            "event_id": expected_event_id,
+            "recipient": "local",
+            "task_id": original_payload["task_id"],
+            "request_id": original_payload["request_id"],
+            "kind": "updated",
+            "body_sha256": original_payload["body_sha256"],
+            "result_page_id": "page-original",
+        })
+        self.assertEqual(signal_rows[0]["publisher_id"], server.RECONCILIATION_PUBLISHER_ID)
+        self.assertEqual(outbox_rows[0]["event_id"], expected_event_id)
+        self.assertEqual(first_cursor["seq"], original["seq"])
+
+        refreshed = self.subscribe_local(url=new_url)
+        self.assertEqual(refreshed["id"], first["id"])
+        self.assertEqual(refreshed["cursor"], first["cursor"])
+        with self.gateway.db_lock:
+            self.assertEqual(
+                self.gateway.db.execute(
+                    "SELECT COUNT(*) FROM events WHERE publisher_id=?",
+                    (server.RECONCILIATION_PUBLISHER_ID,),
+                ).fetchone()[0],
+                1,
+            )
+
+        self.assertTrue(self.gateway.process_outbox_once())
+        notifications = [
+            json.loads(request[2]) for request in self.transport.requests
+            if json.loads(request[2]).get("eventId")
+        ]
+        self.assertEqual([item["eventId"] for item in notifications], [expected_event_id])
+        self.assertEqual(ledger.calls, [])
+
+    def test_prior_2xx_for_original_suppresses_reconciliation(self) -> None:
+        self.subscribe_local(url="https://callback-old.example.test/events")
+        original, duplicate = self.gateway.publish(
+            self.sender, sample_event(event_id="evt-already-notified")
+        )
+        self.assertFalse(duplicate)
+        self.assertTrue(self.gateway.process_outbox_once())
+
+        new = self.subscribe_local(url="https://callback-new.example.test/events")
+        with self.gateway.db_lock:
+            original_outbox = self.gateway.db.execute(
+                "SELECT state,last_status FROM outbox WHERE event_id=?",
+                (original["event_id"],),
+            ).fetchone()
+            signals = self.gateway.db.execute(
+                "SELECT event_id FROM events WHERE publisher_id=?",
+                (server.RECONCILIATION_PUBLISHER_ID,),
+            ).fetchall()
+            new_outbox = self.gateway.db.execute(
+                "SELECT COUNT(*) FROM outbox WHERE subscription_id=?",
+                (new["id"],),
+            ).fetchone()[0]
+        self.assertEqual(original_outbox["state"], "sent")
+        self.assertGreaterEqual(original_outbox["last_status"], 200)
+        self.assertLess(original_outbox["last_status"], 300)
+        self.assertEqual(signals, [])
+        self.assertEqual(new_outbox, 0)
+
+    def test_terminal_original_delivery_does_not_create_reconciliation(self) -> None:
+        self.subscribe_local(url="https://callback-old.example.test/events")
+        original, _ = self.gateway.publish(self.sender, sample_event(event_id="evt-original-terminal"))
+        self.transport.statuses = [410]
+        self.assertTrue(self.gateway.process_outbox_once())
+        new = self.subscribe_local(url="https://callback-new.example.test/events")
+        with self.gateway.db_lock:
+            old_outbox = self.gateway.db.execute(
+                "SELECT state,last_status FROM outbox WHERE event_id=?",
+                (original["event_id"],),
+            ).fetchone()
+            signals = self.gateway.db.execute(
+                "SELECT COUNT(*) FROM events WHERE publisher_id=?",
+                (server.RECONCILIATION_PUBLISHER_ID,),
+            ).fetchone()[0]
+            new_outbox = self.gateway.db.execute(
+                "SELECT COUNT(*) FROM outbox WHERE subscription_id=?",
+                (new["id"],),
+            ).fetchone()[0]
+        self.assertEqual(old_outbox["state"], "failed")
+        self.assertEqual(old_outbox["last_status"], 410)
+        self.assertEqual(signals, 0)
+        self.assertEqual(new_outbox, 0)
+
+    def test_invalid_callback_does_not_persist_reconciliation(self) -> None:
+        self.subscribe_local(url="https://callback-old.example.test/events")
+        self.gateway.publish(self.sender, sample_event(event_id="evt-invalid-callback"))
+        subscriptions_before = self.gateway.db.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0]
+        events_before = self.gateway.db.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+        callback_requests_before = len(self.transport.requests)
+        with self.assertRaises(server.GatewayError) as invalid:
+            self.gateway.subscribe(
+                self.local,
+                {
+                    "name": server.EVENT_NAME,
+                    "arguments": {"recipient": "local"},
+                    "delivery": {
+                        "mode": "webhook",
+                        "url": "http://callback-new.example.test/events",
+                        "secret": "whsec_" + base64.b64encode(b"s" * 32).decode("ascii"),
+                    },
+                },
+            )
+        self.assertEqual(invalid.exception.message, "invalid_callback_url")
+        self.assertEqual(len(self.transport.requests), callback_requests_before)
+        with self.gateway.db_lock:
+            self.assertEqual(
+                self.gateway.db.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0],
+                subscriptions_before,
+            )
+            self.assertEqual(
+                self.gateway.db.execute("SELECT COUNT(*) FROM events").fetchone()[0],
+                events_before,
+            )
+            self.assertEqual(
+                self.gateway.db.execute(
+                    "SELECT COUNT(*) FROM events WHERE publisher_id=?",
+                    (server.RECONCILIATION_PUBLISHER_ID,),
+                ).fetchone()[0],
+                0,
+            )
+
+    def test_reconciliation_identity_survives_callback_replacement_and_2xx(self) -> None:
+        old = self.subscribe_local(url="https://callback-old.example.test/events")
+        self.gateway.unsubscribe(
+            self.local,
+            {
+                "name": server.EVENT_NAME,
+                "arguments": {"recipient": "local"},
+                "delivery": {"mode": "webhook", "url": "https://callback-old.example.test/events"},
+            },
+        )
+        original, _ = self.gateway.publish(self.sender, sample_event(event_id="evt-recovery-sent"))
+        first = self.subscribe_local(url="https://callback-resumed.example.test/events")
+        with self.gateway.db_lock:
+            signal_id = self.gateway.db.execute(
+                "SELECT event_id FROM events WHERE publisher_id=?",
+                (server.RECONCILIATION_PUBLISHER_ID,),
+            ).fetchone()[0]
+        self.assertEqual(
+            signal_id,
+            server.Gateway._reconciliation_event_id(
+                original["event_id"], self.local["id"], server.EVENT_NAME,
+                server.canonical_json({"recipient": "local"}),
+            ),
+        )
+        self.assertTrue(self.gateway.process_outbox_once())
+        self.gateway.unsubscribe(
+            self.local,
+            {
+                "name": server.EVENT_NAME,
+                "arguments": {"recipient": "local"},
+                "delivery": {"mode": "webhook", "url": "https://callback-resumed.example.test/events"},
+            },
+        )
+        self.gateway.close()
+        self.gateway = server.Gateway(
+            str(self.config_path), str(self.db_path), self.transport, self.clock
+        )
+        self.principals = self.gateway.principals()
+        self.local = self.principals["local"]
+        self.sender = self.principals["sender"]
+        self.dot = self.principals["dot"]
+
+        second = self.subscribe_local(url="https://callback-resumed-again.example.test/events")
+        with self.gateway.db_lock:
+            event_ids = self.gateway.db.execute(
+                "SELECT event_id FROM events WHERE publisher_id=?",
+                (server.RECONCILIATION_PUBLISHER_ID,),
+            ).fetchall()
+            second_outbox = self.gateway.db.execute(
+                "SELECT COUNT(*) FROM outbox WHERE subscription_id=?",
+                (second["id"],),
+            ).fetchone()[0]
+            old_outbox = self.gateway.db.execute(
+                "SELECT subscription_id,state,last_status FROM outbox WHERE event_id=?",
+                (signal_id,),
+            ).fetchall()
+        self.assertNotEqual(first["id"], second["id"])
+        self.assertEqual([row["event_id"] for row in event_ids], [signal_id])
+        self.assertEqual(second_outbox, 0)
+        self.assertTrue(any(row["state"] == "sent" and 200 <= row["last_status"] < 300 for row in old_outbox))
+        self.assertEqual(len(self.transport.requests), 4)
+
+    def test_consumed_reconciliation_is_not_recreated_for_new_callback_id(self) -> None:
+        self.subscribe_local(url="https://callback-old.example.test/events")
+        self.gateway.unsubscribe(
+            self.local,
+            {
+                "name": server.EVENT_NAME,
+                "arguments": {"recipient": "local"},
+                "delivery": {"mode": "webhook", "url": "https://callback-old.example.test/events"},
+            },
+        )
+        self.gateway.publish(self.sender, sample_event(event_id="evt-recovery-consumed"))
+        first = self.subscribe_local(url="https://callback-resumed.example.test/events")
+        with self.gateway.db_lock:
+            signal_id = self.gateway.db.execute(
+                "SELECT event_id FROM events WHERE publisher_id=?",
+                (server.RECONCILIATION_PUBLISHER_ID,),
+            ).fetchone()[0]
+        self.gateway.mark_consumed(self.local["id"], signal_id)
+        self.gateway.unsubscribe(
+            self.local,
+            {
+                "name": server.EVENT_NAME,
+                "arguments": {"recipient": "local"},
+                "delivery": {"mode": "webhook", "url": "https://callback-resumed.example.test/events"},
+            },
+        )
+        second = self.subscribe_local(url="https://callback-resumed-again.example.test/events")
+        with self.gateway.db_lock:
+            event_count = self.gateway.db.execute(
+                "SELECT COUNT(*) FROM events WHERE publisher_id=?",
+                (server.RECONCILIATION_PUBLISHER_ID,),
+            ).fetchone()[0]
+            second_outbox = self.gateway.db.execute(
+                "SELECT COUNT(*) FROM outbox WHERE subscription_id=?",
+                (second["id"],),
+            ).fetchone()[0]
+            signal_status = self.gateway.db.execute(
+                "SELECT status FROM events WHERE event_id=?", (signal_id,)
+            ).fetchone()[0]
+        self.assertNotEqual(first["id"], second["id"])
+        self.assertEqual(signal_status, "consumed")
+        self.assertEqual(event_count, 1)
+        self.assertEqual(second_outbox, 0)
+
+    def test_reconciliation_retry_migrates_same_id_with_backoff_budget(self) -> None:
+        self.subscribe_local(url="https://callback-old.example.test/events")
+        self.gateway.unsubscribe(
+            self.local,
+            {
+                "name": server.EVENT_NAME,
+                "arguments": {"recipient": "local"},
+                "delivery": {"mode": "webhook", "url": "https://callback-old.example.test/events"},
+            },
+        )
+        self.gateway.publish(self.sender, sample_event(event_id="evt-recovery-retry"))
+        first = self.subscribe_local(url="https://callback-resumed.example.test/events")
+        with self.gateway.db_lock:
+            signal_id = self.gateway.db.execute(
+                "SELECT event_id FROM events WHERE publisher_id=?",
+                (server.RECONCILIATION_PUBLISHER_ID,),
+            ).fetchone()[0]
+        self.transport.statuses = [503]
+        self.assertTrue(self.gateway.process_outbox_once())
+        with self.gateway.db_lock:
+            prior = self.gateway.db.execute(
+                "SELECT id,state,attempts,next_attempt FROM outbox WHERE event_id=? AND subscription_id=?",
+                (signal_id, first["id"]),
+            ).fetchone()
+        self.assertEqual(prior["state"], "pending")
+        self.assertEqual(prior["attempts"], 1)
+        prior_next_attempt = prior["next_attempt"]
+
+        # Expiration makes the old callback ineligible while retaining the durable retry.
+        self.clock.advance(60)
+        second = self.subscribe_local(url="https://callback-resumed-again.example.test/events")
+        with self.gateway.db_lock:
+            old_row = self.gateway.db.execute(
+                "SELECT state,last_error,attempts,next_attempt FROM outbox WHERE id=?",
+                (prior["id"],),
+            ).fetchone()
+            new_row = self.gateway.db.execute(
+                "SELECT event_id,state,attempts,next_attempt FROM outbox WHERE event_id=? AND subscription_id=?",
+                (signal_id, second["id"]),
+            ).fetchone()
+            signal_count = self.gateway.db.execute(
+                "SELECT COUNT(*) FROM events WHERE publisher_id=?",
+                (server.RECONCILIATION_PUBLISHER_ID,),
+            ).fetchone()[0]
+        self.assertEqual(old_row["state"], "cancelled")
+        self.assertEqual(old_row["last_error"], "subscription_replaced")
+        self.assertEqual(new_row["event_id"], signal_id)
+        self.assertEqual(new_row["attempts"], 1)
+        self.assertEqual(new_row["next_attempt"], prior_next_attempt)
+        self.assertEqual(signal_count, 1)
+        self.assertTrue(self.gateway.process_outbox_once())
+        with self.gateway.db_lock:
+            delivered = self.gateway.db.execute(
+                "SELECT state,attempts FROM outbox WHERE event_id=? AND subscription_id=?",
+                (signal_id, second["id"]),
+            ).fetchone()
+        self.assertEqual(delivered["state"], "sent")
+        self.assertEqual(delivered["attempts"], 2)
+
+    def test_failed_reconciliation_and_sending_lease_are_not_revived(self) -> None:
+        self.subscribe_local(url="https://callback-old.example.test/events")
+        self.gateway.unsubscribe(
+            self.local,
+            {
+                "name": server.EVENT_NAME,
+                "arguments": {"recipient": "local"},
+                "delivery": {"mode": "webhook", "url": "https://callback-old.example.test/events"},
+            },
+        )
+        self.gateway.publish(self.sender, sample_event(event_id="evt-recovery-terminal"))
+        first = self.subscribe_local(url="https://callback-resumed.example.test/events")
+        with self.gateway.db_lock:
+            signal_id = self.gateway.db.execute(
+                "SELECT event_id FROM events WHERE publisher_id=?",
+                (server.RECONCILIATION_PUBLISHER_ID,),
+            ).fetchone()[0]
+        self.transport.statuses = [410]
+        self.assertTrue(self.gateway.process_outbox_once())
+        second = self.subscribe_local(url="https://callback-resumed-again.example.test/events")
+        with self.gateway.db_lock:
+            failed = self.gateway.db.execute(
+                "SELECT state,last_status FROM outbox WHERE event_id=? AND subscription_id=?",
+                (signal_id, first["id"]),
+            ).fetchone()
+            second_count = self.gateway.db.execute(
+                "SELECT COUNT(*) FROM outbox WHERE subscription_id=?", (second["id"],)
+            ).fetchone()[0]
+        self.assertEqual(failed["state"], "failed")
+        self.assertEqual(failed["last_status"], 410)
+        self.assertEqual(second_count, 0)
+
+        # A separate outstanding signal with an active lease stays on its original row.
+        self.gateway.unsubscribe(
+            self.local,
+            {
+                "name": server.EVENT_NAME,
+                "arguments": {"recipient": "local"},
+                "delivery": {"mode": "webhook", "url": "https://callback-resumed-again.example.test/events"},
+            },
+        )
+        self.gateway.unsubscribe(
+            self.local,
+            {
+                "name": server.EVENT_NAME,
+                "arguments": {"recipient": "local"},
+                "delivery": {"mode": "webhook", "url": "https://callback-resumed.example.test/events"},
+            },
+        )
+        self.gateway.publish(self.sender, sample_event(event_id="evt-recovery-lease"))
+        third = self.subscribe_local(url="https://callback-resumed-third.example.test/events")
+        with self.gateway.db_lock:
+            lease_signal = self.gateway.db.execute(
+                "SELECT event_id FROM events WHERE publisher_id=? ORDER BY seq DESC LIMIT 1",
+                (server.RECONCILIATION_PUBLISHER_ID,),
+            ).fetchone()[0]
+            self.gateway.db.execute(
+                "UPDATE outbox SET state='sending',attempts=1,lease_until=? WHERE event_id=? AND subscription_id=?",
+                (self.clock() + 30, lease_signal, third["id"]),
+            )
+        self.gateway.unsubscribe(
+            self.local,
+            {
+                "name": server.EVENT_NAME,
+                "arguments": {"recipient": "local"},
+                "delivery": {"mode": "webhook", "url": "https://callback-resumed-third.example.test/events"},
+            },
+        )
+        fourth = self.subscribe_local(url="https://callback-resumed-fourth.example.test/events")
+        with self.gateway.db_lock:
+            fourth_count = self.gateway.db.execute(
+                "SELECT COUNT(*) FROM outbox WHERE event_id=? AND subscription_id=?",
+                (lease_signal, fourth["id"]),
+            ).fetchone()[0]
+            lease_state = self.gateway.db.execute(
+                "SELECT state FROM outbox WHERE event_id=? AND subscription_id=?",
+                (lease_signal, third["id"]),
+            ).fetchone()[0]
+        self.assertEqual(fourth_count, 0)
+        self.assertEqual(lease_state, "sending")
+
+    def test_empty_queue_and_ordinary_refresh_do_not_reconcile(self) -> None:
+        self.subscribe_local(url="https://callback-old.example.test/events")
+        first = self.subscribe_local(url="https://callback-new.example.test/events")
+        with self.gateway.db_lock:
+            self.assertEqual(self.gateway.db.execute("SELECT COUNT(*) FROM events").fetchone()[0], 0)
+            self.assertEqual(
+                self.gateway.db.execute(
+                    "SELECT COUNT(*) FROM events WHERE publisher_id=?",
+                    (server.RECONCILIATION_PUBLISHER_ID,),
+                ).fetchone()[0],
+                0,
+            )
+
+        self.gateway.publish(self.sender, sample_event(event_id="evt-after-resume"))
+        refreshed = self.subscribe_local(url="https://callback-new.example.test/events")
+        self.assertEqual(refreshed["id"], first["id"])
+        with self.gateway.db_lock:
+            self.assertEqual(self.gateway.db.execute("SELECT COUNT(*) FROM events").fetchone()[0], 1)
+            self.assertEqual(
+                self.gateway.db.execute(
+                    "SELECT COUNT(*) FROM events WHERE publisher_id=?",
+                    (server.RECONCILIATION_PUBLISHER_ID,),
+                ).fetchone()[0],
+                0,
+            )
+
+    def test_invalid_scope_and_unrelated_principal_do_not_reconcile(self) -> None:
+        self.subscribe_local(url="https://local-old.example.test/events")
+        self.gateway.publish(self.sender, sample_event(event_id="evt-local-only"))
+        local_before = self.gateway.db.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0]
+        with self.assertRaises(server.GatewayError) as wrong_filter:
+            self.gateway.subscribe(
+                self.local,
+                {
+                    "name": server.EVENT_NAME,
+                    "arguments": {"recipient": "dot"},
+                    "delivery": {
+                        "mode": "webhook",
+                        "url": "https://invalid-scope.example.test/events",
+                        "secret": "whsec_" + base64.b64encode(b"s" * 32).decode("ascii"),
+                    },
+                },
+            )
+        self.assertEqual(wrong_filter.exception.status, 403)
+
+        dot_secret = "whsec_" + base64.b64encode(b"d" * 32).decode("ascii")
+        for url in ("https://dot-old.example.test/events", "https://dot-new.example.test/events"):
+            self.gateway.subscribe(
+                self.dot,
+                {
+                    "name": server.EVENT_NAME,
+                    "arguments": {"recipient": "dot"},
+                    "delivery": {"mode": "webhook", "url": url, "secret": dot_secret},
+                },
+            )
+        with self.gateway.db_lock:
+            self.assertEqual(
+                self.gateway.db.execute(
+                    "SELECT COUNT(*) FROM events WHERE publisher_id=?",
+                    (server.RECONCILIATION_PUBLISHER_ID,),
+                ).fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                self.gateway.db.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0],
+                local_before + 2,
+            )
+
     def test_cursor_scope_and_shape_are_checked_before_callback_or_write(self) -> None:
         first = self.subscribe_local()
         request_count = len(self.transport.requests)

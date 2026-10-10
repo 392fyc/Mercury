@@ -37,6 +37,11 @@ MCP_VERSION = "2026-07-28"
 SERVER_NAME = "agents-event-gateway"
 SERVER_VERSION = "0.1.0"
 EVENT_NAME = "agent.update"
+RECONCILIATION_PUBLISHER_ID = "gateway_subscription_reconciliation"
+RECONCILIATION_EVENT_PREFIX = "gateway-reconcile-"
+UNSENT_CANCEL_REASONS = frozenset(
+    {"unsubscribed_pending", "subscription_inactive_pending", "subscription_replaced"}
+)
 EVENT_KINDS = frozenset(
     {"created", "started", "updated", "completed", "failed", "needs_attention", "cancelled"}
 )
@@ -878,6 +883,187 @@ class Gateway:
                 )
 
     @staticmethod
+    def _reconciliation_event_id(
+        original_event_id: str,
+        principal_id: str,
+        event_name: str,
+        arguments_json: str,
+    ) -> str:
+        identity = canonical_json(
+            [original_event_id, principal_id, event_name, json.loads(arguments_json)]
+        ).encode("utf-8")
+        return RECONCILIATION_EVENT_PREFIX + hashlib.sha256(identity).hexdigest()
+
+    def _reconciliation_outbox_rows_locked(
+        self,
+        event_id: str,
+        principal_id: str,
+        event_name: str,
+        arguments_json: str,
+        subscription_id: str,
+    ) -> list[sqlite3.Row]:
+        return self.db.execute(
+            "SELECT o.id,o.subscription_id,o.state,o.attempts,o.next_attempt,o.lease_until,"
+            "o.last_status,o.last_error,s.active,s.expires_at,s.principal_fingerprint "
+            "FROM outbox o JOIN subscriptions s ON s.id=o.subscription_id "
+            "WHERE o.event_id=? AND s.principal_id=? AND s.name=? AND s.arguments_json=? "
+            "AND s.id!=? ORDER BY o.id",
+            (event_id, principal_id, event_name, arguments_json, subscription_id),
+        ).fetchall()
+
+    def _insert_reconciliation_signal_locked(
+        self,
+        principal_id: str,
+        principal_fingerprint: str,
+        subscription_id: str,
+        recipient: str,
+        event_name: str,
+        arguments_json: str,
+        now: float,
+    ) -> str | None:
+        originals = self.db.execute(
+            "SELECT event_id,payload_json,status FROM events "
+            "WHERE json_extract(payload_json,'$.recipient')=? AND status!='consumed' "
+            "AND publisher_id!=? ORDER BY seq DESC",
+            (recipient, RECONCILIATION_PUBLISHER_ID),
+        ).fetchall()
+        for original in originals:
+            original_rows = self._reconciliation_outbox_rows_locked(
+                original["event_id"], principal_id, event_name, arguments_json, subscription_id
+            )
+            # A prior 2xx is the transport acknowledgment. Terminal or exhausted
+            # attempts also remain terminal across callback replacement.
+            if original["status"] == "sent" or any(
+                row["state"] == "sent"
+                or (row["last_status"] is not None and 200 <= row["last_status"] < 300)
+                or row["state"] == "failed"
+                or row["attempts"] >= MAX_DELIVERY_ATTEMPTS
+                for row in original_rows
+            ):
+                continue
+            if any(row["state"] == "sending" for row in original_rows):
+                continue
+            if any(
+                row["state"] == "pending"
+                and row["active"]
+                and row["expires_at"] > now
+                and row["principal_fingerprint"] == principal_fingerprint
+                and row["subscription_id"] != subscription_id
+                for row in original_rows
+            ):
+                continue
+            if any(
+                row["state"] == "cancelled"
+                and row["last_error"] not in UNSENT_CANCEL_REASONS
+                and row["attempts"] > 0
+                for row in original_rows
+            ):
+                # Old cancellation records may have overwritten a sending lease;
+                # only known-unsent cancellation states can establish a gap.
+                continue
+
+            source = json.loads(original["payload_json"])
+            event_id = self._reconciliation_event_id(
+                original["event_id"], principal_id, event_name, arguments_json
+            )
+            event = {
+                "event_id": event_id,
+                "recipient": source["recipient"],
+                "task_id": source["task_id"],
+                "request_id": source["request_id"],
+                "kind": "updated",
+                "body_sha256": source["body_sha256"],
+            }
+            if "result_page_id" in source:
+                event["result_page_id"] = source["result_page_id"]
+            payload_json = canonical_json(event)
+            payload_digest = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+            prior = self.db.execute(
+                "SELECT publisher_id,payload_json,status FROM events WHERE event_id=?",
+                (event_id,),
+            ).fetchone()
+            if prior is not None and (
+                prior["publisher_id"] != RECONCILIATION_PUBLISHER_ID
+                or prior["payload_json"] != payload_json
+            ):
+                raise GatewayError("reconciliation_event_conflict", 409)
+            if prior is not None and prior["status"] == "consumed":
+                continue
+            if prior is not None and prior["status"] == "sent":
+                continue
+
+            signal_rows = self._reconciliation_outbox_rows_locked(
+                event_id, principal_id, event_name, arguments_json, subscription_id
+            )
+            if any(
+                row["state"] == "sent"
+                or (row["last_status"] is not None and 200 <= row["last_status"] < 300)
+                or row["state"] == "failed"
+                or row["attempts"] >= MAX_DELIVERY_ATTEMPTS
+                for row in signal_rows
+            ):
+                continue
+            if any(row["state"] == "sending" for row in signal_rows):
+                continue
+            if any(
+                row["state"] == "pending"
+                and row["active"]
+                and row["expires_at"] > now
+                and row["principal_fingerprint"] == principal_fingerprint
+                for row in signal_rows
+            ):
+                # Leave a live delivery and its retry state where it is.
+                return None
+            if any(
+                row["state"] == "cancelled"
+                and row["last_error"] not in UNSENT_CANCEL_REASONS
+                and row["attempts"] > 0
+                for row in signal_rows
+            ):
+                return None
+
+            retry_rows = [
+                row for row in signal_rows
+                if row["state"] == "pending"
+                or (
+                    row["state"] == "cancelled"
+                    and (
+                        row["last_error"] in UNSENT_CANCEL_REASONS
+                        or row["attempts"] == 0
+                    )
+                )
+            ]
+            if any(row["state"] == "pending" and row["active"] and row["expires_at"] > now
+                   and row["principal_fingerprint"] == principal_fingerprint
+                   for row in retry_rows):
+                return None
+            attempts = max((int(row["attempts"]) for row in retry_rows), default=0)
+            next_attempt = max((float(row["next_attempt"]) for row in retry_rows), default=now)
+            if attempts >= MAX_DELIVERY_ATTEMPTS:
+                continue
+
+            if prior is None:
+                self.db.execute(
+                    "INSERT INTO events(event_id,publisher_id,payload_json,payload_sha256,created_at,status) "
+                    "VALUES(?,?,?,?,?,'pending')",
+                    (event_id, RECONCILIATION_PUBLISHER_ID, payload_json, payload_digest, now),
+                )
+            for row in retry_rows:
+                if row["state"] == "pending":
+                    self.db.execute(
+                        "UPDATE outbox SET state='cancelled',last_error='subscription_replaced',lease_until=NULL "
+                        "WHERE id=? AND state='pending'",
+                        (row["id"],),
+                    )
+            self.db.execute(
+                "INSERT INTO outbox(event_id,subscription_id,state,attempts,next_attempt) "
+                "VALUES(?,?,'pending',?,?)",
+                (event_id, subscription_id, attempts, next_attempt),
+            )
+            return event_id
+        return None
+
+    @staticmethod
     def _check_whsec(value: Any) -> tuple[str, bytes]:
         if not isinstance(value, str) or not value.startswith("whsec_"):
             raise GatewayError("invalid_delivery_secret")
@@ -1000,6 +1186,18 @@ class Gateway:
         with self.db_lock:
             self.db.execute("BEGIN IMMEDIATE")
             try:
+                existing = self.db.execute(
+                    "SELECT 1 FROM subscriptions WHERE id=?",
+                    (subscription_id,),
+                ).fetchone()
+                new_subscription = existing is None
+                prior_subscription = None
+                if new_subscription and cursor_seq is None:
+                    prior_subscription = self.db.execute(
+                        "SELECT 1 FROM subscriptions WHERE principal_id=? AND name=? "
+                        "AND arguments_json=? AND id!=? LIMIT 1",
+                        (principal["id"], name, arguments_json, subscription_id),
+                    ).fetchone()
                 self.db.execute(
                     "INSERT INTO subscriptions(id,principal_id,principal_fingerprint,url,name,arguments_json,secret_b64,expires_at,active,created_at,updated_at) "
                     "VALUES(?,?,?,?,?,?,?,?,1,?,?) "
@@ -1021,6 +1219,11 @@ class Gateway:
                 if cursor_seq is not None:
                     self._restore_outbox_after_cursor_locked(
                         principal["id"], subscription_id, arguments["recipient"], cursor_seq, now
+                    )
+                elif new_subscription and prior_subscription is not None:
+                    self._insert_reconciliation_signal_locked(
+                        principal["id"], principal["token_sha256"], subscription_id,
+                        arguments["recipient"], name, arguments_json, now
                     )
                 watermark = self._safe_watermark_locked(principal["id"], subscription_id)
                 response_cursor = self._mint_cursor_locked(
@@ -1065,8 +1268,8 @@ class Gateway:
                     (now, subscription_id, principal["id"]),
                 )
                 self.db.execute(
-                    "UPDATE outbox SET state='cancelled',last_error='unsubscribed' "
-                    "WHERE subscription_id=? AND state IN ('pending','sending')",
+                    "UPDATE outbox SET state='cancelled',last_error='unsubscribed_pending',lease_until=NULL "
+                    "WHERE subscription_id=? AND state='pending'",
                     (subscription_id,),
                 )
                 self.db.execute("COMMIT")
@@ -1085,7 +1288,7 @@ class Gateway:
         with self.db_lock:
             self.db.execute("BEGIN IMMEDIATE")
             row = self.db.execute(
-                "SELECT o.id AS outbox_id,o.event_id,o.subscription_id,o.attempts,e.payload_json,e.created_at,e.status AS event_status, "
+                "SELECT o.id AS outbox_id,o.event_id,o.subscription_id,o.state,o.attempts,e.payload_json,e.created_at,e.status AS event_status, "
                 "e.seq AS event_seq,s.principal_id,s.principal_fingerprint,s.url,s.secret_b64,s.expires_at,s.active, "
                 "s.name,s.arguments_json "
                 "FROM outbox o JOIN events e ON e.event_id=o.event_id "
@@ -1119,8 +1322,13 @@ class Gateway:
                 or owner["token_sha256"] != row["principal_fingerprint"]
             ):
                 self.db.execute(
-                    "UPDATE outbox SET state='cancelled',last_error='subscription_inactive',lease_until=NULL WHERE id=?",
-                    (row["outbox_id"],),
+                    "UPDATE outbox SET state='cancelled',last_error=?,lease_until=NULL WHERE id=?",
+                    (
+                        "subscription_inactive_pending"
+                        if row["state"] == "pending"
+                        else "delivery_lease_expired",
+                        row["outbox_id"],
+                    ),
                 )
                 if owner is None or (owner and owner["token_sha256"] != row["principal_fingerprint"]):
                     self.db.execute(
@@ -1149,20 +1357,30 @@ class Gateway:
         # updates below ensure it will not be retried after cancellation.
         with self.db_lock:
             current = self.db.execute(
-                "SELECT o.state,e.status AS event_status FROM outbox o "
-                "JOIN events e ON e.event_id=o.event_id WHERE o.id=?",
+                "SELECT o.state,e.status AS event_status,s.active,s.expires_at FROM outbox o "
+                "JOIN events e ON e.event_id=o.event_id "
+                "JOIN subscriptions s ON s.id=o.subscription_id WHERE o.id=?",
                 (row["outbox_id"],),
             ).fetchone()
-            if current is None or current["state"] != "sending" or current["event_status"] == "consumed":
+            if (
+                current is None
+                or current["state"] != "sending"
+                or current["event_status"] == "consumed"
+                or not current["active"]
+                or current["expires_at"] <= self.clock()
+            ):
                 if (
                     current is not None
                     and current["state"] == "sending"
-                    and current["event_status"] == "consumed"
                 ):
+                    reason = (
+                        "consumed" if current["event_status"] == "consumed"
+                        else "subscription_inactive_pending"
+                    )
                     self.db.execute(
-                        "UPDATE outbox SET state='cancelled',last_error='consumed',lease_until=NULL "
+                        "UPDATE outbox SET state='cancelled',last_error=?,lease_until=NULL "
                         "WHERE id=? AND state='sending'",
-                        (row["outbox_id"],),
+                        (reason, row["outbox_id"]),
                     )
                 return True
 
