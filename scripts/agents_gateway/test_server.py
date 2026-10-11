@@ -9,6 +9,7 @@ import io
 import json
 import os
 import socket
+import sqlite3
 import sys
 import tempfile
 import threading
@@ -261,6 +262,134 @@ class GatewayTests(unittest.TestCase):
             )
             self.assertEqual(status, 409)
             self.assertEqual(body["error"], "event_id_conflict")
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
+
+    def test_wait_returns_committed_matching_event_after_publication(self) -> None:
+        httpd, thread, base = self.start_http()
+        wait_entered = threading.Event()
+        original_wait = self.gateway.event_condition.wait
+        result: list[tuple[int, object]] = []
+
+        def observed_wait(timeout: float | None = None) -> bool:
+            wait_entered.set()
+            return original_wait(timeout)
+
+        def read_queue() -> None:
+            result.append(self.request(
+                base + "/api/events?after=0&timeout=2", "local-token", timeout=4
+            ))
+
+        waiter = threading.Thread(target=read_queue, daemon=True)
+        try:
+            with patch.object(self.gateway.event_condition, "wait", side_effect=observed_wait):
+                waiter.start()
+                self.assertTrue(wait_entered.wait(2))
+                status, published = self.request(
+                    base + "/api/events", "sender-token", "POST", sample_event()
+                )
+                self.assertEqual(status, 202)
+                self.assertFalse(published["duplicate"])
+                waiter.join(timeout=2)
+
+            self.assertFalse(waiter.is_alive())
+            self.assertEqual(result[0][0], 200)
+            response = result[0][1]
+            self.assertEqual([event["event_id"] for event in response["events"]], ["evt-001"])
+            self.assertEqual(response["next_after"], response["events"][0]["seq"])
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
+
+    def test_wait_returns_existing_event_immediately_and_times_out_empty(self) -> None:
+        httpd, thread, base = self.start_http()
+        try:
+            self.gateway.publish(self.sender, sample_event())
+            status, existing = self.request(
+                base + "/api/events?after=0&timeout=50", "local-token"
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual([event["event_id"] for event in existing["events"]], ["evt-001"])
+
+            status, empty = self.request(
+                base + "/api/events?after=7&timeout=1", "local-token", timeout=3
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(empty, {"events": [], "next_after": 7})
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
+
+    def test_failed_queue_transaction_does_not_signal_waiters(self) -> None:
+        self.subscribe_local()
+        self.gateway.db.execute(
+            "CREATE TRIGGER reject_outbox_insert BEFORE INSERT ON outbox "
+            "BEGIN SELECT RAISE(ABORT, 'test rollback'); END"
+        )
+        with patch.object(self.gateway.event_condition, "notify_all") as notify:
+            with self.assertRaises(sqlite3.IntegrityError):
+                self.gateway.publish(self.sender, sample_event())
+        notify.assert_not_called()
+        self.assertEqual(self.gateway.list_events("local")["events"], [])
+
+    def test_unrelated_principal_publication_does_not_return_or_end_wait(self) -> None:
+        httpd, thread, base = self.start_http()
+        wait_entered = threading.Event()
+        original_wait = self.gateway.event_condition.wait
+        result: list[tuple[int, object]] = []
+
+        def observed_wait(timeout: float | None = None) -> bool:
+            wait_entered.set()
+            return original_wait(timeout)
+
+        def read_queue() -> None:
+            result.append(self.request(
+                base + "/api/events?after=0&timeout=1", "local-token", timeout=3
+            ))
+
+        waiter = threading.Thread(target=read_queue, daemon=True)
+        try:
+            with patch.object(self.gateway.event_condition, "wait", side_effect=observed_wait):
+                waiter.start()
+                self.assertTrue(wait_entered.wait(2))
+                status, _ = self.request(
+                    base + "/api/events", "sender-token", "POST",
+                    sample_event(event_id="evt-dot", recipient="dot"),
+                )
+                self.assertEqual(status, 202)
+                self.assertTrue(waiter.is_alive())
+                waiter.join(timeout=2)
+
+            self.assertFalse(waiter.is_alive())
+            self.assertEqual(result[0], (200, {"events": [], "next_after": 0}))
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
+
+    def test_wait_rejects_invalid_cursor_timeout_unknown_fields_and_auth(self) -> None:
+        httpd, thread, base = self.start_http()
+        try:
+            status, denied = self.request(base + "/api/events?after=0&timeout=1")
+            self.assertEqual((status, denied), (401, {"error": "unauthorized"}))
+            for query in (
+                "after=-1&timeout=1",
+                "after=1.5&timeout=1",
+                "after=9223372036854775808&timeout=1",
+                "after=0&timeout=true",
+                "after=0&timeout=1.5",
+                "after=0&timeout=51",
+                "after=0&timeout=1&recipient=dot",
+                "after=0&timeout=1&timeout=2",
+            ):
+                with self.subTest(query=query):
+                    status, response = self.request(base + "/api/events?" + query, "local-token")
+                    self.assertEqual(status, 400)
+                    self.assertEqual(response, {"error": "invalid_query"})
         finally:
             httpd.shutdown()
             httpd.server_close()
@@ -1656,6 +1785,7 @@ class GatewayTests(unittest.TestCase):
         token: str | None = None,
         method: str = "GET",
         body: object | None = None,
+        timeout: float = 3,
     ) -> tuple[int, object]:
         headers: dict[str, str] = {}
         if token is not None:
@@ -1666,7 +1796,7 @@ class GatewayTests(unittest.TestCase):
             headers["Content-Type"] = "application/json"
         request = Request(url, data=data, headers=headers, method=method)
         try:
-            response = urlopen(request, timeout=3)
+            response = urlopen(request, timeout=timeout)
         except HTTPError as error_response:
             response = error_response
         with response:

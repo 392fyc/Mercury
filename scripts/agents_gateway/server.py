@@ -53,6 +53,8 @@ MAX_CONFIG_BYTES = 64 * 1024
 MAX_BODY_BYTES = 32 * 1024
 MAX_CALLBACK_RESPONSE_BYTES = 16 * 1024
 MAX_QUEUE_PAGE = 100
+MAX_EVENT_WAIT_SECONDS = 50
+MAX_EVENT_SEQUENCE = (1 << 63) - 1
 MAX_EVENT_CURSOR_LENGTH = 128
 DEFAULT_TTL_MS = 60 * 60 * 1000
 MIN_TTL_MS = 60 * 1000
@@ -584,6 +586,7 @@ class Gateway:
         self.task_ledger = task_ledger
         os.makedirs(os.path.dirname(self.database_path) or ".", mode=0o700, exist_ok=True)
         self.db_lock = threading.RLock()
+        self.event_condition = threading.Condition(self.db_lock)
         self.db = sqlite3.connect(self.database_path, check_same_thread=False, isolation_level=None)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys = ON")
@@ -701,6 +704,7 @@ class Gateway:
                         )
                 row = self.db.execute("SELECT * FROM events WHERE event_id=?", (event["event_id"],)).fetchone()
                 self.db.execute("COMMIT")
+                self.event_condition.notify_all()
                 return self._event_row(row), False
             except Exception:
                 if self.db.in_transaction:
@@ -728,6 +732,35 @@ class Gateway:
             events = [self._event_row(row) for row in rows]
         next_after = events[-1]["seq"] if events else after
         return {"events": events, "next_after": next_after}
+
+    def wait_for_events(
+        self, principal_id: str, after: int, timeout: int
+    ) -> dict[str, Any]:
+        if (
+            isinstance(after, bool)
+            or not isinstance(after, int)
+            or after < 0
+            or after > MAX_EVENT_SEQUENCE
+        ):
+            raise GatewayError("invalid_after")
+        if (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, int)
+            or timeout < 0
+            or timeout > MAX_EVENT_WAIT_SECONDS
+        ):
+            raise GatewayError("invalid_timeout")
+
+        deadline = time.monotonic() + timeout
+        with self.event_condition:
+            while True:
+                result = self.list_events(principal_id, after)
+                if result["events"]:
+                    return result
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return result
+                self.event_condition.wait(remaining)
 
     def mark_consumed(self, principal_id: str, event_id: str) -> dict[str, Any]:
         event_id = _safe_text(event_id, "event_id")
@@ -920,7 +953,7 @@ class Gateway:
         event_name: str,
         arguments_json: str,
         now: float,
-    ) -> str | None:
+    ) -> bool | None:
         originals = self.db.execute(
             "SELECT event_id,payload_json,status FROM events "
             "WHERE json_extract(payload_json,'$.recipient')=? AND status!='consumed' "
@@ -1042,7 +1075,8 @@ class Gateway:
             if attempts >= MAX_DELIVERY_ATTEMPTS:
                 continue
 
-            if prior is None:
+            inserted_event = prior is None
+            if inserted_event:
                 self.db.execute(
                     "INSERT INTO events(event_id,publisher_id,payload_json,payload_sha256,created_at,status) "
                     "VALUES(?,?,?,?,?,'pending')",
@@ -1060,7 +1094,7 @@ class Gateway:
                 "VALUES(?,?,'pending',?,?)",
                 (event_id, subscription_id, attempts, next_attempt),
             )
-            return event_id
+            return inserted_event
         return None
 
     @staticmethod
@@ -1183,6 +1217,7 @@ class Gateway:
             raise
         now = self.clock()
         expires_at = now + granted_ms / 1000
+        reconciliation_event_inserted = False
         with self.db_lock:
             self.db.execute("BEGIN IMMEDIATE")
             try:
@@ -1221,15 +1256,19 @@ class Gateway:
                         principal["id"], subscription_id, arguments["recipient"], cursor_seq, now
                     )
                 elif new_subscription and prior_subscription is not None:
-                    self._insert_reconciliation_signal_locked(
-                        principal["id"], principal["token_sha256"], subscription_id,
-                        arguments["recipient"], name, arguments_json, now
+                    reconciliation_event_inserted = bool(
+                        self._insert_reconciliation_signal_locked(
+                            principal["id"], principal["token_sha256"], subscription_id,
+                            arguments["recipient"], name, arguments_json, now
+                        )
                     )
                 watermark = self._safe_watermark_locked(principal["id"], subscription_id)
                 response_cursor = self._mint_cursor_locked(
                     principal["id"], subscription_id, name, arguments_json, watermark
                 )
                 self.db.execute("COMMIT")
+                if reconciliation_event_inserted:
+                    self.event_condition.notify_all()
             except Exception:
                 if self.db.in_transaction:
                     self.db.execute("ROLLBACK")
@@ -1842,12 +1881,24 @@ class Gateway:
                     return
                 try:
                     query = parse_qs(parsed.query, keep_blank_values=True, strict_parsing=True)
-                    if set(query) - {"after"} or any(len(values) != 1 for values in query.values()):
+                    if set(query) - {"after", "timeout"} or any(
+                        len(values) != 1 for values in query.values()
+                    ):
                         raise GatewayError("invalid_query")
                     after_text = query.get("after", ["0"])[0]
                     if not after_text.isdigit():
                         raise GatewayError("invalid_after")
-                    self.send_json(200, gateway.list_events(principal["id"], int(after_text)))
+                    after = int(after_text)
+                    if "timeout" in query:
+                        timeout_text = query["timeout"][0]
+                        if not timeout_text.isascii() or not timeout_text.isdecimal():
+                            raise GatewayError("invalid_timeout")
+                        result = gateway.wait_for_events(
+                            principal["id"], after, int(timeout_text)
+                        )
+                    else:
+                        result = gateway.list_events(principal["id"], after)
+                    self.send_json(200, result)
                 except (GatewayError, ValueError):
                     self.send_json(400, {"error": "invalid_query"})
 

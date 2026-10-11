@@ -159,6 +159,57 @@ class ClientBoundaryTests(unittest.TestCase):
                     client.request('https://gateway.example', token_file, 'ledger-status', {'recipient': 'other'})
                 opener.assert_not_called()
 
+    def test_wait_maps_to_events_read_and_network_timeout_exceeds_server_wait(self):
+        with tempfile.TemporaryDirectory() as folder:
+            token_file = Path(folder) / 'credential'
+            token_file.write_text('a' * 32, encoding='utf-8')
+            opener = FakeOpener()
+            with patch.object(client.urllib.request, 'build_opener', return_value=opener):
+                result = client.request(
+                    'https://gateway.example', token_file, 'wait', {'after': 17, 'timeout': 50}
+                )
+            self.assertEqual(result, {'ok': True})
+            request, timeout = opener.requests[0]
+            parsed = client.urllib.parse.urlsplit(request.full_url)
+            self.assertEqual(request.get_method(), 'GET')
+            self.assertEqual(parsed.path, '/api/events')
+            self.assertEqual(parsed.query, 'after=17&timeout=50')
+            self.assertEqual(timeout, 55)
+
+    def test_wait_rejects_boolean_noninteger_out_of_range_and_unknown_fields(self):
+        with tempfile.TemporaryDirectory() as folder:
+            token_file = Path(folder) / 'credential'
+            token_file.write_text('a' * 32, encoding='utf-8')
+            opener = FakeOpener()
+            invalid_payloads = (
+                {'after': True, 'timeout': 1},
+                {'after': 1.5, 'timeout': 1},
+                {'after': 0, 'timeout': False},
+                {'after': 0, 'timeout': 1.5},
+                {'after': 0, 'timeout': 51},
+                {'after': 0, 'timeout': 1, 'recipient': 'local'},
+                {'after': 0},
+            )
+            with patch.object(client.urllib.request, 'build_opener', return_value=opener):
+                for payload in invalid_payloads:
+                    with self.subTest(payload=payload), self.assertRaises(ValueError):
+                        client.request('https://gateway.example', token_file, 'wait', payload)
+            self.assertEqual(opener.requests, [])
+
+    def test_wait_authentication_error_fails_instead_of_returning_an_empty_queue(self):
+        with tempfile.TemporaryDirectory() as folder:
+            token_file = Path(folder) / 'credential'
+            token_file.write_text('a' * 32, encoding='utf-8')
+            opener = FakeOpener()
+            denied = client.urllib.error.HTTPError(
+                'https://gateway.example/api/events?after=0&timeout=1', 401, 'Unauthorized', None, None
+            )
+            with patch.object(client.urllib.request, 'build_opener', return_value=opener), patch.object(
+                opener, 'open', side_effect=denied
+            ):
+                with self.assertRaisesRegex(ValueError, 'HTTP 401'):
+                    client.request('https://gateway.example', token_file, 'wait', {'timeout': 1})
+
     def test_new_operations_reuse_the_existing_fixed_ssh_route(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -180,6 +231,24 @@ class ClientBoundaryTests(unittest.TestCase):
             self.assertIn('/credentials/local-agent.token', argv[-1])
             self.assertTrue(argv[-1].endswith('ledger-status'))
             self.assertEqual(run.call_args.kwargs['input'], b'{"request_id": "request-23"}')
+
+    def test_ssh_wait_timeout_exceeds_the_bounded_server_wait(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            config = root / 'bridge.json'
+            config.write_text(json.dumps({'ssh_host': 'nas.example', 'container': 'agents-events',
+                                         'principal': 'local-agent', 'docker': '/opt/docker',
+                                         'docker_config': '/private/docker'}))
+            policy = self.policy_copy(config)
+            payload = {'after': 9, 'timeout': 50}
+            with patch.object(client, 'POLICY_FILE', policy), patch.object(
+                client.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, b'{"events":[]}', b'')
+            ) as run:
+                result = client.through_ssh(config, 'wait', payload)
+            self.assertEqual(result, {'events': []})
+            self.assertEqual(run.call_args.kwargs['timeout'], 60)
+            self.assertTrue(run.call_args.args[0][-1].endswith(' wait'))
+            self.assertEqual(run.call_args.kwargs['input'], b'{"after": 9, "timeout": 50}')
 
 
 if __name__ == '__main__':
