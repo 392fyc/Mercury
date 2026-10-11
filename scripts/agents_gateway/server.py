@@ -716,6 +716,7 @@ class Gateway:
         return {
             "seq": row["seq"],
             **event,
+            "publisher_id": row["publisher_id"],
             "status": row["status"],
             "created_at": format_time(row["created_at"]),
         }

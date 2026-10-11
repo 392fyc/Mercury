@@ -267,6 +267,32 @@ class GatewayTests(unittest.TestCase):
             httpd.server_close()
             thread.join(timeout=2)
 
+    def test_queue_wire_preserves_authenticated_publisher_metadata(self) -> None:
+        event = sample_event(result_page_id="page_receiver_657")
+        published, duplicate = self.gateway.publish(self.sender, event)
+        self.assertFalse(duplicate)
+        self.assertEqual(published["publisher_id"], "sender")
+        expected_fields = {
+            "event_id", "recipient", "task_id", "request_id", "kind", "body_sha256",
+            "result_page_id", "seq", "status", "created_at", "publisher_id",
+        }
+        self.assertEqual(set(published), expected_fields)
+        self.assertNotIn("payload", published)
+        waited = self.gateway.wait_for_events("local", 0, 0)["events"][0]
+        self.assertEqual(waited, published)
+        cached, duplicate = self.gateway.publish(self.sender, event)
+        self.assertTrue(duplicate)
+        self.assertEqual(cached, published)
+        with self.assertRaisesRegex(server.GatewayError, "invalid_event_fields"):
+            self.gateway.publish(self.sender, {**event, "publisher_id": "local"})
+        # Readback metadata must not enter the seven-field published payload or
+        # alter its existing canonical digest and idempotency identity.
+        with self.gateway.db_lock:
+            row = self.gateway.db.execute("SELECT payload_json,payload_sha256 FROM events WHERE event_id=?", (published["event_id"],)).fetchone()
+        self.assertEqual(json.loads(row["payload_json"]), event)
+        original_bytes = json.dumps(event, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        self.assertEqual(row["payload_sha256"], hashlib.sha256(original_bytes).hexdigest())
+
     def test_wait_returns_committed_matching_event_after_publication(self) -> None:
         httpd, thread, base = self.start_http()
         wait_entered = threading.Event()
