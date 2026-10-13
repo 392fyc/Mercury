@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.0 - 2026-10-13
+
+- Add Feynman-style explanation and first-principles reasoning rules for
+  research, design, and investigation to the task contract and the three
+  portable roles, scaled to risk and consistent with evidence reuse, with
+  delegation guidance for agents that do not load the instructions.
+
 ## 1.3.0 - 2026-10-06
 
 - Bound task decomposition, test expansion, repeated verification, and provenance

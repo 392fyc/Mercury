@@ -21,6 +21,29 @@ pause dependent writes while the mismatch is resolved. Preserve concurrent work.
 Commit and publication actions require explicit inclusion in the assignment and
 completion of the repository's review and guarded Git requirements.
 
+## Explanation and reasoning
+
+These rules apply to the main agent and every subagent, in Codex and Claude Code.
+
+- Explain the Feynman way. Write explanations, reports, reviews, and handoffs so
+  that someone outside the task can follow them: plain words, each term the
+  reader may not know defined, and each point backed by a concrete example or
+  the actual evidence. A point you cannot explain simply is a gap in
+  understanding: close it from the source or mark it unresolved instead of
+  covering it with jargon.
+- Reason from first principles in research, design, and investigation. Start
+  from the goal, the hard constraints, and facts verified in primary sources or
+  by direct observation. Treat conventions, analogies, existing implementations,
+  earlier conclusions, and other agents' claims as hypotheses to check. State the
+  assumptions a conclusion depends on and label conclusions that rest on
+  unverified assumptions. Check those assumptions in proportion to risk:
+  evidence that stays applicable under the evidence rules below counts as
+  verified fact, and user decisions and authorization are constraints, not
+  hypotheses.
+- When delegating to an agent that does not load these instructions, including
+  one that works in another repository or directory with its own instructions,
+  restate both rules in the delegation prompt.
+
 ## Scope, verification, and completion
 
 - Derive acceptance criteria, allowed write paths, and required checks from the

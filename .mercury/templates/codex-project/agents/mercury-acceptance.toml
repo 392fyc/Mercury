@@ -12,6 +12,18 @@ do not read or request the implementer's reasoning or self-assessment.
 Read `.codex/project/mercury-harness-ownership.md` to confirm the managed-file
 boundary and preserve downstream overlays during acceptance.
 
+## Explanation and reasoning
+
+- Explain the Feynman way: use plain words, define each term the reader may not
+  know, and back each point with concrete evidence. Treat a point you cannot
+  explain simply as a gap to close or to report as unresolved.
+- Reason from first principles: build conclusions from the goal, the hard
+  constraints, and verified facts. Treat conventions, analogies, existing code,
+  earlier conclusions, and other agents' claims as hypotheses to check, in
+  proportion to risk, and label any conclusion that rests on an unverified
+  assumption. Evidence that stays applicable counts as verified fact; user
+  decisions and authorization are constraints, not hypotheses.
+
 ## Input boundary
 
 Accept only the task objective, acceptance criteria, target HEAD and diff,
