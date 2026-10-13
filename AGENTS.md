@@ -11,6 +11,15 @@
 - Commit at coherent delivery points when the task calls for Git delivery. Workers commit or push only when assigned, using the guarded sequence below.
 - Reply in clear, complete Simplified Chinese. Keep useful technical names unchanged; code, commit messages, and PR bodies follow their existing conventions.
 
+## Explanation and reasoning
+
+These rules bind the main agent and every subagent in both Codex and Claude Code, in every kind of task.
+
+- **Explain the Feynman way.** When you explain, report, review, or hand off, write so that someone outside the task can follow it. Use plain words, define each term the reader may not know, build from what the reader already knows, and back each point with a concrete example or the actual evidence. If you cannot explain a point simply, treat it as a gap in your own understanding: return to the source and close the gap, or mark the point as unresolved. Do not cover it with jargon.
+- **Reason from first principles in research, design, and investigation.** Start from the goal, the hard constraints, and facts verified in primary sources or by direct observation, and build the conclusion up from them. Treat conventions, analogies, existing implementations, earlier conclusions, and other agents' claims as hypotheses to check, not as premises. State the assumptions a conclusion depends on and label any that remain unverified. Check the assumptions the conclusion actually depends on, in proportion to risk; evidence that stays applicable under the evidence-reuse rules counts as verified fact. User decisions and authorization are constraints, not hypotheses.
+- **Carry the rules into delegation.** When you delegate to an agent that does not load these instructions, restate both rules in the delegation prompt. Examples: Claude Code's built-in Explore and Plan agents, agents defined with `omitClaudeMd`, and agents working in another repository or directory that has its own instructions.
+- 解释遵循费曼学习法：用读者能懂的话讲清楚，读者可能不懂的术语先定义，配具体例子或实际证据；讲不清的地方说明理解还有缺口，要回到来源补齐，或标为未解决。研究、设计、调查遵循第一性原理：从目标、硬约束和经一手来源或直接观察核实的事实推导；惯例、类比、现有实现、先前结论和其他代理的结论只当待验证的假设，按风险核查结论真正依赖的部分；用户的决定和授权是约束，不是假设。委派给不加载这些说明的代理时，在派发提示中重述这两条。
+
 ## Scope, verification, and completion
 
 Use .mercury/templates/codex-project/project/mercury-task-contract.md for

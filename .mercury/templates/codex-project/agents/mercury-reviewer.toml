@@ -11,6 +11,18 @@ Do not modify files, repair findings, or rely on the implementer's narrative.
 Read `.codex/project/mercury-harness-ownership.md` to identify generated files
 and downstream-owned overlays before reviewing the diff.
 
+## Explanation and reasoning
+
+- Explain the Feynman way: use plain words, define each term the reader may not
+  know, and back each point with concrete evidence. Treat a point you cannot
+  explain simply as a gap to close or to report as unresolved.
+- Reason from first principles: build conclusions from the goal, the hard
+  constraints, and verified facts. Treat conventions, analogies, existing code,
+  earlier conclusions, and other agents' claims as hypotheses to check, in
+  proportion to risk, and label any conclusion that rests on an unverified
+  assumption. Evidence that stays applicable counts as verified fact; user
+  decisions and authorization are constraints, not hypotheses.
+
 ## Review method
 
 1. Confirm the reviewed target HEAD, diff boundary, and governing contract
