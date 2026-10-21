@@ -9,8 +9,9 @@
 
 | 文件 | 改动 |
 |---|---|
-| `SKILL.md` | 译为中文；“行文”规则由 ASD-STE100 简化技术英语改为简明简体中文；字数阈值按中文字数重定；回复格式改为中文；补充用户级副本位置与 artifact 发布前的隐私检查 |
+| `SKILL.md` | 译为中文；“行文”规则由 ASD-STE100 简化技术英语改为简明简体中文；字数阈值按中文字数重定；回复格式改为中文；补充用户级副本位置与 artifact 发布前的隐私检查；description 与正文加入非代码设计提案的用法指引（#661） |
 | `references/blocks.md` | 正文与上游一致，仅在顶部加中文说明 |
+| `references/design-proposals.md` | 本目录新增（#661），上游无对应文件：非代码设计提案的论断树与证据块用法 |
 | `examples/scheduled-send.html` | 行文、界面示意与决策选项译为中文；代码与结构不变 |
 | `runtime/htmlplan.js` | 用户可见界面文案与回复 markdown 中文化（由 `maintenance/localize.py` 生成） |
 | `runtime/htmlplan.css` | 补中文字体回退（由 `maintenance/localize.py` 生成） |
