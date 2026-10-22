@@ -22,7 +22,7 @@ $protocol = Join-Path $testRoot '.agents/skills/dot-link/references/receiver-pro
 $sourceProtocol = Join-Path $PSScriptRoot '../../.agents/skills/dot-link/references/receiver-protocol.md'
 if (-not (Test-Path -LiteralPath $protocol -PathType Leaf)) { throw 'Receiver protocol was not installed.' }
 if ((Get-FileHash -LiteralPath $protocol -Algorithm SHA256).Hash -cne (Get-FileHash -LiteralPath $sourceProtocol -Algorithm SHA256).Hash) { throw 'Installed receiver protocol bytes differ from source.' }
-if ($receipt.private_key_copied -or $receipt.files.Count -ne 5) { throw 'Unexpected installation inventory.' }
+if ($receipt.private_key_copied -or $receipt.files.Count -ne 6) { throw 'Unexpected installation inventory.' }
 if (-not [IO.File]::ReadAllText($global).StartsWith($original.TrimEnd("`r", "`n"))) { throw 'Existing user rules changed.' }
 if (Test-Path -LiteralPath (Join-Path $testRoot '.codex/dot-link/identity/private.pem')) { throw 'Installer unexpectedly created a signing key.' }
 $originalEntry = @($receipt.files | Where-Object { $_.existed })[0]
