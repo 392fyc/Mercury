@@ -1,6 +1,6 @@
 ---
 name: html-plan-zh
-description: 用一个可交互的 HTML 页面写中文实施计划：一棵论断树（缘由 › 做什么 › 怎么做 › 在哪里），每个论断配一个证据块（界面示意、状态机、调用栈、schema 或代码），需要用户拍板的决策放在它影响的论断上。用户输入 /html-plan-zh，或在动手改多个文件之前要求出计划、RFC 或设计时使用。
+description: 用一个可交互的 HTML 页面写中文实施计划：一棵论断树（缘由 › 做什么 › 怎么做 › 在哪里），每个论断配一个证据块（界面示意、状态机、调用栈、schema 或代码），需要用户拍板的决策放在它影响的论断上。用户输入 /html-plan-zh，或在动手改多个文件之前要求出计划、RFC 或设计时使用；也用于呈现规则、数值与评估结论等非代码的设计提案。
 upstream_source: "https://github.com/anthropics/claude-plugins-community/tree/main/html-plan"
 upstream_sha: "88003be1129c09381d27100b37a8fdc21b3214bf"
 upstream_license: "MIT"
@@ -21,6 +21,7 @@ cherry_picked_at: "2026-10-07"
   runtime/htmlplan.css  htmlplan.js   ← 页面里引用这两个文件；pack 会把它们内联
   runtime/pack.mjs                    ← 检查 + 内联 → 一个可携带的文件（只需要 node）
   references/blocks.md                ← 每种块的语法。动笔前先读。
+  references/design-proposals.md      ← 非代码的设计提案（规则、数值、评估）怎么写。
   examples/scheduled-send.html        ← 一份完整的中文计划。照它的结构写。
   maintenance/localize.py             ← 维护用：上游更新后重新生成中文运行时
 ```
@@ -95,6 +96,8 @@ cherry_picked_at: "2026-10-07"
 11. **页面以标题开头。** `h1` 用 4 到 16 字写明改动和位置，例如“PostBox 定时发送”。它不是句子，也不是目标，不以句号结尾。标题上方什么都不放，不加“计划 · 项目”之类的标签行。改动内容由第 1 层论断说明。
 
 没有可见行为的改动（例如重构），把第 1 层写成保证：“调用方看到的行为不变。”“每个存储只有一个属主。”
+
+要呈现的不是代码改动，而是规则、数值或评估结论时，先读 `references/design-proposals.md`。它说明三层论断和证据块在这种场合怎么对应；上面的规则照常适用，参考中注明的例外除外。
 
 ## 行文
 
