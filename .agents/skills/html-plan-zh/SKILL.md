@@ -1,6 +1,6 @@
 ---
 name: html-plan-zh
-description: 用一个可交互的 HTML 页面写中文实施计划：一棵论断树（缘由 › 做什么 › 怎么做 › 在哪里），每个论断配一个证据块（界面示意、状态机、调用栈、schema 或代码），需要用户拍板的决策放在它影响的论断上。用户输入 /html-plan-zh，或在动手改多个文件之前要求出计划、RFC 或设计时使用；也用于呈现玩法规则、数值与平衡评估等非代码的设计提案。
+description: 用一个可交互的 HTML 页面写中文实施计划：一棵论断树（缘由 › 做什么 › 怎么做 › 在哪里），每个论断配一个证据块（界面示意、状态机、调用栈、schema 或代码），需要用户拍板的决策放在它影响的论断上。用户输入 /html-plan-zh，或在动手改多个文件之前要求出计划、RFC 或设计时使用；也用于呈现规则、数值与评估结论等非代码的设计提案。
 upstream_source: "https://github.com/anthropics/claude-plugins-community/tree/main/html-plan"
 upstream_sha: "88003be1129c09381d27100b37a8fdc21b3214bf"
 upstream_license: "MIT"
@@ -97,7 +97,7 @@ cherry_picked_at: "2026-10-07"
 
 没有可见行为的改动（例如重构），把第 1 层写成保证：“调用方看到的行为不变。”“每个存储只有一个属主。”
 
-要呈现的不是代码改动，而是规则、数值或平衡结论（例如游戏职业的技能设计）时，先读 `references/design-proposals.md`。它说明三层论断和证据块在这种场合怎么对应；上面的规则照常适用，参考中注明的例外除外。
+要呈现的不是代码改动，而是规则、数值或评估结论时，先读 `references/design-proposals.md`。它说明三层论断和证据块在这种场合怎么对应；上面的规则照常适用，参考中注明的例外除外。
 
 ## 行文
 
