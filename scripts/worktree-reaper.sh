@@ -1,18 +1,40 @@
 #!/usr/bin/env sh
 # scripts/worktree-reaper.sh
-# Orphan worktree reaper for Mercury dev-pipeline.
+# Worktree reaper for Mercury (lifecycle rules: Issue #663).
 #
-# Lists entries under .worktrees/, cross-checks against open PRs, and removes
-# any worktree whose branch has no open PR and is older than AGE_DAYS days.
+# Scans entries under .worktrees/ and classifies each one:
+#   KEEP       open PR on the branch, or a fresh unmerged worktree
+#   DIRTY      merged, but the worktree has uncommitted content, or ignored files other than
+#              regenerable caches (__pycache__/, .pytest_cache/, *.pyc) that `git worktree remove`
+#              would delete (.handoff/, .tmp/, .env ...) — never removed; the paths are listed
+#   WOULD REAP / REAPED   merged AND clean: the local HEAD is an ancestor of origin/<default branch>
+#              or is contained in the head commit of a merged PR (squash/rebase merge), and the
+#              worktree has no staged/unstaged/untracked content. Merged worktrees are not subject
+#              to the age threshold. "Merged" means: the tip is equal to / an ancestor of the head
+#              commit of a merged PR, OR the branch has at least one commit of its own (branch
+#              tip differs from the commit it was created at, per reflog) and is fully contained in the base. A branch with no own commit and no
+#              merged PR (e.g. just cut from the base) is NEVER reaped; it is only a CONFIRM
+#              candidate once it is older than the threshold.
+#   SKIP       directories that are not worktree roots (or whose .git link is broken), and the
+#              lanes/ directory (long-lived lane worktrees, closed by the lane-close procedure)
+#   Protected: main, master, develop and origin's default branch are never touched (KEEP).
+#   CONFIRM    NOT merged, no open PR, older than the threshold: listed with branch, tip commit and
+#              unmerged commit count for the user to decide. NEVER deleted, in any mode.
+# Removal uses a plain `git worktree remove` (never --force) and `git branch -d`, or `-D` only
+# with merged-PR evidence. Remote branches are left to GitHub's auto-delete-head-branch setting.
+# After the user confirms an abandoned branch, delete it manually: worktree, local branch, and
+#   gh api repos/<owner>/<repo>/git/ref/heads/<branch>   (read back; SHA must equal the listed tip)
+#   gh api -X DELETE repos/<owner>/<repo>/git/refs/heads/<branch>
 #
 # Usage:
-#   ./scripts/worktree-reaper.sh            # dry-run (default — prints WOULD REAP)
+#   ./scripts/worktree-reaper.sh            # dry-run (default — prints WOULD REAP / CONFIRM)
 #   ./scripts/worktree-reaper.sh --dry-run  # same
-#   ./scripts/worktree-reaper.sh --prune    # actually delete orphaned worktrees
+#   ./scripts/worktree-reaper.sh --prune    # remove merged + clean worktrees and their local branches
 #
 # Environment overrides:
-#   WORKTREE_ROOT   directory to scan (default: .worktrees relative to repo root)
-#   WORKTREE_AGE_DAYS  minimum age in days before a worktree is eligible (default: 7)
+#   WORKTREE_ROOT      directory to scan (default: .worktrees relative to repo root)
+#   WORKTREE_AGE_DAYS  age in days after which unmerged worktrees are listed as CONFIRM (default: 7)
+#   WORKTREE_BASE_REF  ref that counts as "merged into" (default: origin's default branch)
 
 set -eu
 
@@ -45,6 +67,33 @@ case "$AGE_DAYS" in
     exit 1
     ;;
 esac
+
+# Base ref: what "merged" is measured against.
+BASE_REF="${WORKTREE_BASE_REF:-}"
+if [ -z "$BASE_REF" ]; then
+  BASE_REF=$(git -C "$REPO_ROOT" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || true)
+fi
+if [ -z "$BASE_REF" ]; then
+  for cand in origin/develop origin/main origin/master; do
+    if git -C "$REPO_ROOT" rev-parse --verify -q "refs/remotes/$cand" >/dev/null 2>&1; then
+      BASE_REF="$cand"
+      break
+    fi
+  done
+fi
+
+# Origin's default branch (protected): origin/HEAD, else ls-remote, else unknown (warn).
+DEFAULT_BRANCH=$(git -C "$REPO_ROOT" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || true)
+DEFAULT_BRANCH=${DEFAULT_BRANCH#origin/}
+if [ -z "$DEFAULT_BRANCH" ] && git -C "$REPO_ROOT" remote get-url origin >/dev/null 2>&1; then
+  _tmo=""
+  command -v timeout >/dev/null 2>&1 && _tmo="timeout 20"
+  DEFAULT_BRANCH=$(GIT_TERMINAL_PROMPT=0 $_tmo git -C "$REPO_ROOT" ls-remote --symref origin HEAD 2>/dev/null \
+    | awk '/^ref:/ { sub("refs/heads/", "", $2); print $2; exit }' || true)
+fi
+if [ -z "$DEFAULT_BRANCH" ]; then
+  printf "WARN: cannot determine origin's default branch — only main, master and develop are protected\n" >&2
+fi
 
 # ---------------------------------------------------------------------------
 # Guard: nothing to do if .worktrees/ does not exist
@@ -80,6 +129,57 @@ NOW=$(date +%s)
 THRESHOLD=$(( AGE_DAYS * 86400 ))
 
 # ---------------------------------------------------------------------------
+# Merged-PR helpers (squash/rebase merges leave the branch tip outside the base history)
+# ---------------------------------------------------------------------------
+# Prints one merged-PR head commit per line for same-repository PRs from branch $1.
+merged_pr_heads() {
+  command -v gh >/dev/null 2>&1 || return 1
+  gh pr list --state merged --head "$1" --json headRefOid,isCrossRepository \
+    --jq '.[] | select(.isCrossRepository == false) | .headRefOid' 2>/dev/null
+}
+
+# True when $1 is main/master/develop or origin's default branch (nothing on GitHub protects them).
+is_protected_branch() {
+  case "$1" in main|master|develop) return 0 ;; esac
+  [ -n "$DEFAULT_BRANCH" ] && [ "$1" = "$DEFAULT_BRANCH" ]
+}
+
+# True when branch $1's tip $2 differs from the commit it was created at (oldest reflog entry),
+# i.e. at least one commit was made on the branch. No reflog => false.
+branch_has_own_commit() {
+  _first=$(git -C "$REPO_ROOT" reflog show --format='%H' "refs/heads/$1" 2>/dev/null | tail -n 1)
+  [ -n "$_first" ] && [ "$_first" != "$2" ]
+}
+
+# Prints what would be lost by `git worktree remove` in worktree $1 (up to 5 entries, ';'-joined):
+# staged/unstaged/untracked files and ignored files except regenerable caches. Empty = clean.
+wt_dirty_detail() {
+  _out=$(git -C "$1" status --porcelain --ignored=matching 2>/dev/null) || {
+    printf 'git status failed (cannot verify)'
+    return 0
+  }
+  printf '%s\n' "$_out" | grep -v '^$' \
+    | grep -v -E '^!! (.*/)?(__pycache__|\.pytest_cache)/$' \
+    | grep -v -E '^!! .*\.pyc$' \
+    | head -n 5 | tr '\n' ';'
+  return 0
+}
+
+# Prints the merged-PR head containing commit $2 (ancestor-or-equal) for branch $1; else fails.
+merged_pr_head_containing() {
+  _heads=$(merged_pr_heads "$1" || true)
+  [ -n "$_heads" ] || return 1
+  for _oid in $_heads; do
+    if git -C "$REPO_ROOT" merge-base --is-ancestor "$2" "$_oid" 2>/dev/null; then
+      printf '%s
+' "$_oid"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# ---------------------------------------------------------------------------
 # Scan worktrees
 # ---------------------------------------------------------------------------
 FOUND=0
@@ -88,6 +188,11 @@ ROOT_REAL=$(cd "$WT_ROOT" 2>/dev/null && pwd -P || printf '')
 for wt in "${WT_ROOT}"/*/; do
   # glob may not expand if directory is empty
   [ -d "$wt" ] || continue
+  # Lane-level worktrees (.worktrees/lanes/<short>) are long-lived; never touched here.
+  if [ "$(basename "$wt")" = "lanes" ]; then
+    printf 'SKIP : lanes (lane-level worktrees are closed by the lane-close procedure)\n'
+    continue
+  fi
   # Skip symlinks — never follow links out of WT_ROOT
   [ -L "$wt" ] && continue
 
@@ -105,6 +210,15 @@ for wt in "${WT_ROOT}"/*/; do
       ;;
   esac
 
+  # Only registered worktree roots are handled: a stray directory (or one with a broken .git
+  # link) would make `git -C` describe the enclosing repository instead.
+  top=$(git -C "$wt" rev-parse --show-toplevel 2>/dev/null || true)
+  top_real=$(cd "$top" 2>/dev/null && pwd -P || printf '')
+  if [ -z "$top_real" ] || [ "$top_real" != "$wt_real" ]; then
+    printf 'SKIP    : %s — not a worktree root (or its .git link is broken); left untouched\n' "$(basename "$wt")"
+    continue
+  fi
+
   FOUND=1
   task_id=$(basename "$wt")
 
@@ -119,32 +233,86 @@ for wt in "${WT_ROOT}"/*/; do
 
   age_sec=$(( NOW - mtime_epoch ))
 
-  # Guard: keep worktrees with an open PR regardless of age
+  # Guard: keep worktrees with an open PR regardless of age or merge state
   if [ -n "$branch" ] && printf '%s\n' "$ACTIVE_BRANCHES" | grep -qxF "$branch" 2>/dev/null; then
     printf 'KEEP    : %s (active PR on branch "%s")\n' "$task_id" "$branch"
     continue
   fi
 
-  # Guard: keep worktrees that are still fresh
+  # Detached HEAD: no branch to reason about
+  if [ -z "$branch" ] || [ "$branch" = "HEAD" ]; then
+    printf 'KEEP    : %s (detached or unreadable HEAD — cannot verify merge state)\n' "$task_id"
+    continue
+  fi
+
+  if is_protected_branch "$branch"; then
+    printf 'KEEP    : %s (protected branch "%s" is never removed)\n' "$task_id" "$branch"
+    continue
+  fi
+
+  tip=$(git -C "$wt" rev-parse HEAD 2>/dev/null || true)
+  if [ -z "$tip" ]; then
+    printf 'KEEP    : %s (cannot read HEAD commit)\n' "$task_id"
+    continue
+  fi
+
+  # --- merge state -------------------------------------------------------
+  merged=0
+  evidence=""
+  pr_head=$(merged_pr_head_containing "$branch" "$tip" || true)
+  if [ -n "$pr_head" ]; then
+    merged=1
+    evidence="contained in merged PR head $pr_head"
+  elif [ -n "$BASE_REF" ] && git -C "$REPO_ROOT" merge-base --is-ancestor "$tip" "$BASE_REF" 2>/dev/null; then
+    # A branch cut from the base and never committed to is also an ancestor of the base, so
+    # ancestry alone proves nothing: require at least one commit made on the branch itself.
+    if branch_has_own_commit "$branch" "$tip"; then
+      merged=1
+      evidence="own commits contained in $BASE_REF"
+    fi
+  fi
+
+  if [ "$merged" -eq 1 ]; then
+    dirty_detail=$(wt_dirty_detail "$wt")
+    if [ -n "$dirty_detail" ]; then
+      printf 'DIRTY   : %s (branch "%s" is merged — %s — but the worktree has uncommitted or ignored content that would be lost: %s; kept)\n' \
+        "$task_id" "$branch" "$evidence" "$dirty_detail"
+      continue
+    fi
+    if [ "$MODE" = "--prune" ]; then
+      if git -C "$REPO_ROOT" worktree remove "$wt" 2>/dev/null; then
+        if git -C "$REPO_ROOT" branch -d "$branch" >/dev/null 2>&1; then
+          :
+        elif [ -n "$pr_head" ] && git -C "$REPO_ROOT" branch -D "$branch" >/dev/null 2>&1; then
+          :
+        else
+          printf 'WARN    : %s worktree removed but local branch "%s" was not deleted\n' "$task_id" "$branch" >&2
+        fi
+        printf 'REAPED  : %s (branch "%s", %s)\n' "$task_id" "$branch" "$evidence"
+      else
+        printf 'ERROR   : failed to remove worktree %s\n' "$wt" >&2
+      fi
+    else
+      printf 'WOULD REAP: %s (branch "%s", %s, clean) [dry-run]\n' "$task_id" "$branch" "$evidence"
+    fi
+    continue
+  fi
+
+  # --- not merged --------------------------------------------------------
   if [ "$age_sec" -lt "$THRESHOLD" ]; then
     printf 'KEEP    : %s (fresh — age %ds < threshold %ds)\n' \
       "$task_id" "$age_sec" "$THRESHOLD"
     continue
   fi
 
-  # Eligible orphan
-  if [ "$MODE" = "--prune" ]; then
-    if git worktree remove --force "$wt" 2>/dev/null; then
-      # Attempt to delete the branch; non-fatal if it is already gone or merged
-      git branch -d "$branch" 2>/dev/null || true
-      printf 'REAPED  : %s (branch "%s", age %ds)\n' "$task_id" "$branch" "$age_sec"
-    else
-      printf 'ERROR   : failed to remove worktree %s\n' "$wt" >&2
-    fi
+  if [ -n "$BASE_REF" ]; then
+    ahead=$(git -C "$REPO_ROOT" rev-list --count "$BASE_REF..$tip" 2>/dev/null || echo '?')
   else
-    printf 'WOULD REAP: %s (branch "%s", age %ds >= threshold %ds) [dry-run]\n' \
-      "$task_id" "$branch" "$age_sec" "$THRESHOLD"
+    ahead='?'
   fi
+  short=$(git -C "$wt" rev-parse --short HEAD 2>/dev/null || echo "$tip")
+  printf 'CONFIRM : %s (branch "%s", tip %s, %s commits not merged, no open PR, age %ds) — needs user confirmation; never deleted automatically\n' \
+    "$task_id" "$branch" "$short" "$ahead" "$age_sec"
 done
 
 if [ "$FOUND" = "0" ]; then

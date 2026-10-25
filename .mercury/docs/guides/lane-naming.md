@@ -206,15 +206,11 @@ the full forensic post-mortem.
 The fix: give each lane a dedicated git worktree at a distinct path so the
 cwd-encoded project state directory is also distinct.
 
-> **Path notation in this §**: examples use `<repo-root>` as a placeholder
-> for the parent directory operators put their Mercury checkouts under
-> (e.g. Mercury team's documented value is `D:/Mercury` per
-> [`CLAUDE.md`](../../../CLAUDE.md) §MUST "Install software to `D:\Program Files`,
-> not C drive"; on Unix this might be `~/repos`). Concrete `D:/Mercury/...`
-> paths shown later are the team's actual values; substitute your own
-> `<repo-root>` when reading. The lane protocol does not impose `D:/Mercury`
-> on other operators — only that each lane's `Worktree path` field in
-> `LANES.md` records whatever concrete path that operator chose.
+> **Path notation in this §**: `<repo-root>` is the root of the Mercury main
+> checkout (the directory that holds `.git` and `.worktrees/`). Since Issue #663
+> every worktree, lane-level included, lives inside the project at
+> `<repo-root>/.worktrees/`; nothing is created in a sibling directory. Each
+> lane's `Worktree path` field in `LANES.md` records the concrete path.
 
 ### Distinguished from task-level worktrees
 
@@ -222,14 +218,20 @@ This § is about **lane-level** isolation (one worktree per active lane,
 long-lived). It is NOT the same scope as the **task-level** worktree spec in
 [`.mercury/docs/guides/worktree-workflow.md`](worktree-workflow.md), which
 covers `.worktrees/{taskId}` worktrees created by the `dev-pipeline` skill
-for a single dev task and removed at PR merge.
+for a single dev task and removed after the PR merge is verified.
 
 | Scope | Path | Lifecycle | Purpose |
 |-------|------|-----------|---------|
-| **Lane-level** (this §) | `<repo-root>/Mercury-<short>` | Per active lane; long-lived; removed at lane close | Isolate per-cwd Claude Code session transcripts (jsonl); user-memory dir (MEMORY.md / SESSION_INDEX.md / sessions/ / handoffs) is canonical by design — see §Operational expectation |
-| **Task-level** ([`worktree-workflow.md`](worktree-workflow.md)) | `<repo-root>/Mercury/.worktrees/{taskId}` | Per dev task; ephemeral; removed at PR merge | Isolate concurrent dev-pipeline branch checkouts |
+| **Lane-level** (this §) | `<repo-root>/.worktrees/lanes/<short>` | Per active lane; long-lived; removed at lane close | Isolate per-cwd Claude Code session transcripts (jsonl); user-memory dir (MEMORY.md / SESSION_INDEX.md / sessions/ / handoffs) is canonical by design — see §Operational expectation |
+| **Task-level** ([`worktree-workflow.md`](worktree-workflow.md)) | `<repo-root>/.worktrees/{taskId}` | Per dev task; ephemeral; removed after PR merge is verified | Isolate concurrent dev-pipeline branch checkouts |
 
-A side lane MAY use both: live in `<repo-root>/Mercury-<short>` for its
+Both kinds live under the repository's own `.worktrees/` (Issue #663). The
+`lanes/` subdirectory is reserved for lane-level worktrees: task-level cleanup
+(`scripts/worktree-reaper.sh`, `scripts/cleanup-worktree-branch.sh` auto-discovery)
+skips it, because a lane is long-lived and is closed by the lane-close
+procedure below, never by task cleanup.
+
+A side lane MAY use both: live in `<repo-root>/.worktrees/lanes/<short>` for its
 session-state isolation, AND have `dev-pipeline` create
 `.worktrees/{taskId}` inside that lane worktree for parallel dev tasks.
 
@@ -237,28 +239,28 @@ session-state isolation, AND have `dev-pipeline` create
 
 | Lane | Worktree path | Notes |
 |------|---------------|-------|
-| `main` | `<repo-root>/Mercury` (Mercury team value: `D:/Mercury/Mercury`) | Backward-compat default; the original repo checkout |
-| `<side>` | `<repo-root>/Mercury-<short>` (Mercury team value: `D:/Mercury/Mercury-<short>`) | `<short>` = the lane's `Short name` field (≤8 char, per Δ6); the operator's own `<repo-root>` choice — record concrete value in own LANES.md `Worktree path` field per Rule 5.1 |
+| `main` | `<repo-root>` | Backward-compat default; the original repo checkout |
+| `<side>` | `<repo-root>/.worktrees/lanes/<short>` | `<short>` = the lane's `Short name` field (≤8 char, per Δ6); record the concrete value in own LANES.md `Worktree path` field per Rule 5.1 |
 
 Example: `side-multi-lane` (short name `side-mlane`) →
-`<repo-root>/Mercury-side-mlane` (Mercury team value:
-`D:/Mercury/Mercury-side-mlane`).
+`<repo-root>/.worktrees/lanes/side-mlane`.
 
-The path lives outside the main checkout so that auto-handoff invocations
-launched from the lane's session can `cd` to a path that resolves to a
-distinct `~/.claude/projects/<encoded-cwd>/` dir (Mercury team value:
-`~/.claude/projects/D--Mercury-Mercury-<short>/`).
+The lane worktree is a different directory from the main checkout, so
+auto-handoff invocations launched from the lane's session can `cd` to a path
+that resolves to a distinct `~/.claude/projects/<encoded-cwd>/` dir (the
+encoding of the full lane worktree path, which differs from the main
+checkout's).
 
 ### Cross-repo lane variant (Rule 5.1 extension, Issue [#374](https://github.com/392fyc/Mercury/issues/374))
 
-The default mapping above assumes the lane's worktree is a Mercury checkout
-sibling (`Mercury-<short>`). A **cross-repo lane** points its `Worktree path`
+The default mapping above assumes the lane's worktree is inside the Mercury
+checkout (`.worktrees/lanes/<short>`). A **cross-repo lane** points its `Worktree path`
 field at a sibling git repository (a different `.git` root, possibly with
 its own remote / branching convention) and uses Mercury core agents +
 skills + memory mechanics in service of work that lives in that sibling repo.
 
 This is an **extension** of Rule 5.1, not a strict superset: Rule 5.1's
-`Mercury-<short>` SHOULD-recommendation does not apply, and the
+`.worktrees/lanes/<short>` SHOULD-recommendation does not apply, and the
 procedural §"Setup at lane open" / §"Cleanup at lane close" Mercury
 `git worktree add/remove` flows below also do **not** apply (the host
 repo manages its own checkout lifecycle). Only the requirement to declare
@@ -266,9 +268,9 @@ a `Worktree path` field per Rule 5.1 (lane workspace isolation) carries
 over unchanged; ownership / per-section editing of LANES.md remains
 governed by Rule 6.
 
-- The worktree path does NOT need to match `<repo-root>/Mercury-<short>` —
-  the `Mercury-<short>` convention is a default for Mercury-checkout
-  sibling lanes, not a hard constraint. The lane MUST still declare a
+- The worktree path does NOT need to match `<repo-root>/.worktrees/lanes/<short>` —
+  that convention is the default for lanes working on the Mercury checkout, not
+  a hard constraint: the host repository's own checkout keeps its own location. The lane MUST still declare a
   stable `Worktree path` field in its own LANES.md section per Rule 5.1
   (Worktree path declaration) — and only the owning lane edits its own
   LANES.md section per Rule 6.
@@ -343,13 +345,13 @@ After opening a new lane (LANES.md section added, short name declared):
 git fetch origin
 
 # Recommended: create a fresh init branch off origin/develop (avoids checkout collision)
-git worktree add -b lane/<short>/init <repo-root>/Mercury-<short> origin/develop
-# Mercury team example:
-# git worktree add -b lane/side-mlane/init D:/Mercury/Mercury-side-mlane origin/develop
+git worktree add -b lane/<short>/init <repo-root>/.worktrees/lanes/<short> origin/develop
+# Example:
+# git worktree add -b lane/side-mlane/init <repo-root>/.worktrees/lanes/side-mlane origin/develop
 ```
 
-If you instead try `git worktree add <repo-root>/Mercury-<short> develop` and
-`develop` is already checked out in the main `<repo-root>/Mercury` repo,
+If you instead try `git worktree add <repo-root>/.worktrees/lanes/<short> develop` and
+`develop` is already checked out in the main `<repo-root>` checkout,
 git refuses with "fatal: 'develop' is already used by worktree at ..." per
 [git-worktree(1)](https://git-scm.com/docs/git-worktree) (a branch can only
 be checked out by one worktree at a time). The `-b lane/<short>/init` form
@@ -363,11 +365,11 @@ once a real work branch exists.
 Side-lane sessions launch with the worktree as cwd:
 
 ```bash
-cd <repo-root>/Mercury-<short>
+cd <repo-root>/.worktrees/lanes/<short>
 claude  # SessionStart hook now reads from ~/.claude/projects/<encoded-cwd>/
-# Mercury team example:
-# cd D:/Mercury/Mercury-side-mlane && claude
-# → ~/.claude/projects/D--Mercury-Mercury-side-mlane/
+# Example:
+# cd <repo-root>/.worktrees/lanes/side-mlane && claude
+# → ~/.claude/projects/<encoded <repo-root>/.worktrees/lanes/side-mlane>/
 ```
 
 This makes the per-cwd project state dir distinct from the main lane's, but
@@ -379,13 +381,12 @@ Concretely (illustrative path values — actual values depend on the
 operator's platform encoding + env vars; trust the script + hook resolution
 at runtime, not the literals shown):
 
-- `<encoded-cwd>` = your platform's encoding of `<repo-root>/Mercury-<short>`
-  (Mercury team example: `D--Mercury-Mercury-side-mlane` for
-  `D:/Mercury/Mercury-side-mlane`)
+- `<encoded-cwd>` = your platform's encoding of the full lane worktree path
+  `<repo-root>/.worktrees/lanes/<short>` (every non-alphanumeric character becomes `-`)
 - `<canonical>` = the project's lane home, `scripts/lane-paths.sh memory-dir`:
   `MERCURY_MEMORY_DIR` if set, else
   `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded main checkout>/memory`
-  (Mercury team example: `~/.claude/projects/D--Mercury-Mercury/memory` —
+  (example: `~/.claude/projects/<encoded main checkout>/memory` —
   encoded for the repo's main checkout path; each project gets its own, #613)
 
 **Per-cwd (Claude Code core, automatic):** session transcripts under
@@ -459,32 +460,43 @@ only flips Status to `closed` + prunes `.tmp/lane-<lane>/` per Rule 3.2).
 Operators run worktree cleanup manually as part of the close ceremony:
 
 ```bash
-# Sanity-check the path resolves to the expected worktree before proceeding,
-# especially before the --force variant:
-git worktree list | grep -F "<repo-root>/Mercury-<short>"
+# Sanity-check the path resolves to the expected worktree before proceeding.
+git worktree list | grep -F "<repo-root>/.worktrees/lanes/<short>"
 
-git worktree remove <repo-root>/Mercury-<short>
-# OR (if uncommitted state exists and is intentionally being discarded)
-git worktree remove --force <repo-root>/Mercury-<short>
+# Verify the lane branch is merged (ancestor of origin/develop, or contained in a
+# merged PR head) and the worktree is clean (git status --porcelain is empty).
+git -C <repo-root>/.worktrees/lanes/<short> status --porcelain
 
-# Mercury team example:
-# git worktree list | grep -F "D:/Mercury/Mercury-side-mlane"
-# git worktree remove D:/Mercury/Mercury-side-mlane
+git worktree remove <repo-root>/.worktrees/lanes/<short>      # never --force
+
+# Example:
+# git worktree list | grep -F ".worktrees/lanes/side-mlane"
+# git worktree remove <repo-root>/.worktrees/lanes/side-mlane
 ```
 
+If you use `scripts/cleanup-worktree-branch.sh` for the lane branch, pass the
+verified lane worktree explicitly with `--worktree-path`; its auto-discovery
+skips anything under `.worktrees/lanes/` by design.
+
+If the worktree has uncommitted content or the merge cannot be verified, do
+not remove anything; report the path and branch. A lane abandoned without
+merging is listed for the user and removed only after the user confirms (see
+[`worktree-workflow.md`](worktree-workflow.md) for the confirmed-deletion
+steps, including the SHA read-back before the remote branch is deleted via
+`gh api -X DELETE`; `main`, `master`, `develop` and the default branch are never deleted).
+
 `git worktree remove` operates on registered worktrees only (verifiable via
-`git worktree list`) — it cannot remove arbitrary filesystem paths even with
-`--force`, so the operation is bounded to the worktree set this repo knows
-about. Combined with the Rule 2.1 `<short>` validation above, the command
-shape is safe for protocol-conforming inputs.
+`git worktree list`) — it cannot remove arbitrary filesystem paths, so the
+operation is bounded to the worktree set this repo knows about. Combined with
+the Rule 2.1 `<short>` validation above, the command shape is safe for
+protocol-conforming inputs.
 
 The `~/.claude/projects/<encoded-cwd>/` user-memory dir is preserved as
 audit trail; operators may archive it manually if no longer needed.
 
 ### Backward compatibility
 
-- `main` lane keeps `<repo-root>/Mercury` as its worktree path (Mercury
-  team value: `D:/Mercury/Mercury`) — no migration needed for existing
+- `main` lane keeps the main checkout `<repo-root>` as its worktree path — no migration needed for existing
   main-lane workflows.
 - Side lanes that opened before Δ9 ran in the shared cwd; this is a known
   routing-bleed risk per Issue #342. Migration is per-lane operator decision

@@ -73,15 +73,14 @@ The canonical dispatch pattern is "`cd` first, then `claude --bg`":
 
 ```bash
 # Substitute <lane-worktree> with the value from your LANES.md
-# `Worktree path` field per Rule 5.1. Mercury team values shown after
-# each lane comment as illustrative concrete examples — operators on
-# other machines / non-Windows substitute their own <repo-root>.
+# `Worktree path` field per Rule 5.1. <repo-root> is the Mercury main
+# checkout root; lane worktrees live inside it (Issue #663).
 
-# main lane (Mercury team value: D:/Mercury/Mercury):
+# main lane (<repo-root>):
 cd <lane-worktree>
 claude --bg "<prompt>"
 
-# side-bug lane (Mercury team value: D:/Mercury/Mercury-side-bug):
+# side-bug lane (<repo-root>/.worktrees/lanes/side-bug):
 cd <lane-worktree>
 claude --bg "<prompt>"
 
@@ -93,14 +92,14 @@ claude --bg "<prompt>"
 Why explicit `cd` matters:
 
 - Mercury's per-cwd session isolation relies on Claude Code encoding the
-  launch cwd into `~/.claude/projects/<encoded-cwd>/` (e.g.
-  `D--Mercury-Mercury` vs `D--Mercury-Mercury-side-bug`). See
+  launch cwd into `~/.claude/projects/<encoded-cwd>/` (the
+  encoding of `<repo-root>` differs from that of `<repo-root>/.worktrees/lanes/side-bug`). See
   [`lane-naming.md`](lane-naming.md) §"Operational expectation" for the
   encoding rules and the canonical-vs-per-cwd split.
 - bg sessions inherit the dispatcher's cwd verbatim (Phase 2 empirical
   in S98 ADR §Phase 2; `state.json.cwd` preserved exactly).
-- Dispatching from the main lane worktree (Mercury team value
-  `D:/Mercury/Mercury`) while *intending* side-bug work routes the
+- Dispatching from the main lane worktree (`<repo-root>`)
+  while *intending* side-bug work routes the
   session transcript jsonl + per-cwd hook scope under the **main**
   lane's encoded dir — the work content is fine, but lane attribution
   is wrong. Mercury's user-level memory layer (handoffs,
@@ -132,13 +131,12 @@ know **bg sessions are not durable across reboot the way lanes are**.
 
 ```bash
 # Substitute <lane-worktree> with the lane's Worktree path from
-# LANES.md per Rule 5.1; concrete Mercury team values shown as
-# illustrative annotations.
+# LANES.md per Rule 5.1; annotations below are <repo-root>-relative.
 
 claude agents                              # all lanes (TUI)
 claude agents --cwd <lane-worktree>        # filter to one lane
-                                           # main         → D:/Mercury/Mercury
-                                           # side-bug     → D:/Mercury/Mercury-side-bug
+                                           # main         → <repo-root>
+                                           # side-bug     → <repo-root>/.worktrees/lanes/side-bug
                                            # cross-repo   → <host-repo-worktree>
 ```
 
@@ -209,8 +207,8 @@ The mid-flight `state.json` exposes:
 
 ```jsonc
 {
-  "cwd": "D:\\Mercury\\Mercury",            // top-level cwd unchanged
-  "worktreePath": "D:\\Mercury\\Mercury\\.claude\\worktrees\\<name>",
+  "cwd": "<repo-root>",                      // top-level cwd unchanged
+  "worktreePath": "<repo-root>/.claude/worktrees/<name>",
   "worktreeBranch": "worktree-<name>"
 }
 ```
@@ -251,22 +249,30 @@ them. Cleanup is an explicit operator step, not automatic GC.
 # Inspect first
 git worktree list | grep ".claude/worktrees/<name>"
 git -C .claude/worktrees/<name> log --oneline -5
+git -C .claude/worktrees/<name> status --porcelain      # must be empty to proceed
 
-# Discard the isolated work
-git worktree remove .claude/worktrees/<name>      # refuses if uncommitted state
-git worktree remove --force .claude/worktrees/<name>  # discards uncommitted
-git branch -D worktree-<name>
+# Merged work (HEAD is an ancestor of origin/develop, or of a merged PR head): remove
+git worktree remove .claude/worktrees/<name>      # plain remove; refuses if uncommitted state
+git branch -d worktree-<name>                     # -D only with merged-PR evidence
 ```
 
-**Destructive — read before running.** The `--force` variant discards
-uncommitted work permanently; `git branch -D` deletes the branch ref
-without merge-safety check. The `<name>` placeholder is operator-supplied
-(NOT auto-substituted by the shell) — copy-pasting verbatim deletes a
-literal directory named `<name>`. Before running:
+**Never use `--force` here.** If `git worktree remove` refuses because of
+uncommitted content, stop and report the path and what is uncommitted. Work
+that was never merged is listed for the user (branch, tip commit, number of
+commits not in the base branch) and removed only after the user confirms; at
+that point `git branch -D worktree-<name>` is the confirmed deletion, and a
+pushed branch is deleted with `gh api -X DELETE repos/<owner>/<repo>/git/refs/heads/worktree-<name>`
+(not a bare `git push`), after reading it back with `gh api repos/<owner>/<repo>/git/ref/heads/worktree-<name>`
+and confirming the SHA equals the tip commit you listed (otherwise stop). Never delete `main`, `master`,
+`develop` or the default branch. Lifecycle rules: [`worktree-workflow.md`](worktree-workflow.md).
+
+The `<name>` placeholder is operator-supplied (NOT auto-substituted by the
+shell) — copy-pasting verbatim targets a literal directory named `<name>`.
+Before running:
 
 1. `git worktree list` and grep for the exact path you intend to remove.
 2. `git -C .claude/worktrees/<name> status` to confirm there is no
-   committed-but-unpushed work you want to keep.
+   uncommitted or unpushed work you want to keep.
 3. Replace `<name>` with the real worktree name from step 1.
 
 The Rule 2.1 `[a-z0-9-]+` short-name validation does NOT apply to
@@ -275,14 +281,15 @@ auto-worktree names (they are Anthropic-generated); audit visually.
 ## 5. `.claude/worktrees/` namespace coexistence
 
 Mercury has a separate, manual `.claude/worktrees/` use-case predating
-agent view: `dev-pipeline` and other workflows create
-`.claude/worktrees/<task-id>/` for per-task isolation (see
-[`worktree-workflow.md`](worktree-workflow.md)). Agent view's auto-iso
-shares the same parent directory.
+agent view: `dev-pipeline` and other workflows created
+`.claude/worktrees/<task-id>/` for per-task isolation. Task worktrees now live
+at `.worktrees/<task-id>/` in the repository root (see
+[`worktree-workflow.md`](worktree-workflow.md)); agent view's auto-iso keeps
+using `.claude/worktrees/`.
 
 | Source | Name pattern | Lifecycle | Branch |
 |--------|--------------|-----------|--------|
-| Mercury manual (dev-pipeline) | task IDs (e.g. `session-22-phase1`, `skill-deep-research`) | created per dev task, removed at PR merge | task-specific |
+| Mercury manual (dev-pipeline, legacy path) | task IDs (e.g. `session-22-phase1`, `skill-deep-research`) | created per dev task, removed after PR merge is verified | task-specific |
 | Agent view auto-iso | Anthropic-generated names from session/prompt context | created at first Edit attempt, optionally preserved by `ExitWorktree(action:"keep")` | `worktree-<auto-name>` |
 
 **Before deleting any `.claude/worktrees/<name>/`**: verify which source
@@ -365,14 +372,13 @@ multi-lane protocol remains intact.
 ```bash
 # <lane-worktree> resolves to each lane's `Worktree path` field in
 # LANES.md (canonical user-memory file, NOT in this repo) per Rule 5.1.
-# Mercury team values shown after each lane line as illustrative
-# concrete examples — operators on other machines / non-Windows
-# substitute their own <repo-root>.
+# <repo-root> is the Mercury main checkout root; lane worktrees live
+# inside it at <repo-root>/.worktrees/lanes/<short> (Issue #663).
 
-# main lane              → Mercury team value: D:/Mercury/Mercury
+# main lane              → <repo-root>
 cd <lane-worktree> && claude --bg "<prompt>"
 
-# side-bug lane          → Mercury team value: D:/Mercury/Mercury-side-bug
+# side-bug lane          → <repo-root>/.worktrees/lanes/side-bug
 cd <lane-worktree> && claude --bg "<prompt>"
 
 # cross-repo lane        → <host-repo-worktree>
@@ -398,13 +404,9 @@ else the project's lane home
 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded main checkout>/memory/LANES.md`; #613). See lane-naming.md §"Worktree path convention" + §"Cross-repo
 lane variant" for canonical pathing rules.
 
-Operators on machines other than the Mercury team's default substitute
-their own `<repo-root>`; the `D:/...` examples above reflect the
-Mercury team's Windows checkout per `CLAUDE.md` §MUST "install to D
-drive" (a **Windows team-specific policy explicitly scoped to that team
-in CLAUDE.md** — skip on non-Windows). These are illustrative examples
-under a `<lane-worktree>` placeholder, not a hard-coded portability
-constraint.
+`<repo-root>` is the Mercury main checkout root; lane worktrees live inside it
+(`<repo-root>/.worktrees/lanes/<short>`, Issue #663). The examples above use
+the `<lane-worktree>` placeholder and carry no machine-specific paths.
 
 ### What Mercury does NOT promise
 
