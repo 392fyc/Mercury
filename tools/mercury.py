@@ -7,9 +7,12 @@
 The target selects packs in `<target>/.mercury/config.json`. Every file of a selected pack except its
 `build/` directory is copied verbatim to `<target>/.mercury/packs/<pack>/`. Each skill the pack declares
 also gets a thin entry (`.claude/skills/mercury-<skill>/SKILL.md`, `.agents/skills/mercury-<skill>/SKILL.md`)
-that points at the full skill under `.mercury/packs/`. Every installed file's sha256 is recorded in
-`<target>/.mercury/lock.json`. Hand edits to a managed file are never overwritten or deleted.
-See packs/README.md for the rules.
+that points at the full skill under `.mercury/packs/`. Role sources (`roles/<role>.md`) become
+`.claude/agents/mercury-<role>.md` and `.codex/agents/mercury-<role>.toml`, rule files (`rules/mercury-*.rules`) go to
+`.codex/rules/`, and the pack fragments `agents.md` / `claude.md` fill a managed section at the top of the target's
+AGENTS.md / CLAUDE.md (bytes outside the markers are never touched). Every installed file's sha256 and every
+section's hash is recorded in `<target>/.mercury/lock.json`. Hand edits to a managed file are never overwritten or
+deleted. See packs/README.md for the rules.
 
 Exit codes: 0 in sync / applied, 1 differences or conflicts, 2 invalid input or configuration.
 """
@@ -32,6 +35,10 @@ HOSTS = {"codex": ".agents/skills", "claude": ".claude/skills"}
 STUB_PREFIX = "mercury-"
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 SKIP_DIRS = {"__pycache__"}
+# Single-file deletion roots: <dir>/mercury-<name><ext> may be deleted, nothing else in <dir>.
+FILE_ROOTS = {(".claude", "agents"): ".md", (".codex", "agents"): ".toml", (".codex", "rules"): ".rules"}
+SECTION_FILES = {"agents": "AGENTS.md", "claude": "CLAUDE.md"}  # fragment name -> entry file that carries the section
+GUARD_REL = f"{PACKS_REL}/core/hooks/readonly_guard.sh"
 
 
 class BuildError(Exception):
@@ -131,12 +138,16 @@ def inside_source(base, path, what):
 def managed_root_of(rel):
     """The root (as a tuple) that bounds deletion for this path, or None when the path is not in the namespace.
 
-    Namespace: any file below .mercury/packs/, and any file below <skill root>/mercury-*/ where the
-    skill roots are .agents/skills and .claude/skills. Compared exactly (case and dots included)."""
+    Namespace: any file below .mercury/packs/, any file below <skill root>/mercury-*/ where the skill roots
+    are .agents/skills and .claude/skills, and the single files .claude/agents/mercury-*.md,
+    .codex/agents/mercury-*.toml and .codex/rules/mercury-*.rules. Compared exactly (case and dots included)."""
     parts = tuple(rel.split("/"))
     pk = tuple(PACKS_REL.split("/"))
     if parts[:2] == pk and len(parts) > 2:
         return pk
+    ext = FILE_ROOTS.get(parts[:2])
+    if ext and len(parts) == 3 and parts[2].startswith(STUB_PREFIX) and parts[2].endswith(ext)             and len(parts[2]) > len(STUB_PREFIX) + len(ext):
+        return parts[:2]
     for root in (tuple(v.split("/")) for v in HOSTS.values()):
         if parts[:2] == root and len(parts) > 3 and parts[2].startswith(STUB_PREFIX) and len(parts[2]) > len(STUB_PREFIX):
             return root
@@ -188,7 +199,8 @@ def field_text(lines, key, what):
     return no_controls(text, f"{what}: {key}")
 
 
-CONTROL_RE = re.compile(r"[\x00-\x08\x0a-\x1f\x7f-\x9f\u2028\u2029]")
+HIDDEN = r"\ud800-\udfff\u202a-\u202e\u2066-\u2069\ufeff"  # lone surrogates, bidi controls, byte order mark
+CONTROL_RE = re.compile(r"[\x00-\x08\x0a-\x1f\x7f-\x9f\u2028\u2029" + HIDDEN + "]")
 
 
 def no_controls(text, what):
@@ -257,20 +269,85 @@ def load_master(source):
     return master, mhash
 
 
+LINK_FIELDS = ("name", "purpose", "locate", "access")
+LINK_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+URL_RE = re.compile(r"\b[A-Za-z][A-Za-z0-9+.-]*://[^\s`'\"()<>\[\]]*")
+# Machine-specific locations, searched in the whole text: file: URLs, a drive letter not glued to a word, %VAR%,
+# $HOME-like variables, ~ as a home directory, and a slash or backslash that starts a path (not "and/or", not "./x").
+LINK_PATHS = [re.compile(p, re.I) for p in (
+    r"\bfile:", r"(?<![A-Za-z0-9])[A-Za-z]:(?=\S)", r"%[A-Za-z_][A-Za-z0-9_ ]*%",
+    r"\$\{?(?:HOME|USERPROFILE|HOMEPATH|HOMEDRIVE|APPDATA|LOCALAPPDATA|TEMP|TMP)\b", r"\$\{?[A-Za-z_][A-Za-z0-9_]*\}?[/\\]",
+    r"(?<![A-Za-z0-9])~(?=[/\\]|$|\s)", r"(?<![A-Za-z0-9._-])[/\\]", r"(?<![A-Za-z0-9])\\", r"(?<![A-Za-z0-9])\.{3,}[/\\]",
+)]
+CONFIG_KEYS = {"schema_version", "packs", "linked_repos", "params"}
+PARAM_KEYS = {"guard_write_scripts"}
+SCRIPT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.(?:sh|ps1|py)$")
+
+
+def link_text(value, what):
+    """One line of plain text for the managed section: no control or line-separator characters, no markup that could
+    close the section, and no machine path (absolute, drive, home or file URL) in any word."""
+    if not isinstance(value, str) or not value or value != value.strip() or len(value) > 400:
+        raise BuildError(f"{what}: must be a non-empty single-line string of at most 400 characters without edge spaces")
+    no_controls(value, what)
+    if "<!--" in value or "-->" in value or "MERCURY:" in value:
+        raise BuildError(f"{what}: must not contain a comment marker or a Mercury marker")
+    probe = URL_RE.sub("url", value) if not re.search(r"\bfile:", value, re.I) else value
+    for pattern in LINK_PATHS:
+        m = pattern.search(probe)
+        if m:
+            raise BuildError(f"{what}: machine paths are not allowed (name a config key or describe the location): {probe[max(0, m.start() - 8):m.end() + 12]!r}")
+    return value
+
+
+def load_linked(items):
+    if not isinstance(items, list) or len(items) > 20:
+        raise BuildError(f"{CONFIG_REL}: linked_repos must be a list of at most 20 entries")
+    out, seen = [], set()
+    for i, item in enumerate(items):
+        what = f"{CONFIG_REL}: linked_repos[{i}]"
+        if not isinstance(item, dict) or set(item) != set(LINK_FIELDS):
+            raise BuildError(f"{what}: needs exactly the fields {', '.join(LINK_FIELDS)}")
+        for field in LINK_FIELDS:
+            link_text(item[field], f"{what}.{field}")
+        if not LINK_NAME_RE.match(item["name"]) or item["name"].lower() in seen:
+            raise BuildError(f"{what}.name: must be a unique plain name (letters, digits, . _ -)")
+        seen.add(item["name"].lower())
+        out.append({f: item[f] for f in LINK_FIELDS})
+    return out
+
+
+def load_params(params):
+    if not isinstance(params, dict) or not set(params) <= PARAM_KEYS:
+        raise BuildError(f"{CONFIG_REL}: params may only hold: {', '.join(sorted(PARAM_KEYS))}")
+    scripts = params.get("guard_write_scripts", [])
+    if not isinstance(scripts, list) or not all(isinstance(x, str) and SCRIPT_RE.match(x) for x in scripts):
+        raise BuildError(f"{CONFIG_REL}: params.guard_write_scripts must be a list of script file names (no directories)")
+    return {"guard_write_scripts": scripts} if "guard_write_scripts" in params else {}
+
+
 def load_config(target, master):
+    """(packs in install order, config hash, {linked_repos, params}). Core comes first, then the config's order."""
     cfg, chash = load_json(target / CONFIG_REL, CONFIG_REL)
     packs = cfg.get("packs") if isinstance(cfg, dict) else None
     if not isinstance(cfg, dict) or cfg.get("schema_version") != 1 or not isinstance(packs, list) \
             or not all(isinstance(p, str) for p in packs):
         raise BuildError(f"{CONFIG_REL}: expected {{\"schema_version\": 1, \"packs\": [names]}}")
+    if set(cfg) - CONFIG_KEYS:
+        raise BuildError(f"{CONFIG_REL}: unknown key(s): {', '.join(sorted(set(cfg) - CONFIG_KEYS))}")
     unknown = sorted(set(packs) - set(master["packs"]))
     if unknown:
         raise BuildError(f"{CONFIG_REL}: unknown pack(s): {', '.join(unknown)}")
     disabled = sorted(p for p in set(packs) if not master["packs"][p]["enabled"])
     if disabled:
         raise BuildError(f"{CONFIG_REL}: pack(s) disabled in mercury.json cannot be installed: {', '.join(disabled)}")
-    required = {n for n, p in master["packs"].items() if p.get("required")}
-    return sorted(set(packs) | required), chash
+    required = [n for n, p in master["packs"].items() if p.get("required")]
+    ordered = []
+    for name in ["core"] + packs + sorted(required):
+        if name not in ordered and (name in packs or name in required):
+            ordered.append(name)
+    extras = {"linked_repos": load_linked(cfg.get("linked_repos", [])), "params": load_params(cfg.get("params", {}))}
+    return ordered, chash, extras
 
 
 def load_pack(proot, pack):
@@ -316,11 +393,305 @@ def tracked_files(source, pack):
     return out
 
 
+# --- roles: one source, two host formats ---
+
+ROLE_NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,40}$")
+TOKEN_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+ROLE_SECTIONS = {
+    "claude": {"model": "token", "tools": "text", "disallowedTools": "text", "permissionMode": "enum", "readonly_guard": "bool"},
+    "codex": {"model": "token", "model_reasoning_effort": "enum", "sandbox_mode": "enum", "web_search": "enum"},
+}
+ROLE_ENUMS = {
+    "permissionMode": {"default", "acceptEdits", "auto", "dontAsk", "plan"},
+    "model_reasoning_effort": {"minimal", "low", "medium", "high", "xhigh", "max"},
+    "sandbox_mode": {"read-only", "workspace-write"},
+    "web_search": {"live", "cached", "disabled"},
+}
+ROLE_REQUIRED = {"claude": {"model"}, "codex": {"sandbox_mode"}}
+BODY_BAD = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029" + HIDDEN + "]")
+
+
+def role_value(raw, what):
+    """One frontmatter value: true/false, a JSON string, or a bare token. Anything else is refused."""
+    if raw in ("true", "false"):
+        return raw == "true"
+    if raw.startswith('"'):
+        try:
+            val = json.loads(raw)
+        except ValueError:
+            raise BuildError(f"{what}: not a valid double-quoted string")
+        if not isinstance(val, str):
+            raise BuildError(f"{what}: not a string")
+        return no_controls(val, what)
+    if TOKEN_RE.match(raw):
+        return raw
+    raise BuildError(f"{what}: unsupported value {raw!r} (use true/false, a double-quoted string or a plain token)")
+
+
+def parse_role(data, what):
+    """{'description', 'claude': {...}, 'codex': {...}, 'body'} from a role source; unknown keys and odd syntax are errors."""
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        raise BuildError(f"{what}: not valid UTF-8")
+    text = text.replace("\r\n", "\n")
+    m = re.match(r"^---\n(.*?)\n---\n(.*)$", text, flags=re.S)
+    if not m:
+        raise BuildError(f"{what}: no frontmatter")
+    role, section = {}, None
+    for line in m.group(1).split("\n"):
+        if not line.strip():
+            continue
+        top = re.match(r"^([A-Za-z_]+):(?: (.*))?$", line)
+        sub = re.match(r"^  ([A-Za-z_]+): (.+)$", line)
+        if top and not line.startswith(" "):
+            key, val = top.group(1), top.group(2)
+            if key in ROLE_SECTIONS and val is None:
+                if key in role:
+                    raise BuildError(f"{what}: {key} declared twice")
+                role[key], section = {}, key
+            elif key == "description" and val is not None and key not in role:
+                role[key], section = role_value(val, f"{what}: description"), None
+            else:
+                raise BuildError(f"{what}: unexpected or repeated frontmatter key {key!r}")
+        elif sub and section:
+            key = sub.group(1)
+            kind = ROLE_SECTIONS[section].get(key)
+            if kind is None or key in role[section]:
+                raise BuildError(f"{what}: unknown or repeated {section} field {key!r}")
+            val = role_value(sub.group(2), f"{what}: {section}.{key}")
+            if (kind == "bool") != isinstance(val, bool) or (kind == "token" and not TOKEN_RE.match(val)) \
+                    or (kind == "enum" and val not in ROLE_ENUMS[key]) or (kind == "text" and not val.strip()):
+                raise BuildError(f"{what}: bad value for {section}.{key}")
+            role[section][key] = val
+        else:
+            raise BuildError(f"{what}: unsupported frontmatter line: {line!r}")
+    if not isinstance(role.get("description"), str) or not role["description"].strip():
+        raise BuildError(f"{what}: description is required")
+    hosts = [h for h in ROLE_SECTIONS if h in role]
+    if not hosts:
+        raise BuildError(f"{what}: declare at least one of: {', '.join(ROLE_SECTIONS)}")
+    for h in hosts:
+        missing = ROLE_REQUIRED[h] - set(role[h])
+        if missing:
+            raise BuildError(f"{what}: {h} section needs: {', '.join(sorted(missing))}")
+    body = m.group(2).strip("\n")
+    if not body.strip():
+        raise BuildError(f"{what}: empty body")
+    if BODY_BAD.search(body):
+        raise BuildError(f"{what}: control character in the body")
+    role["body"] = body + "\n"
+    return role
+
+
+def role_claude(name, src, role):
+    c = role["claude"]
+    q = lambda v: json.dumps(v, ensure_ascii=False)
+    fm = [f"name: {q(name)}", f"description: {q(role['description'])}", f"model: {q(c['model'])}"]
+    for key in ("tools", "disallowedTools", "permissionMode"):
+        if key in c:
+            fm.append(f"{key}: {q(c[key])}")
+    if c.get("readonly_guard"):
+        # Shell form under bash: ${CLAUDE_PROJECT_DIR} is substituted by Claude Code (documented, verified), `sh` needs
+        # no executable bit. `|| exit 2` turns a launcher that cannot run or exits non-zero into a block. A timeout or a
+        # shell that cannot start is not an exit code: only `onFailure: "block"` (documented for Claude Code 2.1.295 and
+        # later; older versions ignore the unknown field, verified on 2.1.291) blocks the call in those cases.
+        cmd = f'sh "${{CLAUDE_PROJECT_DIR}}/{GUARD_REL}" || exit 2'
+        fm += ["hooks:", "  PreToolUse:", '    - matcher: "Bash|PowerShell"', "      hooks:", "        - type: command",
+               "          shell: bash", f"          command: {q(cmd)}", "          timeout: 60", '          onFailure: "block"']
+    note = f"<!-- Generated by tools/mercury.py from {PACKS_REL}/{src}. Do not edit; change the source and run `python tools/mercury.py apply`. -->"
+    return ("---\n" + "\n".join(fm) + f"\n---\n\n{note}\n\n" + role["body"]).encode("utf-8")
+
+
+def role_codex(name, src, role):
+    c = role["codex"]
+    q = lambda v: json.dumps(v, ensure_ascii=False)
+    if "'''" in role["body"]:
+        raise BuildError(f"{src}: the body contains ''' and cannot be written as a TOML literal string")
+    lines = [f"# Generated by tools/mercury.py from {PACKS_REL}/{src}. Do not edit; change the source and run `python tools/mercury.py apply`.",
+             f"name = {q(name)}", f"description = {q(role['description'])}"]
+    for key in ("model", "model_reasoning_effort", "sandbox_mode", "web_search"):
+        if key in c:
+            lines.append(f"{key} = {q(c[key])}")
+    out = "\n".join(lines) + "\n\ndeveloper_instructions = '''\n" + role["body"] + "'''\n"
+    try:
+        import tomllib
+        got = tomllib.loads(out)
+        if got.get("developer_instructions") != role["body"] or got.get("name") != name or got.get("description") != role["description"]:
+            raise BuildError(f"{src}: generated TOML does not read back to the source")
+    except ImportError:
+        pass
+    except ValueError as err:
+        raise BuildError(f"{src}: generated TOML is invalid: {err}")
+    return out.encode("utf-8")
+
+
+def role_files(proot, pack, tracked):
+    """{installation path: bytes} for every roles/<role>.md of the pack; both host formats."""
+    out = {}
+    for rel in sorted(tracked):
+        parts = rel.split("/")
+        if parts[0] != "roles":
+            continue
+        if len(parts) != 2 or not parts[1].endswith(".md") or not ROLE_NAME_RE.match(parts[1][:-3]):
+            raise BuildError(f"pack {pack}: roles/ holds only <role>.md files with a lowercase name: {rel}")
+        role_name = parts[1][:-3]
+        what = f"pack {pack}: {rel}"
+        role = parse_role((proot / rel).read_bytes(), what)
+        name = stub_name(role_name)
+        if "claude" in role:
+            out[f".claude/agents/{name}.md"] = role_claude(name, f"{pack}/{rel}", role)
+        if "codex" in role:
+            out[f".codex/agents/{name}.toml"] = role_codex(name, f"{pack}/{rel}", role)
+    return out
+
+
+# --- managed sections in AGENTS.md / CLAUDE.md ---
+
+MARK_RE = re.compile(r"MERCURY:(BEGIN|END)")
+BEGIN_TEXT = "<!-- MERCURY:BEGIN managed by tools/mercury.py from the packs in .mercury/config.json; edits here stop the installer, change the pack and run apply -->"
+END_TEXT = "<!-- MERCURY:END -->"
+
+
+def fragment(proot, rel):
+    """A pack's fragment as LF text with no trailing blank lines; markers inside it are refused."""
+    try:
+        text = (proot / rel).read_bytes().decode("utf-8").replace("\r\n", "\n")
+    except UnicodeDecodeError:
+        raise BuildError(f"{rel}: not valid UTF-8")
+    if BODY_BAD.search(text.replace("\n", "")) or MARK_RE.search(text) or not text.strip():
+        raise BuildError(f"{rel}: empty, contains a control or hidden character, or contains a Mercury marker")
+    return text.strip("\n")
+
+
+def render_linked(repos):
+    if not repos:
+        return ""
+    parts = ["## Linked repositories", "",
+             "Declared in `linked_repos` in `.mercury/config.json`; Mercury renders this section from it. "
+             "Access beyond what a repository's entry allows needs its own authorized scope.", ""]
+    for r in repos:
+        parts += [f"### {r['name']}", "", f"- Purpose: {r['purpose']}", f"- Locate: {r['locate']}", f"- Access: {r['access']}", ""]
+    return "\n".join(parts).rstrip("\n")
+
+
+def build_sections(frags, repos):
+    """{entry file: managed section text (LF, markers included, no trailing newline)} from {pack: {'agents'|'claude': text}} in install order."""
+    out = {}
+    for kind, entry in SECTION_FILES.items():
+        body = [f[kind] for f in frags.values() if kind in f]
+        if kind == "agents" and repos:
+            body.append(render_linked(repos))
+        text = body[0] if body else ""
+        for part in body[1:]:
+            both_bullets = text.rsplit("\n", 1)[-1].startswith("- ") and part.startswith("- ")
+            text += ("\n" if both_bullets else "\n\n") + part
+        out[entry] = "\n".join([BEGIN_TEXT, text, END_TEXT])
+    return out
+
+
+def find_block(text, name):
+    """(start, end) of the managed block in text, or None when there are no markers. Anything unbalanced is an error."""
+    marks = [(m.start(), m.group(1)) for m in MARK_RE.finditer(text)]
+    if not marks:
+        return None
+    if [k for _, k in marks] != ["BEGIN", "END"]:
+        raise BuildError(f"{name}: Mercury markers are unbalanced or appear more than once")
+    b, e = marks[0][0], marks[1][0]
+    bl = text.rfind("\n", 0, b) + 1
+    be = text.find("\n", b)
+    begin_line = text[bl:be if be != -1 else len(text)].rstrip("\r")
+    el = text.rfind("\n", 0, e) + 1
+    ee = text.find("\n", e)
+    end_line = text[el:ee if ee != -1 else len(text)].rstrip("\r")
+    if not (begin_line.startswith("<!-- MERCURY:BEGIN") and begin_line.endswith("-->")) or end_line != END_TEXT:
+        raise BuildError(f"{name}: Mercury markers must each sit alone on a line in the documented form")
+    return bl, el + len(END_TEXT)
+
+
+def nl_of(text):
+    """The line ending of the first line of text: CRLF if that line ends with CRLF, else LF."""
+    i = text.find("\n")
+    return "\r\n" if i > 0 and text[i - 1] == "\r" else "\n"
+
+
+def read_entry(path, name):
+    if is_link(path) or not path.is_file():
+        raise BuildError(f"{name}: exists but is not a regular file")
+    raw = path.read_bytes()
+    if raw.startswith(b"\xef\xbb\xbf"):
+        raise BuildError(f"{name}: starts with a byte order mark; remove it so the section can sit above the content")
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise BuildError(f"{name}: not valid UTF-8")
+
+
+def plan_sections(target, want, lock_sections):
+    """([(entry, kind, new bytes)], [conflicts]); reads only. kind: create | insert | update."""
+    actions, conflicts = [], []
+    for name, block in want.items():
+        if os.path.lexists(tmp_name(target / name)):
+            raise BuildError(f"{name}: the temporary name {tmp_name(target / name).name} already exists; remove it and run again")
+        d, rec, p = digest(block.encode("utf-8")), lock_sections.get(name), target / name
+        if not os.path.lexists(p):
+            actions.append((name, "create", (block + "\n").encode("utf-8")))
+            continue
+        text = read_entry(p, name)
+        span = find_block(text, name)
+        if span is None:
+            if rec is not None:
+                conflicts.append(f"{name}: the Mercury section markers are gone (edited by hand); restore them or the section")
+            else:
+                eol = nl_of(text)
+                head = block.replace("\n", eol)
+                new = head + eol + (eol + text if text else "")
+                actions.append((name, "insert", new.encode("utf-8")))
+            continue
+        cur = digest(text[span[0]:span[1]].encode("utf-8"))
+        if cur == d:
+            continue
+        if rec is None:
+            conflicts.append(f"{name}: has a Mercury section that is not in the lock (not managed)")
+        elif cur != rec:
+            conflicts.append(f"{name}: the Mercury section was modified by hand since the last installation (lock hash differs)")
+        else:
+            eol = nl_of(text[span[0]:])
+            new = text[:span[0]] + block.replace("\n", eol) + text[span[1]:]
+            actions.append((name, "update", new.encode("utf-8")))
+    return actions, conflicts
+
+
+def tmp_name(path):
+    return path.with_name(path.name + ".mercury-tmp")
+
+
+def atomic_write(target, name, data):
+    """Replace target/name without ever leaving it half written. The temporary file is created exclusively (an existing
+    file or link of that name is refused, never followed or overwritten) and removed again if anything fails."""
+    path, tmp = target / name, tmp_name(target / name)
+    check_inside(target, tmp.name, f"{name} temporary file")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    try:
+        fd = os.open(tmp, flags, 0o666)
+    except FileExistsError:
+        raise BuildError(f"{name}: the temporary name {tmp.name} already exists; remove it and run again")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        if path.exists():
+            os.chmod(tmp, stat.S_IMODE(path.stat().st_mode))
+        os.replace(tmp, path)
+    finally:
+        if os.path.lexists(tmp):
+            os.unlink(tmp)
+
+
 def desired_files(source, master, selected):
-    """Map installation path -> (bytes, executable) for the selected packs.
+    """(installation path -> (bytes, executable), {pack: {'agents'|'claude': fragment text}}) for the selected packs.
 
     The executable flag comes from the file's mode in the Git index (100755), on every platform."""
-    out = {}
+    out, frags = {}, {}
     proot_all = source / "packs"
 
     def add(rel, data, exe, owner):
@@ -339,6 +710,19 @@ def desired_files(source, master, selected):
         if "pack.json" not in tracked:
             raise BuildError(f"{owner}: pack.json is not tracked by git")
         skills = load_pack(proot, pack)
+        for kind in SECTION_FILES:
+            if f"{kind}.md" in tracked:
+                frags.setdefault(pack, {})[kind] = fragment(proot, f"{kind}.md")
+            elif pack == "core":
+                raise BuildError(f"{owner}: core must provide {kind}.md (the fragment of the managed section)")
+        for dest, data in role_files(proot, pack, tracked).items():
+            add(dest, data, False, owner)
+        for rel in sorted(tracked):
+            if rel.startswith("rules/"):
+                rule = rel[len("rules/"):]
+                if "/" in rule or not rule.startswith(STUB_PREFIX) or not rule.endswith(".rules") or len(rule) <= len(STUB_PREFIX) + 6:
+                    raise BuildError(f"{owner}: rules/ holds only mercury-<name>.rules files: {rel}")
+                add(f".codex/rules/{rule}", (proot / rel).read_bytes(), False, owner)
         for rel, mode in sorted(tracked.items()):
             parts = rel.split("/")
             if parts[0] == "build" or SKIP_DIRS & set(parts):
@@ -365,16 +749,17 @@ def desired_files(source, master, selected):
                 desc = field_text(fm, "description", f"{owner}: {skill}/{entry_file}")
                 add(f"{HOSTS[host]}/{name}/SKILL.md", stub_bytes(pack, skill, name, desc, other_fields(fm), entry_file,
                                                            uses_arguments(sdir / entry_file)), False, owner)
-    return dict(sorted(out.items()))
+    return dict(sorted(out.items())), frags
 
 
 def read_lock(target):
     path = target / LOCK_REL
     if not path.exists():
-        return {}
+        return {}, {}
     data, _ = load_json(path, "lock")
     files = data.get("files") if isinstance(data, dict) else None
-    if data.get("schema_version") != 1 or not isinstance(files, dict):
+    sections = data.get("sections", {}) if isinstance(data, dict) else None
+    if data.get("schema_version") != 1 or not isinstance(files, dict) or not isinstance(sections, dict)             or not set(sections) <= set(SECTION_FILES.values()) or not all(isinstance(h, str) for h in sections.values()):
         raise BuildError("lock: unexpected format")
     seen = {}
     for rel, h in files.items():
@@ -386,7 +771,7 @@ def read_lock(target):
         if fold(rel) in seen:
             raise BuildError(f"lock: entries {seen[fold(rel)]!r} and {rel!r} are the same path on Windows")
         seen[fold(rel)] = rel
-    return files
+    return files, sections
 
 
 def current_hash(target, rel):
@@ -416,17 +801,22 @@ def set_exe(path, exe):
 
 def plan(source, target):
     master, mhash = load_master(source)
-    selected, chash = load_config(target, master)
-    want = desired_files(source, master, selected)
-    lock = read_lock(target)
+    selected, chash, extras = load_config(target, master)
+    want, frags = desired_files(source, master, selected)
+    lock, lock_sections = read_lock(target)
     check_inside(target, LOCK_REL, "lock")
+    for entry in SECTION_FILES.values():
+        check_inside(target, entry, "target")
+    sections = build_sections(frags, extras["linked_repos"])
+    section_actions, section_conflicts = plan_sections(target, sections, lock_sections)
+    conflicts_pre = section_conflicts
     for rel in list(want) + list(lock):
         check_inside(target, rel, "target")
     # A lock spelling that folds to a wanted path but is spelled differently is a case-only rename.
     # On Windows both spellings are one file, so the old one must be removed before the new one is written.
     want_fold = {fold(r): r for r in want}
     renamed_from = {want_fold[fold(r)]: r for r in lock if r not in want and fold(r) in want_fold}
-    writes, deletes, conflicts = [], [], []
+    writes, deletes, conflicts = [], [], list(conflicts_pre)
     for rel, (data, exe) in want.items():
         d, cur = digest(data), current_hash(target, rel)
         old = renamed_from.get(rel)
@@ -463,11 +853,12 @@ def plan(source, target):
         origin = f"mercury@{head}" if head else "mercury"
     lock_doc = {"schema_version": 1, "source": origin, "mercury_json_sha256": mhash, "config_sha256": chash,
                 "files": {rel: digest(d) for rel, (d, _) in want.items()},
+                "sections": {name: digest(text.encode("utf-8")) for name, text in sections.items()},
                 "executable": sorted(rel for rel, (_, exe) in want.items() if exe)}
     lock_text = json.dumps(lock_doc, indent=2, sort_keys=True) + "\n"
     lp = target / LOCK_REL
     lock_same = lp.is_file() and lp.read_bytes().decode("utf-8").replace("\r\n", "\n") == lock_text
-    return want, writes, deletes, conflicts, lock_text, lock_same
+    return want, writes, deletes, conflicts, lock_text, lock_same, section_actions
 
 
 def prune_empty_dirs(target, rel):
@@ -483,10 +874,11 @@ def prune_empty_dirs(target, rel):
 
 
 def run(source, target, apply):
-    want, writes, deletes, conflicts, lock_text, lock_same = plan(source, target)
+    want, writes, deletes, conflicts, lock_text, lock_same, section_actions = plan(source, target)
     report = [f"conflict: {c}" for c in conflicts]
     if not apply:
         report += [f"{kind}: {rel}" for rel, kind in writes] + [f"delete: {rel}" for rel in deletes]
+        report += [f"{kind}: {name} (managed section)" for name, kind, _ in section_actions]
         if not lock_same:
             report.append(f"update: {LOCK_REL}")
         for line in report:
@@ -509,11 +901,13 @@ def run(source, target, apply):
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_bytes(data)
         set_exe(p, exe)  # carry the executable bit where the filesystem has one (no effect on Windows)
+    for name, _kind, data in section_actions:
+        atomic_write(target, name, data)
     if not lock_same:
         lp = target / LOCK_REL
         lp.parent.mkdir(parents=True, exist_ok=True)
         lp.write_bytes(lock_text.encode("utf-8"))
-    print(f"mercury: wrote {len(writes)}, deleted {len(deletes)}, {len(want)} file(s) managed")
+    print(f"mercury: wrote {len(writes) + len(section_actions)}, deleted {len(deletes)}, {len(want)} file(s) managed")
     return 0
 
 

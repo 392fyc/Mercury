@@ -1,7 +1,7 @@
 # Mercury packs
 
 A pack is a directory of content that Mercury ships to agent hosts and to downstream projects: skills,
-scripts and guides. `packs/` is the source; nothing here is read by an agent directly. `tools/mercury.py`
+scripts, guides, roles, rules and fragments of the AGENTS.md / CLAUDE.md managed section. `packs/` is the source; nothing here is read by an agent directly. `tools/mercury.py`
 installs the packs a project selects into that project, and Mercury installs itself the same way a
 downstream project does.
 
@@ -12,14 +12,17 @@ packs/
   <pack>/
     pack.json                   declares the pack's skills (hosts, optional Claude entry)
     skills/<skill>/SKILL.md     full skill content (plus references, runtime, examples ...)
+    roles/<role>.md             role source, generated into both host formats (core)
+    rules/mercury-*.rules       Codex rules, installed to .codex/rules/ (core)
+    agents.md  claude.md        fragments of the managed section of AGENTS.md / CLAUDE.md (core must have both)
     scripts/ docs/ ...          plain files, laid out as they should look inside the installed pack
     build/                      Mercury-side generator inputs; never installed
 sources/<project>/              external projects exactly as upstream (git submodules, pinned)
 tools/mercury.py                the installer (`check`, `apply`)
 ```
 
-Packs: `core` (required: web-research), `plan` (html-plan-zh), `subagent-dev`
-(mercury-subagent-driven-development), `lanes` (lane-handoff skill, the lane scripts and the lane guides),
+Packs: `core` (required: web-research, the five roles, Git safety rules, task and ownership contracts, read-only guard), `plan` (html-plan-zh), `subagent-dev`
+(mercury-subagent-driven-development), `lanes` (lane-handoff skill, the lane scripts, the lane guides and the lane contract),
 `dot-link` (dot-link skill, the agents event gateway and dispatcher scripts, the dot-link installer),
 `playwright-mcp` (disabled; see below).
 
@@ -68,10 +71,23 @@ Exit codes: 0 in sync, 1 differences or conflicts, 2 invalid input.
 The project selects packs in `<project>/.mercury/config.json`:
 
 ```json
-{"schema_version": 1, "packs": ["core", "plan"]}
+{"schema_version": 1, "packs": ["core", "plan"],
+ "linked_repos": [{"name": "Notes_KB", "purpose": "...", "locate": "...", "access": "..."}],
+ "params": {"guard_write_scripts": ["deploy.sh"]}}
 ```
 
-Unknown or disabled packs are errors; required packs are always included.
+Unknown or disabled packs are errors; required packs are always included. Unknown top-level keys are errors.
+
+- `linked_repos` (optional): other repositories the project works with. Each entry has exactly `name` (plain, unique
+  ignoring case), `purpose`, `locate` (a config key or a description, never a machine path) and `access` (read and write
+  rules). Every text is one line of at most 400 characters without control or hidden characters (bidi controls, byte
+  order mark, lone surrogates), comment markers or `MERCURY:`, and without a machine path anywhere in it: `file:`, a
+  drive letter (`C:/x`, `D:x`, also after punctuation), `%VAR%`, `$HOME`-style variables, `~`, or a slash or backslash
+  that starts a path (URLs and words such as `and/or` or `docs/a.md` are fine). The list is rendered into the managed
+  section of AGENTS.md as "Linked repositories".
+- `params.guard_write_scripts` (optional): file names ending in `.sh`, `.ps1` or `.py` (no directories; the guard
+  recognises no other kind) of write-type scripts that the read-only guard
+  blocks in addition to its built-in list. No other `params` key exists yet.
 
 What is written:
 
@@ -89,7 +105,37 @@ What is written:
   the arguments placeholder only in the invoked `SKILL.md`, which is the entry; so when the real entry's body uses
   it, the entry gets an `Arguments:` line that carries the value and says to use it wherever the real entry
   mentions the placeholder.
-- `<project>/.mercury/lock.json` records the sha256 of every installed file and the list of files that are executable.
+- `<project>/.mercury/lock.json` records the sha256 of every installed file, the list of files that are executable and
+  the hash of each managed section.
+- Roles: every `roles/<role>.md` of a selected pack (lowercase name) becomes `.claude/agents/mercury-<role>.md` and
+  `.codex/agents/mercury-<role>.toml`. The source has a frontmatter with a one-line `description` and per-host sections
+  (`claude:` with `model`, `tools`, `disallowedTools`, `permissionMode`, `readonly_guard`; `codex:` with `model`,
+  `model_reasoning_effort`, `sandbox_mode`, `web_search`) whose values are `true`/`false`, a double-quoted string or a
+  plain token; anything else, an unknown key, a control character, or a body that cannot be written safely (a TOML
+  literal string cannot hold `'''`) is an error and nothing is written. The body is shared and in English. Strings are
+  written as JSON strings (valid YAML and TOML); the generated TOML is parsed back and compared when `tomllib` exists.
+  `readonly_guard: true` adds a `PreToolUse` hook to the Claude file: shell form under `bash`, command
+  `sh "${CLAUDE_PROJECT_DIR}/.mercury/packs/core/hooks/readonly_guard.sh" || exit 2`. Claude Code documents that
+  `${CLAUDE_PROJECT_DIR}` is substituted in hook commands and that the default Windows shell is Git Bash;
+  the launcher picks the first working `python3`, `python` or `py` (the Windows Store stub is skipped), and a launcher
+  that cannot run or exits non-zero blocks the call (`|| exit 2`). The hook has `timeout: 60` and `onFailure: "block"`:
+  per the hooks documentation a PreToolUse timeout or a shell that cannot start is otherwise non-blocking, and
+  `onFailure` is documented for Claude Code 2.1.295 and later (an older version, checked on 2.1.291, ignores the
+  unknown field, and `|| exit 2` still applies). Project-level frontmatter hooks run only after the workspace trust dialog is accepted.
+- Rules: `rules/mercury-<name>.rules` of a selected pack is copied byte for byte to `.codex/rules/`.
+- Managed section: the pack fragments `agents.md` (AGENTS.md) and `claude.md` (CLAUDE.md), core first and then the
+  config order, plus the linked repositories (AGENTS.md only), are written between a `MERCURY:BEGIN` comment line and a
+  `MERCURY:END` comment line. A missing file is created with only the section; a file without markers gets the section
+  above its content, which stays byte for byte below it (separated by one blank line); a file with markers has only the
+  bytes from the begin line to the end of the end line replaced (wherever they sit). Bytes outside are never modified.
+  The line ending of the section follows the file (CRLF if its first line, or the begin line, ends with CRLF; LF
+  otherwise); the section hash folds CRLF like every other hash. Markers that are unbalanced, repeated, mentioned in
+  prose or not alone on their line are an error (exit 2); a file with a byte order mark, invalid UTF-8 or that is
+  not a regular file is an error. A section that differs from the lock hash was edited by hand, and a missing section
+  with a lock entry means the markers were removed by hand: both stop the run (exit 1, nothing written), as does a
+  section that is not in the lock and not identical to the wanted one. The file is replaced atomically through an exclusively created temporary file `<name>.mercury-tmp`; an existing file
+  or link of that name is refused (exit 2). A project's own text that contains the string `MERCURY:BEGIN` or
+  `MERCURY:END` outside the section stops the installation too (exit 2), so write those words differently.
 
 Rules:
 
@@ -101,10 +147,12 @@ Rules:
 - Existing ancestors of every target (and of the lock) must be real directories that resolve inside the
   project: symlinks, junctions and a file where a directory is needed are errors. A link inside a pack source
   is an error too. All checks run before the first byte is written.
-- Deletion is limited to two places: files under `.mercury/packs/`, and files inside
-  `.claude/skills/mercury-*/` and `.agents/skills/mercury-*/`. A lock entry anywhere else is an error (exit 2),
+- Deletion is limited to these places: files under `.mercury/packs/`, files inside
+  `.claude/skills/mercury-*/` and `.agents/skills/mercury-*/`, and the single files `.claude/agents/mercury-*.md`,
+  `.codex/agents/mercury-*.toml` and `.codex/rules/mercury-*.rules`. A lock entry anywhere else is an error (exit 2),
   so a tampered lock cannot delete other project files. Emptied directories are removed only below those
-  roots; the roots (`.mercury/packs`, `.claude/skills`, `.agents/skills`) stay.
+  roots; the roots (`.mercury/packs`, `.claude/skills`, `.agents/skills`, `.claude/agents`, `.codex/agents`,
+  `.codex/rules`) stay. AGENTS.md and CLAUDE.md are never deleted.
 - A managed file whose content differs from the hash in the lock was edited by hand: the run stops, reports
   it, and writes nothing. Without a lock entry, an existing file is adopted only when its content already
   equals the installation; otherwise the run stops.

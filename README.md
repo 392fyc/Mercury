@@ -47,7 +47,7 @@ Recent additions on top of the core phases:
 ```
 Mercury (lightweight core — only builds what no external project provides)
 ├── .claude/
-│   ├── agents/        sub-agent role definitions (dev, acceptance, critic, design, research)
+│   ├── agents/        sub-agent roles `mercury-{dev,reviewer,acceptance,design,research}` (generated from packs/core/roles/)
 │   ├── skills/        installed `mercury-*` skill entries (managed by tools/mercury.py; the skills live in .mercury/packs/)
 │   └── settings.json  permission rules only; no project hooks are registered
 ├── .codex/            Codex CLI config + agents + rules (project-level hook registrations retired)
@@ -90,18 +90,18 @@ cd Mercury
 claude   # launch a Claude Code session at the repo root
 ```
 
-On session start, Claude Code auto-discovers every agent under `.claude/agents/` and every skill under `.claude/skills/`. Mercury registers no project-level Claude Code hooks; `.claude/settings.json` only carries permission rules. Codex reads `AGENTS.md`, `.codex/config.toml`, `.codex/agents/`, and `.codex/rules/`; Mercury does not register project-level Codex hooks. No build step is required.
+On session start, Claude Code auto-discovers every agent under `.claude/agents/` and every skill under `.claude/skills/`. Mercury registers no project-level Claude Code hooks in settings; `.claude/settings.json` only carries permission rules. The only hook is the read-only write guard in the frontmatter of the generated read-only `mercury-*` roles. Codex reads `AGENTS.md`, `.codex/config.toml`, `.codex/agents/`, and `.codex/rules/`; Mercury does not register project-level Codex hooks. No build step is required.
 
 ### Typical first-session checklist
 
 1. Read `CLAUDE.md` (auto-surfaced by Claude Code; it imports `AGENTS.md`) — issue-first workflow, guarded Git writes via `scripts/codex/git-safe.ps1`, PR-to-`develop` rule
 2. Read `.mercury/docs/DIRECTION.md` — project charter and module definitions
 3. Skim `.claude/skills/` — opt-in workflow entries (`mercury-html-plan-zh`; the full skills are installed from `packs/` into `.mercury/packs/`); each runs only when you ask for it or an agreed plan requires it. The PR review and merge rule is in `.mercury/docs/guides/git-flow.md`
-4. Run your first task by assigning a bounded scope to the `dev` sub-agent, then ask the `acceptance` sub-agent for a blind review of the result
+4. Run your first task by assigning a bounded scope to the `mercury-dev` sub-agent, then ask the `mercury-acceptance` sub-agent for a blind review of the result
 
 ## Skills and sub-agents
 
-The skills (packs under `packs/`, installed by `tools/mercury.py`) and sub-agents under `.claude/agents/` are **detachable** — each pack and each agent file is self-contained and can be installed into another project. Skill frontmatter lists the trigger phrases in English and Chinese. Treat the directory contents as the authoritative list; the snapshot below is current as of this writing and intentionally not a pinned count.
+The skills (packs under `packs/`, installed by `tools/mercury.py`) and sub-agents under `.claude/agents/` are **detachable** — each pack is self-contained and can be installed into another project; the `mercury-*` roles are generated from `packs/core/roles/`. Skill frontmatter lists the trigger phrases in English and Chinese. Treat the directory contents as the authoritative list; the snapshot below is current as of this writing and intentionally not a pinned count.
 
 Skills (1 at time of writing), opt-in:
 
@@ -111,11 +111,11 @@ Skills (1 at time of writing), opt-in:
 
 `web-research` and `handoff` are provided as user-level skills rather than from this repository.
 
-Sub-agents (5): `dev`, `acceptance`, `critic`, `design`, `research`. The game-design agents moved out of Mercury (Mercury #586): the Codex copies to Ship of Theseus `.codex/agents/` (392fyc/Ship_of_Theseus#41), and the Claude copies to the user-level `~/.claude/agents/`. The main session acts as the Mercury main agent; there is no separate `main` sub-agent.
+Sub-agents (5, installed by `tools/mercury.py` from `packs/core/roles/` into `.claude/agents/mercury-*.md` and `.codex/agents/mercury-*.toml`): `mercury-dev`, `mercury-reviewer`, `mercury-acceptance`, `mercury-design`, `mercury-research`. The game-design agents moved out of Mercury (Mercury #586): the Codex copies to Ship of Theseus `.codex/agents/` (392fyc/Ship_of_Theseus#41), and the Claude copies to the user-level `~/.claude/agents/`. The main session acts as the Mercury main agent; there is no separate `main` sub-agent.
 
 ## Hooks
 
-Mercury registers no project-level hooks for Claude Code or Codex. Git safety is enforced by the permission rules in `.claude/settings.json`, `.codex/rules/`, and the guarded wrappers `scripts/codex/git-safe.ps1` and `scripts/codex/guard.ps1`. Memory location is supplied by a user-level `SessionStart` hook that only returns paths; see [Ecosystem](#ecosystem).
+Mercury registers no project-level hooks in settings for Claude Code or Codex; the only hook is the read-only write guard in the frontmatter of the generated read-only Claude `mercury-*` roles (`.mercury/packs/core/hooks/`, extendable with `params.guard_write_scripts` in `.mercury/config.json`). Git safety is enforced by the permission rules in `.claude/settings.json`, `.codex/rules/`, and the guarded wrappers `scripts/codex/git-safe.ps1` and `scripts/codex/guard.ps1`. Memory location is supplied by a user-level `SessionStart` hook that only returns paths; see [Ecosystem](#ecosystem).
 
 ## Multi-lane development
 

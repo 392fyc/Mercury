@@ -26,8 +26,9 @@ to repo sources instead.
 - **No cap.** Lanes are uncapped ([#605](https://github.com/392fyc/Mercury/issues/605)).
 - **Messages from other lanes** follow the receiver rule in `AGENTS.md`,
   under "Cross-lane messages" ([#615](https://github.com/392fyc/Mercury/issues/615)).
-- **Downstream lane contract.** Other repositories receive
-  `.mercury/templates/codex-project/project/mercury-lane-contract.md`
+- **Downstream lane contract.** Projects that install the `lanes` pack get
+  `.mercury/packs/lanes/docs/mercury-lane-contract.md` (the v1 template copy
+  `.mercury/templates/codex-project/project/mercury-lane-contract.md` stays until the template retires)
   ([#629](https://github.com/392fyc/Mercury/issues/629)): user-declared lanes,
   per-agent handoffs, version preconditions for shared files, the cross-lane
   receiver rule, controlled entries, and enforced write guards. Its lane model
