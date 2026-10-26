@@ -4,12 +4,14 @@ on:
   pull_request:
     paths:
       - '.agents/skills/dot-link/**'
+      - 'harness/modules/dot-link/**'
       - 'scripts/codex/*dot-link*'
       - '.github/workflows/dot-link-check.yml'
   push:
     branches: [develop]
     paths:
       - '.agents/skills/dot-link/**'
+      - 'harness/modules/dot-link/**'
       - 'scripts/codex/*dot-link*'
       - '.github/workflows/dot-link-check.yml'
 

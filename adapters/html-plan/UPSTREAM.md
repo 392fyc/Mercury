@@ -4,7 +4,7 @@
 - 子模块：`modules/claude-plugins-community`，钉住提交 `88003be1129c09381d27100b37a8fdc21b3214bf`（2026-10-05，"html-plan: calmer page style"，也是 `html-plan/` 目前最新的一次改动）。
 - 许可证：插件清单 `html-plan/.claude-plugin/plugin.json` 声明 `MIT`，插件目录没有单独的版权行或许可文件；仓库根 `LICENSE` 为 Apache-2.0。生成的 `LICENSE` 同时写明两点并附仓库 LICENSE 原文。
 - 导入记录：Mercury Issue #655（导入）、#668（改为子模块与适配层）。逐文件条目见 `.mercury/state/upstream-manifest.json`。
-- 输出位置：`.agents/skills/html-plan-zh/`（全部由 `generate.py` 生成，不手改）。`.claude/skills/html-plan-zh/SKILL.md` 是不生成的薄入口。
+- 输出位置：`harness/modules/plan/skills/html-plan-zh/`（除 `claude-entry.md` 外全部由 `generate.py` 生成，不手改；构建器再投影到 `.agents/skills/html-plan-zh/`）。`claude-entry.md` 是不生成的薄入口，由构建器投影为 `.claude/skills/html-plan-zh/SKILL.md`。
 
 ## 文件归类
 

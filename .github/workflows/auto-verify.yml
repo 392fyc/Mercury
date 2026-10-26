@@ -20,6 +20,10 @@ jobs:
           python -B adapters/superpowers/generate.py --check
           python -B adapters/caveman/generate.py --check
           python -B -m unittest discover -s tests/codex -p 'test_upstream_adapters.py'
+      - name: Harness projection is in sync and the builder behaves (#674)
+        run: |
+          python -B scripts/harness/build.py --target . --check
+          python -B -m unittest discover -s tests/codex -p 'test_harness_build.py'
 
   toolcall-xml-lint:
     name: Tool-call XML Lint (#527)

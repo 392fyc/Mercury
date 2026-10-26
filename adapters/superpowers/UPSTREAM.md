@@ -4,7 +4,7 @@
 - 子模块：`modules/superpowers`，钉住提交 `d884ae04edebef577e82ff7c4e143debd0bbec99`（v6.1.1，2026-07-02）。
 - 许可证：MIT（Copyright 2025 Jesse Vincent）。
 - 导入记录：Mercury Issue #209 / PR #216（2026-04-10，初次导入自 `917e5f53b16b115b70a3a355ed5f4993b9f8b73d`）、Issue #509（2026-07-04，选择性回移 v6.1.1 的“报告写入文件”约定）、Issue #668（改为子模块与适配层）。
-- 输出位置：`.agents/skills/mercury-subagent-driven-development/`（由 `generate.py` 生成，不手改）。
+- 输出位置：`harness/modules/subagent-dev/skills/mercury-subagent-driven-development/`（由 `generate.py` 生成，不手改；构建器再投影到 `.agents/skills/`）。
 
 ## 文件归类
 

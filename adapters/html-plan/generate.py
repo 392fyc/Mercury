@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""从子模块 modules/claude-plugins-community 生成 .agents/skills/html-plan-zh/ 全部文件。
+"""从子模块 modules/claude-plugins-community 生成 harness/modules/plan/skills/html-plan-zh/ 全部文件。
 
     python adapters/html-plan/generate.py           写出（覆盖）
     python adapters/html-plan/generate.py --check   只比对；任一文件不一致则退出 1 并列出
@@ -22,7 +22,8 @@ import localize  # noqa: E402
 PIN = "88003be1129c09381d27100b37a8fdc21b3214bf"
 MOD = ROOT / "modules" / "claude-plugins-community"
 SRC = MOD / "html-plan" / "skills" / "html-plan"
-OUT = ROOT / ".agents" / "skills" / "html-plan-zh"
+OUT = ROOT / "harness" / "modules" / "plan" / "skills" / "html-plan-zh"
+HAND_WRITTEN = {"claude-entry.md": None}  # hand-maintained Claude entry, projected by the harness builder
 
 
 def rd(p):
@@ -87,7 +88,7 @@ def main(argv):
     bad = [f"不一致：{r}" if (OUT / r).is_file() else f"缺失：{r}" for r, t in files.items()
            if not (OUT / r).is_file() or rd(OUT / r) != t]
     bad += [f"多余：{p.relative_to(OUT).as_posix()}" for p in sorted(OUT.rglob("*"))
-            if p.is_file() and p.relative_to(OUT).as_posix() not in files]
+            if p.is_file() and p.relative_to(OUT).as_posix() not in files | HAND_WRITTEN]
     for line in bad:
         print(line, file=sys.stderr)
     print("html-plan 适配层：" + (f"{len(bad)} 处差异" if bad else f"{len(files)} 个文件与生成结果一致"))
