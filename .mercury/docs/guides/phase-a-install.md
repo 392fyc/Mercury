@@ -1,6 +1,9 @@
-# Phase A Install Guide — 5h Observability + Cross-Lane Aggregator
+# Phase A Install Guide — Cross-Lane Aggregator
 
-Issue #322 / #320 · Phase A · `scripts/statusline-mercury.sh` + `scripts/lane-status.sh`
+Issue #322 / #320 · Phase A · `scripts/lane-status.sh`
+
+> The first half of Phase A, the `statusline-mercury.sh` status bar script with its 5h quota marker, was
+> removed from the repository (#675). This guide covers the remaining half, the lane status aggregator.
 
 ---
 
@@ -13,79 +16,7 @@ Issue #322 / #320 · Phase A · `scripts/statusline-mercury.sh` + `scripts/lane-
 
 ---
 
-## A1 — Install statusline-mercury.sh
-
-### Step 1 — Symlink into Claude config dir (idempotent)
-
-```bash
-CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-REPO_ROOT="$(git rev-parse --show-toplevel)"
-ln -sf "$REPO_ROOT/scripts/statusline-mercury.sh" "$CLAUDE_DIR/statusline-mercury.sh"
-```
-
-Verify the symlink:
-
-```bash
-ls -la "$CLAUDE_DIR/statusline-mercury.sh"
-# → should point to scripts/statusline-mercury.sh inside the repo
-```
-
-### Step 2 — Merge settings.json snippet
-
-> **WARNING — back up first** (per Mercury user-level change governance in CLAUDE.md):
-
-```bash
-CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-cp "$CLAUDE_DIR/settings.json" "$CLAUDE_DIR/settings.json.backup-pre-322"
-```
-
-Add the following `statusLine` block to `$CLAUDE_DIR/settings.json`. Merge manually into the
-existing JSON object — do **not** overwrite the whole file.
-
-```json
-{
-  "statusLine": {
-    "type": "command",
-    "command": "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/statusline-mercury.sh",
-    "refreshInterval": 60
-  }
-}
-```
-
-Validate JSON after merging (compute the path in shell so bash `${VAR:-default}`
-expansion happens BEFORE Python sees it — Python's `os.path.expandvars` does NOT
-understand `${VAR:-default}` syntax):
-
-```bash
-SETTINGS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
-python -c "import json, sys; json.load(open(sys.argv[1]))" "$SETTINGS" \
-  && echo "JSON valid"
-```
-
-### Step 3 — Verify
-
-After restarting Claude Code, the status bar should display:
-
-```
-5h: 42% | 7d: 18% | ctx: 12% | Opus 4.7
-```
-
-Manual smoke test (no Claude Code session needed):
-
-```bash
-# Use a far-future resets_at so the marker stores a realistic epoch (not 0).
-echo '{"rate_limits":{"five_hour":{"used_percentage":96,"resets_at":9999999999},"seven_day":{"used_percentage":20}},"model":{"display_name":"Opus 4.7"},"context_window":{"used_percentage":30}}' \
-  | bash scripts/statusline-mercury.sh
-# → red-colored "5h: 96% | 7d: 20% | ctx: 30% | Opus 4.7"
-# → .mercury/state/auto-run-paused file created
-cat .mercury/state/auto-run-paused
-# → 9999999999  (resets_at echoed from input JSON)
-rm -f .mercury/state/auto-run-paused
-```
-
----
-
-## A2 — Install lane-status.sh
+## Install lane-status.sh
 
 No symlink needed — runs from repo root via cron or manually.
 
@@ -133,7 +64,7 @@ CronCreate:
 ```
 
 > `durable: true` is **mandatory** — without it the cron silently disappears after session restart,
-> opening quota-tracking gaps (per Issue #320 acceptance criterion 5).
+> and the lane-status checks stop after a restart.
 
 Verify registration survived a session restart by listing crons inside Claude Code
 itself — the GitHub API does not expose Claude Code's local cron registry:
@@ -154,27 +85,21 @@ jq -r '.last_checked_at' "$STATE_FILE"
 
 ## Rollback
 
+`lane-status.sh` installs nothing outside the repository. To undo it, remove the `CronCreate`
+registration (use `CronDelete` inside Claude Code) and delete the generated state file:
+
 ```bash
-CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-# Remove symlink
-rm -f "$CLAUDE_DIR/statusline-mercury.sh"
-# Restore settings.json
-mv "$CLAUDE_DIR/settings.json.backup-pre-322" "$CLAUDE_DIR/settings.json"
-# Remove any pause marker
-rm -f .mercury/state/auto-run-paused
+rm -f .mercury/state/lane-status.json .mercury/state/stale-lanes.log
 ```
 
 ---
 
 ## Acceptance Verification Matrix
 
-| # | Criterion (Issue #322 + #320) | Verification command |
+| # | Criterion (Issue #320) | Verification command |
 |---|-------------------------------|----------------------|
-| 1 | statusline shows 5h%, 7d%, ctx%, model | `echo '{"rate_limits":{"five_hour":{"used_percentage":50},"seven_day":{"used_percentage":10}},"model":{"display_name":"Test"},"context_window":{"used_percentage":5}}' \| bash scripts/statusline-mercury.sh` → output contains `5h: 50%` |
-| 2 | marker created when `used_percentage >= 95`, deleted when window resets | `echo '{"rate_limits":{"five_hour":{"used_percentage":96,"resets_at":9999999999},"seven_day":{}}}' \| bash scripts/statusline-mercury.sh && ls -la .mercury/state/auto-run-paused` |
-| 3 | corrupted marker (non-numeric) self-heals without crash | `echo "bad" > .mercury/state/auto-run-paused && echo '{"rate_limits":{"five_hour":{"used_percentage":50}}}' \| bash scripts/statusline-mercury.sh 2>&1 \| grep corrupted` |
-| 4 | `lane-status.json` updates with `last_checked_at` ISO timestamp | `bash scripts/lane-status.sh && jq .last_checked_at .mercury/state/lane-status.json` |
-| 5 | durable cron registered (survives session restart) | After `CronCreate durable:true`, restart Claude Code session, then verify cron still listed |
+| 1 | `lane-status.json` updates with `last_checked_at` ISO timestamp | `bash scripts/lane-status.sh && jq .last_checked_at .mercury/state/lane-status.json` |
+| 2 | durable cron registered (survives session restart) | After `CronCreate durable:true`, restart Claude Code session, then verify cron still listed |
 
 ---
 
@@ -182,9 +107,7 @@ rm -f .mercury/state/auto-run-paused
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `MERCURY_PAUSE_THRESHOLD` | `95` | 5h usage % at which auto-run pauses |
-| `MERCURY_WARN_THRESHOLD` | `85` | 5h usage % at which display turns yellow |
 | `MERCURY_LANE_STALE_MIN` | `15` | Minutes after which a lane is considered stale |
 | `MERCURY_LANES_FILE` | (project lane home) | `LANES.md` that `lane-status.sh` reads; `--lanes-file` wins over it (#616) |
-| `CLAUDE_PROJECT_DIR` | (injected by Claude Code) | Repo root override for statusline |
-| `MERCURY_TEST_REPO_ROOT` | (unset) | Test isolation override for both scripts |
+| `CLAUDE_PROJECT_DIR` | (injected by Claude Code) | Repo root override for `lane-status.sh` |
+| `MERCURY_TEST_REPO_ROOT` | (unset) | Test isolation override for `lane-status.sh` |

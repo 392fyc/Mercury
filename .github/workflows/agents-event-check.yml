@@ -10,6 +10,7 @@ on:
       - 'scripts/test_agents_event_dispatcher.py'
       - 'scripts/install_agents_event_dispatcher.ps1'
       - 'scripts/agents_dispatcher/**'
+      - 'harness/modules/dot-link/files/scripts/**'
       - '.github/workflows/agents-event-check.yml'
   push:
     branches: [develop]
@@ -21,6 +22,7 @@ on:
       - 'scripts/test_agents_event_dispatcher.py'
       - 'scripts/install_agents_event_dispatcher.ps1'
       - 'scripts/agents_dispatcher/**'
+      - 'harness/modules/dot-link/files/scripts/**'
       - '.github/workflows/agents-event-check.yml'
 
 permissions:

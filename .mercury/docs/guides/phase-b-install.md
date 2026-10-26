@@ -6,7 +6,7 @@ Issue [#323](https://github.com/392fyc/Mercury/issues/323) · Phase B ·
 
 This guide is the operator's quick-ref for the three lane-lifecycle
 scripts. Companion to [`phase-a-install.md`](./phase-a-install.md)
-(observability + status aggregator).
+(lane status aggregator).
 
 ## Prerequisites
 
@@ -108,7 +108,7 @@ scripts/lane-sweep.sh --format json | jq '.lanes[] | select(.verdict == "stale")
 
 ### Cron registration (via Claude Code `CronCreate`)
 
-Per [`phase-a-install.md`](./phase-a-install.md) §A2 cron pattern:
+Per the cron pattern in [`phase-a-install.md`](./phase-a-install.md):
 
 ```text
 CronCreate:
@@ -169,7 +169,7 @@ fall back to manually deleting the Phase B files and reverting the
 shows which lines belong to Phase B vs the prior PR #327 baseline.
 
 Operators who installed Phase A can keep it — Phase A and Phase B touch
-different surfaces (statusline + lane-status.json vs lane lifecycle).
+different surfaces (lane-status.json vs lane lifecycle).
 
 ## Environment variables
 
@@ -190,4 +190,4 @@ different surfaces (statusline + lane-status.json vs lane lifecycle).
 - PR [#321](https://github.com/392fyc/Mercury/pull/321) — research §Dim
   1.3 missing modules
 - [`phase-a-install.md`](./phase-a-install.md) — sibling install guide for
-  observability + lane status aggregator
+  the lane status aggregator

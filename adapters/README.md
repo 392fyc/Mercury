@@ -19,7 +19,6 @@ adapters/
 | `playwright-mcp/` | Config-gate wrapper mounting microsoft/playwright-mcp (Apache-2.0) as a pinned MCP server; enforces ADR §4.2 security red lines |
 | `html-plan/` | Generates `harness/modules/plan/skills/html-plan-zh/` from the pinned submodule `modules/claude-plugins-community` (runtime localisation table, patch, overlays); `--check` compares content with line endings normalised (#668) |
 | `superpowers/` | Generates `harness/modules/subagent-dev/skills/mercury-subagent-driven-development/` from overlays checked against the pinned submodule `modules/superpowers` (#668) |
-| `caveman/` | Generates `harness/modules/caveman/` (`skills/caveman-toggle/SKILL.md`, `files/CLAUDE.local.md.example`) from overlays checked against the pinned submodule `modules/caveman` (#668) |
 
 ## 约束
 

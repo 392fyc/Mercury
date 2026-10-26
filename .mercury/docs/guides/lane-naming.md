@@ -398,11 +398,12 @@ specific filename pattern or layout — read it from the payload).
 **Canonical (Mercury user-memory, intentional cross-lane visibility):**
 
 - `<canonical>/MEMORY.md` — shared memory index (per-session bullets
-  derived from per-session files via
-  `scripts/regenerate-memory-index.sh --in-place`, which was removed in #675 — regenerate the index by hand until the lanes module replaces it; Rule 6 boundary still
+  derived from per-session files; Mercury no longer ships a generator for it,
+  because `scripts/regenerate-memory-index.sh` was removed in #675; keeping it
+  current is outside this repository; Rule 6 boundary still
   binds — each lane only edits its own per-session files, never another
   lane's bullets)
-- `<canonical>/SESSION_INDEX.md` — shared session table (same derivation)
+- `<canonical>/SESSION_INDEX.md` — shared session table (same upkeep)
 - `<canonical>/sessions/S<N>.md` (main lane) +
   `<canonical>/sessions/S<N>-<lane>.md` (side lanes) — per-session
   frontmatter + body; lane-suffixed files visibly partition ownership
@@ -412,7 +413,7 @@ specific filename pattern or layout — read it from the payload).
   handoff files, kept in the project's handoff dir
   (`scripts/lane-paths.sh handoff-dir`, #613), not in `<canonical>`
 - The canonical path is anchored by two converging mechanisms:
-  `scripts/regenerate-memory-index.sh` reads the `MERCURY_MEMORY_DIR`
+  `scripts/lane-paths.sh memory-dir` reads the `MERCURY_MEMORY_DIR`
   env var explicitly (default fallback shown in `<canonical>` resolution
   above), and Claude Code core's auto-memory layer + user-level
   SessionStart hooks resolve the same project-anchored dir at runtime.
@@ -423,14 +424,14 @@ specific filename pattern or layout — read it from the payload).
   for Mercury's lane model). The literal example shown above is for one
   specific Mercury checkout; do not hard-code it elsewhere — derive it
   at runtime from the env var or from
-  `bash scripts/regenerate-memory-index.sh --help`.
+  `bash scripts/lane-paths.sh memory-dir`.
 
 **Why canonical (not per-cwd) for user-memory**: Rule 6 (LANES.md is the
 single registry) and Rule 7 (per-session files; canonical MEMORY.md /
-SESSION_INDEX.md auto-regenerated) both assume one shared memory index that
+SESSION_INDEX.md derived from them, see `lane-protocol.md`) both assume one shared memory index that
 every lane can read. Per-cwd routing of memory would fragment the index — a
-side lane wouldn't see main lane's session history, and `regenerate-memory-index.sh`
-output would diverge per worktree. The S13-side-multi-lane routing-bleed
+side lane wouldn't see main lane's session history, and each worktree's
+index would diverge. The S13-side-multi-lane routing-bleed
 incident addressed by Rule 5.1 was specifically about handoff-file selection
 under SessionStart hook latest-mtime ambiguity in shared cwd, not about
 memory-index routing. Worktree-per-lane (Rule 5.1) disambiguates the cwd
@@ -504,7 +505,7 @@ audit trail; operators may archive it manually if no longer needed.
 
 ### Δ10 — `/handoff:auto` worktree integration (Issue [#345](https://github.com/392fyc/Mercury/issues/345))
 
-The `handoff` skill (Codex: `.agents/skills/handoff/SKILL.md`; Claude: user-level `handoff`; Step 5 Auto mode) now
+The `handoff` skill (Codex: `.agents/skills/lane-handoff/SKILL.md`; Claude: user-level `handoff`; Step 5 Auto mode) now
 auto-resolves the active lane's `Worktree path` from `LANES.md` and uses it
 as the new tab's cwd:
 
@@ -609,7 +610,7 @@ unconditional infrastructure.
   convention for Claude Code's agent view UI layer on top of Mercury
   per-cwd lane isolation (bare bg dispatch, monitoring, hook lifecycle,
   auto-iso HYBRID mechanism, cost-tracker gap, kill switch)
-- `.agents/skills/handoff/SKILL.md` Step 5 Auto mode for the spawn-side
+- `.agents/skills/lane-handoff/SKILL.md` Step 5 Auto mode for the spawn-side
   contract
 - Mercury_KB: `04-research/mercury/issue-599-cross-harness-lane-isolation-2026-09.md`
   (ADR, Issue #599) presets how Codex lanes and Claude Code lanes stay

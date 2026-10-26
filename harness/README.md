@@ -16,10 +16,18 @@ harness/
 ```
 
 Modules: `core` (required: web-research), `plan` (html-plan-zh), `subagent-dev`
-(mercury-subagent-driven-development), `caveman` (caveman-toggle, `CLAUDE.local.md.example`),
-`dot-link` (dot-link). The html-plan-zh, subagent-dev and caveman contents are generated into
-`harness/` by `adapters/*/generate.py`; do not edit those files by hand
+(mercury-subagent-driven-development), `lanes` (lane-handoff skill, the lane scripts and the lane
+guides), `dot-link` (dot-link skill, the agents event gateway and dispatcher scripts, the dot-link
+installer). The html-plan-zh and subagent-dev contents are generated into `harness/` by
+`adapters/*/generate.py`; do not edit those files by hand
 (`html-plan-zh/claude-entry.md` is the one hand-written file among them).
+
+The `lanes` and `dot-link` modules keep their plain files under `files/`, in a layout that is not the
+target path: `files/scripts/...` projects to `scripts/...` and `files/docs/...` projects to
+`.mercury/docs/...`. The manifest's `source`/`target` pairs are the authority: edit the copy under `harness/modules/<module>/files/` and run `python scripts/harness/build.py --target . --apply`; the projected path is overwritten, and a hand edit there is reported by `--check`. Their tests
+(`scripts/test-lane-*.sh`, `scripts/test-check-*.sh`, `scripts/handoff-launch.test.sh`,
+`scripts/test_agents_event_*.py`, `scripts/agents_gateway/test_*.py`, `scripts/codex/test-dot-link*`)
+are Mercury's own checks of these files: they stay in the repository and are not part of any module.
 
 ## Manifest (schema 2)
 
@@ -27,9 +35,9 @@ Modules: `core` (required: web-research), `plan` (html-plan-zh), `subagent-dev`
 {"schema_version": 2, "modules": {
   "plan": {"path": "modules/plan",
            "skills": {"html-plan-zh": {"hosts": ["codex", "claude"]}}},
-  "caveman": {"path": "modules/caveman",
-              "skills": {"caveman-toggle": {"hosts": ["codex"]}},
-              "files": [{"source": "files/CLAUDE.local.md.example", "target": "CLAUDE.local.md.example"}]}}}
+  "lanes": {"path": "modules/lanes",
+            "skills": {"lane-handoff": {"hosts": ["codex"]}},
+            "files": [{"source": "files/scripts/lane-claim.sh", "target": "scripts/lane-claim.sh"}]}}}
 ```
 
 - `path` is the module directory under `harness/`; `required: true` forces the module on.
@@ -74,7 +82,8 @@ Rules:
   `.claude/skills/`, and single-file targets declared in the manifest. A lock entry anywhere else
   is an error (exit 2), so a tampered lock cannot delete other repository files. Emptied
   directories are removed only below those skill roots; the roots themselves stay. Removing
-  a single-file projection from the manifest entirely therefore needs the file deleted by hand.
+  a single-file projection from the manifest entirely therefore needs the file deleted by hand
+  and its entry removed from the lock first (#678 did this for `CLAUDE.local.md.example`).
 - A generated Claude entry (no `claude-entry.md`) needs host `codex` as well and single-line
   `name` and `description` frontmatter; otherwise the build fails. Malformed input of any kind
   exits 2 rather than crashing.
@@ -83,7 +92,8 @@ Rules:
   when its content already equals the projection; otherwise the run stops.
 - Files that the manifest or the module selection no longer declares are deleted if unmodified
   (and directories left empty are removed); if modified, the run stops.
-- Content is copied byte for byte (line endings are not rewritten). Hashes and comparisons fold
+- Content is copied byte for byte (line endings are not rewritten). File modes are not carried:
+  a projected script is executable only where the target repository already tracks it as such. Hashes and comparisons fold
   CRLF to LF in text files, so a Windows checkout with `core.autocrlf` and a Linux checkout agree.
 - Output is deterministic: sorted paths, sorted JSON keys.
 

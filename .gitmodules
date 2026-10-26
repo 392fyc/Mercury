@@ -6,7 +6,3 @@
 	path = modules/superpowers
 	url = https://github.com/obra/superpowers.git
 	shallow = true
-[submodule "modules/caveman"]
-	path = modules/caveman
-	url = https://github.com/JuliusBrussee/caveman.git
-	shallow = true

@@ -32,5 +32,19 @@
     ],
     "revisit_when": "上游技能能脱离整套插件单独使用，或 Mercury 出现需要验证器把关的长期研究任务。",
     "issue": "392fyc/Mercury#668"
+  },
+  {
+    "upstream_repo": "JuliusBrussee/caveman",
+    "evaluated_at": "2026-10-26",
+    "sha_at_evaluation": "26c25e39b3aee469dbb017427ab55ee1d32de1a8",
+    "license": "MIT",
+    "scope": "caveman-toggle skill and CLAUDE.local.md.example",
+    "decision": "removed",
+    "reasons": [
+      "The user decided on 2026-10-26 to drop the caveman concise-output mode and the CLAUDE.local.md.example template; both were imported earlier (PR #214, Issue #213) and are removed together with the adapters/caveman overlay and the modules/caveman submodule.",
+      "The last pinned commit is MIT-licensed; upstream changed its license to Apache-2.0 from 921eab8a (2026-09-24), so nothing newer was ever imported."
+    ],
+    "revisit_when": "Only if the user asks for a persistent concise-output mode again.",
+    "issue": "392fyc/Mercury#678"
   }
 ]

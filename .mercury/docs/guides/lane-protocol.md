@@ -18,7 +18,7 @@ to repo sources instead.
   so the hook, the lane scripts and the registry agree
   ([#644](https://github.com/392fyc/Mercury/issues/644)). The bound directory
   must already exist inside `.mercury/memory`; an invalid binding is an error,
-  never a silent fallback. The memory-index scripts resolve through the same
+  never a silent fallback. The lane scripts resolve through the same
   binding.
 - **Lane kinds.** A lane is either solo (no `Peers`) or paired with other lanes.
   Each lane is run by one harness (`claude` or `codex`). Cross-harness rules
@@ -59,7 +59,7 @@ Mercury_KB: `04-research/mercury/articles/001-mercury-harness-overview.md`
 | 4 — only the main lane edits `DIRECTION.md` / `EXECUTION-PLAN.md`; other lanes open an Issue | yes | [lane-emergency-escalation.md](lane-emergency-escalation.md) |
 | 4.1 — emergency escalation when main is idle >48h | yes | [lane-emergency-escalation.md](lane-emergency-escalation.md), `scripts/check-main-idle.sh` |
 | 5 — per-lane state: each lane has its own `session-handoff[-<lane>].md` and session files | yes | [lane-naming.md](lane-naming.md) §Operational expectation, `scripts/lane-paths.sh handoff-file --lane <lane>` |
-| 5.1 — one worktree per lane, declared as `Worktree path` (Δ9); `/handoff:auto` launch (Δ10); `[LANE=<name>]` marker check (Δ11); cross-repo variant (#374) | yes | [lane-naming.md](lane-naming.md) §worktree isolation, `scripts/lane-assertion.sh`, `scripts/handoff-launch.sh`, `.agents/skills/handoff/SKILL.md` Step 5 |
+| 5.1 — one worktree per lane, declared as `Worktree path` (Δ9); `/lane-handoff auto` launch (Δ10); `[LANE=<name>]` marker check (Δ11); cross-repo variant (#374) | yes | [lane-naming.md](lane-naming.md) §worktree isolation, `scripts/lane-assertion.sh`, `scripts/handoff-launch.sh`, `.agents/skills/lane-handoff/SKILL.md` Step 5 |
 | 6 — `LANES.md` is the single lane registry; each lane edits only its own section, and only the owning lane closes itself | yes | [lane-close.md](lane-close.md), [lane-sweep.md](lane-sweep.md), `scripts/lane-spawn.sh`, `scripts/lane-close.sh` |
 | 7 — per-session files `sessions/S<N>(-<lane>).md`; `MEMORY.md` / `SESSION_INDEX.md` regions regenerated from them | **no**, tooling removed by #675 | the regeneration script and its guide were deleted in #675 |
 | Δ7 — hard cap on active lanes | **no**, removed by #605 | [lane-naming.md](lane-naming.md) §Δ7 (historical) |

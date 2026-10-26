@@ -104,6 +104,10 @@ User becomes arbitrator (explicit opt-in PR review, not auto-merge).
 
 ## Delta 5 — Rule 7 REPLACEMENT (P0, BREAKING)
 
+> **Note (#675)**: this section is a historical record. `scripts/regenerate-memory-index.sh`, the
+> pre-commit and post-merge hooks and the migration phases described below no longer exist; the
+> rule index in [guides/lane-protocol.md](guides/lane-protocol.md) (Rule 7) states what is in force.
+
 **Mechanism**:
 - **OLD Rule 7**: append-only edits to `MEMORY.md` and `SESSION_INDEX.md`
 - **NEW Rule 7**: each session writes its own file `memory/sessions/S<N>-<lane>.md`. Index files
