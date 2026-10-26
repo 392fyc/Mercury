@@ -217,13 +217,13 @@ cwd-encoded project state directory is also distinct.
 This § is about **lane-level** isolation (one worktree per active lane,
 long-lived). It is NOT the same scope as the **task-level** worktree spec in
 [`.mercury/docs/guides/worktree-workflow.md`](worktree-workflow.md), which
-covers `.worktrees/{taskId}` worktrees created by the `dev-pipeline` skill
-for a single dev task and removed after the PR merge is verified.
+covers `.worktrees/{taskId}` worktrees created for a
+single dev task and removed after the PR merge is verified.
 
 | Scope | Path | Lifecycle | Purpose |
 |-------|------|-----------|---------|
 | **Lane-level** (this §) | `<repo-root>/.worktrees/lanes/<short>` | Per active lane; long-lived; removed at lane close | Isolate per-cwd Claude Code session transcripts (jsonl); user-memory dir (MEMORY.md / SESSION_INDEX.md / sessions/ / handoffs) is canonical by design — see §Operational expectation |
-| **Task-level** ([`worktree-workflow.md`](worktree-workflow.md)) | `<repo-root>/.worktrees/{taskId}` | Per dev task; ephemeral; removed after PR merge is verified | Isolate concurrent dev-pipeline branch checkouts |
+| **Task-level** ([`worktree-workflow.md`](worktree-workflow.md)) | `<repo-root>/.worktrees/{taskId}` | Per dev task; ephemeral; removed after PR merge is verified | Isolate concurrent dev-task branch checkouts |
 
 Both kinds live under the repository's own `.worktrees/` (Issue #663). The
 `lanes/` subdirectory is reserved for lane-level worktrees: task-level cleanup
@@ -232,7 +232,7 @@ skips it, because a lane is long-lived and is closed by the lane-close
 procedure below, never by task cleanup.
 
 A side lane MAY use both: live in `<repo-root>/.worktrees/lanes/<short>` for its
-session-state isolation, AND have `dev-pipeline` create
+session-state isolation, AND create
 `.worktrees/{taskId}` inside that lane worktree for parallel dev tasks.
 
 ### Worktree path convention

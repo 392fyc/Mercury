@@ -59,7 +59,7 @@ The behavior is uncomfortable in the short term — the agent commits a fix and 
 
 ## Why a maximum of five iterations
 
-The loop cap mirrors the dev-pipeline cap (three iterations) but is set higher because PR review is structurally noisier — review bots sometimes flag the same class of thing across multiple files, and some legitimate PRs need three or four passes just because the diff is large. Five is the empirical sweet spot where:
+The loop cap is set higher than a typical implementation-retry cap (three iterations) because PR review is structurally noisier — review bots sometimes flag the same class of thing across multiple files, and some legitimate PRs need three or four passes just because the diff is large. Five is the empirical sweet spot where:
 - legitimate large PRs converge in time
 - pathological cases (the agent stuck in a fix-find-fix loop on the same finding) hit the cap and escalate
 - the cap is low enough that escalation is cheap

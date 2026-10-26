@@ -1,6 +1,5 @@
 # Dependencies
 node_modules/
-.pnpm-store/
 
 # Build outputs
 dist/
@@ -14,7 +13,6 @@ vite.config.d.ts
 logs/
 *.log
 npm-debug.log*
-pnpm-debug.log*
 
 # Scratch / per-session ephemera (skill prompt files, audit outputs, etc.)
 .tmp/
@@ -60,10 +58,6 @@ CLAUDE.md
 # Git worktrees (transient, managed by Main Agent)
 /.worktrees/
 
-# Mercury runtime state
-.mercury/state/test-gate-attempts.json
-.mercury/state/test-gate-*
-
 # pr-flow skill state files (created per PR, cleaned in Phase 7)
 .pr-flow-*
 .mercury/sessions.json
@@ -75,6 +69,7 @@ CLAUDE.md
 .mercury/mercury.db
 .mercury/mercury.db-wal
 .mercury/mercury.db-shm
+# 旧版本留下的本机配置，保持忽略以免误提交
 mercury.config.json
 .claude/current-session.md
 .codex/state/

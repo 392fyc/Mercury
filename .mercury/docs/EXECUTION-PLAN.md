@@ -3,6 +3,8 @@
 > 状态: **生效中** | 制定日期: 2026-04-06
 > 依据: DIRECTION.md (项目方向定义)
 > 本文档定义从当前状态到新架构的执行路径。
+>
+> **#666 说明**: `archive/`、`packages/`、根目录 Node/TypeScript 工具链、`dev-pipeline` 与 `dual-verify` 技能、`adapters/mercury-test-gate/`、`adapters/mercury-loop-detector/`、dispatch/acceptance 提示模板、`.mcp.json` 已从工作树删除，可通过 Git 历史追溯。下文各 Phase 中对它们的提及是当时的规划与交付记录，不代表现行目录。
 
 ---
 
@@ -139,8 +141,7 @@ adapters/         # 适配层
 
 ### 1-1. Dev Pipeline Preset
 - 完成 .claude/agents/dev.md、acceptance.md 的 sub-agent 定义（Phase 0 已创建基础版）
-- 创建 dev-pipeline skill: 一键触发 Main → Dev → Acceptance 链
-- 编写 dispatch 模板（复用 .mercury/templates/ 现有资产）
+- ~~创建 dev-pipeline skill~~、~~编写 dispatch 模板~~ — 已于 #666 删除（历史记录）
 - 在真实的下游项目上验证
 
 ### 1-2. pr-flow 增强
@@ -188,12 +189,12 @@ adapters/         # 适配层
 ### 2-3. Stop Hook 实现 ✅ 已实现 (Issue #206, 2026-04-08)
 
 **实现路径**: Path β — 独立 Mercury adapter，与 OMC 层叠运行（Layer model）。
-**适配层**: `adapters/mercury-test-gate/` (152 LOC, Node.js CJS)
+**适配层**: `adapters/mercury-test-gate/` (152 LOC, Node.js CJS；已于 #666 删除)
 **机制**: `SubagentStop` 事件触发 → 解析 test command（convention file 优先，fallback 自动检测）→ 执行 → exit code 非零则 emit `{"decision":"block"}` → dev agent 无法退出。
 **验收标准**: Dev sub-agent 不能在 test 未通过时 stop（机械化，harness-level，bypass-proof up to 3 re-entries）。
 **集成测试**: 由用户在 merge 后执行真实 dev pipeline run，结果记录于 Phase 2 completion ADR（DEC-4）。
 
-- ~~基于挂载项目的机制，实现 agent stop 拦截~~ — 已完成，见 `adapters/mercury-test-gate/hook.cjs`
+- ~~基于挂载项目的机制，实现 agent stop 拦截~~ — 已完成，原 `adapters/mercury-test-gate/hook.cjs` 已于 #666 删除，见 Git 历史
 - ~~定义 completion checklist 格式（机械化标准）~~ — test exit code = 0 即为通过标准
 - ~~在 Dev Pipeline 中集成~~ — 已通过 `.claude/settings.json` SubagentStop 注册
 
@@ -221,7 +222,7 @@ adapters/         # 适配层
 
 ### 3-2. MCP 接入
 - 评估 Obsidian MCP server 方案（或 fork/自建轻量替代）
-- 配置 .mcp.json 连接 NAS vault
+- 配置 MCP 连接 NAS vault
 - 验证 agent 可读写 KB
 
 ### 3-3. 周期维护 Agent (#92)
@@ -271,7 +272,7 @@ adapters/         # 适配层
 - **路径决策**：**自研 ~60-80 行 bash/Python 封装**，不整仓挂载 OMC 或 Superpowers（见研究报告 R1/R2）
 - **参考素材**：OMC `worktree.sh`（结构参考）+ Superpowers `using-git-worktrees/SKILL.md`（prompt discipline 参考，若 cherry-pick 需走 upstream-manifest 流程）
 - **API**：`create_worktree(task_id, branch_slug)` / `remove_worktree(task_id)` / `list_orphans()`
-- **集成点**：dev-pipeline skill 在分发 dev subagent 前注入 `worktreePath` 到 TaskBundle
+- **集成点**：任务分发方在派发 dev subagent 前创建任务 worktree 并告知其路径
 - **Out of scope (MVP)**：tmux、session registry、GitHub API polling cleanup
 - Issue #247 + Mercury PR #263 merged 2026-04-18
 
@@ -283,7 +284,7 @@ adapters/         # 适配层
 **人类干预点**：~~技术方案选择（已完成，Option D）~~（已废弃）；4-2.b 首次多 worktree 并行时确认隔离正确性
 **验收标准**：
 1. session_chain DB 能查询任意 session 的 parent/child 链（4-2.a）
-2. Mercury dev-pipeline 分发 N 个 subagent 时能自动创建 N 个隔离 worktree 并在 PR merge 后清理（4-2.b）
+2. Mercury 分发 N 个 subagent 时能自动创建 N 个隔离 worktree 并在 PR merge 后清理（4-2.b）
 3. agent 在 context 耗尽后自动启动新 session 并继续之前的任务（Phase 4 整体目标）
 
 ### 4-3. Compact-prevention 模式 — ✅ Complete (2026-04-23)

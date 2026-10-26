@@ -162,7 +162,7 @@ Phase 6 empirical (S99 ADR §#4):
 |------------|----------------------|------------------------|
 | `SessionStart` | ✅ | mem0 SessionStart, agentkb session-start, OMC SessionStart |
 | `UserPromptSubmit` | ✅ | none (the project hook was retired in #579) |
-| `PreToolUse` | ✅ | none registered by the project (loop-detector remains an unregistered adapter) |
+| `PreToolUse` | ✅ | none registered by the project |
 | `PostToolUse` | ✅ | mem0 PostToolUse, OMC post-tool-use |
 | `PostToolUseFailure` | ✅ | OMC post-tool-use-failure |
 | `Stop` | ✅ | none — the project registers no hooks; only user-level or plugin hooks fire |
@@ -281,7 +281,7 @@ auto-worktree names (they are Anthropic-generated); audit visually.
 ## 5. `.claude/worktrees/` namespace coexistence
 
 Mercury has a separate, manual `.claude/worktrees/` use-case predating
-agent view: `dev-pipeline` and other workflows created
+agent view: earlier manual workflows (such as the retired `dev-pipeline` skill) created
 `.claude/worktrees/<task-id>/` for per-task isolation. Task worktrees now live
 at `.worktrees/<task-id>/` in the repository root (see
 [`worktree-workflow.md`](worktree-workflow.md)); agent view's auto-iso keeps
@@ -289,7 +289,7 @@ using `.claude/worktrees/`.
 
 | Source | Name pattern | Lifecycle | Branch |
 |--------|--------------|-----------|--------|
-| Mercury manual (dev-pipeline, legacy path) | task IDs (e.g. `session-22-phase1`, `skill-deep-research`) | created per dev task, removed after PR merge is verified | task-specific |
+| Mercury manual (legacy path) | task IDs (e.g. `session-22-phase1`, `skill-deep-research`) | created per dev task, removed after PR merge is verified | task-specific |
 | Agent view auto-iso | Anthropic-generated names from session/prompt context | created at first Edit attempt, optionally preserved by `ExitWorktree(action:"keep")` | `worktree-<auto-name>` |
 
 **Before deleting any `.claude/worktrees/<name>/`**: verify which source
@@ -419,7 +419,7 @@ the `<lane-worktree>` placeholder and carry no machine-specific paths.
   it, this guide will need to follow suit.
 - That auto-worktree branch HEAD selection is documented — S99 observed
   a discrepancy between the dispatcher's HEAD and the recorded
-  `originalHeadCommit`; mitigation is dispatch-prompt-side, not
+  `originalHeadCommit`; mitigation is dispatcher-side, not
   Mercury-side.
 
 ### Cross-links
