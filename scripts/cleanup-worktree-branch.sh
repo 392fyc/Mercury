@@ -25,6 +25,23 @@
 #   is used and the evidence is printed. Otherwise the branch is kept with a warning.
 # After a successful local branch delete (not dry-run): `git fetch --prune origin`; if the remote
 #   branch still exists, warn that GitHub auto-delete did not remove it (exit code unchanged).
+# Worktrees with checked-out submodules (Issue #670): a plain `git worktree remove` always refuses
+#   them ("working trees containing submodules cannot be moved or removed"), because the submodule
+#   repositories live in <git-dir>/modules of that worktree. The ONLY case where this script uses
+#   `git worktree remove --force` is a worktree that already passed every check above AND every
+#   checked-out submodule (a <submodule path>/.git exists; recursive, nested ones too) is verified:
+#   `git submodule status` prefix is a space (checked-out commit == recorded commit; "-", "+" and "U"
+#   all block), the submodule path is its own repository root, and
+#   `git status --porcelain --ignored=matching` inside it shows nothing except regenerable caches.
+#   Then exactly one `git worktree remove --force <wt>` runs (no retry, no rm -rf), followed by the
+#   usual branch delete and remote read-back. `git submodule deinit` is deliberately NOT run:
+#   init/deinit write the config shared by all worktrees ($GIT_COMMON_DIR/config), so a deinit in a
+#   task worktree would unregister the submodules of the main checkout too. Only the checked-out
+#   commit is verified; commits on other local branches inside a submodule are not examined and are
+#   lost with the force removal. A worktree whose <git-dir>/modules exists but has no checked-out
+#   submodule also takes this force path (that data is removed with it). Any unmet condition: the
+#   reason is printed, worktree and branch are kept, exit 1. --dry-run only prints the remove
+#   command. A worktree without checked-out submodules and without <git-dir>/modules is unaffected.
 # Exit: 0 complete | 1 worktree cleanup incomplete or merge unverified | 2 invalid args / protected branch / not in a git repository
 
 set -u
@@ -48,7 +65,7 @@ while [ $# -gt 0 ]; do
       shift 2
       ;;
     -h|--help)
-      sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     --) shift; break ;;
@@ -338,19 +355,134 @@ skip_unclean() {
   return 1
 }
 
+# Submodule check of worktree $1 (Issue #670). Sets SUB_STATE = none | clean | bad and SUB_DETAIL.
+# A submodule counts as checked out when <path>/.git exists; the `git submodule status` prefix alone
+# is not trusted (a "-" submodule can still hold files). Walks the submodule tree breadth-first.
+#   none:  no checked-out submodule and no <git-dir>/modules: the normal removal path applies.
+#   clean: every checked-out submodule (recursive) has prefix " ", is its own repository root and has
+#          no staged/unstaged/untracked content or ignored files other than regenerable caches.
+#          Also the result when only <git-dir>/modules exists (leftover repository data).
+#   bad:   anything else, including a command that fails (cannot verify).
+SUB_STATE=""
+SUB_DETAIL=""
+wt_submodule_check() {
+  local wt="$1" gd st line prefix rest sp dir sub label out bad top got has=0 probs="" queue="" first=1
+  SUB_STATE=none; SUB_DETAIL=""
+  gd=$(git -C "$wt" rev-parse --absolute-git-dir 2>/dev/null) || gd=""
+  if [ -n "$gd" ] && [ -d "$gd/modules" ]; then has=1; fi
+  queue="$wt"
+  while [ -n "$queue" ]; do
+    dir=${queue%%$'\n'*}
+    if [ "$queue" = "$dir" ]; then queue=""; else queue=${queue#*$'\n'}; fi
+    if ! st=$(git -C "$dir" submodule status 2>/dev/null); then
+      # A top-level failure only matters when submodule data exists; the worktree status check
+      # has already run for a plain worktree.
+      if [ "$first" -eq 0 ]; then
+        probs="${probs}submodule ${dir#"$wt"/}: git submodule status failed (cannot verify);"
+      elif [ "$has" -eq 1 ]; then
+        probs="${probs}git submodule status failed (cannot verify);"
+      fi
+      first=0
+      continue
+    fi
+    first=0
+    while IFS= read -r line; do
+      [ -z "$line" ] && continue
+      prefix=${line:0:1}
+      rest=${line:1}; rest=${rest#* }; sp=${rest% (*}
+      sub="$dir/$sp"
+      [ -e "$sub/.git" ] || continue   # not checked out: nothing on disk to lose
+      has=1
+      label=${sub#"$wt"/}
+      case "$prefix" in
+        " ") ;;
+        "-") probs="${probs}submodule $label: checked out but not active (status prefix '-'), cannot verify;"; continue ;;
+        *)   probs="${probs}submodule $label: checked-out commit differs from the recorded one or has conflicts (status prefix '$prefix');"; continue ;;
+      esac
+      top=$(git -C "$sub" rev-parse --show-toplevel 2>/dev/null) || top=""
+      got=""; [ -n "$top" ] && got=$(canon "$top")
+      if [ -z "$got" ] || [ "$got" != "$(canon "$sub")" ]; then
+        probs="${probs}submodule $label: not its own repository root (cannot verify);"
+        continue
+      fi
+      if ! out=$(git -C "$sub" status --porcelain --ignored=matching 2>/dev/null); then
+        probs="${probs}submodule $label: git status failed (cannot verify);"
+        continue
+      fi
+      bad=$(printf '%s\n' "$out" | grep -v '^$' \
+              | grep -v -E '^!! (.*/)?(__pycache__|\.pytest_cache)/$' \
+              | grep -v -E '^!! .*\.pyc$' || true)
+      if [ -n "$bad" ]; then
+        probs="${probs}submodule $label: $(printf '%s\n' "$bad" | head -n 5 | tr '\n' ';')"
+        continue
+      fi
+      queue="${queue:+$queue$'\n'}$sub"
+    done <<< "$st"
+  done
+  if [ -n "$probs" ]; then
+    SUB_STATE=bad; SUB_DETAIL="$probs"
+  elif [ "$has" -eq 1 ]; then
+    SUB_STATE=clean
+  fi
+  return 0
+}
+
+# True when the index of worktree $1 holds a gitlink whose path contains a .git entry (a checked-out
+# submodule). Guards the rm -rf fallback, which must never run over submodule repositories.
+wt_has_checked_out_gitlink() {
+  # NUL-separated so paths with quotes, tabs or non-ASCII characters are not C-quoted by git.
+  local wt="$1" rec p
+  while IFS= read -r -d '' rec; do
+    case "$rec" in 160000\ *) ;; *) continue ;; esac
+    p="${rec#*$'\t'}"
+    [ -n "$p" ] && [ -e "$wt/$p/.git" ] && return 0
+  done < <(git -C "$wt" ls-files -s -z 2>/dev/null)
+  return 1
+}
+
+# Removal of a worktree whose submodules were verified clean (SUB_STATE=clean). The single place
+# that uses `git worktree remove --force`: git refuses a non-force remove for any worktree whose
+# git-dir holds submodule repositories, and everything the force removal deletes was verified above.
+# No `git submodule deinit`: it would write the config shared with the main checkout.
+remove_with_submodules() {
+  local wt="$1"
+  echo "cleanup-worktree-branch: worktree $wt has submodule data, all checked-out submodules verified clean at the recorded commits — a single git worktree remove --force" >&2
+  run git worktree remove --force -- "$wt" || { warn "git worktree remove --force failed for $wt"; return 1; }
+  return 0
+}
+
+# Handles the submodule case after wt_state said clean. Returns 0 = handled (removed), 1 = failed
+# or blocked (worktree kept), 2 = no submodule data: the caller continues normally.
+handle_submodules() {
+  local wt="$1"
+  wt_submodule_check "$wt"
+  case "$SUB_STATE" in
+    bad)   warn "worktree $wt has checked-out submodules that are not verifiably clean ($SUB_DETAIL) — worktree and branch kept (--force does not override this)"; return 1 ;;
+    clean) remove_with_submodules "$wt"; return $? ;;
+  esac
+  return 2
+}
+
 remove_force() {
-  # Windows file-lock retry. NEVER uses `git worktree remove --force` and never deletes a worktree
-  # that is dirty or cannot be verified clean (#663). Clean registered root: plain remove (retried
+  # Windows file-lock retry. `git worktree remove --force` is used only through handle_submodules
+  # (verified-clean submodules, #670), never for anything else. Never deletes a worktree that is
+  # dirty or cannot be verified clean (#663). Clean registered root: plain remove (retried
   # once). rm -rf is the last resort for exactly one case: registered root, still clean, plain
   # remove failed (file lock), canonical path under $REPO_ROOT/.worktrees/ and NOT under lanes/.
   local wt="$1"
   wt_state "$wt"
   if skip_unclean "$wt"; then return 1; fi
+  handle_submodules "$wt"; _hs=$?
+  [ "$_hs" -ne 2 ] && return "$_hs"
   run git worktree remove -- "$wt" && return 0
   sleep 2
   run git worktree remove -- "$wt" && return 0
   warn "git worktree remove retry failed for $wt"
   [ -n "$wt" ] && [ -d "$wt" ] && [ ! -L "$wt" ] || return 1
+  if wt_has_checked_out_gitlink "$wt"; then
+    warn "refuse to rm -rf $wt: it holds a checked-out submodule (git-managed repository data) — kept"
+    return 1
+  fi
   local wt_canon
   wt_canon=$(canon "$wt") || {
     warn "cannot canonicalize $wt — refusing rm -rf fallback"
@@ -398,6 +530,8 @@ remove_safe() {
   fi
   wt_state "$wt"
   if skip_unclean "$wt"; then return 1; fi
+  handle_submodules "$wt"; _hs=$?
+  [ "$_hs" -ne 2 ] && return "$_hs"
   run git worktree remove -- "$wt"
 }
 
