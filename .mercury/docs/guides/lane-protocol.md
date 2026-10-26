@@ -22,7 +22,7 @@ to repo sources instead.
   binding.
 - **Lane kinds.** A lane is either solo (no `Peers`) or paired with other lanes.
   Each lane is run by one harness (`claude` or `codex`). Cross-harness rules
-  are in the [#599 ADR](../research/issue-599-cross-harness-lane-isolation-2026-09.md).
+  are in the #599 ADR (Mercury_KB: `04-research/mercury/issue-599-cross-harness-lane-isolation-2026-09.md`).
 - **No cap.** Lanes are uncapped ([#605](https://github.com/392fyc/Mercury/issues/605)).
 - **Messages from other lanes** follow the receiver rule in `AGENTS.md`,
   under "Cross-lane messages" ([#615](https://github.com/392fyc/Mercury/issues/615)).
@@ -35,7 +35,7 @@ to repo sources instead.
   holds formal judgment, and the other harness may join for bounded work such
   as review without taking over. Mercury's own lanes record only the lead
   harness so far and pair lanes as peers
-  ([#599 ADR](../research/issue-599-cross-harness-lane-isolation-2026-09.md)).
+  (#599 ADR (Mercury_KB: `04-research/mercury/issue-599-cross-harness-lane-isolation-2026-09.md`)).
   How far Mercury itself implements the other requirements is tracked in the
   rules table below. Each downstream project maps the contract to its own
   memory location and scripts.
@@ -43,8 +43,8 @@ to repo sources instead.
 ## Rules
 
 The protocol has eight rules. Version 1 was accepted on 2026-05-03 (#347,
-epic #315). The fullest in-repo restatement of all eight is
-[articles/001-mercury-harness-overview.md](../../../articles/001-mercury-harness-overview.md)
+epic #315). The fullest restatement of all eight is
+Mercury_KB: `04-research/mercury/articles/001-mercury-harness-overview.md`
 §"8 条规则全景". The guides and scripts below are the working definitions.
 
 | Rule | In force | Defined / enforced in |
@@ -61,15 +61,15 @@ epic #315). The fullest in-repo restatement of all eight is
 | 5 — per-lane state: each lane has its own `session-handoff[-<lane>].md` and session files | yes | [lane-naming.md](lane-naming.md) §Operational expectation, `scripts/lane-paths.sh handoff-file --lane <lane>` |
 | 5.1 — one worktree per lane, declared as `Worktree path` (Δ9); `/handoff:auto` launch (Δ10); `[LANE=<name>]` marker check (Δ11); cross-repo variant (#374) | yes | [lane-naming.md](lane-naming.md) §worktree isolation, `scripts/lane-assertion.sh`, `scripts/handoff-launch.sh`, `.agents/skills/handoff/SKILL.md` Step 5 |
 | 6 — `LANES.md` is the single lane registry; each lane edits only its own section, and only the owning lane closes itself | yes | [lane-close.md](lane-close.md), [lane-sweep.md](lane-sweep.md), `scripts/lane-spawn.sh`, `scripts/lane-close.sh` |
-| 7 — per-session files `sessions/S<N>(-<lane>).md`; `MEMORY.md` / `SESSION_INDEX.md` regions regenerated from them | yes | [memory-index-regenerate.md](memory-index-regenerate.md), `scripts/regenerate-memory-index.sh` |
+| 7 — per-session files `sessions/S<N>(-<lane>).md`; `MEMORY.md` / `SESSION_INDEX.md` regions regenerated from them | **no**, tooling removed by #675 | the regeneration script and its guide were deleted in #675 |
 | Δ7 — hard cap on active lanes | **no**, removed by #605 | [lane-naming.md](lane-naming.md) §Δ7 (historical) |
-| 8 — lane lifecycle autonomy: each lane owns the full lifecycle of its claimed Issues as a parallel chain, not a sub-agent of another lane; the only limits are Rule 4 and explicit cross-lane coordination Issues (earlier form: the side-lane "autonomous chain") | yes | [agent-view-multi-lane-adaptation-2026-05.md](../research/agent-view-multi-lane-adaptation-2026-05.md), [agent-team-orchestration-feasibility-2026-04-26.md](../research/agent-team-orchestration-feasibility-2026-04-26.md); no guide yet |
-| Cross-harness lanes (Harness / Session / Peers, provenance tag) | yes | [#599 ADR](../research/issue-599-cross-harness-lane-isolation-2026-09.md), `AGENTS.md` "Cross-lane messages" |
+| 8 — lane lifecycle autonomy: each lane owns the full lifecycle of its claimed Issues as a parallel chain, not a sub-agent of another lane; the only limits are Rule 4 and explicit cross-lane coordination Issues (earlier form: the side-lane "autonomous chain") | yes | agent-view-multi-lane-adaptation-2026-05.md (Mercury_KB: `04-research/mercury/agent-view-multi-lane-adaptation-2026-05.md`), agent-team-orchestration-feasibility-2026-04-26.md (Mercury_KB: `04-research/mercury/agent-team-orchestration-feasibility-2026-04-26.md`); no guide yet |
+| Cross-harness lanes (Harness / Session / Peers, provenance tag) | yes | #599 ADR (Mercury_KB: `04-research/mercury/issue-599-cross-harness-lane-isolation-2026-09.md`), `AGENTS.md` "Cross-lane messages" |
 
 The deltas proposed after the first protocol cut, with their evidence, are in
 [lane-protocol-v0.1-deltas.md](../lane-protocol-v0.1-deltas.md). The design
 research is in
-[multi-lane-protocol-2026-04-25.md](../research/multi-lane-protocol-2026-04-25.md).
+multi-lane-protocol-2026-04-25.md (Mercury_KB: `04-research/mercury/multi-lane-protocol-2026-04-25.md`).
 
 ## Changing a rule
 

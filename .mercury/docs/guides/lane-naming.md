@@ -78,7 +78,7 @@ stale signals before flagging stale.
 
 ## Δ7 — HARD-CAP at 5 active lanes
 
-> **Superseded (2026-09, Issue [#605](https://github.com/392fyc/Mercury/issues/605)).** Lanes are no longer capped ([#599 ADR](../research/issue-599-cross-harness-lane-isolation-2026-09.md) D1). `lane-spawn.sh` no longer refuses at the cap, and `lane-cap-check.sh` only reports the count unless you pass `--max N`. This section is kept as the historical record. Current `lane-cap-check.sh` usage: with no flags it prints the active count with verdict `uncapped` and exits 0; `--max N` (a positive integer) opts in to a threshold of your own, with verdict `within_cap` / `exceeded` and exit 1 when exceeded.
+> **Superseded (2026-09, Issue [#605](https://github.com/392fyc/Mercury/issues/605)).** Lanes are no longer capped (#599 ADR (Mercury_KB: `04-research/mercury/issue-599-cross-harness-lane-isolation-2026-09.md`) D1). `lane-spawn.sh` no longer refuses at the cap, and `lane-cap-check.sh` only reports the count unless you pass `--max N`. This section is kept as the historical record. Current `lane-cap-check.sh` usage: with no flags it prints the active count with verdict `uncapped` and exits 0; `--max N` (a positive integer) opts in to a threshold of your own, with verdict `within_cap` / `exceeded` and exit 1 when exceeded.
 
 ### Cap value
 
@@ -399,7 +399,7 @@ specific filename pattern or layout — read it from the payload).
 
 - `<canonical>/MEMORY.md` — shared memory index (per-session bullets
   derived from per-session files via
-  `scripts/regenerate-memory-index.sh --in-place`; Rule 6 boundary still
+  `scripts/regenerate-memory-index.sh --in-place`, which was removed in #675 — regenerate the index by hand until the lanes module replaces it; Rule 6 boundary still
   binds — each lane only edits its own per-session files, never another
   lane's bullets)
 - `<canonical>/SESSION_INDEX.md` — shared session table (same derivation)
@@ -611,7 +611,7 @@ unconditional infrastructure.
   auto-iso HYBRID mechanism, cost-tracker gap, kill switch)
 - `.agents/skills/handoff/SKILL.md` Step 5 Auto mode for the spawn-side
   contract
-- `.mercury/docs/research/issue-599-cross-harness-lane-isolation-2026-09.md`
+- Mercury_KB: `04-research/mercury/issue-599-cross-harness-lane-isolation-2026-09.md`
   (ADR, Issue #599) presets how Codex lanes and Claude Code lanes stay
   isolated, read each other, and exchange messages when they collaborate
 - `scripts/lane-assertion.sh` + `scripts/test-lane-assertion.sh` for the

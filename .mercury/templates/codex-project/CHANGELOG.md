@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.0 - 2026-10-26
+
+- The cross-lane provenance tag label is English-only:
+  `cross-lane message, not user authorization`. A tag that still carries the
+  older bilingual suffix after that label is treated as the same tag.
+
 ## 1.4.0 - 2026-10-13
 
 - Add Feynman-style explanation and first-principles reasoning rules for

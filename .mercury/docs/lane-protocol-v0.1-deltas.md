@@ -2,7 +2,7 @@
 
 **Status**: HISTORICAL — the protocol (v1, including accepted deltas) was accepted on 2026-05-03 (#347); the rules in force are indexed in [guides/lane-protocol.md](guides/lane-protocol.md) (#618)
 **Source**: S1-side-multi-lane research (Issue #292)
-**Companion to**: `.mercury/docs/research/multi-lane-protocol-2026-04-25.md` (full design doc)
+**Companion to**: Mercury_KB: `04-research/mercury/multi-lane-protocol-2026-04-25.md` (full design doc)
 **Mirror of** (historical): the v0.1 Delta Proposal section of the old user-memory lane protocol file. That file was lost in the #579 migration; the rule authority is now [guides/lane-protocol.md](guides/lane-protocol.md) (#618)
 
 ---
@@ -162,7 +162,7 @@ IDE autocomplete + URL pasting suffer.
 
 ## Delta 7 — HARD-CAP at 5 active lanes (doc-only)
 
-> **Superseded (2026-09, Issue [#605](https://github.com/392fyc/Mercury/issues/605)):** the lane-count cap was removed; see `.mercury/docs/research/issue-599-cross-harness-lane-isolation-2026-09.md` D1. Kept as history.
+> **Superseded (2026-09, Issue [#605](https://github.com/392fyc/Mercury/issues/605)):** the lane-count cap was removed; see Mercury_KB: `04-research/mercury/issue-599-cross-harness-lane-isolation-2026-09.md` D1. Kept as history.
 
 **Mechanism**: `LANES.md` MUST NOT exceed 5 active lanes. Attempting to open lane #6 requires:
 1. Closing existing lane first, OR
@@ -189,7 +189,7 @@ Main lane S74+ to decide:
 2. **Cherry-pick subset** → file Issues only for accepted deltas; document rejected deltas in
    this file under "Rejected deltas" with rationale.
 3. **Reject** → keep v0 as-is with documented residual risk acceptance; this file moves to
-   `.mercury/docs/research/` archive.
+   Mercury_KB: `04-research/mercury/` archive.
 
 ## Verification commands
 
@@ -199,6 +199,6 @@ record, and [guides/lane-protocol.md](guides/lane-protocol.md) records which del
 
 ## Cross-references
 
-- Full research: `.mercury/docs/research/multi-lane-protocol-2026-04-25.md`
+- Full research: Mercury_KB: `04-research/mercury/multi-lane-protocol-2026-04-25.md`
 - Issue: [#292](https://github.com/392fyc/Mercury/issues/292)
 - Rules in force: [guides/lane-protocol.md](guides/lane-protocol.md) (#618). It replaces the lost user-memory protocol file.

@@ -70,7 +70,7 @@ scripts/lane-spawn.sh <lane> <issue>
 | `--repo-root PATH` | Override repo root (default: `git rev-parse --show-toplevel`). |
 | `--repo OWNER/REPO` | Pin GitHub repo for `gh` calls. Defaults to `gh repo view` / `GH_REPO`. |
 | `--handoff-dir PATH` | Where the handoff template is written. Default: the project's handoff dir (`scripts/lane-paths.sh handoff-dir`: `<kb_dir>/handoff` per the main checkout's `.handoff-config`, else `<main checkout>/.handoff`; #613). Falls back to `<memory-dir>` when the project cannot be resolved. |
-| `--harness claude\|codex` | Which CLI drives the lane; written as `- **Harness**:` in the new `LANES.md` section. Default: `claude`. See the [#599 ADR](../research/issue-599-cross-harness-lane-isolation-2026-09.md) D1. |
+| `--harness claude\|codex` | Which CLI drives the lane; written as `- **Harness**:` in the new `LANES.md` section. Default: `claude`. See the #599 ADR (Mercury_KB: `04-research/mercury/issue-599-cross-harness-lane-isolation-2026-09.md`) D1. |
 | `--no-claim` | Skip the `lane-claim.sh` step (useful for offline/manual claim). |
 | `--no-branch` | Skip the `git branch` step (useful when branch is created elsewhere). |
 | `--dry-run` | Print intended actions and exit before any state-mutating command. **Note**: `gh repo view` and `gh issue view` may still be invoked *before* the dry-run gate to resolve repo target and derive the slug from the Issue title. To stay fully offline, combine with `--no-claim --slug <slug>` (and `--repo OWNER/REPO` if `gh repo view` is unavailable). |
@@ -78,7 +78,7 @@ scripts/lane-spawn.sh <lane> <issue>
 | `MERCURY_MEMORY_DIR` (env) | Same as `--memory-dir`. |
 | `GH_REPO` (env) | Same as `--repo`. |
 
-Example: open a Codex-driven lane (solo by default; see the [#599 ADR](../research/issue-599-cross-harness-lane-isolation-2026-09.md) for pairing):
+Example: open a Codex-driven lane (solo by default; see the #599 ADR (Mercury_KB: `04-research/mercury/issue-599-cross-harness-lane-isolation-2026-09.md`) for pairing):
 
 ```bash
 scripts/lane-spawn.sh art 612 --short art --harness codex
