@@ -59,7 +59,7 @@ CLAUDE.md
 # Git worktrees (transient, managed by Main Agent)
 /.worktrees/
 
-# pr-flow skill state files (created per PR, cleaned in Phase 7)
+# Leftover state files of the retired pr-flow skill (#672); keep ignored
 .pr-flow-*
 .mercury/sessions.json
 .mercury/transcripts/

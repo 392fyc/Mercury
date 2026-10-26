@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# cleanup-worktree-branch.sh — shared worktree + branch cleanup (dev-pipeline Phase 5 + pr-flow
+# cleanup-worktree-branch.sh — shared worktree + branch cleanup (formerly dev-pipeline Phase 5 + pr-flow
 # Phase 7). SoT for the inline blocks that diverged in S62 (see Mercury #274; lifecycle rules in #663).
 # Usage: cleanup-worktree-branch.sh <BRANCH> <BASE_BRANCH> [--force] [--worktree-path PATH] [--dry-run]
 #   --force        Windows file-lock retry: retries a NON-force `git worktree remove`, then an rm -rf
@@ -514,7 +514,7 @@ remove_force() {
 }
 
 remove_safe() {
-  # pr-flow: preserve dirty/unverifiable worktrees. Directory gone (stale registration) → prune.
+  # safe mode: preserve dirty/unverifiable worktrees. Directory gone (stale registration) → prune.
   local wt="$1"
   if [ ! -d "$wt" ]; then
     warn "worktree $wt is inaccessible — pruning"
@@ -554,7 +554,7 @@ done <<< "$WT_PATHS"
 #     `git worktree remove` can partially succeed (metadata gone, directory retained) — the branch is
 #     still deletable even though WT_FAIL=1. git itself refuses safely if the branch is still
 #     checked out somewhere (a skipped dirty worktree keeps its branch this way).
-#   safe mode (pr-flow): skip branch deletion when worktree cleanup is incomplete, matching the
+#   safe mode: skip branch deletion when worktree cleanup is incomplete, matching the
 #     original Phase 7 guard (dirty worktree → preserve branch so the user can inspect).
 #
 # Squash/rebase merges leave the branch tip outside the base history, so `git branch -d` refuses.

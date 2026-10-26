@@ -158,10 +158,11 @@ Mercury 的核心价值不在代码里，在方法论里。
 **解决的问题**: 通用开发能力增强需要可复用、可分发。
 
 **当前 skills（按优先级）**:
-1. **pr-flow** — PR 全流程自动化（创建、审查、修复、merge）— 最高优先
-2. **web-research** — Web 研究强制协议
-3. **periodic-maintenance** (#92) — 周期性自治维护 Agent
-4. **ext-tracker** (#157) — 外部信息变更自动追踪
+1. **web-research** — Web 研究强制协议
+2. **periodic-maintenance** (#92) — 周期性自治维护 Agent
+3. **ext-tracker** (#157) — 外部信息变更自动追踪
+
+pr-flow 已于 #672 删除，PR 审查与合并规则移至 `.mercury/docs/guides/git-flow.md`。
 
 autoresearch 已于 #668 删除；上游 OMX/OMC autoresearch 的评估结论见 `.mercury/state/upstream-evaluations.json`。
 
@@ -268,7 +269,7 @@ adapters/
 
 | 组件 | 处理 |
 |---|---|
-| .claude/skills/ | 核心保留，pr-flow 优先增强 |
+| .claude/skills/ | 核心保留（pr-flow 已于 #672 删除） |
 | .claude/hooks/ | 保留，迁移为可移植配置格式 |
 | .mercury/templates/ | 核心保留，`codex-project/` 是下游同步的可移植模板 |
 
@@ -402,7 +403,7 @@ Layer 2: LLM-level 自律 (OMC Ralph loop, Superpowers verification-before-compl
 Layer 1: Mechanical enforcement (exit-code check；原 test-gate adapter 已于 #666 删除)
 ```
 
-每层独立运行，任一层可阻止低质量输出。Layer 1 是基础保障（bypass-proof），Layer 2 增加灵活性，Layer 3 提供最终人类判断。Layer 3 最初由 Argus 审阅机器人承担；Argus 现已暂时排除，合并条件见 `.agents/skills/pr-flow/SKILL.md`（#636）。未来 Mercury 模块设计应遵循此层级 — 新门禁优先放在 Layer 1，不足时上浮。
+每层独立运行，任一层可阻止低质量输出。Layer 1 是基础保障（bypass-proof），Layer 2 增加灵活性，Layer 3 提供最终人类判断。Layer 3 最初由 Argus 审阅机器人承担；Argus 现已暂时排除，合并条件见 `.mercury/docs/guides/git-flow.md` 的“PR Review and Merge”（#636，#672 起由 pr-flow 迁入）。未来 Mercury 模块设计应遵循此层级 — 新门禁优先放在 Layer 1，不足时上浮。
 
 ---
 

@@ -28,7 +28,7 @@ Mercury is built phase by phase against [`EXECUTION-PLAN.md`](.mercury/docs/EXEC
 | Phase | Scope | Status |
 |---|---|---|
 | **Phase 0** | Cleanup + scaffolding — archive pre-pivot stack, migrate roles to `.claude/agents/*.md` | ✅ Complete |
-| **Phase 1** | Dev/acceptance roles + `pr-flow` (the former `dev-pipeline` chain was removed in #666) | ✅ Complete |
+| **Phase 1** | Dev/acceptance roles + `pr-flow` (the former `dev-pipeline` chain was removed in #666; `pr-flow` was removed in #672, its merge rule now lives in `git-flow.md`) | ✅ Complete |
 | **Phase 2** | Quality gates — mechanical Stop-hook adapters (since removed in #666; see Git history) | ✅ Complete |
 | **Phase 3** | Memory layer — mem0 + Qdrant cross-session/cross-project memory (user-level) | ✅ Complete |
 | **Phase 4** | Session continuity — `claude-handoff` session-chain, worktree-per-task, compact-prevention, stall detection | ✅ Complete |
@@ -48,7 +48,7 @@ Recent additions on top of the core phases:
 Mercury (lightweight core — only builds what no external project provides)
 ├── .claude/
 │   ├── agents/        sub-agent role definitions (dev, acceptance, critic, design, research)
-│   ├── skills/        opt-in workflow skills (pr-flow, html-plan-zh)
+│   ├── skills/        opt-in workflow skills (html-plan-zh)
 │   └── settings.json  permission rules only; no project hooks are registered
 ├── .codex/            Codex CLI config + agents + rules (project-level hook registrations retired)
 ├── .mercury/
@@ -91,18 +91,17 @@ On session start, Claude Code auto-discovers every agent under `.claude/agents/`
 
 1. Read `CLAUDE.md` (auto-surfaced by Claude Code; it imports `AGENTS.md`) — issue-first workflow, guarded Git writes via `scripts/codex/git-safe.ps1`, PR-to-`develop` rule
 2. Read `.mercury/docs/DIRECTION.md` — project charter and module definitions
-3. Skim `.claude/skills/` — opt-in workflows (`pr-flow`, `html-plan-zh`); each runs only when you ask for it or an agreed plan requires it
+3. Skim `.claude/skills/` — opt-in workflows (`html-plan-zh`); each runs only when you ask for it or an agreed plan requires it. The PR review and merge rule is in `.mercury/docs/guides/git-flow.md`
 4. Run your first task by assigning a bounded scope to the `dev` sub-agent, then ask the `acceptance` sub-agent for a blind review of the result
 
 ## Skills and sub-agents
 
 The skills under `.claude/skills/` and sub-agents under `.claude/agents/` are **detachable** — each directory is self-contained and can be copied into another Claude Code project. Skill frontmatter lists the trigger phrases in English and Chinese. Treat the directory contents as the authoritative list; the snapshot below is current as of this writing and intentionally not a pinned count.
 
-Skills (2 at time of writing), all opt-in:
+Skills (1 at time of writing), opt-in:
 
 | Skill | Purpose |
 |-------|---------|
-| `pr-flow` | A single requested PR stage: check a PR, handle Argus comments, or run one step |
 | `html-plan-zh` | Interactive Chinese implementation plan as an HTML page |
 
 `web-research` and `handoff` are provided as user-level skills rather than from this repository.
@@ -139,7 +138,7 @@ Some Mercury capabilities run as separate, independently-deployable layers rathe
 |---|---|---|
 | **claude-handoff** | Local plugin ([392fyc/claude-handoff](https://github.com/392fyc/claude-handoff)) | Session handoff / continuation + `session_chain` SQLite — backs Phase 4 |
 | **Memory layer** | User-level `~/.claude/hooks/` + `~/.claude/scripts/` | mem0 + Qdrant adapter, session-start/end/pre-compact hooks, cost tracker — backs Phase 3 |
-| **Argus** | Self-hosted PR review bot | Automated PR review on GitHub; pairs with the `pr-flow` skill |
+| **Argus** | Self-hosted PR review bot | Automated PR review on GitHub (currently excluded; see the merge rule in `git-flow.md`) |
 | **oh-my-claudecode (OMC)** | Optional Claude Code plugin — not enabled in the committed `.claude/settings.json` | Multi-agent orchestration companion: UltraQA cycling, agent teams, deep-research, skill lifecycle. Adopted as a plugin (DEC-4 "Path β"); its LLM-level `SubagentStop` gate is an optional companion. **Opt-in & reversible** — after cloning, run `/plugin marketplace add https://github.com/Yeachan-Heo/oh-my-claudecode`, then `/plugin install oh-my-claudecode@omc`, then `/reload-plugins` (marketplace-add only registers the catalog — the explicit install step is what fetches the plugin); it is not enabled in the committed settings, so enable it only in your gitignored `.claude/settings.local.json`; Mercury runs without it and the shared config is never touched. |
 
 User-level changes (anything under `~/.claude/`) are governed separately from project PRs — see "Git and local safety" in [`AGENTS.md`](AGENTS.md) for the backup, rollback and issue-tracking discipline.
