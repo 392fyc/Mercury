@@ -23,6 +23,7 @@ jobs:
         run: |
           python -B tools/mercury.py check --target .
           python -B -m unittest discover -s tests/tools -p 'test_mercury.py'
+          python -B -m unittest discover -s tests/core -p 'test_*.py'
 
   toolcall-xml-lint:
     name: Tool-call XML Lint (#527)

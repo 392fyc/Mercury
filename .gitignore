@@ -55,6 +55,9 @@ CLAUDE.local.md
 !.mercury/state/upstream-evaluations.json
 .claude/settings.local.json
 CLAUDE.md
+# Pack fragments of the managed CLAUDE.md section are tracked and their installed copies under .mercury/packs (the case-insensitive pattern above would hide them)
+!/packs/*/claude.md
+!/.mercury/packs/*/claude.md
 
 # Git worktrees (transient, managed by Main Agent)
 /.worktrees/

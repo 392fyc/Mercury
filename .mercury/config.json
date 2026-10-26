@@ -6,5 +6,13 @@
     "subagent-dev",
     "lanes",
     "dot-link"
+  ],
+  "linked_repos": [
+    {
+      "name": "Mercury_KB",
+      "purpose": "Obsidian vault with Mercury's knowledge, decisions, research and handoffs.",
+      "locate": "Read the `kb_dir` key of `.handoff-config` in the main checkout (a gitignored file); see `.mercury/docs/guides/kb-structure.md`.",
+      "access": "Read when a task needs prior decisions or research. Writes need their own authorized scope; the layout and write rights are in `.mercury/docs/guides/kb-structure.md`."
+    }
   ]
 }

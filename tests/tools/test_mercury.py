@@ -45,6 +45,8 @@ class MercuryToolTest(unittest.TestCase):
         write(p / "core/skills/alpha/claude-entry.md", ENTRY)
         write(p / "core/skills/alpha/ref/a.md", "ref\r\n")
         write(p / "core/build/generate.py", "# Mercury-side generator, never installed\n")
+        write(p / "core/agents.md", "## Core agents\n\nCore fragment for AGENTS.\n")
+        write(p / "core/claude.md", "@AGENTS.md\n\nCore fragment for CLAUDE.\n")
         write(p / "extra/skills/beta/SKILL.md", skill_md("beta", "Beta skill."))
         write(p / "extra/skills/mercury-gamma/SKILL.md", "---\nname: mercury-gamma\ndescription: >-\n  Gamma\n  skill.\n---\n\ngamma\n")
         write(p / "extra/note.txt", "note\n")
@@ -111,7 +113,7 @@ class MercuryToolTest(unittest.TestCase):
         self.assertFalse(any(k.startswith(".mercury/packs/off") for k in s), "a disabled pack that nobody selected stays out")
         lock = json.loads(s[LOCK])
         self.assertEqual(lock["schema_version"], 1)
-        self.assertEqual(set(lock["files"]), set(s) - {LOCK, CONFIG})
+        self.assertEqual(set(lock["files"]), set(s) - {LOCK, CONFIG, "AGENTS.md", "CLAUDE.md"})
         self.assertEqual(self.check()[0], 0)
 
     def test_stubs(self):
@@ -692,6 +694,531 @@ class MercuryToolTest(unittest.TestCase):
             tool.load_pack(ROOT / "packs" / name, name)
         self.assertTrue(master["packs"]["core"]["required"])
         self.assertFalse(master["packs"]["playwright-mcp"]["enabled"])
+
+    # --- roles, rules, managed sections, linked repositories (#682) ---
+
+    ROLE = ('---\ndescription: "Reviews things."\nclaude:\n  model: opus\n  tools: "Read, Grep"\n  disallowedTools: "Edit, Write"\n'
+            '  permissionMode: plan\n  readonly_guard: true\ncodex:\n  model: gpt-6-luna\n  model_reasoning_effort: max\n'
+            '  sandbox_mode: read-only\n  web_search: live\n---\n\n# Role: checker\n\nBody text.\n')
+    DEV_ROLE = ('---\ndescription: "Builds things."\nclaude:\n  model: sonnet\ncodex:\n  sandbox_mode: workspace-write\n---\n\n# Role: builder\n')
+
+    def add_role(self, name, text):
+        write(self.src / "packs/core/roles" / f"{name}.md", text)
+
+    def section(self, name="AGENTS.md"):
+        text = (self.dst / name).read_bytes().decode("utf-8")
+        return text
+
+    def frontmatter_of(self, rel):
+        text = (self.dst / rel).read_bytes().decode("utf-8")
+        head = text.split("\n---\n", 1)[0]
+        self.assertTrue(head.startswith("---\n"))
+        return head[4:].split("\n")
+
+    def test_roles_are_generated_in_both_formats(self):
+        import tomllib
+        self.add_role("reviewer", self.ROLE)
+        self.add_role("dev", self.DEV_ROLE)
+        code, out = self.apply()
+        self.assertEqual(code, 0, out)
+        fm = self.frontmatter_of(".claude/agents/mercury-reviewer.md")
+        self.assertEqual(fm[:7], ['name: "mercury-reviewer"', 'description: "Reviews things."', 'model: "opus"',
+                                  'tools: "Read, Grep"', 'disallowedTools: "Edit, Write"', 'permissionMode: "plan"', "hooks:"])
+        self.assertIn('    - matcher: "Bash|PowerShell"', fm)
+        self.assertIn("          shell: bash", fm)
+        self.assertIn("          timeout: 60", fm)
+        self.assertIn('          onFailure: "block"', fm)
+        cmd = json.loads(next(l for l in fm if l.startswith("          command: "))[len("          command: "):])
+        self.assertEqual(cmd, 'sh "${CLAUDE_PROJECT_DIR}/.mercury/packs/core/hooks/readonly_guard.sh" || exit 2')
+        self.assertNotIn("hooks:", "\n".join(self.frontmatter_of(".claude/agents/mercury-dev.md")))  # no guard without readonly_guard
+        self.assertEqual(self.frontmatter_of(".claude/agents/mercury-dev.md"), ['name: "mercury-dev"', 'description: "Builds things."', 'model: "sonnet"'])
+        toml = tomllib.loads((self.dst / ".codex/agents/mercury-reviewer.toml").read_text(encoding="utf-8"))
+        self.assertEqual({k: v for k, v in toml.items() if k != "developer_instructions"},
+                         {"name": "mercury-reviewer", "description": "Reviews things.", "model": "gpt-6-luna",
+                          "model_reasoning_effort": "max", "sandbox_mode": "read-only", "web_search": "live"})
+        self.assertEqual(toml["developer_instructions"], "# Role: checker\n\nBody text.\n")
+        dev = tomllib.loads((self.dst / ".codex/agents/mercury-dev.toml").read_text(encoding="utf-8"))
+        self.assertEqual((dev["name"], dev["sandbox_mode"], "model" in dev), ("mercury-dev", "workspace-write", False))
+        lock = json.loads((self.dst / LOCK).read_text())
+        self.assertIn(".claude/agents/mercury-reviewer.md", lock["files"])
+        self.assertIn(".codex/agents/mercury-dev.toml", lock["files"])
+        self.assertTrue(self.apply()[1].startswith("mercury: wrote 0, deleted 0"))
+
+    def test_role_text_is_escaped_for_yaml_and_toml(self):
+        import tomllib
+        desc = 'Quote " backslash \\ colon: hash # dash --- unicode \u00e9\u4e2d'
+        body = '# Role\n\nTriple """ quotes, a backslash \\ at end \\\n``` fenced "json": {"a": 1}\n--- not frontmatter\nit\'s fine\n'
+        text = ('---\ndescription: ' + json.dumps(desc, ensure_ascii=False) + '\nclaude:\n  model: opus\n  readonly_guard: true\n'
+                'codex:\n  sandbox_mode: read-only\n---\n\n' + body)
+        self.add_role("esc", text)
+        code, out = self.apply()
+        self.assertEqual(code, 0, out)
+        fm = self.frontmatter_of(".claude/agents/mercury-esc.md")
+        self.assertEqual(json.loads(fm[1][len("description: "):]), desc)  # a JSON string is a YAML double-quoted scalar
+        toml = tomllib.loads((self.dst / ".codex/agents/mercury-esc.toml").read_text(encoding="utf-8"))
+        self.assertEqual((toml["description"], toml["developer_instructions"]), (desc, body))
+        self.assertTrue((self.dst / ".claude/agents/mercury-esc.md").read_bytes().endswith(body.encode("utf-8")))
+
+    def test_roles_that_cannot_be_written_safely_are_refused(self):
+        bad = {
+            "triple": self.ROLE.replace("Body text.", "has ''' inside"),
+            "control-body": self.ROLE.replace("Body text.", "bell \x07 here"),
+            "control-desc": self.ROLE.replace("Reviews things.", "bell \\u0007 here"),
+            "newline-desc": self.ROLE.replace("Reviews things.", "two\\nlines"),
+            "unknown-key": self.ROLE.replace("  web_search: live\n", "  web_search: live\n  evil: x\n"),
+            "unknown-top": self.ROLE.replace("claude:\n", "extra: x\nclaude:\n", 1),
+            "no-model": self.ROLE.replace("  model: opus\n", ""),
+            "bad-enum": self.ROLE.replace("sandbox_mode: read-only", "sandbox_mode: danger-full-access"),
+            "bad-value": self.ROLE.replace("model: opus", "model: [a, b]"),
+            "no-desc": self.ROLE.replace('description: "Reviews things."\n', ""),
+            "no-host": '---\ndescription: "x"\n---\n\nbody\n',
+            "no-frontmatter": "# just a body\n",
+            "empty-body": self.ROLE.split("---\n\n")[0] + "---\n\n",
+            "twice": self.ROLE.replace("codex:\n", "claude:\n  model: opus\ncodex:\n", 1),
+            "surrogate-desc": self.ROLE.replace("Reviews things.", "lone \\ud800 surrogate"),
+            "bidi-desc": self.ROLE.replace("Reviews things.", "bidi \\u202e text"),
+            "bom-desc": self.ROLE.replace("Reviews things.", "bom \\ufeff here"),
+            "bidi-body": self.ROLE.replace("Body text.", "bidi \u2067 body"),
+            "bom-body": self.ROLE.replace("Body text.", "bom \ufeff body"),
+        }
+        self.apply()
+        before = self.snapshot()
+        for name, text in bad.items():
+            with self.subTest(case=name):
+                self.add_role("r", text)
+                code, out = self.apply()
+                self.assertEqual(code, 2, out)
+                self.assertEqual(self.snapshot(), before)
+        self.add_role("r", self.ROLE)
+        (self.src / "packs/core/roles/r.md").rename(self.src / "packs/core/roles/Bad_Name.md")
+        self.assertEqual(self.apply()[0], 2)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_removed_role_is_deleted_and_hand_edit_stops(self):
+        self.add_role("r", self.ROLE)
+        self.apply()
+        (self.src / "packs/core/roles/r.md").unlink()
+        # a hand-edited generated role is never deleted or overwritten
+        (self.dst / ".claude/agents/mercury-r.md").write_bytes(b"mine\n")
+        before = self.snapshot()
+        code, out = self.apply()
+        self.assertEqual(code, 1, out)
+        self.assertEqual(self.snapshot(), before)
+        write(self.dst / ".claude/agents/mercury-r.md", self.generated_of("claude"))
+        code, out = self.apply()
+        self.assertEqual(code, 0, out)
+        self.assertFalse((self.dst / ".claude/agents/mercury-r.md").exists())
+        self.assertFalse((self.dst / ".codex/agents/mercury-r.toml").exists())
+        self.assertTrue((self.dst / ".claude/agents").is_dir())  # the root directory stays
+
+    def generated_of(self, host):
+        # the original bytes of the generated role, taken from the lock-consistent installation of a fresh copy
+        tool = load_tool()
+        role = tool.parse_role(self.ROLE.encode("utf-8"), "test")
+        return (tool.role_claude("mercury-r", "core/roles/r.md", role) if host == "claude"
+                else tool.role_codex("mercury-r", "core/roles/r.md", role)).decode("utf-8")
+
+    def test_rules_are_installed_verbatim(self):
+        raw = b"# rule\r\nprefix_rule(pattern = [\"git\", \"push\"], decision = \"forbidden\")\r\n"
+        (self.src / "packs/core/rules").mkdir(parents=True)
+        (self.src / "packs/core/rules/mercury-git-safety.rules").write_bytes(raw)
+        code, out = self.apply()
+        self.assertEqual(code, 0, out)
+        self.assertEqual((self.dst / ".codex/rules/mercury-git-safety.rules").read_bytes(), raw)
+        for rel in ("rules/other.rules", "rules/mercury-x.txt", "rules/sub/mercury-x.rules", "rules/mercury-.rules"):
+            with self.subTest(rel=rel):
+                write(self.src / "packs/core" / rel, "x\n")
+                self.assertEqual(self.apply()[0], 2)
+                (self.src / "packs/core" / rel).unlink()
+                self.index()
+        self.assertEqual(self.apply()[0], 0)
+
+    def test_pack_rules_file_is_the_v1_template_file(self):
+        tpl = ROOT / ".mercury/templates/codex-project/rules/mercury-git-safety.rules"
+        if not tpl.exists():
+            self.skipTest("the v1 template has been retired")
+        self.assertEqual((ROOT / "packs/core/rules/mercury-git-safety.rules").read_bytes().replace(b"\r\n", b"\n"),
+                         tpl.read_bytes().replace(b"\r\n", b"\n"))
+
+    # managed section
+
+    def test_section_is_created_when_the_file_is_missing(self):
+        self.apply()
+        a, c = self.section("AGENTS.md"), self.section("CLAUDE.md")
+        self.assertTrue(a.startswith("<!-- MERCURY:BEGIN ") and a.endswith("\n<!-- MERCURY:END -->\n"))
+        self.assertIn("Core fragment for AGENTS.", a)
+        self.assertIn("@AGENTS.md\n\nCore fragment for CLAUDE.", c)
+        self.assertEqual(a.count("MERCURY:"), 2)
+        lock = json.loads((self.dst / LOCK).read_text())
+        self.assertEqual(set(lock["sections"]), {"AGENTS.md", "CLAUDE.md"})
+        tool = load_tool()
+        self.assertEqual(lock["sections"]["AGENTS.md"], tool.digest(a.rstrip("\n").encode("utf-8")))
+        self.assertEqual(self.check()[0], 0)
+
+    def test_section_is_inserted_above_existing_content_byte_for_byte(self):
+        for original in (b"# Mine\nline\n", b"# Mine\r\nline\r\n", b"no newline at all", b"\n\n  odd  \n\xe4\xb8\xad\n"):
+            with self.subTest(original=original):
+                for name in ("AGENTS.md", "CLAUDE.md", LOCK):
+                    (self.dst / name).unlink(missing_ok=True)
+                (self.dst / "AGENTS.md").write_bytes(original)
+                code, out = self.apply()
+                self.assertEqual(code, 0, out)
+                data = (self.dst / "AGENTS.md").read_bytes()
+                self.assertTrue(data.startswith(b"<!-- MERCURY:BEGIN "))
+                self.assertTrue(data.endswith(original), data)
+                eol = b"\r\n" if original.split(b"\n")[0].endswith(b"\r") and b"\n" in original else b"\n"
+                self.assertTrue(data[:-len(original)].endswith(b"<!-- MERCURY:END -->" + eol + eol))
+                if eol == b"\r\n":  # one consistent line ending in the section
+                    self.assertEqual(data[:-len(original)].count(b"\n"), data[:-len(original)].count(b"\r\n"))
+                self.assertEqual(self.check()[0], 0)
+
+    def test_section_update_leaves_bytes_outside_the_markers_alone(self):
+        before_text, after_text = b"# Above (mine)\r\n\r\ntext \xe4\xb8\xad\r\n", b"\r\n# Below\r\nmore\r\n\r\n\r\n"
+        self.apply()
+        a = (self.dst / "AGENTS.md").read_bytes().replace(b"\r\n", b"\n")
+        block = a.rstrip(b"\n")
+        (self.dst / "AGENTS.md").write_bytes(before_text + block.replace(b"\n", b"\r\n") + after_text)
+        write(self.src / "packs/core/agents.md", "## Core agents\n\nChanged fragment.\n")
+        code, out = self.apply()
+        self.assertEqual(code, 0, out)
+        data = (self.dst / "AGENTS.md").read_bytes()
+        self.assertTrue(data.startswith(before_text + b"<!-- MERCURY:BEGIN "))
+        self.assertTrue(data.endswith(b"<!-- MERCURY:END -->" + after_text))
+        self.assertIn(b"Changed fragment.", data)
+        self.assertEqual(data.count(b"\n"), data.count(b"\r\n"))  # CRLF kept everywhere
+        self.assertEqual(self.check()[0], 0)
+        self.assertEqual(self.apply()[1].split(",")[0], "mercury: wrote 0")
+        # an LF file stays LF, with the markers in the middle of other text
+        (self.dst / "CLAUDE.md").write_bytes(b"top\n" + (self.dst / "CLAUDE.md").read_bytes().rstrip(b"\n") + b"\nbottom")
+        write(self.src / "packs/core/claude.md", "@AGENTS.md\n\nNew claude fragment.\n")
+        self.assertEqual(self.apply()[0], 0)
+        c = (self.dst / "CLAUDE.md").read_bytes()
+        self.assertTrue(c.startswith(b"top\n<!-- MERCURY:BEGIN ") and c.endswith(b"<!-- MERCURY:END -->\nbottom"))
+        self.assertNotIn(b"\r", c)
+
+    def test_hand_edited_section_stops_the_run_with_zero_writes(self):
+        self.apply()
+        p = self.dst / "AGENTS.md"
+        p.write_bytes(p.read_bytes().replace(b"Core fragment for AGENTS.", b"Core fragment for AGENTS. EDITED"))
+        write(self.src / "packs/core/claude.md", "@AGENTS.md\n\nNew claude fragment.\n")  # would otherwise update CLAUDE.md
+        write(self.src / "packs/extra/note.txt", "changed\n")  # and a file
+        before = self.snapshot()
+        for mode in ("check", "apply"):
+            code, out = self.run_tool(mode)
+            self.assertEqual(code, 1, out)
+            self.assertIn("AGENTS.md: the Mercury section was modified by hand", out)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_removed_markers_and_foreign_sections_stop_the_run(self):
+        self.apply()
+        p = self.dst / "AGENTS.md"
+        good = p.read_bytes()
+        p.write_bytes(b"# only mine\n")  # markers and section gone although the lock has them
+        code, out = self.apply()
+        self.assertEqual(code, 1, out)
+        self.assertIn("markers are gone", out)
+        self.assertEqual(p.read_bytes(), b"# only mine\n")
+        # a section that is not in the lock and differs is not adopted; an identical one is
+        p.write_bytes(good.replace(b"Core fragment", b"Someone else"))
+        (self.dst / LOCK).unlink()
+        code, out = self.apply()
+        self.assertEqual(code, 1, out)
+        self.assertIn("not in the lock", out)
+        p.write_bytes(good)
+        self.assertEqual(self.apply()[0], 0)
+
+    def test_unbalanced_or_duplicate_markers_are_errors(self):
+        self.apply()
+        good = (self.dst / "AGENTS.md").read_bytes().decode("utf-8")
+        begin = good.split("\n")[0]
+        cases = {
+            "no-end": good.replace("<!-- MERCURY:END -->", ""),
+            "no-begin": good.replace(begin, "", 1),
+            "twice": good + good,
+            "end-first": "<!-- MERCURY:END -->\n" + good.replace("<!-- MERCURY:END -->", ""),
+            "begin-twice": begin + "\n" + good,
+            "prose-mention": good + "\nthe MERCURY:END marker\n",
+            "inline": "text " + good,
+            "end-with-text": good.replace("<!-- MERCURY:END -->", "<!-- MERCURY:END --> trailing"),
+            "begin-not-comment": good.replace("<!-- MERCURY:BEGIN", "MERCURY:BEGIN", 1),
+        }
+        for name, text in cases.items():
+            with self.subTest(case=name):
+                (self.dst / "AGENTS.md").write_bytes(text.encode("utf-8"))
+                before = self.snapshot()
+                for mode in ("check", "apply"):
+                    code, out = self.run_tool(mode)
+                    self.assertEqual(code, 2, out)
+                    self.assertIn("AGENTS.md", out)
+                self.assertEqual(self.snapshot(), before)
+
+    def test_entry_file_problems_are_refused(self):
+        (self.dst / "AGENTS.md").write_bytes(b"\xef\xbb\xbf# bom\n")
+        self.assertEqual(self.apply()[0], 2)
+        (self.dst / "AGENTS.md").write_bytes(b"\xff\xfe bad utf8")
+        self.assertEqual(self.apply()[0], 2)
+        (self.dst / "AGENTS.md").unlink()
+        (self.dst / "AGENTS.md").mkdir()
+        self.assertEqual(self.apply()[0], 2)
+        self.assertEqual(sorted(p.name for p in self.dst.iterdir() if p.name.endswith("tmp")), [])
+
+    def test_fragments_must_exist_for_core_and_stay_free_of_markers(self):
+        (self.src / "packs/core/claude.md").unlink()
+        code, out = self.apply()
+        self.assertEqual(code, 2, out)
+        self.assertIn("core must provide claude.md", out)
+        write(self.src / "packs/core/claude.md", "@AGENTS.md\n\n<!-- MERCURY:END -->\n")
+        self.assertEqual(self.apply()[0], 2)
+        write(self.src / "packs/core/claude.md", "  \n\n")
+        self.assertEqual(self.apply()[0], 2)
+
+    def test_fragments_follow_core_first_then_config_order(self):
+        write(self.src / "packs/extra/agents.md", "## Extra agents\n")
+        write(self.src / "packs/zeta/agents.md", "## Zeta agents\n")
+        write(self.src / "packs/zeta/note.txt", "z\n")
+        self.master["packs"]["zeta"] = {"enabled": True}
+        self.packs["zeta"] = {}
+        self.save_sources()
+        self.select(["zeta", "core", "extra"])
+        code, out = self.apply()
+        self.assertEqual(code, 0, out)
+        a = self.section("AGENTS.md")
+        self.assertTrue(a.index("Core fragment for AGENTS.") < a.index("## Zeta agents") < a.index("## Extra agents"))
+        self.assertNotIn("Extra", self.section("CLAUDE.md"))  # a pack without claude.md adds nothing there
+        self.select(["extra", "zeta"])
+        self.assertEqual(self.apply()[0], 0)
+        a = self.section("AGENTS.md")
+        self.assertTrue(a.index("Core fragment for AGENTS.") < a.index("## Extra agents") < a.index("## Zeta agents"))
+
+    # linked repositories and params
+
+    LINK = {"name": "Notes_KB", "purpose": "Knowledge base.", "locate": "Read the `kb_dir` key of `.handoff-config`.",
+            "access": "Read freely; writes need their own authorized scope."}
+
+    def set_config(self, **extra):
+        write(self.dst / CONFIG, json.dumps({"schema_version": 1, "packs": ["core", "extra"], **extra}))
+
+    def test_linked_repos_are_rendered_into_the_agents_section_only(self):
+        self.set_config(linked_repos=[self.LINK, {**self.LINK, "name": "Design.lib", "purpose": "Design data."}])
+        code, out = self.apply()
+        self.assertEqual(code, 0, out)
+        a = self.section("AGENTS.md")
+        self.assertIn("## Linked repositories", a)
+        self.assertIn("### Notes_KB\n\n- Purpose: Knowledge base.\n- Locate: Read the `kb_dir` key of `.handoff-config`.\n"
+                      "- Access: Read freely; writes need their own authorized scope.\n", a)
+        self.assertTrue(a.index("### Notes_KB") < a.index("### Design.lib") < a.index("<!-- MERCURY:END -->"))
+        self.assertNotIn("Linked repositories", self.section("CLAUDE.md"))
+        self.set_config()  # removing the declaration removes the section
+        self.assertEqual(self.apply()[0], 0)
+        self.assertNotIn("Linked repositories", self.section("AGENTS.md"))
+
+    def test_linked_repos_validation(self):
+        L = self.LINK
+        bad = {
+            "not-a-list": {"name": "x"},
+            "missing-field": {k: v for k, v in L.items() if k != "access"},
+            "extra-field": {**L, "path": "x"},
+            "unix-absolute": {**L, "locate": "/home/me/kb"},
+            "unix-in-text": {**L, "locate": "Look in (/srv/data) first"},
+            "windows-drive": {**L, "locate": "D:\\Project\\KB"},
+            "windows-drive-slash": {**L, "locate": "key=C:/kb"},
+            "bold-drive": {**L, "locate": "**C:/v**"},
+            "brace-drive": {**L, "locate": "{C:/vault}"},
+            "label-drive": {**L, "locate": "path:C:\\vault"},
+            "pipe-drive": {**L, "locate": "x|C:/v"},
+            "drive-relative": {**L, "locate": "D:vault"},
+            "percent-var": {**L, "locate": "%USERPROFILE%\\vault"},
+            "dollar-home": {**L, "locate": "$HOME/vault"},
+            "brace-home": {**L, "locate": "${HOME}/vault"},
+            "userprofile": {**L, "locate": "$USERPROFILE\\vault"},
+            "tilde-slash": {**L, "locate": "see ~/vault"},
+            "tilde-backslash": {**L, "locate": "see ~\\vault"},
+            "slash-after-punct": {**L, "locate": "x|/etc/kb"},
+            "slash-after-space": {**L, "locate": "in /srv/kb"},
+            "backslash-after-punct": {**L, "locate": "x=\\share\\kb"},
+            "generic-var": {**L, "locate": "$KB_ROOT/vault"},
+            "file-url-in-text": {**L, "locate": "open file:///kb now"},
+            "hidden-bidi": {**L, "purpose": "x\u202ey"},
+            "hidden-bom": {**L, "purpose": "x\ufeffy"},
+            "hidden-surrogate": {**L, "purpose": "x\ud800y"},
+            "unc": {**L, "locate": "\\\\server\\share"},
+            "home": {**L, "locate": "~/kb"},
+            "file-url": {**L, "locate": "file:///kb"},
+            "newline": {**L, "purpose": "two\nlines"},
+            "carriage-return": {**L, "purpose": "two\rlines"},
+            "line-separator": {**L, "purpose": "two\u2028lines"},
+            "control": {**L, "access": "bell \x07"},
+            "nul": {**L, "access": "a\x00b"},
+            "comment-open": {**L, "purpose": "x <!-- y"},
+            "comment-close": {**L, "purpose": "x --> y"},
+            "marker": {**L, "purpose": "MERCURY:END"},
+            "empty": {**L, "purpose": ""},
+            "edge-space": {**L, "purpose": " x"},
+            "not-string": {**L, "purpose": 5},
+            "long": {**L, "purpose": "x" * 401},
+            "bad-name": {**L, "name": "has space"},
+            "name-dup": None,
+        }
+        before = None
+        for name, entry in bad.items():
+            with self.subTest(case=name):
+                if name == "not-a-list":
+                    repos = entry
+                elif name == "name-dup":
+                    repos = [L, {**L, "name": "NOTES_kb"}]
+                else:
+                    repos = [entry]
+                self.set_config(linked_repos=repos)
+                code, out = self.apply()
+                self.assertEqual(code, 2, out)
+                self.assertIn("linked_repos", out)
+                self.assertFalse((self.dst / "AGENTS.md").exists())
+        self.set_config(linked_repos=[{**L, "locate": "Use the `kb_dir` key; see docs/guides/kb.md and https://example.com/a/b (and/or read/write)."}])
+        self.assertEqual(self.apply()[0], 0)
+
+    def test_params_and_unknown_config_keys(self):
+        for bad in ({"guard_write_scripts": "x.sh"}, {"guard_write_scripts": ["dir/x.sh"]}, {"guard_write_scripts": ["x"]},
+                    {"guard_write_scripts": ["..\\x.sh"]}, {"guard_write_scripts": ["run.cmd"]},
+                    {"guard_write_scripts": ["run.bat"]}, {"other": 1}, ["x"]):
+            with self.subTest(bad=bad):
+                self.set_config(params=bad)
+                self.assertEqual(self.apply()[0], 2)
+        self.set_config(typo_repos=[])
+        code, out = self.apply()
+        self.assertEqual(code, 2, out)
+        self.assertIn("unknown key", out)
+        self.set_config(params={"guard_write_scripts": ["deploy.sh", "Push.ps1"]})
+        self.assertEqual(self.apply()[0], 0)
+
+    # deletion scope for roles and rules
+
+    def test_deletion_scope_reaches_mercury_roles_and_rules_only(self):
+        self.apply()
+        lock = self.dst / LOCK
+        mine = [".claude/agents/mercury-old.md", ".codex/agents/mercury-old.toml", ".codex/rules/mercury-old.rules"]
+        for rel in mine + [".codex/agents/main.toml", ".codex/rules/default.rules", ".claude/agents/own.md"]:
+            write(self.dst / rel, "old\n")
+        data = json.loads(lock.read_text())
+        for rel in mine:
+            data["files"][rel] = hashlib.sha256(b"old\n").hexdigest()
+        lock.write_text(json.dumps(data))
+        code, out = self.apply()
+        self.assertEqual(code, 0, out)
+        for rel in mine:
+            self.assertFalse((self.dst / rel).exists(), rel)
+        for rel in (".codex/agents/main.toml", ".codex/rules/default.rules", ".claude/agents/own.md"):
+            self.assertTrue((self.dst / rel).exists(), rel)
+        self.assertTrue((self.dst / ".codex/agents").is_dir())
+
+    def test_lock_entries_for_foreign_agent_and_rule_files_are_refused(self):
+        self.apply()
+        victims = (".claude/agents/own.md", ".codex/agents/main.toml", ".codex/rules/default.rules", ".claude/agents/mercury-x.toml",
+                   ".codex/agents/mercury-x.md", ".codex/rules/mercury-x.toml", ".claude/agents/mercury-.md", ".codex/agents/mercury-.toml",
+                   ".codex/rules/mercury-.rules", ".claude/agents/sub/mercury-x.md", ".codex/agents/Mercury-x.toml", ".claude/agents",
+                   ".codex/rules/mercury-x.rules/inner", "AGENTS.md", "CLAUDE.md")
+        lock = self.dst / LOCK
+        for victim in victims:
+            with self.subTest(victim=victim):
+                if victim not in ("AGENTS.md", "CLAUDE.md", ".claude/agents"):
+                    write(self.dst / victim, "keep\n")
+                data = json.loads(lock.read_text())
+                data["files"][victim] = "0" * 64
+                lock.write_text(json.dumps(data))
+                before = {k: v for k, v in self.snapshot().items() if k != LOCK}
+                code, out = self.apply()
+                self.assertEqual(code, 2, out)
+                self.assertEqual({k: v for k, v in self.snapshot().items() if k != LOCK}, before)
+                del data["files"][victim]
+                lock.write_text(json.dumps(data))
+
+    def test_lock_with_a_malformed_sections_entry_is_refused(self):
+        self.apply()
+        lock = self.dst / LOCK
+        for bad in ({"README.md": "0" * 64}, {"AGENTS.md": 5}, []):
+            with self.subTest(bad=bad):
+                data = json.loads(lock.read_text())
+                data["sections"] = bad
+                lock.write_text(json.dumps(data))
+                before = self.snapshot()
+                self.assertEqual(self.apply()[0], 2)
+                self.assertEqual(self.snapshot(), before)
+                del data["sections"]
+                lock.write_text(json.dumps(data))
+
+    def test_temporary_file_names_are_never_followed_or_overwritten(self):
+        self.apply()
+        write(self.src / "packs/core/agents.md", "## Core agents\n\nChanged.\n")
+        for kind in ("file", "link"):
+            with self.subTest(kind=kind):
+                tmp = self.dst / "AGENTS.md.mercury-tmp"
+                victim = self.dst / "victim.txt"
+                write(victim, "keep\n")
+                if kind == "file":
+                    write(tmp, "planted\n")
+                else:
+                    try:
+                        os.symlink(victim, tmp)
+                    except (OSError, NotImplementedError):
+                        continue  # no symlink privilege here (Windows); the file case above still ran
+                before = self.snapshot()
+                code, out = self.apply()
+                self.assertEqual(code, 2, out)
+                self.assertIn("temporary name", out)
+                self.assertEqual(victim.read_bytes(), b"keep\n")
+                self.assertEqual(self.snapshot(), before)
+                tmp.unlink()
+        self.assertEqual(self.apply()[0], 0)
+        self.assertFalse((self.dst / "AGENTS.md.mercury-tmp").exists())
+
+    def test_exclusive_temporary_file_and_cleanup(self):
+        tool = load_tool()
+        target = self.dst
+        write(target / "AGENTS.md", "old\n")
+        write(target / "AGENTS.md.mercury-tmp", "planted\n")  # the writer itself refuses too, not only the plan
+        with self.assertRaises(tool.BuildError):
+            tool.atomic_write(target, "AGENTS.md", b"new\n")
+        self.assertEqual((target / "AGENTS.md.mercury-tmp").read_bytes(), b"planted\n")
+        (target / "AGENTS.md.mercury-tmp").unlink()
+        tool.atomic_write(target, "AGENTS.md", b"new\n")
+        self.assertEqual((target / "AGENTS.md").read_bytes(), b"new\n")
+        self.assertFalse((target / "AGENTS.md.mercury-tmp").exists())
+        real_replace = os.replace
+        os.replace = lambda *a: (_ for _ in ()).throw(OSError("boom"))
+        try:
+            with self.assertRaises(OSError):
+                tool.atomic_write(target, "AGENTS.md", b"newer\n")
+        finally:
+            os.replace = real_replace
+        self.assertFalse((target / "AGENTS.md.mercury-tmp").exists())  # removed in finally
+        self.assertEqual((target / "AGENTS.md").read_bytes(), b"new\n")
+
+    def test_hidden_characters_in_fragments_are_refused(self):
+        for bad in ("bidi \u202e text", "bom \ufeff text", "nul \x00 text"):
+            with self.subTest(bad=bad):
+                write(self.src / "packs/core/agents.md", f"## Core\n\n{bad}\n")
+                code, out = self.apply()
+                self.assertEqual(code, 2, out)
+                self.assertFalse((self.dst / "AGENTS.md").exists())
+
+    def test_consecutive_bullet_fragments_join_without_a_blank_line(self):
+        write(self.src / "packs/core/claude.md", "@AGENTS.md\n\n- first bullet\n")
+        write(self.src / "packs/extra/claude.md", "- second bullet\n")
+        write(self.src / "packs/extra/agents.md", "## Extra\n")
+        self.assertEqual(self.apply()[0], 0)
+        self.assertIn("- first bullet\n- second bullet\n", self.section("CLAUDE.md"))
+        write(self.src / "packs/extra/claude.md", "Paragraph after a list.\n")
+        self.assertEqual(self.apply()[0], 0)
+        self.assertIn("- first bullet\n\nParagraph after a list.\n", self.section("CLAUDE.md"))
+
+    def test_linked_repos_that_are_fine_stay_accepted(self):
+        L = self.LINK
+        for locate in ("Use the `kb_dir` key; see docs/guides/kb.md and https://example.com/a/b (and/or read/write).",
+                       "Key `kb_dir` in .handoff-config; see ./docs/x.md, ../y.md and my-dir/sub_dir/z.md.",
+                       "Step A: read it; 50% done; about ~5 minutes; ask in the KB channel."):
+            with self.subTest(locate=locate):
+                self.set_config(linked_repos=[{**L, "locate": locate}])
+                code, out = self.apply()
+                self.assertEqual(code, 0, out)
 
     def test_repository_installation_is_in_sync(self):
         r = subprocess.run([sys.executable, "-B", str(TOOL), "check", "--target", str(ROOT)], capture_output=True, text=True, encoding="utf-8")

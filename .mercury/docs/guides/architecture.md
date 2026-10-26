@@ -18,7 +18,7 @@ scripts/        Mercury 专用维护脚本与 Codex 受控 Git 脚本
 
 ## 角色定义
 
-Claude Code 的角色定义在 `.claude/agents/*.md`，Codex 的在 `.codex/agents/*.toml`；其中 `main.toml` 描述主会话本身，不是子代理。当前主会话就是 Mercury 主代理。
+Claude Code 的角色定义在 `.claude/agents/mercury-*.md`，Codex 的在 `.codex/agents/mercury-*.toml`；二者由 `tools/mercury.py` 从 `packs/core/roles/` 单一来源生成，不手工修改。`.codex/agents/main.toml` 归项目所有，描述主会话本身，不是子代理。当前主会话就是 Mercury 主代理。
 
 ## Agent 指令文件
 

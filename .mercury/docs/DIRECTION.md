@@ -146,7 +146,7 @@ Mercury 的核心价值不在代码里，在方法论里。
 
 ### 模块 4: Dev/Acceptance 角色（原 Dev Pipeline Preset）
 
-`dev-pipeline` 技能与 dispatch/acceptance 提示模板已于 #666 删除。保留的是 `.claude/agents/` 与 `.codex/agents/` 中的 dev、acceptance 等角色定义：Codex 与 Claude Code 日常原生自主执行，实施与审查深度按任务风险选择；仅在用户明确要求或已确定的任务方案需要时，才让 dev 子代理实现、acceptance 子代理盲验收。
+`dev-pipeline` 技能与 dispatch/acceptance 提示模板已于 #666 删除。保留的是由 `packs/core/roles/` 生成到 `.claude/agents/mercury-*.md` 与 `.codex/agents/mercury-*.toml` 的 dev、reviewer、acceptance 等角色定义（#682）：Codex 与 Claude Code 日常原生自主执行，实施与审查深度按任务风险选择；仅在用户明确要求或已确定的任务方案需要时，才让 dev 子代理实现、acceptance 子代理盲验收。
 
 - 使用原生 sub-agent 机制（非独立 session，节省 token）
 - 多任务通过多 session 并行，由 Agent Orchestrator 或 CLI 管理（#645）
