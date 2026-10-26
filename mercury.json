@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "packs": {
+    "core": {
+      "enabled": true,
+      "required": true
+    },
+    "plan": {
+      "enabled": true
+    },
+    "subagent-dev": {
+      "enabled": true
+    },
+    "lanes": {
+      "enabled": true
+    },
+    "dot-link": {
+      "enabled": true
+    },
+    "playwright-mcp": {
+      "enabled": false
+    }
+  }
+}

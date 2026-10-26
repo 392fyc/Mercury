@@ -64,7 +64,7 @@ The local-path arg form is intended for Mercury-internal registry items (e.g., a
 A local-path add **falls back to the full cherry-pick protocol (rules 1-6)** when ANY of these conditions hold. Resolve the source path with `git rev-parse --show-toplevel` for the Mercury repo root (or `realpath` on the path arg) before applying the test — symlinks, `..` traversal, and absolute paths are all normalized this way:
 
 - The resolved path is **not** under the current Mercury repo working tree (i.e., does not have the `git rev-parse --show-toplevel` output as a prefix)
-- The resolved path is under a git submodule whose upstream points to a third-party repo (check via `git submodule status`)
+- The resolved path is under a git submodule whose upstream points to a third-party repo (check via `git submodule status`; every project under `sources/` is such a submodule)
 - The resolved path is under a `node_modules/`, `vendor/`, or other package-manager-staged directory whose contents originate from an external package
 - The resolved path is under a temporary checkout of an external project staged for import (e.g., a `tmp/`, `scratch/`, or any cloned third-party repo directory)
 

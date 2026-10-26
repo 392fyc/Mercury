@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "name": "plan",
+  "skills": {
+    "html-plan-zh": {
+      "hosts": [
+        "codex",
+        "claude"
+      ],
+      "claude_entry": "claude-entry.md"
+    }
+  }
+}

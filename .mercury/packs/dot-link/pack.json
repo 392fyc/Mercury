@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "name": "dot-link",
+  "skills": {
+    "dot-link": {
+      "hosts": [
+        "codex"
+      ]
+    }
+  }
+}
