@@ -48,7 +48,7 @@ Recent additions on top of the core phases:
 Mercury (lightweight core — only builds what no external project provides)
 ├── .claude/
 │   ├── agents/        sub-agent role definitions (dev, acceptance, critic, design, research)
-│   ├── skills/        opt-in workflow skills (pr-flow, autoresearch, html-plan-zh)
+│   ├── skills/        opt-in workflow skills (pr-flow, html-plan-zh)
 │   └── settings.json  permission rules only; no project hooks are registered
 ├── .codex/            Codex CLI config + agents + rules (project-level hook registrations retired)
 ├── .mercury/
@@ -91,19 +91,18 @@ On session start, Claude Code auto-discovers every agent under `.claude/agents/`
 
 1. Read `CLAUDE.md` (auto-surfaced by Claude Code; it imports `AGENTS.md`) — issue-first workflow, guarded Git writes via `scripts/codex/git-safe.ps1`, PR-to-`develop` rule
 2. Read `.mercury/docs/DIRECTION.md` — project charter and module definitions
-3. Skim `.claude/skills/` — opt-in workflows (`pr-flow`, `autoresearch`, `html-plan-zh`); each runs only when you ask for it or an agreed plan requires it
+3. Skim `.claude/skills/` — opt-in workflows (`pr-flow`, `html-plan-zh`); each runs only when you ask for it or an agreed plan requires it
 4. Run your first task by assigning a bounded scope to the `dev` sub-agent, then ask the `acceptance` sub-agent for a blind review of the result
 
 ## Skills and sub-agents
 
 The skills under `.claude/skills/` and sub-agents under `.claude/agents/` are **detachable** — each directory is self-contained and can be copied into another Claude Code project. Skill frontmatter lists the trigger phrases in English and Chinese. Treat the directory contents as the authoritative list; the snapshot below is current as of this writing and intentionally not a pinned count.
 
-Skills (3 at time of writing), all opt-in:
+Skills (2 at time of writing), all opt-in:
 
 | Skill | Purpose |
 |-------|---------|
 | `pr-flow` | A single requested PR stage: check a PR, handle Argus comments, or run one step |
-| `autoresearch` | Bounded multi-round research with coverage, sources and open questions |
 | `html-plan-zh` | Interactive Chinese implementation plan as an HTML page |
 
 `web-research` and `handoff` are provided as user-level skills rather than from this repository.

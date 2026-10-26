@@ -49,6 +49,8 @@ Adopt a three-tier model assignment for Mercury sub-agents:
 
 ### Skill model exception: autoresearch / deep-research
 
+> **Status (2026-10-26):** the autoresearch skill was removed in #668; this rule has no current subject. It still applies to any future deep-research class skill.
+
 Skills are prompt expansions executed in the **invoking** session's context — they inherit whatever model the caller is on. autoresearch's synthesis phase is GPQA-Diamond-class deep reasoning and must run on Opus.
 
 **Rule**: autoresearch (and any future deep-research class skill) MUST be invoked directly from Mercury Main (`/autoresearch ...`), NOT delegated through the `research` sub-agent. This keeps the skill execution in Main's Opus context.

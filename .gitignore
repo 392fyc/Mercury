@@ -52,6 +52,7 @@ CLAUDE.local.md
 .claude/scheduled_tasks.lock
 .mercury/state/*
 !.mercury/state/upstream-manifest.json
+!.mercury/state/upstream-evaluations.json
 .claude/settings.local.json
 CLAUDE.md
 

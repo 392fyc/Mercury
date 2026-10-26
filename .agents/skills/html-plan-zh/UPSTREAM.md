@@ -10,19 +10,17 @@
 | 文件 | 改动 |
 |---|---|
 | `SKILL.md` | 译为中文；“行文”规则由 ASD-STE100 简化技术英语改为简明简体中文；字数阈值按中文字数重定；回复格式改为中文；补充用户级副本位置与 artifact 发布前的隐私检查；description 与正文加入非代码设计提案的用法指引（#661） |
-| `references/blocks.md` | 正文与上游一致，仅在顶部加中文说明 |
-| `references/design-proposals.md` | 本目录新增（#661），上游无对应文件：非代码设计提案的论断树与证据块用法 |
+| `references/blocks.md` | 正文与上游一致，仅在顶部加中文说明（补丁 `adapters/html-plan/blocks.md.patch`） |
+| `references/design-proposals.md` | 本目录新增（#661），上游无对应文件：非代码设计提案的论断树与证据块用法；Mercury 自写，不登记 manifest |
+| `LICENSE` | 许可说明头部加上游仓库 LICENSE 原文 |
 | `examples/scheduled-send.html` | 行文、界面示意与决策选项译为中文；代码与结构不变 |
-| `runtime/htmlplan.js` | 用户可见界面文案与回复 markdown 中文化（由 `maintenance/localize.py` 生成） |
-| `runtime/htmlplan.css` | 补中文字体回退（由 `maintenance/localize.py` 生成） |
-| `runtime/pack.mjs` | 长度检查改为按中文字数计算；英文 STE 用词检查换成中文用词检查（由 `maintenance/localize.py` 生成） |
+| `runtime/htmlplan.js` | 用户可见界面文案与回复 markdown 中文化（由 `adapters/html-plan/` 生成） |
+| `runtime/htmlplan.css` | 补中文字体回退（由 `adapters/html-plan/` 生成） |
+| `runtime/pack.mjs` | 长度检查改为按中文字数计算；英文 STE 用词检查换成中文用词检查（由 `adapters/html-plan/` 生成） |
 
 ## 更新上游
 
-1. 下载新版本的 `html-plan/skills/html-plan/runtime/` 到临时目录。
-2. 运行 `python maintenance/localize.py <上游 runtime 目录> runtime`。替换表里任何一条命中次数不符都会报错退出，按报错修正替换表。
-3. 对照上游 diff 手动更新 `SKILL.md`、`references/blocks.md` 和示例。
-4. 更新本文件与 manifest 中的 SHA，经独立审查后提交。
+本目录由 `adapters/html-plan/generate.py` 从子模块 `modules/claude-plugins-community` 生成，不要手改。维护步骤见 `adapters/html-plan/UPSTREAM.md`。
 
 ## 原版插件的版本固定
 
