@@ -132,7 +132,7 @@ any worktree outside the repository (for example a sibling directory such as
 `Mercury-<short>`): the reaper, the cleanup script and the `.gitignore` entry
 all assume the in-repo location. Long-lived lane worktrees also live inside the
 repository, at `${REPO_ROOT}/.worktrees/lanes/<short>`
-([`lane-naming.md`](lane-naming.md)); the reaper and the cleanup script's
+([`lane-naming.md`](../../packs/lanes/docs/guides/lane-naming.md)); the reaper and the cleanup script's
 auto-discovery skip `.worktrees/lanes/`, and a lane is closed only through the
 lane-close procedure.
 

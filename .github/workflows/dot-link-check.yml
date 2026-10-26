@@ -3,16 +3,16 @@ name: Dot Link Check
 on:
   pull_request:
     paths:
-      - '.agents/skills/dot-link/**'
-      - 'harness/modules/dot-link/**'
-      - 'scripts/codex/*dot-link*'
+      - 'packs/dot-link/**'
+      - '.mercury/packs/dot-link/**'
+      - 'tests/dot/**'
       - '.github/workflows/dot-link-check.yml'
   push:
     branches: [develop]
     paths:
-      - '.agents/skills/dot-link/**'
-      - 'harness/modules/dot-link/**'
-      - 'scripts/codex/*dot-link*'
+      - 'packs/dot-link/**'
+      - '.mercury/packs/dot-link/**'
+      - 'tests/dot/**'
       - '.github/workflows/dot-link-check.yml'
 
 jobs:
@@ -23,10 +23,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: python scripts/codex/test-dot-link.py
+      - run: python tests/dot/test-dot-link.py
   windows-install:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - shell: pwsh
-        run: ./scripts/codex/test-dot-link-install.ps1
+        run: ./tests/dot/test-dot-link-install.ps1

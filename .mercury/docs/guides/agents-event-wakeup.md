@@ -17,7 +17,7 @@ The first dispatcher version accepts only owner-registered synthetic local notif
 
 ## Queue and credentials
 
-`scripts/agents_gateway/server.py` uses the Python standard library, SQLite and a fixed event schema. `scripts/agents_event_client.py` supports list, publish and consume, without invoking models. Authenticated principals have isolated queues and approved recipients. The client can run through an existing SSH connection; the queue token stays in the NAS container's read-only credentials mount.
+`.mercury/packs/dot-link/scripts/agents_gateway/server.py` uses the Python standard library, SQLite and a fixed event schema. `.mercury/packs/dot-link/scripts/agents_event_client.py` supports list, publish and consume, without invoking models. Authenticated principals have isolated queues and approved recipients. The client can run through an existing SSH connection; the queue token stays in the NAS container's read-only credentials mount.
 
 The local bridge config must exactly match the owner-controlled policy at `~/.codex/dot-link/event-policy/targets.json`. Neither events nor CLI arguments can select another target policy. Windows policy ACLs are restricted to the owner, SYSTEM and Administrators; Unix files must be owner-controlled and not writable by other users. Redirects never receive Bearer credentials. Deployment uses a pinned image, a non-root user, read-only code/config and a separate database, with no host port or Docker socket mount.
 
@@ -34,14 +34,14 @@ Portable bridge template; replace every value with approved deployment values:
 ```
 
 ```text
-python scripts/agents_event_client.py --ssh-config PRIVATE_CONFIG --payload-file PRIVATE_REQUEST list
+python .mercury/packs/dot-link/scripts/agents_event_client.py --ssh-config PRIVATE_CONFIG --payload-file PRIVATE_REQUEST list
 ```
 
 The fixed container origin is `http://127.0.0.1:8765`, and the token path is `/credentials/<principal>.token`. Do not commit tokens, private keys, session histories, real authorization records or task materials.
 
 ## Local event dispatcher
 
-See [dispatcher operations](../../../scripts/agents_dispatcher/README.md) for the reviewed contract and commands. Windows installation uses `scripts/install_agents_event_dispatcher.ps1`; it refuses an existing installation, protects new files with owner ACLs, copies the selected native binaries into a dedicated protected directory below `D:\Program Files`, verifies source digests and reads the generated contract back without starting a model. The fixed dispatcher policy is `~/.codex/dot-link/event-policy/dispatcher.json`. State uses a new `event-dispatch` directory and never rewrites the old heartbeat consumer state.
+See [dispatcher operations](../../../.mercury/packs/dot-link/scripts/agents_dispatcher/README.md) for the reviewed contract and commands. Windows installation uses `.mercury/packs/dot-link/scripts/install_agents_event_dispatcher.ps1`; it refuses an existing installation, protects new files with owner ACLs, copies the selected native binaries into a dedicated protected directory below `D:\Program Files`, verifies source digests and reads the generated contract back without starting a model. The fixed dispatcher policy is `~/.codex/dot-link/event-policy/dispatcher.json`. State uses a new `event-dispatch` directory and never rewrites the old heartbeat consumer state.
 
 Empty polls invoke no model and produce no routine report. A registered probe must match its event, raw body digest and a separate protected human authorization record. The owner supplies a trusted native executable during installation. The reviewed contract fixes the OpenAI provider, the existing project worker default `gpt-6-luna` with `max` reasoning, receipt schema and controlled worker/output paths; events cannot choose commands or executables.
 

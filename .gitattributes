@@ -23,5 +23,5 @@
 .claude/workflows/** text=auto eol=lf
 
 # The cooperation contract is exchanged by exact UTF-8 byte digest across hosts.
-.agents/skills/dot-link/references/receiver-protocol.md text eol=lf
-harness/modules/dot-link/skills/dot-link/references/receiver-protocol.md text eol=lf
+.mercury/packs/dot-link/skills/dot-link/references/receiver-protocol.md text eol=lf
+packs/dot-link/skills/dot-link/references/receiver-protocol.md text eol=lf

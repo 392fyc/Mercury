@@ -16,13 +16,13 @@ jobs:
         run: python -B -m unittest discover -s tests/codex/project_template -p 'test_*.py'
       - name: Upstream adapters regenerate the committed files (line endings normalised) (#668)
         run: |
-          python -B adapters/html-plan/generate.py --check
-          python -B adapters/superpowers/generate.py --check
-          python -B -m unittest discover -s tests/codex -p 'test_upstream_adapters.py'
-      - name: Harness projection is in sync and the builder behaves (#674)
+          python -B packs/plan/build/generate.py --check
+          python -B packs/subagent-dev/build/generate.py --check
+          python -B -m unittest discover -s tests/tools -p 'test_upstream_adapters.py'
+      - name: Installed packs are in sync and the installer behaves (#674, #680)
         run: |
-          python -B scripts/harness/build.py --target . --check
-          python -B -m unittest discover -s tests/codex -p 'test_harness_build.py'
+          python -B tools/mercury.py check --target .
+          python -B -m unittest discover -s tests/tools -p 'test_mercury.py'
 
   toolcall-xml-lint:
     name: Tool-call XML Lint (#527)
@@ -43,7 +43,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Both harnesses load the same receiver rule
-        run: bash scripts/check-lane-receiver-rule.sh
+        run: bash .mercury/packs/lanes/scripts/check-lane-receiver-rule.sh
 
       - name: Self-test the check
-        run: bash scripts/test-check-lane-receiver-rule.sh
+        run: bash tests/lanes/test-check-lane-receiver-rule.sh

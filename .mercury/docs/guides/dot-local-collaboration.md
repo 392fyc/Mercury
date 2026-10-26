@@ -4,7 +4,7 @@ Mercury 管理 `dot-link` 原生技能和签名工具。用户级安装让本地
 
 ## 安装与身份
 
-使用 PowerShell 7 执行 `scripts/codex/install-dot-link.ps1`，提供已存在的 Python、OpenSSL、配对标识和 YC 线程。脚本安装到用户的 `.agents/skills/dot-link`，在 `.codex/AGENTS.md` 增加一个有边界的入口段落，并写入 `.codex/dot-link/config.json`。它备份所修改的原文件并输出备份目录。机器路径只保存在用户配置，源码不含凭据。
+使用 PowerShell 7 执行 `.mercury/packs/dot-link/scripts/codex/install-dot-link.ps1`，提供已存在的 Python、OpenSSL、配对标识和 YC 线程。脚本安装到用户的 `.agents/skills/dot-link`，在 `.codex/AGENTS.md` 增加一个有边界的入口段落，并写入 `.codex/dot-link/config.json`。它备份所修改的原文件并输出备份目录。机器路径只保存在用户配置，源码不含凭据。
 
 首次调用 `dot_link.py init --state-dir <identity目录> --openssl <可执行文件>` 前，应为 identity 目录设置访问控制。Windows 只允许当前用户和 SYSTEM 访问，禁用继承；Linux 使用仅本人可访问的目录。随后生成独立 Ed25519 身份，不复用 SSH/API 凭据。初始化拒绝覆盖现存身份。私钥仅由本地工具读取，不上传、不放进提示词或 Git。
 
@@ -12,7 +12,7 @@ Mercury 管理 `dot-link` 原生技能和签名工具。用户级安装让本地
 
 ## 任务传递
 
-接收、去重和消费回执的现行合同为 [dot 接收与回传协议](../../../.agents/skills/dot-link/references/receiver-protocol.md)，协作版本 `dot-cooperation/1`；原有签名格式 `dot-local/0.2` 不变。安装后，本地新会话从技能入口读取该文件；共享配置指向私有协议 Page。每次投递核对协议原文件 SHA256 和接收端 ACK，不能仅因写入 Page 就声称 dot 已采用。
+接收、去重和消费回执的现行合同为 [dot 接收与回传协议](../../../.mercury/packs/dot-link/skills/dot-link/references/receiver-protocol.md)，协作版本 `dot-cooperation/1`；原有签名格式 `dot-local/0.2` 不变。安装后，本地新会话从技能入口读取该文件；共享配置指向私有协议 Page。每次投递核对协议原文件 SHA256 和接收端 ACK，不能仅因写入 Page 就声称 dot 已采用。
 
 持续人类授权与签名身份分别核对。已覆盖步骤直接执行；结果按原文件核验后发送签名 RECEIPT，接收端保存并确认关闭。网站入口、机器任务 API、反向会话推送和本地空闲唤醒各自验收，不把一种路径通过写成全部能力通过。
 
@@ -46,6 +46,6 @@ YC 使用自己的会话交付结果和私有 Page。反向消息不可用时，
 
 ## 验证
 
-`python scripts/codex/test-dot-link.py` 运行有效签名、行为字段篡改、过期、错误公钥、严格 JSON 解析、持久去重与跨会话身份测试。GitHub 的 Dot Link Check 重复执行便携测试。本地安装、真实 YC 验签与授权生效另存仓库外回执，不能从静态测试推断云端权限已开通。
+`python tests/dot/test-dot-link.py` 运行有效签名、行为字段篡改、过期、错误公钥、严格 JSON 解析、持久去重与跨会话身份测试。GitHub 的 Dot Link Check 重复执行便携测试。本地安装、真实 YC 验签与授权生效另存仓库外回执，不能从静态测试推断云端权限已开通。
 
 命令行为依据 [OpenSSL 3.1 pkeyutl](https://docs.openssl.org/3.1/man1/openssl-pkeyutl/)；用户级技能目录依据 [Codex 技能文档](https://learn.chatgpt.com/docs/build-skills)。

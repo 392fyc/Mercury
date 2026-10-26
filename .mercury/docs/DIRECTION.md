@@ -45,20 +45,20 @@ Mercury 本体只做外部项目做不到的事。能挂载的绝不自研。
 Mercury 本体 (自研，最小化)
 ├── session-continuity/    # 外部项目无此能力
 ├── memory-layer/          # 外部项目无此能力
-└── adapters/              # 外部项目接口转换（唯一耦合点）
+└── packs/                 # 可装载内容（技能、脚本、指南）；各 pack 的 build/ 是外部项目接口转换（唯一耦合点），由 tools/mercury.py 装载
 
-外部挂载 (git submodule，独立版本管理，挂载到 modules/ 目录)
-├── modules/gsd/           # 质量门禁 + 卡死检测
-├── modules/superpowers/   # 自检清单 + review 机制
-├── modules/ohmyclaudecode/# Stop hook 拦截
-├── modules/openspace/     # 技能自进化
-└── modules/...            # 未来可追加
+外部挂载 (git submodule，独立版本管理，原样挂载到 sources/ 目录)
+├── sources/gsd/           # 质量门禁 + 卡死检测
+├── sources/superpowers/   # 自检清单 + review 机制
+├── sources/ohmyclaudecode/# Stop hook 拦截
+├── sources/openspace/     # 技能自进化
+└── sources/...            # 未来可追加
 ```
 
 ### P2: 适配层吸收差异
 
-外部项目更新时，Mercury 本体不改。差异由 `adapters/` 吸收。
-每个 adapter 是薄转换层，不包含业务逻辑。
+外部项目更新时，Mercury 本体不改。差异由各 pack 的 `build/`（`packs/<pack>/build/`）吸收。
+每个 build 层是薄转换层，不包含业务逻辑。
 
 ### P3: 模块可拆卸
 
@@ -206,20 +206,20 @@ autoresearch 已于 #668 删除；上游 OMX/OMC autoresearch 的评估结论见
 
 外部项目按以下三类受治理的挂载模式之一接入，**默认首选 git submodule**：
 
-1. **git submodule（默认）** — 每个外部项目作为 git submodule 挂载到 `modules/` 目录下（详见下方"挂载方式: Git Submodule"）。
-2. **uvx git+SHA runtime-only** — runtime-only 依赖经 `uvx --from git+<repo>@<SHA>` 引用（首例为 `adapters/gpt-image-2/`，已随 #586 移除），不 vendoring 源码，按 git commit SHA pin。
-3. **npm-version-pinned MCP server（runtime-only）** — runtime-only 的 MCP server 经 npm 按版本解析挂载（如 `npx @playwright/mcp@<pinned-version>` 或等价的 `npm install --prefix <repo 外 cache>`），首例 `adapters/playwright-mcp/`（playwright-mcp / Issue #154）。
+1. **git submodule（默认）** — 每个外部项目作为 git submodule 挂载到 `sources/` 目录下（详见下方"挂载方式: Git Submodule"）。
+2. **uvx git+SHA runtime-only** — runtime-only 依赖经 `uvx --from git+<repo>@<SHA>` 引用（首例为 gpt-image-2 适配层，已随 #586 移除），不 vendoring 源码，按 git commit SHA pin。
+3. **npm-version-pinned MCP server（runtime-only）** — runtime-only 的 MCP server 经 npm 按版本解析挂载（如 `npx @playwright/mcp@<pinned-version>` 或等价的 `npm install --prefix <repo 外 cache>`），首例 `packs/playwright-mcp/`（playwright-mcp / Issue #154；在 `mercury.json` 中停用）。
 
 模式 2、3 同为 runtime-only 例外，均须满足：
 - **license gate**：仅 permissive（MIT / Apache-2.0 等）。
-- **provenance**：在 `.mercury/state/upstream-manifest.json` 登记 + 对应 `adapters/<vendor>/UPSTREAM.md` 记录版本/license/已知不兼容项。
+- **provenance**：在 `.mercury/state/upstream-manifest.json` 登记 + 对应 pack 内的 `UPSTREAM.md`（`packs/<pack>/UPSTREAM.md` 或 `packs/<pack>/build/UPSTREAM.md`）记录版本/license/已知不兼容项。
 - **drift 监控**：`scripts/upstream-drift-check.sh` 跟踪上游版本契约文件。
 
 **版本 pin 规则（模式 3）**：`.mcp.json` / wrapper 必须 pin 确切 npm 版本号（**禁止浮动 `@latest`**）。执行契约 = pinned npm 版本；manifest 的 `upstream_sha_at_import` = 对应 git tag commit（审计元数据，非执行契约）。依据见 Mercury_KB: `04-research/mercury/issue-154-web-automation-2026-05.md` §5.1 + Issue #458。
 
 ### 挂载方式: Git Submodule
 
-每个外部项目作为 git submodule 挂载到 modules/ 目录下。
+每个外部项目作为 git submodule 挂载到 sources/ 目录下，内容原样保存、不在此处修改。
 
 ### 版本管理
 
@@ -230,14 +230,14 @@ autoresearch 已于 #668 删除；上游 OMX/OMC autoresearch 的评估结论见
 ### 适配层规范
 
 ```
-adapters/
-  {project-name}/
-    README.md           # 说明: 挂载了什么、为什么、适配了什么
-    adapter.ts 或 .py   # 接口转换代码
-    UPSTREAM.md         # 上游版本记录、已知不兼容项
+packs/
+  {pack-name}/
+    pack.json           # 声明技能与宿主；mercury.json 声明该 pack 是否启用
+    skills/ scripts/ docs/   # 装载内容，按“装入项目后在 pack 内的相对路径”存放
+    build/              # 接口转换：生成器、补丁、overlay、UPSTREAM.md（上游版本记录、已知不兼容项）；不下发
 ```
 
-适配层只做接口转换，不包含业务逻辑。如果适配层超过 200 行，说明耦合过深，需要重新评估挂载方式。
+接口转换层只做转换，不包含业务逻辑。如果转换层超过 200 行，说明耦合过深，需要重新评估挂载方式。完整规则见 `packs/README.md`。
 
 ### 候选挂载项目评估标准
 

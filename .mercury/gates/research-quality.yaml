@@ -2,7 +2,7 @@
 # Location: .mercury/gates/research-quality.yaml
 # Referenced by:
 #   - user-level Claude web-research skill (light gate thresholds)
-#   - .agents/skills/web-research/SKILL.md (Codex light gate)
+#   - .mercury/packs/core/skills/web-research/SKILL.md (Codex light gate)
 
 # Tiered research routing
 routing:
