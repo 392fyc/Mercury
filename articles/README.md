@@ -2,6 +2,8 @@
 
 Mercury 方法论文章合集 — 工程实践沉淀为公开方法论资产。
 
+> 文章按写作时的背景阅读。其中提到的 dev-pipeline、dual-verify、mercury-loop-detector、mercury-test-gate 已于 #666 删除。
+
 ## 目的
 
 Mercury 不仅是一套 harness 框架，更是一组设计哲学与工程实证。本目录用于沉淀 Mercury 自身演化产生的方法论，供：

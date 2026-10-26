@@ -24,10 +24,7 @@ reviews:
     - "!Mercury_KB/**"
     - "!.mercury/transcripts/**"
     - "!.mercury/sessions.json"
-    - "!archive/**"
   path_instructions:
-    - path: "packages/core/**"
-      instructions: "关注 TypeScript 类型安全、接口向后兼容、依赖管理"
     - path: "adapters/**"
       instructions: "关注 adapter 接口一致性、不超过200行、无业务逻辑"
     - path: ".claude/agents/**"

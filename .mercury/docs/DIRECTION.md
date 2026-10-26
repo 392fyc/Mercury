@@ -45,8 +45,7 @@ Mercury 本体只做外部项目做不到的事。能挂载的绝不自研。
 Mercury 本体 (自研，最小化)
 ├── session-continuity/    # 外部项目无此能力
 ├── memory-layer/          # 外部项目无此能力
-├── adapters/              # 外部项目接口转换（唯一耦合点）
-└── dev-pipeline/          # 预设开发组编排
+└── adapters/              # 外部项目接口转换（唯一耦合点）
 
 外部挂载 (git submodule，独立版本管理，挂载到 modules/ 目录)
 ├── modules/gsd/           # 质量门禁 + 卡死检测
@@ -145,24 +144,12 @@ Mercury 的核心价值不在代码里，在方法论里。
 
 ---
 
-### 模块 4: Dev Pipeline Preset（开发作业工作组）
+### 模块 4: Dev/Acceptance 角色（原 Dev Pipeline Preset）
 
-Codex 日常默认原生自主执行，实施与审查深度按任务风险选择；仅在用户明确调用或已确定的任务方案需要时使用此预设。
+`dev-pipeline` 技能与 dispatch/acceptance 提示模板已于 #666 删除。保留的是 `.claude/agents/` 与 `.codex/agents/` 中的 dev、acceptance 等角色定义：Codex 与 Claude Code 日常原生自主执行，实施与审查深度按任务风险选择；仅在用户明确要求或已确定的任务方案需要时，才让 dev 子代理实现、acceptance 子代理盲验收。
 
-**解决的问题**: 每次开发任务都需要手动配置角色分工和执行流程。
-
-**职责**:
-- 预设开发工作组: Main → Dev sub-agent → Acceptance sub-agent 线性链
-- 使用 Claude Code 原生 sub-agent 机制（非独立 session，节省 token）
-- 单任务内线性执行
-- 多任务通过多 session 并行
-
-**技术方向**:
-- .claude/agents/ sub-agent 定义 (从 Mercury role YAML 转换)
-- Dispatch prompt 模板 (.mercury/templates/)
-- Session 并行由 Agent Orchestrator 或 CLI 管理（#645）
-
-**自研理由**: 角色定义、dispatch 模板、流水线编排是 Mercury 方法论的核心体现。
+- 使用原生 sub-agent 机制（非独立 session，节省 token）
+- 多任务通过多 session 并行，由 Agent Orchestrator 或 CLI 管理（#645）
 
 ---
 
@@ -173,10 +160,9 @@ Codex 日常默认原生自主执行，实施与审查深度按任务风险选�
 **当前 skills（按优先级）**:
 1. **pr-flow** — PR 全流程自动化（创建、审查、修复、merge）— 最高优先
 2. **autoresearch** — 自主研究协议（多轮搜索 + 验证门禁）
-3. **dual-verify** — 双重验证门禁（Claude Code + Codex 并行审查）
-4. **web-research** — Web 研究强制协议
-5. **periodic-maintenance** (#92) — 周期性自治维护 Agent
-6. **ext-tracker** (#157) — 外部信息变更自动追踪
+3. **web-research** — Web 研究强制协议
+4. **periodic-maintenance** (#92) — 周期性自治维护 Agent
+5. **ext-tracker** (#157) — 外部信息变更自动追踪
 
 **每个 skill 必须**:
 - 独立可用（不依赖其他 Mercury 模块）
@@ -264,13 +250,13 @@ adapters/
 
 ## 五、现有代码处理
 
-归档目标目录: `archive/` (repo 根目录下)
+> **现状（#666）**: 下列归档对象（`archive/`、`packages/`）及根目录 Node/TypeScript 工具链已从工作树删除，可通过 Git 历史追溯。本节保留为当时的处理记录。
 
-### 归档（不再投入开发，移入 archive/）
+### 归档（不再投入开发，已于 #666 删除）
 
 | 组件 | 理由 |
 |---|---|
-| packages/orchestrator/ | 被 Session Continuity + Dev Pipeline 替代 |
+| packages/orchestrator/ | 被 Session Continuity + 原生子代理替代 |
 | packages/gui/ | 暂缓（历史记录；#645 已删除，GUI 由 Agent Orchestrator 提供，旧实现见 Git 历史） |
 | packages/sdk-adapters/ | 被原生方案替代 |
 | packages/poc/ | 早期概念验证，已完成使命 |
@@ -283,8 +269,7 @@ adapters/
 |---|---|
 | .claude/skills/ | 核心保留，pr-flow 优先增强 |
 | .claude/hooks/ | 保留，迁移为可移植配置格式 |
-| .mercury/templates/ | 核心保留，dispatch 模板是核心资产 |
-| packages/core/ | 评估后部分复用类型定义 |
+| .mercury/templates/ | 核心保留，`codex-project/` 是下游同步的可移植模板 |
 
 ### 转换
 
@@ -311,7 +296,7 @@ adapters/
 | #86 PR Monitor | Skills | 合并入 pr-flow skill |
 | #107 Codex 追踪 | Quality Gate | 评估是否可通过挂载项目解决 |
 | #63 Agent 群体记忆 | Memory Layer | Plan 与长期记忆优化，对应 Phase 3 |
-| #61 CLI-Anything 自动化 | Session Continuity / Dev Pipeline | CLI 自动化增强，评估归属模块 |
+| #61 CLI-Anything 自动化 | Session Continuity / 子代理角色 | CLI 自动化增强，评估归属模块 |
 
 ### 重新定义
 
@@ -384,7 +369,7 @@ Phase 2-1 评估了 4 个外部项目的 hook 能力，发现 Claude Code hook �
 | `SubagentStop` | 极少 | **仅 OMC 有 scaffold**（Ralph loop iteration counter），但为 LLM-level 而非 mechanical |
 | `PreCompact` / `PostCompact` | 少 | claude-memory-compiler 利用 PreCompact 做 session 捕获，少数项目涉及 |
 
-**结论**: `SubagentStop` mechanical enforcement 是 Claude Code 生态的真空地带。Mercury 的 `mercury-test-gate` adapter 填补了此空白，且是目前已知唯一的 exit-code-based mechanical stop hook 实现。
+**结论**: `SubagentStop` mechanical enforcement 是 Claude Code 生态的真空地带。Mercury 曾以 `mercury-test-gate` adapter 填补此空白（该 adapter 已于 #666 删除，见 Git 历史）。
 
 ### 8-2. 外部项目挂载的实战教训
 
@@ -393,7 +378,7 @@ Phase 2-1 评估了 4 个外部项目的 hook 能力，发现 Claude Code hook �
 | **REJECT ≠ 无价值** | DEC-4 §Non-Selected Analysis | Phase 2-1 的 4 个 REJECT/DEFER 判定仅针对 Stop hook 维度。每个项目在其他维度有 cherry-pick 价值（Superpowers 技能库、OpenSpace 自进化、GSD 多角色库） |
 | **挂载标准须窄化** | Phase 2-1 全程 | "能不能用"的判定必须对齐到具体验收标准（exit-code mechanical enforcement），而非泛化的"好不好" |
 | **Layer model 优于 replace model** | Path β 决策 | OMC (LLM-level) + Mercury (mechanical) 双层叠加 > 任何单层方案 |
-| **adapter ≤200 LOC 是硬约束** | mercury-test-gate 实现 | 200 LOC 边界验证可行但无余量。功能扩展需先 trim 再加，或申请 cap relaxation |
+| **adapter ≤200 LOC 是硬约束** | 已删除的 test-gate 实现 | 200 LOC 边界验证可行但无余量。功能扩展需先 trim 再加，或申请 cap relaxation |
 
 ### 8-3. 发布渠道观察
 
@@ -413,7 +398,7 @@ Phase 2 的最终架构揭示了 agent 质量门禁的**三层模型**：
 ```
 Layer 3: 独立审查与人类确认 (原生独立子代理审阅 PR, 用户在聊天中确认合并)
 Layer 2: LLM-level 自律 (OMC Ralph loop, Superpowers verification-before-completion)
-Layer 1: Mechanical enforcement (mercury-test-gate exit-code check)
+Layer 1: Mechanical enforcement (exit-code check；原 test-gate adapter 已于 #666 删除)
 ```
 
 每层独立运行，任一层可阻止低质量输出。Layer 1 是基础保障（bypass-proof），Layer 2 增加灵活性，Layer 3 提供最终人类判断。Layer 3 最初由 Argus 审阅机器人承担；Argus 现已暂时排除，合并条件见 `.agents/skills/pr-flow/SKILL.md`（#636）。未来 Mercury 模块设计应遵循此层级 — 新门禁优先放在 Layer 1，不足时上浮。

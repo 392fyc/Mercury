@@ -38,7 +38,7 @@ Evaluate only from code, tests, and runtime output. Do not rely on the developer
 
 ## Output Format
 
-The verdict schema matches what `dev-pipeline` SKILL.md Phase 4 parses. Both `criteriaResults` (per-criterion breakdown) and `findings` / `recommendations` (free-form lists) are required fields. Do NOT omit `criteriaResults` — the pipeline keys off it for retry decisions.
+Return the verdict in this schema. Both `criteriaResults` (per-criterion breakdown) and `findings` / `recommendations` (free-form lists) are required fields. Do NOT omit `criteriaResults` — the caller keys off it for retry decisions.
 
 ```json
 {

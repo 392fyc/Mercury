@@ -800,7 +800,7 @@ session handoff. Read ...
 **ONLY entry point**: `scripts/handoff-launch.sh`. No exceptions. Do not call
 `wt`, `tmux`, `Start-Process`, or any direct terminal-spawn primitive from
 your agent code under any circumstances. The launcher is the only supported
-mechanism for `/handoff auto` and is dual-verify-tested (Mercury Issue #377).
+mechanism for `/handoff auto` and was independently reviewed (Mercury Issue #377).
 
 **SHORT_PROMPT metacharacter rationale** (kept here for human readers — the
 launcher enforces this automatically): SHORT_PROMPT must remain free of

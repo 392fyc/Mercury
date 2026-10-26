@@ -1,5 +1,7 @@
 > 作者: 392fyc | 日期: 2026-05-11 | 状态: 草稿，待 main session 审阅
 
+> **当前状态（2026-10-26）：** 文中的 dev-pipeline、dual-verify、mercury-loop-detector、mercury-test-gate 与 `packages/` 已于 #666 删除。本文按写作时的背景阅读，不得据此重建。
+
 > **当前状态（2026-08-15）：项目级 Codex hooks 已退役。** `.codex/hooks.json`、旧
 > hook probe 与测试脚本已删除，不得依据本文的历史描述重建。当前 Codex 防护由
 > `.codex/rules` 强制，`scripts/codex/` 包装脚本与指令层补充；`.claude/hooks/`

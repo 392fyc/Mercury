@@ -69,10 +69,10 @@ worktrees are transient and must not be committed.
 
 ---
 
-## TaskBundle Schema Extension
+## Task Bundle Field
 
-`worktreePath` is a first-class field in the TaskBundle. Main fills it in
-Phase 2 of the dev-pipeline skill before dispatching to the dev agent:
+When Main hands a task to a dev agent, it passes the worktree path as a
+`worktreePath` field of the task description before dispatching:
 
 ```json
 {
@@ -87,18 +87,16 @@ before every file operation. Dev never creates or removes worktrees.
 
 ---
 
-## Dev-Pipeline Integration
+## Dispatch Integration
 
-Worktree management is embedded in the
-[`dev-pipeline` skill](.../../.claude/skills/dev-pipeline/SKILL.md):
+Worktree management follows these steps when Main dispatches a dev agent:
 
-| Phase | Action |
+| Step | Action |
 |-------|--------|
-| **Phase 2 — Dispatch Dev** | Main runs `git worktree add "${REPO_ROOT}/.worktrees/${TASK_ID}" -b "${TASK_BRANCH}"` then injects the absolute path into `TaskBundle.worktreePath` before dispatch |
-| **Phase 2 — Dev prompt** | Prompt explicitly instructs dev to `cd <worktreePath>` before any file operation |
-| **Phase 2 — Forbidden list** | Dev agents are forbidden from "Creating or modifying git worktrees (Main's responsibility)" |
-| **Phase 5 — Cleanup** | After the PR is merged: `bash scripts/cleanup-worktree-branch.sh "${TASK_BRANCH}" develop` (safe mode; no `--force`). On blocked/escalation exits the work is not merged, so nothing is deleted: report the branch to the user (see abandoned work below) |
-| **Phase 6 — Step 5.1** | After PR merge confirmed, the same cleanup script runs as the final action |
+| **Dispatch dev** | Main runs `git worktree add "${REPO_ROOT}/.worktrees/${TASK_ID}" -b "${TASK_BRANCH}"` then injects the absolute path into `TaskBundle.worktreePath` before dispatch |
+| **Dev prompt** | Prompt explicitly instructs dev to `cd <worktreePath>` before any file operation |
+| **Forbidden list** | Dev agents are forbidden from "Creating or modifying git worktrees (Main's responsibility)" |
+| **Cleanup** | After the PR is merged: `bash scripts/cleanup-worktree-branch.sh "${TASK_BRANCH}" develop` (safe mode; no `--force`). On blocked/escalation exits the work is not merged, so nothing is deleted: report the branch to the user (see abandoned work below) |
 
 ---
 

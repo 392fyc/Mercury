@@ -16,8 +16,6 @@ adapters/
 
 | Adapter | Description |
 |---------|-------------|
-| `mercury-loop-detector/` | PostToolUse hook detecting stall/loop patterns in Claude sessions |
-| `mercury-test-gate/` | PreToolUse hook enforcing test passage before destructive writes |
 | `playwright-mcp/` | Config-gate wrapper mounting microsoft/playwright-mcp (Apache-2.0) as a pinned MCP server; enforces ADR §4.2 security red lines |
 
 ## 约束
