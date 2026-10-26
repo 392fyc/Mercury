@@ -1,0 +1,28 @@
+{
+  "files": {
+    ".agents/skills/caveman-toggle/SKILL.md": "a93480ad1f4f45b9edbcd1eb7c0f958ce65e087adae49f0212309b04b46caf34",
+    ".agents/skills/dot-link/SKILL.md": "41628cf61d9d8606803f0699ef8771272e1909069f51cce93ce5fdd0fbe797bb",
+    ".agents/skills/dot-link/references/receiver-protocol.md": "b81844e56fed1f037bcefb0b5ea15c706eb317fe5f805d644218ef6187710ad5",
+    ".agents/skills/dot-link/scripts/dot_link.py": "3120ed11bf8da0a1a320151306fb27131f4869bb6aa871d0faea3cc54e206e2a",
+    ".agents/skills/html-plan-zh/LICENSE": "c7c815e24ecee835b328f7590f9e74542aaf973cfe09ace5bfbee3c7aae07440",
+    ".agents/skills/html-plan-zh/SKILL.md": "a5bbcdad67277bde47f0d49bf946b8fd8777d3d0c6f2a8d28539ed7f6aa46764",
+    ".agents/skills/html-plan-zh/UPSTREAM.md": "665eca505cd9622504c8a85c4327d4903f88bd874e96c6442a0e871da497855a",
+    ".agents/skills/html-plan-zh/examples/scheduled-send.html": "9ed2fd489681c429624ae8c95a1a47bdedb26d6597105976220c8e9cdb37f4a0",
+    ".agents/skills/html-plan-zh/references/blocks.md": "3ed716e7df14997f070a2a66513c9b6edd6c7dd574bb290b02a119af548e0feb",
+    ".agents/skills/html-plan-zh/references/design-proposals.md": "ca34c523c2245f885afecc6f614a5a18b55e795285049f3dc9691db0e28eb25a",
+    ".agents/skills/html-plan-zh/runtime/htmlplan.css": "5776cbb6ea91a0f1b67f3af60a7967b8ede780c2bb32ae6cd348d79fced57e74",
+    ".agents/skills/html-plan-zh/runtime/htmlplan.js": "4a473d97cc8b1aebc35ba90ba4c0ffa949709d8e87190c276f11406b1b56a5fb",
+    ".agents/skills/html-plan-zh/runtime/pack.mjs": "c683243a12a146102bfc19e12c1ec854d5e349c8c158299771873a6fa090c92e",
+    ".agents/skills/mercury-subagent-driven-development/SKILL.md": "03748e0c10b6bfade63775eb1fc01a8e68dec9861e81c29cbe977d17d75d2d59",
+    ".agents/skills/mercury-subagent-driven-development/code-quality-reviewer-prompt.md": "0cc6c28223ba1f09bb26a403677fa1591b664d5f0f3f7f6212835e55d6dd4dc3",
+    ".agents/skills/mercury-subagent-driven-development/implementer-prompt.md": "11c08ed3482c4fa5be1d2c213744d7a54132712e6dc54757ddb404da08d58522",
+    ".agents/skills/mercury-subagent-driven-development/spec-reviewer-prompt.md": "dbc8abc65b88a65a80a701c7e6a6f4cd75cb0db95bf8e52efddc52d1abd9e3ba",
+    ".agents/skills/web-research/SKILL.md": "21cf0851379c5eb18445f39d0598bea1fedadbab461d7c9a196cf127fd3efd38",
+    ".claude/skills/html-plan-zh/SKILL.md": "e935e713875a1d85f4634a9457fca203db56d069c6e6c8461f1899628bf6fee8",
+    "CLAUDE.local.md.example": "867e645354f4f27cd5512dafdb1725e39662e26f68adcffc19bede8c1765680b"
+  },
+  "manifest_sha256": "e64ca9d0670509a945ad98c2d873cebdfb032ae029c235736c0291583ab0b8a9",
+  "project_config_sha256": "ba74eca02e36f51f69c9603ce5b0e7cbd916445ec23c828fa7d84e752e033299",
+  "schema_version": 1,
+  "source": "self"
+}

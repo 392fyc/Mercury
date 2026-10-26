@@ -1,0 +1,39 @@
+{
+  "schema_version": 2,
+  "modules": {
+    "core": {
+      "path": "core",
+      "required": true,
+      "skills": {
+        "web-research": {"hosts": ["codex"]}
+      }
+    },
+    "plan": {
+      "path": "modules/plan",
+      "skills": {
+        "html-plan-zh": {"hosts": ["codex", "claude"]}
+      }
+    },
+    "subagent-dev": {
+      "path": "modules/subagent-dev",
+      "skills": {
+        "mercury-subagent-driven-development": {"hosts": ["codex"]}
+      }
+    },
+    "caveman": {
+      "path": "modules/caveman",
+      "skills": {
+        "caveman-toggle": {"hosts": ["codex"]}
+      },
+      "files": [
+        {"source": "files/CLAUDE.local.md.example", "target": "CLAUDE.local.md.example"}
+      ]
+    },
+    "dot-link": {
+      "path": "modules/dot-link",
+      "skills": {
+        "dot-link": {"hosts": ["codex"]}
+      }
+    }
+  }
+}

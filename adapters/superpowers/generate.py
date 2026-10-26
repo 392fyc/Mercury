@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""生成 .agents/skills/mercury-subagent-driven-development/ 的全部文件。
+"""生成 harness/modules/subagent-dev/skills/mercury-subagent-driven-development/ 的全部文件。
 
     python adapters/superpowers/generate.py           写出（覆盖）
     python adapters/superpowers/generate.py --check   只比对；任一文件不一致则退出 1 并列出
@@ -20,7 +20,7 @@ ROOT = HERE.parents[1]
 PIN = "d884ae04edebef577e82ff7c4e143debd0bbec99"
 MOD = ROOT / "modules" / "superpowers"
 UP = MOD / "skills" / "subagent-driven-development"
-OUT = ROOT / ".agents" / "skills" / "mercury-subagent-driven-development"
+OUT = ROOT / "harness" / "modules" / "subagent-dev" / "skills" / "mercury-subagent-driven-development"
 # 上游文件 -> 必须仍存在的原文片段（该片段也出现在 overlay 的对应文件里）
 ANCHORS = {"implementer-prompt.md": ["It is always OK to stop and say", "Never silently produce work you're unsure about."]}
 # 这两个文件取自更早的提交 917e5f5，钉住的提交里已被上游删除；只能整篇放 overlay，不做锚点检查

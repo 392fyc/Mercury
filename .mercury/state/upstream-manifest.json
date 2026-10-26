@@ -1,6 +1,6 @@
 [
   {
-    "path": ".agents/skills/mercury-subagent-driven-development/SKILL.md",
+    "path": "harness/modules/subagent-dev/skills/mercury-subagent-driven-development/SKILL.md",
     "scope": "project",
     "upstream_repo": "obra/superpowers",
     "upstream_path": "skills/subagent-driven-development/SKILL.md",
@@ -12,7 +12,7 @@
     "last_drift_check": "2026-07-04"
   },
   {
-    "path": ".agents/skills/mercury-subagent-driven-development/implementer-prompt.md",
+    "path": "harness/modules/subagent-dev/skills/mercury-subagent-driven-development/implementer-prompt.md",
     "scope": "project",
     "upstream_repo": "obra/superpowers",
     "upstream_path": "skills/subagent-driven-development/implementer-prompt.md",
@@ -24,7 +24,7 @@
     "last_drift_check": "2026-07-04"
   },
   {
-    "path": ".agents/skills/mercury-subagent-driven-development/code-quality-reviewer-prompt.md",
+    "path": "harness/modules/subagent-dev/skills/mercury-subagent-driven-development/code-quality-reviewer-prompt.md",
     "scope": "project",
     "upstream_repo": "obra/superpowers",
     "upstream_path": "skills/subagent-driven-development/code-quality-reviewer-prompt.md",
@@ -37,7 +37,7 @@
     "last_drift_check": null
   },
   {
-    "path": ".agents/skills/mercury-subagent-driven-development/spec-reviewer-prompt.md",
+    "path": "harness/modules/subagent-dev/skills/mercury-subagent-driven-development/spec-reviewer-prompt.md",
     "scope": "project",
     "upstream_repo": "obra/superpowers",
     "upstream_path": "skills/subagent-driven-development/spec-reviewer-prompt.md",
@@ -50,7 +50,7 @@
     "last_drift_check": null
   },
   {
-    "path": ".agents/skills/caveman-toggle/SKILL.md",
+    "path": "harness/modules/caveman/skills/caveman-toggle/SKILL.md",
     "scope": "project",
     "upstream_repo": "JuliusBrussee/caveman",
     "upstream_path": "skills/caveman/SKILL.md",
@@ -62,7 +62,7 @@
     "last_drift_check": "2026-07-04"
   },
   {
-    "path": "CLAUDE.local.md.example",
+    "path": "harness/modules/caveman/files/CLAUDE.local.md.example",
     "scope": "project",
     "upstream_repo": "JuliusBrussee/caveman",
     "upstream_path": "skills/caveman/SKILL.md",
@@ -86,7 +86,7 @@
     "last_drift_check": "2026-07-04"
   },
   {
-    "path": ".agents/skills/html-plan-zh/SKILL.md",
+    "path": "harness/modules/plan/skills/html-plan-zh/SKILL.md",
     "scope": "project",
     "upstream_repo": "anthropics/claude-plugins-community",
     "upstream_path": "html-plan/skills/html-plan/SKILL.md",
@@ -98,7 +98,7 @@
     "last_drift_check": null
   },
   {
-    "path": ".agents/skills/html-plan-zh/references/blocks.md",
+    "path": "harness/modules/plan/skills/html-plan-zh/references/blocks.md",
     "scope": "project",
     "upstream_repo": "anthropics/claude-plugins-community",
     "upstream_path": "html-plan/skills/html-plan/references/blocks.md",
@@ -110,7 +110,7 @@
     "last_drift_check": null
   },
   {
-    "path": ".agents/skills/html-plan-zh/examples/scheduled-send.html",
+    "path": "harness/modules/plan/skills/html-plan-zh/examples/scheduled-send.html",
     "scope": "project",
     "upstream_repo": "anthropics/claude-plugins-community",
     "upstream_path": "html-plan/skills/html-plan/examples/scheduled-send.html",
@@ -122,7 +122,7 @@
     "last_drift_check": null
   },
   {
-    "path": ".agents/skills/html-plan-zh/runtime/htmlplan.js",
+    "path": "harness/modules/plan/skills/html-plan-zh/runtime/htmlplan.js",
     "scope": "project",
     "upstream_repo": "anthropics/claude-plugins-community",
     "upstream_path": "html-plan/skills/html-plan/runtime/htmlplan.js",
@@ -134,7 +134,7 @@
     "last_drift_check": null
   },
   {
-    "path": ".agents/skills/html-plan-zh/runtime/htmlplan.css",
+    "path": "harness/modules/plan/skills/html-plan-zh/runtime/htmlplan.css",
     "scope": "project",
     "upstream_repo": "anthropics/claude-plugins-community",
     "upstream_path": "html-plan/skills/html-plan/runtime/htmlplan.css",
@@ -146,7 +146,7 @@
     "last_drift_check": null
   },
   {
-    "path": ".agents/skills/html-plan-zh/runtime/pack.mjs",
+    "path": "harness/modules/plan/skills/html-plan-zh/runtime/pack.mjs",
     "scope": "project",
     "upstream_repo": "anthropics/claude-plugins-community",
     "upstream_path": "html-plan/skills/html-plan/runtime/pack.mjs",
@@ -158,7 +158,7 @@
     "last_drift_check": null
   },
   {
-    "path": ".agents/skills/html-plan-zh/LICENSE",
+    "path": "harness/modules/plan/skills/html-plan-zh/LICENSE",
     "scope": "project",
     "upstream_repo": "anthropics/claude-plugins-community",
     "upstream_path": "LICENSE",

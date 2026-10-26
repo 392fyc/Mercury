@@ -55,6 +55,8 @@ Mercury (lightweight core — only builds what no external project provides)
 │   ├── docs/          DIRECTION.md + EXECUTION-PLAN.md + guides/ + research/
 │   ├── templates/     portable Codex project template (synchronized downstream)
 │   └── gates/         quality-gate configurations
+├── harness/           harness source: manifest.json (schema 2) + core/ and modules/ skills and files (see harness/README.md)
+├── mercury.project.json  module selection for this repository; `scripts/harness/build.py` projects it into .agents/skills, .claude/skills and CLAUDE.local.md.example (lock: .mercury/harness.lock)
 ├── adapters/          Mercury-owned hook/gate/integration adapters (≤200 LOC each for external mounts)
 ├── scripts/           maintenance scripts (lane-*, worktree-reaper, mem0 hooks, codex guardrails, ...)
 └── modules/           reserved for mounted external projects (currently empty — see External project mounts)
