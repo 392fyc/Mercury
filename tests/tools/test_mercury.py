@@ -61,6 +61,8 @@ class MercuryToolTest(unittest.TestCase):
         self.auto_index = True
         self.git("init", "-q")
         self.git("config", "core.autocrlf", "false")
+        # Modes in the index come only from explicit `update-index --chmod`; on POSIX `add -A` would otherwise reset them.
+        self.git("config", "core.fileMode", "false")
 
     def git(self, *args):
         r = subprocess.run(["git", "-C", str(self.src), *args], capture_output=True, text=True, encoding="utf-8")
