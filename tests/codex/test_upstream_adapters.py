@@ -8,7 +8,6 @@ ROOT = Path(__file__).resolve().parents[2]
 ADAPTERS = {
     "html-plan": "claude-plugins-community",
     "superpowers": "superpowers",
-    "caveman": "caveman",
 }
 
 

@@ -56,7 +56,7 @@ Mercury (lightweight core — only builds what no external project provides)
 │   ├── templates/     portable Codex project template (synchronized downstream)
 │   └── gates/         quality-gate configurations
 ├── harness/           harness source: manifest.json (schema 2) + core/ and modules/ skills and files (see harness/README.md)
-├── mercury.project.json  module selection for this repository; `scripts/harness/build.py` projects it into .agents/skills, .claude/skills and CLAUDE.local.md.example (lock: .mercury/harness.lock)
+├── mercury.project.json  module selection for this repository; `scripts/harness/build.py` projects it into .agents/skills, .claude/skills and the files its modules declare (lock: .mercury/harness.lock)
 ├── adapters/          Mercury-owned hook/gate/integration adapters (≤200 LOC each for external mounts)
 ├── scripts/           maintenance scripts (lane-*, worktree-reaper, mem0 hooks, codex guardrails, ...)
 └── modules/           reserved for mounted external projects (currently empty — see External project mounts)
@@ -152,18 +152,6 @@ User-level changes (anything under `~/.claude/`) are governed separately from pr
 Mercury's mount philosophy (DIRECTION.md §四): build the minimum in-house; mount external projects via git submodule under `modules/` with a thin `adapters/<name>/` translation layer (≤200 LOC). Phase 2-1 evaluated four candidates (GSD, Superpowers, OMC, OpenSpace) against a narrow Stop-hook acceptance criterion; all four were REJECT or DEFER on that criterion, so `modules/` is currently empty. Other value from those projects has been cherry-picked individually (see `.mercury/state/upstream-manifest.json` and `scripts/upstream-drift-check.sh`).
 
 When files from an external project are cherry-picked into Mercury, the upstream import protocol in [`AGENTS.md`](AGENTS.md) is the canonical source for the required attribution / manifest / drift discipline. Two adjacent cases (one-shot CLI scaffolding and registry-based per-item imports) have a narrower carve-out — AGENTS.md keeps a summary; the authoritative full rules live in [`.mercury/docs/guides/cherry-pick-carve-out.md`](.mercury/docs/guides/cherry-pick-carve-out.md). This README does not restate the rules; consult those docs for current details.
-
-## Example files
-
-One `.example` file ships at the repo root; its target is gitignored:
-
-| Template | Target | Tracking model |
-|---|---|---|
-| `CLAUDE.local.md.example` | `CLAUDE.local.md` | Target is **gitignored** — personal instructions per developer |
-
-### Caveman mode (local, gitignored)
-
-Persistent concise-output style based on [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) (MIT). Activate it by copying the example: `cp CLAUDE.local.md.example CLAUDE.local.md`.
 
 ## Documentation index
 

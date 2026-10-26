@@ -33,7 +33,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# Resolve REPO_ROOT (same pattern as statusline-mercury.sh; MERCURY_TEST_REPO_ROOT override).
+# Resolve REPO_ROOT: MERCURY_TEST_REPO_ROOT (test override), then CLAUDE_PROJECT_DIR, then the git toplevel.
 if [ -n "${MERCURY_TEST_REPO_ROOT:-}" ]; then
   REPO_ROOT="$MERCURY_TEST_REPO_ROOT"
 elif [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -d "$CLAUDE_PROJECT_DIR/.git" ]; then

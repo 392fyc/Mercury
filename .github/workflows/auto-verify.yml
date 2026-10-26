@@ -18,7 +18,6 @@ jobs:
         run: |
           python -B adapters/html-plan/generate.py --check
           python -B adapters/superpowers/generate.py --check
-          python -B adapters/caveman/generate.py --check
           python -B -m unittest discover -s tests/codex -p 'test_upstream_adapters.py'
       - name: Harness projection is in sync and the builder behaves (#674)
         run: |
