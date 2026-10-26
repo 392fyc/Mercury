@@ -29,7 +29,7 @@ on:
     # Monthly, 1st @ 09:23 UTC. cron is always UTC. The off-the-hour minute (:23,
     # not :00) follows GitHub's guidance that on-the-hour jobs are the most
     # delayed/dropped under load. Monthly (not weekly) because cherry-pick /
-    # pin drift moves slower than the external-intel source watch.
+    # pin drift moves slowly.
     - cron: '23 9 1 * *'
   workflow_dispatch:
     inputs:

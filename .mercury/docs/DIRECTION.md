@@ -37,7 +37,7 @@ Mercury 是一套**让 AI Agent 能持续、自主、高质量地工作的 harne
 
 ### P1: 轻量本体 + 外部挂载
 
-> 路径选型依据: 详见 [架构方向评估](research/issue-158-architecture-evaluation.md)，其中包含路径 A (自研编排) vs 路径 B (轻量挂载) 的成本、收益、风险对照分析。
+> 路径选型依据: 详见 架构方向评估 (Mercury_KB: `04-research/mercury/issue-158-architecture-evaluation.md`)，其中包含路径 A (自研编排) vs 路径 B (轻量挂载) 的成本、收益、风险对照分析。
 
 Mercury 本体只做外部项目做不到的事。能挂载的绝不自研。
 
@@ -101,16 +101,16 @@ Mercury 的核心价值不在代码里，在方法论里。
 
 ### 模块 2: Memory Layer（长期记忆层）
 
-> **⚠ mem0 语义召回层已退役 #518（2026-06-28）**: #517 瘦身审计实测 mem0 + Qdrant 为**空仓**——Qdrant 0 行 / `history.db` 0 行，自 2026-04-18 初始化后从未写入；根因 `OPENAI_API_KEY` unset → `mem0_bridge.py` fail-safe 静默 no-op，`recall()` 全仓零调用方。用户裁定退役,删 **user-level runtime**: `~/.claude/scripts/{mem0_hooks,mem0_bridge}.py` + `mem0-state/` + NAS 镜像链、user-level `pyproject` 去 `mem0ai`+`qdrant-client`、注销计划任务（repo 内 `scripts/mem0_*.py` #258 Phase A 原型 + `mem0-setup.md` 安装指南亦于 #517 KB-3 收尾批删除;内容存 git 历史 + [cma-memory ADR](research/cma-memory-vs-mem0-2026-05.md)）。
+> **⚠ mem0 语义召回层已退役 #518（2026-06-28）**: #517 瘦身审计实测 mem0 + Qdrant 为**空仓**——Qdrant 0 行 / `history.db` 0 行，自 2026-04-18 初始化后从未写入；根因 `OPENAI_API_KEY` unset → `mem0_bridge.py` fail-safe 静默 no-op，`recall()` 全仓零调用方。用户裁定退役,删 **user-level runtime**: `~/.claude/scripts/{mem0_hooks,mem0_bridge}.py` + `mem0-state/` + NAS 镜像链、user-level `pyproject` 去 `mem0ai`+`qdrant-client`、注销计划任务（repo 内 `scripts/mem0_*.py` #258 Phase A 原型 + `mem0-setup.md` 安装指南亦于 #517 KB-3 收尾批删除;内容存 git 历史 + cma-memory ADR (Mercury_KB: `04-research/mercury/cma-memory-vs-mem0-2026-05.md`)）。
 > **当前长期记忆 = 文件式**（无向量语义召回层）: auto-memory `MEMORY.md` 索引 + `SESSION_INDEX.md` 全量历史 + handoff KB（Mercury_KB，#475）+ daily-log flush。
-> [Issue #384 ADR](research/cma-memory-vs-mem0-2026-05.md) 的「status quo + monitor」verdict **前提（mem0 在用 + 有召回价值）已被空仓证据证伪**;mem0 已由 #518 用户裁定退役,该 verdict 实务上失效、应正式 re-eval（空仓属 ADR 原 4 个 re-eval trigger 未预见的新增条件;ADR §结论本就预留「§模块 2 独立过时 → 单独 follow-up」）。**下方「职责 / 技术方向 / 自研理由」为退役前架构描述,保留作历史。**
+> Issue #384 ADR (Mercury_KB: `04-research/mercury/cma-memory-vs-mem0-2026-05.md`) 的「status quo + monitor」verdict **前提（mem0 在用 + 有召回价值）已被空仓证据证伪**;mem0 已由 #518 用户裁定退役,该 verdict 实务上失效、应正式 re-eval（空仓属 ADR 原 4 个 re-eval trigger 未预见的新增条件;ADR §结论本就预留「§模块 2 独立过时 → 单独 follow-up」）。**下方「职责 / 技术方向 / 自研理由」为退役前架构描述,保留作历史。**
 
 **解决的问题**: Claude Code 内置 memory 容量有限、不可结构化查询、不跨 session、不跨项目、不跨 vendor。
 
 **职责**:
 - 跨 session 语义召回: SessionStart 注入相关历史 / SessionEnd flush 总结 / PreCompact 压缩前 snapshot
 - 跨项目共享（§P3 模块可拆卸的体现）: 不绑定 Mercury，用户级 hook 链（`~/.claude/hooks/`）使任何 Claude Code / Codex CLI 项目均可接入
-- 跨 vendor 可移植（§P5 向上兼容的核心收益）: 持久层 user-controlled，不依赖任何 Anthropic / OpenAI runtime；Anthropic Claude Managed Agents Memory / OpenAI `/responses/compact` 评估见 [Issue #384 ADR](research/cma-memory-vs-mem0-2026-05.md)（Verdict (a) status quo + monitor 配 4 个 re-eval trigger）
+- 跨 vendor 可移植（§P5 向上兼容的核心收益）: 持久层 user-controlled，不依赖任何 Anthropic / OpenAI runtime；Anthropic Claude Managed Agents Memory / OpenAI `/responses/compact` 评估见 Issue #384 ADR (Mercury_KB: `04-research/mercury/cma-memory-vs-mem0-2026-05.md`)（Verdict (a) status quo + monitor 配 4 个 re-eval trigger）
 - LLM 自维护: agent 全自动写入 + dedup，人类只读 / 查询
 - 失败安全 kill-switch: `AGENTKB_MEM0_DISABLED=1`（或 alias `MERCURY_MEM0_DISABLED=1`）软关；全路径 no-op-safe fail-falsy（mem0 缺失 / API key 缺失 / store 错误均不阻塞主流程）
 
@@ -118,7 +118,7 @@ Mercury 的核心价值不在代码里，在方法论里。
 - Adapter — [PR #258](https://github.com/392fyc/Mercury/pull/258) `599d313` 2026-04-17（Mercury Issue #252 **Phase A**，in-repo `scripts/`，仅 adapter prototype，hook 接线延后）: `mem0ai.Memory` 包装 + 4 个上游 P1 bug guard（mem0ai [#4099](https://github.com/mem0ai/mem0/issues/4099) empty-payload / [#4799](https://github.com/mem0ai/mem0/issues/4799) list-content / [#4453](https://github.com/mem0ai/mem0/issues/4453) threshold-filter / [#4536](https://github.com/mem0ai/mem0/issues/4536) contradiction-dedup 0.92 cosine fails-closed） + telemetry-off forced
 - Bridge + Hook 触发 + Vector store — user-level cross-repo 落地（post-Phase A，per CLAUDE.md §"用户级变更治理" + #259 governance pattern）: `~/.claude/scripts/mem0_bridge.py` no-op-safe `ingest_session()` / `recall()` + `~/.claude/hooks/{session-start.py,session-end.py,pre-compact.py}` hook 触发 + `~/.claude/scripts/mem0-state/qdrant/` + `history.db`（on-disk Qdrant + SQLite history，user-controlled）
 - Karpathy 模式 (raw → compile → wiki → Q&A → enhance) 映射: `add_safe()` → Qdrant + SQLite → `search_safe()` cosine + entity graph → `dedup_guard` 阈值拒绝矛盾或重复
-- 历史演进: Mercury_KB Obsidian vault（早期 KB；**未废——现为 handoff 文档落点 #475**，旧标「已废」于 #517 审计纠正）→ AgentKB-fork（Karpathy-style file KB，已归档详见 [`agentkb-fork-salvage-audit-2026-04-17.md`](research/agentkb-fork-salvage-audit-2026-04-17.md)）→ mem0 + Qdrant（#252 实装，**#518 退役**——空仓，见模块顶部 banner）→ **当前: 文件式长期记忆**（auto-memory `MEMORY.md` + `SESSION_INDEX.md` + handoff KB + daily-log flush，无向量语义召回层）
+- 历史演进: Mercury_KB Obsidian vault（早期 KB；**未废——现为 handoff 文档落点 #475**，旧标「已废」于 #517 审计纠正）→ AgentKB-fork（Karpathy-style file KB，已归档详见 Mercury_KB: `04-research/mercury/agentkb-fork-salvage-audit-2026-04-17.md`）→ mem0 + Qdrant（#252 实装，**#518 退役**——空仓，见模块顶部 banner）→ **当前: 文件式长期记忆**（auto-memory `MEMORY.md` + `SESSION_INDEX.md` + handoff KB + daily-log flush，无向量语义召回层）
 
 **自研理由**: adapter + bridge + 4 P1 bug guard 是 Mercury 特有；底层 vector store + LLM compile loop 通过 mem0ai + Qdrant 上游解决。
 
@@ -135,7 +135,7 @@ Mercury 的核心价值不在代码里，在方法论里。
 - Acceptance sub-agent 独立验证: 做和验分离
 
 **技术方向**: 主要通过外部项目挂载实现
-- GSD (gsd-build/get-shit-done): Claude Code 安装式 skill/hook 框架（Phase 2-1 评估后 REJECT，详见 `.mercury/docs/research/phase2-1-get-shit-done-evaluation.md`；姊妹项目 gsd-build/gsd-2 是独立 CLI，与 Mercury sub-agent 模型不兼容）
+- GSD (gsd-build/get-shit-done): Claude Code 安装式 skill/hook 框架（Phase 2-1 评估后 REJECT，详见 Mercury_KB: `04-research/mercury/phase2-1-get-shit-done-evaluation.md`；姊妹项目 gsd-build/gsd-2 是独立 CLI，与 Mercury sub-agent 模型不兼容）
 - Superpowers (obra/superpowers): inline checklist + TDD red-green-refactor（已进入 Anthropic marketplace）
 - OMC (Yeachan-Heo/oh-my-claudecode): Ralph mode stop hook 拦截
 - OpenSpace (HKUDS/OpenSpace): 技能自进化 + proof-gates
@@ -195,8 +195,8 @@ autoresearch 已于 #668 删除；上游 OMX/OMC autoresearch 的评估结论见
 - **实现链**: Issues #413–#416 → PRs #421/#422/#424/#425（scaffold → 读侧数据层 → snapshot 视图 → Issue/PR 看板）。
 - **v2 stance**: 增强按需推进、不主动排期；v2 backlog（#427，仍 OPEN 作为跟踪）已逐项 disposition。进一步开发仅在多 session 并行管理出现真实需求时启动。
 - **相关设计提案**（均为 `status: PROPOSAL`、`decision_authority: User`，**尚未批准实施**，verdict 为推荐而非已批决策）：
-  - 结构性拆分（单包 vs workspace）— 推荐 NO-GO / 保持单包，见 [`research/issue-446-mercury-gui-structural-split-2026-05.md`](research/issue-446-mercury-gui-structural-split-2026-05.md)。当前 `mercury-gui/` 即单包结构。
-  - 前端测试基建选型 — 推荐 Vitest + jsdom + Testing Library 栈，见 [`research/issue-438-frontend-test-infra-2026-05.md`](research/issue-438-frontend-test-infra-2026-05.md)。
+  - 结构性拆分（单包 vs workspace）— 推荐 NO-GO / 保持单包，见 Mercury_KB: `04-research/mercury/issue-446-mercury-gui-structural-split-2026-05.md`。当前 `mercury-gui/` 即单包结构。
+  - 前端测试基建选型 — 推荐 Vitest + jsdom + Testing Library 栈，见 Mercury_KB: `04-research/mercury/issue-438-frontend-test-infra-2026-05.md`。
 
 ---
 
@@ -215,7 +215,7 @@ autoresearch 已于 #668 删除；上游 OMX/OMC autoresearch 的评估结论见
 - **provenance**：在 `.mercury/state/upstream-manifest.json` 登记 + 对应 `adapters/<vendor>/UPSTREAM.md` 记录版本/license/已知不兼容项。
 - **drift 监控**：`scripts/upstream-drift-check.sh` 跟踪上游版本契约文件。
 
-**版本 pin 规则（模式 3）**：`.mcp.json` / wrapper 必须 pin 确切 npm 版本号（**禁止浮动 `@latest`**）。执行契约 = pinned npm 版本；manifest 的 `upstream_sha_at_import` = 对应 git tag commit（审计元数据，非执行契约）。依据见 `research/issue-154-web-automation-2026-05.md` §5.1 + Issue #458。
+**版本 pin 规则（模式 3）**：`.mcp.json` / wrapper 必须 pin 确切 npm 版本号（**禁止浮动 `@latest`**）。执行契约 = pinned npm 版本；manifest 的 `upstream_sha_at_import` = 对应 git tag commit（审计元数据，非执行契约）。依据见 Mercury_KB: `04-research/mercury/issue-154-web-automation-2026-05.md` §5.1 + Issue #458。
 
 ### 挂载方式: Git Submodule
 
@@ -410,10 +410,10 @@ Layer 1: Mechanical enforcement (exit-code check；原 test-gate adapter 已于 
 ## 九、参考资源
 
 外部引用经人工抽样验证（截至 2026-04-07，GSD 纠偏与 get-shit-done 评估完成时）；链接有效性以 ADR 发布时间为准，后续可能因上游变更失效。
-验证证据索引：详见 ADR `.mercury/docs/research/phase2-1-get-shit-done-evaluation.md#references`。
+验证证据索引：详见 ADR Mercury_KB: `04-research/mercury/phase2-1-get-shit-done-evaluation.md#references`。
 
 - Karpathy LLM Knowledge Bases (2026-04-02) — Memory Layer 设计理念
-- GSD (gsd-build/get-shit-done) — 评估结果 REJECT for Quality Gate（无 blocking Stop hook；姊妹项目 gsd-2 是独立 CLI 不可挂载）。详见 `.mercury/docs/research/phase2-1-get-shit-done-evaluation.md`
+- GSD (gsd-build/get-shit-done) — 评估结果 REJECT for Quality Gate（无 blocking Stop hook；姊妹项目 gsd-2 是独立 CLI 不可挂载）。详见 Mercury_KB: `04-research/mercury/phase2-1-get-shit-done-evaluation.md`
 - Superpowers (obra/superpowers) — Quality Gate: 自检清单 + TDD，已进入 Anthropic marketplace，活跃维护
 - Oh My Claude Code (Yeachan-Heo/oh-my-claudecode) — Quality Gate: Stop hook 拦截，活跃维护
 - OpenSpace (HKUDS/OpenSpace) — Quality Gate: 技能自进化，活跃维护

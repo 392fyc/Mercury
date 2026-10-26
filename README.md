@@ -117,7 +117,7 @@ Mercury registers no project-level hooks for Claude Code or Codex. Git safety is
 Mercury runs multiple **lanes** in parallel — independent work streams that don't step on each other. Each lane owns a git worktree, a branch namespace, and a handoff document, so concurrent sessions (e.g. an architecture lane and a bug-fix lane) stay isolated.
 
 - **Branch prefix**: `lane/<short>/<N>-<slug>` (≤40 chars; a legacy `feature/lane-<lane>/...` form is still accepted)
-- **No lane-count cap**: open as many lanes as you need; the former Δ7 hard cap was removed in [#605](https://github.com/392fyc/Mercury/issues/605). A lane is driven by Claude Code or Codex (`--harness`) and works solo by default or pairs with another lane (see the [cross-harness lane ADR](.mercury/docs/research/issue-599-cross-harness-lane-isolation-2026-09.md))
+- **No lane-count cap**: open as many lanes as you need; the former Δ7 hard cap was removed in [#605](https://github.com/392fyc/Mercury/issues/605). A lane is driven by Claude Code or Codex (`--harness`) and works solo by default or pairs with another lane (see the cross-harness lane ADR (Mercury_KB: `04-research/mercury/issue-599-cross-harness-lane-isolation-2026-09.md`))
 - **First-time setup**: run `scripts/lane-init.sh` once per project per machine to create that project's lane registry (`LANES.md`)
 - **One lane home per project**: registry and handoff docs are resolved from the project's main checkout, shared by all of its lanes and both harnesses; print them with `scripts/lane-paths.sh memory-dir` and `scripts/lane-paths.sh handoff-dir` ([#613](https://github.com/392fyc/Mercury/issues/613))
 - **Tooling**: `scripts/lane-*.sh` (init / spawn / claim / close / sweep) + `lane-assertion.sh` enforce the protocol mechanically; `lane-cap-check.sh` reports the active-lane count
@@ -174,11 +174,11 @@ Persistent concise-output style based on [JuliusBrussee/caveman](https://github.
 | Git-flow conventions | [`.mercury/docs/guides/git-flow.md`](.mercury/docs/guides/git-flow.md) |
 | Issue-first workflow | [`.mercury/docs/guides/issue-workflow.md`](.mercury/docs/guides/issue-workflow.md) |
 | Lane naming + concurrency cap | [`.mercury/docs/guides/lane-naming.md`](.mercury/docs/guides/lane-naming.md) |
-| Architecture evaluation (PR #162) | [`.mercury/docs/research/issue-158-architecture-evaluation.md`](.mercury/docs/research/issue-158-architecture-evaluation.md) |
+| Architecture evaluation (PR #162) | Mercury_KB: `04-research/mercury/issue-158-architecture-evaluation.md` |
 
 ## Removed legacy components
 
-The pre-pivot orchestrator stack, the `archive/` tree, the `packages/` workspace, the root Node/TypeScript tooling, `GEMINI.md` / `OPENCODE.md`, the loop-detector and test-gate adapters, and the `dev-pipeline` / `dual-verify` skills were removed in #666. They remain available through Git history; `.mercury/docs/research/` and `.mercury/docs/decisions/` keep the historical records.
+The pre-pivot orchestrator stack, the `archive/` tree, the `packages/` workspace, the root Node/TypeScript tooling, `GEMINI.md` / `OPENCODE.md`, the loop-detector and test-gate adapters, and the `dev-pipeline` / `dual-verify` skills were removed in #666. They remain available through Git history; Mercury_KB: `04-research/mercury/` and Mercury_KB: `03-decisions/mercury/` keep the historical records.
 
 ## License
 

@@ -256,11 +256,11 @@ adapters/         # 适配层
 - ⚠ AgentKB 侧的 `session_chain` 表 + `handoff-orchestrator` **未落地**（Plan D 废弃，见 KB 概念 `agentKB-phase4-1-components`）。
 - 🔄 **遗留缺口**：`session_chain` DB（跨 session 关联跟踪）仍是必需组件，已迁移至 Phase 4-2.a，作为 `claude-handoff` 插件的扩展实现。
 
-研究报告：`.mercury/docs/research/phase4-1-*`, `.research/reports/RESEARCH-OpenClaw-*`, `.mercury/docs/research/phase4-2-worktree-mount-eval.md`
+研究报告：Mercury_KB: `04-research/mercury/phase4-1-*`, `.research/reports/RESEARCH-OpenClaw-*`, Mercury_KB: `04-research/mercury/phase4-2-worktree-mount-eval.md`
 
 ### 4-2. Worktree-per-task + session_chain DB (S54 重新拆解) — ✅ Complete (2026-04-18)
 
-基于 S54 研究结论（`.mercury/docs/research/phase4-2-worktree-mount-eval.md`），Phase 4-2 拆成三条独立子轨：
+基于 S54 研究结论（Mercury_KB: `04-research/mercury/phase4-2-worktree-mount-eval.md`），Phase 4-2 拆成三条独立子轨：
 
 #### 4-2.a session_chain DB (claude-handoff 扩展)
 - **实现位置**：`github.com/392fyc/claude-handoff` 插件仓库（非 Mercury 主仓）
@@ -291,14 +291,14 @@ adapters/         # 适配层
 
 > **Phase 4-3 Complete**：Compact-prevention 分层（statusline advisory + PreCompact block + env-var gate）已全部落地至用户级 hooks，Issues #268/#269/#270 均已 CLOSED。
 
-研究：`.mercury/docs/research/phase4-3-compact-prevention-eval.md` (S60)。Option B 分层执行。
+研究：Mercury_KB: `04-research/mercury/phase4-3-compact-prevention-eval.md` (S60)。Option B 分层执行。
 
 #### 4-3. S4 prerequisite — ✅ CLOSED PARTIAL (S61, Issue #268, 2026-04-18)
 - `context_window.used_percentage` PRESENT in statusline stdin, ABSENT in PreCompact/SessionStart/SessionEnd hook payloads
 - 决定 B.1 走 statusline wrapper 路径，B.2 必须用 `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` env var gate（不能依赖 hook payload 读阈值）
 
 #### 4-3. B.1 statusline advisory — ✅ Complete (S69, Issue #269 CLOSED 2026-04-23)
-- `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/statusline-context.sh` 为最终 shipped 的 statusline 入口（bash wrapper）；Phase 4-3 research/design 文档 (`.mercury/docs/research/phase4-3-compact-prevention-eval.md`) 中提到的 `.../hooks/statusline-context.py` 属于早期设计引用，实际落地路径以 `.sh` 为准
+- `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/statusline-context.sh` 为最终 shipped 的 statusline 入口（bash wrapper）；Phase 4-3 research/design 文档 (Mercury_KB: `04-research/mercury/phase4-3-compact-prevention-eval.md`) 中提到的 `.../hooks/statusline-context.py` 属于早期设计引用，实际落地路径以 `.sh` 为准
 - 该 wrapper 包装 claude-hud，≥75% 时 append `⚠ CTX n% /handoff`
 - 阈值 env var `MERCURY_CTX_ADVISORY_PCT` override；Windows UTF-8 fixed (`PYTHONIOENCODING=utf-8`)
 - Soak 验证：2+ sessions 确认无 regression + null-safe + 渲染正确
