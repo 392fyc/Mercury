@@ -18,7 +18,7 @@ packs/
     scripts/ docs/ ...          plain files, laid out as they should look inside the installed pack
     build/                      Mercury-side generator inputs; never installed
 sources/<project>/              external projects exactly as upstream (git submodules, pinned)
-tools/mercury.py                the installer (`check`, `apply`)
+tools/mercury.py                the installer (`check`, `apply`, `install`) and the `source` commands
 ```
 
 Packs: `core` (required: web-research, the five roles, Git safety rules, task and ownership contracts, read-only guard), `plan` (html-plan-zh), `subagent-dev`
@@ -38,8 +38,14 @@ found through `$(dirname "$0")`) and to project files with paths relative to the
 {"schema_version": 1, "packs": {
   "core": {"enabled": true, "required": true},
   "plan": {"enabled": true},
-  "playwright-mcp": {"enabled": false}}}
+  "playwright-mcp": {"enabled": false}},
+ "sources": [{"name": "superpowers", "url": "https://github.com/obra/superpowers.git", "commit": "<40 hex>",
+              "license": "MIT", "added": "2026-10-26", "rationale": "..."}]}
 ```
+
+`sources` records every pinned external project under `sources/` (see "Sources" below). It is bookkeeping: the
+`mercury_json_sha256` value in an installation lock is computed without it, so `source add` and `source update` never
+make `check` fail.
 
 Every directory under `packs/` is listed here. A pack with `"enabled": false` cannot be installed by any
 project: `tools/mercury.py` refuses a config that selects it. `required: true` forces the pack on for
@@ -61,12 +67,83 @@ every project and cannot be combined with `enabled: false`.
 ## Installation
 
 ```
-python tools/mercury.py check --target <project>   # compare only; exit 1 on any difference
-python tools/mercury.py apply --target <project>   # write the installation and the lock
+python tools/mercury.py install --target <project> [--packs core,lanes] [--source-commit <sha>] [--dry-run]
+python tools/mercury.py check   --target <project> [--source-commit <sha>]   # compare only; exit 1 on any difference
+python tools/mercury.py apply   --target <project> [--source-commit <sha>]   # write the installation and the lock
 ```
 
-`--source <mercury checkout>` selects the packs to install from (default: the checkout that holds the tool).
+`--source <mercury checkout>` selects the repository to install from (default: the checkout that holds the tool).
 Exit codes: 0 in sync, 1 differences or conflicts, 2 invalid input.
+
+Two ways to read the packs:
+
+- **Mercury installing itself** (`--target` is the source checkout): the file list comes from the Git index and the
+  content from the working tree, as before. `--source-commit` is an error here.
+- **Any other project**: the packs, their modes and `mercury.json` (the master switch) are read from one commit of the
+  source repository (`git ls-tree` and `git cat-file`), never from its working tree, so local edits and untracked files
+  cannot leak in. `install` uses `--source-commit` or else the source `HEAD`; `check` and `apply` use
+  `--source-commit` or else the commit recorded in the target lock (`source_commit`; `HEAD` when there is no lock).
+  The lock records `source_repo` (`owner/name`, from the `origin` remote of the source; the URL itself is never printed
+  or stored) and `source_commit`. Because the lock calls the commit a commit of `origin`, writing (`install`, `apply`)
+  requires it to be reachable from a remote-tracking branch of `origin` (`git for-each-ref --contains` on
+  `refs/remotes/origin/`, as of the last fetch); an unpushed commit is refused. `--dry-run` and `check` accept it and say
+  so. There is no override flag: the only reason to use an unpushed commit is to preview it, and `--dry-run` does that.
+  Every run prints `mercury: source commit <sha>`. A tree entry that is not a regular file (link, submodule) is an
+  error. The target must be the root of a Git work tree.
+
+`install` is `apply` for a project that may not have a configuration yet. Without `.mercury/config.json` it creates one
+from `--packs` (default: only `core`; `core` is always included); afterwards the file belongs to the project and the
+tool only reads it. With an existing configuration, a `--packs` list that selects a different set is an error.
+
+Before any write (and in `check`), every managed path, `.mercury/config.json`, the lock, `AGENTS.md` and `CLAUDE.md` is
+passed through `git check-ignore` of the target. An ignored path stops the run (exit 2) because the file would never be
+committed. `--dry-run` prints the plan and writes nothing: the files to create, update, adopt and delete; where the
+managed section goes in `AGENTS.md` and `CLAUDE.md`; the tracked text files of the target that mention a path about to be
+removed; the workflows under `.github/workflows/` that still refer to the v1 template (`mercury-template`, `mercury-sync`,
+`sync-project-template`, `sync-downstream-pr`, `verify-project-template`; this tool never edits them); and any managed
+path that the ignore rules cover. It exits 1 when there is a conflict or an ignored path.
+
+### Adopting a v1 template installation
+
+A project with `.codex/mercury-template.lock` (schema 1) was installed by the old template synchroniser. `install` takes
+its files over. A file listed in the v1 lock (only `agents/mercury-*.toml`, `rules/mercury-*.rules` and
+`project/mercury-*.md` are accepted) is adopted while its content still hashes to the v1 lock value: sha256 of the raw
+bytes, as `sync-project-template.py` computes it. A difference that is only CRLF against LF, as `core.autocrlf` makes,
+also counts as unmodified. An adopted file that the new installation also ships is replaced; one it no longer ships
+(`.codex/project/mercury-*.md`) is deleted, and its directory is removed if that empties it. The v1 lock is deleted
+last, so an interrupted run can be repeated. Any other content stops the run with nothing written. A v1 lock entry whose
+spelling differs from a path the new installation ships only in case (one file on Windows) is a conflict, never a
+deletion; fix the spelling first.
+
+## Sources
+
+`sources/<name>/` holds one pinned external GitHub project as a shallow Git submodule.
+
+```
+python tools/mercury.py source add <name> <https://github.com/owner/repo> --rationale "<why>" [--ref <ref>]
+python tools/mercury.py source update <name> [--to <ref>]
+```
+
+- `add` asks `gh api repos/{owner}/{repo}/commits/{ref}` for the full commit id (default ref `HEAD`) and
+  `gh api repos/{owner}/{repo}/license?ref=<sha>` for the SPDX license at that commit. Only MIT, Apache-2.0,
+  BSD-2-Clause, BSD-3-Clause, ISC, 0BSD and Unlicense are accepted. It fetches that one commit (`--depth 1`) into
+  `sources/<name>/` with the layout `git submodule add` produces: the Git directory under the `modules/` directory of
+  the superproject (per work tree), a `.git` file with a relative `gitdir:` and a relative `core.worktree` in the module
+  config. It appends the `.gitmodules` entry (with `shallow = true`), writes the `submodule.<path>.url` and `.active`
+  values that `git submodule init` writes into the shared Git config, and records `name`, `url`, `commit`, `license`,
+  `added` and `rationale` in `mercury.json`. It prints the paths to stage and **never writes the Git index**; stage with
+  `git-safe.ps1 add .gitmodules mercury.json sources/<name>`. Only GitHub repositories are supported (the repository
+  name may not be `.`, `..` or end in `.git`). A step that fails after the directories exist reports both leftover paths,
+  `sources/<name>` and its Git directory, for you to inspect and remove. If an add is abandoned, also remove the two shared
+  config keys by hand: `git config --unset submodule.sources/<name>.url` and `git config --unset submodule.sources/<name>.active`
+  (and the `.gitmodules` entry and `mercury.json` record if they were written).
+- `update` requires the checkout to be at the recorded commit and free of local modifications (`git status --porcelain`
+  empty, untracked files included), resolves the new commit (license checked again), refuses
+  a commit that is not a descendant of the recorded one, prints the upstream change summary (`gh api compare`), moves
+  the checkout, updates `mercury.json`, and runs `build/generate.py --check` of every pack whose `build/` mentions the
+  source. A mismatch is reported and stops the command with exit 1: the generators pin the commit themselves, so update
+  the pin and regenerate by hand. It never regenerates or stages anything.
+- All network and Git calls of these two commands go through one small class, `Ext`, so tests can replace it.
 
 The project selects packs in `<project>/.mercury/config.json`:
 

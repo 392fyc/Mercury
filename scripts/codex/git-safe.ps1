@@ -44,6 +44,57 @@ function Invoke-Git {
   }
 }
 
+function Test-RegisteredSubmodule {
+  param(
+    [string]$Path,
+    [System.IO.FileSystemInfo]$Item
+  )
+
+  # A directory may be staged only as a gitlink: its path must be a submodule `path` in the working-tree .gitmodules
+  # (exact spelling) and it must be the root of its own Git work tree, not a link and not just a folder of this repository.
+  $reparse = [System.IO.FileAttributes]::ReparsePoint
+  if ($Item.Attributes -band $reparse) {
+    return $false
+  }
+
+  $modulesFile = Join-Path $repoRoot ".gitmodules"
+  if (-not (Test-Path -LiteralPath $modulesFile -PathType Leaf)) {
+    return $false
+  }
+  if ((Get-Item -LiteralPath $modulesFile).Attributes -band $reparse) {
+    return $false
+  }
+
+  $registered = @()
+  $lines = & git config --file $modulesFile --get-regexp '^submodule\..*\.path$'
+  if ($LASTEXITCODE -eq 0) {
+    foreach ($line in @($lines)) {
+      if ($line -match '^submodule\..+\.path (?<value>.+)$') {
+        $registered += $Matches["value"]
+      }
+    }
+  }
+  $normalized = $Path.Replace("\", "/")
+  if (-not ($registered -ccontains $normalized)) {
+    return $false
+  }
+
+  try {
+    $top = & git -C $Item.FullName rev-parse --show-toplevel 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      return $false
+    }
+  } catch {
+    return $false
+  }
+  $topPath = [System.IO.Path]::GetFullPath(([string]$top).Trim()).TrimEnd("\", "/")
+  $itemPath = [System.IO.Path]::GetFullPath($Item.FullName).TrimEnd("\", "/")
+  if ([System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT) {
+    return ($topPath -ieq $itemPath)
+  }
+  return ($topPath -ceq $itemPath)
+}
+
 function Assert-ExplicitPaths {
   param([string[]]$Paths)
 
@@ -75,8 +126,8 @@ function Assert-ExplicitPaths {
     $candidate = Join-Path $repoRoot $path
     if (Test-Path -LiteralPath $candidate) {
       $item = Get-Item -LiteralPath $candidate
-      if ($item.PSIsContainer) {
-        throw "Directories are not allowed in git-safe add. Pass explicit files only: $path"
+      if ($item.PSIsContainer -and -not (Test-RegisteredSubmodule -Path $path -Item $item)) {
+        throw "Directories are not allowed in git-safe add. Pass explicit files only (a registered submodule path from .gitmodules is the one exception): $path"
       }
     }
 

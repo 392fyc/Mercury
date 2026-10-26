@@ -111,7 +111,7 @@
     ".mercury/packs/subagent-dev/skills/mercury-subagent-driven-development/implementer-prompt.md": "11c08ed3482c4fa5be1d2c213744d7a54132712e6dc54757ddb404da08d58522",
     ".mercury/packs/subagent-dev/skills/mercury-subagent-driven-development/spec-reviewer-prompt.md": "dbc8abc65b88a65a80a701c7e6a6f4cd75cb0db95bf8e52efddc52d1abd9e3ba"
   },
-  "mercury_json_sha256": "d3bfd0bcddbe196fed35e7a3a7e4ac07844dacbfebd6091b1d2340dde9ae96ca",
+  "mercury_json_sha256": "90fbf9d700cb7ce0dd1c1ee5f77eaa3678e950acd3a9462444a9fd2fa5bdf71e",
   "schema_version": 1,
   "sections": {
     "AGENTS.md": "e5cade06610a1c2ba7f34993e8d5bfb04a4690181dac94b459096cac751917c4",
