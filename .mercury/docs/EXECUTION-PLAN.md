@@ -4,7 +4,7 @@
 > 依据: DIRECTION.md (项目方向定义)
 > 本文档定义从当前状态到新架构的执行路径。
 >
-> **#666 说明**: `archive/`、`packages/`、根目录 Node/TypeScript 工具链、`dev-pipeline` 与 `dual-verify` 技能、`adapters/mercury-test-gate/`、`adapters/mercury-loop-detector/`、dispatch/acceptance 提示模板、`.mcp.json` 已从工作树删除；`autoresearch` 技能已于 #668 删除。以上均可通过 Git 历史追溯。下文各 Phase 中对它们的提及是当时的规划与交付记录，不代表现行目录。
+> **#666 说明**: `archive/`、`packages/`、根目录 Node/TypeScript 工具链、`dev-pipeline` 与 `dual-verify` 技能、`adapters/mercury-test-gate/`、`adapters/mercury-loop-detector/`、dispatch/acceptance 提示模板、`.mcp.json` 已从工作树删除；`autoresearch` 技能已于 #668 删除；`pr-flow` 技能已于 #672 删除，合并规则移至 `git-flow.md`。以上均可通过 Git 历史追溯。下文各 Phase 中对它们的提及是当时的规划与交付记录，不代表现行目录。
 
 ---
 
