@@ -178,12 +178,60 @@ All of these must hold:
 Then run `scripts/cleanup-worktree-branch.sh <branch> develop`. The script
 re-checks 1 and 3 itself and exits without deleting anything if it cannot
 verify the merge (exit 1) or the branch is protected (exit 2). It removes the
-worktree with a plain `git worktree remove` (never `--force`), deletes the local
+worktree with a plain `git worktree remove` (never `--force`, except for the verified submodule case below), deletes the local
 branch with `git branch -d` (or `-D` with the merged-PR evidence printed), and
 reads the remote back with `git fetch --prune origin`. The remote branch is
 deleted by GitHub's "automatically delete head branches" setting; if
 `origin/<branch>` still exists after the fetch, the script warns and the
 remote branch is handled like abandoned work below.
+
+**Worktree with checked-out submodules: the one exception to "never `--force`"
+(Issue #670).** Once a submodule was checked out inside a task worktree, git refuses
+a plain `git worktree remove` ("working trees containing submodules cannot be moved
+or removed"), because the submodule repositories live under `<git-dir>/modules` of
+that worktree. Both scripts therefore use a single `git worktree remove --force` for
+such a worktree, and only when **all** of these hold:
+
+1. The worktree passes every check above (registered root, merge proven, no staged,
+   unstaged or untracked content, no ignored files other than regenerable caches).
+2. Every **checked-out** submodule, recursively, is verified. "Checked out" means
+   `<submodule path>/.git` exists; the `git submodule status` prefix alone is not trusted,
+   because a submodule shown as `-` can still hold files. For each one:
+   - the status prefix is a space, i.e. the checked-out commit equals the commit the
+     superproject records (`+` differs, `U` is a conflict, and `-` on a checked-out
+     submodule means "checked out but not active", which cannot be verified and blocks);
+   - the path is its own repository root (`git rev-parse --show-toplevel`), so the check
+     cannot silently run against the superproject;
+   - `git -C <submodule> status --porcelain --ignored=matching` shows nothing except
+     regenerable caches;
+   - the same applies to the submodules inside it. A submodule that is not checked out
+     (no `.git`) is skipped.
+3. Then exactly one `git worktree remove --force` runs (no retry, no `rm -rf`), followed
+   by the usual branch delete and remote read-back.
+
+`git submodule deinit` is deliberately **not** run. `submodule init` and `deinit` write
+`submodule.<name>.url` into the config shared by all worktrees
+(`$GIT_COMMON_DIR/config`), so a deinit in a task worktree also unregisters the
+submodules of the main checkout (verified with git 2.43: afterwards the main checkout's
+`git submodule status` shows `-`). A plain force removal deletes only the task worktree
+directory and its own `<common-dir>/worktrees/<name>/` data; the main checkout's url,
+status and files stay intact.
+
+Limits: only the checked-out commit is compared with the recorded one. Commits that
+exist only on other local branches inside a submodule are **not** examined and are lost
+with the force removal; push such work from the submodule before cleaning up. A worktree
+that has `<git-dir>/modules` but no checked-out submodule also takes this force path
+(that leftover repository data is removed with it). The `--force` rm-rf fallback of
+`cleanup-worktree-branch.sh` refuses any worktree whose index holds a gitlink with a
+checked-out `.git` below it.
+
+If any condition fails, the worktree and the branch are kept: `cleanup-worktree-branch.sh`
+prints the reason and exits 1, and the reaper prints a `DIRTY` line (the superproject
+already sees the change) or a `SUBMODULE :` line (only the submodule check sees it).
+`--dry-run` prints only the `remove --force` command. A worktree without a checked-out
+submodule and without `<git-dir>/modules` keeps the plain, never-forced removal. The
+decision "which worktrees are forced" lives in the scripts, not in agent judgement: do
+not run `--force` by hand for a worktree whose check failed.
 
 **Dirty worktree or merge cannot be verified: delete nothing.** Report the
 path, the branch and what is uncommitted or unverified. `--force` does not
@@ -231,7 +279,8 @@ The script classifies each worktree:
 |--------|---------|--------|
 | `KEEP` | Branch has an open PR (any age), is protected (`main`, `master`, `develop`, origin's default branch), or the worktree is unmerged and newer than `WORKTREE_AGE_DAYS` (default 7) | none |
 | `DIRTY` | Merged, but the worktree has uncommitted content or ignored files other than regenerable caches (paths are listed) | kept; clean it up by hand |
-| `WOULD REAP` / `REAPED` | Proven merged (tip contained in a merged PR head, or the branch has its own commits and all of them are in `origin/<default branch>`) and clean | `--prune`: plain `git worktree remove` + `git branch -d` (`-D` with merged-PR evidence). Not limited by age |
+| `SUBMODULE :` | Merged and clean, but a checked-out submodule is not at its recorded commit, is not active, holds uncommitted or non-cache ignored content, or cannot be verified (Issue #670) | kept; fix the submodule by hand |
+| `WOULD REAP` / `REAPED` | Proven merged (tip contained in a merged PR head, or the branch has its own commits and all of them are in `origin/<default branch>`) and clean | `--prune`: plain `git worktree remove` + `git branch -d` (`-D` with merged-PR evidence); a worktree with verified-clean checked-out submodules is removed with one `git worktree remove --force`, no deinit (Issue #670). Not limited by age |
 | `CONFIRM` | Not proven merged (unmerged work, or no own commit and no merged PR), no open PR, older than the threshold | **never deleted in any mode**; prints branch, tip commit and unmerged commit count for the user to decide |
 
 Details:

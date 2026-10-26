@@ -918,6 +918,262 @@ test_neg_branch_typo_with_path
 test_neg_ignored_content
 test_default_branch_ls_remote
 
+# ---------- tests: worktrees with checked-out submodules (Issue #670) ----------
+# The submodule sources are local bare repositories (protocol.file.allow=always for the file
+# transport): sub.git (contains a nested submodule deps/inner from inner.git). The submodule is added
+# inside the task worktree, so its repository lives in the worktree's git-dir
+# (<common-dir>/worktrees/<name>/modules), exactly like a real task worktree.
+#
+# mk_sub_sandbox <src-dir> [recursive:0|1]: mk_sandbox + libs/sub committed on feat/test and
+# fast-forwarded into main; recursive=1 also checks out libs/sub/deps/inner in the worktree.
+mk_sub_sandbox() {
+  local src="$1" rec="${2:-0}" sb
+  (
+    cd "$src" || exit 1
+    git init -q -b main innerseed
+    cd innerseed || exit 1
+    git config user.email "test@example.com"
+    git config user.name "Test"
+    echo inner > i.txt
+    git add i.txt
+    git commit -q -m "inner seed"
+    cd .. && git clone -q --bare innerseed inner.git
+    git init -q -b main seed
+    cd seed || exit 1
+    git config user.email "test@example.com"
+    git config user.name "Test"
+    printf '*.log\n__pycache__/\n*.pyc\n' > .gitignore
+    echo one > a.txt
+    git add .gitignore a.txt
+    git commit -q -m "sub seed"
+    git -c protocol.file.allow=always submodule add -q "$src/inner.git" deps/inner
+    git commit -q -m "add inner"
+    cd .. && git clone -q --bare seed sub.git
+  ) >/dev/null 2>&1 || return 1
+  sb=$(mk_sandbox) || return 1
+  (
+    cd "$sb/.worktrees/feat-test" || exit 1
+    git -c protocol.file.allow=always submodule add -q "$src/sub.git" libs/sub >/dev/null 2>&1 || exit 1
+    if [ "$rec" = "1" ]; then
+      git -c protocol.file.allow=always submodule update --init --recursive -q >/dev/null 2>&1 || exit 1
+    fi
+    git commit -q -m "add submodule"
+    cd "$sb" && git merge -q --ff-only feat/test
+  ) >/dev/null 2>&1 || return 1
+  echo "$sb"
+}
+
+# Wrapper that runs the script from the sandbox root and keeps stdout+stderr in $out, status in $rc.
+# run_sub_case <label> <mutation> <hide:0|1|2> <expect:removed|kept> [extra script args]
+# Environment: SUB_SETUP (normal|recursive|main-init|inactive|conflict|badmodules|uncheckedout|modulesonly),
+#              SUB_TARGET (path of the mutated submodule inside the worktree, default libs/sub).
+# mutation: none | cache | modified | staged | untracked | ignored | moved
+# hide=1 sets submodule.<name>.ignore=all in the worktree and hide=2 also inside libs/sub, so the
+# superproject's own `git status` stays quiet and the submodule-specific check is the only defense.
+# For "kept" cases the sentinel (file content or submodule HEAD) must still be there afterwards.
+run_sub_case() {
+  local label="$1" mutation="$2" hide="$3" expect="$4"; shift 4
+  local setup="${SUB_SETUP:-normal}" target="${SUB_TARGET:-libs/sub}" rec=0
+  TOTAL=$((TOTAL + 1))
+  [ "$setup" = "recursive" ] && rec=1
+  local src sb out rc wt sub head_before head_after ok=1 gd
+  src=$(mktemp -d)
+  sb=$(mk_sub_sandbox "$src" "$rec") || { fail "$label (setup failed)"; rm -rf "$src"; return; }
+  wt="$sb/.worktrees/feat-test"
+  sub="$wt/$target"
+  gd=$(git -C "$wt" rev-parse --absolute-git-dir)
+  case "$setup" in
+    main-init) git -C "$sb" -c protocol.file.allow=always submodule update --init -q >/dev/null 2>&1 ;;
+    inactive)  git -C "$wt" config --unset "submodule.libs/sub.url" ;;
+    conflict)
+      local h
+      h=$(git -C "$wt/libs/sub" rev-parse HEAD)
+      printf '0 0000000000000000000000000000000000000000\tlibs/sub\n160000 %s 1\tlibs/sub\n160000 %s 2\tlibs/sub\n160000 %s 3\tlibs/sub\n' "$h" "$h" "$h" \
+        | git -C "$wt" update-index --index-info ;;
+    badmodules)
+      printf '[broken\n' >> "$wt/.gitmodules"
+      git -C "$wt" update-index --assume-unchanged .gitmodules ;;
+    uncheckedout|modulesonly)
+      rm -rf "$wt/libs/sub" && mkdir "$wt/libs/sub"
+      [ "$setup" = "uncheckedout" ] && rm -rf "$gd/modules" ;;
+  esac
+  case "$mutation" in
+    cache)     mkdir -p "$sub/pkg/__pycache__" && echo x > "$sub/pkg/__pycache__/m.pyc" ;;
+    modified)  echo more >> "$sub/a.txt" ;;
+    staged)    echo s > "$sub/staged.txt" && git -C "$sub" add staged.txt ;;
+    untracked) echo u > "$sub/untracked.txt" ;;
+    ignored)   echo i > "$sub/debug.log" ;;
+    moved)     git -C "$sub" -c user.email=t@example.com -c user.name=T commit -q --allow-empty -m moved ;;
+  esac
+  if [ "$hide" != "0" ]; then
+    git -C "$wt" config submodule.libs/sub.ignore all
+    [ "$hide" = "2" ] && git -C "$wt/libs/sub" config submodule.deps/inner.ignore all
+  fi
+  head_before=""
+  [ -e "$sub/.git" ] && head_before=$(git -C "$sub" rev-parse HEAD 2>/dev/null)
+  out=$(cd "$sb" && bash "$SCRIPT" feat/test main "$@" 2>&1); rc=$?
+  if [ "$expect" = "removed" ]; then
+    [ "$rc" -eq 0 ] || { echo "exit $rc: $out"; ok=0; }
+    [ ! -d "$wt" ] || { echo "worktree still exists: $out"; ok=0; }
+    git -C "$sb" show-ref --verify --quiet refs/heads/feat/test && { echo "branch not deleted: $out"; ok=0; }
+    git -C "$sb" worktree list --porcelain | grep -q "feat-test" && { echo "worktree still registered"; ok=0; }
+    printf '%s' "$out" | grep -q 'submodule deinit' && { echo "deinit mentioned: $out"; ok=0; }
+  else
+    [ "$rc" -eq 1 ] || { echo "exit $rc (want 1): $out"; ok=0; }
+    [ -d "$wt" ] || { echo "worktree removed: $out"; ok=0; }
+    git -C "$sb" show-ref --verify --quiet refs/heads/feat/test || { echo "branch deleted: $out"; ok=0; }
+    printf '%s' "$out" | grep -q 'libs/sub\|submodule\|cannot verify' || { echo "reason does not name the submodule: $out"; ok=0; }
+    case "$mutation" in
+      modified)  grep -q '^more$' "$sub/a.txt" || { echo "sentinel line in a.txt lost"; ok=0; } ;;
+      staged)    [ -f "$sub/staged.txt" ] || { echo "staged.txt lost"; ok=0; } ;;
+      untracked) [ -f "$sub/untracked.txt" ] || { echo "untracked.txt lost"; ok=0; } ;;
+      ignored)   [ -f "$sub/debug.log" ] || { echo "debug.log lost"; ok=0; } ;;
+    esac
+    if [ -n "$head_before" ]; then
+      head_after=$(git -C "$sub" rev-parse HEAD 2>/dev/null)
+      [ "$head_before" = "$head_after" ] || { echo "submodule HEAD changed"; ok=0; }
+    fi
+  fi
+  if [ "$ok" -eq 1 ]; then pass "$label"; else fail "$label"; fi
+  cleanup_sandbox "$sb"
+  rm -rf "$src" 2>/dev/null || true
+}
+
+test_submodule_cases() {
+  run_sub_case "submodule clean at recorded commit: worktree and branch removed" none 0 removed
+  run_sub_case "submodule clean + --force: worktree and branch removed" none 0 removed --force
+  run_sub_case "submodule with only regenerable caches: removed" cache 0 removed
+  run_sub_case "submodule modified file: kept, file content intact" modified 0 kept
+  run_sub_case "submodule modified file (superproject status hidden): kept" modified 1 kept
+  run_sub_case "submodule staged file (superproject status hidden): kept" staged 1 kept
+  run_sub_case "submodule untracked file: kept, file intact" untracked 0 kept
+  run_sub_case "submodule untracked file (superproject status hidden): kept" untracked 1 kept
+  run_sub_case "submodule ignored non-cache file: kept, file intact" ignored 0 kept
+  run_sub_case "submodule ignored non-cache file + --force: kept, file intact" ignored 0 kept --force
+  run_sub_case "submodule checked out at a different commit: kept, HEAD unchanged" moved 0 kept
+  run_sub_case "submodule at different commit (superproject status hidden): kept" moved 1 kept
+  # recursive
+  SUB_SETUP=recursive run_sub_case "nested submodules all clean: removed" none 0 removed
+  SUB_SETUP=recursive SUB_TARGET=libs/sub/deps/inner run_sub_case "nested submodule untracked file (all status hidden): kept, file intact" untracked 2 kept
+  SUB_SETUP=recursive SUB_TARGET=libs/sub/deps/inner run_sub_case "nested submodule ignored file (all status hidden): kept, file intact" ignored 2 kept
+  SUB_SETUP=recursive SUB_TARGET=libs/sub/deps/inner run_sub_case "nested submodule at a different commit (all status hidden): kept" moved 2 kept
+  # status prefix "-" but still checked out (url missing from the shared config): cannot verify
+  SUB_SETUP=inactive run_sub_case "checked out but inactive submodule with ignored file: kept, file intact" ignored 0 kept
+  # prefix U (unmerged gitlink) and a failing submodule status
+  SUB_SETUP=conflict run_sub_case "unmerged submodule entry (status U): kept" none 0 kept
+  SUB_SETUP=badmodules run_sub_case "git submodule status fails (broken .gitmodules): kept" none 0 kept
+  # no checked-out submodule in the task worktree
+  SUB_SETUP=uncheckedout run_sub_case "submodule not checked out and no modules dir: plain removal" none 0 removed
+  SUB_SETUP=modulesonly run_sub_case "only <git-dir>/modules left (no checked-out submodule): force path removes" none 0 removed
+}
+
+# The main checkout has the submodule initialized too: cleaning the task worktree must leave the main
+# checkout's url config, status prefix and files alone (init/deinit would write the shared config).
+TOTAL=$((TOTAL + 1))
+test_main_checkout_submodule_untouched() {
+  local src sb out rc ok=1 pre
+  src=$(mktemp -d)
+  sb=$(mk_sub_sandbox "$src" 0) || { fail "main checkout submodule (setup failed)"; rm -rf "$src"; return; }
+  git -C "$sb" -c protocol.file.allow=always submodule update --init -q >/dev/null 2>&1
+  [ -f "$sb/libs/sub/a.txt" ] || { echo "setup: main checkout submodule missing"; ok=0; }
+  out=$(cd "$sb" && bash "$SCRIPT" feat/test main 2>&1); rc=$?
+  [ "$rc" -eq 0 ] || { echo "exit $rc: $out"; ok=0; }
+  [ ! -d "$sb/.worktrees/feat-test" ] || { echo "worktree still exists"; ok=0; }
+  [ -n "$(git -C "$sb" config --get submodule.libs/sub.url)" ] || { echo "main checkout url config lost"; ok=0; }
+  pre=$(git -C "$sb" submodule status | cut -c1)
+  [ "$pre" = " " ] || { echo "main checkout status prefix is '$pre'"; ok=0; }
+  [ -f "$sb/libs/sub/a.txt" ] || { echo "main checkout submodule files lost"; ok=0; }
+  if [ "$ok" -eq 1 ]; then pass "main checkout keeps its submodule url, status and files after worktree cleanup"
+  else fail "main checkout keeps its submodule url, status and files after worktree cleanup"; fi
+  cleanup_sandbox "$sb"
+  rm -rf "$src" 2>/dev/null || true
+}
+
+# dry-run: prints only remove --force (no deinit), changes nothing
+TOTAL=$((TOTAL + 1))
+test_submodule_dry_run() {
+  local src sb out rc ok=1
+  src=$(mktemp -d)
+  sb=$(mk_sub_sandbox "$src" 0) || { fail "submodule dry-run (setup failed)"; rm -rf "$src"; return; }
+  out=$(cd "$sb" && bash "$SCRIPT" feat/test main --dry-run 2>&1); rc=$?
+  [ "$rc" -eq 0 ] || { echo "exit $rc: $out"; ok=0; }
+  printf '%s' "$out" | grep -q '\[dry-run\] git worktree remove --force' || { echo "no remove --force plan: $out"; ok=0; }
+  printf '%s' "$out" | grep -q 'deinit' && { echo "deinit in dry-run output: $out"; ok=0; }
+  [ -f "$sb/.worktrees/feat-test/libs/sub/a.txt" ] || { echo "worktree touched in dry-run"; ok=0; }
+  git -C "$sb" show-ref --verify --quiet refs/heads/feat/test || { echo "branch removed in dry-run"; ok=0; }
+  if [ "$ok" -eq 1 ]; then pass "submodule worktree dry-run only prints remove --force, no deinit"
+  else fail "submodule worktree dry-run only prints remove --force, no deinit"; fi
+  cleanup_sandbox "$sb"
+  rm -rf "$src" 2>/dev/null || true
+}
+
+# A worktree without submodules must never see --force
+TOTAL=$((TOTAL + 1))
+test_no_submodule_no_force() {
+  local sb out
+  sb=$(mk_sandbox) || { fail "setup failed"; return; }
+  out=$(cd "$sb" && bash "$SCRIPT" feat/test main --dry-run 2>&1)
+  if printf '%s' "$out" | grep -q 'remove --force\|submodule deinit'; then
+    fail "worktree without submodules: dry-run plan must not contain --force or deinit"
+  else
+    pass "worktree without submodules: dry-run plan has neither --force nor deinit"
+  fi
+  cleanup_sandbox "$sb"
+}
+
+# --force rm -rf fallback must refuse a worktree holding a checked-out submodule. The plain removal
+# path is made to fail with a stub `git` that fails `worktree remove` (simulated Windows file lock).
+TOTAL=$((TOTAL + 1))
+test_rmrf_refuses_checked_out_submodule() {
+  local src sb out rc ok=1 realgit stub wt
+  src=$(mktemp -d)
+  sb=$(mk_sub_sandbox "$src" 0) || { fail "rm -rf submodule guard (setup failed)"; rm -rf "$src"; return; }
+  wt="$sb/.worktrees/feat-test"
+  # Make the submodule check see "no submodule data" (modules removed, prefix "-" with no .git) is not
+  # possible while a .git exists, so test the guard function directly instead.
+  out=$(
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^wt_has_checked_out_gitlink() {/,/^}/p' "$SCRIPT")"
+    wt_has_checked_out_gitlink "$wt" && echo GUARD_TRUE || echo GUARD_FALSE
+  )
+  [ "$out" = "GUARD_TRUE" ] || { echo "guard did not detect checked-out gitlink: $out"; ok=0; }
+  rm -rf "$wt/libs/sub" && mkdir "$wt/libs/sub"
+  out=$(
+    eval "$(sed -n '/^wt_has_checked_out_gitlink() {/,/^}/p' "$SCRIPT")"
+    wt_has_checked_out_gitlink "$wt" && echo GUARD_TRUE || echo GUARD_FALSE
+  )
+  [ "$out" = "GUARD_FALSE" ] || { echo "guard fired for an empty submodule dir: $out"; ok=0; }
+  if [ "$ok" -eq 1 ]; then pass "rm -rf fallback guard detects only checked-out submodules"
+  else fail "rm -rf fallback guard detects only checked-out submodules"; fi
+  cleanup_sandbox "$sb"
+  rm -rf "$src" 2>/dev/null || true
+}
+
+# The guard must still see a gitlink whose path git would C-quote (non-ASCII, quote, space).
+TOTAL=$((TOTAL + 1))
+test_rmrf_guard_quoted_path() {
+  local repo p out
+  repo=$(mktemp -d)
+  p="libs/子模块 'q'"
+  git -C "$repo" init -q
+  git -C "$repo" update-index --add --cacheinfo "160000,$(printf '%040d' 1),$p"
+  mkdir -p "$repo/$p" && : > "$repo/$p/.git"
+  out=$(
+    eval "$(sed -n '/^wt_has_checked_out_gitlink() {/,/^}/p' "$SCRIPT")"
+    wt_has_checked_out_gitlink "$repo" && echo GUARD_TRUE || echo GUARD_FALSE
+  )
+  if [ "$out" = "GUARD_TRUE" ]; then pass "rm -rf fallback guard sees gitlinks with quoted (non-ASCII) paths"
+  else fail "rm -rf fallback guard sees gitlinks with quoted (non-ASCII) paths (got $out)"; fi
+  rm -rf "$repo" 2>/dev/null || true
+}
+
+test_submodule_cases
+test_submodule_dry_run
+test_no_submodule_no_force
+test_main_checkout_submodule_untouched
+test_rmrf_refuses_checked_out_submodule
+test_rmrf_guard_quoted_path
+
 echo ""
 echo "Summary: $((TOTAL - FAILED))/$TOTAL tests passed"
 exit $FAILED

@@ -25,6 +25,13 @@
 #   TASK-broken        merged, old, .git link broken            -> SKIP, untouched
 #   stray/             plain directory under .worktrees         -> SKIP, untouched
 #   develop            protected branch, merged, old         -> KEEP (never touched)
+#   Worktrees with an initialized submodule (Issue #670, local bare repo as source), all merged:
+#   TASK-sub-clean     submodule at recorded commit, clean (+ regenerable cache) -> REAPED
+#   TASK-sub-mod       submodule has a modified file         -> kept (DIRTY: superproject sees it)
+#   TASK-sub-mod-h     same, superproject status hidden (submodule.<n>.ignore=all) -> SUBMODULE, kept
+#   TASK-sub-untr-h    submodule untracked file, status hidden -> SUBMODULE, kept
+#   TASK-sub-ign       submodule ignored non-cache file      -> SUBMODULE, kept
+#   TASK-sub-moved-h   submodule at a different commit, status hidden -> SUBMODULE, kept
 
 set -uo pipefail
 
@@ -109,6 +116,73 @@ echo keep > "$REPO/.worktrees/stray/f"
 mkdir -p "$REPO/.worktrees/lanes"
 git_r worktree add -q -b lane/side/init "$REPO/.worktrees/lanes/side" main
 
+# --- worktrees with initialized submodules (Issue #670) ---
+SUBSRC="${TMP}/subsrc"
+mkdir -p "$SUBSRC"
+(
+  cd "$SUBSRC" || exit 1
+  git init -q -b main seed
+  cd seed || exit 1
+  git config user.email "test@example.com"
+  git config user.name "Test"
+  printf '*.log\n__pycache__/\n*.pyc\n' > .gitignore
+  echo one > a.txt
+  git add .gitignore a.txt
+  git commit -q -m "sub seed"
+  cd .. && git init -q -b main innerseed && cd innerseed || exit 1
+  git config user.email "test@example.com"
+  git config user.name "Test"
+  echo inner > i.txt
+  git add i.txt
+  git commit -q -m "inner seed"
+  cd .. && git clone -q --bare innerseed inner.git
+  cd seed || exit 1
+  git -c protocol.file.allow=always submodule add -q "$SUBSRC/inner.git" deps/inner
+  git commit -q -m "add inner"
+  cd .. && git clone -q --bare seed sub.git
+) >/dev/null 2>&1 || { echo "1..0 # SKIP cannot create submodule source"; exit 0; }
+
+# add_sub_wt <task> <branch> [recursive] — worktree whose commit adds libs/sub-<task suffix> (checked out
+# inside the worktree; nested deps/inner too when recursive=1), then fast-forwards main so the branch is
+# merged (own commit, contained in main).
+add_sub_wt() {
+  add_wt "$1" "$2" 0
+  git -C "$REPO/.worktrees/$1" -c protocol.file.allow=always submodule add -q "$SUBSRC/sub.git" "libs/sub-${1#TASK-sub-}" >/dev/null 2>&1
+  if [ "${3:-0}" = "1" ]; then
+    git -C "$REPO/.worktrees/$1" -c protocol.file.allow=always submodule update --init --recursive -q >/dev/null 2>&1
+  fi
+  git -C "$REPO/.worktrees/$1" commit -q -m "add submodule"
+  git_r merge -q --ff-only "$2"
+}
+for t in clean mod mod-h untr-h ign moved-h inact; do
+  add_sub_wt "TASK-sub-$t" "feat/TASK-sub-$t"
+done
+for t in nest nest-h; do
+  add_sub_wt "TASK-sub-$t" "feat/TASK-sub-$t" 1
+done
+SUBW="$REPO/.worktrees"
+mkdir -p "$SUBW/TASK-sub-clean/libs/sub-clean/pkg/__pycache__"
+echo x > "$SUBW/TASK-sub-clean/libs/sub-clean/pkg/__pycache__/m.pyc"
+echo more >> "$SUBW/TASK-sub-mod/libs/sub-mod/a.txt"
+echo more >> "$SUBW/TASK-sub-mod-h/libs/sub-mod-h/a.txt"
+echo u > "$SUBW/TASK-sub-untr-h/libs/sub-untr-h/untracked.txt"
+echo i > "$SUBW/TASK-sub-ign/libs/sub-ign/debug.log"
+git -C "$SUBW/TASK-sub-moved-h/libs/sub-moved-h" -c user.email=t@example.com -c user.name=T commit -q --allow-empty -m moved
+for t in mod-h untr-h moved-h; do
+  git -C "$SUBW/TASK-sub-$t" config "submodule.libs/sub-$t.ignore" all
+done
+# inactive but still checked out (status prefix "-"), holding an ignored file
+git -C "$SUBW/TASK-sub-inact" config --unset "submodule.libs/sub-inact.url"
+echo i > "$SUBW/TASK-sub-inact/libs/sub-inact/debug.log"
+# nested: inner submodule dirty, every status above it hidden
+echo u > "$SUBW/TASK-sub-nest-h/libs/sub-nest-h/deps/inner/untracked.txt"
+git -C "$SUBW/TASK-sub-nest-h" config "submodule.libs/sub-nest-h.ignore" all
+git -C "$SUBW/TASK-sub-nest-h/libs/sub-nest-h" config "submodule.deps/inner.ignore" all
+# the main checkout has libs/sub-clean initialized too (shared config must survive the reap)
+git_r -c protocol.file.allow=always submodule update --init -q libs/sub-clean >/dev/null 2>&1
+MAIN_URL_BEFORE=$(git_r config --get submodule.libs/sub-clean.url || true)
+SUB_MOVED_HEAD=$(git -C "$SUBW/TASK-sub-moved-h/libs/sub-moved-h" rev-parse HEAD)
+
 echo "scratch" > "$REPO/.worktrees/TASK-merged-dirty/untracked.txt"
 
 SQUASH_TIP=$(git -C "$REPO/.worktrees/TASK-squash" rev-parse HEAD)
@@ -153,7 +227,7 @@ run_reaper() {
 
 branch_exists() { git_r show-ref --verify --quiet "refs/heads/$1"; }
 
-printf '1..%s\n' "28"
+printf '1..%s\n' "57"
 
 # ---------------------------------------------------------------------------
 # dry-run
@@ -174,6 +248,20 @@ printf '%s\n' "$OUT" | grep -q 'KEEP.*TASK-protected.*protected' && ok "dry-run:
 printf '%s\n' "$OUT" | grep -q 'DIRTY.*TASK-ignored.*\.tmp/' && ok "dry-run: ignored content reported as DIRTY with the path" || notok "dry-run: TASK-ignored not DIRTY" "$OUT"
 printf '%s\n' "$OUT" | grep -q 'DIRTY.*TASK-merged-dirty' && ok "dry-run: merged but dirty reported as DIRTY" || notok "dry-run: no DIRTY line" "$OUT"
 
+printf '%s\n' "$OUT" | grep -q 'WOULD REAP.*TASK-sub-clean.*worktree remove --force' && ok "dry-run: clean submodule worktree prints the remove --force plan" || notok "dry-run: no plan for TASK-sub-clean" "$OUT"
+printf '%s\n' "$OUT" | grep -q 'deinit' && notok "dry-run: deinit appears in the output" "$OUT" || ok "dry-run: no submodule deinit anywhere"
+printf '%s\n' "$OUT" | grep -q 'WOULD REAP.*TASK-sub-nest ' && ok "dry-run: nested clean submodules reported as WOULD REAP" || notok "dry-run: TASK-sub-nest not WOULD REAP" "$OUT"
+printf '%s\n' "$OUT" | grep -q 'DIRTY *: TASK-sub-mod ' && ok "dry-run: TASK-sub-mod (visible to superproject status) reported as DIRTY" || notok "dry-run: TASK-sub-mod not DIRTY" "$OUT"
+for t in mod-h untr-h ign moved-h inact nest-h; do
+  printf '%s\n' "$OUT" | grep -q "SUBMODULE : TASK-sub-$t " && ok "dry-run: TASK-sub-$t reported as SUBMODULE" || notok "dry-run: TASK-sub-$t not SUBMODULE" "$OUT"
+done
+printf '%s\n' "$OUT" | grep -q 'SUBMODULE : TASK-sub-moved-h.*libs/sub-moved-h.*differs' && ok "dry-run: moved submodule reason names path and commit mismatch" || notok "dry-run: no SUBMODULE reason for moved" "$OUT"
+SUBDRY_OK=1
+for t in clean mod mod-h untr-h ign moved-h inact nest nest-h; do
+  [ -d "$REPO/.worktrees/TASK-sub-$t/libs/sub-$t" ] && branch_exists "feat/TASK-sub-$t" || SUBDRY_OK=0
+done
+[ "$SUBDRY_OK" -eq 1 ] && ok "dry-run: submodule worktrees and branches all untouched" || notok "dry-run: submodule worktree or branch changed" "$OUT"
+
 # ---------------------------------------------------------------------------
 # prune
 # ---------------------------------------------------------------------------
@@ -188,6 +276,33 @@ OUT=$(run_reaper --prune)
 { [ -f "$REPO/.worktrees/TASK-merged-dirty/untracked.txt" ] && branch_exists feat/TASK-merged-dirty; } \
   && ok "prune: dirty merged worktree and branch kept" || notok "prune: dirty merged worktree was touched" "$OUT"
 printf '%s\n' "$OUT" | grep -q 'DIRTY.*TASK-merged-dirty' && ok "prune: DIRTY line printed" || notok "prune: no DIRTY line" "$OUT"
+
+{ [ ! -d "$REPO/.worktrees/TASK-sub-clean" ] && ! branch_exists feat/TASK-sub-clean; } \
+  && ok "prune: clean submodule worktree removed (single force remove) and branch deleted" || notok "prune: TASK-sub-clean not fully removed" "$OUT"
+git_r worktree list --porcelain | grep -q 'TASK-sub-clean' && notok "prune: TASK-sub-clean still registered" || ok "prune: TASK-sub-clean no longer registered"
+printf '%s\n' "$OUT" | grep -q 'REAPED.*TASK-sub-clean' && ok "prune: REAPED line for TASK-sub-clean" || notok "prune: no REAPED line for TASK-sub-clean" "$OUT"
+{ [ ! -d "$REPO/.worktrees/TASK-sub-nest" ] && ! branch_exists feat/TASK-sub-nest; } \
+  && ok "prune: nested clean submodules: worktree removed and branch deleted" || notok "prune: TASK-sub-nest not fully removed" "$OUT"
+for t in mod mod-h untr-h ign moved-h inact nest-h; do
+  { [ -d "$REPO/.worktrees/TASK-sub-$t/libs/sub-$t" ] && branch_exists "feat/TASK-sub-$t"; } \
+    && ok "prune: TASK-sub-$t worktree and branch kept" || notok "prune: TASK-sub-$t was removed" "$OUT"
+done
+printf '%s\n' "$OUT" | grep -q 'SUBMODULE : TASK-sub-ign.*libs/sub-ign.*debug.log' && ok "prune: ignored non-cache file reason names the file" || notok "prune: no SUBMODULE reason for TASK-sub-ign" "$OUT"
+SUB_OK=1
+grep -q '^more$' "$SUBW/TASK-sub-mod/libs/sub-mod/a.txt" || SUB_OK=0
+grep -q '^more$' "$SUBW/TASK-sub-mod-h/libs/sub-mod-h/a.txt" || SUB_OK=0
+[ -f "$SUBW/TASK-sub-untr-h/libs/sub-untr-h/untracked.txt" ] || SUB_OK=0
+[ -f "$SUBW/TASK-sub-ign/libs/sub-ign/debug.log" ] || SUB_OK=0
+[ -f "$SUBW/TASK-sub-inact/libs/sub-inact/debug.log" ] || SUB_OK=0
+[ -f "$SUBW/TASK-sub-nest-h/libs/sub-nest-h/deps/inner/untracked.txt" ] || SUB_OK=0
+[ "$(git -C "$SUBW/TASK-sub-moved-h/libs/sub-moved-h" rev-parse HEAD)" = "$SUB_MOVED_HEAD" ] || SUB_OK=0
+[ "$SUB_OK" -eq 1 ] && ok "prune: all kept submodule worktrees still hold their sentinel content" || notok "prune: a sentinel file or submodule HEAD was lost"
+printf '%s\n' "$OUT" | grep -q 'SUBMODULE : TASK-sub-inact.*inact' && ok "prune: inactive-but-checked-out submodule reported" || notok "prune: no SUBMODULE line for TASK-sub-inact" "$OUT"
+printf '%s\n' "$OUT" | grep -q 'SUBMODULE : TASK-sub-nest-h.*deps/inner' && ok "prune: nested submodule reason names the inner path" || notok "prune: no SUBMODULE line for TASK-sub-nest-h" "$OUT"
+[ "$(git_r config --get submodule.libs/sub-clean.url || true)" = "$MAIN_URL_BEFORE" ] && [ -n "$MAIN_URL_BEFORE" ] \
+  && [ "$(git_r submodule status libs/sub-clean | cut -c1)" = " " ] && [ -f "$REPO/libs/sub-clean/a.txt" ] \
+  && ok "prune: main checkout keeps its submodule url, status and files" || notok "prune: main checkout submodule state changed" "$OUT"
+printf '%s\n' "$OUT" | grep -q 'SUBMODULE : TASK-sub-untr-h.*untracked.txt' && ok "prune: untracked file reason names the file" || notok "prune: no SUBMODULE reason for TASK-sub-untr-h" "$OUT"
 
 { [ -d "$REPO/.worktrees/TASK-abandoned" ] && branch_exists feat/TASK-abandoned; } \
   && ok "prune: unmerged abandoned worktree and branch NOT deleted" || notok "prune: unmerged abandoned worktree was deleted" "$OUT"

@@ -15,13 +15,27 @@
 #              tip differs from the commit it was created at, per reflog) and is fully contained in the base. A branch with no own commit and no
 #              merged PR (e.g. just cut from the base) is NEVER reaped; it is only a CONFIRM
 #              candidate once it is older than the threshold.
+#   SUBMODULE  merged and clean, but a checked-out submodule is not at its recorded commit or has
+#              uncommitted/ignored content (or cannot be verified) — never removed; reason listed
 #   SKIP       directories that are not worktree roots (or whose .git link is broken), and the
 #              lanes/ directory (long-lived lane worktrees, closed by the lane-close procedure)
 #   Protected: main, master, develop and origin's default branch are never touched (KEEP).
 #   CONFIRM    NOT merged, no open PR, older than the threshold: listed with branch, tip commit and
 #              unmerged commit count for the user to decide. NEVER deleted, in any mode.
 # Removal uses a plain `git worktree remove` (never --force) and `git branch -d`, or `-D` only
-# with merged-PR evidence. Remote branches are left to GitHub's auto-delete-head-branch setting.
+# with merged-PR evidence. The single exception (Issue #670) is a merged, clean worktree with
+# checked-out submodules: git refuses a non-force remove for those (the submodule repositories live
+# in <git-dir>/modules). It is removed with one `git worktree remove --force` ONLY when every
+# checked-out submodule (<path>/.git exists; recursive) has `git submodule status` prefix " "
+# (checked-out commit == recorded commit; "-", "+", "U" all block), is its own repository root, and
+# `git status --porcelain --ignored=matching` inside it shows nothing except regenerable caches.
+# `git submodule deinit` is deliberately NOT run: init/deinit write the config shared by all
+# worktrees, so it would unregister the submodules of the main checkout. Only the checked-out
+# commit is verified; commits on other local branches inside a submodule are not examined and are
+# lost with the force removal. A worktree with <git-dir>/modules but no checked-out submodule also
+# takes this force path. Otherwise the worktree is kept and a `SUBMODULE :` line gives the reason.
+# Worktrees without checked-out submodules and without <git-dir>/modules are unaffected.
+# Remote branches are left to GitHub's auto-delete-head-branch setting.
 # After the user confirms an abandoned branch, delete it manually: worktree, local branch, and
 #   gh api repos/<owner>/<repo>/git/ref/heads/<branch>   (read back; SHA must equal the listed tip)
 #   gh api -X DELETE repos/<owner>/<repo>/git/refs/heads/<branch>
@@ -165,6 +179,85 @@ wt_dirty_detail() {
   return 0
 }
 
+# Submodule check of worktree $1 (Issue #670). Prints "none", "clean" or "bad: <detail>".
+# A submodule counts as checked out when <path>/.git exists; the status prefix alone is not trusted
+# (a "-" submodule can still hold files). Walks the submodule tree breadth-first with a work list.
+#   none:  no checked-out submodule and no <git-dir>/modules.
+#   clean: every checked-out submodule (recursive) has prefix " ", is its own repository root and
+#          holds nothing but regenerable caches besides tracked content (also when only
+#          <git-dir>/modules exists).
+#   bad:   anything else, including a command that fails (cannot verify).
+wt_submodule_state() {
+  _has=0
+  _probs=""
+  _first=1
+  _gd=$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null || true)
+  if [ -n "$_gd" ] && [ -d "$_gd/modules" ]; then _has=1; fi
+  _queue="$1"
+  while [ -n "$_queue" ]; do
+    _dir=$(printf '%s\n' "$_queue" | head -n 1)
+    _queue=$(printf '%s\n' "$_queue" | tail -n +2)
+    if ! _st=$(git -C "$_dir" submodule status 2>/dev/null); then
+      if [ "$_first" -eq 0 ]; then
+        _probs="${_probs}submodule ${_dir#"$1"/}: git submodule status failed (cannot verify);"
+      elif [ "$_has" -eq 1 ]; then
+        _probs="${_probs}git submodule status failed (cannot verify);"
+      fi
+      _first=0
+      continue
+    fi
+    _first=0
+    while IFS= read -r _line; do
+      [ -n "$_line" ] || continue
+      _prefix=$(printf '%s' "$_line" | cut -c1)
+      _rest=$(printf '%s' "$_line" | cut -c2-)
+      _rest=${_rest#* }
+      _sp=${_rest% (*}
+      _sub="$_dir/$_sp"
+      [ -e "$_sub/.git" ] || continue   # not checked out: nothing on disk to lose
+      _has=1
+      _label=${_sub#"$1"/}
+      case "$_prefix" in
+        " ") ;;
+        "-") _probs="${_probs}submodule $_label: checked out but not active (status prefix '-'), cannot verify;"; continue ;;
+        *)   _probs="${_probs}submodule $_label: checked-out commit differs from the recorded one or has conflicts (status prefix '$_prefix');"; continue ;;
+      esac
+      _top=$(git -C "$_sub" rev-parse --show-toplevel 2>/dev/null || true)
+      _got=""
+      [ -n "$_top" ] && _got=$(cd "$_top" 2>/dev/null && pwd -P || true)
+      _want=$(cd "$_sub" 2>/dev/null && pwd -P || true)
+      if [ -z "$_got" ] || [ "$_got" != "$_want" ]; then
+        _probs="${_probs}submodule $_label: not its own repository root (cannot verify);"
+        continue
+      fi
+      if ! _sout=$(git -C "$_sub" status --porcelain --ignored=matching 2>/dev/null); then
+        _probs="${_probs}submodule $_label: git status failed (cannot verify);"
+        continue
+      fi
+      _sbad=$(printf '%s\n' "$_sout" | grep -v '^$' \
+        | grep -v -E '^!! (.*/)?(__pycache__|\.pytest_cache)/$' \
+        | grep -v -E '^!! .*\.pyc$' \
+        | head -n 5 | tr '\n' ';' || true)
+      if [ -n "$_sbad" ]; then
+        _probs="${_probs}submodule $_label: $_sbad"
+        continue
+      fi
+      _queue="${_queue:+$_queue
+}$_sub"
+    done <<SUBEOF
+$_st
+SUBEOF
+  done
+  if [ -n "$_probs" ]; then
+    printf 'bad: %s' "$_probs"
+  elif [ "$_has" -eq 1 ]; then
+    printf 'clean'
+  else
+    printf 'none'
+  fi
+  return 0
+}
+
 # Prints the merged-PR head containing commit $2 (ancestor-or-equal) for branch $1; else fails.
 merged_pr_head_containing() {
   _heads=$(merged_pr_heads "$1" || true)
@@ -277,6 +370,36 @@ for wt in "${WT_ROOT}"/*/; do
     if [ -n "$dirty_detail" ]; then
       printf 'DIRTY   : %s (branch "%s" is merged — %s — but the worktree has uncommitted or ignored content that would be lost: %s; kept)\n' \
         "$task_id" "$branch" "$evidence" "$dirty_detail"
+      continue
+    fi
+    sub_state=$(wt_submodule_state "$wt")
+    case "$sub_state" in
+      bad:*)
+        printf 'SUBMODULE : %s (branch "%s" is merged — %s — but a checked-out submodule blocks removal: %s; kept)\n' \
+          "$task_id" "$branch" "$evidence" "${sub_state#bad: }"
+        continue
+        ;;
+    esac
+    if [ "$sub_state" = "clean" ]; then
+      # Issue #670: git refuses a non-force remove while submodule data exists. Verified
+      # above: worktree clean, every submodule at its recorded commit with no extra content.
+      if [ "$MODE" = "--prune" ]; then
+        if git -C "$REPO_ROOT" worktree remove --force "$wt" 2>/dev/null; then
+          if git -C "$REPO_ROOT" branch -d "$branch" >/dev/null 2>&1; then
+            :
+          elif [ -n "$pr_head" ] && git -C "$REPO_ROOT" branch -D "$branch" >/dev/null 2>&1; then
+            :
+          else
+            printf 'WARN    : %s worktree removed but local branch "%s" was not deleted\n' "$task_id" "$branch" >&2
+          fi
+          printf 'REAPED  : %s (branch "%s", %s, submodules verified clean)\n' "$task_id" "$branch" "$evidence"
+        else
+          printf 'ERROR   : failed to remove worktree %s\n' "$wt" >&2
+        fi
+      else
+        printf 'WOULD REAP: %s (branch "%s", %s, clean, submodules verified clean) [dry-run] would run: git worktree remove --force %s\n' \
+          "$task_id" "$branch" "$evidence" "$wt"
+      fi
       continue
     fi
     if [ "$MODE" = "--prune" ]; then
