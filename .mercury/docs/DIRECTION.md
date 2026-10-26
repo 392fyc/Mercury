@@ -159,10 +159,11 @@ Mercury 的核心价值不在代码里，在方法论里。
 
 **当前 skills（按优先级）**:
 1. **pr-flow** — PR 全流程自动化（创建、审查、修复、merge）— 最高优先
-2. **autoresearch** — 自主研究协议（多轮搜索 + 验证门禁）
-3. **web-research** — Web 研究强制协议
-4. **periodic-maintenance** (#92) — 周期性自治维护 Agent
-5. **ext-tracker** (#157) — 外部信息变更自动追踪
+2. **web-research** — Web 研究强制协议
+3. **periodic-maintenance** (#92) — 周期性自治维护 Agent
+4. **ext-tracker** (#157) — 外部信息变更自动追踪
+
+autoresearch 已于 #668 删除；上游 OMX/OMC autoresearch 的评估结论见 `.mercury/state/upstream-evaluations.json`。
 
 **每个 skill 必须**:
 - 独立可用（不依赖其他 Mercury 模块）

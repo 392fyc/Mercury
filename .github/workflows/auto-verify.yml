@@ -10,8 +10,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
       - name: Test template synchronization, provenance and PR merge gates
         run: python -B -m unittest discover -s tests/codex/project_template -p 'test_*.py'
+      - name: Upstream adapters regenerate the committed files (line endings normalised) (#668)
+        run: |
+          python -B adapters/html-plan/generate.py --check
+          python -B adapters/superpowers/generate.py --check
+          python -B adapters/caveman/generate.py --check
+          python -B -m unittest discover -s tests/codex -p 'test_upstream_adapters.py'
 
   toolcall-xml-lint:
     name: Tool-call XML Lint (#527)

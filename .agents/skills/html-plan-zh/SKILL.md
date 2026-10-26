@@ -23,10 +23,9 @@ cherry_picked_at: "2026-10-07"
   references/blocks.md                ← 每种块的语法。动笔前先读。
   references/design-proposals.md      ← 非代码的设计提案（规则、数值、评估）怎么写。
   examples/scheduled-send.html        ← 一份完整的中文计划。照它的结构写。
-  maintenance/localize.py             ← 维护用：上游更新后重新生成中文运行时
 ```
 
-在 Mercury 仓库内，本目录是 `.agents/skills/html-plan-zh/`；用户级副本在 `~/.claude/skills/html-plan-zh/`。
+在 Mercury 仓库内，本目录是 `.agents/skills/html-plan-zh/`；用户级副本在 `~/.claude/skills/html-plan-zh/`。本目录由 `adapters/html-plan/generate.py` 从钉住的上游子模块生成，不要手改。
 
 ## 论断树
 

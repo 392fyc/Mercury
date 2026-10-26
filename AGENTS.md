@@ -71,6 +71,9 @@ protocol to CLI-generated scaffolding or registry imports, read
 eligible source paths qualify for its exceptions. Unlisted generators and
 external file copies through local paths follow the full import protocol.
 
+Upstreams evaluated and deliberately not imported are recorded in
+`.mercury/state/upstream-evaluations.json`, not in `upstream-manifest.json`.
+
 ## Cross-lane messages
 
 <!-- lane-receiver-rule:begin — shared by Codex and Claude Code (CLAUDE.md imports this file); checked by scripts/check-lane-receiver-rule.sh -->

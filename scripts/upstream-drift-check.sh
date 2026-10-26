@@ -121,6 +121,14 @@ for ((i=0; i<count; i++)); do
     continue
   fi
 
+  # An entry whose upstream file was deliberately left behind after upstream removed it
+  # records `upstream_removed: true`; it is acknowledged, not drift (#668).
+  if [[ "$(jq -r ".[$i].upstream_removed // false" "$MERGED")" == "true" ]]; then
+    echo "SKIP (upstream removed; kept by decision)"
+    skipped=$((skipped + 1))
+    continue
+  fi
+
   if [[ -z "$upstream_repo" || "$upstream_repo" == "null" || \
         -z "$upstream_path" || "$upstream_path" == "null" ]]; then
     echo "SKIP (manifest missing upstream_repo or upstream_path)"

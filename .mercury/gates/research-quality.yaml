@@ -1,21 +1,19 @@
 # Mercury Research Quality Gate Configuration
 # Location: .mercury/gates/research-quality.yaml
 # Referenced by:
-#   - .agents/skills/autoresearch/SKILL.md (Codex autoresearch)
 #   - user-level Claude web-research skill (light gate thresholds)
 #   - .agents/skills/web-research/SKILL.md (Codex light gate)
-# NOTE: The Codex autoresearch skill may embed key thresholds for standalone
-# operation. When updating thresholds, check it as well.
 
 # Tiered research routing
 routing:
-  # Conditions that trigger deep research (Research Agent)
+  # Conditions that trigger deep research (Research Agent).
+  # No skill currently executes the deep path: autoresearch was removed in #668.
   deep:  # ANY of these conditions triggers deep path (OR logic)
     - research_questions_count: ">= 3"
     - cross_source_verification: ">= 3"
     - task_type: "architectural_decision"
     - explicit_scope: "deep"            # TaskBundle.researchScope === "deep"
-    - explicit_invocation: true          # /autoresearch or "深度调研"
+    - explicit_invocation: true          # or "深度调研"
 
   # Default fallback: light research (in-agent, web-search gate)
   # Any task not matching deep conditions falls here — this is the else branch
@@ -37,7 +35,7 @@ gates:
       total_search_budget: 15            # Total searches per task
       sdk_api_verification_budget: 20    # Extended budget for SDK/API verification
 
-  # Deep path: applied per-round in autoresearch skill
+  # Deep path: applied per round of deep research
   deep:
     mandatory:
       question_answer_rate: ">= 0.9"    # Answered / total questions
@@ -74,8 +72,7 @@ verification:
       FAIL: "Submit with FAIL status — human must decide next steps"
 
 # Canonical JSONL schema for results-{ISSUE_NUM}.jsonl
-# Single source of truth — referenced by:
-#   - .agents/skills/autoresearch/SKILL.md (Results JSONL section)
+# Single source of truth for the results file format
 jsonl_schema:
   file_pattern: "results-{ISSUE_NUM}.jsonl"   # Mercury mode
   standalone_file_pattern: "results.jsonl"    # Standalone mode (no ISSUE_NUM)
