@@ -4,12 +4,21 @@ on:
   pull_request:
     branches: [develop, master]
 
+# Every test file in the repository must be run here or in another workflow, on Linux and, where it can
+# pass, on Windows (#686). scripts/ci/check-test-coverage.py enforces that; its exemption and platform-gap
+# lists are scripts/ci/test-coverage.json. Shell tests run through scripts/ci/run-isolated.sh so they get a
+# throw-away HOME and never touch the runner user's real directories.
+#
+# Action majors follow each action's own README (checkout, setup-python and setup-node all show @v7 as of
+# 2026-10). Job names are what the PR status checks show; the existing ones keep their names, new jobs add
+# new names.
+
 jobs:
   template-contract:
     name: Portable Harness contract
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
       - name: Test template synchronization, provenance and PR merge gates
@@ -18,18 +27,47 @@ jobs:
         run: |
           python -B packs/plan/build/generate.py --check
           python -B packs/subagent-dev/build/generate.py --check
-          python -B -m unittest discover -s tests/tools -p 'test_upstream_adapters.py'
-      - name: Installed packs are in sync and the installer behaves (#674, #680)
+      - name: Installed packs are in sync and the installer behaves (#674, #680, #686)
         run: |
           python -B tools/mercury.py check --target .
-          python -B -m unittest discover -s tests/tools -p 'test_mercury.py'
+          python -B -m unittest discover -s tests/tools -p 'test_*.py' -v
           python -B -m unittest discover -s tests/core -p 'test_*.py'
+
+  template-contract-windows:
+    name: Portable Harness contract (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    # bash, not the Windows default pwsh: a pwsh script reports only its LAST command's exit code, so a failing
+    # first command in a multi-line step would pass silently. bash runs with -e and stops at the first failure.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Test template synchronization, provenance and PR merge gates
+        run: python -B -m unittest discover -s tests/codex/project_template -p 'test_*.py'
+      - name: Upstream adapters regenerate the committed files (line endings normalised) (#668)
+        run: |
+          python -B packs/plan/build/generate.py --check
+          python -B packs/subagent-dev/build/generate.py --check
+      - name: Installed packs are in sync and the installer behaves (#674, #680, #686)
+        run: |
+          python -B tools/mercury.py check --target .
+          python -B -m unittest discover -s tests/tools -p 'test_*.py' -v
+          python -B -m unittest discover -s tests/core -p 'test_*.py'
+      - name: The coverage checker reads Windows (CRLF) workflow files
+        run: python -B -m unittest discover -s tests/ci -p 'test_*.py'
 
   toolcall-xml-lint:
     name: Tool-call XML Lint (#527)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Lint Claude-context files for literal tool-call markers
         run: bash scripts/toolcall-xml-lint.sh
@@ -41,10 +79,91 @@ jobs:
     name: Cross-lane receiver rule (#615)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Both harnesses load the same receiver rule
         run: bash .mercury/packs/lanes/scripts/check-lane-receiver-rule.sh
 
       - name: Self-test the check
         run: bash tests/lanes/test-check-lane-receiver-rule.sh
+
+  shell-tests-linux:
+    name: Shell tests (Linux) (#686)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: jq is on the runner (the lane tests call it; ubuntu-latest ships it)
+        run: jq --version
+      - name: Lane tests, each in an isolated HOME
+        run: |
+          fail=0
+          for t in tests/lanes/*.sh; do
+            bash scripts/ci/run-isolated.sh "$t" || { echo "::error::$t failed"; fail=1; }
+          done
+          exit $fail
+      - name: Branch cleanup script
+        run: bash scripts/ci/run-isolated.sh tests/test_cleanup_worktree_branch.sh
+      - name: Worktree reaper
+        run: bash scripts/ci/run-isolated.sh tests/test_worktree_reaper.sh
+
+  shell-tests-windows:
+    name: Shell tests (Windows, Git Bash) (#686)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      # Only the tests that can pass under Git Bash. The others and why are in scripts/ci/test-coverage.json.
+      - name: Lane tests that do not need symlinks, python3, POSIX paths or a Linux jq
+        run: |
+          fail=0
+          for t in tests/lanes/handoff-launch.test.sh tests/lanes/test-check-lane-receiver-rule.sh \
+                   tests/lanes/test-check-main-idle.sh tests/lanes/test-lane-close.sh tests/lanes/test-lane-spawn.sh; do
+            bash scripts/ci/run-isolated.sh "$t" || { echo "::error::$t failed"; fail=1; }
+          done
+          exit $fail
+      - name: Tool-call XML linter self-test
+        run: bash scripts/ci/run-isolated.sh scripts/test-toolcall-xml-lint.sh
+      - name: Branch cleanup script
+        run: bash scripts/ci/run-isolated.sh tests/test_cleanup_worktree_branch.sh
+      - name: Worktree reaper
+        run: bash scripts/ci/run-isolated.sh tests/test_worktree_reaper.sh
+
+  playwright-mcp-wrapper:
+    name: Playwright MCP wrapper (${{ matrix.os }}, node ${{ matrix.node }}) (#686)
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        # 18 is the floor packs/playwright-mcp/package.json promises ("engines": {"node": ">=18.0.0"}); 24 is the
+        # current LTS line (Krypton; nodejs.org/en/about/previous-releases lists 24 and 22 as LTS, 26 as Current).
+        node: ['18', '24']
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Config-gate wrapper tests (node:test, no dependencies to install)
+        run: bash scripts/ci/run-isolated.sh packs/playwright-mcp/test/launch.test.cjs
+
+  test-coverage:
+    name: Every test file is run by a workflow (#686)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: No test file is left out
+        run: python -B scripts/ci/check-test-coverage.py --matrix
+      - name: Self-test the checker
+        run: python -B -m unittest discover -s tests/ci -p 'test_*.py'

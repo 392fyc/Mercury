@@ -375,6 +375,44 @@ class MercuryToolTest(unittest.TestCase):
         self.assertEqual(self.check()[0], 0)
         self.assertIn("wrote 0, deleted 0", self.apply()[1])
 
+    @staticmethod
+    def is_case_insensitive(directory):
+        """Create CaseProbe.tmp and ask for caseprobe.tmp: does this file system fold case?"""
+        probe = directory / "CaseProbe.tmp"
+        probe.write_bytes(b"")
+        try:
+            return (directory / "caseprobe.tmp").exists()
+        finally:
+            probe.unlink()
+
+    def test_the_plan_of_a_case_only_rename_does_not_depend_on_the_file_system(self):
+        """#686: assert plan() itself. The apply-level test above passes on Linux whichever way the rename is planned.
+
+        The installed note.txt is in the lock; the source now spells it Note.txt. On a case-insensitive file system
+        (Windows, default macOS) that is one file, so the plan rewrites it ("rename"); on a case-sensitive one (Linux) it
+        is two, so the plan creates the new spelling ("create"). Which one applies is probed on the target directory
+        itself, not guessed from sys.platform. On both the old spelling must be deleted, the new one written exactly
+        once, and nothing reported as a conflict.
+        """
+        self.apply()
+        os.rename(self.src / "packs/extra/note.txt", self.src / "packs/extra/Note.txt")
+        self.git("rm", "-q", "--cached", "packs/extra/note.txt")
+        self.auto_index = False
+        self.index()
+        tool = load_tool()
+        src = tool.WorkTreeSource(self.src)
+        master, src.master_hash = tool.load_master(src)
+        selected, chash, extras, _ = tool.prepare_config(src, self.dst, master, None, False)
+        P = tool.plan(src, self.dst, selected, chash, extras, False, False)
+        old, new = ".mercury/packs/extra/note.txt", ".mercury/packs/extra/Note.txt"
+        self.assertEqual(P.conflicts, [])
+        self.assertEqual(P.deletes, [old])
+        writes = [(rel, kind) for rel, kind in P.writes if rel in (old, new)]
+        self.assertEqual(len(writes), 1, P.writes)
+        self.assertEqual(writes[0][0], new)
+        self.assertIn(writes[0][1], ("create", "rename"))
+        self.assertEqual(writes[0][1], "rename" if self.is_case_insensitive(self.dst) else "create")
+
     def test_case_only_rename_with_a_hand_edit_stops(self):
         self.apply()
         (self.dst / ".mercury/packs/extra/note.txt").write_bytes(b"mine\n")
@@ -606,39 +644,69 @@ class MercuryToolTest(unittest.TestCase):
         self.assertFalse((self.dst / ".claude").exists())  # nothing written before the failure
         self.assertFalse((self.dst / ".mercury/packs").exists())
 
-    @unittest.skipUnless(sys.platform == "win32", "directory junctions exist on Windows only")
-    def test_junction_in_target_is_refused(self):
+    # A directory link is refused whether it is a Windows junction or a POSIX directory symlink. The
+    # bodies are shared; one test per link kind (#686). Junctions run on Windows only. Directory symlinks
+    # run wherever the OS lets the user create one (always on Linux, in CI); where it does not (an
+    # unprivileged Windows account) the test skips and the junction test still covers Windows.
+
+    def make_junction(self, link, target):
         import _winapi
+        _winapi.CreateJunction(str(target), str(link))
+
+    def make_dir_symlink(self, link, target):
+        try:
+            os.symlink(str(target), str(link), target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("directory symlinks not available")
+
+    def link_in_target_is_refused(self, make_link):
         outside = self.dst.parent / "outside"
         outside.mkdir()
         (self.dst / ".agents").mkdir()
-        _winapi.CreateJunction(str(outside), str(self.dst / ".agents" / "skills"))
+        make_link(self.dst / ".agents" / "skills", outside)
         code, out = self.apply()
         self.assertEqual(code, 2, out)
         self.assertEqual(list(outside.iterdir()), [])
         self.assertEqual(self.check()[0], 2)
 
-    @unittest.skipUnless(sys.platform == "win32", "directory junctions exist on Windows only")
-    def test_junction_for_packs_directory_is_refused(self):
-        import _winapi
+    def link_for_packs_directory_is_refused(self, make_link):
         outside = self.dst.parent / "outside"
         outside.mkdir()
-        _winapi.CreateJunction(str(outside), str(self.dst / ".mercury" / "packs"))
+        make_link(self.dst / ".mercury" / "packs", outside)
         code, out = self.apply()
         self.assertEqual(code, 2, out)
         self.assertEqual(list(outside.iterdir()), [])
 
-    @unittest.skipUnless(sys.platform == "win32", "directory junctions exist on Windows only")
-    def test_junction_for_lock_directory_is_refused(self):
-        import _winapi
+    def link_for_lock_directory_is_refused(self, make_link):
         outside = self.dst.parent / "outside"
         write(outside / "config.json", json.dumps({"schema_version": 1, "packs": ["core"]}))
         (self.dst / CONFIG).unlink()
         (self.dst / ".mercury").rmdir()
-        _winapi.CreateJunction(str(outside), str(self.dst / ".mercury"))
+        make_link(self.dst / ".mercury", outside)
         code, out = self.apply()
         self.assertEqual(code, 2, out)
         self.assertEqual([p.name for p in outside.iterdir()], ["config.json"])
+
+    @unittest.skipUnless(sys.platform == "win32", "directory junctions exist on Windows only")
+    def test_junction_in_target_is_refused(self):
+        self.link_in_target_is_refused(self.make_junction)
+
+    @unittest.skipUnless(sys.platform == "win32", "directory junctions exist on Windows only")
+    def test_junction_for_packs_directory_is_refused(self):
+        self.link_for_packs_directory_is_refused(self.make_junction)
+
+    @unittest.skipUnless(sys.platform == "win32", "directory junctions exist on Windows only")
+    def test_junction_for_lock_directory_is_refused(self):
+        self.link_for_lock_directory_is_refused(self.make_junction)
+
+    def test_directory_symlink_in_target_is_refused(self):
+        self.link_in_target_is_refused(self.make_dir_symlink)
+
+    def test_directory_symlink_for_packs_directory_is_refused(self):
+        self.link_for_packs_directory_is_refused(self.make_dir_symlink)
+
+    def test_directory_symlink_for_lock_directory_is_refused(self):
+        self.link_for_lock_directory_is_refused(self.make_dir_symlink)
 
     def test_link_inside_a_pack_source_is_refused(self):
         target = self.src / "packs/extra/note.txt"

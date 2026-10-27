@@ -12,7 +12,12 @@ import unittest
 GUARD = Path(__file__).resolve().parents[3] / "scripts/codex/guard.ps1"
 
 
+# PowerShell writes its own error frame (the "At line" / "Line |" block) in the
+# console's code page, and on a Chinese Windows that is GBK, not UTF-8. The
+# wrapper switches the console to UTF-8 first so the bytes the test decodes
+# really are UTF-8 on every locale (#686).
 GH_FUNCTION = r'''
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 function global:gh {
   param([Parameter(ValueFromRemainingArguments = $true)][string[]]$GhArgs)
   $global:LASTEXITCODE = 0
@@ -206,7 +211,7 @@ class GuardPreMergeTests(unittest.TestCase):
         command = [self.pwsh, "-NoLogo", "-NoProfile", "-NonInteractive",
                    "-ExecutionPolicy", "Bypass", "-File", str(self.wrapper)]
         return subprocess.run(command, cwd=self.root, env=self.env, capture_output=True,
-                              text=True, encoding="utf-8", timeout=30)
+                              text=True, encoding="utf-8", errors="replace", timeout=30)
 
     def assert_rejected(self, *, receipt=True):
         result = self.run_guard(receipt=receipt)
