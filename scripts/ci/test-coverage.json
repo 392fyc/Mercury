@@ -1,0 +1,27 @@
+{
+  "_comment": "Read by scripts/ci/check-test-coverage.py (#686); the rules are in its docstring. 'exempt': tests no workflow runs. 'path_filtered': tests run only by a workflow whose pull_request trigger has a paths filter. 'conditional': tests run only by a step whose condition the checker cannot evaluate. 'not_on': tests that run on the other platform but, on purpose, not on this one. Every entry needs a reason; an entry that is no longer true is an error. Entries marked RETRY are Windows gaps that rest on an unverified assumption: re-test them from CI evidence and move them onto Windows if they pass.",
+  "exempt": {},
+  "path_filtered": {
+    "tests/dot/test_server.py": "Run by agents-event-check.yml (Linux and Windows) only when a pull request touches packs/dot-link/**, .mercury/packs/dot-link/**, tests/dot/** or that workflow. The test exercises only the dot-link pack, so a change elsewhere cannot affect it; running it on every pull request would add minutes for no information.",
+    "tests/dot/test_callback_relay.py": "Run by agents-event-check.yml (Linux and Windows) only when a pull request touches the dot-link pack, tests/dot/** or that workflow. It exercises only the dot-link pack.",
+    "tests/dot/test_agents_event_client.py": "Run by agents-event-check.yml (Linux and Windows) only when a pull request touches the dot-link pack, tests/dot/** or that workflow. It exercises only the dot-link pack.",
+    "tests/dot/test_agents_event_dispatcher.py": "Run by agents-event-check.yml (Linux and Windows) only when a pull request touches the dot-link pack, tests/dot/** or that workflow. It exercises only the dot-link pack.",
+    "tests/dot/test-dot-link.py": "Run by dot-link-check.yml (signed-messages on Linux, signed-messages-windows on Windows) only when a pull request touches the dot-link pack, tests/dot/** or that workflow. It exercises only the dot-link pack.",
+    "tests/dot/test-dot-link-install.ps1": "Run by dot-link-check.yml (windows-install) only when a pull request touches the dot-link pack, tests/dot/** or that workflow. It exercises only the dot-link Windows installer."
+  },
+  "conditional": {},
+  "not_on": {
+    "windows": {
+      "tests/lanes/test-lane-assertion.sh": "RETRY. Suspected cause, not yet observed: three assertions call the external jq, and the jq manual says a native jq.exe turns LF into CRLF unless run with --binary, so `$(... | jq -r ...)` would keep a stray CR and the string comparison would fail. On the development machine (no jq) the test passes with those 3 assertions skipped, so the jq path has never run under Windows.",
+      "tests/lanes/test-lane-cap-check.sh": "Observed cause: it parses its JSON output with `python3`, and under Git Bash on the development machine `python3` is the Microsoft Store alias stub, which exits non-zero (1 failure, `json no-cap output invalid`). Whether `python3` exists after actions/setup-python on windows-latest is unverified. RETRY if CI shows `python3` resolves.",
+      "tests/lanes/test-lane-claim.sh": "RETRY. The development machine has no jq, so it stops at its own jq check and nothing was observed. The runner has jq 1.8.2, but the same suspected CRLF effect as test-lane-assertion.sh applies to the script under test.",
+      "tests/lanes/test-lane-init.sh": "Observed cause: two cases create a symbolic link with `ln -s`; under Git Bash without symlink privilege the link is not created (2 failures on the development machine: `dangling LANES.md symlink refused`, `symlink to an existing file refused`). The Linux run covers them.",
+      "tests/lanes/test-lane-paths.sh": "Observed cause: it compares against POSIX paths (/tmp/...), while under Git Bash the scripts print the same place as C:/... (cygpath -m): 5 path-form failures, plus a symlink case and a collision case that is derived from the encoded path (7 failures in all on the development machine).",
+      "tests/lanes/test-lane-status.sh": "RETRY. The development machine has no jq, so the first assertions fail with exit 127 and nothing else was observed. The test stubs a CRLF-emitting jq on purpose (case T_REG2), so a real native jq.exe is exactly the situation it models.",
+      "tests/lanes/test-lane-sweep.sh": "RETRY. Without jq it fails 3 cases (`jq required for Issue activity probe`); with jq on the runner the outcome is unobserved, and the CRLF suspicion of test-lane-assertion.sh applies to the probe's output."
+    },
+    "linux": {
+      "tests/dot/test-dot-link-install.ps1": "Tests the Windows PowerShell installer of dot-link (install-dot-link.ps1) and is written and checked for Windows; running it on Linux (pwsh is installed there) has not been verified."
+    }
+  }
+}

@@ -19,14 +19,24 @@ jobs:
   signed-messages:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
       - run: python tests/dot/test-dot-link.py
   windows-install:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - shell: pwsh
         run: ./tests/dot/test-dot-link-install.ps1
+  signed-messages-windows:
+    # #686: the same signed-message tests as signed-messages, on Windows (passes locally under Windows, 8 tests)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - run: python tests/dot/test-dot-link.py

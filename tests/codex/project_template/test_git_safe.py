@@ -50,7 +50,7 @@ class GitSafeAddTest(unittest.TestCase):
         return r.returncode, r.stdout + r.stderr
 
     def staged(self):
-        return git(self.repo, "ls-files", "-s", "--", "sources", ".gitmodules", "plain", "other")
+        return git(self.repo, "ls-files", "-s", "--", "sources", ".gitmodules", "plain", "other", ".dotdir", ".gitignore")
 
     def register(self, path="sources/sub"):
         (self.repo / ".gitmodules").write_text(f'[submodule "{path}"]\n\tpath = {path}\n\turl = https://github.com/o/r.git\n\tshallow = true\n')
@@ -101,6 +101,28 @@ class GitSafeAddTest(unittest.TestCase):
         (self.repo / "other/f.txt").write_text("x\n")
         self.assertEqual(self.add("other/f.txt")[0], 0)
         self.assertIn("other/f.txt", self.staged())
+
+    def test_an_unregistered_dot_directory_is_refused(self):
+        """#685: a name starting with a dot is not exempt from the directory rule, whether it is a plain directory or a clone."""
+        (self.repo / ".dotdir").mkdir()
+        (self.repo / ".dotdir/f.txt").write_text("x\n")
+        self.register()  # registers sources/sub only; .dotdir stays unregistered
+        code, out = self.add(".dotdir")
+        self.assertNotEqual(code, 0)
+        self.assertIn("Directories are not allowed", out)
+        shutil.rmtree(self.repo / ".dotdir")
+        git(self.repo, "clone", "-q", self.upstream.as_posix(), ".dotdir")
+        code, out = self.add(".dotdir")
+        self.assertNotEqual(code, 0)
+        self.assertIn("Directories are not allowed", out)
+        self.assertEqual(self.staged(), "")
+
+    def test_a_plain_dot_file_is_staged(self):
+        """#685: `.gitignore` is a file, so it must stage even though its name starts with a dot."""
+        (self.repo / ".gitignore").write_text("*.tmp\n")
+        code, out = self.add(".gitignore")
+        self.assertEqual(code, 0, out)
+        self.assertIn(".gitignore", self.staged())
 
     def test_the_branch_check_still_applies(self):
         self.register()
