@@ -61,7 +61,8 @@ function Test-RegisteredSubmodule {
   if (-not (Test-Path -LiteralPath $modulesFile -PathType Leaf)) {
     return $false
   }
-  if ((Get-Item -LiteralPath $modulesFile).Attributes -band $reparse) {
+  # -Force: on Linux a dot file counts as hidden and Get-Item would not find it.
+  if ((Get-Item -Force -LiteralPath $modulesFile).Attributes -band $reparse) {
     return $false
   }
 
@@ -125,7 +126,7 @@ function Assert-ExplicitPaths {
 
     $candidate = Join-Path $repoRoot $path
     if (Test-Path -LiteralPath $candidate) {
-      $item = Get-Item -LiteralPath $candidate
+      $item = Get-Item -Force -LiteralPath $candidate
       if ($item.PSIsContainer -and -not (Test-RegisteredSubmodule -Path $path -Item $item)) {
         throw "Directories are not allowed in git-safe add. Pass explicit files only (a registered submodule path from .gitmodules is the one exception): $path"
       }
