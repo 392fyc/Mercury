@@ -265,6 +265,11 @@ def stub_bytes(pack, skill, name, desc, extra, entry_file, args=False, local_dir
     origin = ("This skill belongs to the project; Mercury generated this entry from `.mercury/local.json`"
               if local_dir else f"This skill is installed by Mercury (pack `{pack}`)")
     fields = "".join(l + "\n" for l in extra)
+    # A pack skill is written relative to its own directory. A project skill is the same file another host reads in
+    # place, written as the project writes it: relative to the repository root unless it says otherwise.
+    paths = ("A path it mentions without saying what it is relative to is relative to the repository root; a "
+             "Markdown link stays relative to the file that contains it."
+             if local_dir else f"Resolve every relative path it mentions against `{skill_dir}`.")
     # Claude Code substitutes the placeholder only in the invoked SKILL.md, which is this stub, so the stub
     # carries the value over. The backslash keeps the second mention literal (the documented escape).
     carry = (f"Arguments: {ARGS_TOKEN}\n\nUse the value on the `Arguments:` line above wherever the entry "
@@ -272,8 +277,8 @@ def stub_bytes(pack, skill, name, desc, extra, entry_file, args=False, local_dir
     body = (f"---\nname: {name}\ndescription: {json.dumps(desc, ensure_ascii=False)}\n{fields}---\n\n"
             f"# {name}\n\n{carry}"
             f"{origin}. The full skill lives in `{skill_dir}`.\n\n"
-            f"Read `{skill_dir}{entry_file}` and follow it. Resolve every relative path it mentions "
-            f"against `{skill_dir}`. This entry adds no permission and no separate workflow.\n")
+            f"Read `{skill_dir}{entry_file}` and follow it. {paths} This entry adds no permission and no separate "
+            f"workflow.\n")
     return body.encode("utf-8")
 
 
