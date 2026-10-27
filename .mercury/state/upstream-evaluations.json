@@ -1,0 +1,50 @@
+[
+  {
+    "upstream_repo": "Yeachan-Heo/oh-my-codex",
+    "evaluated_at": "2026-10-26",
+    "sha_at_evaluation": "6b1c110ec06b45a5644ceb6ee60788f7ccae6c46",
+    "license": "MIT",
+    "scope": "autoresearch",
+    "decision": "not-imported",
+    "reasons": [
+      "运行依赖整套插件、会话停止钩子、.omx/state 状态与 deep-interview --autoresearch，需要注册全局钩子；与“默认不启用后台编排、自动交接或循环代理”的全局规则、Mercury“本项目无钩子注册”及用户“不加钩子”的决定冲突。",
+      "上游技能正文明确不建议用于普通调研与规划前查找。",
+      "Mercury 唯一一次实际运行在 2026-05；现有 Mercury autoresearch 已精简为与 web-research 重叠的四步流程，已在 Issue #668 删除。",
+      "来源链：karpathy/autoresearch（2026-03-06，无许可证）→ OMX 运行时（src/autoresearch/runtime.ts 首提交 91acab1，2026-03-14）→ OMC 移植（PR #1693，2026-03-16）→ 两仓技能化（2026-04-17）；Mercury 版本源自 Issue #59，2026-03-25 起自写。",
+      "核实时 main 的提交日期为 2026-10-25；版本为 0.x，近 30 天约 350 个提交，几乎每日发版，autoresearch 未废弃。"
+    ],
+    "revisit_when": "上游技能能脱离整套插件单独使用，或 Mercury 出现需要验证器把关的长期研究任务。",
+    "issue": "392fyc/Mercury#668"
+  },
+  {
+    "upstream_repo": "Yeachan-Heo/oh-my-claudecode",
+    "evaluated_at": "2026-10-26",
+    "sha_at_evaluation": "bc9bffea0d6f80c4b8302a634e1ccfe16077d2c1",
+    "license": "MIT",
+    "scope": "autoresearch",
+    "decision": "not-imported",
+    "reasons": [
+      "运行依赖整套插件、会话停止钩子、.omx/state 状态与 deep-interview --autoresearch，需要注册全局钩子；与“默认不启用后台编排、自动交接或循环代理”的全局规则、Mercury“本项目无钩子注册”及用户“不加钩子”的决定冲突。",
+      "上游技能正文明确不建议用于普通调研与规划前查找。",
+      "Mercury 唯一一次实际运行在 2026-05；现有 Mercury autoresearch 已精简为与 web-research 重叠的四步流程，已在 Issue #668 删除。",
+      "来源链：karpathy/autoresearch（2026-03-06，无许可证）→ OMX 运行时（src/autoresearch/runtime.ts 首提交 91acab1，2026-03-14）→ OMC 移植（PR #1693，2026-03-16）→ 两仓技能化（2026-04-17）；Mercury 版本源自 Issue #59，2026-03-25 起自写。",
+      "近 30 天约 960 个提交，几乎每日发版，autoresearch 未废弃。"
+    ],
+    "revisit_when": "上游技能能脱离整套插件单独使用，或 Mercury 出现需要验证器把关的长期研究任务。",
+    "issue": "392fyc/Mercury#668"
+  },
+  {
+    "upstream_repo": "JuliusBrussee/caveman",
+    "evaluated_at": "2026-10-26",
+    "sha_at_evaluation": "26c25e39b3aee469dbb017427ab55ee1d32de1a8",
+    "license": "MIT",
+    "scope": "caveman-toggle skill and CLAUDE.local.md.example",
+    "decision": "removed",
+    "reasons": [
+      "The user decided on 2026-10-26 to drop the caveman concise-output mode and the CLAUDE.local.md.example template; both were imported earlier (PR #214, Issue #213) and are removed together with the adapters/caveman overlay and the modules/caveman submodule.",
+      "The last pinned commit is MIT-licensed; upstream changed its license to Apache-2.0 from 921eab8a (2026-09-24), so nothing newer was ever imported."
+    ],
+    "revisit_when": "Only if the user asks for a persistent concise-output mode again.",
+    "issue": "392fyc/Mercury#678"
+  }
+]

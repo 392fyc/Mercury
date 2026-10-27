@@ -1,0 +1,89 @@
+# Managed by Mercury (pack deploy). Rendered from params in .mercury/config.json by tools/mercury.py; do not edit by hand.
+# Change the params (or the pack) and run `python tools/mercury.py apply` from a released Mercury commit instead.
+name: Mercury update
+
+on:
+  schedule:
+    - cron: @@UPDATE_SCHEDULE@@
+  workflow_dispatch:
+
+# One run at a time: two runs must not publish or merge side by side.
+concurrency:
+  group: mercury-update
+  cancel-in-progress: false
+
+# The workflow token stays read-only. Every write goes through the GitHub App token created in the `update` job.
+permissions:
+  contents: read
+
+jobs:
+  # GitHub runs scheduled workflows only from the default branch. When that is not the integration branch, the scheduled
+  # run does nothing but start this same workflow on the integration branch (a workflow_dispatch started with GITHUB_TOKEN
+  # does create a run), so the update always uses the integration branch's own copy of this file. No App token exists here.
+  dispatch:
+    name: Mercury update (dispatch)
+    if: github.event_name == 'schedule' && github.ref_name != @@INTEGRATION_BRANCH_EXPR@@
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    env:
+      MERCURY_BASE: @@INTEGRATION_BRANCH@@
+    steps:
+      - name: Start the update on the integration branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run mercury-update.yml --repo "$GITHUB_REPOSITORY" --ref "$MERCURY_BASE"
+
+  update:
+    name: Mercury update
+    if: github.event_name != 'schedule' || github.ref_name == @@INTEGRATION_BRANCH_EXPR@@
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      MERCURY_BASE: @@INTEGRATION_BRANCH@@
+    steps:
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Check out Mercury at master
+        uses: actions/checkout@v7
+        with:
+          repository: 392fyc/Mercury
+          ref: master
+          path: mercury
+          fetch-depth: 0
+          persist-credentials: false
+      # Input names: https://github.com/actions/create-github-app-token (action.yml and README, v3). The token is limited
+      # to the current repository and to the five permissions below, even if the App itself holds more. It is created as
+      # late as possible so that it exists for as few steps as possible.
+      - name: Create the GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.MERCURY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MERCURY_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+          permission-checks: read
+          permission-statuses: read
+      - name: Check out this project at the integration branch
+        uses: actions/checkout@v7
+        with:
+          path: target
+          ref: @@INTEGRATION_BRANCH@@
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+      - name: Publish the update pull request
+        id: publish
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: python -B mercury/tools/mercury_update.py publish --target target --mercury mercury --repo "$GITHUB_REPOSITORY" --base "$MERCURY_BASE"
+      # A pull request published a moment ago has no checks yet, so merging is left to the next run.
+      - name: Merge when every condition holds
+        if: steps.publish.outputs.published != 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          MERCURY_REQUIRED_CHECKS: @@REQUIRED_CHECKS@@
+        run: python -B mercury/tools/mercury_update.py merge --target target --mercury mercury --repo "$GITHUB_REPOSITORY" --base "$MERCURY_BASE" --required-checks-json "$MERCURY_REQUIRED_CHECKS"

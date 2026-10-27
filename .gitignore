@@ -1,21 +1,26 @@
 # Dependencies
 node_modules/
-.pnpm-store/
 
 # Build outputs
 dist/
 dist-ssr/
 *.local
-
-# Rust/Tauri
-packages/gui/src-tauri/target/
-packages/gui/src-tauri/gen/schemas/
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
 
 # Logs
 logs/
 *.log
 npm-debug.log*
-pnpm-debug.log*
+
+# Scratch / per-session ephemera (skill prompt files, audit outputs, etc.)
+.tmp/
+
+# handoff skill — transient session-handoff docs + local KB-pointer marker (#474)
+# handoff docs live with the workspace/KB, never in global ~/.claude; always gitignored.
+.handoff/
+.handoff-config
 
 # Environment / Secrets
 .env
@@ -41,12 +46,61 @@ desktop.ini
 $RECYCLE.BIN/
 
 # Claude Code
+CLAUDE.local.md
 .claude/plans/
 .claude/hooks/state/
+.claude/scheduled_tasks.lock
+.mercury/state/*
+!.mercury/state/upstream-manifest.json
+!.mercury/state/upstream-evaluations.json
 .claude/settings.local.json
 CLAUDE.md
+# Pack fragments of the managed CLAUDE.md section are tracked and their installed copies under .mercury/packs (the case-insensitive pattern above would hide them)
+!/packs/*/claude.md
+!/.mercury/packs/*/claude.md
 
-# Mercury runtime state
+# Git worktrees (transient, managed by Main Agent)
+/.worktrees/
+
+# Leftover state files of the retired pr-flow skill (#672); keep ignored
+.pr-flow-*
 .mercury/sessions.json
 .mercury/transcripts/
+.mercury/backups/
+# Local runtime state: tool environments, fixtures and probes — never commit
+.mercury/tmp/
+.mercury/tools/
+.mercury/mercury.db
+.mercury/mercury.db-wal
+.mercury/mercury.db-shm
+# 旧版本留下的本机配置，保持忽略以免误提交
 mercury.config.json
+.claude/current-session.md
+.codex/state/
+
+# Autoresearch state (standalone mode, transient)
+.research/
+
+# mem0 test venv (Phase A)
+.venv-mem0/
+
+# Python build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# PR review agent guide (deployment-specific doc, not committed)
+.mercury/docs/guides/argus-review-guide.md
+
+# Private active memory (local-only; exclusion must survive cloning)
+/.mercury/memory/
+
+# KB managed separately in parallel directory (D:/Mercury/Mercury_KB), never inside repo
+Mercury_KB/
+
+# OMC plugin runtime state (per-user, populated after /plugin install oh-my-claudecode)
+.omc/
+
+# playwright-mcp server output sandbox (console logs, storageState exports w/ live cookies) — never commit
+.playwright-mcp/

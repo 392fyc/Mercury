@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "name": "core",
+  "skills": {
+    "web-research": {
+      "hosts": [
+        "codex"
+      ]
+    }
+  }
+}

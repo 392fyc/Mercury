@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "packs": {
+    "core": {
+      "enabled": true,
+      "required": true
+    },
+    "plan": {
+      "enabled": true
+    },
+    "subagent-dev": {
+      "enabled": true
+    },
+    "lanes": {
+      "enabled": true
+    },
+    "dot-link": {
+      "enabled": true
+    },
+    "deploy": {
+      "enabled": true
+    },
+    "playwright-mcp": {
+      "enabled": false
+    }
+  },
+  "sources": [
+    {
+      "name": "claude-plugins-community",
+      "url": "https://github.com/anthropics/claude-plugins-community.git",
+      "commit": "88003be1129c09381d27100b37a8fdc21b3214bf",
+      "license": "Apache-2.0",
+      "added": "2026-10-26",
+      "rationale": "Input of packs/plan/build/generate.py, which generates the html-plan-zh skill."
+    },
+    {
+      "name": "superpowers",
+      "url": "https://github.com/obra/superpowers.git",
+      "commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
+      "license": "MIT",
+      "added": "2026-10-26",
+      "rationale": "Input of packs/subagent-dev/build/generate.py, which generates the subagent-driven-development skill."
+    }
+  ]
+}

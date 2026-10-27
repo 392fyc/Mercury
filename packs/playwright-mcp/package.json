@@ -1,0 +1,15 @@
+{
+  "name": "playwright-mcp-adapter",
+  "version": "1.0.0",
+  "description": "Mercury config-gate wrapper for @playwright/mcp (pinned, security defaults)",
+  "private": true,
+  "type": "commonjs",
+  "main": "launch.cjs",
+  "scripts": {
+    "test": "node --test \"test/*.cjs\""
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "MIT"
+}

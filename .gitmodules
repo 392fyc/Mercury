@@ -1,0 +1,8 @@
+[submodule "sources/claude-plugins-community"]
+	path = sources/claude-plugins-community
+	url = https://github.com/anthropics/claude-plugins-community.git
+	shallow = true
+[submodule "sources/superpowers"]
+	path = sources/superpowers
+	url = https://github.com/obra/superpowers.git
+	shallow = true

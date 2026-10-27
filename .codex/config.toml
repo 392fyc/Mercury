@@ -1,0 +1,35 @@
+model = "gpt-6.1-sol"
+# Mercury project settings. Keep scalar keys before tables.
+# Docs: https://developers.openai.com/codex/config-reference
+web_search = "live"
+sandbox_mode = "workspace-write"
+approval_policy = "on-request"
+
+developer_instructions = """
+Follow AGENTS.md for Mercury's current working contract and repository ownership.
+Use Codex autonomous execution by default. Invoke complex workflows only when
+the user explicitly calls for them or an established task plan requires them.
+Use gpt-6.1-sol as the primary agent for planning, integration, and final
+verification. Use gpt-6-luna at max effort for bounded execution and independent
+review. Keep delegation native and proportional to the task.
+Verify SDK/API signatures against official vendor documentation before writing
+dependent code. Check claimed package versions in their registry; cite sources
+and label unverified claims when verification is unavailable.
+Preserve protected branches and use scripts/codex/git-safe.ps1 for Git writes.
+Before commit, complete the risk-appropriate checks and required independent
+review, then mark the exact staged snapshot with scripts/codex/guard.ps1
+mark-review. Follow AGENTS.md for review triggers; a marker is not review evidence.
+Apply AGENTS.md for bounded scope, test relevance, evidence reuse, and
+completion. Reassess methods after two repair rounds without outcome progress.
+Use the configured sandbox and .codex/rules/. Inspect current runtime support
+before changing hook wiring; this repository has no project hook registrations.
+Reply to the user in clear, complete Simplified Chinese, retaining technical names
+where useful. Code, commit messages, and PR bodies keep their existing conventions.
+"""
+
+[sandbox_workspace_write]
+network_access = true
+
+[agents]
+default_subagent_model = "gpt-6-luna"
+default_subagent_reasoning_effort = "max"

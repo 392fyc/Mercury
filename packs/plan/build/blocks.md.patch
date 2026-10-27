@@ -1,0 +1,10 @@
+--- a/references/blocks.md
++++ b/references/blocks.md
+@@ -1,3 +1,7 @@
++<!-- Based on anthropics/claude-plugins-community html-plan (MIT) SHA: 88003be1129c09381d27100b37a8fdc21b3214bf — Mercury #655 -->
++
++> 中文版说明：本文件是上游语法手册原文，块的写法以此为准。文中关于字数和句子的建议按英文写成；写中文计划时，行文规则和字数以 `../SKILL.md` 的“行文”一节为准（例如“sketch”写作“草案”，问题以约 30 字为宜）。
++
+ # Blocks
+ 
+ Every block's **source text goes in `<script type="text/plain">…</script>` as its first child**. Inside it `<`, `>` and generics are safe. Without it the first stray `<` cuts the block short, and pack reports an error.
