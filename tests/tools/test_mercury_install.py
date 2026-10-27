@@ -34,6 +34,16 @@ def write(path, data):
     path.write_bytes(data if isinstance(data, bytes) else data.encode("utf-8"))
 
 
+def is_case_insensitive(directory):
+    """Create CaseProbe.tmp and ask for caseprobe.tmp: does this file system fold case?"""
+    probe = directory / "CaseProbe.tmp"
+    probe.write_bytes(b"")
+    try:
+        return (directory / "caseprobe.tmp").exists()
+    finally:
+        probe.unlink()
+
+
 def sha(data):
     return hashlib.sha256(data).hexdigest()
 
@@ -400,8 +410,12 @@ class ExternalTarget(unittest.TestCase):
         """#686: assert plan() directly. The install-level test above leans on the file system; this one does not.
 
         The v1 lock spells the file `mercury-Dev.toml`, the new installation wants `mercury-dev.toml`. On a
-        case-insensitive file system those are one file, on a case-sensitive one they are two. Either way the
-        plan must keep the old spelling (never delete it) and report one conflict, and must not write the wanted path.
+        case-insensitive file system (Windows) those are one file: the plan finds the wanted path already in place
+        and plans no write for it. On a case-sensitive one (Linux) they are two files: the wanted path does not
+        exist yet, so the plan lists it as a "create". Both are right for their file system, so the plan's write
+        list is NOT the invariant (CI showed this on Linux). What holds everywhere: the plan keeps the old
+        spelling (no v1 delete, no write or delete of it), reports exactly one conflict, and because there is a
+        conflict a real run stops and changes nothing.
         """
         scratch = self.dst.parent / "scratch"
         init_repo(scratch)
@@ -420,8 +434,18 @@ class ExternalTarget(unittest.TestCase):
         self.assertEqual(len(conflicts), 1, P.conflicts)
         self.assertIn("spells this path differently", conflicts[0])
         written = [r for r, _ in P.writes]
-        self.assertNotIn(".codex/agents/mercury-dev.toml", written)
         self.assertNotIn(".codex/agents/mercury-Dev.toml", written)
+        self.assertNotIn(".codex/agents/mercury-Dev.toml", P.deletes)
+        wanted = [kind for r, kind in P.writes if r == ".codex/agents/mercury-dev.toml"]
+        self.assertEqual(wanted, [] if is_case_insensitive(self.dst) else ["create"], P.writes)
+        # the invariant: with a conflict nothing is applied, on either kind of file system
+        before = self.snapshot()
+        for extra, mode in (((), "install"), (("--dry-run",), "install"), ((), "apply"), ((), "check")):
+            with self.subTest(mode=mode, extra=extra):
+                code, out = self.install(*extra, mode=mode)
+                self.assertEqual(code, 1, out)
+                self.assertIn("spells this path differently", out)
+                self.assertEqual(self.snapshot(), before)
 
     def test_a_v1_lock_alone_is_just_removed(self):
         write(self.dst / V1_LOCK, json.dumps({"schema_version": 1, "files": {"agents/mercury-gone.toml": "0" * 64}}))
@@ -590,7 +614,9 @@ class SourceCommands(unittest.TestCase):
         self.assertEqual(code, 2, out)
         self.assertIn("simulated network failure", out)
         self.assertIn("sources", out)
-        self.assertIn(str(self.root / "sources/up"), out)
+        # The tool prints the resolved (long, canonical) path; a temp dir can be given in its 8.3 short form
+        # (C:\\Users\\RUNNER~1) on Windows, so compare against the resolved root (#686, seen on CI).
+        self.assertIn(str(self.root.resolve() / "sources" / "up"), out)
         self.assertIn("modules", out)
         self.assertIn("submodule.sources/up.url", out)
         self.assertFalse((self.root / ".gitmodules").exists())  # recorded nothing
