@@ -424,7 +424,10 @@ What is written:
 - Roles: every `roles/<role>.md` of a selected pack (lowercase name) becomes `.claude/agents/mercury-<role>.md` and
   `.codex/agents/mercury-<role>.toml`. The source has a frontmatter with a one-line `description` and per-host sections
   (`claude:` with `model` (required), `tools`, `disallowedTools`, `permissionMode`, `readonly_guard`; `codex:` with
-  `sandbox_mode` (required) and the optional `model`, `model_reasoning_effort` and `web_search`) and an optional
+  `sandbox_mode` (required for a pack role; a project-area role may leave it out. Current Codex documentation says a
+  subagent always inherits the parent's current sandbox and approval settings (including changes made during the
+  session) and that a custom agent file cannot override them, so the key changes nothing at run time either way; see
+  #665) and the optional `model`, `model_reasoning_effort` and `web_search`) and an optional
   `attribution` (see "The project area"; it works the same for pack roles) whose values are `true`/`false`, a double-quoted string or a
   plain token; anything else, an unknown key, a control character, or a body that cannot be written safely (a TOML
   literal string cannot hold `'''`) is an error and nothing is written. The body is shared and in English. Strings are

@@ -166,6 +166,17 @@ class Generation(Base):
         self.assertFalse((self.dst / ".claude/agents/game-analyst.md").exists())
         self.assertTrue((self.dst / ".codex/agents/game-analyst.toml").exists())
 
+    def test_a_project_role_may_leave_the_codex_sandbox_to_the_session(self):
+        text = ROLE.replace("  sandbox_mode: read-only\n", "")
+        with self.assertRaises(T.BuildError):  # a pack role still needs it
+            T.parse_role(text.encode(), "t")
+        self.role(text=text)
+        self.manifest(roles={"game-analyst": ".mercury/local/roles/game-analyst.md"})
+        self.assertEqual(self.apply()[0], 0)
+        got = tomllib.loads((self.dst / ".codex/agents/game-analyst.toml").read_text(encoding="utf-8"))
+        self.assertNotIn("sandbox_mode", got)
+        self.assertEqual(got["web_search"], "disabled")
+
     def test_a_skill_elsewhere_gets_an_entry_per_host(self):
         write(self.dst / "tools/skills/proj-x/SKILL.md", SKILL)
         self.manifest(skills={"proj-x": {"path": "tools/skills/proj-x", "hosts": ["codex", "claude"]}})
