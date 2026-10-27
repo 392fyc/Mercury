@@ -24,6 +24,7 @@ tools/mercury.py                the installer (`check`, `apply`, `install`) and 
 Packs: `core` (required: web-research, the five roles, Git safety rules, task and ownership contracts, read-only guard), `plan` (html-plan-zh), `subagent-dev`
 (mercury-subagent-driven-development), `lanes` (lane-handoff skill, the lane scripts, the lane guides and the lane contract),
 `dot-link` (dot-link skill, the agents event gateway and dispatcher scripts, the dot-link installer),
+`deploy` (the two workflows that deliver released Mercury commits to a downstream project; see "The deploy pack"),
 `playwright-mcp` (disabled; see below).
 
 Pack-relative paths are the paths inside the installed pack: `packs/lanes/scripts/lane-claim.sh`
@@ -84,10 +85,12 @@ Two ways to read the packs:
   cannot leak in. `install` uses `--source-commit` or else the source `HEAD`; `check` and `apply` use
   `--source-commit` or else the commit recorded in the target lock (`source_commit`; `HEAD` when there is no lock).
   The lock records `source_repo` (`owner/name`, from the `origin` remote of the source; the URL itself is never printed
-  or stored) and `source_commit`. Because the lock calls the commit a commit of `origin`, writing (`install`, `apply`)
-  requires it to be reachable from a remote-tracking branch of `origin` (`git for-each-ref --contains` on
-  `refs/remotes/origin/`, as of the last fetch); an unpushed commit is refused. `--dry-run` and `check` accept it and say
-  so. There is no override flag: the only reason to use an unpushed commit is to preview it, and `--dry-run` does that.
+  or stored) and `source_commit`. **Release gate:** writing (`install`, `apply`) requires the commit to be reachable
+  from `origin/master` of the source (`git merge-base --is-ancestor <commit> refs/remotes/origin/master`, as of the last
+  fetch). Mercury's `master` is the milestone release branch (`develop` to `master`), so a commit that is only on
+  `develop`, a feature branch or nowhere on origin is refused. `--dry-run` and `check` accept it and annotate the line
+  `source commit <sha> (NOT on origin/master ...)`. There is no override flag: the only reason to use an unreleased
+  commit is to preview it, and `--dry-run` does that. Mercury installing itself is not gated.
   Every run prints `mercury: source commit <sha>`. A tree entry that is not a regular file (link, submodule) is an
   error. The target must be the root of a Git work tree.
 
@@ -114,6 +117,162 @@ also counts as unmodified. An adopted file that the new installation also ships 
 last, so an interrupted run can be repeated. Any other content stops the run with nothing written. A v1 lock entry whose
 spelling differs from a path the new installation ships only in case (one file on Windows) is a conflict, never a
 deletion; fix the spelling first.
+
+## The deploy pack
+
+`deploy` is optional. It makes a project take every released Mercury commit on its own, through a pull request, with no
+human in the loop when (and only when) the conditions below hold. It installs two managed workflow files:
+
+- `.github/workflows/mercury-update.yml` (jobs `dispatch` and `Mercury update`): runs on `schedule`
+  (`params.update_schedule`) and on `workflow_dispatch`; one run at a time (`concurrency`); top-level
+  `permissions: contents: read`. The `update` job sets up Python, checks out Mercury at `master` without credentials, creates
+  a GitHub App token (as late as possible, right before the first step that needs it), checks out the project at the
+  integration branch with it, then runs `tools/mercury_update.py publish` and, unless that just published, `merge`. The
+  `dispatch` job is explained under "Scheduled runs and the default branch".
+- `.github/workflows/mercury-verify.yml` (job `Mercury verify`): runs on `pull_request` to the integration branch with
+  a read-only token, checks out the proposed head and Mercury `master` without credentials, runs `tools/mercury.py check`
+  and `tools/mercury_update.py verify`. There is no `pull_request_target`, and no pull-request-controlled text is written
+  into a command line (the head branch name goes through an environment variable).
+
+Both are *rendered* files: the pack holds templates (`templates/*.yml`, with `@@NAME@@` placeholders) and `pack.json`
+maps each destination to its template in a `rendered` object. A destination must be `.github/workflows/mercury-<name>.yml`.
+`tools/mercury.py` fills the placeholders from the project's params, hashes the result into the lock like any other file,
+and `check` renders again to compare. Values are written as JSON strings (valid YAML double-quoted scalars), so no param can
+end its scalar or add a line; non-ASCII is written as escapes.
+
+### Params (in `.mercury/config.json`)
+
+```json
+{"schema_version": 1, "packs": ["core", "deploy"],
+ "params": {"integration_branch": "develop", "required_checks": ["Godot headless", "Repository contract"],
+            "update_schedule": "17 3 * * *"}}
+```
+
+- `integration_branch` (required with `deploy`): the branch update pull requests target. Letters, digits, `.`, `_`, `/`,
+  `-`; at most 100 characters; git branch-name rules (no `..`, no empty or dot-leading segment, no `.lock` suffix; a test
+  checks every accepted name against `git check-ref-format --branch`); not a pseudo ref (`HEAD`, `FETCH_HEAD`, `ORIG_HEAD`,
+  `MERGE_HEAD`, `CHERRY_PICK_HEAD`), not under `refs/`, and neither `mercury` nor under `mercury/` (reserved for update
+  branches: a ref cannot be both a file and a directory). These reserved names are compared ignoring case, because on a
+  case-insensitive file system `Mercury` collides with `mercury/` and `head` with `HEAD`.
+- `required_checks` (required with `deploy`, may be `[]`): the project's own check names that must be green on the head
+  before a merge. At most 20 distinct names of 1-100 characters on one line, no `${{`, and no character that draws nothing or
+  counts as a space or control. That is decided by Unicode general category, so no list can miss one: Cc, Cf (zero-width and
+  direction marks, the tag block, the Arabic number signs, ...), Cs, Co, Cn (unassigned), Zl, Zp, Me and every Zs except the
+  ordinary space are refused, plus a few fillers and selectors that Unicode files as letters or marks (U+034F, U+115F, U+1160,
+  U+17B4, U+17B5, U+180B-U+180F, U+2800, U+3164, U+FE00-U+FE0F, U+FFA0, U+E0100-U+E01EF). A test walks every code point.
+  **Look-alike letters are not detected:** a Cyrillic capital I (U+0406) is an ordinary letter that looks like the Latin I, so a
+  name that uses it passes. A name can be claimed by a commit status (see merge condition 5), so a project must review every
+  change to `required_checks` like code. (The answer for a character that only a very new Unicode version assigns can differ
+  between Python versions, because unassigned code points are refused.)
+- `update_schedule` (optional, default `17 3 * * *`, UTC): five space-separated cron fields of numbers, `*`, ranges, `/n`
+  steps and commas, each number in range (day of week 0-6).
+
+Because `.mercury/config.json` may not change inside an update pull request, changing a param is a normal project pull
+request followed by `python tools/mercury.py apply` from a released Mercury commit.
+
+### The GitHub App (set up once by the project owner)
+
+Events caused by the workflow's own `GITHUB_TOKEN` do not create workflow runs, except `workflow_dispatch` and
+`repository_dispatch` (GitHub docs, "Triggering a workflow"; the source text is `data/reusables/actions/actions-do-not-trigger-workflows.md`
+in github/docs). A pull request opened with `GITHUB_TOKEN` therefore either starts no `pull_request` workflows or, in the
+newest docs, starts them waiting for a person to approve them; either way the checks would not run by themselves. The workflow
+therefore uses a GitHub App installation token (`actions/create-github-app-token@v3`; input names verified in its `action.yml`
+and README at v3).
+
+- Create the App on the owner account (webhook off, installable on that account only) with these repository permissions:
+  Contents read and write, Pull requests read and write, Workflows read and write (the managed files live under
+  `.github/workflows/`), Checks read-only, Commit statuses read-only; Metadata read-only is added automatically.
+- Install it on the downstream repositories only (choose "Only select repositories").
+- In each downstream repository: variable `MERCURY_APP_CLIENT_ID` (the App's Client ID, not the App ID) and secret
+  `MERCURY_APP_PRIVATE_KEY` (the whole `.pem` file). The key is never committed or sent anywhere else.
+- The workflow narrows the token to the current repository and to `permission-contents: write`,
+  `permission-pull-requests: write`, `permission-workflows: write`, `permission-checks: read` and
+  `permission-statuses: read`, even if the App holds more. Mercury itself is public, so its checkout needs no token.
+
+### Scheduled runs and the default branch
+
+GitHub runs `schedule` workflows only from the latest commit of the repository's default branch ("Events that trigger
+workflows", docs.github.com). A project may integrate somewhere else (SoT's default branch is `main`, it integrates on
+`develop`). So the `dispatch` job, which runs only when `github.event_name == 'schedule'` and `github.ref_name` is not
+the integration branch, does one thing: `gh workflow run mercury-update.yml --ref <integration_branch>` with the workflow's
+`GITHUB_TOKEN`, then ends. A `workflow_dispatch` created with `GITHUB_TOKEN` does start a run (same docs). Creating the
+event needs the repository permission Actions: write (github/docs `src/github-apps/data/fpt-2026-03-10/server-to-server-permissions.json`,
+entry `create-a-workflow-dispatch-event`), which is granted to that job only (`permissions: actions: write`; the top-level
+`contents: read` is unchanged). The dispatched run uses the integration branch's own copy of the file, so after the managed
+files have reached the integration branch every update runs the version that branch holds. No App token, variable or secret
+is referenced in the `dispatch` job. The two job conditions are exact complements, so exactly one job runs: a scheduled run
+on the integration branch, and any manual dispatch, run `update`.
+
+Two properties of this design that are worth knowing:
+
+- Anyone with write access to the repository can start `workflow_dispatch` on any branch (the Actions tab, or `gh workflow run
+  --ref <branch>`). That runs the `update` job with the App token, using the workflow file of the branch they picked. This is
+  inside the threat model that already trusts write access (a writer can push a workflow file and run it anyway); it is
+  mentioned so nobody assumes the token is reachable only from the integration branch.
+- The `dispatch` run and the run it starts share the one `concurrency` group (`mercury-update`, `cancel-in-progress: false`).
+  GitHub keeps at most one running and one pending run per group, and a newer pending run replaces an older pending one. A
+  scheduled tick that arrives while an update is running, or while another is already pending, can therefore be replaced
+  and skipped. Nothing is lost: the update is idempotent and the next schedule tick catches up.
+
+Because the scheduled copy on the default branch can be older than the tool, **the command line of `tools/mercury_update.py`
+is a compatibility surface.** An older workflow copy calls the latest tool from Mercury's `master`. Flags are only ever added,
+and only as optional; an existing flag is never removed, renamed or made required, and an exit code keeps its meaning.
+`tests/tools/test_mercury_update.py` pins the argument lists of the released workflows and the set of required options.
+
+### What the update job does
+
+`publish` reads the newest commit of Mercury's `origin/master` and runs `tools/mercury.py apply` on a branch
+`mercury/update-<12 hex>`. If the project already matches, nothing happens. Otherwise it commits as
+`mercury-update@users.noreply.github.com`, pushes, and opens the one update pull request (source commit link, upstream
+change summary, files taken over or deleted). If an update pull request already exists and is behind Mercury `master`,
+the new state is committed on top of its branch with a regular push; the tool has no force option, so a regular push can
+never discard anyone's commits. It builds only on a branch that is same-repository, named `mercury/update-<12 hex>`, and
+whose every commit beyond the base carries the tool's committer identity; any other branch is left alone and reported. That
+identity test is a courtesy heuristic and not a security boundary (a committer email is free text and can be forged). What makes
+a forged branch harmless is that a regular push never discards anything and that `merge` re-validates the content of the head
+whoever wrote it.
+
+Credentials: `actions/checkout@v7` keeps the token in a separate file under `$RUNNER_TEMP` and wires it through git
+`includeIf.gitdir:` entries for the repository's `.git` and for `.git/worktrees/*` (checkout's `src/git-auth-helper.ts`,
+`includeIf.gitdir:${gitDir}` and `${gitDir}/worktrees/*`). `publish` fetches and pushes from the main checkout of `--target`
+(`git -C target`), which the first entry covers, so the push path needs nothing more; the only worktree the tool creates is the
+read-only one that `merge` uses for `mercury.py check`, and it never talks to the remote.
+
+`merge` squash-merges that pull request with `gh pr merge --match-head-commit <head>` only when all of these hold:
+
+1. It is the only open pull request from a `mercury/update-*` branch, and that branch is in the same repository.
+2. Every path changed between the merge base and the head is Mercury-managed, and a path may only change in the way its
+   kind allows:
+   - a path the **new** lock lists may be created or modified (its content is verified by condition 4);
+   - a path that only the **old** lock or the **v1** lock lists (a file this release stops shipping, a v1 file being adopted
+     away, the v1 lock itself) may only be **deleted**: nothing re-reads its content, so keeping it with other bytes would carry
+     anything through;
+   - `.mercury/lock.json` may change (condition 4 checks it);
+   - `AGENTS.md` / `CLAUDE.md` may change only between the markers (compared outside the markers byte for byte; the section
+     must hash to the value in the lock; deleting either file is refused);
+   - `.mercury/config.json` must not change, and no path outside these kinds may change.
+   Every changed path other than a deletion must be a regular file (mode 100644 or 100755), so a symlink or submodule
+   in place of a managed path is refused.
+3. The new lock's `source_commit` is on Mercury's `origin/master` and descends from the old lock's commit (or there is no
+   old lock, on a first installation), with the same `source_repo`.
+4. `tools/mercury.py check` passes on a read-only checkout of that head, so the file contents are what that Mercury
+   commit produces (a pull request that edits `mercury-verify.yml` to always pass cannot vouch for itself).
+5. Every name in `params.required_checks` and `Mercury verify` has a completed successful result on the exact head.
+   Missing, pending, failed, skipped or cancelled means stop. Every page is read; incomplete pagination is a refusal.
+   Who may satisfy a name:
+   - `Mercury verify` only by a **check run created by GitHub Actions** (app slug `github-actions`), which is what the managed
+     job is. A commit status with that name, or a check run of another app, does not count, because anyone with write access
+     can post those in one call.
+   - The project's own `required_checks` may be satisfied by a check run of any app or by a commit status (external CI is a
+     legitimate source and the project chose the names). The project is responsible for those names not being claimable by
+     an untrusted writer. When one name is reported by several sources, all of them must be green.
+6. The pull request is open, not a draft and GitHub reports it mergeable. `mergeable: false` (a conflict with the base) stops
+   with the instruction to close the pull request and delete its branch, after which the next `publish` opens a fresh one;
+   `mergeable: null` (not computed yet) stops and says the next run will look again.
+
+Exit codes of `tools/mercury_update.py`: 0 nothing to do, published or merged; 1 stopped (the reason is printed: a condition
+is not met, the queue is not unique, a branch is not the tool's); 2 usage or safety error (bad arguments, a cross-repository
+update branch, incomplete pagination, unreadable data). Credentials are redacted from all output.
 
 ## Sources
 
@@ -164,7 +323,9 @@ Unknown or disabled packs are errors; required packs are always included. Unknow
   section of AGENTS.md as "Linked repositories".
 - `params.guard_write_scripts` (optional): file names ending in `.sh`, `.ps1` or `.py` (no directories; the guard
   recognises no other kind) of write-type scripts that the read-only guard
-  blocks in addition to its built-in list. No other `params` key exists yet.
+  blocks in addition to its built-in list.
+- `params.integration_branch`, `params.required_checks`, `params.update_schedule`: used by the `deploy` pack only (see
+  below). They are validated whenever they are present, so a bad value stops every run, not just the one that renders them.
 
 What is written:
 
@@ -226,7 +387,7 @@ Rules:
   is an error too. All checks run before the first byte is written.
 - Deletion is limited to these places: files under `.mercury/packs/`, files inside
   `.claude/skills/mercury-*/` and `.agents/skills/mercury-*/`, and the single files `.claude/agents/mercury-*.md`,
-  `.codex/agents/mercury-*.toml` and `.codex/rules/mercury-*.rules`. A lock entry anywhere else is an error (exit 2),
+  `.codex/agents/mercury-*.toml`, `.codex/rules/mercury-*.rules` and `.github/workflows/mercury-*.yml`. A lock entry anywhere else is an error (exit 2),
   so a tampered lock cannot delete other project files. Emptied directories are removed only below those
   roots; the roots (`.mercury/packs`, `.claude/skills`, `.agents/skills`, `.claude/agents`, `.codex/agents`,
   `.codex/rules`) stay. AGENTS.md and CLAUDE.md are never deleted.

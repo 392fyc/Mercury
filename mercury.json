@@ -17,6 +17,9 @@
     "dot-link": {
       "enabled": true
     },
+    "deploy": {
+      "enabled": true
+    },
     "playwright-mcp": {
       "enabled": false
     }
