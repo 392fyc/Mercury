@@ -907,13 +907,6 @@ class MercuryToolTest(unittest.TestCase):
                 self.index()
         self.assertEqual(self.apply()[0], 0)
 
-    def test_pack_rules_file_is_the_v1_template_file(self):
-        tpl = ROOT / ".mercury/templates/codex-project/rules/mercury-git-safety.rules"
-        if not tpl.exists():
-            self.skipTest("the v1 template has been retired")
-        self.assertEqual((ROOT / "packs/core/rules/mercury-git-safety.rules").read_bytes().replace(b"\r\n", b"\n"),
-                         tpl.read_bytes().replace(b"\r\n", b"\n"))
-
     # managed section
 
     def test_section_is_created_when_the_file_is_missing(self):

@@ -271,7 +271,7 @@ packs/
 |---|---|
 | .claude/skills/ | 核心保留（pr-flow 已于 #672 删除） |
 | .claude/hooks/ | 保留，迁移为可移植配置格式 |
-| .mercury/templates/ | 核心保留，`codex-project/` 是下游同步的可移植模板 |
+| .mercury/templates/ | 已于 #688 删除（v1 模板退役，由 `packs/` 与 `tools/mercury.py` 取代，见 Git 历史） |
 
 ### 转换
 
