@@ -407,6 +407,10 @@ Unknown or disabled packs are errors; required packs are always included. Unknow
   its workflows (see below), and the `lanes` scripts use it as the base for new lane branches, after the
   `MERCURY_BASE_BRANCH` environment variable and before origin's default branch (Issue #703).
 - `params.required_checks`, `params.update_schedule`: used by the `deploy` pack only (see below).
+- `params.skip_skills` (optional): a list of pack skill names whose entry files (`.claude/skills/mercury-<skill>/`,
+  `.agents/skills/mercury-<skill>/`) are not installed, for a project whose own skill does the same job, for example
+  `["lane-handoff"]` where the project keeps its own handoff skill. The skill's source still installs under
+  `.mercury/packs/`; an unknown name is an error, and removing it from the list installs the entries again.
 - These values are validated whenever they are present, so a bad value stops every run, not just the one that renders
   them.
 

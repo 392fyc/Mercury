@@ -63,7 +63,7 @@
     ".mercury/packs/dot-link/skills/dot-link/SKILL.md": "41628cf61d9d8606803f0699ef8771272e1909069f51cce93ce5fdd0fbe797bb",
     ".mercury/packs/dot-link/skills/dot-link/references/receiver-protocol.md": "b81844e56fed1f037bcefb0b5ea15c706eb317fe5f805d644218ef6187710ad5",
     ".mercury/packs/dot-link/skills/dot-link/scripts/dot_link.py": "3120ed11bf8da0a1a320151306fb27131f4869bb6aa871d0faea3cc54e206e2a",
-    ".mercury/packs/lanes/agents.md": "4e479d2fe17809abe0bb690dda2d9f6de50d2f6fee382e0452bb56adfaefd8b2",
+    ".mercury/packs/lanes/agents.md": "ed905cb2c77e2733a958872065e9d943cfe6d14098760cb9335975d9e9d3f9b6",
     ".mercury/packs/lanes/claude.md": "48900bc662ada9353856b6ce6181a352ce1222e9e43831230e12e92b5c029ee4",
     ".mercury/packs/lanes/docs/guides/agent-view-dispatch.md": "dabcd88bdc2102d2c52092d99334d206860645d1a1a545938becec5f4fde8167",
     ".mercury/packs/lanes/docs/guides/cross-lane-on-codex.md": "c1e6466372ead8537e0ce13c451e989c889f5370cdb07c21ec65b184a598274e",
@@ -115,7 +115,7 @@
   "mercury_json_sha256": "877b2181bd46fddd25f74cc29f873f7ee97b7bde72795e00f48ac81f2ce391c2",
   "schema_version": 1,
   "sections": {
-    "AGENTS.md": "97114ade73a1f3677c422511cfb777182b9be373d952e6e754a93cfff8b9ed9e",
+    "AGENTS.md": "c88a176714d0fd19c69a7bb3e1f0e0c9b29fa413733d41b882c1fa549898a03a",
     "CLAUDE.md": "c8adcf29c1d31304ea737b7a1a7dd801ed3ce007436a18a2647ef8a68aaf99f1"
   },
   "source": "self"

@@ -373,7 +373,8 @@ LINK_PATHS = [re.compile(p, re.I) for p in (
     r"(?<![A-Za-z0-9])~(?=[/\\]|$|\s)", r"(?<![A-Za-z0-9._-])[/\\]", r"(?<![A-Za-z0-9])\\", r"(?<![A-Za-z0-9])\.{3,}[/\\]",
 )]
 CONFIG_KEYS = {"schema_version", "packs", "linked_repos", "params"}
-PARAM_KEYS = {"guard_write_actions", "guard_write_scripts", "integration_branch", "required_checks", "update_schedule"}
+PARAM_KEYS = {"guard_write_actions", "guard_write_scripts", "integration_branch", "required_checks", "skip_skills",
+              "update_schedule"}
 PARAM_DEFAULTS = {"update_schedule": "17 3 * * *"}  # the others have no sensible default: a project must name them
 SCRIPT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.(?:sh|ps1|py)\Z")
 ACTION_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*\Z")
@@ -526,6 +527,12 @@ def load_params(params):
         out["required_checks"] = check_names(params["required_checks"], f"{CONFIG_REL}: params.required_checks")
     if "update_schedule" in params:
         out["update_schedule"] = cron_text(params["update_schedule"], f"{CONFIG_REL}: params.update_schedule")
+    if "skip_skills" in params:
+        # Pack skills whose entry files the project does not want, because a project skill does the same job.
+        skip = params["skip_skills"]
+        if not isinstance(skip, list) or not all(isinstance(x, str) and NAME_RE.match(x) for x in skip)                 or len(set(skip)) != len(skip):
+            raise BuildError(f"{CONFIG_REL}: params.skip_skills must be a list of distinct pack skill names")
+        out["skip_skills"] = list(skip)
     return out
 
 
@@ -1340,6 +1347,8 @@ def desired_files(src, selected, params=None):
             raise BuildError(f"{owner}: path installed twice: {rel}")
         out[rel] = (data, exe)
 
+    skip = set((params or {}).get("skip_skills", []))
+    skipped = set()
     for pack in selected:
         owner = f"pack {pack}"
         tracked = src.tracked(pack)
@@ -1369,6 +1378,9 @@ def desired_files(src, selected, params=None):
                 continue
             add(f"{PACKS_REL}/{pack}/{rel}", src.read(pack, rel), mode == "100755", owner)
         for skill, sspec in sorted(skills.items()):
+            if skill in skip:
+                skipped.add(skill)
+                continue
             sdir = f"skills/{skill}/"
             if f"skills/{skill}/SKILL.md" not in tracked:
                 raise BuildError(f"{owner}: skill {skill} has no tracked SKILL.md")
@@ -1386,6 +1398,9 @@ def desired_files(src, selected, params=None):
                 desc = field_text(fm, "description", f"{owner}: {skill}/{entry_file}")
                 add(f"{HOSTS[host]}/{name}/SKILL.md", stub_bytes(pack, skill, name, desc, other_fields(fm), entry_file,
                                                            uses_arguments(raw)), False, owner)
+    if skip - skipped:
+        raise BuildError(f"{CONFIG_REL}: params.skip_skills names no skill of the selected packs: "
+                         f"{', '.join(sorted(skip - skipped))}")
     return dict(sorted(out.items())), frags
 
 
