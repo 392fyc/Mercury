@@ -55,6 +55,19 @@ memory location, registry format, scripts, and labels in its own project layer.
      project keeps it.
   A project script that performs steps 2 to 4 under one check is preferred over
   doing them by hand.
+- Each lane has a work area for material that is not itself a delivery:
+  drafts, raw data, simulation output, review notes. It belongs to the lane in
+  the same way as the lane's own directory, so only the lane's own agents
+  write it. The project names its location, either outside the repository or
+  under a path that the repository ignores as a whole (one ignore entry for
+  the directory, not per file), so that neither the work area nor the lane
+  state shows up as an uncommitted change in a main checkout.
+- Create a task branch and worktree only for work that is delivered or
+  reviewed through a pull request. Never keep a branch or worktree only to hold
+  uncommitted files; move such files to the work area, then retire the branch
+  and worktree under the project's branch lifecycle. Deliver each resulting
+  conclusion to the repository that is authoritative for it; the raw material
+  stays in the work area or is discarded.
 - The main checkout is not a development workspace. Develop and review in task
   worktrees. At session end, report uncommitted changes in a main checkout and
   their suspected owner; do not discard or commit another lane's work.
