@@ -136,6 +136,9 @@ class Generation(Base):
         self.assertNotIn(".agents/skills/proj-x/SKILL.md", self.lock()["local"]["files"])
         self.assertIn("The full skill lives in `.agents/skills/proj-x/`", stub)
         self.assertIn("This skill belongs to the project", stub)
+        self.assertIn("relative to the repository root", stub)  # a project skill's paths are not skill-relative
+        self.assertIn("Markdown link stays relative to the file that contains it", stub)
+        self.assertNotIn("Resolve every relative path", stub)
         self.assertIn("name: proj-x\n", stub)
         self.assertIn("user-invocable: true\n", stub)  # other frontmatter fields are carried, as for pack skills
         self.assertIn("Arguments: $ARGUMENTS", stub)
