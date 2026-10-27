@@ -227,7 +227,7 @@ run_reaper() {
 
 branch_exists() { git_r show-ref --verify --quiet "refs/heads/$1"; }
 
-printf '1..%s\n' "57"
+printf '1..%s\n' "63"
 
 # ---------------------------------------------------------------------------
 # dry-run
@@ -351,6 +351,47 @@ EOF
 chmod +x "$EMPTYBIN/gh"
 ( cd "$REPO" && PATH="${EMPTYBIN}:${PATH}" WORKTREE_BASE_REF=main bash "$REAPER" --prune >/dev/null 2>&1 )
 [ $? -ne 0 ] && ok "prune refuses to run when gh cannot list open PRs" || notok "prune ran without gh PR data"
+
+# ---------------------------------------------------------------------------
+# Base ref = the integration branch (#703): WORKTREE_BASE_REF, else
+# $MERCURY_BASE_BRANCH, else params.integration_branch, else origin/HEAD, else error
+# ---------------------------------------------------------------------------
+REPO2="${TMP}/repo2"
+mkdir -p "$REPO2/.mercury"
+git -C "$REPO2" init -q 2>/dev/null
+run_base() {  # run_base [VAR=value ...] - reaper --dry-run in REPO2 without WORKTREE_BASE_REF
+  ( cd "$REPO2" && env -u WORKTREE_BASE_REF -u MERCURY_BASE_BRANCH "$@" PATH="${SHIM}:${PATH}" bash "$REAPER" --dry-run 2>&1 )
+}
+OUT=$(run_base X=1); RC=$?
+{ [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "cannot resolve the integration branch"; } \
+  && ok "base ref: nothing resolves -> error, no guess" || notok "base ref: expected an error (rc=$RC)" "$OUT"
+OUT=$(run_base MERCURY_BASE_BRANCH=trunk); RC=$?
+[ "$RC" -eq 0 ] && ok "base ref: MERCURY_BASE_BRANCH resolves" || notok "base ref: env var not honored (rc=$RC)" "$OUT"
+if command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
+  printf '{"params":{"integration_branch":"fromcfg"}}\n' > "$REPO2/.mercury/config.json"
+  OUT=$(run_base X=1); RC=$?
+  [ "$RC" -eq 0 ] && ok "base ref: params.integration_branch in .mercury/config.json resolves" || notok "base ref: config.json not honored (rc=$RC)" "$OUT"
+  rm -f "$REPO2/.mercury/config.json"
+else
+  ok "base ref: config.json case skipped (no python)"
+fi
+git -C "$REPO2" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/mainline 2>/dev/null
+OUT=$(run_base X=1); RC=$?
+[ "$RC" -eq 0 ] && ok "base ref: origin/HEAD resolves" || notok "base ref: origin/HEAD not honored (rc=$RC)" "$OUT"
+
+# Remote HEAD fallback: no refs/remotes/origin/HEAD, but the remote's real HEAD is readable.
+REPO3="${TMP}/repo3"; REMOTE3="${TMP}/remote3.git"
+git init -q --bare "$REMOTE3" 2>/dev/null
+git init -q "$REPO3" 2>/dev/null
+git -C "$REPO3" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+git -C "$REPO3" remote add origin "$REMOTE3"
+git -C "$REPO3" push -q origin HEAD:refs/heads/trunk 2>/dev/null
+git -C "$REMOTE3" symbolic-ref HEAD refs/heads/trunk
+git -C "$REPO3" symbolic-ref -q refs/remotes/origin/HEAD >/dev/null 2>&1 && git -C "$REPO3" symbolic-ref --delete refs/remotes/origin/HEAD
+OUT=$( cd "$REPO3" && env -u WORKTREE_BASE_REF -u MERCURY_BASE_BRANCH PATH="${SHIM}:${PATH}" bash "$REAPER" --dry-run 2>&1 ); RC=$?
+[ "$RC" -eq 0 ] && ok "base ref: remote HEAD via ls-remote when origin/HEAD is missing" || notok "base ref: ls-remote fallback failed (rc=$RC)" "$OUT"
+OUT=$( cd "$REPO2" && git symbolic-ref --delete refs/remotes/origin/HEAD 2>/dev/null; env -u WORKTREE_BASE_REF -u MERCURY_BASE_BRANCH PATH="${SHIM}:${PATH}" bash "$REAPER" --dry-run 2>&1 ); RC=$?
+[ "$RC" -ne 0 ] && ok "base ref: no remote and nothing configured is still an error" || notok "base ref: expected error without any source (rc=$RC)" "$OUT"
 
 printf '# %d tests, %d failed\n' "$TESTS" "$FAILED"
 exit "$FAILED"

@@ -228,7 +228,7 @@ them. Cleanup is an explicit operator step, not automatic GC.
   `ExitWorktree` themselves — policy hooks could intercept (none ship
   today).
 - Commits made inside the auto-worktree land on `worktree-<auto-name>`
-  branch. Reconciliation back to `develop` or a lane branch is an
+  branch. Reconciliation back to the integration branch or a lane branch is an
   **operator decision**: cherry-pick, merge, or discard. (Phase 6 probe
   did not commit; commit-fate is inferred from the branch-separation
   mechanics, not empirical — future probe 4 will close the gap.)
@@ -236,10 +236,10 @@ them. Cleanup is an explicit operator step, not automatic GC.
   mechanism that did not match the dispatcher's current branch HEAD in
   S99 empirical (the work branch HEAD was `8ffb17a` but the
   `worktree-state` event recorded `originalHeadCommit: e892920`). Both
-  SHAs are in the develop ancestry — not a random commit — but the
+  SHAs are in the integration-branch ancestry — not a random commit — but the
   supervisor's selection mechanism between them is undocumented (S99
   ADR §#1 sub-finding). **Mitigation**: if a bg task depends on the
-  latest develop state, the dispatch prompt should explicitly cite
+  latest integration-branch state, the dispatch prompt should explicitly cite
   file paths + commit SHA so the agent can self-check, rather than
   assuming the worktree HEAD == lane HEAD.
 
@@ -251,7 +251,7 @@ git worktree list | grep ".claude/worktrees/<name>"
 git -C .claude/worktrees/<name> log --oneline -5
 git -C .claude/worktrees/<name> status --porcelain      # must be empty to proceed
 
-# Merged work (HEAD is an ancestor of origin/develop, or of a merged PR head): remove
+# Merged work (HEAD is an ancestor of origin/<integration-branch>, or of a merged PR head): remove
 git worktree remove .claude/worktrees/<name>      # plain remove; refuses if uncommitted state
 git branch -d worktree-<name>                     # -D only with merged-PR evidence
 ```
@@ -264,7 +264,7 @@ that point `git branch -D worktree-<name>` is the confirmed deletion, and a
 pushed branch is deleted with `gh api -X DELETE repos/<owner>/<repo>/git/refs/heads/worktree-<name>`
 (not a bare `git push`), after reading it back with `gh api repos/<owner>/<repo>/git/ref/heads/worktree-<name>`
 and confirming the SHA equals the tip commit you listed (otherwise stop). Never delete `main`, `master`,
-`develop` or the default branch. Lifecycle rules: `.mercury/docs/guides/worktree-workflow.md`.
+`develop` (frozen) or the default branch. Lifecycle rules: `.mercury/docs/guides/worktree-workflow.md`.
 
 The `<name>` placeholder is operator-supplied (NOT auto-substituted by the
 shell) — copy-pasting verbatim targets a literal directory named `<name>`.
@@ -298,7 +298,7 @@ created it. The pragmatic heuristics:
 - If the branch is `worktree-<name>` AND the name has no clear task-ID
   shape → agent view auto-iso.
 - If `git -C .claude/worktrees/<name> log --oneline -1` shows commits on
-  a `lane/<short>/<N>-*` or `feature/lane-*` branch → Mercury manual.
+  a lane branch (`<type>/<purpose>-<short>[-<agent>]`, or the legacy `lane/<short>/<N>-*` / `feature/lane-*`) → Mercury manual.
 - When in doubt, check `~/.claude/jobs/*/state.json` for any
   `worktreePath` field referencing the dir; if a session is still alive
   and the worktree is its iso target, removing it will surprise the bg

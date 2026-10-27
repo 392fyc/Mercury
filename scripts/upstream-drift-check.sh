@@ -21,7 +21,7 @@
 #   --write-back   After checking, stamp last_drift_check (UTC date) on every
 #                  PROJECT-manifest entry, recording that a drift review ran.
 #                  Use locally / in a PR — NOT from CI (CI must not push to
-#                  develop; the scheduled .github/workflows/upstream-drift.yml
+#                  master; the scheduled .github/workflows/upstream-drift.yml
 #                  runs read-only and files a tracking Issue instead).
 #
 # Exit codes (so a scheduler/CI can gate on drift):

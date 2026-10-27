@@ -381,7 +381,7 @@ adapters/         # 适配层
 4. 实现（Mode B 或 Mode D）
 5. 在真实项目上验证
 6. 编写方法论文档（Mode E）
-7. PR → develop
+7. PR → master
 
 ---
 

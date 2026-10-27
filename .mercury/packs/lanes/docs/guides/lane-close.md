@@ -29,7 +29,7 @@ atomic and bounded to the owning lane's section.
 | Flag / Env var | Effect |
 |----------------|--------|
 | `--yes` | Skip the interactive confirm prompt. Required in non-interactive contexts (CI, autorun). |
-| `--force-cross-lane` | Suppress the warning emitted when the current branch does not match `feature/lane-<lane>/*`. Useful when closing from `develop` after a PR merge. |
+| `--force-cross-lane` | Suppress the warning emitted when the current branch does not belong to the lane (it does not end with the lane's short name). Useful when closing from the integration branch after a PR merge. |
 | `--dry-run` | Print intended actions without modifying `LANES.md` or removing the tmp dir. |
 | `--lanes-file PATH` | Override LANES.md location. Defaults to `<memory-dir>/LANES.md`. |
 | `--memory-dir PATH` | Override memory dir. Defaults to `MERCURY_MEMORY_DIR` env, then the project's lane home `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded main checkout>/memory` (`.mercury/packs/lanes/scripts/lane-paths.sh memory-dir`; `D--Mercury-Mercury` for `D:/Mercury/Mercury`; #613). |
@@ -56,11 +56,12 @@ lane flips).
 
 Per Rule 6, only the owning lane should close itself. The script can't
 cryptographically prove ownership from inside a single repo checkout, so it
-uses a heuristic: if the current branch starts with `feature/lane-<lane>/`,
-the run is presumed in-scope and proceeds silently. Otherwise it emits a
+uses a heuristic: if the current branch ends with the lane's short name
+(`<type>/<purpose>-<short>[-<agent>]`, Issue #703; the old `feature/lane-<lane>/`
+and `lane/<short>/` prefixes still count), the run is presumed in-scope and proceeds silently. Otherwise it emits a
 `WARN` (not a hard error). Pass `--force-cross-lane` to silence the warning
 when you legitimately need to close from another branch — e.g., after the
-lane's last PR was merged and you switched back to `develop`.
+lane's last PR was merged and you switched back to the integration branch.
 
 ### Tmp-dir safety guards
 
@@ -91,8 +92,8 @@ re-run.
 # Standard close from the lane's own working branch
 .mercury/packs/lanes/scripts/lane-close.sh side-multi-lane
 
-# Close from develop (after PR merged) — silence cross-lane warning
-git checkout develop
+# Close from the integration branch (after PR merged) — silence cross-lane warning
+git checkout <integration-branch>
 .mercury/packs/lanes/scripts/lane-close.sh side-multi-lane --yes --force-cross-lane
 
 # Preview without mutating anything

@@ -14,8 +14,10 @@
 #   4. Remove `.tmp/lane-<lane>/`
 #
 # Per Rule 6 only the OWNING lane should run this. The script issues a soft
-# warning when the current git branch does not match `feature/lane-<lane>/*`
-# (heuristic — not enforced; pass --force-cross-lane to silence).
+# warning when the current git branch does not belong to the lane (#703: the
+# branch ends with the lane's short name, `<type>/<purpose>-<short>[-<agent>]`;
+# the old `feature/lane-<lane>/*` and `lane/<short>/*` still count — legacy
+# compat). Heuristic — not enforced; pass --force-cross-lane to silence.
 #
 # Usage:
 #   .mercury/packs/lanes/scripts/lane-close.sh <lane-name>
@@ -211,9 +213,19 @@ fi
 if [ "$FORCE_CROSS_LANE" -eq 0 ]; then
   CUR_BRANCH=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
   if [ -n "$CUR_BRANCH" ] && [ "$CUR_BRANCH" != "HEAD" ]; then
+    # Short name from the lane section; falls back to the lane name (as lane-assertion.sh does).
+    CUR_SHORT=$(printf '%s\n' "$LANE_SECTION" | grep -m1 '^- \*\*Short name\*\*:' \
+      | sed -E 's/^- \*\*Short name\*\*: `?([A-Za-z0-9_-]+)`?.*/\1/' || true)
+    [ -n "$CUR_SHORT" ] || CUR_SHORT="$LANE"
     case "$CUR_BRANCH" in
-      "feature/lane-${LANE}/"*) ;;
-      *) warn "current branch '$CUR_BRANCH' does not match owning-lane prefix 'feature/lane-${LANE}/*' — pass --force-cross-lane to silence this warning" ;;
+      "feature/lane-${LANE}/"*) ;;   # legacy format (pre-#703)
+      "lane/${CUR_SHORT}/"*) ;;      # legacy format (pre-#703)
+      *)
+        if [ "$(lane_branch_owner "$CUR_BRANCH" "$CUR_SHORT" 2>/dev/null)" = "$CUR_SHORT" ]; then
+          :
+        else
+          warn "current branch '$CUR_BRANCH' does not end with owning-lane suffix '-${CUR_SHORT}' (<type>/<purpose>-${CUR_SHORT}[-<agent>]) — pass --force-cross-lane to silence this warning"
+        fi ;;
     esac
   fi
 fi

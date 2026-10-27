@@ -21,7 +21,7 @@ the same time (default threshold: 14 days):
 
 | Signal | Source | Stale criterion |
 |--------|--------|-----------------|
-| Branch activity | `git for-each-ref` on `feature/lane-<lane>/*` (and legacy `feature/TASK-*` for main) | newest committerdate > 14d ago, or no matching refs |
+| Branch activity | `git for-each-ref` over local and remote branches: those ending with the lane's short name (`<type>/<purpose>-<short>[-<agent>]`, longest match wins) plus legacy `feature/lane-<lane>/*` and `lane/<short>/*` (main: also any new-format branch no other lane owns, which includes the old `feature/TASK-*` unless another lane's suffix owns it) | newest committerdate > 14d ago, or no matching refs |
 | Handoff activity | mtime of `session-handoff[-<lane>].md` in the project's handoff dir (`.mercury/packs/lanes/scripts/lane-paths.sh handoff-dir`, or `--handoff-dir`; not auto-resolved when `--memory-dir` is given) plus the legacy `<memory-dir>` copy — newest wins | mtime > 14d ago, or file missing |
 | Issue activity | `gh issue list --label "lane:<lane>" --state all` newest `updatedAt` | > 14d ago, or no matching Issues |
 

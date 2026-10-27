@@ -472,6 +472,57 @@ else
   fail "T_REG2 default resolution via the lane home" "$(cat "$RR/.mercury/state/lane-status.json" 2>/dev/null | head -c 300)"
 fi
 
+# T_SUF — #703 suffix branch format: <type>/<purpose>-<short>[-<agent>] has no
+# shared prefix, so every remote head is listed and matched per lane by suffix
+# (longest registered name wins); the legacy lane/<short>/ prefix still counts.
+printf '%s\n' '#!/bin/bash' \
+  'if [[ "$*" == *"label list"* ]]; then' \
+  '  echo '"'"'[{"name":"lane:solo"}]'"'"'; exit 0; fi' \
+  'if [[ "$*" == *"issue list"* ]]; then echo "[]"; exit 0; fi' \
+  'echo '"'"'[]'"'"'; exit 0' > "$STUB_REG/gh"
+printf '%s\n' '#!/bin/bash' \
+  'if [[ "$*" == *"ls-remote"* ]]; then' \
+  "  printf '%s\t%s\n' 'b1' 'refs/heads/feature/12-palette-art-claude'" \
+  "  printf '%s\t%s\n' 'b2' 'refs/heads/feature/13-t-artist-codex'" \
+  "  printf '%s\t%s\n' 'b3' 'refs/heads/feature/4-x-solo'" \
+  "  printf '%s\t%s\n' 'b4' 'refs/heads/fix/7-y-side-mlane-codex'" \
+  "  printf '%s\t%s\n' 'b5' 'refs/heads/fix/8-z-mlane'" \
+  "  printf '%s\t%s\n' 'b6' 'refs/heads/lane/art/9-legacy'" \
+  "  printf '%s\t%s\n' 'b7' 'refs/heads/codex/10-forbidden-art'" \
+  "  printf '%s\t%s\n' 'b8' 'refs/heads/feature/11-unowned-claude'; exit 0; fi" \
+  'if [[ "$*" == *"log"* ]]; then echo "2026-04-26T10:00:00Z"; exit 0; fi' \
+  "exec '$REAL_GIT' \"\$@\"" > "$STUB_REG/git"
+chmod +x "$STUB_REG/gh" "$STUB_REG/git"
+REG3="$REPO_ROOT/LANES3.md"
+cat > "$REG3" <<'LANES'
+## Active Lanes
+
+### `art`
+
+- **Short name**: `art`
+
+### `artist`
+
+- **Short name**: `artist`
+
+### `mlane`
+
+- **Short name**: `mlane`
+
+### `side-multi-lane`
+
+- **Short name**: `side-mlane`
+LANES
+rm -f "$REG_JSON"
+set +e
+MERCURY_LANES_FILE="$REG3" bash "$LANE_STATUS" 2>/dev/null
+set -e
+reg_check "T_SUF suffix + agent suffix counted for art; legacy lane/art/ too; artist branch and codex/ prefix not" '.lanes[] | select(.name=="art") | ([.branches[].ref] | sort) == ["feature/12-palette-art-claude","lane/art/9-legacy"]'
+reg_check "T_SUF artist owns only its own suffix" '.lanes[] | select(.name=="artist") | [.branches[].ref] == ["feature/13-t-artist-codex"]'
+reg_check "T_SUF longest match: side-mlane owns ...-side-mlane-codex" '.lanes[] | select(.name=="side-multi-lane") | [.branches[].ref] == ["fix/7-y-side-mlane-codex"]'
+reg_check "T_SUF longest match: mlane does not own ...-side-mlane-codex" '.lanes[] | select(.name=="mlane") | [.branches[].ref] == ["fix/8-z-mlane"]'
+reg_check "T_SUF unregistered label falls back to the lane name as suffix" '.lanes[] | select(.name=="solo") | [.branches[].ref] == ["feature/4-x-solo"]'
+
 rm -rf "$STUB_REG"
 
 # ---------------------------------------------------------------------------

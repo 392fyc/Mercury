@@ -16,7 +16,7 @@ name: upstream-drift
 # .mercury/docs/guides/upstream-drift-routine.md.
 #
 # This job runs READ-ONLY: it does NOT write last_drift_check back to the repo
-# (GHA must not push to develop — Mercury PR-only rule). last_drift_check is the
+# (GHA must not push to master — Mercury PR-only rule). last_drift_check is the
 # "last human-reviewed" marker, stamped by local `upstream-drift-check.sh
 # --write-back` runs committed via PR; this job is the automated alarm.
 #

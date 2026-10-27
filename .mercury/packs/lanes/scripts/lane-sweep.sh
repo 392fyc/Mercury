@@ -4,7 +4,7 @@
 #
 # A lane is "stale" if ALL THREE criteria are simultaneously older than the
 # threshold (default 14 days):
-#   1. Branch activity   — newest committerdate on `feature/lane-<lane>/*` refs
+#   1. Branch activity   — newest committerdate on the lane's branches (suffix format #703 + legacy)
 #                          (main lane also checks legacy `feature/TASK-*`)
 #   2. Handoff activity  — mtime of the lane's `session-handoff[-<lane>].md`
 #                          file in the user-memory directory
@@ -148,23 +148,12 @@ parse_active_lanes() {
   ' "$1"
 }
 
-# Newest committerdate (unix ts) across refs matching the lane's branch glob.
-# main lane also includes legacy `feature/TASK-*`. Empty output = no refs.
+# Newest committerdate (unix ts) across the lane's branches (#703 suffix format
+# plus the legacy `feature/lane-<lane>/*`, `lane/<short>/*`; main also owns
+# legacy `feature/TASK-*`). Empty output = no refs. See lane_branch_last_ts.
 # Pinned via `git -C "$REPO_ROOT"` so cwd doesn't silently hijack the result.
 branch_last_ts() {
-  local lane="$1"
-  local patterns=(
-    "refs/heads/feature/lane-${lane}/*"
-    "refs/remotes/*/feature/lane-${lane}/*"
-  )
-  if [ "$lane" = "main" ]; then
-    patterns+=(
-      "refs/heads/feature/TASK-*"
-      "refs/remotes/*/feature/TASK-*"
-    )
-  fi
-  git -C "$REPO_ROOT" for-each-ref --sort=-committerdate --format='%(committerdate:unix)' \
-    "${patterns[@]}" 2>/dev/null | head -n1
+  lane_branch_last_ts "$REPO_ROOT" "$1" "$LANES_FILE"
 }
 
 # Newest mtime of a lane's handoff: the unified handoff dir (#613) first, the

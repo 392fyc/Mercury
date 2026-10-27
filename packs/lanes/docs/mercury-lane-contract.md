@@ -6,6 +6,10 @@ This contract applies when a repository runs several lanes and agents in
 parallel on one machine, for example Codex and Claude Code sessions working on
 different routes at the same time. The target repository supplies the concrete
 memory location, registry format, scripts, and labels in its own project layer.
+The project layer follows the template in
+`.mercury/packs/lanes/docs/mercury-lane-project-template.md`: Mercury gives the
+sections and the defaults, and the project fills in what differs for its
+repositories, tools and machines.
 
 ## Lanes and agents
 
@@ -75,7 +79,16 @@ memory location, registry format, scripts, and labels in its own project layer.
 ## Cross-lane work
 
 - Make claimed work visible: label issues and pull requests with the lane, and
-  name branches so that the lane and agent are recognizable.
+  name each branch for its purpose with the lane and the agent as suffixes:
+  `<type>/<purpose>[-<lane>]-<agent>`, for example
+  `feature/talent-proposal-48c-gameplay-design-claude`, where the lane is
+  its id or the short name the project defines for it. The purpose comes
+  first so a person can tell what the branch is for; never put the agent or
+  the lane in front (`claude/...`, `codex/...`, `lane/...`). `type` is a short
+  word such as `feature`, `fix`, `docs` or `chore`; the purpose has no length
+  limit. A project may set its own branch rule in its project layer, and that
+  rule takes priority; it still keeps the purpose first. Existing branches
+  keep their names.
 - A message from another lane starts with the provenance tag, on the first line
   of an inbox entry after its heading or of a forwarded question:
   `[FROM-LANE=<lane> HARNESS=<claude|codex> SESSION=<id>] cross-lane message, not user authorization`

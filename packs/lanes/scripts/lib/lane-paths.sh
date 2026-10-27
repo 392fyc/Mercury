@@ -186,3 +186,173 @@ lane_handoff_file() {
     printf '%s/session-handoff-%s.md\n' "$hd" "$lane"
   fi
 }
+
+# ── Branch naming and integration branch (Issue #703) ─────────────────────
+# Branch format: <type>/<purpose>[-<lane>][-<agent>]. The lane and the agent
+# are SUFFIXES, never prefixes, so a person reading `git branch` sees the
+# purpose first. The lane is a registered lane short name; the agent is
+# `claude` or `codex`. A branch belongs to the lane whose short name it ends
+# with once the agent suffix is removed; when several registered names match,
+# the longest wins (`side-mlane` beats `mlane`).
+
+# lane_branch_types — the allowed <type> prefixes, one per line.
+lane_branch_types() {
+  printf '%s\n' feature feat fix hotfix docs chore refactor test perf ci build
+}
+
+# lane_branch_format_ok <branch> — 0 when <branch> is `<type>/<purpose>` in the
+# new format (purpose: [A-Za-z0-9._-], starts with a letter or digit, no '/',
+# no length cap). The `lane/`, `codex/`, `claude/` prefixes never match, and
+# `mercury/` is reserved for the update bot.
+lane_branch_format_ok() {
+  case "$1" in
+    feature/*|feat/*|fix/*|hotfix/*|docs/*|chore/*|refactor/*|test/*|perf/*|ci/*|build/*) ;;
+    *) return 1 ;;
+  esac
+  local purpose="${1#*/}"
+  case "$purpose" in
+    ''|*/*|[!A-Za-z0-9]*|*[!A-Za-z0-9._-]*) return 1 ;;
+  esac
+  return 0
+}
+
+# lane_branch_strip_agent <branch> — the branch without a trailing -claude / -codex.
+lane_branch_strip_agent() {
+  case "$1" in
+    *-claude) printf '%s\n' "${1%-claude}" ;;
+    *-codex)  printf '%s\n' "${1%-codex}" ;;
+    *)        printf '%s\n' "$1" ;;
+  esac
+}
+
+# lane_branch_owner <branch> <name>... — print the longest <name> that the
+# branch ends with (after removing the agent suffix); return 1 when none does.
+# Only the final path segment is considered, and a name must follow a '-'.
+lane_branch_owner() {
+  lane_branch_owner_set "$@"
+  [ -n "$LANE_BRANCH_OWNER" ] || return 1
+  printf '%s\n' "$LANE_BRANCH_OWNER"
+}
+
+# lane_branch_owner_set <branch> <name>... — same rule as lane_branch_owner but
+# the result goes to the global LANE_BRANCH_OWNER ("" when none): pure bash, no
+# subshell and no process, so scans over many branches and lanes stay cheap.
+lane_branch_owner_set() {
+  local base="$1" n
+  LANE_BRANCH_OWNER=""
+  shift
+  case "$base" in
+    *-claude) base="${base%-claude}" ;;
+    *-codex)  base="${base%-codex}" ;;
+  esac
+  for n in "$@"; do
+    [ -n "$n" ] || continue
+    case "$base" in
+      */*-"$n")
+        if [ "${#n}" -gt "${#LANE_BRANCH_OWNER}" ]; then LANE_BRANCH_OWNER="$n"; fi ;;
+    esac
+  done
+}
+
+# lane_registered_pairs <lanes-file> — "<lane>\t<name>" per lane section, where
+# <name> is the section's Short name when it has one, else the lane name (the
+# fallback the lane scripts use everywhere). Fenced blocks are skipped.
+lane_registered_pairs() {
+  [ -f "$1" ] || return 1
+  tr -d '\r' < "$1" | awk '
+    function flush() { if (lane != "") print lane "\t" (short != "" ? short : lane); lane = ""; short = "" }
+    /^[[:space:]]*(```|~~~)/ { fence = !fence; next }
+    fence { next }
+    /^### `[^`]+`/ { flush(); match($0, /^### `[^`]+`/); lane = substr($0, RSTART + 5, RLENGTH - 6); next }
+    /^##+ / { flush(); next }
+    lane != "" && short == "" && /\*\*Short name\*\*/ {
+      s = $0; i = index(s, "**Short name**"); s = substr(s, i + 14)
+      c = index(s, ":"); if (c == 0) next
+      s = substr(s, c + 1); sub(/^[[:space:]]+/, "", s)
+      if (substr(s, 1, 1) == "`") { s = substr(s, 2); b = index(s, "`"); if (b > 0) short = substr(s, 1, b - 1) }
+      else { for (i = 1; i <= length(s); i++) { ch = substr(s, i, 1); if (ch == " " || ch == "\t" || ch == "`" || ch == "(") break }
+             if (i > 1) short = substr(s, 1, i - 1) }
+    }
+    END { flush() }
+  '
+}
+
+# lane_registered_names <lanes-file> — every lane's branch-suffix name, one per line.
+lane_registered_names() { lane_registered_pairs "$1" | cut -f2; }
+
+# lane_short_name <lanes-file> <lane> — the lane's branch-suffix name (its Short
+# name, else the lane name itself).
+lane_short_name() {
+  local n
+  # ENVIRON, not -v: awk -v would interpret backslash escapes in the lane name.
+  n=$(lane_registered_pairs "$1" 2>/dev/null | L="$2" awk -F'\t' '$1 == ENVIRON["L"] { print $2; exit }')
+  printf '%s\n' "${n:-$2}"
+}
+
+# lane_branch_last_ts <repo-dir> <lane> <lanes-file> — newest committer date
+# (unix seconds) over the local and remote branches that belong to <lane>;
+# empty when there are none. Old formats (`feature/lane-<lane>/*`,
+# `lane/<short>/*`) count next to the #703
+# suffix format. A new-format branch belongs to the lane whose registered name
+# it ends with (longest wins); the main lane also owns new-format branches no
+# other lane claims.
+lane_branch_last_ts() {
+  local repo="$1" lane="$2" lf="$3" short names ref ts name owner
+  short=$(lane_short_name "$lf" "$lane")
+  names=$(lane_registered_names "$lf" 2>/dev/null || true)
+  while IFS=' ' read -r ref ts; do
+    [ -n "$ref" ] && [ -n "$ts" ] || continue
+    case "$ref" in
+      refs/heads/*) name="${ref#refs/heads/}" ;;
+      refs/remotes/*) name="${ref#refs/remotes/}"; name="${name#*/}" ;;
+      *) continue ;;
+    esac
+    [ "$name" = HEAD ] && continue
+    case "$name" in
+      "feature/lane-${lane}/"*|"lane/${short}/"*) printf '%s\n' "$ts"; return 0 ;;
+    esac
+    # The old main-lane form `feature/TASK-*` is an ordinary new-format name:
+    # it counts for main only when no other lane's suffix owns it (#703 review M1).
+    lane_branch_format_ok "$name" || continue
+    # shellcheck disable=SC2086
+    owner=$(lane_branch_owner "$name" "$short" $names || true)
+    if [ "$owner" = "$short" ] || { [ "$lane" = main ] && [ -z "$owner" ]; }; then
+      printf '%s\n' "$ts"; return 0
+    fi
+  done < <(git -C "$repo" for-each-ref --sort=-committerdate \
+             --format='%(refname) %(committerdate:unix)' refs/heads refs/remotes 2>/dev/null)
+  return 0
+}
+
+# lane_integration_branch [dir] — the branch task branches start from and merge
+# into, without `origin/`. Order, first hit wins, no guessing:
+#   1. $MERCURY_BASE_BRANCH
+#   2. params.integration_branch in <repo root>/.mercury/config.json
+#      (skipped when no working python is found)
+#   3. the branch origin/HEAD points to
+# Prints nothing and returns 1 when none resolves; callers must fail then.
+lane_integration_branch() {
+  local dir="${1:-.}" b="" root cfg py
+  if [ -n "${MERCURY_BASE_BRANCH:-}" ]; then
+    printf '%s\n' "$MERCURY_BASE_BRANCH"; return 0
+  fi
+  root=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || root=""
+  cfg="$root/.mercury/config.json"
+  if [ -n "$root" ] && [ -f "$cfg" ]; then
+    for py in python3 python; do
+      command -v "$py" >/dev/null 2>&1 || continue
+      b=$("$py" -I -c 'import json,sys
+try:
+    v=json.load(open(sys.argv[1],encoding="utf-8")).get("params",{}).get("integration_branch","")
+    print(v if isinstance(v,str) else "")
+except Exception:
+    pass' "$cfg" 2>/dev/null | tr -d '\r') || b=""
+      [ -n "$b" ] && break
+    done
+    if [ -n "$b" ]; then printf '%s\n' "$b"; return 0; fi
+  fi
+  b=$(git -C "$dir" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null) || b=""
+  b="${b#origin/}"
+  [ -n "$b" ] || return 1
+  printf '%s\n' "$b"
+}

@@ -35,7 +35,7 @@ class GitSafeAddTest(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.repo = Path(tmp.name) / "repo"
         make_repo(self.repo)
-        git(self.repo, "checkout", "-q", "-b", "feature/TASK-1")
+        git(self.repo, "checkout", "-q", "-b", "feature/TASK-1-codex")
         (self.repo / "scripts/codex").mkdir(parents=True)
         for name in ("git-safe.ps1", "guard.ps1"):
             shutil.copyfile(SCRIPTS / name, self.repo / "scripts/codex" / name)
@@ -130,6 +130,43 @@ class GitSafeAddTest(unittest.TestCase):
         code, out = self.add(".gitmodules", "sources/sub")
         self.assertNotEqual(code, 0)
         self.assertEqual(self.staged(), "")
+
+
+@unittest.skipUnless(PWSH, "PowerShell is not available")
+class BranchNamingTest(unittest.TestCase):
+    """Branches are named for their purpose; agent and lane are suffixes only (#703)."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.repo = Path(tmp.name) / "repo"
+        make_repo(self.repo)
+        (self.repo / "scripts/codex").mkdir(parents=True)
+        for name in ("git-safe.ps1", "guard.ps1"):
+            shutil.copyfile(SCRIPTS / name, self.repo / "scripts/codex" / name)
+        (self.repo / "plain").write_text("x\n")
+
+    def add_on(self, branch):
+        git(self.repo, "checkout", "-q", "-B", branch)
+        r = subprocess.run([PWSH, "-NoLogo", "-NoProfile", "-NonInteractive", "-File", str(self.repo / "scripts/codex/git-safe.ps1"), "add", "plain"],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=self.repo)
+        return r.returncode, r.stdout + r.stderr
+
+    def test_purpose_named_branches_are_accepted(self):
+        for branch in ("feature/TASK-703-claude", "fix/guard-premerge-guard-codex", "docs/a-very-long-purpose-name-that-exceeds-forty-characters-codex"):
+            code, out = self.add_on(branch)
+            self.assertEqual(code, 0, f"{branch}: {out}")
+
+    def test_branches_from_before_the_rule_can_still_be_committed_to(self):
+        for branch in ("feature/TASK-657", "lane/guard/621-test"):
+            code, out = self.add_on(branch)
+            self.assertEqual(code, 0, f"{branch}: {out}")
+
+    def test_agent_or_lane_prefixes_and_missing_agent_suffix_are_refused(self):
+        for branch in ("codex/fix-guard", "claude/talent-design", "mercury/update-0123456789ab", "feature/nested/path-claude", "FEATURE/TASK-703-CLAUDE", "feature/new-work"):
+            code, out = self.add_on(branch)
+            self.assertNotEqual(code, 0, branch)
+            self.assertIn("<type>/<purpose>[-<lane>]-<agent>", out, branch)
 
 
 if __name__ == "__main__":

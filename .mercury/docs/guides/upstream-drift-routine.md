@@ -21,7 +21,7 @@ Mercury 挂载/借鉴了若干外部组件(cherry-pick 的 skill/agent 文件、
 ## last_drift_check 语义(重要)
 
 - `last_drift_check` = **「上次人工复核日期」**,由本地 `bash scripts/upstream-drift-check.sh --write-back` 回写、经 PR 提交。它**独立于**当次 CLEAN/CHANGED 状态(状态是瞬时的,重跑即得)。
-- **GHA 只读、绝不回写**:GitHub Actions 不能 push develop(Mercury PR-only 规则)。月度 GHA 是「自动告警」(检测→开/更新 tracking issue),不动 manifest。manifest 的时间戳只在人工复核 + PR 时前进。
+- **GHA 只读、绝不回写**:GitHub Actions 不能 push master(Mercury PR-only 规则)。月度 GHA 是「自动告警」(检测→开/更新 tracking issue),不动 manifest。manifest 的时间戳只在人工复核 + PR 时前进。
 - 这样分工:`upstream-drift` tracking issue = 「机器说有漂移」;`last_drift_check` = 「人看过了,日期为证」。
 
 ## 漂移裁决流程(收到 CHANGED / Tier-2 ACTION-NEEDED 时)

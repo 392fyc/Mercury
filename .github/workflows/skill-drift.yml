@@ -2,11 +2,11 @@ name: Skill Drift Detection
 
 on:
   pull_request:
-    branches: [develop, master]
+    branches: [master]
     paths:
       - ".claude/skills/**"
   push:
-    branches: [develop]
+    branches: [master]
     paths:
       - ".claude/skills/**"
 

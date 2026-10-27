@@ -753,7 +753,7 @@ extraction works before spawning a process you may have to clean up:
 ```bash
 if [ -x .mercury/packs/lanes/scripts/lane-assertion.sh ]; then
   if ! BOOTSTRAP_PROMPT="$SHORT_PROMPT" bash .mercury/packs/lanes/scripts/lane-assertion.sh \
-       --cwd "$WORKTREE_PATH" --branch "$(git -C "$WORKTREE_PATH" branch --show-current 2>/dev/null || echo develop)"; then
+       --cwd "$WORKTREE_PATH" --branch "$(git -C "$WORKTREE_PATH" branch --show-current 2>/dev/null || echo master)"; then
     echo "ERROR: lane-assertion pre-flight failed — refusing to spawn" >&2
     exit 1
   fi

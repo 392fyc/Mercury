@@ -62,7 +62,7 @@ Main: verify merged + clean (see Cleanup after merge)
 | Artifact | Pattern | Example |
 |----------|---------|---------|
 | Worktree path | `.worktrees/{taskId}` | `.worktrees/247-worktree-per-task` |
-| Branch | `feat/{taskId}` or `feat/{taskId}-{slug}` per git-flow.md | `feat/247-worktree-per-task` |
+| Branch | `<type>/<purpose>[-<lane>]-<agent>` per git-flow.md | `feature/247-worktree-per-task-claude` |
 
 The worktree root (`.worktrees/`) is listed in `.gitignore` as `/.worktrees/` —
 worktrees are transient and must not be committed.
@@ -96,7 +96,7 @@ Worktree management follows these steps when Main dispatches a dev agent:
 | **Dispatch dev** | Main runs `git worktree add "${REPO_ROOT}/.worktrees/${TASK_ID}" -b "${TASK_BRANCH}"` then injects the absolute path into `TaskBundle.worktreePath` before dispatch |
 | **Dev prompt** | Prompt explicitly instructs dev to `cd <worktreePath>` before any file operation |
 | **Forbidden list** | Dev agents are forbidden from "Creating or modifying git worktrees (Main's responsibility)" |
-| **Cleanup** | After the PR is merged: `bash scripts/cleanup-worktree-branch.sh "${TASK_BRANCH}" develop` (safe mode; no `--force`). On blocked/escalation exits the work is not merged, so nothing is deleted: report the branch to the user (see abandoned work below) |
+| **Cleanup** | After the PR is merged: `bash scripts/cleanup-worktree-branch.sh "${TASK_BRANCH}" master` (safe mode; no `--force`). On blocked/escalation exits the work is not merged, so nothing is deleted: report the branch to the user (see abandoned work below) |
 
 ---
 
@@ -124,7 +124,7 @@ Before dispatching a task, Main MUST:
 4. **After PR merge**, clean up (details below):
 
    ```bash
-   bash scripts/cleanup-worktree-branch.sh "${TASK_BRANCH}" develop
+   bash scripts/cleanup-worktree-branch.sh "${TASK_BRANCH}" master
    ```
 
 Task worktrees live only at `${REPO_ROOT}/.worktrees/${TASK_ID}`. Do not create
@@ -155,11 +155,11 @@ All of these must hold:
    - The branch has at least one commit of its own (evidence: its tip differs from the
      commit recorded by the oldest entry of its reflog, i.e. where it was created; no
      reflog means no evidence) **and** all of it is already in the base
-     branch (`git merge-base --is-ancestor <tip> origin/develop`).
+     branch (`git merge-base --is-ancestor <tip> origin/master`).
 
    Being an ancestor of the base branch alone proves nothing: a branch that was
-   just cut from `develop` and has no commit of its own is also an ancestor of
-   `develop`, and deleting it would destroy a task that has only just started.
+   just cut from `master` and has no commit of its own is also an ancestor of
+   `master`, and deleting it would destroy a task that has only just started.
    A branch with no own commit and no merged PR is therefore never removed
    automatically; it is only listed (`CONFIRM`).
 2. The path is a registered worktree root (`git worktree list --porcelain`) that checks
@@ -175,7 +175,7 @@ All of these must hold:
    branches in the Mercury-family repositories (`protected: false`), so this
    check is the only guard; never rely on remote branch protection.
 
-Then run `scripts/cleanup-worktree-branch.sh <branch> develop`. The script
+Then run `scripts/cleanup-worktree-branch.sh <branch> master`. The script
 re-checks 1 and 3 itself and exits without deleting anything if it cannot
 verify the merge (exit 1) or the branch is protected (exit 2). It removes the
 worktree with a plain `git worktree remove` (never `--force`, except for the verified submodule case below), deletes the local
@@ -301,16 +301,16 @@ Tests: `bash tests/test_worktree_reaper.sh` (TAP output; exit code = number of f
 
 ## Merge Strategy
 
-Each worktree produces an independent PR (`feat/{taskId}` into `develop`).
+Each worktree produces an independent PR (`feature/{taskId}-<agent>` into `master`).
 PRs are merged in dependency order when dependencies exist. Conflicts are
 resolved by Main Agent via rebase before merge; after rebasing a pushed branch,
 `--force-with-lease` is used to update the PR branch (direct force-push without
 lease is prohibited).
 
 ```text
-develop --> feat/TASK-a1b2c3d4-add-auth     (independent)         -> PR -> merge
-        --> feat/TASK-e5f6g7h8-add-logging  (independent)         -> PR -> merge
-        --> feat/TASK-i9j0k1l2-refactor-auth (dependsOn TASK-a1b2c3d4) -> wait -> PR -> merge
+master --> feature/TASK-a1b2c3d4-add-auth-claude     (independent)         -> PR -> merge
+        --> feature/TASK-e5f6g7h8-add-logging-codex(independent)         -> PR -> merge
+        --> feature/TASK-i9j0k1l2-refactor-auth-claude(dependsOn TASK-a1b2c3d4) -> wait -> PR -> merge
 ```
 
 ---
@@ -320,7 +320,7 @@ develop --> feat/TASK-a1b2c3d4-add-auth     (independent)         -> PR -> merge
 | Existing Rule | How Worktree Workflow Satisfies It |
 |---------------|-------------------------------------|
 | Dev agents must never switch branches ([`git-flow.md`](git-flow.md)) | Worktree is branch-locked at creation; the same branch cannot be checked out in multiple worktrees simultaneously |
-| All code enters develop through PRs ([`git-flow.md`](git-flow.md)) | Each worktree branch becomes an independent PR |
+| All code enters master through PRs ([`git-flow.md`](git-flow.md)) | Each worktree branch becomes an independent PR |
 | Main creates branches, Dev does not ([`git-flow.md`](git-flow.md)) | Main creates worktree+branch pre-dispatch; Dev only commits |
 
 ---
@@ -336,6 +336,6 @@ Decided (Issue #663):
 Open (deferred):
 
 2. For tasks that share a dependency, should the dependent task inherit the
-   parent's worktree or get a fresh one from develop? Fresh worktree is safer.
+   parent's worktree or get a fresh one from master? Fresh worktree is safer.
 3. How does the acceptance agent reference files — via worktree path or repo
    root? Acceptance likely needs the repo root for blind review.

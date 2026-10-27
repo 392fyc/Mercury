@@ -133,7 +133,7 @@ class GuardPreMergeTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name) / "repo"
         self.root.mkdir()
-        self._git("init", "--initial-branch=lane/guard/621-test", str(self.root))
+        self._git("init", "--initial-branch=fix/621-test-guard-codex", str(self.root))
         self._git("config", "user.name", "Guard Test")
         self._git("config", "user.email", "guard@example.invalid")
         (self.root / "tracked.txt").write_text("fixture\n", encoding="utf-8")
@@ -174,9 +174,9 @@ class GuardPreMergeTests(unittest.TestCase):
                 "mergeable": "MERGEABLE",
                 "reviewDecision": "REVIEW_REQUIRED",
                 "statusCheckRollup": [success_check()],
-                "headRefName": "lane/guard/621-test",
+                "headRefName": "fix/621-test-guard-codex",
                 "headRefOid": self.head,
-                "baseRefName": "develop",
+                "baseRefName": "master",
             },
             "pages": {
                 "checks": [check_page([success_check()])],

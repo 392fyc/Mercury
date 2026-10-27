@@ -18,13 +18,21 @@
 #        https://code.claude.com/docs/en/claude-directory
 #      - Codex CLI keeps sessions under `$CODEX_HOME/sessions/` (not per cwd);
 #        the cwd scopes `codex resume --last` and the working tree itself.
-#   3. git current branch — MUST match the lane's branch-prefix convention:
-#      - main: `feature/lane-main/TASK-<N>-*` OR `feature/TASK-<N>-*` (legacy)
-#        OR `lane/main/<N>-<slug>` (Rule 2.1, future) OR `develop` itself
-#        (a session can run on develop while not yet branched).
-#      - side: `feature/lane-<lane>/TASK-<N>-*` (legacy) OR
-#        `lane/<short>/<N>-<slug>` (Rule 2.1) OR `lane/<short>/init`
-#        (scaffold per lane-naming.md §Setup at lane open).
+#   3. git current branch — MUST match the lane's branch convention (Issue #703):
+#      new format `<type>/<purpose>[-<lane>][-<agent>]`; the lane is a
+#      registered short name used as a SUFFIX (longest registered match wins),
+#      the agent is `claude` or `codex`.
+#      - main: a new-format branch that no OTHER registered lane owns
+#        (main needs no lane suffix), OR `develop|main|master` itself
+#        (a session can run on a protected branch while not yet branched).
+#        `feature/TASK-<N>-*` is an ordinary new-format name: main owns it
+#        unless another lane's suffix does. Old formats stay accepted so
+#        in-flight work is not interrupted (legacy compat):
+#        `feature/lane-main/TASK-<N>-*`, `lane/main/*`.
+#      - side: a new-format branch whose owning lane (longest suffix match)
+#        is this lane (no protected branch, develop is frozen),
+#        OR the old formats (legacy compat) `feature/lane-<lane>/TASK-<N>-*`,
+#        `lane/<short>/*`.
 #
 # If all three align → exit 0. Mismatch → fail loud with explicit guidance.
 # Soft-disable via MERCURY_LANE_ASSERT_DISABLED=1 for break-glass scenarios.
@@ -366,9 +374,25 @@ if [ -z "$ACTUAL_BRANCH" ]; then
 elif [ "$LANE_NAME" = "main" ]; then
   case "$ACTUAL_BRANCH" in
     develop|master|main) branch_ok=1 ;;
-    feature/lane-main/TASK-*|feature/TASK-*) branch_ok=1 ;;
+    # Legacy formats (pre-#703), accepted so in-flight work keeps running.
+    feature/lane-main/TASK-*) branch_ok=1 ;;
     lane/main/*) branch_ok=1 ;;
-    *) branch_reason="main lane expects develop / feature/lane-main/* / feature/TASK-* / lane/main/*; got '$ACTUAL_BRANCH'" ;;
+    # `feature/TASK-*` (old main-lane form) is NOT accepted here: it is a
+    # new-format name too, so it goes through the ownership check below and
+    # `feature/TASK-12-x-guard-codex` still belongs to lane `guard` (#703 M1).
+    *)
+      if lane_branch_format_ok "$ACTUAL_BRANCH"; then
+        # New format: main owns every branch that no other registered lane claims.
+        # shellcheck disable=SC2046
+        owner=$(lane_branch_owner "$ACTUAL_BRANCH" $(lane_registered_names "$LANES_FILE" 2>/dev/null | grep -vx main) || true)
+        if [ -z "$owner" ]; then
+          branch_ok=1
+        else
+          branch_reason="main lane: branch '$ACTUAL_BRANCH' ends with the name of lane '$owner' (suffix <purpose>-<lane>[-<agent>]), so it belongs to that lane"
+        fi
+      else
+        branch_reason="main lane expects <type>/<purpose>[-<lane>][-<agent>] (types: $(lane_branch_types | tr '\n' ' ')) or develop / main / master (legacy: feature/lane-main/*, lane/main/*); got '$ACTUAL_BRANCH'"
+      fi ;;
   esac
 else
   # For side lanes, derive the short name. Convention: <name> with -multi-
@@ -412,18 +436,31 @@ else
   ' "$LANES_FILE")
   # Without short name, fall back to lane name itself for branch matching.
   [ -z "$SHORT_NAME" ] && SHORT_NAME="$LANE_NAME"
-  # Side-lane branch tolerance: only `develop` is the canonical pre-checkout
-  # state (lane-naming.md §Setup at lane open uses `git worktree add ...
-  # origin/develop` to scaffold). master/main are NOT legitimate side-lane
-  # operating branches — accepting them would mean a misrouted session on
-  # those branches passes the assertion. Tightened per Argus iter2 Minor
-  # "校验放宽风险" (PR #346). Scaffold + work branches remain accepted via
-  # the lane/<short>/* and feature/lane-<lane>/TASK-* patterns below.
+  # Side-lane branch tolerance: Mercury has a single trunk and `develop` is
+  # frozen (#703), so NO protected branch (develop/master/main) is a legitimate
+  # side-lane operating branch — accepting one would let a misrouted session
+  # pass (Argus iter2 Minor, PR #346). A fresh side worktree starts on its own
+  # init branch (see lane-naming.md). Work branches use the #703 format with
+  # this lane as the owning suffix; the old formats remain accepted (legacy compat).
   case "$ACTUAL_BRANCH" in
-    develop) branch_ok=1 ;;  # canonical pre-checkout state for fresh side worktree
+    # Legacy formats (pre-#703), accepted so in-flight work keeps running.
     "feature/lane-${LANE_NAME}/TASK-"*) branch_ok=1 ;;
     "lane/${SHORT_NAME}/"*) branch_ok=1 ;;
-    *) branch_reason="lane '$LANE_NAME' (short '$SHORT_NAME') expects develop / feature/lane-${LANE_NAME}/TASK-* / lane/${SHORT_NAME}/*; got '$ACTUAL_BRANCH'" ;;
+    *)
+      if lane_branch_format_ok "$ACTUAL_BRANCH"; then
+        # Longest registered name wins; this lane's own short/name is always a candidate.
+        # shellcheck disable=SC2046
+        owner=$(lane_branch_owner "$ACTUAL_BRANCH" "$SHORT_NAME" $(lane_registered_names "$LANES_FILE" 2>/dev/null) || true)
+        if [ "$owner" = "$SHORT_NAME" ]; then
+          branch_ok=1
+        elif [ -n "$owner" ]; then
+          branch_reason="lane '$LANE_NAME' (short '$SHORT_NAME'): branch '$ACTUAL_BRANCH' belongs to lane '$owner' (longest suffix match)"
+        else
+          branch_reason="lane '$LANE_NAME' (short '$SHORT_NAME') expects <type>/<purpose>-${SHORT_NAME}[-<agent>]; got '$ACTUAL_BRANCH'"
+        fi
+      else
+        branch_reason="lane '$LANE_NAME' (short '$SHORT_NAME') expects <type>/<purpose>-${SHORT_NAME}[-<agent>] (legacy: feature/lane-${LANE_NAME}/TASK-*, lane/${SHORT_NAME}/*); got '$ACTUAL_BRANCH'"
+      fi ;;
   esac
 fi
 
@@ -435,7 +472,7 @@ if [ "$branch_ok" -ne 1 ]; then
     cat >&2 <<EOF
 $PROG: BLOCKED — branch does not match lane '$LANE_NAME' convention.
   $branch_reason
-Reference: .mercury/packs/lanes/docs/guides/lane-naming.md §Δ6 short branch prefix
+Reference: .mercury/packs/lanes/docs/guides/lane-naming.md (branch suffix rules)
 Soft-disable: export MERCURY_LANE_ASSERT_DISABLED=1
 EOF
   fi

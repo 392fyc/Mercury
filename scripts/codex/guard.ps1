@@ -31,14 +31,17 @@ $repoRoot = (Resolve-Path (Join-Path $scriptDir "..\\..")).Path
 $stateDir = Join-Path $repoRoot ".mercury\\state"
 $reviewFlag = Join-Path $stateDir "review-passed"
 $protectedBranches = @("develop", "main", "master")
-# Accept feature/TASK-* (legacy) and the lane branch forms used in practice
-# under Mercury's multi-lane v1 protocol (.mercury/packs/lanes/docs/guides/lane-protocol.md Rule 2.1):
-#   - lane/<lane-name>/init               — scaffold branch (e.g. lane/side-bug/init)
-#   - lane/<lane-name>/<n>                — issue-only suffix
-#   - lane/<lane-name>/<n>-<slug>         — typical work branch (e.g. lane/side-bug/357-codex-hooks)
-# The pattern is intentionally precise so the throw-message description
-# below matches what is actually accepted (Argus iter 1 finding).
-$featureTaskPattern = "^(feature/TASK-[A-Za-z0-9._-]+|lane/[A-Za-z0-9._-]+/(init|[0-9]+(-[A-Za-z0-9._-]+)?))$"
+# Accept purpose-named task branches: <type>/<purpose>[-<lane>]-<agent> (Issue #703).
+# The purpose comes first so people can read what the branch is for; the lane and the
+# agent are suffixes only. Prefixes such as codex/, claude/ and lane/ are rejected, and
+# mercury/ stays reserved for the update bot. The purpose has no length limit.
+#   - feature/TASK-703-claude
+#   - fix/guard-premerge-guard-codex      (lane "guard")
+$branchTypes = "feature|feat|fix|hotfix|docs|chore|refactor|test|perf|ci|build"
+$featureTaskPattern = "^($branchTypes)/[A-Za-z0-9][A-Za-z0-9._-]*-(claude|codex)$"
+# Branches created before #703 keep their names and can still be committed to; do not create new ones.
+$legacyBranchPattern = "^(feature/TASK-[A-Za-z0-9._-]+|lane/[A-Za-z0-9._-]+/(init|[0-9]+(-[A-Za-z0-9._-]+)?))$"
+$branchFormHelp = "<type>/<purpose>[-<lane>]-<agent> with type in $($branchTypes.Replace('|', ', ')) and agent claude or codex, e.g. feature/TASK-703-claude"
 
 function Initialize-StateDir {
   if (-not (Test-Path -LiteralPath $stateDir)) {
@@ -83,11 +86,11 @@ function Assert-TaskBranch {
   param([string]$Branch)
 
   if (Test-ProtectedBranch -Branch $Branch) {
-    throw "Protected branch '$Branch' is not allowed for Codex commits or pushes. Use feature/TASK-<id> or lane/<lane>/(init|<n>|<n>-<slug>)."
+    throw "Protected branch '$Branch' is not allowed for Codex commits or pushes. Use $branchFormHelp."
   }
 
-  if ($Branch -notmatch $featureTaskPattern) {
-    throw "Branch '$Branch' does not match feature/TASK-<id> or lane/<lane>/(init|<n>|<n>-<slug>). Move the work to a task or lane branch before mutating git state."
+  if ($Branch -cnotmatch $featureTaskPattern -and $Branch -cnotmatch $legacyBranchPattern) {
+    throw "Branch '$Branch' does not match $branchFormHelp. Move the work to such a branch before mutating git state."
   }
 }
 
@@ -685,8 +688,8 @@ function Assert-PreMergeReady {
   if ($pr.headRefOid -ne $ExpectedHead) {
     throw "PR #$Number is at '$($pr.headRefOid)', but current HEAD is '$ExpectedHead'. Push/fetch and retry."
   }
-  if ($UseNativeReceipt -and $pr.baseRefName -cne "develop") {
-    throw "PR #$Number targets '$($pr.baseRefName)'; Mercury pre-merge checks require the develop branch."
+  if ($UseNativeReceipt -and $pr.baseRefName -cne "master") {
+    throw "PR #$Number targets '$($pr.baseRefName)'; Mercury pre-merge checks require the master branch (single trunk, Issue #703)."
   }
 
   if ($pr.state -cne "OPEN") {
