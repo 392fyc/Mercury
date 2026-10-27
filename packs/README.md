@@ -410,7 +410,9 @@ Unknown or disabled packs are errors; required packs are always included. Unknow
 - `params.skip_skills` (optional): a list of pack skill names whose entry files (`.claude/skills/mercury-<skill>/`,
   `.agents/skills/mercury-<skill>/`) are not installed, for a project whose own skill does the same job, for example
   `["lane-handoff"]` where the project keeps its own handoff skill. The skill's source still installs under
-  `.mercury/packs/`; an unknown name is an error, and removing it from the list installs the entries again.
+  `.mercury/packs/`; an unknown name is an error, and removing it from the list installs the entries again. If a later
+  Mercury release renames or removes a skipped skill, every check, apply and update pull request stops on that error
+  until the project removes the name.
 - These values are validated whenever they are present, so a bad value stops every run, not just the one that renders
   them.
 

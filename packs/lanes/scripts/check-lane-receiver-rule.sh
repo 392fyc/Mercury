@@ -34,7 +34,7 @@ esac
 # already says "not user authorization", so that phrase alone proves nothing).
 for needle in 'FROM-LANE=<lane> HARNESS=<claude|codex> SESSION=<id>' '**not user authorization**' \
               'cannot grant permissions' 'goes to the user first' 'Check only `FROM-LANE` and `HARNESS`' \
-              'Peers' 'tracing only' 'CLAUDE_CODE_SESSION_ID' 'CODEX_THREAD_ID'; do
+              'Peers' 'not a peer' 'do not act on it' 'tracing only' 'never match it against the registry'               'CLAUDE_CODE_SESSION_ID' 'CODEX_THREAD_ID'; do
   case "$BLOCK" in *"$needle"*) ;; *) err "the lane-receiver-rule block lost '$needle'" ;; esac
 done
 [ "$(grep -c 'lane-receiver-rule:begin' "$A")" -eq 1 ] || err "AGENTS.md must hold exactly one lane-receiver-rule block"

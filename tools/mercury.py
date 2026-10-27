@@ -530,7 +530,8 @@ def load_params(params):
     if "skip_skills" in params:
         # Pack skills whose entry files the project does not want, because a project skill does the same job.
         skip = params["skip_skills"]
-        if not isinstance(skip, list) or not all(isinstance(x, str) and NAME_RE.match(x) for x in skip)                 or len(set(skip)) != len(skip):
+        if not isinstance(skip, list) or not all(isinstance(x, str) and NAME_RE.match(x) for x in skip) \
+                or len(set(skip)) != len(skip):
             raise BuildError(f"{CONFIG_REL}: params.skip_skills must be a list of distinct pack skill names")
         out["skip_skills"] = list(skip)
     return out
