@@ -170,7 +170,7 @@ rc=$?
 assert_eq "marker empty name — rc=1" "1" "$rc"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=Side_Multi]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch develop 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch 'feature/1-x-Side_Multi' 2>&1)
 rc=$?
 assert_eq "marker has uppercase/underscore (Rule 2.1 violation) — rc=1" "1" "$rc"
 
@@ -221,13 +221,13 @@ assert_eq "side lane wrong short-name in branch — rc=3" "3" "$rc"
 printf '\n=== Worktree path missing (exit 4) ===\n'
 
 err=$(env MERCURY_LANE_MARKER='[LANE=nopath]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd '/var/test/nopath' --branch develop 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/nopath' --branch 'feature/1-x-nopath' 2>&1)
 rc=$?
 assert_eq "lane has no Worktree path field — rc=4" "4" "$rc"
 assert_contains "missing field — points at LANES.md" "LANES.md" "$err"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=ghostlane]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd '/var/test/ghost' --branch develop 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/ghost' --branch 'feature/1-x-ghostlane' 2>&1)
 rc=$?
 assert_eq "lane name not present in LANES.md at all — rc=4" "4" "$rc"
 
@@ -325,23 +325,23 @@ type: project
 SPACE_EOF
 
 err=$(env MERCURY_LANE_MARKER='[LANE=with-space]' bash "$ASSERTION" \
-  --memory-dir "$SPACE_MEM" --cwd '/Users/Alice Smith/repos/Mercury-with-space' --branch develop 2>&1)
+  --memory-dir "$SPACE_MEM" --cwd '/Users/Alice Smith/repos/Mercury-with-space' --branch 'feature/1-x-with-space' 2>&1)
 rc=$?
 assert_eq "spaces in path preserved -> rc=0" "0" "$rc"
 assert_contains "verdict shows full path" 'Alice Smith' "$err"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=with-space]' bash "$ASSERTION" \
-  --memory-dir "$SPACE_MEM" --cwd '/Users/Alice' --branch develop 2>&1)
+  --memory-dir "$SPACE_MEM" --cwd '/Users/Alice' --branch 'feature/1-x-with-space' 2>&1)
 rc=$?
 assert_eq "truncated cwd no longer falsely passes -> rc=2" "2" "$rc"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=with-paren]' bash "$ASSERTION" \
-  --memory-dir "$SPACE_MEM" --cwd 'C:/Program Files (x86)/Mercury-with-paren' --branch develop 2>&1)
+  --memory-dir "$SPACE_MEM" --cwd 'C:/Program Files (x86)/Mercury-with-paren' --branch 'feature/1-x-with-paren' 2>&1)
 rc=$?
 assert_eq "parens in path preserved (Program Files (x86)) -> rc=0" "0" "$rc"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=unquoted-legacy]' bash "$ASSERTION" \
-  --memory-dir "$SPACE_MEM" --cwd '/tmp/unquoted-path' --branch develop 2>&1)
+  --memory-dir "$SPACE_MEM" --cwd '/tmp/unquoted-path' --branch 'feature/1-x-unquoted-legacy' 2>&1)
 rc=$?
 assert_eq "unquoted legacy path still works -> rc=0" "0" "$rc"
 
@@ -369,13 +369,13 @@ type: project
 DUP_EOF
 
 err=$(env MERCURY_LANE_MARKER='[LANE=dup]' bash "$ASSERTION" \
-  --memory-dir "$DUP_MEM" --cwd '/new/correct/path' --branch develop 2>&1)
+  --memory-dir "$DUP_MEM" --cwd '/new/correct/path' --branch 'feature/1-x-dup' 2>&1)
 rc=$?
 assert_eq "duplicate Worktree path -> rc=6" "6" "$rc"
 assert_contains "duplicate message includes count" "Worktree path bullets" "$err"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=single]' bash "$ASSERTION" \
-  --memory-dir "$DUP_MEM" --cwd '/just/one' --branch develop 2>&1)
+  --memory-dir "$DUP_MEM" --cwd '/just/one' --branch 'feature/1-x-single' 2>&1)
 rc=$?
 assert_eq "single bullet still works -> rc=0" "0" "$rc"
 
@@ -419,7 +419,7 @@ rc=$?
 assert_eq "trailing-space MERCURY_LANE_MARKER still parses (awk word-splits) -> rc=0" "0" "$rc"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=Bad_Name]' BOOTSTRAP_PROMPT='[LANE=main]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch develop 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch 'feature/1-x-Bad_Name' 2>&1)
 rc=$?
 assert_eq "Bad_Name (uppercase+underscore) falls through to valid BOOTSTRAP_PROMPT -> rc=0" "0" "$rc"
 
@@ -448,12 +448,12 @@ type: project
 TRIM_EOF
 
 err=$(env MERCURY_LANE_MARKER='[LANE=with-trail]' bash "$ASSERTION" \
-  --memory-dir "$TRIM_MEM" --cwd '/tmp/trail-target' --branch develop 2>&1)
+  --memory-dir "$TRIM_MEM" --cwd '/tmp/trail-target' --branch 'feature/1-x-with-trail' 2>&1)
 rc=$?
 assert_eq "trailing whitespace inside backticks trimmed -> rc=0" "0" "$rc"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=with-trail]' bash "$ASSERTION" \
-  --memory-dir "$TRIM_MEM" --cwd '/tmp/trail-target   ' --branch develop --format json 2>&1)
+  --memory-dir "$TRIM_MEM" --cwd '/tmp/trail-target   ' --branch 'feature/1-x-with-trail' --format json 2>&1)
 rc=$?
 # After trim, expected_enc has no trailing dashes; cwd encode keeps trailing
 # slash-dashes after tr conversion of spaces? No — encode_path strips trailing
@@ -541,18 +541,18 @@ type: project
 FENCE_EOF
 
 err=$(env MERCURY_LANE_MARKER='[LANE=fake-lane]' bash "$ASSERTION" \
-  --memory-dir "$FENCE_MEM" --cwd '/should/not/match' --branch develop 2>&1)
+  --memory-dir "$FENCE_MEM" --cwd '/should/not/match' --branch 'feature/1-x-fake-lane' 2>&1)
 rc=$?
 assert_eq "fake-lane inside fence -> rc=4 (Worktree path missing)" "4" "$rc"
 assert_contains "fake-lane fence isolation message" "no Worktree path" "$err"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=real-lane]' bash "$ASSERTION" \
-  --memory-dir "$FENCE_MEM" --cwd '/real/path' --branch develop 2>&1)
+  --memory-dir "$FENCE_MEM" --cwd '/real/path' --branch 'feature/1-x-real-lane' 2>&1)
 rc=$?
 assert_eq "real-lane outside fence -> rc=0" "0" "$rc"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=another-real]' bash "$ASSERTION" \
-  --memory-dir "$FENCE_MEM" --cwd '/another/real' --branch develop 2>&1)
+  --memory-dir "$FENCE_MEM" --cwd '/another/real' --branch 'feature/1-x-another-real' 2>&1)
 rc=$?
 assert_eq "another-real after fence close -> rc=0" "0" "$rc"
 
@@ -611,7 +611,7 @@ fi
 printf '\n=== json_escape function ordering (Argus iter2 minor regression) ===\n'
 
 err=$(env MERCURY_LANE_MARKER='[LANE=nopath]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd '/var/test/nopath' --branch develop --format json 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/nopath' --branch 'feature/1-x-nopath' --format json 2>&1)
 rc=$?
 assert_eq "json worktree_path_missing branch reaches json_escape -> rc=4" "4" "$rc"
 assert_contains "json worktree_path_missing emits valid JSON" '"verdict":"worktree_path_missing"' "$err"
@@ -641,12 +641,84 @@ assert_eq "side lane on main no longer tolerated -> rc=3" "3" "$rc"
 err=$(env MERCURY_LANE_MARKER='[LANE=side-multi-lane]' bash "$ASSERTION" \
   --memory-dir "$MEMDIR" --cwd '/var/test/side-mlane' --branch develop 2>&1)
 rc=$?
-assert_eq "side lane on develop still works (canonical pre-checkout) -> rc=0" "0" "$rc"
+assert_eq "side lane on develop no longer tolerated (develop is frozen, #703) -> rc=3" "3" "$rc"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=main]' bash "$ASSERTION" \
   --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch master 2>&1)
 rc=$?
 assert_eq "main lane on master still tolerated -> rc=0" "0" "$rc"
+
+# ───────────────────────────────────────────────────────────────
+# #703 branch format: <type>/<purpose>[-<lane>][-<agent>] — lane/agent are
+# suffixes; longest registered lane suffix wins; old formats stay accepted.
+# ───────────────────────────────────────────────────────────────
+
+printf '\n=== #703 suffix branch format ===\n'
+
+SUF_MEM="$WORK_DIR/suffix-mem"; mkdir -p "$SUF_MEM"
+cat > "$SUF_MEM/LANES.md" <<'LANES_EOF'
+# Mercury Lanes Registry
+
+## Active Lanes
+
+### `main`
+
+- **Worktree path** (per Rule 5.1): `/var/test/s-main`
+- **Status**: `active`
+
+### `guard`
+
+- **Worktree path** (per Rule 5.1): `/var/test/s-guard`
+- **Short name**: `guard`
+- **Status**: `active`
+
+### `side-multi-lane`
+
+- **Worktree path** (per Rule 5.1): `/var/test/s-mlane`
+- **Short name**: `side-mlane`
+- **Status**: `active`
+
+### `mlane`
+
+- **Worktree path** (per Rule 5.1): `/var/test/s-short`
+- **Short name**: `mlane`
+- **Status**: `active`
+LANES_EOF
+
+suf() {  # suf <lane> <cwd> <branch> -> rc
+  env MERCURY_LANE_MARKER="[LANE=$1]" bash "$ASSERTION" --memory-dir "$SUF_MEM" --cwd "$2" --branch "$3" >/dev/null 2>&1
+  echo $?
+}
+# side lane: suffix match, with and without agent suffix, any type, no length cap
+assert_eq "suffix: lane then agent (lane=guard)"        "0" "$(suf guard /var/test/s-guard 'feature/621-guard-test-guard-codex')"
+assert_eq "suffix: lane only, no agent"                  "0" "$(suf guard /var/test/s-guard 'fix/621-thing-guard')"
+assert_eq "suffix: long purpose, no length cap"          "0" "$(suf guard /var/test/s-guard 'docs/a-very-very-very-very-very-long-purpose-that-exceeds-forty-characters-guard-claude')"
+assert_eq "suffix: other lane's branch rejected"          "3" "$(suf guard /var/test/s-guard 'feature/621-thing-side-mlane-claude')"
+assert_eq "suffix: no lane suffix rejected for side lane" "3" "$(suf guard /var/test/s-guard 'fix/TASK-12-claude')"
+# longest match: '-side-mlane' beats '-mlane'
+assert_eq "longest match: side-mlane owns ...-side-mlane" "0" "$(suf side-multi-lane /var/test/s-mlane 'feature/7-x-side-mlane-codex')"
+assert_eq "longest match: mlane does not own ...-side-mlane" "3" "$(suf mlane /var/test/s-short 'feature/7-x-side-mlane-codex')"
+assert_eq "longest match: mlane owns ...-mlane"           "0" "$(suf mlane /var/test/s-short 'feature/7-x-mlane-claude')"
+# forbidden / malformed
+assert_eq "forbidden prefix codex/ rejected"              "3" "$(suf guard /var/test/s-guard 'codex/621-guard')"
+assert_eq "forbidden prefix claude/ rejected"             "3" "$(suf guard /var/test/s-guard 'claude/621-guard')"
+assert_eq "nested purpose slash rejected"                 "3" "$(suf guard /var/test/s-guard 'feature/a/b-guard')"
+assert_eq "purpose must start alnum"                      "3" "$(suf guard /var/test/s-guard 'feature/-x-guard')"
+# main lane: no lane suffix needed, but another lane's suffix is not main's
+assert_eq "main: no lane suffix (fix/TASK-12-claude)"     "0" "$(suf main /var/test/s-main 'fix/TASK-12-claude')"
+assert_eq "main: plain new-format branch"                 "0" "$(suf main /var/test/s-main 'feature/703-branch-naming')"
+assert_eq "main: other lane's suffix rejected"            "3" "$(suf main /var/test/s-main 'feature/621-guard-test-guard-codex')"
+assert_eq "main: feature/TASK-* owned by another lane is rejected (#703 M1)" "3" "$(suf main /var/test/s-main 'feature/TASK-12-x-guard-codex')"
+assert_eq "main: feature/TASK-* with no lane suffix still accepted" "0" "$(suf main /var/test/s-main 'feature/TASK-12-x-claude')"
+assert_eq "guard owns feature/TASK-12-x-guard-codex"        "0" "$(suf guard /var/test/s-guard 'feature/TASK-12-x-guard-codex')"
+assert_eq "side lane: develop rejected (frozen)"            "3" "$(suf guard /var/test/s-guard 'develop')"
+assert_eq "side lane: master rejected"                      "3" "$(suf guard /var/test/s-guard 'master')"
+assert_eq "main: forbidden prefix rejected"               "3" "$(suf main /var/test/s-main 'codex/foo')"
+assert_eq "main: develop/main/master protected branches"  "0" "$(suf main /var/test/s-main 'master')"
+# legacy formats still accepted (pre-#703 in-flight work)
+assert_eq "legacy: lane/<short>/ for side lane"           "0" "$(suf guard /var/test/s-guard 'lane/guard/621-x')"
+assert_eq "legacy: feature/lane-<lane>/TASK- for side"    "0" "$(suf side-multi-lane /var/test/s-mlane 'feature/lane-side-multi-lane/TASK-5-x')"
+assert_eq "legacy: feature/TASK- for main"                "0" "$(suf main /var/test/s-main 'feature/TASK-5-x')"
 
 # ───────────────────────────────────────────────────────────────
 # Summary

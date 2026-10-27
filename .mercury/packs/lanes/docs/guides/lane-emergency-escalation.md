@@ -33,7 +33,7 @@ All of:
    `coordination` labels) at least 48 hours before the escalation PR is opened.
 3. Main lane has been idle for 48+ hours — defined objectively as **all three**
    of:
-   - No commits to `feature/lane-main/*` or legacy `feature/TASK-*` branches
+   - No commits to the main lane's branches (any `<type>/<purpose>[-<agent>]` branch no other lane owns, or legacy `feature/lane-main/*`; the old `feature/TASK-*` counts unless another lane's suffix owns it)
    - No edits to `session-handoff.md` in the project's handoff dir
      (`.mercury/packs/lanes/scripts/lane-paths.sh handoff-dir`, or `--handoff-dir`) or its legacy
      `<memory-dir>` copy

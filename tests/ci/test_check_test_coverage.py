@@ -339,7 +339,7 @@ class StepsThatNeverRunOrNeverFail(unittest.TestCase):
     def test_pull_request_triggers_that_cover_every_pull_request_count(self):
         for on in ("on: pull_request", "on: [push, pull_request]", on_block("push", "pull_request"),
                    on_block("pull_request", branches=["develop", "master"]),
-                   on_block("pull_request", branches=["develop"], types=["opened", "synchronize"]),
+                   on_block("pull_request", branches=["master"], types=["opened", "synchronize"]),
                    on_block("pull_request", branches=["'**'"])):
             with self.subTest(on=on):
                 self.assertCounts(workflow(self.RUN, on=on))

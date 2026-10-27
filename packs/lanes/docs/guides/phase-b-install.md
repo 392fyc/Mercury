@@ -13,7 +13,7 @@ scripts. Companion to [`phase-a-install.md`](./phase-a-install.md)
 - `bash` ≥ 4.0 (Git Bash on Windows is fine)
 - `jq` and `gh` on PATH
 - `gh auth status` clean
-- Mercury repo cloned, `origin/develop` reachable
+- Mercury repo cloned, `origin/<integration-branch>` reachable (`master`; see lane-naming.md §Δ6)
 
 ## Module overview
 
@@ -46,7 +46,7 @@ After spawn:
   `lane-spawn.sh` passes `--no-assignee` to `lane-claim.sh` per Issue
   #317 Copilot iter 2 contention-avoidance; assign manually if you want
   GitHub UI ownership)
-- Branch `lane/<short>/<issue>-<slug>` created (off `origin/develop`)
+- Branch `<type>/<issue>-<slug>-<short>-<harness>` created (off `origin/<integration-branch>`)
 - Handoff template at `<handoff-dir>/session-handoff-<lane>.md`
   (`.mercury/packs/lanes/scripts/lane-paths.sh handoff-dir`)
 - New section appended to `LANES.md` (own section per Rule 6)
@@ -54,7 +54,7 @@ After spawn:
 Switch to the branch and start work:
 
 ```bash
-git switch lane/<short>/<issue>-<slug>
+git switch <type>/<issue>-<slug>-<short>-<harness>
 ```
 
 ## B2 — Closing a lane
@@ -153,8 +153,8 @@ relying on `HEAD~1` (which depends on local commit ordering and would
 not point at "pre-Phase-B" once subsequent merges land):
 
 ```bash
-# Identify the Phase B merge commit on the develop branch
-PHASE_B_MERGE=$(git log develop --merges --grep='Phase B' --format='%H' | head -n 1)
+# Identify the Phase B merge commit on the integration branch
+PHASE_B_MERGE=$(git log "origin/<integration-branch>" --merges --grep='Phase B' --format='%H' | head -n 1)
 
 # Create a revert commit (preferred — preserves history, works on any branch state)
 git revert -m 1 "$PHASE_B_MERGE"

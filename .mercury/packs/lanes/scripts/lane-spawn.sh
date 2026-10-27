@@ -8,7 +8,10 @@
 #   2. Refuse if <lane> already appears in LANES.md "## Active Lanes" section
 #   3. (No lane-count cap: the Delta 7 HARD-CAP was removed by Issue #605 / #599 ADR D1)
 #   4. Claim Issue via .mercury/packs/lanes/scripts/lane-claim.sh (Rule 1.1 probe-after-write, #309)
-#   5. Create branch `lane/<short>/<issue>-<slug>` off origin/develop (Rule 2.1)
+#   5. Create branch `<type>/<issue>-<slug>-<short>-<harness>` off the integration
+#      branch (Issue #703: purpose first, lane and agent as suffixes; the
+#      integration branch is $MERCURY_BASE_BRANCH, else params.integration_branch
+#      in .mercury/config.json, else origin/HEAD — never guessed)
 #   6. Write per-lane handoff template at <handoff-dir>/session-handoff-<lane>.md
 #      (refuse to overwrite if file exists — protect prior session state)
 #   7. Append a new lane section to LANES.md (own section per Rule 6)
@@ -22,7 +25,7 @@
 #
 # Usage:
 #   .mercury/packs/lanes/scripts/lane-spawn.sh <lane> <issue>
-#                         [--short SHORT] [--slug SLUG]
+#                         [--short SHORT] [--slug SLUG] [--type TYPE]
 #                         [--memory-dir PATH] [--lanes-file PATH] [--handoff-dir PATH]
 #                         [--repo-root PATH] [--repo OWNER/REPO]
 #                         [--harness claude|codex] [--no-claim] [--no-branch]
@@ -31,8 +34,9 @@
 # Defaults:
 #   --harness        claude (which CLI drives this lane; written to LANES.md)
 #   --short          first 8 chars of <lane> after stripping non-[a-z0-9-]
-#   --slug           lowercased Issue title with non-[a-z0-9-] → "-",
-#                    truncated so total branch ≤40 chars (Rule 2.1)
+#   --slug           lowercased Issue title with non-[a-z0-9-] → "-"
+#                    (no length cap, Issue #703)
+#   --type           feature (one of feature|feat|fix|hotfix|docs|chore|refactor|test|perf|ci|build)
 #   --memory-dir     $MERCURY_MEMORY_DIR, else the project's lane home (.mercury/packs/lanes/scripts/lane-paths.sh memory-dir)
 #   --lanes-file     <memory-dir>/LANES.md
 #   --handoff-dir    the project's handoff dir (.mercury/packs/lanes/scripts/lane-paths.sh handoff-dir; #613)
@@ -61,6 +65,7 @@ LANE=""
 ISSUE=""
 SHORT=""
 SLUG=""
+BTYPE=feature
 MEMORY_DIR=""
 LANES_FILE=""
 REPO_ROOT=""
@@ -76,6 +81,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --short)       shift; [ $# -gt 0 ] || die "--short needs a value"; SHORT="$1"; shift ;;
     --slug)        shift; [ $# -gt 0 ] || die "--slug needs a value"; SLUG="$1"; shift ;;
+    --type)        shift; [ $# -gt 0 ] || die "--type needs a value"; BTYPE="$1"; shift ;;
     --memory-dir)  shift; [ $# -gt 0 ] || die "--memory-dir needs a value"; MEMORY_DIR="$1"; shift ;;
     --lanes-file)  shift; [ $# -gt 0 ] || die "--lanes-file needs a value"; LANES_FILE="$1"; shift ;;
     --handoff-dir) shift; [ $# -gt 0 ] || die "--handoff-dir needs a value"; HANDOFF_DIR="$1"; shift ;;
@@ -87,7 +93,7 @@ while [ $# -gt 0 ]; do
     --dry-run)     DRY_RUN=1; shift ;;
     --yes)         YES=1; shift ;;
     -h|--help)
-      sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '2,52p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     --) shift
         if [ -z "$LANE" ]   && [ $# -gt 0 ]; then LANE="$1"; shift; fi
@@ -118,6 +124,12 @@ case "$HARNESS" in
   claude|codex) ;;
   *) die "--harness must be claude or codex: '$HARNESS'" ;;
 esac
+
+# Branch type prefix (Issue #703): only the documented types; `lane`, `codex`,
+# `claude` are forbidden prefixes and `mercury` is reserved for the update bot.
+if ! lane_branch_types | grep -qxF -- "$BTYPE"; then
+  die "--type must be one of: $(lane_branch_types | tr '\n' ' ')(got '$BTYPE')"
+fi
 
 # Memory dir resolution mirrors lane-close.sh / lane-sweep.sh.
 if [ -z "$MEMORY_DIR" ]; then
@@ -255,18 +267,26 @@ case "$SLUG" in
   *[!a-z0-9-]*) die "--slug must be [a-z0-9-]: '$SLUG'" ;;
 esac
 
-# Branch name + Rule 2.1 ≤40-char cap. Truncate slug if needed.
-PREFIX="lane/${SHORT}/${ISSUE}-"
-MAX_BRANCH=40
-PREFIX_LEN=${#PREFIX}
-SLUG_BUDGET=$(( MAX_BRANCH - PREFIX_LEN ))
-if [ "$SLUG_BUDGET" -lt 1 ]; then
-  fail "branch prefix '$PREFIX' already exceeds Rule 2.1 ≤40-char cap (pass shorter --short)"
+# Branch name (Issue #703): <type>/<issue>-<slug>-<short>-<harness>. The
+# purpose (issue + slug) comes first; lane and agent are suffixes so a reader
+# sees what the branch is for. No length cap.
+BRANCH="${BTYPE}/${ISSUE}-${SLUG}-${SHORT}-${HARNESS}"
+lane_branch_format_ok "$BRANCH" || die "computed branch name is not a valid <type>/<purpose> name: '$BRANCH'"
+# The branch must belong to THIS lane under the longest-suffix rule: a slug that
+# ends in another registered lane's name would make the new branch look like
+# that lane's work (e.g. slug "x-side" + short "mlane" -> ...-side-mlane).
+# shellcheck disable=SC2046
+BRANCH_OWNER=$(lane_branch_owner "$BRANCH" "$SHORT" $(lane_registered_names "$LANES_FILE" 2>/dev/null) || true)
+if [ "$BRANCH_OWNER" != "$SHORT" ]; then
+  die "branch '$BRANCH' would belong to lane name '$BRANCH_OWNER' (longest suffix match), not to '$SHORT' — change --slug or --short"
 fi
-if [ "${#SLUG}" -gt "$SLUG_BUDGET" ]; then
-  SLUG=$(printf '%s' "$SLUG" | cut -c1-"$SLUG_BUDGET" | sed -E 's/-+$//')
+
+# Integration branch: the base for the new branch (resolved, never guessed).
+BASE_BRANCH=""
+if [ "$NO_BRANCH" -eq 0 ]; then
+  BASE_BRANCH=$(lane_integration_branch "$REPO_ROOT") \
+    || die "cannot resolve the integration branch (set MERCURY_BASE_BRANCH, params.integration_branch in .mercury/config.json, or origin/HEAD)"
 fi
-BRANCH="${PREFIX}${SLUG}"
 
 # Unified handoff dir (#613): --handoff-dir, else the project's handoff dir;
 # when the project cannot be resolved (e.g. --repo-root is not a checkout),
@@ -291,7 +311,7 @@ fi
 # Dry-run gate — print intent and exit before any external mutations.
 if [ "$DRY_RUN" -eq 1 ]; then
   printf '[dry-run] lane=%s issue=%s short=%s slug=%s harness=%s\n' "$LANE" "$ISSUE" "$SHORT" "$SLUG" "$HARNESS"
-  printf '[dry-run] branch=%s (%d chars, cap=%d)\n' "$BRANCH" "${#BRANCH}" "$MAX_BRANCH"
+  printf '[dry-run] branch=%s (%d chars)\n' "$BRANCH" "${#BRANCH}"
   printf '[dry-run] memory-dir=%s\n' "$MEMORY_DIR"
   printf '[dry-run] handoff=%s\n' "$HANDOFF_FILE"
   printf '[dry-run] LANES.md=%s (%d active lanes pre-spawn)\n' "$LANES_FILE" "$ACTIVE_COUNT"
@@ -301,7 +321,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
     printf '[dry-run] step 1: SKIPPED (--no-claim)\n'
   fi
   if [ "$NO_BRANCH" -eq 0 ]; then
-    printf '[dry-run] step 2: git branch %s origin/develop\n' "$BRANCH"
+    printf '[dry-run] step 2: git branch %s origin/%s\n' "$BRANCH" "$BASE_BRANCH"
   else
     printf '[dry-run] step 2: SKIPPED (--no-branch)\n'
   fi
@@ -342,16 +362,16 @@ if [ "$NO_CLAIM" -eq 0 ]; then
   printf 'lane-spawn: claimed issue #%s with lane:%s\n' "$ISSUE" "$LANE"
 fi
 
-# Step 2: create branch off origin/develop.
+# Step 2: create branch off the integration branch (origin/$BASE_BRANCH).
 if [ "$NO_BRANCH" -eq 0 ]; then
   if git -C "$REPO_ROOT" rev-parse --verify --quiet "refs/heads/$BRANCH" >/dev/null 2>&1; then
     fail "branch '$BRANCH' already exists locally (delete or rename first)"
   fi
-  if ! git -C "$REPO_ROOT" rev-parse --verify --quiet "refs/remotes/origin/develop" >/dev/null 2>&1; then
-    fail "origin/develop not found locally — run 'git fetch origin' first"
+  if ! git -C "$REPO_ROOT" rev-parse --verify --quiet "refs/remotes/origin/${BASE_BRANCH}" >/dev/null 2>&1; then
+    fail "origin/${BASE_BRANCH} not found locally — run 'git fetch origin' first"
   fi
-  git -C "$REPO_ROOT" branch "$BRANCH" "origin/develop" \
-    || fail "git branch $BRANCH origin/develop failed"
+  git -C "$REPO_ROOT" branch "$BRANCH" "origin/${BASE_BRANCH}" \
+    || fail "git branch $BRANCH origin/${BASE_BRANCH} failed"
   printf 'lane-spawn: created branch %s\n' "$BRANCH"
 fi
 
@@ -376,7 +396,7 @@ This is Mercury **lane '${LANE}'** session 1 (lane info in \`LANES.md\` + \`.mer
 
 ### 当前状态
 
-- 仓库 \`$(basename "$REPO_ROOT")\` branch \`${BRANCH}\` (off origin/develop)
+- 仓库 \`$(basename "$REPO_ROOT")\` branch \`${BRANCH}\` (off origin/${BASE_BRANCH:-the integration branch})
 - 关联 Issue: [#${ISSUE}](https://github.com/${REPO:-OWNER/REPO}/issues/${ISSUE})
 - 第一步：\`git fetch origin && git switch ${BRANCH}\`
 

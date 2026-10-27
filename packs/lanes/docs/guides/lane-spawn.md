@@ -21,7 +21,7 @@ ceremony atomic from a single command.
 | 3 | *(removed)* No lane-count cap since Issue #605 (the former Delta 7 HARD-CAP) | — | — |
 | 4 | Refuse if `<short>` already in use by another active lane | `LANES.md` | exit 1; nothing mutated |
 | 5 | Claim Issue via `lane-claim.sh` (Rule 1.1 probe-after-write) | GitHub | exit 1 on conflict; later steps skipped |
-| 6 | Create branch `lane/<short>/<issue>-<slug>` off `origin/develop` | local git | exit 1 on existing branch / missing origin/develop; later steps skipped |
+| 6 | Create branch `<type>/<issue>-<slug>-<short>-<harness>` off `origin/<integration-branch>` | local git | exit 2 when the integration branch cannot be resolved; exit 1 on existing branch / missing `origin/<integration-branch>`; later steps skipped |
 | 7 | Write per-lane handoff template (refuses to overwrite) | user-memory | exit 1 if file exists; LANES.md NOT touched |
 | 8 | Append new section to `LANES.md` (own section per Rule 6) | `LANES.md` | exit 2 on awk failure; manual edit advised |
 
@@ -86,18 +86,30 @@ Example: open a Codex-driven lane (solo by default; see the #599 ADR (Mercury_KB
 
 ### Branch naming (Rule 2.1)
 
-Default form: `lane/<short>/<issue>-<slug>`, total length capped at **40
-chars**. If the auto-derived slug would overflow, it is truncated and
-trailing hyphens stripped. Example:
+Default form (Issue #703): `<type>/<issue>-<slug>-<short>-<harness>`. The
+purpose (issue number and slug) comes first; the lane short name and the
+agent are suffixes. `--type` picks the prefix (default `feature`; one of
+`feature|feat|fix|hotfix|docs|chore|refactor|test|perf|ci|build`; `lane`,
+`codex`, `claude` are rejected). There is **no length cap**, so the slug is
+used whole. Example:
 
 ```text
-lane=newlane issue=300 short=newl slug="phase-b-lane-lifecycle-cleanup-pass"
-→ lane/newl/300-phase-b-lane-lifecycle  (40 chars after truncation)
+lane=newlane issue=300 short=newl harness=claude slug="phase-b-lane-lifecycle-cleanup-pass"
+→ feature/300-phase-b-lane-lifecycle-cleanup-pass-newl-claude
 ```
 
-If the prefix `lane/<short>/<issue>-` itself exceeds 40 chars (e.g. very
-long short name + 6-digit issue number), the script exits 1 and asks for a
-shorter `--short`.
+The script also checks that the finished name belongs to this lane under the
+longest-suffix rule. A slug that ends in another registered lane's name (slug
+`x-side` with short `mlane` next to lane `side-mlane`) is refused with exit 2;
+change `--slug` or `--short`.
+
+### Integration branch (base of the new branch)
+
+The base is the resolved integration branch, never a hard-coded `develop`:
+`$MERCURY_BASE_BRANCH`, else `params.integration_branch` in
+`.mercury/config.json` (needs `python`), else the branch `origin/HEAD` points
+to. If none resolves the script exits 2 without guessing. With `--no-branch`
+no base is needed. See [lane-naming.md](lane-naming.md) §Δ6.
 
 ### Section ownership (Rule 6)
 
@@ -126,7 +138,7 @@ or delete the prior handoff first.
 ## Examples
 
 ```bash
-# Standard spawn — claim Issue, derive slug from title, branch off origin/develop
+# Standard spawn — claim Issue, derive slug from title, branch off origin/<integration-branch>
 .mercury/packs/lanes/scripts/lane-spawn.sh newlane 300
 
 # Pin short name and slug explicitly (bypass Issue title fetch)
@@ -168,7 +180,7 @@ Runs offline (no `gh`, no live LANES.md, no live git) and exercises:
 - Handoff overwrite guard: refuses + LANES.md NOT mutated
 - Non-interactive without `--yes` → exit 1
 - Auto-derived `--short` from lane name
-- Long slug truncated to keep branch ≤40 chars
+- Long slug kept whole (no branch length cap, #703)
 
 ## Source references
 

@@ -132,9 +132,11 @@ if [ "$lane_label_count" -eq 0 ]; then
   # Still write valid lane-status.json with empty lanes array below.
 fi
 
-# Enumerate live lane branches from remote (refs/heads/feature/lane-<name>/...).
+# Enumerate remote branches. #703: branches are `<type>/<purpose>[-<lane>][-<agent>]`
+# with no shared prefix, so every head is listed and matched per lane below
+# (the legacy `feature/lane-<lane>/*` and `lane/<short>/*` are still matched).
 # M2: tolerate git ls-remote failure; tr -d '\r' for MINGW CRLF.
-remote_refs="$(git -C "$REPO_ROOT" ls-remote origin 'refs/heads/feature/lane-*' 'refs/heads/lane/*' 2>/dev/null | tr -d '\r' || true)"
+remote_refs="$(git -C "$REPO_ROOT" ls-remote origin 'refs/heads/*' 2>/dev/null | tr -d '\r' || true)"
 
 now=$(date +%s)
 stale_cutoff=$(( now - STALE_MIN * 60 ))
@@ -144,6 +146,30 @@ lanes_json="[]"
 # Lane ids: every lane:* label, then registered lanes without a label.
 label_ids="$(echo "$lane_labels" | jq -r '.[]' 2>/dev/null | tr -d '\r' | sed 's/^lane://' || true)"
 registry_ids="$(echo "$registry_json" | jq -r 'keys_unsorted[]' 2>/dev/null | tr -d '\r' || true)"
+
+# Branch-suffix name of every known lane: its Short name, else the lane name
+# (the same rule as lane_branch_last_ts). A lane:* label whose lane is
+# registered is NOT added under its full name.
+all_lane_names="$({ echo "$registry_json" | jq -r 'to_entries[] | (.value.short // .key)' 2>/dev/null | tr -d '\r'
+                    printf '%s\n' "$label_ids" | grep -Fvx -f <(printf '%s\n' "$registry_ids" | sed '/^$/d') || true; } | sed '/^$/d' | sort -u)"
+read -r -a all_lane_names_arr <<< "$(printf '%s ' $all_lane_names)"
+
+# Ownership of every remote branch, computed ONCE here (pure bash, no process
+# per branch) instead of once per lane x branch: ref_names[i] is the branch,
+# ref_owners[i] the lane name owning its #703 suffix ("" = none / not new format).
+ref_names=(); ref_owners=()
+while IFS= read -r _line; do
+  [ -n "$_line" ] || continue
+  _b="${_line##*refs/heads/}"        # "<sha>\trefs/heads/<branch>" -> <branch>
+  _b="${_b%$'\r'}"
+  ref_names+=("$_b")
+  if lane_branch_format_ok "$_b"; then
+    lane_branch_owner_set "$_b" ${all_lane_names_arr[@]+"${all_lane_names_arr[@]}"}
+    ref_owners+=("$LANE_BRANCH_OWNER")
+  else
+    ref_owners+=("")
+  fi
+done <<< "$remote_refs"
 
 # Iterate over each lane
 while IFS= read -r lane_id; do
@@ -166,20 +192,22 @@ while IFS= read -r lane_id; do
   # Normalize: extract relevant fields only
   issues_normalized="$(echo "$issues_json" | jq '[.[] | {number: .number, title: .title, updated_at: .updatedAt}]' 2>/dev/null || echo '[]')"
 
-  # Find matching branches: feature/lane-<lane_id>/...
-  # lane_id may contain hyphens; branch prefix is feature/lane-<lane_id>/
-  branch_prefix="feature/lane-${lane_id}/"
-  # Rule 2.1 branches: lane/<short>/..., short name from the registry.
+  # Matching branches: #703 format `<type>/<purpose>-<short>[-<agent>]` (the
+  # lane owning the longest matching suffix), plus the legacy
+  # `feature/lane-<lane_id>/...` and `lane/<short>/...` prefixes.
   # No registered Short name: fall back to the lane name, as lane-assertion.sh does.
+  branch_prefix="feature/lane-${lane_id}/"
   lane_short="$(echo "$lane_registry" | jq -r '.short // empty' 2>/dev/null | tr -d '\r' || true)"
   [ -n "$lane_short" ] || lane_short="$lane_id"
   short_prefix="lane/${lane_short}/"
   branches_json="[]"
 
-  while IFS= read -r ref_line; do
-    [ -z "$ref_line" ] && continue
-    # ref_line format: "<sha>\trefs/heads/<branch>"
-    ref_branch=$(echo "$ref_line" | awk '{print $2}' | sed 's|refs/heads/||' | tr -d '\r')
+  for i in "${!ref_names[@]}"; do
+    ref_branch="${ref_names[$i]}"
+    case "$ref_branch" in
+      "$branch_prefix"*|"$short_prefix"*) ;;   # legacy formats (pre-#703)
+      *) [ "${ref_owners[$i]}" = "$lane_short" ] || continue ;;
+    esac
     # M1: TZ=UTC + --date=format-local emits the timestamp in UTC, then the
     # literal Z suffix is honest. Without TZ=UTC, format-local would format in
     # the local zone but still tack on Z, mislabeling the value (Copilot finding).
@@ -197,9 +225,7 @@ while IFS= read -r lane_id; do
         --arg ts "$last_commit_at" \
         '. + [{"ref": $ref, "last_commit_at": $ts}]')
     fi
-  # m2: use grep -F for fixed-string lane_id lookup — prevents regex metachars in
-  # lane_id (e.g. "." or "+") from causing mis-matches.
-  done < <(echo "$remote_refs" | grep -F -e "refs/heads/${branch_prefix}" ${short_prefix:+-e "refs/heads/${short_prefix}"} || true)
+  done
 
   # Compute is_stale:
   # A lane is stale if its most-recent issue update AND most-recent branch commit

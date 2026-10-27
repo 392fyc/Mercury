@@ -47,7 +47,7 @@ write_fixture_lanes() {
 ### `existing-lane`
 
 - **Short name**: `existing`
-- **Branch**: `lane/existing/100-foo`
+- **Branch**: `feature/100-foo-existing-claude`
 - **Handoff file**: `session-handoff-existing-lane.md`
 - **Status**: `active`
 
@@ -117,7 +117,7 @@ case "$OUT1" in
   *) fail "dry-run output missing lane/issue: $OUT1" ;;
 esac
 case "$OUT1" in
-  *"branch=lane/newlane/200-test-spawn"*) pass "dry-run prints branch" ;;
+  *"branch=feature/200-test-spawn-newlane-claude "*) pass "dry-run prints branch" ;;
   *) fail "dry-run output missing branch line: $OUT1" ;;
 esac
 # dry-run must NOT mutate LANES.md
@@ -129,6 +129,77 @@ esac
 [ ! -f "$MEM1/session-handoff-newlane.md" ] \
   && pass "dry-run did not write handoff" \
   || fail "dry-run wrote handoff file"
+
+# ---- branch naming (#703) and integration branch resolution ----
+echo
+echo "[branch-naming]"
+MEMB="$TMP/memb"; mkdir -p "$MEMB"; write_fixture_lanes "$MEMB/LANES.md"
+mkdir -p "$TMP/repob"
+# Long purpose: no 40-char cap any more; lane then agent as suffixes.
+OUTB=$("$SCRIPT" newlane 300 --short newl --harness codex --type fix \
+        --slug "a-very-long-purpose-that-used-to-be-truncated-at-forty-chars" \
+        --dry-run --no-claim --no-branch --memory-dir "$MEMB" --lanes-file "$MEMB/LANES.md" \
+        --repo-root "$TMP/repob" 2>&1)
+case "$OUTB" in
+  *"branch=fix/300-a-very-long-purpose-that-used-to-be-truncated-at-forty-chars-newl-codex "*) pass "type prefix, no length cap, lane then agent suffix" ;;
+  *) fail "unexpected branch line: $OUTB" ;;
+esac
+assert_exit 2 "invalid --type rejected" "$SCRIPT" newlane 300 --type lane --slug x --dry-run --no-claim --no-branch --memory-dir "$MEMB" --lanes-file "$MEMB/LANES.md" --repo-root "$TMP/repob"
+assert_exit 2 "--type claude rejected"  "$SCRIPT" newlane 300 --type claude --slug x --dry-run --no-claim --no-branch --memory-dir "$MEMB" --lanes-file "$MEMB/LANES.md" --repo-root "$TMP/repob"
+# The branch must belong to THIS lane: a slug ending in another lane's name is refused.
+MEMO="$TMP/memo"; mkdir -p "$MEMO"
+printf '# Lanes\n\n## Active Lanes\n\n### `side-multi-lane`\n\n- **Short name**: `side-mlane`\n- **Status**: `active`\n' > "$MEMO/LANES.md"
+OUTO=$("$SCRIPT" mlane 302 --short mlane --slug "x-side" --dry-run --no-claim --no-branch \
+        --memory-dir "$MEMO" --lanes-file "$MEMO/LANES.md" --repo-root "$TMP/repob" 2>&1); RCO=$?
+case "$RCO:$OUTO" in
+  2:*"belong to lane name 'side-mlane'"*) pass "slug that makes the branch another lane's is refused (exit 2)" ;;
+  *) fail "expected exit 2 for ambiguous owner: $RCO $OUTO" ;;
+esac
+OUTO=$("$SCRIPT" mlane 302 --short mlane --slug "x-other" --dry-run --no-claim --no-branch \
+        --memory-dir "$MEMO" --lanes-file "$MEMO/LANES.md" --repo-root "$TMP/repob" 2>&1); RCO=$?
+[ "$RCO" = "0" ] && pass "unambiguous slug accepted" || fail "unambiguous slug refused: $RCO $OUTO"
+# Base branch: no env / config / origin/HEAD -> error (never guessed).
+OUTB=$(env -u MERCURY_BASE_BRANCH "$SCRIPT" newlane 301 --short newl --slug x --dry-run --no-claim \
+        --memory-dir "$MEMB" --lanes-file "$MEMB/LANES.md" --repo-root "$TMP/repob" 2>&1); RCB=$?
+case "$RCB:$OUTB" in
+  2:*"cannot resolve the integration branch"*) pass "unresolvable integration branch is an error" ;;
+  *) fail "expected exit 2 + integration-branch error: $RCB $OUTB" ;;
+esac
+# 1. env var
+OUTB=$(MERCURY_BASE_BRANCH=trunk "$SCRIPT" newlane 301 --short newl --slug x --dry-run --no-claim \
+        --memory-dir "$MEMB" --lanes-file "$MEMB/LANES.md" --repo-root "$TMP/repob" 2>&1)
+case "$OUTB" in
+  *"git branch feature/301-x-newl-claude origin/trunk"*) pass "base: MERCURY_BASE_BRANCH" ;;
+  *) fail "base from env: $OUTB" ;;
+esac
+# 2. config.json (needs python), env var wins over it; 3. origin/HEAD
+REPOC="$TMP/repoc"; mkdir -p "$REPOC/.mercury"
+git init -q "$REPOC" 2>/dev/null
+printf '{"params":{"integration_branch":"fromcfg"}}\n' > "$REPOC/.mercury/config.json"
+if command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
+  OUTB=$(env -u MERCURY_BASE_BRANCH "$SCRIPT" newlane 301 --short newl --slug x --dry-run --no-claim \
+          --memory-dir "$MEMB" --lanes-file "$MEMB/LANES.md" --repo-root "$REPOC" 2>&1)
+  case "$OUTB" in
+    *"origin/fromcfg"*) pass "base: params.integration_branch in .mercury/config.json" ;;
+    *) fail "base from config: $OUTB" ;;
+  esac
+  OUTB=$(MERCURY_BASE_BRANCH=envwins "$SCRIPT" newlane 301 --short newl --slug x --dry-run --no-claim \
+          --memory-dir "$MEMB" --lanes-file "$MEMB/LANES.md" --repo-root "$REPOC" 2>&1)
+  case "$OUTB" in
+    *"origin/envwins"*) pass "base: env var beats config.json" ;;
+    *) fail "env should beat config: $OUTB" ;;
+  esac
+else
+  pass "base: config.json cases skipped (no python)"
+fi
+rm -f "$REPOC/.mercury/config.json"
+git -C "$REPOC" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/mainline 2>/dev/null
+OUTB=$(env -u MERCURY_BASE_BRANCH "$SCRIPT" newlane 301 --short newl --slug x --dry-run --no-claim \
+        --memory-dir "$MEMB" --lanes-file "$MEMB/LANES.md" --repo-root "$REPOC" 2>&1)
+case "$OUTB" in
+  *"origin/mainline"*) pass "base: origin/HEAD" ;;
+  *) fail "base from origin/HEAD: $OUTB" ;;
+esac
 
 # ---- duplicate-lane refusal ----
 echo
@@ -251,7 +322,7 @@ case "$(cat "$MEM5/LANES.md")" in
   *) fail "newlane section NOT in LANES.md after spawn" ;;
 esac
 case "$(cat "$MEM5/LANES.md")" in
-  *"**Branch**: \`lane/newl/204-phase-b-test\`"*) pass "branch field recorded" ;;
+  *"**Branch**: \`feature/204-phase-b-test-newl-claude\`"*) pass "branch field recorded" ;;
   *) fail "branch field missing in LANES.md" ;;
 esac
 case "$(cat "$MEM5/LANES.md")" in
@@ -388,7 +459,7 @@ RC_BAD2=$?
 
 # ---- branch length cap (Rule 2.1 ≤40 chars) ----
 echo
-echo "[branch-cap]"
+echo "[branch-no-cap]"
 MEM9="$TMP/mem9"; mkdir -p "$MEM9"; write_fixture_lanes "$MEM9/LANES.md"
 mkdir -p "$TMP/repo9"
 OUT9=$("$SCRIPT" longLane 208 --short ll --slug "very-very-very-long-task-slug-overflow" \
@@ -396,13 +467,11 @@ OUT9=$("$SCRIPT" longLane 208 --short ll --slug "very-very-very-long-task-slug-o
         --memory-dir "$MEM9" --lanes-file "$MEM9/LANES.md" \
         --repo-root "$TMP/repo9" 2>&1)
 RC9=$?
-[ "$RC9" = "0" ] && pass "long slug truncated (exit 0)" \
+[ "$RC9" = "0" ] && pass "long slug accepted (exit 0)" \
   || fail "long slug failed: exit=$RC9 out=$OUT9"
-# Pull the recorded branch and check ≤40 chars.
+# Pull the recorded branch: the old 40-char cap is gone (#703), the slug stays whole.
 BR=$(awk '/^### `longLane`/{s=1} s && /^- \*\*Branch\*\*: `[^`]+`/{match($0,/`[^`]+`/); print substr($0,RSTART+1,RLENGTH-2); exit}' "$MEM9/LANES.md")
-[ -n "$BR" ] && [ "${#BR}" -le 40 ] \
-  && pass "branch length ${#BR} ≤40 (cap honored)" \
-  || fail "branch length ${#BR}: '$BR' (cap violated)"
+[ "$BR" = "feature/208-very-very-very-long-task-slug-overflow-ll-claude" ]   && pass "branch ${#BR} chars kept whole (no cap)"   || fail "branch not kept whole: '$BR'"
 
 echo
 printf '%d pass / %d fail\n' "$PASS" "$FAIL"

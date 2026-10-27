@@ -88,8 +88,8 @@ Two ways to read the packs:
   The lock records `source_repo` (`owner/name`, from the `origin` remote of the source; the URL itself is never printed
   or stored) and `source_commit`. **Release gate:** writing (`install`, `apply`) requires the commit to be reachable
   from `origin/master` of the source (`git merge-base --is-ancestor <commit> refs/remotes/origin/master`, as of the last
-  fetch). Mercury's `master` is the milestone release branch (`develop` to `master`), so a commit that is only on
-  `develop`, a feature branch or nowhere on origin is refused. `--dry-run` and `check` accept it and annotate the line
+  fetch). Mercury's `master` is its single trunk, where every merged pull request is a release, so a commit that is only on
+  a feature branch, the frozen `develop` or nowhere on origin is refused. `--dry-run` and `check` accept it and annotate the line
   `source commit <sha> (NOT on origin/master ...)`. There is no override flag: the only reason to use an unreleased
   commit is to preview it, and `--dry-run` does that. Mercury installing itself is not gated.
   Every run prints `mercury: source commit <sha>`. A tree entry that is not a regular file (link, submodule) is an
@@ -403,8 +403,12 @@ Unknown or disabled packs are errors; required packs are always included. Unknow
   `2>&1`, `2>$null` or `> $null` after such a script is blocked although it is allowed after other commands; and a path
   that contains parentheses, a variable or non-ASCII characters cannot be passed to it. Write the call as
   `<script> -Action <Name> -Param plain-value`.
-- `params.integration_branch`, `params.required_checks`, `params.update_schedule`: used by the `deploy` pack only (see
-  below). They are validated whenever they are present, so a bad value stops every run, not just the one that renders them.
+- `params.integration_branch`: the branch task branches start from and merge into. The `deploy` pack renders it into
+  its workflows (see below), and the `lanes` scripts use it as the base for new lane branches, after the
+  `MERCURY_BASE_BRANCH` environment variable and before origin's default branch (Issue #703).
+- `params.required_checks`, `params.update_schedule`: used by the `deploy` pack only (see below).
+- These values are validated whenever they are present, so a bad value stops every run, not just the one that renders
+  them.
 
 What is written:
 

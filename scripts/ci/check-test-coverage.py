@@ -15,7 +15,7 @@ A workflow step COUNTS only if all of these hold (each is checked, none is assum
 
   1. The workflow has a `pull_request` trigger. `push`, `schedule` and `workflow_dispatch` alone do not count.
   2. That trigger has no `paths` / `paths-ignore` filter, its `types` (if any) include `synchronize`, and its
-     `branches` (if any) include `develop` (the branch this repository merges into). A workflow whose
+     `branches` (if any) include `master` (the branch this repository merges into). A workflow whose
      trigger is filtered runs only for some pull requests: its steps count only for the tests listed under
      "path_filtered" in the config (with a reason), and the matrix marks them with `*`.
   3. Neither the job nor the step is switched off: `if: false` / `${{ false }}` on either means never. An `if:` this
@@ -369,12 +369,12 @@ def pull_request_trigger(doc) -> str:
     branches = cfg.get("branches")
     if branches:
         wanted = branches if isinstance(branches, list) else [branches]
-        if not any(fnmatch.fnmatchcase("develop", str(b)) for b in wanted):
+        if not any(fnmatch.fnmatchcase("master", str(b)) for b in wanted):
             return "filtered"
     ignored = cfg.get("branches-ignore")
     if ignored:
         banned = ignored if isinstance(ignored, list) else [ignored]
-        if any(fnmatch.fnmatchcase("develop", str(b)) for b in banned):
+        if any(fnmatch.fnmatchcase("master", str(b)) for b in banned):
             return "filtered"
     return "always"
 

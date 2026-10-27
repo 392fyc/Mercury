@@ -2,7 +2,7 @@ name: Auto Verify
 
 on:
   pull_request:
-    branches: [develop, master]
+    branches: [master]
 
 # Every test file in the repository must be run here or in another workflow, on Linux and, where it can
 # pass, on Windows (#686). scripts/ci/check-test-coverage.py enforces that; its exemption and platform-gap

@@ -1,8 +1,9 @@
 # Lane Naming + Capacity — lane protocol Rule 2 & HARD-CAP
 
-Implements the **Rule 2 short branch prefix** delta (v0.1 Delta 6, Issue
-[#313](https://github.com/392fyc/Mercury/issues/313)). It also records the
-former **HARD-CAP** delta (v0.1 Delta 7, Issue
+Defines how lane branches are named (Rule 2 / Rule 2.1, rewritten by Issue
+[#703](https://github.com/392fyc/Mercury/issues/703); first introduced as v0.1
+Delta 6, Issue [#313](https://github.com/392fyc/Mercury/issues/313)). It also
+records the former **HARD-CAP** delta (v0.1 Delta 7, Issue
 [#314](https://github.com/392fyc/Mercury/issues/314)), which was **removed**
 by Issue [#605](https://github.com/392fyc/Mercury/issues/605): lanes are no
 longer capped (see §Δ7).
@@ -14,34 +15,65 @@ control how many lanes could exist concurrently (removed in #605). Operators rea
 open / what do I name its branch" in one mental motion; one combined guide is
 shorter than two cross-referenced ones.
 
-## Δ6 — Short branch prefix (`lane/<short>/<N>-<slug>`)
+## Δ6 — Branch naming: purpose first, lane and agent as suffixes
 
-### What changed
+### The format
 
-- **OLD prefix** (still valid for backward-compat): `feature/lane-<lane>/TASK-<N>-*` — 45-65 chars
-- **NEW prefix** (preferred for new work): `lane/<short>/<N>-<slug>` — ≤40 chars
+```
+<type>/<purpose>[-<lane>][-<agent>]
+```
 
-Example: `feature/lane-side-multi-lane/TASK-313-314-phase-c` (51 chars) →
-`lane/side-mlane/313-phase-c` (27 chars).
+| Part | Rule | Example |
+|------|------|---------|
+| `<type>` | one of `feature`, `feat`, `fix`, `hotfix`, `docs`, `chore`, `refactor`, `test`, `perf`, `ci`, `build` | `feature` |
+| `<purpose>` | letters, digits, `.`, `_`, `-`; starts with a letter or digit; **no `/`**; no length limit | `621-guard-test` |
+| `-<lane>` | optional suffix: a registered lane short name (the `Short name` in `LANES.md`, else the lane name) | `-guard` |
+| `-<agent>` | `-claude` or `-codex`, always the last suffix. A branch an agent creates MUST carry it | `-codex` |
 
-### Why short matters
+Examples: `feature/621-guard-test-guard-codex` (lane `guard`, created by
+Codex) and `fix/TASK-12-claude` (no lane, created by Claude).
 
-- Community soft cap is ~50 chars (Graphite naming guide); LeanTaaS hard cap is
-  28 chars. 65-char branches push past both, breaking IDE autocomplete + URL
-  pasting + `gh pr` shell expansion in some terminals.
-- Mercury empirically observed in S3-S5 that the legacy 51-char prefix already
-  truncates in `git branch` listing on narrow terminals and forces line wraps
-  in PR titles.
+### Why purpose first
+
+The branch name is read by people far more often than by scripts (`git branch`,
+PR lists, `gh pr list`). With the old prefixes (`lane/side-mlane/...`,
+`codex/...`) every branch of a lane started with the same few words, so the
+part that tells branches apart, what the branch is for, was pushed to the end
+and cut off by narrow terminals. Putting the purpose first and the lane and
+agent last keeps the distinguishing part visible. The old 40-character cap
+existed only to compensate for long prefixes and is gone: there is no length
+limit.
+
+### Forbidden prefixes
+
+New branches never start with `codex/`, `claude/` or `lane/` (they name the
+tool or the lane instead of the purpose). The `mercury/` namespace is reserved
+for the update bot; the lane scripts never generate it.
+
+### Which lane owns a branch
+
+Remove a trailing `-claude` or `-codex`, then look at the end of what is left:
+the branch belongs to the registered lane whose name it ends with
+(`-<lane>`). If several registered names match, **the longest wins**. Example
+with lanes `mlane` and `side-mlane`: `feature/7-x-side-mlane-codex` ends with
+both `-mlane` and `-side-mlane`, so it belongs to `side-mlane`, not `mlane`.
+A branch with no registered lane suffix belongs to no side lane; the `main`
+lane may use such branches (its name needs no suffix).
+
+`lane-assertion.sh` applies exactly this rule (see §Δ11 below), so the lane a
+branch name points to must match the lane the session declares.
 
 ### Short-name convention
 
 Each lane declares a `Short name` field in its own `LANES.md` section. The
 short name MUST be:
 
-- ≤ 8 characters (giving the rest of the branch ≥ 27 chars for `<N>-<slug>`)
+- ≤ 8 characters (it is a branch suffix; keep it readable)
 - Match `[a-z0-9-]+` (lowercase + digits + hyphen only)
 - Globally unique across all active + closed lanes (avoid colliding with a
   closed lane's archived branches)
+- Not a trailing part of another lane's name unless the longest-match rule
+  above gives the intended owner (`mlane` vs `side-mlane`)
 
 Default mapping for current Mercury lanes:
 
@@ -55,26 +87,57 @@ For new lanes: pick a short name at lane open time and write it in the lane's
 pick the same short name, lane-claim semantics + manual review apply (no
 mechanical enforcement; collision is rare).
 
-### Backward compatibility
+### Creating branches
 
-- All existing `feature/lane-<lane>/...` branches and `feature/TASK-<N>-*`
-  legacy main-lane branches REMAIN valid until their containing lane closes.
-- New work on existing lanes MAY continue using the legacy prefix to avoid
-  mid-lane branch-naming churn.
-- New lanes opened after Δ6 SHOULD use the short prefix.
+`lane-spawn.sh <lane> <issue> [--type TYPE] [--slug SLUG]` builds
+`<type>/<issue>-<slug>-<short>-<harness>` (type defaults to `feature`, harness
+is the lane's `--harness`) off the integration branch (next section).
+
+### Integration branch (the base)
+
+Mercury uses a single trunk: task branches start from, and pull requests merge
+into, the **integration branch**; `develop` is frozen and no longer used.
+Scripts never hard-code the name; they resolve it in this order and stop with
+an error when nothing resolves (they do not guess):
+
+1. environment variable `MERCURY_BASE_BRANCH`
+2. `params.integration_branch` in the repository's `.mercury/config.json`
+   (skipped when no `python` is available). Mercury itself sets this to
+   `master`, so in this repository step 2 decides unless the environment
+   variable overrides it.
+3. the branch `origin/HEAD` points to (`git symbolic-ref --short refs/remotes/origin/HEAD`, without `origin/`)
+
+`scripts/worktree-reaper.sh` uses the same order (after `WORKTREE_BASE_REF`)
+and, as a fourth step, reads the remote's real HEAD with
+`git ls-remote --symref origin HEAD` when `origin/HEAD` is missing locally.
+
+### Backward compatibility (old formats)
+
+- Existing branches are **not renamed**. The old formats `lane/<short>/...`
+  and `feature/lane-<lane>/TASK-*` stay valid until their work is finished. The main lane's old
+  `feature/TASK-<N>-*` needs no special case: it is an ordinary new-format
+  name, owned by the lane whose suffix it ends with, else by `main`.
+- Read-only status and scan scripts (`lane-status.sh`, `lane-sweep.sh`,
+  `check-main-idle.sh`) recognize both the old and the new format.
+- Assertion-style checks (`lane-assertion.sh`, the `lane-close.sh` ownership
+  warning) keep accepting the old formats so that in-progress work is not
+  interrupted. This is a compatibility allowance, not a recommendation.
+- New branches MUST use the new format; nothing creates `lane/<short>/...`
+  branches any more.
 
 ### Script support (current state)
 
-`.mercury/packs/lanes/scripts/lane-sweep.sh` and `.mercury/packs/lanes/scripts/check-main-idle.sh` currently glob
-`refs/heads/feature/lane-<lane>/*` for branch-activity probing. These scripts
-will be extended in v0.2 to also glob `refs/heads/lane/<short>/*` once one
-real lane uses the new prefix end-to-end (deferred to avoid speculative code).
-
-If a lane ONLY has new-prefix branches and no legacy `feature/lane-*`
-branches, the sweep's branch-activity signal will report "inf" until v0.2 ref
-glob extension lands. This degrades gracefully — handoff mtime + Issue
-activity remain valid signals, and the AND-gate verdict still requires three
-stale signals before flagging stale.
+`lane-sweep.sh` and `check-main-idle.sh` read every **local and remote-tracking**
+branch (`git for-each-ref refs/heads refs/remotes`); `lane-status.sh` reads the
+**remote** branches only (`git ls-remote origin 'refs/heads/*'`). All three
+match a lane's branches by suffix (new format) plus the old prefixes. Because
+the new format has no common prefix, they list every branch and match it
+against the registered lane names, where a lane's name is its Short name, else
+its lane name. `lane-status.sh` works out each branch's owner once, outside the
+lane loop, so the cost grows with branches + lanes, not their product. The
+shared logic is in `.mercury/packs/lanes/scripts/lib/lane-paths.sh`
+(`lane_branch_owner`, `lane_branch_owner_set`, `lane_branch_last_ts`,
+`lane_integration_branch`).
 
 ## Δ7 — HARD-CAP at 5 active lanes
 
@@ -275,8 +338,8 @@ governed by Rule 6.
   (Worktree path declaration) — and only the owning lane edits its own
   LANES.md section per Rule 6.
 - The lane's branch convention follows the host repo's git workflow, not
-  Mercury's. Rule 2.1 short-prefix (`lane/<short>/<N>-<slug>`) remains
-  recommended for in-host work-branches that the operator wants Mercury
+  Mercury's. The Rule 2.1 suffix format (`<type>/<purpose>-<short>[-<agent>]`)
+  remains recommended for in-host work-branches that the operator wants Mercury
   lane-assertion (Δ11) to validate. If host-repo conventions conflict
   AND the operator accepts the trade-off, `MERCURY_LANE_ASSERT_DISABLED=1`
   is the operator's escape valve — but it skips **all** assertion checks
@@ -340,25 +403,28 @@ After opening a new lane (LANES.md section added, short name declared):
 > proceeding.
 
 ```bash
-# Prerequisite: ensure origin/develop is current to avoid basing the new
-# worktree on a stale local branch (matches .mercury/packs/lanes/scripts/lane-spawn.sh convention)
+# Prerequisite: ensure origin/<integration-branch> is current to avoid basing the new
+# worktree on a stale local branch (matches .mercury/packs/lanes/scripts/lane-spawn.sh convention).
+# <integration-branch>: $MERCURY_BASE_BRANCH, else params.integration_branch in
+# .mercury/config.json, else the branch origin/HEAD points to (see §Δ6).
 git fetch origin
 
-# Recommended: create a fresh init branch off origin/develop (avoids checkout collision)
-git worktree add -b lane/<short>/init <repo-root>/.worktrees/lanes/<short> origin/develop
-# Example:
-# git worktree add -b lane/side-mlane/init <repo-root>/.worktrees/lanes/side-mlane origin/develop
+# Recommended: create a fresh init branch off origin/<integration-branch> (avoids checkout collision)
+git worktree add -b chore/init-<short>-<agent> <repo-root>/.worktrees/lanes/<short> origin/<integration-branch>
+# Example (integration branch master, lane side-mlane driven by Claude):
+# git worktree add -b chore/init-side-mlane-claude <repo-root>/.worktrees/lanes/side-mlane origin/master
 ```
 
-If you instead try `git worktree add <repo-root>/.worktrees/lanes/<short> develop` and
-`develop` is already checked out in the main `<repo-root>` checkout,
-git refuses with "fatal: 'develop' is already used by worktree at ..." per
+If you instead try `git worktree add <repo-root>/.worktrees/lanes/<short> <integration-branch>` and
+the integration branch is already checked out in the main `<repo-root>` checkout,
+git refuses with "fatal: '<integration-branch>' is already used by worktree at ..." per
 [git-worktree(1)](https://git-scm.com/docs/git-worktree) (a branch can only
-be checked out by one worktree at a time). The `-b lane/<short>/init` form
-above sidesteps the collision by creating a new branch from `origin/develop`. The
-lane's actual work branches (Rule 2.1 short-prefix `lane/<short>/<N>-<slug>`)
+be checked out by one worktree at a time). The `-b chore/init-<short>-<agent>` form
+above sidesteps the collision by creating a new branch from `origin/<integration-branch>`. The
+lane's actual work branches (Rule 2.1 suffix format `<type>/<purpose>-<short>-<agent>`)
 are created later inside the worktree; the `init` branch can be deleted
-once a real work branch exists.
+once a real work branch exists. (The `init` name follows the same suffix rule so
+`lane-assertion.sh` accepts it; the old `lane/<short>/init` is still accepted as a legacy name.)
 
 ### Operational expectation
 
@@ -464,7 +530,7 @@ Operators run worktree cleanup manually as part of the close ceremony:
 # Sanity-check the path resolves to the expected worktree before proceeding.
 git worktree list | grep -F "<repo-root>/.worktrees/lanes/<short>"
 
-# Verify the lane branch is merged (ancestor of origin/develop, or contained in a
+# Verify the lane branch is merged (ancestor of origin/<integration-branch>, or contained in a
 # merged PR head) and the worktree is clean (git status --porcelain is empty).
 git -C <repo-root>/.worktrees/lanes/<short> status --porcelain
 
@@ -484,7 +550,7 @@ not remove anything; report the path and branch. A lane abandoned without
 merging is listed for the user and removed only after the user confirms (see
 `.mercury/docs/guides/worktree-workflow.md` for the confirmed-deletion
 steps, including the SHA read-back before the remote branch is deleted via
-`gh api -X DELETE`; `main`, `master`, `develop` and the default branch are never deleted).
+`gh api -X DELETE`; `main`, `master`, `develop` (frozen) and the default branch are never deleted).
 
 `git worktree remove` operates on registered worktrees only (verifiable via
 `git worktree list`) — it cannot remove arbitrary filesystem paths, so the
@@ -564,7 +630,7 @@ work. The script compares:
 |--------|----------|---------------|
 | `[LANE=<name>]` marker (CLI / `MERCURY_LANE_MARKER` / `BOOTSTRAP_PROMPT` / stdin) | parsable lane name (`[a-z0-9-]+`) | `1` |
 | Encoded cwd vs encoded `Worktree path` from `LANES.md` | byte-equal after `: \\ /` → `-` slash-encoding | `2` |
-| `git branch --show-current` | matches lane's branch-prefix convention (Rule 2.1 `lane/<short>/*` or legacy `feature/lane-<lane>/TASK-*`). For **side lanes** only `develop` is tolerated as pre-checkout; `master`/`main` are NOT — accepting them would mean a misrouted session on those branches passes the assertion. **Main lane** tolerates all three (`develop`/`master`/`main`) since they are legitimate main-lane operating branches. | `3` |
+| `git branch --show-current` | matches lane's branch convention (Rule 2.1: `<type>/<purpose>-<short>[-<agent>]`, longest registered lane suffix wins; legacy compatibility: `lane/<short>/*` or `feature/lane-<lane>/TASK-*`). For **side lanes** no protected branch is tolerated (`develop` is frozen; `master`/`main` are NOT either) — accepting one would mean a misrouted session on those branches passes the assertion. **Main lane** tolerates all three (`develop`/`master`/`main`) since they are legitimate main-lane operating branches, and accepts any new-format branch that no other registered lane owns. | `3` |
 | `Worktree path` field present in lane's `LANES.md` section | non-empty | `4` |
 
 Marker source priority: `--marker` CLI → `MERCURY_LANE_MARKER` env →

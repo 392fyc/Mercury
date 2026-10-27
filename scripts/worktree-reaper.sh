@@ -48,7 +48,7 @@
 # Environment overrides:
 #   WORKTREE_ROOT      directory to scan (default: .worktrees relative to repo root)
 #   WORKTREE_AGE_DAYS  age in days after which unmerged worktrees are listed as CONFIRM (default: 7)
-#   WORKTREE_BASE_REF  ref that counts as "merged into" (default: origin's default branch)
+#   WORKTREE_BASE_REF  ref that counts as "merged into" (default: the integration branch: MERCURY_BASE_BRANCH, params.integration_branch in .mercury/config.json, origin/HEAD, then `git ls-remote --symref origin HEAD`; error when none resolves)
 
 set -eu
 
@@ -82,20 +82,30 @@ case "$AGE_DAYS" in
     ;;
 esac
 
-# Base ref: what "merged" is measured against.
+# Base ref: what "merged" is measured against = the integration branch (#703),
+# resolved in this order and never guessed: WORKTREE_BASE_REF, then
+# $MERCURY_BASE_BRANCH, then params.integration_branch in .mercury/config.json
+# (skipped without a working python), then origin/HEAD. None found: error.
 BASE_REF="${WORKTREE_BASE_REF:-}"
+if [ -z "$BASE_REF" ]; then
+  _ib="${MERCURY_BASE_BRANCH:-}"
+  if [ -z "$_ib" ] && [ -f "$REPO_ROOT/.mercury/config.json" ]; then
+    for _py in python3 python; do
+      command -v "$_py" >/dev/null 2>&1 || continue
+      _ib=$("$_py" -I -c 'import json,sys
+try:
+    v=json.load(open(sys.argv[1],encoding="utf-8")).get("params",{}).get("integration_branch","")
+    print(v if isinstance(v,str) else "")
+except Exception:
+    pass' "$REPO_ROOT/.mercury/config.json" 2>/dev/null | tr -d '\r') || _ib=""
+      [ -n "$_ib" ] && break
+    done
+  fi
+  [ -n "$_ib" ] && BASE_REF="origin/$_ib"
+fi
 if [ -z "$BASE_REF" ]; then
   BASE_REF=$(git -C "$REPO_ROOT" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || true)
 fi
-if [ -z "$BASE_REF" ]; then
-  for cand in origin/develop origin/main origin/master; do
-    if git -C "$REPO_ROOT" rev-parse --verify -q "refs/remotes/$cand" >/dev/null 2>&1; then
-      BASE_REF="$cand"
-      break
-    fi
-  done
-fi
-
 # Origin's default branch (protected): origin/HEAD, else ls-remote, else unknown (warn).
 DEFAULT_BRANCH=$(git -C "$REPO_ROOT" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || true)
 DEFAULT_BRANCH=${DEFAULT_BRANCH#origin/}
@@ -104,6 +114,14 @@ if [ -z "$DEFAULT_BRANCH" ] && git -C "$REPO_ROOT" remote get-url origin >/dev/n
   command -v timeout >/dev/null 2>&1 && _tmo="timeout 20"
   DEFAULT_BRANCH=$(GIT_TERMINAL_PROMPT=0 $_tmo git -C "$REPO_ROOT" ls-remote --symref origin HEAD 2>/dev/null \
     | awk '/^ref:/ { sub("refs/heads/", "", $2); print $2; exit }' || true)
+fi
+# Last resort for the base ref: the remote's real HEAD (read from the remote, not a guess).
+if [ -z "$BASE_REF" ] && [ -n "$DEFAULT_BRANCH" ]; then
+  BASE_REF="origin/$DEFAULT_BRANCH"
+fi
+if [ -z "$BASE_REF" ]; then
+  printf 'ERROR: cannot resolve the integration branch: set WORKTREE_BASE_REF or MERCURY_BASE_BRANCH, params.integration_branch in .mercury/config.json, or origin/HEAD (also tried git ls-remote --symref origin HEAD)\n' >&2
+  exit 1
 fi
 if [ -z "$DEFAULT_BRANCH" ]; then
   printf "WARN: cannot determine origin's default branch — only main, master and develop are protected\n" >&2

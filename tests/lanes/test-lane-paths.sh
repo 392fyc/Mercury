@@ -111,23 +111,25 @@ bash "$REPO_ROOT/.mercury/packs/lanes/scripts/lane-spawn.sh" dangle 9 --short da
 eq "lane-spawn refuses a dangling symlink at the handoff path" "$?" "1"
 [ ! -e "$TMP/outside-target.md" ] && pass "nothing written through the dangling symlink" || fail "wrote through symlink"
 
-git -C "$A" update-ref refs/remotes/origin/develop HEAD  # lets step 2 create a branch
+git -C "$A" update-ref refs/remotes/origin/master HEAD  # lets step 2 create a branch (#703: base = resolved integration branch)
+export MERCURY_BASE_BRANCH=master
 RO="$TMP/ro-parent"; mkdir -p "$RO"; chmod 555 "$RO"
 if [ ! -w "$RO" ]; then  # root ignores permissions; skip there
   OUT=$(bash "$REPO_ROOT/.mercury/packs/lanes/scripts/lane-spawn.sh" rotest 10 --short rotest --slug x --no-claim --yes \
         --handoff-dir "$RO/handoff" --repo-root "$AW" 2>&1); RC=$?
   eq "unwritable handoff dir -> spawn fails" "$RC" "1"
-  git -C "$AW" rev-parse --verify --quiet refs/heads/lane/rotest/10-x >/dev/null \
+  git -C "$AW" rev-parse --verify --quiet refs/heads/feature/10-x-rotest-claude >/dev/null \
     && fail "branch created before the handoff dir check" || pass "no branch created when the handoff dir is unusable"
 else
   HD_FILE="$TMP/hd-file"; : > "$HD_FILE"
   OUT=$(bash "$REPO_ROOT/.mercury/packs/lanes/scripts/lane-spawn.sh" rotest 10 --short rotest --slug x --no-claim --yes \
         --handoff-dir "$HD_FILE" --repo-root "$AW" 2>&1); RC=$?
   eq "handoff dir path is a file -> spawn fails" "$RC" "1"
-  git -C "$AW" rev-parse --verify --quiet refs/heads/lane/rotest/10-x >/dev/null \
+  git -C "$AW" rev-parse --verify --quiet refs/heads/feature/10-x-rotest-claude >/dev/null \
     && fail "branch created before the handoff dir check" || pass "no branch created when the handoff dir is unusable"
 fi
 chmod 755 "$RO"
+unset MERCURY_BASE_BRANCH
 
 echo
 echo "[lane-init --main-worktree picks that project's lane home]"
@@ -193,6 +195,105 @@ done
 rm -f "$P/.mercury/memory/lane-home"
 eq "no binding file keeps the Claude Code project dir" \
    "$("$CLI" memory-dir --repo-root "$P")" "$CLAUDE_CONFIG_DIR/projects/$(enc "$MP")/memory"
+
+# ---- #703: branch naming + integration branch helpers in the lib ----
+echo
+echo "[branch-naming-lib]"
+LIB="$REPO_ROOT/.mercury/packs/lanes/scripts/lib/lane-paths.sh"
+# shellcheck source=/dev/null
+. "$LIB"
+ok_fmt() { lane_branch_format_ok "$1" && echo yes || echo no; }
+eq "format: feature/621-guard-test-guard-codex"  "$(ok_fmt feature/621-guard-test-guard-codex)" yes
+eq "format: fix/TASK-12-claude"                  "$(ok_fmt fix/TASK-12-claude)" yes
+eq "format: dots and underscores in purpose"     "$(ok_fmt chore/a.b_c-1)" yes
+eq "format: very long purpose (no cap)"          "$(ok_fmt feature/$(printf 'a%.0s' $(seq 1 120)))" yes
+eq "format: unknown type rejected"               "$(ok_fmt wip/foo)" no
+eq "format: lane/ prefix rejected"               "$(ok_fmt lane/art/12-x)" no
+eq "format: codex/ prefix rejected"              "$(ok_fmt codex/foo)" no
+eq "format: claude/ prefix rejected"             "$(ok_fmt claude/foo)" no
+eq "format: mercury/ namespace not generated"    "$(ok_fmt mercury/update)" no
+eq "format: slash inside purpose rejected"       "$(ok_fmt feature/a/b)" no
+eq "format: purpose must start alnum"            "$(ok_fmt feature/-a)" no
+eq "format: empty purpose rejected"              "$(ok_fmt feature/)" no
+eq "format: space rejected"                      "$(ok_fmt 'feature/a b')" no
+eq "owner: lane then agent suffix"   "$(lane_branch_owner feature/621-guard-test-guard-codex guard art)" guard
+eq "owner: lane only"                "$(lane_branch_owner fix/1-x-art art guard)" art
+eq "owner: longest wins"             "$(lane_branch_owner feature/7-x-side-mlane-claude mlane side-mlane)" side-mlane
+eq "owner: shorter name when only it matches" "$(lane_branch_owner feature/7-x-mlane mlane side-mlane)" mlane
+eq "owner: art is not artist"        "$(lane_branch_owner feature/7-x-artist-codex art)" ""
+eq "owner: no registered suffix"     "$(lane_branch_owner fix/TASK-12-claude guard art)" ""
+eq "owner: name must follow a hyphen" "$(lane_branch_owner feature/xguard guard)" ""
+
+REGF="$TMP/LANES-naming.md"
+cat > "$REGF" <<'EOF'
+## Active Lanes
+
+### `main`
+
+- **Status**: `active`
+
+### `side-multi-lane`
+
+- **Short name**: `side-mlane`
+
+### `guard`
+
+- **Short name** (note): `guard`
+EOF
+eq "registered names: short when present, else lane name" \
+   "$(lane_registered_names "$REGF" | tr '\n' ' ')" "main side-mlane guard "
+eq "short name lookup"          "$(lane_short_name "$REGF" side-multi-lane)" side-mlane
+eq "short name falls back to lane name" "$(lane_short_name "$REGF" main)" main
+
+# Integration branch: env > .mercury/config.json > origin/HEAD > error
+IB="$TMP/integ"; mkproj "$IB"; mkdir -p "$IB/.mercury"
+rc_none=0; (unset MERCURY_BASE_BRANCH; lane_integration_branch "$IB" >/dev/null 2>&1) || rc_none=$?
+eq "integration branch: nothing resolves -> error" "$rc_none" "1"
+git -C "$IB" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/mainline 2>/dev/null
+eq "integration branch: origin/HEAD" "$(unset MERCURY_BASE_BRANCH; lane_integration_branch "$IB")" mainline
+if command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
+  printf '{"params":{"integration_branch":"fromcfg"}}\n' > "$IB/.mercury/config.json"
+  eq "integration branch: config.json beats origin/HEAD" "$(unset MERCURY_BASE_BRANCH; lane_integration_branch "$IB")" fromcfg
+  printf '{"params":{}}\n' > "$IB/.mercury/config.json"
+  eq "integration branch: config without the key falls through" "$(unset MERCURY_BASE_BRANCH; lane_integration_branch "$IB")" mainline
+  printf '{"params":{"integration_branch":"fromcfg"}}\n' > "$IB/.mercury/config.json"
+else
+  pass "integration branch: config.json cases skipped (no python)"
+fi
+eq "integration branch: env var beats everything" "$(MERCURY_BASE_BRANCH=fromenv lane_integration_branch "$IB")" fromenv
+
+# lane_branch_last_ts / check-main-idle over a throwaway repo
+BR="$TMP/branches"; mkproj "$BR"
+commit_on() {  # commit_on <branch> <iso date>
+  git -C "$BR" checkout -q -b "$1" develop 2>/dev/null || git -C "$BR" checkout -q "$1"
+  GIT_COMMITTER_DATE="$2" GIT_AUTHOR_DATE="$2" git -C "$BR" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "c $1"
+  git -C "$BR" checkout -q develop
+}
+commit_on "feature/1-old-guard-codex" "2020-01-01T00:00:00Z"
+commit_on "fix/2-new-guard"           "2020-06-01T00:00:00Z"
+commit_on "feature/3-art-work-art-claude" "2021-01-01T00:00:00Z"
+commit_on "lane/guard/4-legacy"       "2022-01-01T00:00:00Z"
+commit_on "feature/5-unowned-claude"  "2023-01-01T00:00:00Z"
+commit_on "feature/TASK-12-x-guard-codex" "2024-01-01T00:00:00Z"
+ts() { date -u -d "$1" +%s 2>/dev/null || date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$1" +%s; }
+eq "last_ts guard: newest of suffix + legacy branches (feature/TASK-12-x-guard-codex is guard's)" "$(lane_branch_last_ts "$BR" guard "$REGF")" "$(ts 2024-01-01T00:00:00Z)"
+eq "last_ts main: new-format branches no lane owns (feature/TASK-* of guard not counted, #703 M1)" "$(lane_branch_last_ts "$BR" main "$REGF")" "$(ts 2023-01-01T00:00:00Z)"
+eq "last_ts art (unregistered): its own suffix only"   "$(lane_branch_last_ts "$BR" art "$REGF")" "$(ts 2021-01-01T00:00:00Z)"
+eq "last_ts: lane without branches -> empty"           "$(lane_branch_last_ts "$BR" nobody "$REGF")" ""
+# remote-tracking refs count too
+commit_on "tmp-remote-src" "2025-01-01T00:00:00Z"
+git -C "$BR" update-ref refs/remotes/origin/feature/9-remote-guard-claude "$(git -C "$BR" rev-parse tmp-remote-src)"
+git -C "$BR" branch -q -D tmp-remote-src
+eq "last_ts: remote-tracking branch counted for its lane" "$(lane_branch_last_ts "$BR" guard "$REGF")" "$(ts 2025-01-01T00:00:00Z)"
+
+CMI="$REPO_ROOT/.mercury/packs/lanes/scripts/check-main-idle.sh"
+MEMI="$TMP/memidle"; mkdir -p "$MEMI"; cp "$REGF" "$MEMI/LANES.md"
+OUT=$(bash "$CMI" --repo-root "$BR" --memory-dir "$MEMI" --no-issue-check --format json 2>&1)
+case "$OUT" in
+  *'"branch_age_hours":"inf"'*) fail "check-main-idle: new-format main branch not seen: $OUT" ;;
+  *'"branch_age_hours":"'*) pass "check-main-idle sees main's new-format branches (feature/5-unowned-claude)" ;;
+  *) fail "check-main-idle output: $OUT" ;;
+esac
 
 echo
 printf '%d pass / %d fail\n' "$PASS" "$FAIL"

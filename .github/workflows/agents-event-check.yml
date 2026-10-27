@@ -8,7 +8,7 @@ on:
       - 'tests/dot/**'
       - '.github/workflows/agents-event-check.yml'
   push:
-    branches: [develop]
+    branches: [master]
     paths:
       - 'packs/dot-link/**'
       - '.mercury/packs/dot-link/**'

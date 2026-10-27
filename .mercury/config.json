@@ -15,5 +15,8 @@
       "use": "Read `.mercury/docs/guides/kb-structure.md` for the folder layout, then start from the navigation notes and the decision index in `00-index` of the vault; formal research is in `04-research` and decisions in `03-decisions`.",
       "rules": "Read when a task needs prior decisions or research. Writing needs its own authorized scope and follows the per-folder write rights in `.mercury/docs/guides/kb-structure.md`."
     }
-  ]
+  ],
+  "params": {
+    "integration_branch": "master"
+  }
 }

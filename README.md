@@ -93,7 +93,7 @@ On session start, Claude Code auto-discovers every agent under `.claude/agents/`
 
 ### Typical first-session checklist
 
-1. Read `CLAUDE.md` (auto-surfaced by Claude Code; it imports `AGENTS.md`) — issue-first workflow, guarded Git writes via `scripts/codex/git-safe.ps1`, PR-to-`develop` rule
+1. Read `CLAUDE.md` (auto-surfaced by Claude Code; it imports `AGENTS.md`) — issue-first workflow, guarded Git writes via `scripts/codex/git-safe.ps1`, PR-to-`master` rule (single trunk)
 2. Read `.mercury/docs/DIRECTION.md` — project charter and module definitions
 3. Skim `.claude/skills/` — opt-in workflow entries (`mercury-html-plan-zh`; the full skills are installed from `packs/` into `.mercury/packs/`); each runs only when you ask for it or an agreed plan requires it. The PR review and merge rule is in `.mercury/docs/guides/git-flow.md`
 4. Run your first task by assigning a bounded scope to the `mercury-dev` sub-agent, then ask the `mercury-acceptance` sub-agent for a blind review of the result

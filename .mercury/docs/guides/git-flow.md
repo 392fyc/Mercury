@@ -7,18 +7,37 @@
 
 | Branch | Purpose | Merge method |
 |--------|---------|-------------|
-| `master` | Stable — PR from develop only | Human / Main Agent |
-| `develop` | Integration baseline — **PR from task branches only** | Main Agent via the guarded PR flow |
-| `feature/TASK-XXX` | Per-task work branch | Implementation and Git delivery owners are named by the task |
-| `lane/<lane>/(init|<n>|<n>-<slug>)` | Lane work accepted by the Codex guard | Same review and PR requirements as task branches |
+| `master` | The single trunk and the release branch — **PR from task branches only**; every merge is a release | Main Agent via the guarded PR flow |
+| `develop` | Frozen since #703: kept and protected, no longer used | — |
+| `<type>/<purpose>[-<lane>]-<agent>` | Task work branch, for example `feature/TASK-703-claude` | Implementation and Git delivery owners are named by the task |
 
-For Codex Git writes, `scripts/codex/guard.ps1` defines the accepted task-branch
-forms. Select an accepted branch before staging or committing; do not bypass
-the guard to use an unsupported branch name.
+### Branch names
+
+A branch is named for its purpose so that a person can tell what it is for:
+`<type>/<purpose>[-<lane>]-<agent>`.
+
+- `type` is one of `feature`, `feat`, `fix`, `hotfix`, `docs`, `chore`,
+  `refactor`, `test`, `perf`, `ci` or `build`.
+- `purpose` is the task or direction, such as `TASK-703` or
+  `talent-proposal-48c`: letters, digits, `.`, `_` and `-`, no further `/`.
+  Keep it short; there is no length limit.
+- The lane and the agent (`claude` or `codex`) are suffixes only. A branch an
+  agent creates ends with its agent; a lane branch puts the lane before it,
+  for example `fix/guard-premerge-guard-codex` for lane `guard`.
+- Agent or lane prefixes such as `codex/`, `claude/` and `lane/` are not used.
+  `mercury/` is reserved for the update bot.
+- Existing branches keep their names and can still be committed to (the guard
+  accepts the older `feature/TASK-<id>` and `lane/<lane>/...` forms); new
+  branches use the form above.
+
+For Codex Git writes, `scripts/codex/guard.ps1` enforces this form. Select an
+accepted branch before staging or committing; do not bypass the guard to use an
+unsupported branch name. A tool that creates a branch with another name, such as
+an automatic worktree, must rename it before the first commit.
 
 ## Workflow
 
-1. The coordinating agent selects an isolated task branch from develop and
+1. The coordinating agent selects an isolated task branch from master and
    identifies the implementation and Git delivery owners. Routine work may be
    completed directly; bounded delegation is optional. Invoke a multi-stage
    pipeline only when the user explicitly calls for it or an established task
@@ -31,19 +50,26 @@ the guard to use an unsupported branch name.
    staged snapshot with `scripts/codex/guard.ps1 mark-review`, and use
    `scripts/codex/git-safe.ps1 commit/push` for delivery. Changed staged content
    requires renewed review and a fresh mark; the mark alone is not review evidence.
-4. The assigned delivery owner opens the Issue-linked PR into `develop`; the
+4. The assigned delivery owner opens the Issue-linked PR into `master`; the
    coordinating agent obtains independent native subagent review as described in
    [PR Review and Merge](#pr-review-and-merge).
 5. Resolve review findings and complete required checks and approvals before the
    coordinating agent merges through the guarded PR flow.
-6. Milestone release: PR `develop` → `master`.
+6. The merge is the release: downstream projects take it through their own
+   update pull request, which merges only when their required checks pass.
 
 **Direct commits or pushes to develop, main, or master are forbidden.** All code
-enters develop through PRs. Never publish merely because implementation finished.
+enters master through PRs. Never publish merely because implementation finished.
+
+Why a single trunk (#703): develop held no checks of its own between a merge and
+a release, so it only delayed releases or let them pile up. The buffer that
+protects downstream projects is their update pull request and its required
+checks, which applies with or without develop.
 
 ## Branch Protection (GitHub)
 
-Both `develop` and `master` have branch protection rules enabled:
+Both `develop` and `master` have branch protection rules enabled; develop keeps
+its protection while frozen:
 
 | Rule | develop | master |
 |------|---------|--------|
@@ -68,8 +94,8 @@ Argus is currently excluded; do not wait for or depend on it.
 
 ### Review and repairs
 
-- Confirm the repository, target branch, and current PR head. Mercury integrates
-  into `develop`; the Argus repository uses `master`. Other repositories use
+- Confirm the repository, target branch, and current PR head. Mercury and the
+  Argus repository both integrate into `master`. Other repositories use
   their own governing policy.
 - Entering a requested review or merge stage authorizes starting an independent
   subagent without asking again. Codex uses `gpt-6-luna` / `max` under the role
@@ -114,9 +140,8 @@ Mercury's required GitHub approval count is zero for `develop` and `master`;
 all other branch protections remain in force (Issues #632 and #636, user decision
 on 2026-10-05). The owner opens these PRs and GitHub does not allow authors to
 approve their own PRs, so the user gives merge approval in chat. This procedure
-applies only to PRs targeting `develop`: `guard.ps1 pre-merge`
-accepts only `develop`. Release PRs targeting `master` require separate user
-authorization. The primary agent may merge only when all of the following hold:
+applies only to PRs targeting `master`: `guard.ps1 pre-merge`
+accepts only `master`. The primary agent may merge only when all of the following hold:
 
 1. An independent native subagent reviewed and passed the exact current head;
    the local receipt has `verdict=pass` and `findings=[]`.

@@ -5,7 +5,8 @@
 # Evaluates THREE main-lane activity signals against the threshold
 # (default 48h) and returns "idle" only when ALL THREE are simultaneously
 # older than the threshold (logical AND, not maximum):
-#   1. Newest commit on `feature/lane-main/*` or legacy `feature/TASK-*` refs
+#   1. Newest commit on the main lane's branches (#703 suffix format, or legacy
+#      `feature/lane-main/*` / `feature/TASK-*`) refs
 #   2. mtime of the main lane's session-handoff.md (unified handoff dir, #613;
 #      legacy <memory-dir> copy also read)
 #   3. Newest `updatedAt` of any Issue carrying the `lane:main` label
@@ -112,14 +113,11 @@ fi
 NOW=$(date +%s)
 THRESHOLD_SECS=$((HOURS * 3600))
 
-# 1. Branch activity — main lane ref glob.
+# 1. Branch activity — the main lane's branches: #703 suffix format (every
+# new-format branch no other registered lane owns) plus legacy
+# `feature/lane-main/*` and `feature/TASK-*`; see lane_branch_last_ts.
 # Pinned via `git -C "$REPO_ROOT"` so cwd doesn't silently hijack the result.
-branch_ts=$(git -C "$REPO_ROOT" for-each-ref --sort=-committerdate --format='%(committerdate:unix)' \
-  'refs/heads/feature/lane-main/*' \
-  'refs/remotes/*/feature/lane-main/*' \
-  'refs/heads/feature/TASK-*' \
-  'refs/remotes/*/feature/TASK-*' \
-  2>/dev/null | head -n1)
+branch_ts=$(lane_branch_last_ts "$REPO_ROOT" main "$MEMORY_DIR/LANES.md")
 
 # 2. Handoff mtime — main file is unsuffixed.
 # Unified handoff dir (#613): --handoff-dir, else the project's handoff dir
