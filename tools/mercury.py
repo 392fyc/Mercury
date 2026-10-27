@@ -867,8 +867,9 @@ def attribution_text(text, what):
     return lines
 
 
-def parse_role(data, what):
-    """{'description', 'claude': {...}, 'codex': {...}, 'body'} from a role source; unknown keys and odd syntax are errors."""
+def parse_role(data, what, local=False):
+    """{'description', 'claude': {...}, 'codex': {...}, 'body'} from a role source; unknown keys and odd syntax are errors.
+    A project-area role (local) may leave out the Codex sandbox_mode, so the role runs in the session's own sandbox."""
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
@@ -932,7 +933,7 @@ def parse_role(data, what):
     if not hosts:
         raise BuildError(f"{what}: declare at least one of: {', '.join(ROLE_SECTIONS)}")
     for h in hosts:
-        missing = ROLE_REQUIRED[h] - set(role[h])
+        missing = ROLE_REQUIRED[h] - set(role[h]) - ({"sandbox_mode"} if local else set())
         if missing:
             raise BuildError(f"{what}: {h} section needs: {', '.join(sorted(missing))}")
     body = m.group(2).strip("\n")
@@ -1114,7 +1115,7 @@ def load_local(target):
             raise BuildError(f"{what}: the source must be {LOCAL_ROLES_REL}/{name}.md, not {rel!r}")
         data = read_local_source(target, rel, what)
         sources[rel] = digest(data)
-        for dest, out in role_outputs(name, rel, parse_role(data, what)).items():
+        for dest, out in role_outputs(name, rel, parse_role(data, what, local=True)).items():
             add(dest, out, what)
     for name, sspec in sorted(skills.items()):
         what = f"{LOCAL_REL}: skill {name}"
