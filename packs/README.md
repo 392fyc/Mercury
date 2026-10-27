@@ -111,7 +111,7 @@ path that the ignore rules cover. It exits 1 when there is a conflict or an igno
 A project with `.codex/mercury-template.lock` (schema 1) was installed by the old template synchroniser. `install` takes
 its files over. A file listed in the v1 lock (only `agents/mercury-*.toml`, `rules/mercury-*.rules` and
 `project/mercury-*.md` are accepted) is adopted while its content still hashes to the v1 lock value: sha256 of the raw
-bytes, as `sync-project-template.py` computes it. A difference that is only CRLF against LF, as `core.autocrlf` makes,
+bytes, as the retired v1 synchroniser computed it. A difference that is only CRLF against LF, as `core.autocrlf` makes,
 also counts as unmodified. An adopted file that the new installation also ships is replaced; one it no longer ships
 (`.codex/project/mercury-*.md`) is deleted, and its directory is removed if that empties it. The v1 lock is deleted
 last, so an interrupted run can be repeated. Any other content stops the run with nothing written. A v1 lock entry whose

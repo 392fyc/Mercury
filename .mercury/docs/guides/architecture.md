@@ -8,7 +8,7 @@ Mercury 是一套轻量的多代理协作 harness：它配置 Claude Code 与 Co
 .claude/        Claude Code 的子代理定义、技能入口（mercury- 前缀，由 tools/mercury.py 生成）与权限规则
 .codex/         Codex 的配置、代理与命令规则
 .agents/skills/ Codex 的技能入口（mercury- 前缀的薄入口，由 tools/mercury.py 生成）
-.mercury/       文档、状态清单、下游同步模板（templates/codex-project/），以及装载结果：config.json（选用的 pack）、packs/（pack 的装载副本）、lock.json
+.mercury/       文档、状态清单，以及装载结果：config.json（选用的 pack）、packs/（pack 的装载副本）、lock.json
 packs/          可装载内容（技能、脚本、指南）的源；pack.json 声明技能，build/ 放生成器；playwright-mcp 在 mercury.json 中停用
 mercury.json    总控：哪些 pack 存在、哪些启用（core 必选）
 sources/        外部项目原样（pinned git submodule）

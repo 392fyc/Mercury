@@ -26,7 +26,7 @@ jobs:
           python-version: '3.12'
       - name: PyYAML, so the rendered deploy workflows are read back by a real YAML parser (#688)
         run: python -m pip install PyYAML==6.0.3
-      - name: Test template synchronization, provenance and PR merge gates
+      - name: Test git-safe and guard pre-merge gates
         run: python -B -m unittest discover -s tests/codex/project_template -p 'test_*.py'
       - name: Upstream adapters regenerate the committed files (line endings normalised) (#668)
         run: |
@@ -56,7 +56,7 @@ jobs:
           python-version: '3.12'
       - name: PyYAML, so the rendered deploy workflows are read back by a real YAML parser (#688)
         run: python -m pip install PyYAML==6.0.3
-      - name: Test template synchronization, provenance and PR merge gates
+      - name: Test git-safe and guard pre-merge gates
         run: python -B -m unittest discover -s tests/codex/project_template -p 'test_*.py'
       - name: Upstream adapters regenerate the committed files (line endings normalised) (#668)
         run: |
