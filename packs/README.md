@@ -132,7 +132,10 @@ outputs the same tool generates, checks and retires. The project owns `.mercury/
 - `skills`: the full skill stays in the declared `path`, a directory with a `SKILL.md` whose `name` equals the manifest
   key. Each host in `hosts` gets the same thin entry a pack skill gets (`.claude/skills/<skill>/SKILL.md`,
   `.agents/skills/<skill>/SKILL.md`; description and other frontmatter fields carried over, the arguments line when the
-  skill uses it), pointing at `path` and saying that the skill belongs to the project. A host whose entry location is the
+  skill uses it), pointing at `path` and saying that the skill belongs to the project. A project skill writes its paths
+  relative to the repository root unless it says otherwise (the other host reads the same file in place; a Markdown
+  link stays relative to its own file), and its entry says so; a pack skill's entry resolves paths against the pack
+  skill's directory instead. A host whose entry location is the
   skill directory itself (for example Codex with `path` `.agents/skills/<skill>`) gets no entry. A directory directly
   under `.claude/skills/` or `.agents/skills/` must carry the skill's own name.
 - Sources are project-owned input: in both source modes (Mercury on itself, and an external target read from a Mercury
