@@ -1,5 +1,5 @@
 {
-  "config_sha256": "63b301b6d6a595eed79967153966ed464f099fcd6c96dfd05fac2fd60fc8a8b3",
+  "config_sha256": "2bcbcb4c8eded37d9b1b4c63b567d4620c50e04a0cdc24cbcbf0faed56a6656a",
   "executable": [
     ".mercury/packs/lanes/scripts/check-lane-receiver-rule.sh",
     ".mercury/packs/lanes/scripts/check-main-idle.sh",
@@ -33,11 +33,11 @@
     ".codex/agents/mercury-research.toml": "752fd3553cdacd640dc3f08d07e90da45edcedd47c47b9e0f83cb8eb7744f368",
     ".codex/agents/mercury-reviewer.toml": "cb3b1b6b793a01d05673aed015f33417ddb66eb3b7a528872d3c3e699abde585",
     ".codex/rules/mercury-git-safety.rules": "a755ec542cfbbc42dd496613fc7978a3c9d0c02b94868c8c1e8338be656b22c7",
-    ".mercury/packs/core/agents.md": "c69e034bbce2a392df08c5022f5d04c11ef7bedbc987fbab283a9c1339824be1",
+    ".mercury/packs/core/agents.md": "a1e88a108a7f368c7f5e0065ad4a001fda6246ca9fdf0ddfa151ffe799317fe1",
     ".mercury/packs/core/claude.md": "a41db75ae5f575cf43e7f98e25b7bd9eb3488a248005bf9d78895e91476de95c",
-    ".mercury/packs/core/docs/mercury-harness-ownership.md": "942b43c1e13403670f59414473e43356cd4cbeb541c7d2dfc979d23dc1b4da36",
+    ".mercury/packs/core/docs/mercury-harness-ownership.md": "3d2833b68131def32ae9229d5796bfddbe8865fa117ca9d7246737310d56d298",
     ".mercury/packs/core/docs/mercury-task-contract.md": "a81b69572ef97b5af658a781f990d45f4c547614988f4a82000a065d6833a303",
-    ".mercury/packs/core/hooks/readonly_guard.py": "c391ce5c733db0ec86acc7da825830f451dff7710409d4fd1a5a8fbcad58f140",
+    ".mercury/packs/core/hooks/readonly_guard.py": "3ff706525e8cfd4a8288fb9016745632773bea4300e69b82ba87ee4c2d31e1eb",
     ".mercury/packs/core/hooks/readonly_guard.sh": "f7823f1ea505f3d7c08847a72d00249b45dd476b426fc8e3adffbd9dc5cde1b3",
     ".mercury/packs/core/pack.json": "e557bbb6b3bf98157382a9a99bbd1f999d1a9c80c38e0dd109b9599200684dc3",
     ".mercury/packs/core/roles/acceptance.md": "0d41bb606815e6db3b851fc62c7758df6d4c95c4eb1cd2df6b491585c7aa2fff",
@@ -71,7 +71,7 @@
     ".mercury/packs/lanes/docs/guides/lane-close.md": "9efbe832df7b12e891f04d489aa61e9f3fcac19dfcd127c93ad7bce8e17f2c66",
     ".mercury/packs/lanes/docs/guides/lane-emergency-escalation.md": "46b0a2ec0e9084d448af8b01ef0fd1fa80822a6fbbfa738a03e24a095a6d87a7",
     ".mercury/packs/lanes/docs/guides/lane-naming.md": "862bcf370ddb23836d5fb07a4ccc123f389a5c3472bd3bdfaf57b204daf79787",
-    ".mercury/packs/lanes/docs/guides/lane-protocol.md": "a44c7686db4f381500ba2694fbce7e07cbfb0833e39891c0ed330557f66d0e91",
+    ".mercury/packs/lanes/docs/guides/lane-protocol.md": "b5042f3894cd69c8d3595922be74d9ada9209b132cad5606f58ec78782e4f42d",
     ".mercury/packs/lanes/docs/guides/lane-spawn.md": "92e02efc7ed03c10c7778f66f35cbcf934bd0b4decc0b7ebb6ff5f9584a979fa",
     ".mercury/packs/lanes/docs/guides/lane-sweep.md": "c73532053b050c4fac642822bd61ac41718c39a1f6a2253cab64d1c8f7aa39fe",
     ".mercury/packs/lanes/docs/guides/phase-a-install.md": "b3db26eb1cd505b47b19b01a636d7f272cd5acd96e7985db19df4359ed7ac488",
@@ -114,7 +114,7 @@
   "mercury_json_sha256": "877b2181bd46fddd25f74cc29f873f7ee97b7bde72795e00f48ac81f2ce391c2",
   "schema_version": 1,
   "sections": {
-    "AGENTS.md": "e5cade06610a1c2ba7f34993e8d5bfb04a4690181dac94b459096cac751917c4",
+    "AGENTS.md": "97114ade73a1f3677c422511cfb777182b9be373d952e6e754a93cfff8b9ed9e",
     "CLAUDE.md": "c8adcf29c1d31304ea737b7a1a7dd801ed3ce007436a18a2647ef8a68aaf99f1"
   },
   "source": "self"

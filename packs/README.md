@@ -74,6 +74,7 @@ python tools/mercury.py apply   --target <project> [--source-commit <sha>]   # w
 ```
 
 `--source <mercury checkout>` selects the repository to install from (default: the checkout that holds the tool).
+`install` and `apply` also take `--adopt-local` (see "The project area").
 Exit codes: 0 in sync, 1 differences or conflicts, 2 invalid input.
 
 Two ways to read the packs:
@@ -106,12 +107,61 @@ removed; the workflows under `.github/workflows/` that still refer to the v1 tem
 `sync-project-template`, `sync-downstream-pr`, `verify-project-template`; this tool never edits them); and any managed
 path that the ignore rules cover. It exits 1 when there is a conflict or an ignored path.
 
+### The project area
+
+A project keeps roles and skills of its own next to Mercury's, in an area that Mercury updates never touch but whose
+outputs the same tool generates, checks and retires. The project owns `.mercury/local.json`:
+
+```json
+{"schema_version": 1,
+ "roles":  {"game-analyst": ".mercury/local/roles/game-analyst.md"},
+ "skills": {"sot-designlib": {"path": ".agents/skills/sot-designlib", "hosts": ["claude", "codex"]}}}
+```
+
+- Names: lowercase letters, digits and `-`, starting with a letter, at most 64 characters, and never starting with
+  `mercury-` (that prefix is Mercury's namespace, so a project name can never collide with a pack output).
+- `roles`: the source is exactly `.mercury/local/roles/<role>.md`, in the role source format described under "What is
+  written" (the same parser and the same renderer as the pack roles, so the two cannot diverge). It becomes
+  `.claude/agents/<role>.md` and/or `.codex/agents/<role>.toml`, without a prefix, depending on the host sections it
+  declares. The optional `attribution` (a block `attribution: |` with lines indented by two spaces, or a double-quoted
+  string; at most 20 lines and 2000 characters) is written verbatim as a comment at the top of both outputs: `# ` lines
+  at the top of the TOML file, and one `<!-- -->` block right after the frontmatter of the Markdown file (the frontmatter
+  must stay first). It is refused, not escaped, when it contains a control, hidden or line-separator character or one of
+  `<!--`, `-->`, `--!>`, so it can never end its comment; a TOML comment ends only at a line break, which every line gets
+  its own `#` for. Both outputs are read back: the TOML must parse to exactly the declared keys.
+- `skills`: the full skill stays in the declared `path`, a directory with a `SKILL.md` whose `name` equals the manifest
+  key. Each host in `hosts` gets the same thin entry a pack skill gets (`.claude/skills/<skill>/SKILL.md`,
+  `.agents/skills/<skill>/SKILL.md`; description and other frontmatter fields carried over, the arguments line when the
+  skill uses it), pointing at `path` and saying that the skill belongs to the project. A host whose entry location is the
+  skill directory itself (for example Codex with `path` `.agents/skills/<skill>`) gets no entry. A directory directly
+  under `.claude/skills/` or `.agents/skills/` must carry the skill's own name.
+- Sources are project-owned input: in both source modes (Mercury on itself, and an external target read from a Mercury
+  commit) they are read from the target's working tree, not from the Mercury commit, which supplies only the tool and
+  the renderers. A source must be a regular file inside the target reached through real directories (no symbolic link or
+  junction), outside `.git/` and outside Mercury's namespace (case and trailing dots folded as Windows does). For an
+  external target the outputs and sources also go through the ignore check.
+- The lock records the outputs and the sources (`.mercury/local.json` included) with their hashes in a separate
+  `local` section, apart from the pack files. `check` (and therefore `Mercury verify` and the update merge) compares the
+  outputs with what the sources produce.
+- Lifecycle, all through `apply` (or `install`): create = add the manifest entry and the source; update = change the
+  source; retire = remove the entry (or the whole manifest). Retiring deletes only outputs that the `local` section
+  recorded, at the four output locations (`.claude/agents/<name>.md`, `.codex/agents/<name>.toml`,
+  `.claude/skills/<name>/SKILL.md`, `.agents/skills/<name>/SKILL.md`; an emptied `<name>/` entry directory goes too), and
+  never a path that is a source now. A lock whose `local` section names anything else is refused (exit 2).
+- A hand-edited output stops the run (exit 1, nothing written), for an update as for a retire.
+- `--adopt-local` (only `install` and `apply`): the first time an output path already holds a different file that the
+  lock does not record (for example the project's hand-written `.codex/agents/<role>.toml`), the run stops with a
+  conflict and writes nothing; with the flag that file is replaced by the generated one. The flag never takes over a link,
+  a directory, a Mercury-managed path or a recorded output that was edited by hand. A file that already equals the
+  output is taken into the lock without the flag.
+- Update pull requests of the deploy pack never change the project area (see "What the update job does").
+
 ### Adopting a v1 template installation
 
 A project with `.codex/mercury-template.lock` (schema 1) was installed by the old template synchroniser. `install` takes
 its files over. A file listed in the v1 lock (only `agents/mercury-*.toml`, `rules/mercury-*.rules` and
 `project/mercury-*.md` are accepted) is adopted while its content still hashes to the v1 lock value: sha256 of the raw
-bytes, as `sync-project-template.py` computes it. A difference that is only CRLF against LF, as `core.autocrlf` makes,
+bytes, as the retired v1 synchroniser computed it. A difference that is only CRLF against LF, as `core.autocrlf` makes,
 also counts as unmodified. An adopted file that the new installation also ships is replaced; one it no longer ships
 (`.codex/project/mercury-*.md`) is deleted, and its directory is removed if that empties it. The v1 lock is deleted
 last, so an interrupted run can be repeated. Any other content stops the run with nothing written. A v1 lock entry whose
@@ -250,7 +300,11 @@ read-only one that `merge` uses for `mercury.py check`, and it never talks to th
    - `.mercury/lock.json` may change (condition 4 checks it);
    - `AGENTS.md` / `CLAUDE.md` may change only between the markers (compared outside the markers byte for byte; the section
      must hash to the value in the lock; deleting either file is refused);
-   - `.mercury/config.json` must not change, and no path outside these kinds may change.
+   - `.mercury/config.json` must not change, and no path outside these kinds may change;
+   - nothing of the project area may change: `.mercury/local.json`, anything under `.mercury/local/`, any path that the old
+     or the new lock records in its `local` section (outputs and sources), and the `local` section itself. A Mercury change
+     to the role or entry renderer that would change a project-area output therefore cannot travel in an update pull
+     request; the project takes it with its own `apply` in an ordinary pull request.
    Every changed path other than a deletion must be a regular file (mode 100644 or 100755), so a symlink or submodule
    in place of a managed path is refused.
 3. The new lock's `source_commit` is on Mercury's `origin/master` and descends from the old lock's commit (or there is no
@@ -308,15 +362,17 @@ The project selects packs in `<project>/.mercury/config.json`:
 
 ```json
 {"schema_version": 1, "packs": ["core", "plan"],
- "linked_repos": [{"name": "Notes_KB", "purpose": "...", "locate": "...", "access": "..."}],
- "params": {"guard_write_scripts": ["deploy.sh"]}}
+ "linked_repos": [{"name": "Notes_KB", "purpose": "...", "locate": "...", "use": "...", "rules": "..."}],
+ "params": {"guard_write_scripts": ["deploy.sh"], "guard_write_actions": {"worktree.ps1": ["Create", "Remove"]}}}
 ```
 
 Unknown or disabled packs are errors; required packs are always included. Unknown top-level keys are errors.
 
 - `linked_repos` (optional): other repositories the project works with. Each entry has exactly `name` (plain, unique
-  ignoring case), `purpose`, `locate` (a config key or a description, never a machine path) and `access` (read and write
-  rules). Every text is one line of at most 400 characters without control or hidden characters (bidi controls, byte
+  ignoring case), `purpose` (what the repository is responsible for), `locate` (how to find it: a config key or a
+  description, never a machine path), `use` (how to use it quickly: skills, scripts, command entry points) and `rules`
+  (what work in it must follow, for example read and write rights). The older field `access` is gone; move its text to
+  `rules`. Every text is one line of at most 400 characters without control or hidden characters (bidi controls, byte
   order mark, lone surrogates), comment markers or `MERCURY:`, and without a machine path anywhere in it: `file:`, a
   drive letter (`C:/x`, `D:x`, also after punctuation), `%VAR%`, `$HOME`-style variables, `~`, or a slash or backslash
   that starts a path (URLs and words such as `and/or` or `docs/a.md` are fine). The list is rendered into the managed
@@ -324,6 +380,26 @@ Unknown or disabled packs are errors; required packs are always included. Unknow
 - `params.guard_write_scripts` (optional): file names ending in `.sh`, `.ps1` or `.py` (no directories; the guard
   recognises no other kind) of write-type scripts that the read-only guard
   blocks in addition to its built-in list.
+- `params.guard_write_actions` (optional): `{"<script>": ["<Action>", ...]}` for a script that has read-only and writing
+  actions. The guard blocks such a script only when its `-Action` value is one of the listed names, compared ignoring case
+  as PowerShell does (`-Action X`, `-Action:X`, or a prefix of the parameter name such as `-Act X`), whether the script is
+  run directly or through `pwsh`/`powershell -File`. The guard is not a PowerShell parser, so it accepts only arguments
+  it reads the same way PowerShell does and blocks everything else: after the script name only plain ASCII may follow,
+  without `#` (comments, also `<# #>`), the backtick escape, `@` (splatting), `$`, `(`, `)`, `{`, `}`, `;`, `|`, `&`, `<` or
+  `>` (PowerShell also reads the curly quotes as quotes); a quoted token that starts with a dash and the `--` and `--%`
+  tokens are refused (PowerShell does not read them as parameter names); and exactly one `-Action` with a plain name is
+  required (none, which leaves a positional or splatted value possible, or two, block). The en dash, em dash and
+  horizontal bar that PowerShell accepts in front of a parameter name count as `-`. Script names follow the rule of
+  `guard_write_scripts`; action names are a letter followed by letters or digits; at most 20 scripts with 1-20 distinct
+  actions each; a script may be neither in `guard_write_scripts` nor on the guard's built-in list (both block it
+  outright). The guard reads both params from the project's `.mercury/config.json` when the hook runs: a malformed action
+  list for a named script blocks every call of that script, a list of script names under `guard_write_actions` blocks
+  those scripts outright, and any other malformed value is ignored (the installer refuses it on every check and apply).
+  What this costs a read-only role, so its instructions can say it up front: a script whose default action is read-only
+  still needs an explicit `-Action` (for example `-Action List`), because a call without one is blocked; a redirect such as
+  `2>&1`, `2>$null` or `> $null` after such a script is blocked although it is allowed after other commands; and a path
+  that contains parentheses, a variable or non-ASCII characters cannot be passed to it. Write the call as
+  `<script> -Action <Name> -Param plain-value`.
 - `params.integration_branch`, `params.required_checks`, `params.update_schedule`: used by the `deploy` pack only (see
   below). They are validated whenever they are present, so a bad value stops every run, not just the one that renders them.
 
@@ -344,11 +420,12 @@ What is written:
   it, the entry gets an `Arguments:` line that carries the value and says to use it wherever the real entry
   mentions the placeholder.
 - `<project>/.mercury/lock.json` records the sha256 of every installed file, the list of files that are executable and
-  the hash of each managed section.
+  the hash of each managed section; a project area adds its own `local` section (see "The project area").
 - Roles: every `roles/<role>.md` of a selected pack (lowercase name) becomes `.claude/agents/mercury-<role>.md` and
   `.codex/agents/mercury-<role>.toml`. The source has a frontmatter with a one-line `description` and per-host sections
-  (`claude:` with `model`, `tools`, `disallowedTools`, `permissionMode`, `readonly_guard`; `codex:` with `model`,
-  `model_reasoning_effort`, `sandbox_mode`, `web_search`) whose values are `true`/`false`, a double-quoted string or a
+  (`claude:` with `model` (required), `tools`, `disallowedTools`, `permissionMode`, `readonly_guard`; `codex:` with
+  `sandbox_mode` (required) and the optional `model`, `model_reasoning_effort` and `web_search`) and an optional
+  `attribution` (see "The project area"; it works the same for pack roles) whose values are `true`/`false`, a double-quoted string or a
   plain token; anything else, an unknown key, a control character, or a body that cannot be written safely (a TOML
   literal string cannot hold `'''`) is an error and nothing is written. The body is shared and in English. Strings are
   written as JSON strings (valid YAML and TOML); the generated TOML is parsed back and compared when `tomllib` exists.
@@ -381,7 +458,7 @@ Rules:
   spaces dropped, case ignored), so a segment that ends in a dot or space is refused outright (`mercury-./x`
   would alias `mercury-/x`). A path must be relative, free of `..`, drive letters, backslashes, control
   characters, `:`, `~` (8.3 short names) and Windows device names (`CON`, `NUL`, `COM1`...), and must lie
-  outside `.git/`. `.mercury/config.json` and `.mercury/lock.json` are reserved.
+  outside `.git/`. `.mercury/config.json`, `.mercury/lock.json` and `.mercury/local.json` are reserved.
 - Existing ancestors of every target (and of the lock) must be real directories that resolve inside the
   project: symlinks, junctions and a file where a directory is needed are errors. A link inside a pack source
   is an error too. All checks run before the first byte is written.
@@ -390,7 +467,8 @@ Rules:
   `.codex/agents/mercury-*.toml`, `.codex/rules/mercury-*.rules` and `.github/workflows/mercury-*.yml`. A lock entry anywhere else is an error (exit 2),
   so a tampered lock cannot delete other project files. Emptied directories are removed only below those
   roots; the roots (`.mercury/packs`, `.claude/skills`, `.agents/skills`, `.claude/agents`, `.codex/agents`,
-  `.codex/rules`) stay. AGENTS.md and CLAUDE.md are never deleted.
+  `.codex/rules`) stay. AGENTS.md and CLAUDE.md are never deleted. The project area has its own, narrower deletion
+  scope (the outputs its lock section recorded; see "The project area").
 - A managed file whose content differs from the hash in the lock was edited by hand: the run stops, reports
   it, and writes nothing. Without a lock entry, an existing file is adopted only when its content already
   equals the installation; otherwise the run stops.

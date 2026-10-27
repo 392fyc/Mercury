@@ -37,4 +37,3 @@ KB 路径通过 orchestrator 启动配置注入，各 Agent 指令文件中引�
 | `.mercury/docs/guides/architecture.md` | 项目架构 |
 | `.mercury/docs/guides/git-flow.md` | Git 分支规范 |
 | `.mercury/docs/guides/kb-structure.md` | 本文件 |
-| `.mercury/templates/codex-project/` | 下游同步的可移植 Codex 项目模板 |

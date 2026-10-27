@@ -18,7 +18,9 @@ merge    Merges the one update pull request (squash, `--match-head-commit`) only
            1. it is from a same-repository `mercury/update-<12 hex>` branch and is the only such open pull request;
            2. every changed path (merge base to head) is Mercury-managed: in the old or the new lock, a v1 file being
               adopted or deleted, the lock itself, or AGENTS.md / CLAUDE.md where only the bytes between the Mercury
-              markers changed; `.mercury/config.json` never changes;
+              markers changed; `.mercury/config.json` never changes, and neither does the project area
+              (`.mercury/local.json`, anything under `.mercury/local/`, every path in either lock's `local` section, and
+              that section itself);
            3. the new lock's `source_commit` is on Mercury's `origin/master` and descends from the old one's;
            4. `tools/mercury.py check` passes on a read-only checkout of that head (the files really are what that Mercury
               commit produces, so a hand-edited workflow cannot vouch for itself);
@@ -72,6 +74,7 @@ VERIFY_APP_SLUG = "github-actions"  # the app that owns check runs of Actions jo
 BOT_NAME, BOT_EMAIL = "Mercury Update", "mercury-update@users.noreply.github.com"
 RELEASE_REF = inst.RELEASE_REF
 LOCK_REL, CONFIG_REL, V1_LOCK_REL = inst.LOCK_REL, inst.CONFIG_REL, inst.V1_LOCK_REL
+LOCAL_REL, LOCAL_DIR = inst.LOCAL_REL, ".mercury/local"  # the project area: never changed by an update
 ENTRY_FILES = tuple(inst.SECTION_FILES.values())  # AGENTS.md, CLAUDE.md
 REPO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+\Z")
 PER_PAGE, MAX_PAGES = 100, 20
@@ -296,6 +299,15 @@ def lock_of(raw, what):
     return doc, files, sections
 
 
+def local_of(doc):
+    """The lock's `local` section as {"files": {...}, "sources": {...}} (empty parts when absent); a Stop if malformed."""
+    try:
+        files, sources = inst.parse_local(doc)
+    except inst.BuildError as err:
+        raise Stop(f"the lock: {err}") from None
+    return {"files": dict(files), "sources": dict(sources)}
+
+
 def raw_changes(target, old, new):
     """[(path, new mode)] for every path that differs between two commits; mode '000000' means deleted."""
     parts = git(target, "diff", "--raw", "-z", "--no-renames", "--no-abbrev", old, new).split("\0")
@@ -369,13 +381,23 @@ def validate_update(target, mercury, base, head):
     # shipping: it may only be deleted. Nothing re-checks the content of such a path (the new lock no longer names it), so
     # "modified instead of deleted" would otherwise carry arbitrary content through.
     allowed = set(new_files) | set(old_files) | v1 | {LOCK_REL}
+    # The project area belongs to the project: an update never touches its manifest, its sources or the outputs that
+    # either lock records for it, and never rewrites the lock's `local` section.
+    old_local = local_of(old_doc if old_doc is not None else {})
+    new_local = local_of(new_doc)
+    local_paths = {inst.fold(p) for sec in (old_local, new_local) for part in sec.values() for p in part}
     changes = raw_changes(target, mb, head)
     problems = []
     if not changes:
         raise Stop("the proposed head changes nothing")
+    if new_local != old_local:
+        problems.append(f"{LOCK_REL}: the local section (project area) must not change in an update pull request")
     for path, mode in changes:
         if path == CONFIG_REL:
             problems.append(f"{CONFIG_REL} must not change in an update pull request")
+        elif inst.fold(path) == inst.fold(LOCAL_REL) or inst.fold(path).startswith(LOCAL_DIR + "/") \
+                or inst.fold(path) in local_paths:
+            problems.append(f"{path}: belongs to the project area, which an update pull request must not change")
         elif path in ENTRY_FILES:
             why = entry_problem(path, show(target, mb, path), show(target, head, path), new_sections)
             if why:
