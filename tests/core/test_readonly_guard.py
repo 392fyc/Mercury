@@ -129,6 +129,79 @@ class GuardCommands(unittest.TestCase):
         check_command("grep -n publish.ps1 README.md", extra=extra)
 
 
+class GuardActions(unittest.TestCase):
+    """#692: params.guard_write_actions blocks a script only for listed -Action values, and whenever the action is unclear."""
+    ACTIONS = {"sot-worktree.ps1": frozenset({"create", "remove"})}
+
+    def test_read_only_actions_pass_in_every_spelling(self):
+        for command in ("pwsh -File scripts/sot-worktree.ps1 -Action List",
+                        "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\sot-worktree.ps1 -Action Verify",
+                        "scripts/sot-worktree.ps1 -action:list", "& ./sot-worktree.ps1 -ACTION list",
+                        "./sot-worktree.ps1 -Act List -Name x", "pwsh -Command \"& ./sot-worktree.ps1 -Action List\"",
+                        "cat scripts/sot-worktree.ps1", "rg -n Create scripts/sot-worktree.ps1"):
+            with self.subTest(command=command):
+                check_command(command, actions=self.ACTIONS)
+
+    def test_listed_missing_or_unreadable_actions_are_blocked(self):
+        for command in ("pwsh -File scripts/sot-worktree.ps1 -Action Create", "sot-worktree.ps1 -Action:REMOVE",
+                        "sot-worktree.ps1 -A remove", "powershell -File sot-worktree.ps1 -Action \"Create\"",
+                        "pwsh -Command \"& ./sot-worktree.ps1 -Action Remove\"", "bash -c 'pwsh -File sot-worktree.ps1 -Action Create'",
+                        "sot-worktree.ps1", "sot-worktree.ps1 Create", "sot-worktree.ps1 @args", "sot-worktree.ps1 -Action",
+                        "sot-worktree.ps1 -Action:", "sot-worktree.ps1 -Action $a", "sot-worktree.ps1 -Action (Get-X)",
+                        "sot-worktree.ps1 -Action List,Create", "sot-worktree.ps1 -Action List -Action Create",
+                        "sot-worktree.ps1 --% -Action List", "sot-worktree.ps1 --Action List",
+                        "sot-worktree.ps1 –Action Create", "sot-worktree.ps1 —action:remove",
+                        "sot-worktree.ps1 –Action List -Action Create", "sot-worktree.ps1 -Action \"Create\nList\""):
+            with self.subTest(command=command):
+                with self.assertRaises(Blocked):
+                    check_command(command, actions=self.ACTIONS)
+
+    def test_the_reviewed_bypasses_are_blocked(self):
+        # B-F1..F3 of the #692 review: in each, pwsh bound Action=Create while the old tokenizer read -Action List.
+        reproduced = {
+            "comment decoy and splat": "$p=@{Action='Create';Task='x'}; ./sot-worktree.ps1 @p # -Action List",
+            "curly quotes": "./sot-worktree.ps1 @p -Task \u201cx -Action List y\u201d",
+            "curly quotes without a splat": "./sot-worktree.ps1 -Task \u201cx -Action List y\u201d -Action Create",
+            "backtick-escaped quote": './sot-worktree.ps1 @p -Task "x`" -Action List `"y"',
+            "block comment": "./sot-worktree.ps1 <# -Action List #> -Action Create",
+        }
+        for case, command in reproduced.items():
+            with self.subTest(case=case):
+                with self.assertRaises(Blocked) as ctx:
+                    check_command(command, actions=self.ACTIONS)
+                self.assertIn("in its arguments", str(ctx.exception))  # refused by the allowlist, not by luck
+
+    def test_block_comment_is_refused_on_purpose_not_as_a_redirect(self):
+        with self.assertRaises(Blocked) as ctx:
+            check_command("./sot-worktree.ps1 <# -Action List #>", actions=self.ACTIONS)
+        self.assertIn("'#<>'", str(ctx.exception))
+        self.assertNotIn("redirection", str(ctx.exception))
+
+    def test_other_ways_to_hide_a_value_are_blocked(self):
+        for command in ("./sot-worktree.ps1 -Action List -Task x$(Write-Output y)", "./sot-worktree.ps1 -Action List -T {x}",
+                        "./sot-worktree.ps1 -Action List -T (1)", "./sot-worktree.ps1 -Action List -T caf\u00e9",
+                        "./sot-worktree.ps1 -Task x -- -Action List", "./sot-worktree.ps1 Create '-Action' List",
+                        './sot-worktree.ps1 Create "-Action" List', "./sot-worktree.ps1 -Action List -T x\\\" ; x\"",
+                        "./sot-worktree.ps1 -Action List \u2018x\u2019"):
+            with self.subTest(command=command):
+                with self.assertRaises(Blocked):
+                    check_command(command, actions=self.ACTIONS)
+
+    def test_plain_read_only_calls_stay_allowed(self):
+        for command in ("./sot-worktree.ps1 -Action List", "pwsh -NoProfile -File scripts/sot-worktree.ps1 -Action Inspect -Task TASK-12",
+                        "./sot-worktree.ps1 \u2013Action Verify -Name 'a b' -Path docs/x.md",
+                        "& 'scripts/sot-worktree.ps1' -Action:verify -Root D:/Project/x"):
+            with self.subTest(command=command):
+                check_command(command, actions=self.ACTIONS)
+
+    def test_whole_script_names_still_win_and_a_malformed_entry_blocks_everything(self):
+        with self.assertRaises(Blocked):
+            check_command("sot-worktree.ps1 -Action List", extra=frozenset({"sot-worktree.ps1"}), actions=self.ACTIONS)
+        with self.assertRaises(Blocked):
+            check_command("sot-worktree.ps1 -Action List", actions={"sot-worktree.ps1": None})
+        check_command("other.ps1 -Action Create", actions=self.ACTIONS)
+
+
 class GuardHook(unittest.TestCase):
     def test_hook_blocks_with_exit_2(self):
         result = run_hook({"tool_name": "Bash", "tool_input": {"command": "git commit -m x"}})
@@ -159,6 +232,33 @@ class GuardHook(unittest.TestCase):
                 self.assertEqual(run_hook(git, project).returncode, 2)
             cfg.write_text("not json")
             self.assertEqual(run_hook(payload, project).returncode, 0)
+
+    def test_hook_reads_write_actions_from_the_project_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / ".mercury").mkdir()
+            cfg = project / ".mercury" / "config.json"
+
+            def code(command, params):
+                cfg.write_text(json.dumps({"schema_version": 1, "packs": ["core"], "params": params}))
+                return run_hook({"tool_name": "PowerShell", "tool_input": {"command": command}, "cwd": str(project)}, project).returncode
+
+            listed = {"guard_write_actions": {"Sot-Memory.ps1": ["Write"]}}
+            self.assertEqual(code("pwsh -File scripts/sot-memory.ps1 -Action Verify", listed), 0)
+            self.assertEqual(code("pwsh -File scripts/sot-memory.ps1 -Action write", listed), 2)
+            self.assertEqual(code("pwsh -File scripts/sot-memory.ps1", listed), 2)
+            # a malformed list for a named script blocks that script; a value that is not an object is ignored
+            for bad in ({"sot-memory.ps1": "Write"}, {"sot-memory.ps1": []}, {"sot-memory.ps1": ["$x"]}):
+                self.assertEqual(code("pwsh -File sot-memory.ps1 -Action Verify", {"guard_write_actions": bad}), 2)
+            # a list of script names under this key (the shape of guard_write_scripts) blocks those scripts outright;
+            # any other value that is not an object is ignored
+            self.assertEqual(code("pwsh -File sot-memory.ps1 -Action Verify", {"guard_write_actions": ["Sot-Memory.ps1"]}), 2)
+            for ignored in (["a/b.ps1"], [1], "sot-memory.ps1", 5):
+                self.assertEqual(code("pwsh -File sot-memory.ps1 -Action Write", {"guard_write_actions": ignored}), 0)
+            # both params together: the whole-script list and the per-action list each apply
+            both = {"guard_write_scripts": ["deploy.sh"], **listed}
+            self.assertEqual(code("bash deploy.sh", both), 2)
+            self.assertEqual(code("pwsh -File sot-memory.ps1 -Action Verify", both), 0)
 
 
 @unittest.skipUnless(shutil.which("sh"), "needs sh")

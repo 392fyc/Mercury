@@ -910,6 +910,107 @@ class Merge(Fixture):
         self.assertNotIn(SECRET, out + err)
 
 
+class ProjectArea(Fixture):
+    """#692: an update pull request never touches the project area (manifest, sources, the outputs the lock's `local`
+    section records, or that section). An update of the packs alone still goes through."""
+    LOCAL = ".mercury/local.json"
+    ROLE_SRC = ".mercury/local/roles/proj-role.md"
+
+    def setUp(self):
+        super().setUp()
+        write(self.target / self.ROLE_SRC, DEV_ROLE.replace("Builds things.", "Project role."))
+        write(self.target / "s/proj-x/SKILL.md", "---\nname: proj-x\ndescription: Project skill.\n---\n\nbody\n")
+        write(self.target / self.LOCAL, json.dumps({"schema_version": 1, "roles": {"proj-role": self.ROLE_SRC},
+                                                    "skills": {"proj-x": {"path": "s/proj-x", "hosts": ["claude"]}}}))
+        self.mercury_tool("apply", self.c1)
+        git(self.target, "add", "-A")
+        git(self.target, "commit", "-q", "-m", "project area")
+        git(self.target, "push", "-q", "origin", BASE)
+        self.assertIn("local", json.loads((self.target / LOCK).read_text(encoding="utf-8")))
+
+    def ready(self):
+        branch, head, pr = self.published()
+        self.gh.all_green(head)
+        return branch, head, pr
+
+    def test_an_update_of_the_packs_with_a_project_area_merges(self):
+        branch, head, pr = self.ready()
+        changed = git(self.bare, "diff", "--name-only", BASE, branch).split()
+        self.assertFalse([c for c in changed if "proj-" in c or c.startswith(".mercury/local")], changed)
+        rc, out, err = self.merge()
+        self.assertEqual(rc, 0, out + err)
+
+    def test_changes_to_the_project_area_are_refused(self):
+        def relocal(raw):
+            doc = json.loads(raw)
+            doc["local"]["files"][".claude/agents/proj-role.md"] = "0" * 64
+            return (json.dumps(doc, indent=2, sort_keys=True) + "\n").encode()
+        cases = {
+            self.LOCAL: (lambda b: b + b" ", "belongs to the project area"),
+            self.ROLE_SRC: (lambda b: b + b"more\n", "belongs to the project area"),
+            ".mercury/local/notes.md": ("new\n", "belongs to the project area"),
+            ".claude/agents/proj-role.md": (lambda b: b + b"x\n", "belongs to the project area"),
+            ".codex/agents/proj-role.toml": (None, "belongs to the project area"),
+            ".claude/skills/proj-x/SKILL.md": (lambda b: b + b"x\n", "belongs to the project area"),
+            "s/proj-x/SKILL.md": (lambda b: b + b"x\n", "belongs to the project area"),
+            LOCK: (relocal, "the local section (project area) must not change"),
+        }
+        for n, (rel, (change, text)) in enumerate(cases.items(), 2):
+            with self.subTest(rel=rel):
+                self.gh = FakeGh(self.bare)
+                for b in self.remote_branches():
+                    if b.startswith("mercury/"):
+                        git(self.bare, "update-ref", "-d", f"refs/heads/{b}")
+                self.reset_target()
+                branch, head, pr = self.published(self.m_commit(n))
+                new = self.edit_branch(branch, {rel: change})
+                self.gh.all_green(new)
+                rc, out, err = self.merge()
+                self.assertEqual(rc, 1, out + err)
+                self.assertIn(text, err)
+                self.assertEqual(self.gh.named("pr", "merge"), [])
+                rc, out, err = self.run_tool("verify", "--head-ref", branch) if self.checkout(new) else (None, "", "")
+                self.assertEqual(rc, 1, out + err)
+                self.assertIn(text, err)
+
+    def index_path_on_branch(self, branch, rel, content="x\n"):
+        """Commit a file at exactly `rel` through the index, so a spelling the file system would fold (case, trailing dot)
+        reaches the commit as written."""
+        work = self.tmp / f"work-{len(list(self.tmp.glob('work-*')))}"
+        git(self.tmp, "clone", "-q", "--branch", branch, str(self.bare), str(work))
+        blob = subprocess.run(["git", "-C", str(work), "hash-object", "-w", "--stdin"], input=content, capture_output=True,
+                              text=True, check=True).stdout.strip()
+        git(work, "-c", "core.protectNTFS=false", "update-index", "--add", "--cacheinfo", f"100644,{blob},{rel}")
+        git(work, "commit", "-q", "-m", "alias")
+        git(work, "push", "-q", "origin", f"HEAD:refs/heads/{branch}")
+        return git(work, "rev-parse", "HEAD")
+
+    def test_alias_spellings_of_the_project_area_are_refused(self):
+        # On Windows these spellings are the project area itself: case-folded, or with a trailing dot that Windows drops.
+        aliases = (".Mercury/Local/x.md", ".MERCURY/local.JSON", ".mercury/local./x.md", ".mercury./local/roles/x.md",
+                   ".mercury/local.json.", ".Claude/Agents/proj-role.md", ".codex/agents/proj-role.toml.")
+        for n, rel in enumerate(aliases, 2):
+            with self.subTest(rel=rel):
+                self.gh = FakeGh(self.bare)
+                for b in self.remote_branches():
+                    if b.startswith("mercury/"):
+                        git(self.bare, "update-ref", "-d", f"refs/heads/{b}")
+                self.reset_target()
+                branch, head, pr = self.published(self.m_commit(n))
+                new = self.index_path_on_branch(branch, rel)
+                self.assertIn(rel, git(self.bare, "ls-tree", "-r", "--name-only", new))  # the alias really is in the commit
+                self.gh.all_green(new)
+                rc, out, err = self.merge()
+                self.assertEqual(rc, 1, out + err)
+                self.assertIn(f"{rel}: belongs to the project area", err)
+                self.assertEqual(self.gh.named("pr", "merge"), [])
+
+    def checkout(self, sha):
+        git(self.target, "fetch", "-q", "origin", f"+refs/heads/*:refs/remotes/origin/*")
+        git(self.target, "switch", "-q", "--detach", sha)
+        return True
+
+
 class Verify(Fixture):
     def run_verify(self, head_ref):
         return self.run_tool("verify", "--head-ref", head_ref)

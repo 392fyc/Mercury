@@ -889,8 +889,8 @@ class MercuryToolTest(unittest.TestCase):
         # the original bytes of the generated role, taken from the lock-consistent installation of a fresh copy
         tool = load_tool()
         role = tool.parse_role(self.ROLE.encode("utf-8"), "test")
-        return (tool.role_claude("mercury-r", "core/roles/r.md", role) if host == "claude"
-                else tool.role_codex("mercury-r", "core/roles/r.md", role)).decode("utf-8")
+        return (tool.role_claude("mercury-r", ".mercury/packs/core/roles/r.md", role) if host == "claude"
+                else tool.role_codex("mercury-r", ".mercury/packs/core/roles/r.md", role)).decode("utf-8")
 
     def test_rules_are_installed_verbatim(self):
         raw = b"# rule\r\nprefix_rule(pattern = [\"git\", \"push\"], decision = \"forbidden\")\r\n"
@@ -1060,7 +1060,8 @@ class MercuryToolTest(unittest.TestCase):
     # linked repositories and params
 
     LINK = {"name": "Notes_KB", "purpose": "Knowledge base.", "locate": "Read the `kb_dir` key of `.handoff-config`.",
-            "access": "Read freely; writes need their own authorized scope."}
+            "use": "Run the `kb-search` skill; the index note is `00-index/home.md`.",
+            "rules": "Read freely; writes need their own authorized scope."}
 
     def set_config(self, **extra):
         write(self.dst / CONFIG, json.dumps({"schema_version": 1, "packs": ["core", "extra"], **extra}))
@@ -1072,7 +1073,8 @@ class MercuryToolTest(unittest.TestCase):
         a = self.section("AGENTS.md")
         self.assertIn("## Linked repositories", a)
         self.assertIn("### Notes_KB\n\n- Purpose: Knowledge base.\n- Locate: Read the `kb_dir` key of `.handoff-config`.\n"
-                      "- Access: Read freely; writes need their own authorized scope.\n", a)
+                      "- Use: Run the `kb-search` skill; the index note is `00-index/home.md`.\n"
+                      "- Rules: Read freely; writes need their own authorized scope.\n", a)
         self.assertTrue(a.index("### Notes_KB") < a.index("### Design.lib") < a.index("<!-- MERCURY:END -->"))
         self.assertNotIn("Linked repositories", self.section("CLAUDE.md"))
         self.set_config()  # removing the declaration removes the section
@@ -1083,7 +1085,13 @@ class MercuryToolTest(unittest.TestCase):
         L = self.LINK
         bad = {
             "not-a-list": {"name": "x"},
-            "missing-field": {k: v for k, v in L.items() if k != "access"},
+            "missing-field": {k: v for k, v in L.items() if k != "rules"},
+            "missing-use": {k: v for k, v in L.items() if k != "use"},
+            "legacy-access": {**{k: v for k, v in L.items() if k not in ("use", "rules")}, "access": "Read freely."},
+            "access-and-rules": {**L, "access": "Read freely."},
+            "use-machine-path": {**L, "use": "run C:/tools/kb.ps1"},
+            "rules-home": {**L, "rules": "see ~/notes"},
+            "use-comment": {**L, "use": "x --> y"},
             "extra-field": {**L, "path": "x"},
             "unix-absolute": {**L, "locate": "/home/me/kb"},
             "unix-in-text": {**L, "locate": "Look in (/srv/data) first"},
@@ -1114,8 +1122,8 @@ class MercuryToolTest(unittest.TestCase):
             "newline": {**L, "purpose": "two\nlines"},
             "carriage-return": {**L, "purpose": "two\rlines"},
             "line-separator": {**L, "purpose": "two\u2028lines"},
-            "control": {**L, "access": "bell \x07"},
-            "nul": {**L, "access": "a\x00b"},
+            "control": {**L, "rules": "bell \x07"},
+            "nul": {**L, "use": "a\x00b"},
             "comment-open": {**L, "purpose": "x <!-- y"},
             "comment-close": {**L, "purpose": "x --> y"},
             "marker": {**L, "purpose": "MERCURY:END"},
