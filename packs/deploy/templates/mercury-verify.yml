@@ -1,0 +1,46 @@
+# Managed by Mercury (pack deploy). Rendered from params in .mercury/config.json by tools/mercury.py; do not edit by hand.
+# Change the params (or the pack) and run `python tools/mercury.py apply` from a released Mercury commit instead.
+name: Mercury verify
+
+# pull_request, never pull_request_target: the proposed tree is only read, with a read-only token and no secrets.
+on:
+  pull_request:
+    branches: [@@INTEGRATION_BRANCH@@]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    # The job name is the check name that the update job requires before it merges. Do not rename it.
+    name: Mercury verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      MERCURY_BASE: @@INTEGRATION_BRANCH@@
+    steps:
+      - name: Check out the proposed head
+        uses: actions/checkout@v7
+        with:
+          path: target
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check out Mercury at master
+        uses: actions/checkout@v7
+        with:
+          repository: 392fyc/Mercury
+          ref: master
+          path: mercury
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Installed files match the recorded Mercury commit
+        run: python -B mercury/tools/mercury.py check --target target --source mercury
+      # The branch name is passed through the environment, never written into the command line.
+      - name: Update pull requests keep to Mercury paths and a released source
+        env:
+          MERCURY_HEAD_REF: ${{ github.head_ref }}
+        run: python -B mercury/tools/mercury_update.py verify --target target --mercury mercury --base "$MERCURY_BASE" --head-ref "$MERCURY_HEAD_REF"

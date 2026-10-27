@@ -91,7 +91,7 @@ class ExternalTarget(unittest.TestCase):
             git(self.src, "update-index", "--chmod=+x", rel)
         git(self.src, "commit", "-q", "-m", msg)
         head = git(self.src, "rev-parse", "HEAD").strip()
-        git(self.src, "update-ref", "refs/remotes/origin/main", head)  # as if pushed and fetched
+        git(self.src, "update-ref", "refs/remotes/origin/master", head)  # as if pushed and fetched
         return head
 
     def head(self):
@@ -181,7 +181,7 @@ class ExternalTarget(unittest.TestCase):
         r = subprocess.run(["git", "-C", str(self.src), "hash-object", "-w", "--stdin"], input="note.txt", capture_output=True, text=True)
         git(self.src, "update-index", "--add", "--cacheinfo", f"120000,{r.stdout.strip()},packs/core/link.txt")
         git(self.src, "commit", "-q", "-m", "link")
-        git(self.src, "update-ref", "refs/remotes/origin/main", "HEAD")
+        git(self.src, "update-ref", "refs/remotes/origin/master", "HEAD")
         code, out = self.install()
         self.assertEqual(code, 2, out)
         self.assertIn("only regular files", out)
@@ -215,24 +215,51 @@ class ExternalTarget(unittest.TestCase):
         local = self.head()
         code, out = self.install()
         self.assertEqual(code, 2, out)
-        self.assertIn("not reachable from any remote-tracking branch of origin", out)
+        self.assertIn("not reachable from origin/master", out)
         self.assertEqual(self.snapshot(), {})
         for mode in ("apply",):
             self.assertEqual(self.install(mode=mode)[0], 2)
         code, out = self.install("--dry-run")
         self.assertEqual(code, 0, out)
-        self.assertIn(f"source commit {local} (NOT on origin", out)
+        self.assertIn(f"source commit {local} (NOT on origin/master", out)
         self.assertEqual(self.snapshot(), {})
-        git(self.src, "update-ref", "refs/remotes/origin/main", local)  # pushed and fetched
+        git(self.src, "update-ref", "refs/remotes/origin/master", local)  # pushed and fetched
         code, out = self.install()
         self.assertEqual(code, 0, out)
         self.assertIn(f"mercury: source commit {local}\n", out)
         self.assertEqual(json.loads(self.snapshot()[LOCK])["source_commit"], local)
 
-    def test_a_commit_on_another_branch_of_origin_counts(self):
-        git(self.src, "update-ref", "-d", "refs/remotes/origin/main")
+    def test_a_commit_only_on_another_branch_of_origin_is_not_released(self):
+        # The release gate is origin/master (#688): origin/develop or a feature branch is not enough.
+        git(self.src, "update-ref", "-d", "refs/remotes/origin/master")
         git(self.src, "update-ref", "refs/remotes/origin/feature/x", "HEAD")
+        git(self.src, "update-ref", "refs/remotes/origin/develop", "HEAD")
+        for mode in ("install", "apply"):
+            code, out = self.install(mode=mode)
+            self.assertEqual(code, 2, out)
+            self.assertIn("not reachable from origin/master", out)
+        self.assertEqual(self.snapshot(), {})
+        code, out = self.install("--dry-run")  # a preview still works and says so
+        self.assertEqual(code, 0, out)
+        self.assertIn("(NOT on origin/master", out)
+        git(self.src, "update-ref", "refs/remotes/origin/master", "HEAD")
         self.assertEqual(self.install()[0], 0)
+
+    def test_an_older_commit_below_origin_master_counts_and_check_only_annotates(self):
+        first = self.head()
+        write(self.src / "packs/extra/note.txt", "newer\n")
+        git(self.src, "add", "-A")
+        git(self.src, "commit", "-q", "-m", "two")
+        git(self.src, "update-ref", "refs/remotes/origin/master", "HEAD")  # master moved past `first`
+        code, out = self.install("--source-commit", first)
+        self.assertEqual(code, 0, out)
+        write(self.src / "packs/extra/note.txt", "unreleased\n")
+        git(self.src, "add", "-A")
+        git(self.src, "commit", "-q", "-m", "three, not released")
+        local = self.head()
+        code, out = self.install("--source-commit", local, mode="check")
+        self.assertIn(f"source commit {local} (NOT on origin/master", out)  # check annotates instead of refusing
+        self.assertNotEqual(code, 2, out)
 
     def test_check_and_install_print_the_commit_in_use(self):
         self.assertEqual(self.install()[0], 0)

@@ -3,7 +3,7 @@
 
     python tools/mercury.py check --target <dir>    compare only; any difference exits 1
     python tools/mercury.py apply --target <dir>    write the installation and the lock
-    python tools/mercury.py install --target <dir> [--packs a,b] [--source-commit <sha>] [--dry-run]
+    python tools/mercury.py install --target <dir> [--packs a,b] [--params-json <json>] [--source-commit <sha>] [--dry-run]
     python tools/mercury.py source add <name> <github-url> --rationale <text> [--ref <ref>]
     python tools/mercury.py source update <name> [--to <ref>]
 
@@ -27,6 +27,7 @@ import re
 import stat
 import subprocess
 import sys
+import unicodedata
 import urllib.parse
 from datetime import date
 from pathlib import Path
@@ -41,9 +42,11 @@ STUB_PREFIX = "mercury-"
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 SKIP_DIRS = {"__pycache__"}
 # Single-file deletion roots: <dir>/mercury-<name><ext> may be deleted, nothing else in <dir>.
-FILE_ROOTS = {(".claude", "agents"): ".md", (".codex", "agents"): ".toml", (".codex", "rules"): ".rules"}
+FILE_ROOTS = {(".claude", "agents"): ".md", (".codex", "agents"): ".toml", (".codex", "rules"): ".rules",
+              (".github", "workflows"): ".yml"}
 SECTION_FILES = {"agents": "AGENTS.md", "claude": "CLAUDE.md"}  # fragment name -> entry file that carries the section
 GUARD_REL = f"{PACKS_REL}/core/hooks/readonly_guard.sh"
+RELEASE_REF = "refs/remotes/origin/master"  # an external target may only take a Mercury commit that is released here
 
 
 class BuildError(Exception):
@@ -356,7 +359,8 @@ LINK_PATHS = [re.compile(p, re.I) for p in (
     r"(?<![A-Za-z0-9])~(?=[/\\]|$|\s)", r"(?<![A-Za-z0-9._-])[/\\]", r"(?<![A-Za-z0-9])\\", r"(?<![A-Za-z0-9])\.{3,}[/\\]",
 )]
 CONFIG_KEYS = {"schema_version", "packs", "linked_repos", "params"}
-PARAM_KEYS = {"guard_write_scripts"}
+PARAM_KEYS = {"guard_write_scripts", "integration_branch", "required_checks", "update_schedule"}
+PARAM_DEFAULTS = {"update_schedule": "17 3 * * *"}  # the others have no sensible default: a project must name them
 SCRIPT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.(?:sh|ps1|py)$")
 
 
@@ -393,13 +397,145 @@ def load_linked(items):
     return out
 
 
+BRANCH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}\Z")
+# `mercury` itself cannot coexist with the update branches `mercury/update-*` (a ref cannot be both a file and a directory).
+# Compared after casefold(): on a case-insensitive file system `Mercury` and `mercury/`, or `head` and `HEAD`, are one name.
+RESERVED_BRANCHES = {"head", "fetch_head", "orig_head", "merge_head", "cherry_pick_head", "mercury"}
+CHECK_BAD = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029" + HIDDEN + "]")  # unlike CONTROL_RE this includes the tab
+# A check name must not contain a character that draws nothing or that Unicode treats as a space or a control. Decided by
+# the Unicode general category, not by a hand-made list (a list always misses some: the tag block, the Arabic number signs
+# U+0600-U+0605, U+110BD, U+1D173, U+1BCA0 ... are all format characters): Cc, Cf, Cs, Co, Cn, Zl, Zp, Me, and every Zs except
+# the ordinary space. Cn (unassigned) is refused too, so a character that a later Unicode version assigns cannot appear
+# unnoticed; the price is that the answer for a very new character can differ between Python versions. A few fillers and
+# selectors are letters or marks to Unicode yet draw nothing, so they are listed by hand.
+INVISIBLE_CATEGORIES = {"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp", "Me"}
+INVISIBLE_EXTRA = set("\u034f\u115f\u1160\u17b4\u17b5\u3164\uffa0\u2800") | {chr(c) for c in range(0x180b, 0x1810)} \
+    | {chr(c) for c in range(0xfe00, 0xfe10)} | {chr(c) for c in range(0xe0100, 0xe01f0)}
+
+
+def invisible(ch):
+    cat = unicodedata.category(ch)
+    return cat in INVISIBLE_CATEGORIES or (cat == "Zs" and ch != " ") or ch in INVISIBLE_EXTRA
+
+CRON_FIELDS = ((0, 59), (0, 23), (1, 31), (1, 12), (0, 6))  # minute, hour, day of month, month, day of week (numbers only)
+CRON_TOKEN_RE = re.compile(r"^(\*|(\d{1,2})(?:-(\d{1,2}))?)(?:/(\d{1,2}))?\Z")
+
+
+def branch_name(value, what):
+    """A plain branch name (git check-ref-format rules, narrowed): letters, digits and . _ / -, no glob characters,
+    nothing that starts with the reserved update prefix `mercury/`."""
+    if not isinstance(value, str) or not BRANCH_RE.match(value) or ".." in value \
+            or value.casefold().startswith(("mercury/", "refs/")) or value.casefold() in RESERVED_BRANCHES:
+        raise BuildError(f"{what}: must be a plain branch name (letters, digits, . _ / -; at most 100 characters; not HEAD or another "
+                         "pseudo ref, not `mercury` or under mercury/ (reserved for update branches), not under refs/)")
+    for seg in value.split("/"):
+        if not seg or seg.startswith(".") or seg.endswith(".") or seg.endswith(".lock"):
+            raise BuildError(f"{what}: not a valid branch name (empty segment, or a segment starting with a dot or ending in . or .lock): {value!r}")
+    return value
+
+
+def check_names(value, what):
+    """A list of at most 20 distinct check names: one line each, no control or hidden character, no expression start."""
+    if not isinstance(value, list) or len(value) > 20:
+        raise BuildError(f"{what}: must be a list of at most 20 check names")
+    for name in value:
+        if not isinstance(name, str) or not name or len(name) > 100 or name != name.strip() or CHECK_BAD.search(name) \
+                or any(invisible(c) for c in name) or "${{" in name:
+            raise BuildError(f"{what}: a check name must be 1-100 characters on one line, without edge spaces, control characters or an expression start: {name!r}")
+    if len(set(value)) != len(value):
+        raise BuildError(f"{what}: duplicate check name")
+    return list(value)
+
+
+def cron_text(value, what):
+    """Five space-separated fields of numbers, `*`, ranges `a-b`, steps `/n` and lists `,`; every number in range."""
+    fields = value.split(" ") if isinstance(value, str) else []
+    if len(fields) != 5:
+        raise BuildError(f"{what}: must be a five-field cron expression separated by single spaces")
+    for field, (low, high) in zip(fields, CRON_FIELDS):
+        for token in field.split(","):
+            m = CRON_TOKEN_RE.match(token)
+            if not m:
+                raise BuildError(f"{what}: unsupported cron field {field!r} (numbers, *, a-b, /n and commas only)")
+            nums = [int(g) for g in (m.group(2), m.group(3)) if g is not None]
+            if any(not low <= n <= high for n in nums) or (len(nums) == 2 and nums[0] > nums[1]) \
+                    or (m.group(4) is not None and int(m.group(4)) < 1):
+                raise BuildError(f"{what}: cron field {field!r} is out of range {low}-{high}")
+    return value
+
+
 def load_params(params):
     if not isinstance(params, dict) or not set(params) <= PARAM_KEYS:
         raise BuildError(f"{CONFIG_REL}: params may only hold: {', '.join(sorted(PARAM_KEYS))}")
-    scripts = params.get("guard_write_scripts", [])
-    if not isinstance(scripts, list) or not all(isinstance(x, str) and SCRIPT_RE.match(x) for x in scripts):
-        raise BuildError(f"{CONFIG_REL}: params.guard_write_scripts must be a list of script file names (no directories)")
-    return {"guard_write_scripts": scripts} if "guard_write_scripts" in params else {}
+    out = {}
+    if "guard_write_scripts" in params:
+        scripts = params["guard_write_scripts"]
+        if not isinstance(scripts, list) or not all(isinstance(x, str) and SCRIPT_RE.match(x) for x in scripts):
+            raise BuildError(f"{CONFIG_REL}: params.guard_write_scripts must be a list of script file names (no directories)")
+        out["guard_write_scripts"] = scripts
+    if "integration_branch" in params:
+        out["integration_branch"] = branch_name(params["integration_branch"], f"{CONFIG_REL}: params.integration_branch")
+    if "required_checks" in params:
+        out["required_checks"] = check_names(params["required_checks"], f"{CONFIG_REL}: params.required_checks")
+    if "update_schedule" in params:
+        out["update_schedule"] = cron_text(params["update_schedule"], f"{CONFIG_REL}: params.update_schedule")
+    return out
+
+
+# --- rendered files: a pack template whose @@NAME@@ placeholders are filled from the project's params ---
+
+PLACEHOLDER_RE = re.compile(r"@@(\w*)@@")
+RENDER_NEEDS = {"INTEGRATION_BRANCH": "integration_branch", "INTEGRATION_BRANCH_EXPR": "integration_branch",
+                "REQUIRED_CHECKS": "required_checks", "UPDATE_SCHEDULE": "update_schedule"}
+
+
+def load_rendered(raw, pack):
+    """{destination: pack-relative template} from pack.json's optional `rendered` object. A destination is one
+    mercury-*.yml file directly in .github/workflows/ (the only place a rendered file may go)."""
+    spec, _ = parse_json(raw, f"pack {pack} pack.json", "pack.json")
+    rendered = spec.get("rendered", {}) if isinstance(spec, dict) else {}
+    if not isinstance(rendered, dict):
+        raise BuildError(f"pack {pack}: rendered must be an object {{destination: template}}")
+    for dest, tmpl in rendered.items():
+        check_rel(dest, f"pack {pack}: rendered destination")
+        parts = dest.split("/")
+        if tuple(parts[:2]) != (".github", "workflows") or managed_root_of(dest) is None:
+            raise BuildError(f"pack {pack}: a rendered file must be .github/workflows/mercury-<name>.yml: {dest!r}")
+        plain_rel(tmpl, f"pack {pack}: rendered template")
+        if tmpl.split("/")[0] == "build":
+            raise BuildError(f"pack {pack}: a template cannot live under build/ (it is never installed): {tmpl!r}")
+    return rendered
+
+
+def render_template(raw, params, what):
+    """The template's text with every @@NAME@@ replaced by a YAML-safe value built from the params (bytes, LF).
+
+    Values are JSON strings, and JSON strings are valid YAML double-quoted scalars, so no param value can end its scalar,
+    start a new key or add a line. required_checks is a JSON list inside such a string. The params were validated in
+    load_params. An unknown placeholder, a stray `@@` or a missing required param is an error."""
+    try:
+        text = raw.decode("utf-8").replace("\r\n", "\n")
+    except UnicodeDecodeError:
+        raise BuildError(f"{what}: not valid UTF-8")
+    names = PLACEHOLDER_RE.findall(text)
+    if text.count("@@") != 2 * len(names) or any(n not in RENDER_NEEDS for n in names):
+        raise BuildError(f"{what}: unknown placeholder or stray @@ (allowed: {', '.join(sorted(RENDER_NEEDS))})")
+    values = {}
+    for name in set(names):
+        key = RENDER_NEEDS[name]
+        value = params.get(key, PARAM_DEFAULTS.get(key))
+        if value is None:
+            raise BuildError(f"{CONFIG_REL}: params.{key} is required by {what}")
+        if name == "INTEGRATION_BRANCH_EXPR":
+            # A single-quoted expression literal. The branch regex (no quote character) makes quoting trivial; check anyway.
+            if not BRANCH_RE.match(value):
+                raise BuildError(f"{what}: branch name is not safe to write into an expression")
+            values[name] = "'" + value + "'"
+            continue
+        if name == "REQUIRED_CHECKS":
+            value = json.dumps(value, ensure_ascii=True, separators=(",", ":"))
+        values[name] = json.dumps(value, ensure_ascii=True)
+    return PLACEHOLDER_RE.sub(lambda m: values[m.group(1)], text).encode("utf-8")
 
 
 def load_config(target, master):
@@ -608,10 +744,20 @@ class CommitSource:
         return self.blobs[oid]
 
     def is_published(self):
-        """True when the commit is reachable from a remote-tracking branch of origin (as last fetched)."""
-        out = git_bytes(self.root, ["for-each-ref", "--format=%(refname)", "--count=1", "--contains", self.commit,
-                                    "refs/remotes/origin/"], "checking that the source commit is on origin")
-        return bool(out.strip())
+        """True when the commit is reachable from `origin/master` (as last fetched): the release branch is the gate."""
+        try:
+            r = subprocess.run(["git", "-C", str(self.root), "merge-base", "--is-ancestor", self.commit, RELEASE_REF],
+                               capture_output=True)
+        except OSError as err:
+            raise BuildError(f"checking that the source commit is released: git is required: {err}")
+        if r.returncode in (0, 1):
+            return r.returncode == 0
+        # 128 and others: most likely there is no `origin/master` yet (never fetched). Nothing is released then.
+        ref = subprocess.run(["git", "-C", str(self.root), "rev-parse", "--verify", "--quiet", RELEASE_REF + "^{commit}"],
+                             capture_output=True)
+        if ref.returncode != 0:
+            return False
+        raise BuildError(f"checking that the source commit is released: {r.stderr.decode('utf-8', 'replace').strip() or 'git failed'}")
 
     def origin(self):
         r = subprocess.run(["git", "-C", str(self.root), "remote", "get-url", "origin"], capture_output=True, text=True)
@@ -920,7 +1066,7 @@ def atomic_write(target, name, data):
             os.unlink(tmp)
 
 
-def desired_files(src, selected):
+def desired_files(src, selected, params=None):
     """(installation path -> (bytes, executable), {pack: {'agents'|'claude': fragment text}}) for the selected packs.
 
     The executable flag comes from the file's mode in the Git index (100755), on every platform."""
@@ -945,6 +1091,10 @@ def desired_files(src, selected):
                 raise BuildError(f"{owner}: core must provide {kind}.md (the fragment of the managed section)")
         for dest, data in role_files(src, pack, tracked).items():
             add(dest, data, False, owner)
+        for dest, tmpl in sorted(load_rendered(src.read(pack, "pack.json"), pack).items()):
+            if tmpl not in tracked:
+                raise BuildError(f"{owner}: rendered template {tmpl} is not tracked by git")
+            add(dest, render_template(src.read(pack, tmpl), params or {}, f"{owner}: {tmpl}"), False, owner)
         for rel in sorted(tracked):
             if rel.startswith("rules/"):
                 rule = rel[len("rules/"):]
@@ -982,9 +1132,14 @@ def read_lock(target):
     if not path.exists():
         return {}, {}
     data, _ = load_json(path, "lock")
+    return parse_lock(data)
+
+
+def parse_lock(data):
+    """(files, sections) from the parsed JSON of an installation lock; the same checks wherever the lock comes from."""
     files = data.get("files") if isinstance(data, dict) else None
     sections = data.get("sections", {}) if isinstance(data, dict) else None
-    if data.get("schema_version") != 1 or not isinstance(files, dict) or not isinstance(sections, dict)             or not set(sections) <= set(SECTION_FILES.values()) or not all(isinstance(h, str) for h in sections.values()):
+    if not isinstance(data, dict) or data.get("schema_version") != 1 or not isinstance(files, dict) or not isinstance(sections, dict)             or not set(sections) <= set(SECTION_FILES.values()) or not all(isinstance(h, str) for h in sections.values()):
         raise BuildError("lock: unexpected format")
     seen = {}
     for rel, h in files.items():
@@ -1045,6 +1200,11 @@ def read_v1(target):
     if is_link(p) or not p.is_file():
         raise BuildError(f"{V1_LOCK_REL}: exists but is not a regular file")
     data, _ = load_json(p, "v1 template lock")
+    return parse_v1(data)
+
+
+def parse_v1(data):
+    """{project-relative path: raw sha256} from the parsed JSON of a v1 template lock."""
     files = data.get("files") if isinstance(data, dict) else None
     if not isinstance(files, dict) or data.get("schema_version") != 1:
         raise BuildError(f"{V1_LOCK_REL}: not a schema 1 template lock")
@@ -1086,7 +1246,7 @@ class Plan:
 
 
 def plan(src, target, selected, chash, extras, external, same):
-    want, frags = desired_files(src, selected)
+    want, frags = desired_files(src, selected, extras["params"])
     lock, lock_sections = read_lock(target)
     v1 = read_v1(target) if external else None
     check_inside(target, LOCK_REL, "lock")
@@ -1269,7 +1429,7 @@ def find_references(target, paths, skip):
 
 # --- run ---
 
-def prepare_config(src, target, master, packs_arg, may_create):
+def prepare_config(src, target, master, packs_arg, may_create, params_arg=None):
     """(selected, config hash, extras, bytes to create or None). An existing config belongs to the project: only read."""
     path = target / CONFIG_REL
     if os.path.lexists(path):
@@ -1282,17 +1442,22 @@ def prepare_config(src, target, master, packs_arg, may_create):
             if set(want) != set(selected):
                 raise BuildError(f"--packs ({', '.join(want)}) does not match {CONFIG_REL} ({', '.join(selected)}); "
                                  "the config belongs to the project, edit it there")
+        if params_arg is not None and load_params(params_arg) != extras["params"]:
+            raise BuildError(f"--params-json does not match params in {CONFIG_REL}; the config belongs to the project, edit it there")
         return selected, chash, extras, None
     if not may_create:
         raise BuildError(f"cannot read {CONFIG_REL} ({Path(CONFIG_REL).name}): no such file; run `install` first")
-    raw = config_bytes(packs_arg or [])
+    raw = config_bytes(packs_arg or [], params_arg)
     selected, chash, extras = parse_config(raw, master)
     return selected, chash, extras, raw
 
 
-def config_bytes(packs):
+def config_bytes(packs, params=None):
     names = ["core"] + [p for p in packs if p != "core"]
-    return (json.dumps({"schema_version": 1, "packs": list(dict.fromkeys(names))}, indent=2) + "\n").encode("utf-8")
+    cfg = {"schema_version": 1, "packs": list(dict.fromkeys(names))}
+    if params:
+        cfg["params"] = params
+    return (json.dumps(cfg, indent=2) + "\n").encode("utf-8")
 
 
 def managed_paths(P):
@@ -1362,16 +1527,17 @@ def dry_report(P, target, hit):
     print("mercury: dry run, " + (f"{problems} problem(s), an install would stop with nothing written" if problems else "no conflicts"))
 
 
-def run(src, target, apply, *, external=False, same=False, dry=False, packs_arg=None, may_create=False):
+def run(src, target, apply, *, external=False, same=False, dry=False, packs_arg=None, may_create=False, params_arg=None):
     master, mhash = load_master(src)
     src.master_hash = mhash
     if src.kind == "commit":
         published = src.is_published()
         if apply and not dry and not published:
-            raise BuildError(f"source commit {src.commit} is not reachable from any remote-tracking branch of origin, but the lock "
-                             "would record it as a commit of origin; push it (and fetch) first, or preview with --dry-run")
-        print(f"mercury: source commit {src.commit}" + ("" if published else " (NOT on origin: preview only, nothing can be written)"))
-    selected, chash, extras, cfg_raw = prepare_config(src, target, master, packs_arg, may_create)
+            raise BuildError(f"source commit {src.commit} is not reachable from origin/master (as last fetched): only released "
+                             "Mercury commits are installed into other projects; release it to master (and fetch) first, "
+                             "or preview with --dry-run")
+        print(f"mercury: source commit {src.commit}" + ("" if published else " (NOT on origin/master: preview only, nothing can be written)"))
+    selected, chash, extras, cfg_raw = prepare_config(src, target, master, packs_arg, may_create, params_arg)
     P = plan(src, target, selected, chash, extras, external, same)
     P.config_create = cfg_raw
     hit = ignored_paths(target, managed_paths(P)) if external else []
@@ -1658,6 +1824,8 @@ def build_parser():
         p.add_argument("--source-commit", help="Mercury commit to read the packs from (external targets only)")
         if name == "install":
             p.add_argument("--packs", help="comma separated packs for a new .mercury/config.json (core is always included)")
+            p.add_argument("--params-json", help="JSON object of params for a new .mercury/config.json (for example the deploy pack's "
+                                                 "integration_branch and required_checks)")
             p.add_argument("--dry-run", action="store_true", help="print the plan; write nothing")
     sp = sub.add_parser("source")
     ss = sp.add_subparsers(dest="action", required=True)
@@ -1714,8 +1882,15 @@ def main(argv, worktree=False, ext=None):
         packs_arg = None
         if install and args.packs is not None:
             packs_arg = [p.strip() for p in args.packs.split(",") if p.strip()]
+        params_arg = None
+        if install and args.params_json is not None:
+            try:
+                params_arg = json.loads(args.params_json)
+            except ValueError as err:
+                raise BuildError(f"--params-json is not valid JSON: {err}")
+            load_params(params_arg)
         return run(src, target, args.command != "check", external=external, same=same,
-                   dry=install and args.dry_run, packs_arg=packs_arg, may_create=install)
+                   dry=install and args.dry_run, packs_arg=packs_arg, may_create=install, params_arg=params_arg)
     except BuildError as err:
         print(f"mercury: {err}", file=sys.stderr)
         return 2
