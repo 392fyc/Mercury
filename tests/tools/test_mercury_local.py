@@ -501,5 +501,45 @@ class GuardActionsParam(Base):
         self.assertEqual(T.SCRIPT_RE.pattern, guard.SCRIPT_NAME.pattern)
 
 
+class SkipSkillsParam(Base):
+    """params.skip_skills leaves out a pack skill's entry files, for a project whose own skill does the job (#703)."""
+
+    def setUp(self):
+        super().setUp()
+        p = self.src / "packs"
+        write(p / "core/pack.json", json.dumps({"schema_version": 1, "name": "core",
+                                                "skills": {"hand-off": {"hosts": ["claude", "codex"]}}}))
+        write(p / "core/skills/hand-off/SKILL.md", '---\nname: hand-off\ndescription: "Hands off."\n---\n\nbody\n')
+        git(self.src, "add", "-A")
+
+    def set_params(self, params):
+        write(self.dst / CONFIG, json.dumps({"schema_version": 1, "packs": ["core"], "params": params}))
+
+    def test_a_skipped_skill_gets_no_entry_and_a_dropped_skip_restores_it(self):
+        self.assertEqual(self.apply()[0], 0)
+        entries = [".claude/skills/mercury-hand-off/SKILL.md", ".agents/skills/mercury-hand-off/SKILL.md"]
+        for rel in entries:
+            self.assertTrue((self.dst / rel).is_file(), rel)
+        self.set_params({"skip_skills": ["hand-off"]})
+        code, out = self.apply()
+        self.assertEqual(code, 0, out)
+        for rel in entries:
+            self.assertFalse((self.dst / rel).exists(), rel)
+        self.assertTrue((self.dst / ".mercury/packs/core/skills/hand-off/SKILL.md").is_file())
+        self.set_params({})
+        self.assertEqual(self.apply()[0], 0)
+        for rel in entries:
+            self.assertTrue((self.dst / rel).is_file(), rel)
+
+    def test_validation(self):
+        for params in ({"skip_skills": "hand-off"}, {"skip_skills": ["a/b"]}, {"skip_skills": ["hand-off", "hand-off"]},
+                       {"skip_skills": ["no-such-skill"]}):
+            with self.subTest(params=params):
+                self.set_params(params)
+                code, out = self.apply()
+                self.assertEqual(code, 2, out)
+                self.assertIn("params.skip_skills", out)
+
+
 if __name__ == "__main__":
     unittest.main()

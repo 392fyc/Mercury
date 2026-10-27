@@ -63,7 +63,7 @@
     ".mercury/packs/dot-link/skills/dot-link/SKILL.md": "41628cf61d9d8606803f0699ef8771272e1909069f51cce93ce5fdd0fbe797bb",
     ".mercury/packs/dot-link/skills/dot-link/references/receiver-protocol.md": "b81844e56fed1f037bcefb0b5ea15c706eb317fe5f805d644218ef6187710ad5",
     ".mercury/packs/dot-link/skills/dot-link/scripts/dot_link.py": "3120ed11bf8da0a1a320151306fb27131f4869bb6aa871d0faea3cc54e206e2a",
-    ".mercury/packs/lanes/agents.md": "4e479d2fe17809abe0bb690dda2d9f6de50d2f6fee382e0452bb56adfaefd8b2",
+    ".mercury/packs/lanes/agents.md": "ed905cb2c77e2733a958872065e9d943cfe6d14098760cb9335975d9e9d3f9b6",
     ".mercury/packs/lanes/claude.md": "48900bc662ada9353856b6ce6181a352ce1222e9e43831230e12e92b5c029ee4",
     ".mercury/packs/lanes/docs/guides/agent-view-dispatch.md": "dabcd88bdc2102d2c52092d99334d206860645d1a1a545938becec5f4fde8167",
     ".mercury/packs/lanes/docs/guides/cross-lane-on-codex.md": "c1e6466372ead8537e0ce13c451e989c889f5370cdb07c21ec65b184a598274e",
@@ -80,7 +80,7 @@
     ".mercury/packs/lanes/docs/mercury-lane-contract.md": "f5b10cb4cc9f3a52edb163c9c32d6196d92868f657731acceafe002c6da23053",
     ".mercury/packs/lanes/docs/mercury-lane-project-template.md": "002ac95696b2a9fc1fecaddf119acf64522aae09a4960017f7bc094d0e8d477d",
     ".mercury/packs/lanes/pack.json": "e417360e9b883d644fea4c76f03a74d0acb7a64a0d14dac2f96862b4201f3b68",
-    ".mercury/packs/lanes/scripts/check-lane-receiver-rule.sh": "b8f81284c19a175d66bcc2f0e804b01f41ac0901392e7e5769ed17b94bcf823f",
+    ".mercury/packs/lanes/scripts/check-lane-receiver-rule.sh": "7835658b59c6223eb0de51fd8f9ec61148c97d0dc25856f40d1d99a6b92894b9",
     ".mercury/packs/lanes/scripts/check-main-idle.sh": "9e2d40b69bdeb0016ff4a03131f26172f5ffb4468b2b15fce0de09be3784fa5b",
     ".mercury/packs/lanes/scripts/handoff-launch.sh": "c0dedb3fcae3ade91534617139cc3e05b83b64766ec6691ec4083c68c87df818",
     ".mercury/packs/lanes/scripts/lane-assertion.sh": "b33d00ec15cabc2731f16baaaeca87a1f6ac71e3e2b879660c66b882d1a1ac9a",
@@ -115,7 +115,7 @@
   "mercury_json_sha256": "877b2181bd46fddd25f74cc29f873f7ee97b7bde72795e00f48ac81f2ce391c2",
   "schema_version": 1,
   "sections": {
-    "AGENTS.md": "97114ade73a1f3677c422511cfb777182b9be373d952e6e754a93cfff8b9ed9e",
+    "AGENTS.md": "c88a176714d0fd19c69a7bb3e1f0e0c9b29fa413733d41b882c1fa549898a03a",
     "CLAUDE.md": "c8adcf29c1d31304ea737b7a1a7dd801ed3ce007436a18a2647ef8a68aaf99f1"
   },
   "source": "self"
