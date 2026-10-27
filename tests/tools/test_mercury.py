@@ -18,6 +18,12 @@ LOCK = ".mercury/lock.json"
 CONFIG = ".mercury/config.json"
 
 
+# Runs the tool in its legacy mode that reads the packs from the source's working tree and index (the mode Mercury uses on
+# itself). The command line has no such switch; external targets always read a commit (see tests/tools/test_mercury_install.py).
+WORKTREE_RUNNER = ("import importlib.util, sys; spec = importlib.util.spec_from_file_location('m', sys.argv[1]); "
+                   "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m); sys.exit(m.main(sys.argv[2:], worktree=True))")
+
+
 def load_tool():
     spec = importlib.util.spec_from_file_location("mercury_tool", TOOL)
     mod = importlib.util.module_from_spec(spec)
@@ -85,7 +91,7 @@ class MercuryToolTest(unittest.TestCase):
     def run_tool(self, mode):
         if self.auto_index:
             self.index()  # tests edit the source freely; the index follows unless a test turns this off
-        r = subprocess.run([sys.executable, "-B", str(TOOL), mode, "--source", str(self.src), "--target", str(self.dst)],
+        r = subprocess.run([sys.executable, "-B", "-c", WORKTREE_RUNNER, str(TOOL), mode, "--source", str(self.src), "--target", str(self.dst)],
                            capture_output=True, text=True, encoding="utf-8")
         return r.returncode, r.stdout + r.stderr
 
