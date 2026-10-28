@@ -2,6 +2,12 @@
   "schema_version": 1,
   "name": "core",
   "skills": {
+    "test-file-delivery": {
+      "hosts": [
+        "codex",
+        "claude"
+      ]
+    },
     "web-research": {
       "hosts": [
         "codex"
