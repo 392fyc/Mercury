@@ -267,6 +267,41 @@ class ExternalTarget(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn(f"mercury: source commit {self.head()}", out)
 
+    # --- check renders with the tool of the recorded commit (#708) ---
+
+    STUB_TOOL = "import sys\nprint('recorded tool', sys.argv[1:])\nsys.exit(7)\n"
+
+    def test_check_runs_the_tool_of_the_recorded_commit(self):
+        write(self.src / "tools/mercury.py", self.STUB_TOOL)
+        recorded = self.commit_all("with an older tool")
+        self.assertEqual(self.install()[0], 0)
+        write(self.src / "packs/extra/note.txt", "later\n")
+        self.commit_all("a later release")  # check still compares with the recorded commit, not with HEAD
+        code, out = self.install(mode="check")
+        self.assertEqual(code, 7, out)
+        self.assertIn(f"checking with the tool of {recorded[:12]}", out)
+        self.assertIn("recorded tool", out)
+        self.assertIn(recorded, out)  # --source-commit is passed on
+
+    def test_check_runs_here_when_the_recorded_tool_is_this_one(self):
+        write(self.src / "tools/mercury.py", TOOL.read_text(encoding="utf-8"))
+        self.commit_all("with this tool")
+        self.assertEqual(self.install()[0], 0)
+        code, out = self.install(mode="check")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("checking with the tool of", out)
+
+    def test_check_refuses_a_recorded_tool_outside_the_source_history(self):
+        write(self.src / "tools/mercury.py", self.STUB_TOOL)
+        self.commit_all("with an older tool")
+        self.assertEqual(self.install()[0], 0)
+        git(self.src, "checkout", "-q", "--orphan", "elsewhere")
+        git(self.src, "commit", "-q", "-m", "unrelated history")
+        code, out = self.install(mode="check")
+        self.assertEqual(code, 2, out)
+        self.assertIn("not in the history of --source HEAD", out)
+        self.assertNotIn("recorded tool", out)
+
     # --- the origin url is never echoed (A-F3) ---
 
     def test_an_unreadable_origin_url_is_not_echoed(self):

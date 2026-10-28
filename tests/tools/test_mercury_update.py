@@ -945,17 +945,35 @@ class ProjectArea(Fixture):
             doc = json.loads(raw)
             doc["local"]["files"][".claude/agents/proj-role.md"] = "0" * 64
             return (json.dumps(doc, indent=2, sort_keys=True) + "\n").encode()
+
+        def resource(raw):
+            doc = json.loads(raw)
+            doc["local"]["sources"][self.ROLE_SRC] = "0" * 64
+            return (json.dumps(doc, indent=2, sort_keys=True) + "\n").encode()
+
+        def drop_output(raw):
+            doc = json.loads(raw)
+            del doc["local"]["files"][".claude/skills/proj-x/SKILL.md"]
+            return (json.dumps(doc, indent=2, sort_keys=True) + "\n").encode()
+        # None: the path rules refuse it, so `verify` does too. A hand-edited output that both locks record passes the path
+        # rules as a possible regeneration (#708); `mercury.py check` on the head refuses its bytes (merge condition 4, and
+        # the first step of the `Mercury verify` job).
+        by_check = "not what Mercury commit"
         cases = {
             self.LOCAL: (lambda b: b + b" ", "belongs to the project area"),
             self.ROLE_SRC: (lambda b: b + b"more\n", "belongs to the project area"),
             ".mercury/local/notes.md": ("new\n", "belongs to the project area"),
-            ".claude/agents/proj-role.md": (lambda b: b + b"x\n", "belongs to the project area"),
+            ".claude/agents/proj-role.md": (lambda b: b + b"x\n", by_check),
             ".codex/agents/proj-role.toml": (None, "belongs to the project area"),
-            ".claude/skills/proj-x/SKILL.md": (lambda b: b + b"x\n", "belongs to the project area"),
+            ".claude/skills/proj-x/SKILL.md": (lambda b: b + b"x\n", by_check),
             "s/proj-x/SKILL.md": (lambda b: b + b"x\n", "belongs to the project area"),
-            LOCK: (relocal, "the local section (project area) must not change"),
+            LOCK: (relocal, by_check),
+            "lock-sources": (resource, "may only record outputs regenerated from unchanged sources"),
+            "lock-outputs": (drop_output, "may only record outputs regenerated from unchanged sources"),
         }
         for n, (rel, (change, text)) in enumerate(cases.items(), 2):
+            if rel.startswith("lock-"):
+                rel = LOCK
             with self.subTest(rel=rel):
                 self.gh = FakeGh(self.bare)
                 for b in self.remote_branches():
@@ -970,8 +988,35 @@ class ProjectArea(Fixture):
                 self.assertIn(text, err)
                 self.assertEqual(self.gh.named("pr", "merge"), [])
                 rc, out, err = self.run_tool("verify", "--head-ref", branch) if self.checkout(new) else (None, "", "")
+                if text == by_check:
+                    self.assertEqual(rc, 0, out + err)  # the path rules allow it; the job's `check` step refuses it
+                    continue
                 self.assertEqual(rc, 1, out + err)
                 self.assertIn(text, err)
+
+    def test_outputs_regenerated_from_unchanged_sources_merge(self):
+        """#708: a release whose renderer writes the project-area outputs differently, while the project's sources stay
+        as they were, reaches the project through the update pull request."""
+        role, skill = ".claude/agents/proj-role.md", ".claude/skills/proj-x/SKILL.md"
+        doc = json.loads((self.target / LOCK).read_text(encoding="utf-8"))
+        for rel in (role, skill):  # as an older renderer wrote them, and as its lock recorded them
+            data = (self.target / rel).read_bytes() + b"<!-- older renderer -->\n"
+            write(self.target / rel, data)
+            doc["local"]["files"][rel] = hashlib.sha256(data).hexdigest()
+        write(self.target / LOCK, json.dumps(doc, indent=2, sort_keys=True) + "\n")
+        git(self.target, "add", "-A")
+        git(self.target, "commit", "-q", "-m", "outputs of an older renderer")
+        git(self.target, "push", "-q", "origin", BASE)
+        branch, head, pr = self.ready()
+        changed = set(git(self.bare, "diff", "--name-only", BASE, branch).split())
+        self.assertTrue({role, skill} <= changed, changed)
+        self.assertFalse([c for c in changed if c.startswith(".mercury/local")], changed)
+        self.assertNotIn(b"older renderer", git(self.bare, "show", f"{branch}:{role}").encode())
+        rc, out, err = self.merge()
+        self.assertEqual(rc, 0, out + err)
+        self.assertEqual(len(self.gh.named("pr", "merge")), 1)
+        rc, out, err = self.run_tool("verify", "--head-ref", branch) if self.checkout(head) else (None, "", "")
+        self.assertEqual(rc, 0, out + err)
 
     def index_path_on_branch(self, branch, rel, content="x\n"):
         """Commit a file at exactly `rel` through the index, so a spelling the file system would fold (case, trailing dot)
