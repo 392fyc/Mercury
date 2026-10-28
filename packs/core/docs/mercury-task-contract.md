@@ -82,6 +82,63 @@ These rules apply to the main agent and every subagent, in Codex and Claude Code
   unresolved requirement prevents completion, disclose the gap; never count
   unexamined or failed requirements as passed.
 
+## Waiting on long-running work
+
+The host does not bound a wait for you (Mercury #706). Claude Code applies a time
+limit to background commands only in unattended sessions (`-p`, Agent SDK, CI,
+cloud); terminal, desktop and IDE sessions have none, and a foreground command
+that reaches its timeout moves to the background instead of stopping. `maxTurns`
+does not help either: a subagent that waits uses no turns. A wait whose condition
+can never come true therefore runs until a person notices.
+
+- Pick the deadline from the expected duration (about twice the expected time)
+  and state it. Bounded forms:
+  - Bash: `timeout 900 bash -c 'until [ -f out/done ]; do sleep 5; done'`, or a
+    loop that compares `$SECONDS` with an end time.
+  - PowerShell: `$end = (Get-Date).AddMinutes(15); while (-not (Test-Path out/done) -and (Get-Date) -lt $end) { Start-Sleep 5 }`.
+  - Claude Code `Monitor` with `timeout_ms` (at most 30 minutes; start it again
+    after it expires only for a stated reason).
+- A command started in the background already reports its exit. Wait for that
+  notice; do not add a loop that polls the command's output file for a pattern.
+  When a separate wait is unavoidable, its end condition must include the
+  watched command's exit (for example the host's `exited with code` line) and
+  every failure state, never only a count of success lines.
+- At the deadline, stop waiting and report that the work did not finish, with
+  the last output. Start a longer wait only for a stated reason.
+- A delegation that may wait states the deadline. Before reporting completion,
+  list the background tasks you and your subagents started; stop each one past
+  its deadline or no longer needed, and report what was stopped.
+
+**Guard.** Every Claude role Mercury generates (the `mercury-*` roles and the
+project-area roles) runs `.mercury/packs/core/hooks/wait_guard.sh` as a
+`PreToolUse` hook on Bash and PowerShell. It blocks a command that contains a
+wait without a deadline:
+
+- a loop that sleeps in its condition or body (`while|until <cond>; do ... sleep ... done`,
+  PowerShell `while (<cond>) { ... }` or `do { ... } while|until (<cond>)` with
+  `Start-Sleep`), unless its condition reads the clock (`$SECONDS`, `date +%s`,
+  `Get-Date`, `Stopwatch` `.Elapsed`, `[datetime]::Now`), counts a variable up to
+  a number, or reads input (`while read`);
+- a command that follows or watches until stopped: `tail -f`, `inotifywait -m`,
+  `Get-Content -Wait`, `journalctl -f`, `docker`/`kubectl logs -f`,
+  `gh ... --watch`, `gh run watch`, `watch`, `sleep infinity`, and `Wait-Job` or
+  `Wait-Process` without `-Timeout`;
+
+unless the top-level command that holds it is `timeout <duration> ...` (a
+duration above 0; `timeout 0` means no limit) in the Bash tool (in PowerShell, `timeout` is Windows' `timeout.exe`, which bounds
+nothing). A `timeout` on another command of the same line does not count. The
+guard reads text, not behavior: a deadline that is present but wrong passes, a
+wait written in another form (for example inside `python -c`) is not seen, text
+in quotes counts too (a search pattern or a message that names `tail -f` or
+holds a whole loop is refused), and an unusual bounded loop may be refused; the
+refusal says how to rephrase. A sleep placed after an inner loop of a nested loop
+is not seen. Endless `for ((;;))` and `for (;;)` loops are
+refused as well. It does
+not run in the main session, in other agents or in Codex, where these rules
+still apply. When no Python 3.8+ is available, or the check cannot run, it allows
+the call (and says so on stderr when Python is missing), so that a broken check
+does not stop all shell work.
+
 ## Evidence
 
 Each criterion needs a reproducible observation: a command and observed result,

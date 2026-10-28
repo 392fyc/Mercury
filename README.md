@@ -89,7 +89,7 @@ cd Mercury
 claude   # launch a Claude Code session at the repo root
 ```
 
-On session start, Claude Code auto-discovers every agent under `.claude/agents/` and every skill under `.claude/skills/`. Mercury registers no project-level Claude Code hooks in settings; `.claude/settings.json` only carries permission rules. The only hook is the read-only write guard in the frontmatter of the generated read-only `mercury-*` roles. Codex reads `AGENTS.md`, `.codex/config.toml`, `.codex/agents/`, and `.codex/rules/`; Mercury does not register project-level Codex hooks. No build step is required.
+On session start, Claude Code auto-discovers every agent under `.claude/agents/` and every skill under `.claude/skills/`. Mercury registers no project-level Claude Code hooks in settings; `.claude/settings.json` only carries permission rules. The only hooks are the read-only write guard in the generated read-only `mercury-*` roles and the wait guard in every generated role. Codex reads `AGENTS.md`, `.codex/config.toml`, `.codex/agents/`, and `.codex/rules/`; Mercury does not register project-level Codex hooks. No build step is required.
 
 ### Typical first-session checklist
 
@@ -114,7 +114,7 @@ Sub-agents (5, installed by `tools/mercury.py` from `packs/core/roles/` into `.c
 
 ## Hooks
 
-Mercury registers no project-level hooks in settings for Claude Code or Codex; the only hook is the read-only write guard in the frontmatter of the generated read-only Claude `mercury-*` roles (`.mercury/packs/core/hooks/`, extendable with `params.guard_write_scripts` in `.mercury/config.json`). Git safety is enforced by the permission rules in `.claude/settings.json`, `.codex/rules/`, and the guarded wrappers `scripts/codex/git-safe.ps1` and `scripts/codex/guard.ps1`. Memory location is supplied by a user-level `SessionStart` hook that only returns paths; see [Ecosystem](#ecosystem).
+Mercury registers no project-level hooks in settings for Claude Code or Codex; the only hooks are the read-only write guard in the frontmatter of the generated read-only Claude `mercury-*` roles (`.mercury/packs/core/hooks/`, extendable with `params.guard_write_scripts` in `.mercury/config.json`) and the wait guard in every generated Claude role, which blocks a wait loop without a deadline (#706). Git safety is enforced by the permission rules in `.claude/settings.json`, `.codex/rules/`, and the guarded wrappers `scripts/codex/git-safe.ps1` and `scripts/codex/guard.ps1`. Memory location is supplied by a user-level `SessionStart` hook that only returns paths; see [Ecosystem](#ecosystem).
 
 ## Multi-lane development
 

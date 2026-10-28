@@ -802,10 +802,18 @@ class MercuryToolTest(unittest.TestCase):
         self.assertIn("          shell: bash", fm)
         self.assertIn("          timeout: 60", fm)
         self.assertIn('          onFailure: "block"', fm)
-        cmd = json.loads(next(l for l in fm if l.startswith("          command: "))[len("          command: "):])
-        self.assertEqual(cmd, 'sh "${CLAUDE_PROJECT_DIR}/.mercury/packs/core/hooks/readonly_guard.sh" || exit 2')
-        self.assertNotIn("hooks:", "\n".join(self.frontmatter_of(".claude/agents/mercury-dev.md")))  # no guard without readonly_guard
-        self.assertEqual(self.frontmatter_of(".claude/agents/mercury-dev.md"), ['name: "mercury-dev"', 'description: "Builds things."', 'model: "sonnet"'])
+        cmds = [json.loads(l[len("          command: "):]) for l in fm if l.startswith("          command: ")]
+        self.assertEqual(cmds, ['sh "${CLAUDE_PROJECT_DIR}/.mercury/packs/core/hooks/readonly_guard.sh" || exit 2',
+                                'sh "${CLAUDE_PROJECT_DIR}/.mercury/packs/core/hooks/wait_guard.sh"'])
+        self.assertEqual(fm.count('          onFailure: "block"'), 1)  # only the read-only guard fails closed
+        # A role without readonly_guard runs only the wait guard (#706).
+        dev_fm = self.frontmatter_of(".claude/agents/mercury-dev.md")
+        self.assertEqual(dev_fm[:7], ['name: "mercury-dev"', 'description: "Builds things."', 'model: "sonnet"', "hooks:",
+                                      "  PreToolUse:", '    - matcher: "Bash|PowerShell"', "      hooks:"])
+        self.assertEqual([json.loads(l[len("          command: "):]) for l in dev_fm if l.startswith("          command: ")],
+                         ['sh "${CLAUDE_PROJECT_DIR}/.mercury/packs/core/hooks/wait_guard.sh"'])
+        self.assertNotIn('          onFailure: "block"', dev_fm)
+        self.assertNotIn("          timeout: 60", dev_fm)
         toml = tomllib.loads((self.dst / ".codex/agents/mercury-reviewer.toml").read_text(encoding="utf-8"))
         self.assertEqual({k: v for k, v in toml.items() if k != "developer_instructions"},
                          {"name": "mercury-reviewer", "description": "Reviews things.", "model": "gpt-6-luna",
