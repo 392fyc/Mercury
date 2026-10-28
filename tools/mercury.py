@@ -49,6 +49,7 @@ FILE_ROOTS = {(".claude", "agents"): ".md", (".codex", "agents"): ".toml", (".co
               (".github", "workflows"): ".yml"}
 SECTION_FILES = {"agents": "AGENTS.md", "claude": "CLAUDE.md"}  # fragment name -> entry file that carries the section
 GUARD_REL = f"{PACKS_REL}/core/hooks/readonly_guard.sh"
+WAIT_GUARD_REL = f"{PACKS_REL}/core/hooks/wait_guard.sh"  # every generated Claude role runs it (#706)
 RELEASE_REF = "refs/remotes/origin/master"  # an external target may only take a Mercury commit that is released here
 
 
@@ -970,14 +971,19 @@ def role_claude(name, src, role):
     for key in ("tools", "disallowedTools", "permissionMode"):
         if key in c:
             fm.append(f"{key}: {q(c[key])}")
+    fm += ["hooks:", "  PreToolUse:", '    - matcher: "Bash|PowerShell"', "      hooks:"]
     if c.get("readonly_guard"):
         # Shell form under bash: ${CLAUDE_PROJECT_DIR} is substituted by Claude Code (documented, verified), `sh` needs
         # no executable bit. `|| exit 2` turns a launcher that cannot run or exits non-zero into a block. A timeout or a
         # shell that cannot start is not an exit code: only `onFailure: "block"` (documented for Claude Code 2.1.295 and
         # later; older versions ignore the unknown field, verified on 2.1.291) blocks the call in those cases.
         cmd = f'sh "${{CLAUDE_PROJECT_DIR}}/{GUARD_REL}" || exit 2'
-        fm += ["hooks:", "  PreToolUse:", '    - matcher: "Bash|PowerShell"', "      hooks:", "        - type: command",
-               "          shell: bash", f"          command: {q(cmd)}", "          timeout: 60", '          onFailure: "block"']
+        fm += ["        - type: command", "          shell: bash", f"          command: {q(cmd)}", "          timeout: 60",
+               '          onFailure: "block"']
+    # The wait guard blocks only by its own exit 2; a launcher or interpreter failure lets the call through (fail open,
+    # see wait_guard.sh), so it has neither `|| exit 2` nor onFailure.
+    cmd = f'sh "${{CLAUDE_PROJECT_DIR}}/{WAIT_GUARD_REL}"'
+    fm += ["        - type: command", "          shell: bash", f"          command: {q(cmd)}", "          timeout: 30"]
     front = "---\n" + "\n".join(fm) + "\n---\n\n"
     head = ""
     if role.get("attribution"):

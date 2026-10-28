@@ -21,7 +21,7 @@ sources/<project>/              external projects exactly as upstream (git submo
 tools/mercury.py                the installer (`check`, `apply`, `install`) and the `source` commands
 ```
 
-Packs: `core` (required: web-research, the five roles, Git safety rules, task and ownership contracts, read-only guard), `plan` (html-plan-zh), `subagent-dev`
+Packs: `core` (required: web-research, the five roles, Git safety rules, task and ownership contracts, read-only guard, wait guard), `plan` (html-plan-zh), `subagent-dev`
 (mercury-subagent-driven-development), `lanes` (lane-handoff skill, the lane scripts, the lane guides and the lane contract),
 `dot-link` (dot-link skill, the agents event gateway and dispatcher scripts, the dot-link installer),
 `deploy` (the two workflows that deliver released Mercury commits to a downstream project; see "The deploy pack"),
@@ -452,7 +452,11 @@ What is written:
   that cannot run or exits non-zero blocks the call (`|| exit 2`). The hook has `timeout: 60` and `onFailure: "block"`:
   per the hooks documentation a PreToolUse timeout or a shell that cannot start is otherwise non-blocking, and
   `onFailure` is documented for Claude Code 2.1.295 and later (an older version, checked on 2.1.291, ignores the
-  unknown field, and `|| exit 2` still applies). Project-level frontmatter hooks run only after the workspace trust dialog is accepted.
+  unknown field, and `|| exit 2` still applies). Every generated Claude file (with or without `readonly_guard`) also
+  gets the wait guard (#706) under the same matcher: command `sh "${CLAUDE_PROJECT_DIR}/.mercury/packs/core/hooks/wait_guard.sh"`,
+  `timeout: 30`, no `|| exit 2` and no `onFailure`. It blocks a wait loop or follow command without a deadline (exit 2)
+  and fails open when no Python 3.8+ is found or the check cannot run; what it blocks and accepts is in the task contract
+  (Waiting on long-running work). Project-level frontmatter hooks run only after the workspace trust dialog is accepted.
 - Rules: `rules/mercury-<name>.rules` of a selected pack is copied byte for byte to `.codex/rules/`.
 - Managed section: the pack fragments `agents.md` (AGENTS.md) and `claude.md` (CLAUDE.md), core first and then the
   config order, plus the linked repositories (AGENTS.md only), are written between a `MERCURY:BEGIN` comment line and a

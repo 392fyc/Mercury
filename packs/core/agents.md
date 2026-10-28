@@ -20,6 +20,15 @@ bounded scope, test relevance, evidence reuse, provenance-check triggers,
 review, and completion. Read its details when needed for these decisions;
 it does not add a mandatory workflow or weaken governing requirements.
 
+## Waiting on long-running work
+
+These rules bind the main agent and every subagent in both Codex and Claude Code (Mercury #706). A local Claude Code session puts no time limit on background commands, so a wait whose condition never comes true runs until someone notices.
+
+- **Every wait has a deadline set before it starts.** Wrap a shell wait loop or a follow command such as `tail -f` in `timeout <duration>`, give a PowerShell loop a `Get-Date` or `Stopwatch` deadline, or use a watch the host bounds itself (Claude Code `Monitor` with `timeout_ms`). To learn when a background command finishes, rely on the host's completion notice instead of a second loop that polls its output.
+- **End the wait on the watched process's exit and on every failure state**, not on counting success lines. When the deadline passes, report that the work did not finish and what it last showed; do not simply wait again.
+- **Delegate with the deadline, and clean up before reporting.** Put the deadline in the delegation prompt. Before you report completion, check the background tasks you and your subagents started and stop any that ran past its deadline or is no longer needed.
+- In Claude Code every role Mercury generates runs a `PreToolUse` guard (`.mercury/packs/core/hooks/wait_guard.sh`) that blocks a Bash or PowerShell wait loop or follow command without such a deadline. It is a heuristic check, not a time limit, and it does not cover the main session; details are in the task contract.
+
 ## Mercury roles and Git safety rules
 
 - Mercury installs five roles for both hosts: `mercury-dev`, `mercury-reviewer`, `mercury-acceptance`, `mercury-design` and `mercury-research`, as `.claude/agents/mercury-*.md` and `.codex/agents/mercury-*.toml`. They are generated from `.mercury/packs/core/roles/`; change the source in Mercury, not the generated files. A project role of the same name in `.claude/agents/` takes priority over a user-level one, so these project roles apply in this project.

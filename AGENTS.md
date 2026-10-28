@@ -21,6 +21,15 @@ bounded scope, test relevance, evidence reuse, provenance-check triggers,
 review, and completion. Read its details when needed for these decisions;
 it does not add a mandatory workflow or weaken governing requirements.
 
+## Waiting on long-running work
+
+These rules bind the main agent and every subagent in both Codex and Claude Code (Mercury #706). A local Claude Code session puts no time limit on background commands, so a wait whose condition never comes true runs until someone notices.
+
+- **Every wait has a deadline set before it starts.** Wrap a shell wait loop or a follow command such as `tail -f` in `timeout <duration>`, give a PowerShell loop a `Get-Date` or `Stopwatch` deadline, or use a watch the host bounds itself (Claude Code `Monitor` with `timeout_ms`). To learn when a background command finishes, rely on the host's completion notice instead of a second loop that polls its output.
+- **End the wait on the watched process's exit and on every failure state**, not on counting success lines. When the deadline passes, report that the work did not finish and what it last showed; do not simply wait again.
+- **Delegate with the deadline, and clean up before reporting.** Put the deadline in the delegation prompt. Before you report completion, check the background tasks you and your subagents started and stop any that ran past its deadline or is no longer needed.
+- In Claude Code every role Mercury generates runs a `PreToolUse` guard (`.mercury/packs/core/hooks/wait_guard.sh`) that blocks a Bash or PowerShell wait loop or follow command without such a deadline. It is a heuristic check, not a time limit, and it does not cover the main session; details are in the task contract.
+
 ## Mercury roles and Git safety rules
 
 - Mercury installs five roles for both hosts: `mercury-dev`, `mercury-reviewer`, `mercury-acceptance`, `mercury-design` and `mercury-research`, as `.claude/agents/mercury-*.md` and `.codex/agents/mercury-*.toml`. They are generated from `.mercury/packs/core/roles/`; change the source in Mercury, not the generated files. A project role of the same name in `.claude/agents/` takes priority over a user-level one, so these project roles apply in this project.
@@ -68,7 +77,7 @@ Declared in `linked_repos` in `.mercury/config.json`; Mercury renders this secti
 - Keep unrelated changes. Stage explicit files only. Do not reset, stash, rewrite history, force-push, or remove other work to simplify a task.
 - Name task branches for their purpose, as `scripts/codex/guard.ps1` accepts them: `<type>/<purpose>[-<lane>]-<agent>`, for example `feature/TASK-703-claude`; the agent and the lane are suffixes, never prefixes (details in `.mercury/docs/guides/git-flow.md`). Never commit or push directly to `develop`, `main`, or `master`. `master` is the single trunk and develop is frozen; merge into `master` through a PR under the merge rule in `.mercury/docs/guides/git-flow.md` (PR Review and Merge): independent review of the exact head, all checks green, zero review threads (resolved ones count), no outstanding changes requested, `guard.ps1 pre-merge` passing, and the user's explicit confirmation in chat.
 - For Git writes, use `powershell -File scripts/codex/git-safe.ps1 add/commit/push`, including outside Codex. Before commit: stage intended files, inspect that staged diff, complete required checks and review, then run `powershell -File scripts/codex/guard.ps1 mark-review`. Changed staged content needs renewed review and a fresh mark. The mark records a snapshot, not review evidence.
-- Preserve the sandbox and command rules. Request scoped access when needed; never bypass a denial through another shell. Use `.codex/rules/` and guarded scripts. This project registers no hooks in settings files; the only hook is the read-only guard in the frontmatter of the generated Claude `mercury-*` roles. Check current official documentation before changing runtime wiring.
+- Preserve the sandbox and command rules. Request scoped access when needed; never bypass a denial through another shell. Use `.codex/rules/` and guarded scripts. This project registers no hooks in settings files; the only hooks are the read-only guard and the wait guard in the frontmatter of the generated Claude roles. Check current official documentation before changing runtime wiring.
 - On Windows, install software under `D:\Program Files`. Keep machine paths and local state out of portable templates.
 - Back up user-level configuration, hooks, or scripts before changing them and leave rollback instructions. Track that work in a Mercury Issue with commands, a diff summary, and verification evidence; user-level files do not use the Mercury PR delivery path.
 - Never publish credentials, tokens, private memory, or secret-matching text in commits, Issues, receipts, or migration inventories. Describe sensitive findings without copying their contents.

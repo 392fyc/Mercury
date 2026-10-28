@@ -160,7 +160,8 @@ class Generation(Base):
         role = T.parse_role(ROLE.encode(), "t")
         a = T.role_outputs("x", ".mercury/packs/core/roles/x.md", role)
         b = T.role_outputs("x", ".mercury/local/roles/x.md", role)
-        self.assertEqual({k: v.replace(b".mercury/packs/core/", b".mercury/local/") for k, v in a.items()}, b)
+        # Only the source path differs; the guard hooks point at .mercury/packs/core/hooks/ in both (#706).
+        self.assertEqual({k: v.replace(b".mercury/packs/core/roles/", b".mercury/local/roles/") for k, v in a.items()}, b)
 
     def test_a_host_section_decides_which_files_exist(self):
         self.role(text=ROLE.replace("claude:\n  model: opus\n  disallowedTools: \"Edit, Write\"\n", ""))
