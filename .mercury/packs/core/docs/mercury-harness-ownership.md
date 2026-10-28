@@ -38,8 +38,9 @@ The tool only generates, checks and retires their host files:
 Create, update and retire through `python tools/mercury.py apply` (add an entry and its source; change the source; remove
 the entry). Do not edit a generated file: a hand edit stops the next `apply`. Retiring deletes only generated files that
 the lock's `local` section recorded, never a source. Taking over an existing project file at a generated path for the
-first time needs the explicit `--adopt-local` flag. A Mercury update pull request that touches the project area is
-refused. Names in this area never start with `mercury-`.
+first time needs the explicit `--adopt-local` flag. A Mercury update pull request never changes the manifest, a source
+or the set of generated files; it may only carry generated files regenerated from unchanged sources when a Mercury
+release renders them differently, and anything else in the area is refused. Names in this area never start with `mercury-`.
 
 ## Everything else
 

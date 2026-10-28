@@ -30,6 +30,7 @@ import re
 import stat
 import subprocess
 import sys
+import tempfile
 import unicodedata
 import urllib.parse
 from datetime import date
@@ -2224,6 +2225,37 @@ def lock_commit(target):
     return c if isinstance(c, str) and SHA_RE.match(c) else None
 
 
+TOOL_REL = "tools/mercury.py"
+
+
+def check_with_recorded_tool(source, commit, argv):
+    """`check` of an external target compares with what `commit` produces, and the renderers are part of that: when the
+    commit's own tool differs from this one, run that tool (#708). Otherwise a release that changes a renderer would make
+    every downstream installation look modified until it updates. Returns its exit code, or None to check here. Only a
+    commit in the history of --source's HEAD (the release when --source is Mercury's master) runs; a commit without the
+    tool (a test repository) is checked here."""
+    rc = subprocess.run(["git", "-C", str(source), "cat-file", "-e", f"{commit}:{TOOL_REL}"], capture_output=True).returncode
+    if rc != 0:
+        return None
+    theirs = git_bytes(source, ["cat-file", "blob", f"{commit}:{TOOL_REL}"], f"{TOOL_REL} at {commit[:12]}")
+    if theirs.replace(b"\r\n", b"\n") == Path(__file__).read_bytes().replace(b"\r\n", b"\n"):
+        return None
+    rc = subprocess.run(["git", "-C", str(source), "merge-base", "--is-ancestor", commit, "HEAD"], capture_output=True).returncode
+    if rc != 0:
+        raise BuildError(f"source commit {commit[:12]} is not in the history of --source HEAD, so its tool is not run; "
+                         "check out a Mercury commit that contains it")
+    print(f"mercury: checking with the tool of {commit[:12]}, which produced the recorded files", file=sys.stderr)
+    sys.stderr.flush()
+    with tempfile.TemporaryDirectory(prefix="mercury-tool-") as tmp:
+        tool = Path(tmp) / "mercury.py"
+        tool.write_bytes(theirs)
+        try:
+            # Below the 300 s that tools/mercury_update.py gives this whole command, so the copy never outlives its caller.
+            return subprocess.run([sys.executable, "-B", str(tool), *argv], timeout=270).returncode
+        except subprocess.TimeoutExpired:
+            raise BuildError(f"the tool of {commit[:12]} did not finish within 270 seconds")
+
+
 def main(argv, worktree=False, ext=None):
     """worktree=True (tests only, never a command line flag) reads the packs from the source's working tree and index."""
     for s in (sys.stdout, sys.stderr):
@@ -2246,6 +2278,11 @@ def main(argv, worktree=False, ext=None):
             git_bytes(source, ["rev-parse", "--git-dir"], "--source is not a Git checkout")
             spec = args.source_commit or (None if args.command == "install" else lock_commit(target)) or "HEAD"
             src = CommitSource(source, resolve_commit(source, spec))
+            if args.command == "check":
+                rc = check_with_recorded_tool(source, src.commit, ["check", "--target", str(target), "--source", str(source),
+                                                                   "--source-commit", src.commit])
+                if rc is not None:
+                    return rc
         else:
             if args.source_commit:
                 raise BuildError("--source-commit applies to external targets; Mercury installs itself from its working tree")

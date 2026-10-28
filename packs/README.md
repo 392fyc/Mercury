@@ -145,7 +145,12 @@ outputs the same tool generates, checks and retires. The project owns `.mercury/
   external target the outputs and sources also go through the ignore check.
 - The lock records the outputs and the sources (`.mercury/local.json` included) with their hashes in a separate
   `local` section, apart from the pack files. `check` (and therefore `Mercury verify` and the update merge) compares the
-  outputs with what the sources produce.
+  outputs with what the sources produce. For an external target it renders with the tool of the commit it compares with
+  (`--source-commit`, else the recorded one): when that commit's `tools/mercury.py` differs from the running one, `check`
+  runs that commit's copy (the commit must be in the history of `--source` HEAD), so a release that changes a renderer
+  does not make existing installations look modified before they update (#708). The checking logic is then that
+  commit's too: a lock that names an older released commit is checked by that older tool, and only the update merge
+  (condition 3) refuses going back.
 - Lifecycle, all through `apply` (or `install`): create = add the manifest entry and the source; update = change the
   source; retire = remove the entry (or the whole manifest). Retiring deletes only outputs that the `local` section
   recorded, at the four output locations (`.claude/agents/<name>.md`, `.codex/agents/<name>.toml`,
@@ -157,7 +162,9 @@ outputs the same tool generates, checks and retires. The project owns `.mercury/
   conflict and writes nothing; with the flag that file is replaced by the generated one. The flag never takes over a link,
   a directory, a Mercury-managed path or a recorded output that was edited by hand. A file that already equals the
   output is taken into the lock without the flag.
-- Update pull requests of the deploy pack never change the project area (see "What the update job does").
+- Update pull requests of the deploy pack never change the manifest, the sources or the set of outputs. When a release
+  renders the unchanged sources differently, they carry the regenerated outputs and their hashes in the `local` section
+  (see "What the update job does").
 
 ### Adopting a v1 template installation
 
@@ -305,9 +312,12 @@ read-only one that `merge` uses for `mercury.py check`, and it never talks to th
      must hash to the value in the lock; deleting either file is refused);
    - `.mercury/config.json` must not change, and no path outside these kinds may change;
    - nothing of the project area may change: `.mercury/local.json`, anything under `.mercury/local/`, any path that the old
-     or the new lock records in its `local` section (outputs and sources), and the `local` section itself. A Mercury change
-     to the role or entry renderer that would change a project-area output therefore cannot travel in an update pull
-     request; the project takes it with its own `apply` in an ordinary pull request.
+     or the new lock records in its `local` section (outputs and sources), and the `local` section itself. One exception
+     (#708): when both locks record the same sources with the same hashes and the same outputs, an output may be
+     **modified** (never created or deleted), together with its hash in the `local` section. That is a Mercury change to
+     the role or entry renderer reaching the outputs of unchanged sources; condition 4 proves the bytes. Anything else in
+     the project area (a changed source, a new or retired output) still needs the project's own `apply` in an ordinary
+     pull request.
    Every changed path other than a deletion must be a regular file (mode 100644 or 100755), so a symlink or submodule
    in place of a managed path is refused.
 3. The new lock's `source_commit` is on Mercury's `origin/master` and descends from the old lock's commit (or there is no

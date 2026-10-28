@@ -20,7 +20,8 @@ merge    Merges the one update pull request (squash, `--match-head-commit`) only
               adopted or deleted, the lock itself, or AGENTS.md / CLAUDE.md where only the bytes between the Mercury
               markers changed; `.mercury/config.json` never changes, and neither does the project area
               (`.mercury/local.json`, anything under `.mercury/local/`, every path in either lock's `local` section, and
-              that section itself);
+              that section itself), except an output both locks record, modified because the new commit renders the
+              unchanged sources differently (same sources and outputs in the `local` section; 4 verifies the bytes);
            3. the new lock's `source_commit` is on Mercury's `origin/master` and descends from the old one's;
            4. `tools/mercury.py check` passes on a read-only checkout of that head (the files really are what that Mercury
               commit produces, so a hand-edited workflow cannot vouch for itself);
@@ -381,20 +382,30 @@ def validate_update(target, mercury, base, head):
     # shipping: it may only be deleted. Nothing re-checks the content of such a path (the new lock no longer names it), so
     # "modified instead of deleted" would otherwise carry arbitrary content through.
     allowed = set(new_files) | set(old_files) | v1 | {LOCK_REL}
-    # The project area belongs to the project: an update never touches its manifest, its sources or the outputs that
-    # either lock records for it, and never rewrites the lock's `local` section.
+    # The project area belongs to the project: an update never touches its manifest or its sources, never adds or
+    # removes an output, and never changes the sources the lock's `local` section records. The one thing it may carry is
+    # an output regenerated from those unchanged sources because the new Mercury commit renders them differently (#708):
+    # the path must be an output that both locks record, it may only be modified, and `mercury.py check` on the head proves
+    # byte for byte that it, and its hash in the `local` section, are what the unchanged sources produce at that commit.
     old_local = local_of(old_doc if old_doc is not None else {})
     new_local = local_of(new_doc)
     local_paths = {inst.fold(p) for sec in (old_local, new_local) for part in sec.values() for p in part}
+    regenerated = set()
+    if new_local["sources"] == old_local["sources"] and set(new_local["files"]) == set(old_local["files"]):
+        sources = {inst.fold(p) for p in new_local["sources"]}
+        regenerated = {p for p in new_local["files"] if inst.fold(p) not in sources}
     changes = raw_changes(target, mb, head)
     problems = []
     if not changes:
         raise Stop("the proposed head changes nothing")
-    if new_local != old_local:
-        problems.append(f"{LOCK_REL}: the local section (project area) must not change in an update pull request")
+    if not regenerated and new_local != old_local:
+        problems.append(f"{LOCK_REL}: the local section (project area) may only record outputs regenerated from unchanged "
+                        "sources in an update pull request")
     for path, mode in changes:
         if path == CONFIG_REL:
             problems.append(f"{CONFIG_REL} must not change in an update pull request")
+        elif path in regenerated and mode != "000000":
+            pass  # regenerated from unchanged sources; `mercury.py check` on the head verifies the bytes
         elif inst.fold(path) == inst.fold(LOCAL_REL) or inst.fold(path).startswith(LOCAL_DIR + "/") \
                 or inst.fold(path) in local_paths:
             problems.append(f"{path}: belongs to the project area, which an update pull request must not change")
