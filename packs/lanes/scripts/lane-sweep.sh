@@ -4,8 +4,8 @@
 #
 # A lane is "stale" if ALL THREE criteria are simultaneously older than the
 # threshold (default 14 days):
-#   1. Branch activity   — newest committerdate on the lane's branches (suffix format #703 + legacy)
-#                          (main lane also checks legacy `feature/TASK-*`)
+#   1. Branch activity   — newest committerdate on the lane's branches (suffix format #703;
+#                          main also owns every branch no other lane claims)
 #   2. Handoff activity  — mtime of the lane's `session-handoff[-<lane>].md`
 #                          file in the user-memory directory
 #   3. Issue activity    — newest `updatedAt` of any Issue carrying the
@@ -148,9 +148,8 @@ parse_active_lanes() {
   ' "$1"
 }
 
-# Newest committerdate (unix ts) across the lane's branches (#703 suffix format
-# plus the legacy `feature/lane-<lane>/*`, `lane/<short>/*`; main also owns
-# legacy `feature/TASK-*`). Empty output = no refs. See lane_branch_last_ts.
+# Newest committerdate (unix ts) across the lane's branches (#703 suffix format;
+# main also owns every branch no other lane claims). Empty output = no refs. See lane_branch_last_ts.
 # Pinned via `git -C "$REPO_ROOT"` so cwd doesn't silently hijack the result.
 branch_last_ts() {
   lane_branch_last_ts "$REPO_ROOT" "$1" "$LANES_FILE"

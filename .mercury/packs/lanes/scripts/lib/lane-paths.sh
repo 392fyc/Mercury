@@ -291,9 +291,7 @@ lane_short_name() {
 
 # lane_branch_last_ts <repo-dir> <lane> <lanes-file> — newest committer date
 # (unix seconds) over the local and remote branches that belong to <lane>;
-# empty when there are none. Old formats (`feature/lane-<lane>/*`,
-# `lane/<short>/*`) count next to the #703
-# suffix format. A new-format branch belongs to the lane whose registered name
+# empty when there are none. Only the #703 suffix format counts. A branch belongs to the lane whose registered name
 # it ends with (longest wins); the main lane also owns new-format branches no
 # other lane claims.
 lane_branch_last_ts() {
@@ -308,9 +306,6 @@ lane_branch_last_ts() {
       *) continue ;;
     esac
     [ "$name" = HEAD ] && continue
-    case "$name" in
-      "feature/lane-${lane}/"*|"lane/${short}/"*) printf '%s\n' "$ts"; return 0 ;;
-    esac
     # The old main-lane form `feature/TASK-*` is an ordinary new-format name:
     # it counts for main only when no other lane's suffix owns it (#703 review M1).
     lane_branch_format_ok "$name" || continue
