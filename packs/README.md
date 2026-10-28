@@ -21,7 +21,7 @@ sources/<project>/              external projects exactly as upstream (git submo
 tools/mercury.py                the installer (`check`, `apply`, `install`) and the `source` commands
 ```
 
-Packs: `core` (required: web-research, the five roles, Git safety rules, task and ownership contracts, read-only guard, wait guard), `plan` (html-plan-zh), `subagent-dev`
+Packs: `core` (required: web-research, test-file-delivery, the five roles, Git safety rules, task and ownership contracts, read-only guard, wait guard), `plan` (html-plan-zh), `subagent-dev`
 (mercury-subagent-driven-development), `lanes` (lane-handoff skill, the lane scripts, the lane guides and the lane contract),
 `dot-link` (dot-link skill, the agents event gateway and dispatcher scripts, the dot-link installer),
 `deploy` (the two workflows that deliver released Mercury commits to a downstream project; see "The deploy pack"),
