@@ -129,8 +129,15 @@ def receive(manifest, input_path, output):
                 if previous != block:
                     raise ValueError("conflicting saved part %d" % part)
             else:
-                with dest.open("xb") as target:
-                    target.write(block)
+                pending = dest.with_name(dest.name + ".incoming-" + uuid.uuid4().hex)
+                target = pending.open("xb")
+                try:
+                    with target:
+                        target.write(block)
+                        target.flush()
+                    os.link(pending, dest)
+                finally:
+                    pending.unlink()
             accepted += 1
     if not accepted:
         raise ValueError("no packets received")
@@ -152,7 +159,7 @@ def assemble(incoming, dest):
                     block = raw.read(m["chunk_bytes"] + 1)
                 expected = min(m["chunk_bytes"], m["total_bytes"] - total)
                 if len(block) != expected:
-                    raise ValueError("saved part size mismatch")
+                    raise ValueError("saved part %d size mismatch" % part)
                 digest.update(block)
                 total += len(block)
                 stream.write(block)
@@ -215,7 +222,7 @@ def main():
             result = assemble(args.incoming, args.dest)
         print(dump(result))
         return 0
-    except (ValueError, OSError, binascii.Error, TypeError) as error:
+    except (ValueError, OSError, binascii.Error, TypeError, RecursionError) as error:
         # Do not echo exception text: JSON errors and OS paths can expose input or local identities.
         reason = str(error) if type(error) is ValueError else type(error).__name__
         print("transfer failed: " + reason, file=sys.stderr)

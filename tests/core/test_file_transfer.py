@@ -70,6 +70,49 @@ class FileTransferTests(unittest.TestCase):
         transfer.assemble(self.incoming, self.dest)
         self.assertEqual(self.dest.read_bytes(), self.data)
 
+    def test_partial_receive_write_can_be_retried(self):
+        original_open = Path.open
+
+        class PartialWriter:
+            def __init__(self, raw):
+                self.raw = raw
+
+            def __enter__(self):
+                return self
+
+            def write(self, data):
+                self.raw.write(data[:17])
+                self.raw.flush()
+                raise OSError("simulated interrupted write")
+
+            def __exit__(self, *args):
+                self.raw.close()
+
+        def injected_open(path, *args, **kwargs):
+            raw = original_open(path, *args, **kwargs)
+            if args and args[0] == "xb":
+                return PartialWriter(raw)
+            return raw
+
+        with mock.patch.object(Path, "open", injected_open):
+            with self.assertRaises(OSError):
+                self.receive(self.lines[:1])
+        self.assertFalse((self.incoming / "part-00000001.bin").exists())
+        self.assertEqual(list(self.incoming.glob("*.incoming-*")), [])
+        self.receive(self.lines)
+        transfer.assemble(self.incoming, self.dest)
+        self.assertEqual(self.dest.read_bytes(), self.data)
+
+    def test_receive_publish_failure_can_be_retried(self):
+        with mock.patch.object(transfer.os, "link", side_effect=OSError("unsupported")):
+            with self.assertRaises(OSError):
+                self.receive(self.lines[:1])
+        self.assertFalse((self.incoming / "part-00000001.bin").exists())
+        self.assertEqual(list(self.incoming.glob("*.incoming-*")), [])
+        self.receive(self.lines)
+        transfer.assemble(self.incoming, self.dest)
+        self.assertEqual(self.dest.read_bytes(), self.data)
+
     def test_packet_corruption_is_rejected(self):
         original = json.loads(self.lines[0][len(transfer.PREFIX):])
         for key, value in (("transfer_id", "0" * 32), ("offset", 1), ("bytes", 1),
@@ -209,6 +252,19 @@ class FileTransferTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertNotIn("private-location", result.stderr)
         self.assertEqual(result.stdout, "")
+
+    def test_deep_json_is_reported_without_traceback_or_private_path(self):
+        batch = self.batch(["[" * 60000 + "]" * 60000])
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "receive", "--manifest", str(self.manifest),
+             "--input", str(batch), "--out", str(self.incoming)],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr.strip(), "transfer failed: RecursionError")
+        self.assertNotIn(str(SCRIPT), result.stderr)
+        self.assertNotIn(str(self.root), result.stderr)
 
 
 if __name__ == "__main__":
