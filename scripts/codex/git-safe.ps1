@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true, Position = 0)]
-  [ValidateSet("add", "commit", "push")]
+  [ValidateSet("add", "commit", "push", "sync")]
   [string]$Action,
 
   [string]$Message,
@@ -152,8 +152,38 @@ function Assert-HasStagedChanges {
     throw "Unable to inspect staged changes."
   }
 
-  if ([string]::IsNullOrWhiteSpace(($staged -join ""))) {
+  # A merge left by `sync` may bring nothing the branch lacks, and still has to be concluded.
+  if ([string]::IsNullOrWhiteSpace(($staged -join "")) -and -not (Test-GitPath -Name "MERGE_HEAD")) {
     throw "No staged changes found. Stage explicit files with git-safe add first."
+  }
+}
+
+function Test-GitPath {
+  param([string]$Name)
+
+  $path = git -C $repoRoot rev-parse --git-path $Name
+  if ($LASTEXITCODE -ne 0) {
+    throw "Unable to locate $Name in the Git directory."
+  }
+  if (-not [System.IO.Path]::IsPathRooted($path)) {
+    $path = Join-Path $repoRoot $path
+  }
+  return (Test-Path -LiteralPath $path)
+}
+
+function Assert-ReadyToSync {
+  # Every state that a merge would mix into, or that a merge would leave half done, is refused before anything changes.
+  foreach ($name in @("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD", "rebase-merge", "rebase-apply", "BISECT_LOG")) {
+    if (Test-GitPath -Name $name) {
+      throw "Another Git operation is in progress ($name). Finish or abandon it before git-safe sync."
+    }
+  }
+  $changes = git -C $repoRoot status --porcelain --untracked-files=no
+  if ($LASTEXITCODE -ne 0) {
+    throw "Unable to inspect the working tree."
+  }
+  if (-not [string]::IsNullOrWhiteSpace(($changes -join ""))) {
+    throw "The branch has staged or unstaged changes. Commit them through git-safe, or set them aside, before git-safe sync."
   }
 }
 
@@ -192,6 +222,36 @@ switch ($Action) {
     Invoke-Guard -GuardAction "pre-push" -PushCommandText $pushCommand
     $gitArgs = @("-C", $repoRoot, "push") + $Arguments
     Invoke-Git -GitArgs $gitArgs
+    exit 0
+  }
+  "sync" {
+    # Merge the latest trunk into the current task branch (#716). The base is always origin/master, the single trunk;
+    # the merge is never committed, pushed or replayed here: the result is reviewed and concluded with git-safe commit.
+    if (($Arguments -and $Arguments.Count -gt 0) -or -not [string]::IsNullOrEmpty($Message)) {
+      throw "git-safe sync takes no arguments: it always merges origin/master into the current task branch."
+    }
+    Invoke-Guard -GuardAction "pre-stage"
+    Assert-ReadyToSync
+    Invoke-Git -GitArgs @("-C", $repoRoot, "fetch", "--no-tags", "origin", "+refs/heads/master:refs/remotes/origin/master")
+    & git -C $repoRoot merge-base --is-ancestor refs/remotes/origin/master HEAD
+    if ($LASTEXITCODE -eq 0) {
+      Write-Output "sync=up-to-date"
+      exit 0
+    }
+    & git -C $repoRoot merge --no-ff --no-commit refs/remotes/origin/master
+    $mergeExit = $LASTEXITCODE
+    $unmerged = @(git -C $repoRoot diff --name-only --diff-filter=U)
+    if ($unmerged.Count -gt 0) {
+      Write-Output "sync=conflicts"
+      $unmerged | ForEach-Object { Write-Output "conflict: $_" }
+      Write-Output "Resolve each file keeping the intent of both sides, stage it with git-safe add, review the result, run guard.ps1 mark-review, then git-safe commit."
+      exit 1
+    }
+    if ($mergeExit -ne 0 -or -not (Test-GitPath -Name "MERGE_HEAD")) {
+      throw "git merge of origin/master failed (exit $mergeExit)."
+    }
+    Write-Output "sync=merged"
+    Write-Output "The merge is staged but not committed: review it, run guard.ps1 mark-review, then git-safe commit."
     exit 0
   }
 }

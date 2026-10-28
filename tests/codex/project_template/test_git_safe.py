@@ -169,5 +169,169 @@ class BranchNamingTest(unittest.TestCase):
             self.assertIn("<type>/<purpose>[-<lane>]-<agent>", out, branch)
 
 
+@unittest.skipUnless(PWSH, "PowerShell is not available")
+class GitSafeSyncTest(unittest.TestCase):
+    """git-safe sync merges origin/master into the current task branch and stops before committing (#716)."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        self.origin = root / "origin.git"
+        git(root, "init", "-q", "--bare", "-b", "master", self.origin.as_posix())
+        self.trunk = root / "trunk"  # where "other PRs" land on master
+        git(root, "clone", "-q", self.origin.as_posix(), "trunk")
+        git(self.trunk, "config", "core.autocrlf", "false")
+        git(self.trunk, "checkout", "-q", "-b", "master")
+        (self.trunk / "shared.txt").write_text("line one\n")
+        git(self.trunk, "add", "shared.txt")
+        git(self.trunk, "commit", "-q", "-m", "seed")
+        git(self.trunk, "push", "-q", "origin", "master")
+        self.repo = root / "repo"
+        git(root, "clone", "-q", self.origin.as_posix(), "repo")
+        for key, value in (("core.autocrlf", "false"), ("user.name", "t"), ("user.email", "t@example.com")):
+            git(self.repo, "config", key, value)
+        git(self.repo, "checkout", "-q", "-b", "feature/TASK-1-codex")
+        (self.repo / "scripts/codex").mkdir(parents=True)
+        for name in ("git-safe.ps1", "guard.ps1"):
+            shutil.copyfile(SCRIPTS / name, self.repo / "scripts/codex" / name)
+        (self.repo / ".git/info/exclude").write_text("scripts/\n.mercury/\n")
+
+    def run_ps(self, script, *args):
+        r = subprocess.run([PWSH, "-NoLogo", "-NoProfile", "-NonInteractive", "-File", str(self.repo / "scripts/codex" / script), *args],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=self.repo, timeout=120)
+        return r.returncode, r.stdout + r.stderr
+
+    def sync(self, *args):
+        return self.run_ps("git-safe.ps1", "sync", *args)
+
+    def land_on_master(self, name, text):
+        (self.trunk / name).write_text(text)
+        git(self.trunk, "add", name)
+        git(self.trunk, "commit", "-q", "-m", f"land {name}")
+        git(self.trunk, "push", "-q", "origin", "master")
+
+    def commit_on_branch(self, name, text):
+        (self.repo / name).write_text(text)
+        git(self.repo, "add", name)
+        git(self.repo, "commit", "-q", "-m", f"branch {name}")
+
+    def merging(self):
+        return (self.repo / ".git/MERGE_HEAD").exists()
+
+    def test_up_to_date_changes_nothing(self):
+        head = git(self.repo, "rev-parse", "HEAD")
+        code, out = self.sync()
+        self.assertEqual(code, 0, out)
+        self.assertIn("sync=up-to-date", out)
+        self.assertFalse(self.merging())
+        self.assertEqual(git(self.repo, "rev-parse", "HEAD"), head)
+
+    def test_a_clean_merge_is_staged_then_concluded_with_git_safe_commit(self):
+        self.commit_on_branch("mine.txt", "mine\n")
+        self.land_on_master("theirs.txt", "theirs\n")
+        code, out = self.sync()
+        self.assertEqual(code, 0, out)
+        self.assertIn("sync=merged", out)
+        self.assertTrue(self.merging())  # stopped before committing
+        self.assertEqual(git(self.repo, "rev-list", "--count", "HEAD"), "2\n")
+        self.assertEqual(self.run_ps("git-safe.ps1", "commit", "-Message", "chore(TASK-1): merge master")[0], 1)  # no review mark
+        self.assertEqual(self.run_ps("guard.ps1", "mark-review")[0], 0)
+        code, out = self.run_ps("git-safe.ps1", "commit", "-Message", "chore(TASK-1): merge master")
+        self.assertEqual(code, 0, out)
+        self.assertFalse(self.merging())
+        parents = git(self.repo, "rev-list", "--parents", "-n", "1", "HEAD").split()
+        self.assertEqual(parents[2], git(self.repo, "rev-parse", "origin/master").strip())
+        self.assertTrue((self.repo / "theirs.txt").exists())
+        self.assertEqual(git(self.repo, "rev-parse", "--abbrev-ref", "HEAD").strip(), "feature/TASK-1-codex")
+
+    def test_a_fast_forward_still_stops_as_a_merge(self):
+        self.land_on_master("theirs.txt", "theirs\n")
+        code, out = self.sync()
+        self.assertEqual(code, 0, out)
+        self.assertTrue(self.merging())  # --no-ff: the branch history stays its own
+
+    def test_conflicts_are_listed_and_left_for_the_agent(self):
+        self.commit_on_branch("shared.txt", "branch edit\n")
+        self.land_on_master("shared.txt", "master edit\n")
+        code, out = self.sync()
+        self.assertEqual(code, 1, out)
+        self.assertIn("sync=conflicts", out)
+        self.assertIn("conflict: shared.txt", out)
+        self.assertTrue(self.merging())
+        code, out = self.sync()  # a merge in progress is never stacked on
+        self.assertNotEqual(code, 0)
+        self.assertIn("Another Git operation is in progress (MERGE_HEAD)", out)
+        (self.repo / "shared.txt").write_text("branch edit\nmaster edit\n")
+        self.assertEqual(self.run_ps("git-safe.ps1", "add", "shared.txt")[0], 0)
+        self.assertEqual(self.run_ps("guard.ps1", "mark-review")[0], 0)
+        code, out = self.run_ps("git-safe.ps1", "commit", "-Message", "chore(TASK-1): merge master")
+        self.assertEqual(code, 0, out)
+        self.assertFalse(self.merging())
+
+    def test_refuses_local_changes_protected_branches_and_arguments(self):
+        self.land_on_master("theirs.txt", "theirs\n")
+        (self.repo / "shared.txt").write_text("unstaged\n")
+        code, out = self.sync()
+        self.assertNotEqual(code, 0)
+        self.assertIn("staged or unstaged changes", out)
+        git(self.repo, "add", "shared.txt")
+        self.assertIn("staged or unstaged changes", self.sync()[1])
+        git(self.repo, "reset", "-q", "--hard")
+        for args in (("origin", "develop"), ("-Message", "x")):
+            with self.subTest(args=args):
+                code, out = self.sync(*args)
+                self.assertNotEqual(code, 0)
+                self.assertIn("takes no arguments", out)
+        for branch, reason in (("master", "Protected branch 'master'"), ("scratch", "Branch 'scratch' does not match")):
+            with self.subTest(branch=branch):
+                git(self.repo, "checkout", "-q", "-B", branch)
+                code, out = self.sync()
+                self.assertNotEqual(code, 0)
+                self.assertIn(reason, out)
+        git(self.repo, "checkout", "-q", "--detach")
+        code, out = self.sync()
+        self.assertNotEqual(code, 0)
+        self.assertIn("Branch 'HEAD' does not match", out)
+        self.assertFalse(self.merging())
+
+    def test_refuses_other_operations_in_progress(self):
+        self.land_on_master("theirs.txt", "theirs\n")
+        marker = self.repo / ".git/CHERRY_PICK_HEAD"
+        marker.write_text(git(self.repo, "rev-parse", "HEAD"))
+        code, out = self.sync()
+        self.assertNotEqual(code, 0)
+        self.assertIn("(CHERRY_PICK_HEAD)", out)
+        self.assertFalse(self.merging())
+
+    def test_a_failed_merge_without_conflicts_leaves_nothing_behind(self):
+        self.land_on_master("theirs.txt", "theirs\n")
+        (self.repo / "theirs.txt").write_text("untracked, would be overwritten\n")
+        head = git(self.repo, "rev-parse", "HEAD")
+        code, out = self.sync()
+        self.assertNotEqual(code, 0)
+        self.assertIn("git merge of origin/master failed", out)
+        self.assertFalse(self.merging())
+        self.assertEqual(git(self.repo, "rev-parse", "HEAD"), head)
+        self.assertEqual((self.repo / "theirs.txt").read_text(), "untracked, would be overwritten\n")
+
+    def test_a_merge_that_changes_no_file_can_still_be_concluded(self):
+        self.commit_on_branch("theirs.txt", "same\n")  # the branch already has what master brings
+        self.land_on_master("theirs.txt", "same\n")
+        code, out = self.sync()
+        self.assertEqual(code, 0, out)
+        self.assertEqual(git(self.repo, "diff", "--cached", "--name-only"), "")
+        self.assertEqual(self.run_ps("guard.ps1", "mark-review")[0], 0)
+        code, out = self.run_ps("git-safe.ps1", "commit", "-Message", "chore(TASK-1): merge master")
+        self.assertEqual(code, 0, out)
+        self.assertFalse(self.merging())
+
+    def test_an_ordinary_commit_with_nothing_staged_is_still_refused(self):
+        self.assertEqual(self.run_ps("guard.ps1", "mark-review")[0], 0)
+        code, out = self.run_ps("git-safe.ps1", "commit", "-Message", "chore(TASK-1): nothing")
+        self.assertNotEqual(code, 0)
+        self.assertIn("No staged changes found", out)
+
+
 if __name__ == "__main__":
     unittest.main()
