@@ -79,8 +79,8 @@ chmod +x "$STUB_BIN/gh"
 # Stub `git` — intercepts ls-remote and log; delegates other git commands to REAL_GIT.
 printf '%s\n' '#!/bin/bash' \
   'if [[ "$*" == *"ls-remote"* ]]; then' \
-  "  printf '%s\t%s\n' 'abc123def456' 'refs/heads/feature/lane-main/TASK-001'" \
-  "  printf '%s\t%s\n' '789xyz000111' 'refs/heads/feature/lane-side-multi-lane/TASK-309'" \
+  "  printf '%s\t%s\n' 'abc123def456' 'refs/heads/feature/TASK-001-main-claude'" \
+  "  printf '%s\t%s\n' '789xyz000111' 'refs/heads/feature/TASK-309-side-multi-lane-claude'" \
   '  exit 0; fi' \
   'if [[ "$*" == *"log"* ]]; then' \
   '  echo "2026-04-26T10:00:00Z"; exit 0; fi' \
@@ -197,7 +197,7 @@ chmod +x "$STUB_DATE1/gh"
 # Write git stub: returns FRESH_TS for log; real git for everything else
 printf '%s\n' '#!/bin/bash' \
   'if [[ "$*" == *"ls-remote"* ]]; then' \
-  "  printf '%s\t%s\n' 'aaabbbccc111' 'refs/heads/feature/lane-main/TASK-DATE'; exit 0; fi" \
+  "  printf '%s\t%s\n' 'aaabbbccc111' 'refs/heads/feature/TASK-DATE-main-claude'; exit 0; fi" \
   'if [[ "$*" == *"log"* ]]; then' \
   "  echo '$FRESH_TS'; exit 0; fi" \
   "exec '$REAL_GIT' \"\$@\"" > "$STUB_DATE1/git"
@@ -252,7 +252,7 @@ chmod +x "$STUB_DATE2/gh"
 
 printf '%s\n' '#!/bin/bash' \
   'if [[ "$*" == *"ls-remote"* ]]; then' \
-  "  printf '%s\t%s\n' 'aaabbbccc222' 'refs/heads/feature/lane-main/TASK-DATE'; exit 0; fi" \
+  "  printf '%s\t%s\n' 'aaabbbccc222' 'refs/heads/feature/TASK-DATE-main-claude'; exit 0; fi" \
   'if [[ "$*" == *"log"* ]]; then' \
   "  echo '$STALE_TS'; exit 0; fi" \
   "exec '$REAL_GIT' \"\$@\"" > "$STUB_DATE2/git"
@@ -294,8 +294,8 @@ printf '%s\n' '#!/bin/bash' \
   'echo '"'"'[]'"'"'; exit 0' > "$STUB_REG/gh"
 printf '%s\n' '#!/bin/bash' \
   'if [[ "$*" == *"ls-remote"* ]]; then' \
-  "  printf '%s\t%s\n' 'aaa111' 'refs/heads/lane/art/12-palette'" \
-  "  printf '%s\t%s\n' 'bbb222' 'refs/heads/lane/other/3-x'; exit 0; fi" \
+  "  printf '%s\t%s\n' 'aaa111' 'refs/heads/feature/12-palette-art'" \
+  "  printf '%s\t%s\n' 'bbb222' 'refs/heads/feature/3-x-other'; exit 0; fi" \
   'if [[ "$*" == *"log"* ]]; then echo "2026-04-26T10:00:00Z"; exit 0; fi' \
   "exec '$REAL_GIT' \"\$@\"" > "$STUB_REG/git"
 chmod +x "$STUB_REG/gh" "$STUB_REG/git"
@@ -320,7 +320,7 @@ cat > "$REG" <<'LANES'
 - **Short name**: `art`
 - **Session**: `8f1c2e3a`
 - **Peers**: `talent`, `main`
-- **Branch**: `lane/art/12-palette`
+- **Branch**: `feature/12-palette-art`
 - **Status**: `active`
 
 ```
@@ -360,7 +360,7 @@ reg_check "T_REG registered lane without a label is listed" '[.lanes[].name] | i
 reg_check "T_REG missing Harness defaults to claude (D1)" '.lanes[] | select(.name=="art") | .registry.harness == "claude"'
 reg_check "T_REG peers split into a list" '.lanes[] | select(.name=="art") | .registry.peers == ["talent","main"]'
 reg_check "T_REG unlabelled lane has no issues" '.lanes[] | select(.name=="art") | .issues == []'
-reg_check "T_REG lane/<short>/ branches counted (Rule 2.1)" '.lanes[] | select(.name=="art") | [.branches[].ref] == ["lane/art/12-palette"]'
+reg_check "T_REG <purpose>-<short> branches counted (#703)" '.lanes[] | select(.name=="art") | [.branches[].ref] == ["feature/12-palette-art"]'
 reg_check "T_REG fenced example not parsed" '[.lanes[].name] | index("fenced") == null'
 reg_check "T_REG ~~~ fenced example not parsed" '[.lanes[].name] | index("tildefenced") == null'
 reg_check "T_REG indented fence example not parsed" '[.lanes[].name] | index("indentfenced") == null'
@@ -400,9 +400,9 @@ printf '%s\n' '#!/bin/bash' \
   'echo '"'"'[]'"'"'; exit 0' > "$STUB_REG/gh"
 printf '%s\n' '#!/bin/bash' \
   'if [[ "$*" == *"ls-remote"* ]]; then' \
-  "  printf '%s\t%s\n' 'a1' 'refs/heads/lane/art/12-palette'" \
-  "  printf '%s\t%s\n' 'a2' 'refs/heads/lane/artist/13-t'" \
-  "  printf '%s\t%s\n' 'a3' 'refs/heads/lane/solo/4-x'; exit 0; fi" \
+  "  printf '%s\t%s\n' 'a1' 'refs/heads/feature/12-palette-art'" \
+  "  printf '%s\t%s\n' 'a2' 'refs/heads/feature/13-t-artist'" \
+  "  printf '%s\t%s\n' 'a3' 'refs/heads/feature/4-x-solo'; exit 0; fi" \
   'if [[ "$*" == *"log"* ]]; then echo "2026-04-26T10:00:00Z"; exit 0; fi' \
   "exec '$REAL_GIT' \"\$@\"" > "$STUB_REG/git"
 chmod +x "$STUB_REG/gh" "$STUB_REG/git"
@@ -421,7 +421,7 @@ cat > "$REG2" <<'LANES'
 
 - **Short name** (Δ6): `art`
 - **Harness**: `Codex`
-- **Branch**: `lane/art/12-palette` — see Issue #12
+- **Branch**: `feature/12-palette-art` — see Issue #12
 
 ### Conventions
 
@@ -439,13 +439,13 @@ reg_check "T_REG2 annotated bullet read (worktree)" '.lanes[] | select(.name=="m
 reg_check "T_REG2 trailing note dropped (status)" '.lanes[] | select(.name=="main") | .registry.status == "active"'
 reg_check "T_REG2 first occurrence of a field wins" '.lanes[] | select(.name=="main") | .registry.status == "active"'
 reg_check "T_REG2 annotated Short name read" '.lanes[] | select(.name=="art") | .registry.short == "art"'
-reg_check "T_REG2 trailing note dropped (branch)" '.lanes[] | select(.name=="art") | .registry.branch == "lane/art/12-palette"'
+reg_check "T_REG2 trailing note dropped (branch)" '.lanes[] | select(.name=="art") | .registry.branch == "feature/12-palette-art"'
 reg_check "T_REG2 harness lower-cased" '.lanes[] | select(.name=="art") | .registry.harness == "codex"'
 reg_check "T_REG2 non-lane ### heading does not leak into the previous lane" '.lanes[] | select(.name=="art") | .registry.status == null'
 reg_check "T_REG2 every lane has the same registry keys" '[.lanes[] | select(.registry != null) | .registry | keys] | unique | length == 1'
-reg_check "T_REG2 art does not count artist branches" '.lanes[] | select(.name=="art") | [.branches[].ref] == ["lane/art/12-palette"]'
-reg_check "T_REG2 artist counts only its own" '.lanes[] | select(.name=="artist") | [.branches[].ref] == ["lane/artist/13-t"]'
-reg_check "T_REG2 unregistered label falls back to lane/<name>/" '.lanes[] | select(.name=="solo") | ([.branches[].ref] == ["lane/solo/4-x"]) and .registry == null'
+reg_check "T_REG2 art does not count artist branches" '.lanes[] | select(.name=="art") | [.branches[].ref] == ["feature/12-palette-art"]'
+reg_check "T_REG2 artist counts only its own" '.lanes[] | select(.name=="artist") | [.branches[].ref] == ["feature/13-t-artist"]'
+reg_check "T_REG2 unregistered label falls back to the lane name as suffix" '.lanes[] | select(.name=="solo") | ([.branches[].ref] == ["feature/4-x-solo"]) and .registry == null'
 
 # CRLF from jq (Git for Windows): wrap jq so every line ends in \r\n.
 REAL_JQ="$(command -v jq)"
@@ -456,7 +456,7 @@ set +e
 MERCURY_LANES_FILE="$REG2" bash "$LANE_STATUS" 2>/dev/null
 set -e
 rm -f "$STUB_REG/jq"
-reg_check "T_REG2 CRLF jq: lane/<short>/ still counted" '.lanes[] | select(.name=="art") | [.branches[].ref] == ["lane/art/12-palette"]'
+reg_check "T_REG2 CRLF jq: <purpose>-<short> still counted" '.lanes[] | select(.name=="art") | [.branches[].ref] == ["feature/12-palette-art"]'
 
 # Default resolution: no override, registry found in the project's lane home.
 RR="$REPO_ROOT/realrepo"; "$REAL_GIT" init -q "$RR"
@@ -474,7 +474,7 @@ fi
 
 # T_SUF — #703 suffix branch format: <type>/<purpose>-<short>[-<agent>] has no
 # shared prefix, so every remote head is listed and matched per lane by suffix
-# (longest registered name wins); the legacy lane/<short>/ prefix still counts.
+# (longest registered name wins); the pre-#703 lane/<short>/ prefix no longer counts.
 printf '%s\n' '#!/bin/bash' \
   'if [[ "$*" == *"label list"* ]]; then' \
   '  echo '"'"'[{"name":"lane:solo"}]'"'"'; exit 0; fi' \
@@ -517,7 +517,7 @@ rm -f "$REG_JSON"
 set +e
 MERCURY_LANES_FILE="$REG3" bash "$LANE_STATUS" 2>/dev/null
 set -e
-reg_check "T_SUF suffix + agent suffix counted for art; legacy lane/art/ too; artist branch and codex/ prefix not" '.lanes[] | select(.name=="art") | ([.branches[].ref] | sort) == ["feature/12-palette-art-claude","lane/art/9-legacy"]'
+reg_check "T_SUF suffix + agent suffix counted for art; pre-#703 lane/art/, artist branch and codex/ prefix not" '.lanes[] | select(.name=="art") | [.branches[].ref] == ["feature/12-palette-art-claude"]'
 reg_check "T_SUF artist owns only its own suffix" '.lanes[] | select(.name=="artist") | [.branches[].ref] == ["feature/13-t-artist-codex"]'
 reg_check "T_SUF longest match: side-mlane owns ...-side-mlane-codex" '.lanes[] | select(.name=="side-multi-lane") | [.branches[].ref] == ["fix/7-y-side-mlane-codex"]'
 reg_check "T_SUF longest match: mlane does not own ...-side-mlane-codex" '.lanes[] | select(.name=="mlane") | [.branches[].ref] == ["fix/8-z-mlane"]'

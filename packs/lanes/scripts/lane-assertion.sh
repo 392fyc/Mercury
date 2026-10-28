@@ -26,13 +26,11 @@
 #        (main needs no lane suffix), OR `develop|main|master` itself
 #        (a session can run on a protected branch while not yet branched).
 #        `feature/TASK-<N>-*` is an ordinary new-format name: main owns it
-#        unless another lane's suffix does. Old formats stay accepted so
-#        in-flight work is not interrupted (legacy compat):
-#        `feature/lane-main/TASK-<N>-*`, `lane/main/*`.
+#        unless another lane's suffix does.
 #      - side: a new-format branch whose owning lane (longest suffix match)
-#        is this lane (no protected branch, develop is frozen),
-#        OR the old formats (legacy compat) `feature/lane-<lane>/TASK-<N>-*`,
-#        `lane/<short>/*`.
+#        is this lane (no protected branch, develop is frozen).
+#      The pre-#703 forms `feature/lane-<lane>/TASK-<N>-*` and `lane/<short>/*`
+#      are no longer accepted.
 #
 # If all three align → exit 0. Mismatch → fail loud with explicit guidance.
 # Soft-disable via MERCURY_LANE_ASSERT_DISABLED=1 for break-glass scenarios.
@@ -362,8 +360,7 @@ if [ -z "$ACTUAL_BRANCH" ]; then
   fi
 fi
 
-# Branch validation rules per lane (matches lane-naming.md §Δ6 + main lane
-# legacy convention). Detached HEAD and an empty branch (e.g. before any
+# Branch validation rules per lane (#703 suffix format). Detached HEAD and an empty branch (e.g. before any
 # checkout) are tolerated as warn — not a fatal mismatch — to avoid
 # blocking sessions that legitimately operate without a branch.
 branch_ok=0
@@ -374,9 +371,6 @@ if [ -z "$ACTUAL_BRANCH" ]; then
 elif [ "$LANE_NAME" = "main" ]; then
   case "$ACTUAL_BRANCH" in
     develop|master|main) branch_ok=1 ;;
-    # Legacy formats (pre-#703), accepted so in-flight work keeps running.
-    feature/lane-main/TASK-*) branch_ok=1 ;;
-    lane/main/*) branch_ok=1 ;;
     # `feature/TASK-*` (old main-lane form) is NOT accepted here: it is a
     # new-format name too, so it goes through the ownership check below and
     # `feature/TASK-12-x-guard-codex` still belongs to lane `guard` (#703 M1).
@@ -391,14 +385,13 @@ elif [ "$LANE_NAME" = "main" ]; then
           branch_reason="main lane: branch '$ACTUAL_BRANCH' ends with the name of lane '$owner' (suffix <purpose>-<lane>[-<agent>]), so it belongs to that lane"
         fi
       else
-        branch_reason="main lane expects <type>/<purpose>[-<lane>][-<agent>] (types: $(lane_branch_types | tr '\n' ' ')) or develop / main / master (legacy: feature/lane-main/*, lane/main/*); got '$ACTUAL_BRANCH'"
+        branch_reason="main lane expects <type>/<purpose>[-<lane>][-<agent>] (types: $(lane_branch_types | tr '\n' ' ')) or develop / main / master; got '$ACTUAL_BRANCH'"
       fi ;;
   esac
 else
   # For side lanes, derive the short name. Convention: <name> with -multi-
-  # contractions (e.g. side-multi-lane → side-mlane). Lookup falls back to
-  # exact match against branch prefix `lane/<lane-name>/...` if no Short name
-  # field is found in LANES.md.
+  # contractions (e.g. side-multi-lane → side-mlane). Without a Short name
+  # field in LANES.md, the lane name itself is used.
   SHORT_NAME=$(awk -v lane="$LANE_NAME" '
   BEGIN { in_section=0; in_fence=0 }
   /^```/ { in_fence = !in_fence; next }
@@ -441,27 +434,20 @@ else
   # side-lane operating branch — accepting one would let a misrouted session
   # pass (Argus iter2 Minor, PR #346). A fresh side worktree starts on its own
   # init branch (see lane-naming.md). Work branches use the #703 format with
-  # this lane as the owning suffix; the old formats remain accepted (legacy compat).
-  case "$ACTUAL_BRANCH" in
-    # Legacy formats (pre-#703), accepted so in-flight work keeps running.
-    "feature/lane-${LANE_NAME}/TASK-"*) branch_ok=1 ;;
-    "lane/${SHORT_NAME}/"*) branch_ok=1 ;;
-    *)
-      if lane_branch_format_ok "$ACTUAL_BRANCH"; then
-        # Longest registered name wins; this lane's own short/name is always a candidate.
-        # shellcheck disable=SC2046
-        owner=$(lane_branch_owner "$ACTUAL_BRANCH" "$SHORT_NAME" $(lane_registered_names "$LANES_FILE" 2>/dev/null) || true)
-        if [ "$owner" = "$SHORT_NAME" ]; then
-          branch_ok=1
-        elif [ -n "$owner" ]; then
-          branch_reason="lane '$LANE_NAME' (short '$SHORT_NAME'): branch '$ACTUAL_BRANCH' belongs to lane '$owner' (longest suffix match)"
-        else
-          branch_reason="lane '$LANE_NAME' (short '$SHORT_NAME') expects <type>/<purpose>-${SHORT_NAME}[-<agent>]; got '$ACTUAL_BRANCH'"
-        fi
-      else
-        branch_reason="lane '$LANE_NAME' (short '$SHORT_NAME') expects <type>/<purpose>-${SHORT_NAME}[-<agent>] (legacy: feature/lane-${LANE_NAME}/TASK-*, lane/${SHORT_NAME}/*); got '$ACTUAL_BRANCH'"
-      fi ;;
-  esac
+  # this lane as the owning suffix.
+  owner=""
+  if lane_branch_format_ok "$ACTUAL_BRANCH"; then
+    # Longest registered name wins; this lane's own short/name is always a candidate.
+    # shellcheck disable=SC2046
+    owner=$(lane_branch_owner "$ACTUAL_BRANCH" "$SHORT_NAME" $(lane_registered_names "$LANES_FILE" 2>/dev/null) || true)
+  fi
+  if [ "$owner" = "$SHORT_NAME" ]; then
+    branch_ok=1
+  elif [ -n "$owner" ]; then
+    branch_reason="lane '$LANE_NAME' (short '$SHORT_NAME'): branch '$ACTUAL_BRANCH' belongs to lane '$owner' (longest suffix match)"
+  else
+    branch_reason="lane '$LANE_NAME' (short '$SHORT_NAME') expects <type>/<purpose>-${SHORT_NAME}[-<agent>]; got '$ACTUAL_BRANCH'"
+  fi
 fi
 
 if [ "$branch_ok" -ne 1 ]; then

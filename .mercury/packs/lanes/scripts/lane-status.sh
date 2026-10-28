@@ -133,8 +133,7 @@ if [ "$lane_label_count" -eq 0 ]; then
 fi
 
 # Enumerate remote branches. #703: branches are `<type>/<purpose>[-<lane>][-<agent>]`
-# with no shared prefix, so every head is listed and matched per lane below
-# (the legacy `feature/lane-<lane>/*` and `lane/<short>/*` are still matched).
+# with no shared prefix, so every head is listed and matched per lane below.
 # M2: tolerate git ls-remote failure; tr -d '\r' for MINGW CRLF.
 remote_refs="$(git -C "$REPO_ROOT" ls-remote origin 'refs/heads/*' 2>/dev/null | tr -d '\r' || true)"
 
@@ -193,21 +192,15 @@ while IFS= read -r lane_id; do
   issues_normalized="$(echo "$issues_json" | jq '[.[] | {number: .number, title: .title, updated_at: .updatedAt}]' 2>/dev/null || echo '[]')"
 
   # Matching branches: #703 format `<type>/<purpose>-<short>[-<agent>]` (the
-  # lane owning the longest matching suffix), plus the legacy
-  # `feature/lane-<lane_id>/...` and `lane/<short>/...` prefixes.
+  # lane owning the longest matching suffix).
   # No registered Short name: fall back to the lane name, as lane-assertion.sh does.
-  branch_prefix="feature/lane-${lane_id}/"
   lane_short="$(echo "$lane_registry" | jq -r '.short // empty' 2>/dev/null | tr -d '\r' || true)"
   [ -n "$lane_short" ] || lane_short="$lane_id"
-  short_prefix="lane/${lane_short}/"
   branches_json="[]"
 
   for i in "${!ref_names[@]}"; do
     ref_branch="${ref_names[$i]}"
-    case "$ref_branch" in
-      "$branch_prefix"*|"$short_prefix"*) ;;   # legacy formats (pre-#703)
-      *) [ "${ref_owners[$i]}" = "$lane_short" ] || continue ;;
-    esac
+    [ "${ref_owners[$i]}" = "$lane_short" ] || continue
     # M1: TZ=UTC + --date=format-local emits the timestamp in UTC, then the
     # literal Z suffix is honest. Without TZ=UTC, format-local would format in
     # the local zone but still tack on Z, mislabeling the value (Copilot finding).

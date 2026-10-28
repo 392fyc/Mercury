@@ -57,8 +57,7 @@ lane flips).
 Per Rule 6, only the owning lane should close itself. The script can't
 cryptographically prove ownership from inside a single repo checkout, so it
 uses a heuristic: if the current branch ends with the lane's short name
-(`<type>/<purpose>-<short>[-<agent>]`, Issue #703; the old `feature/lane-<lane>/`
-and `lane/<short>/` prefixes still count), the run is presumed in-scope and proceeds silently. Otherwise it emits a
+(`<type>/<purpose>-<short>[-<agent>]`, Issue #703), the run is presumed in-scope and proceeds silently. Otherwise it emits a
 `WARN` (not a hard error). Pass `--force-cross-lane` to silence the warning
 when you legitimately need to close from another branch — e.g., after the
 lane's last PR was merged and you switched back to the integration branch.

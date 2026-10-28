@@ -298,7 +298,7 @@ created it. The pragmatic heuristics:
 - If the branch is `worktree-<name>` AND the name has no clear task-ID
   shape → agent view auto-iso.
 - If `git -C .claude/worktrees/<name> log --oneline -1` shows commits on
-  a lane branch (`<type>/<purpose>-<short>[-<agent>]`, or the legacy `lane/<short>/<N>-*` / `feature/lane-*`) → Mercury manual.
+  a lane branch (`<type>/<purpose>-<short>[-<agent>]`) → Mercury manual.
 - When in doubt, check `~/.claude/jobs/*/state.json` for any
   `worktreePath` field referencing the dir; if a session is still alive
   and the worktree is its iso target, removing it will surprise the bg

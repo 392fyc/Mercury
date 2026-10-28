@@ -43,8 +43,7 @@ field's bullet, so notes such as `(per Rule 5.1)` or a trailing comment
 are ignored. Registered lanes without a `lane:*` label are listed too;
 labelled lanes that are not registered get `registry: null`.
 Branches ending with the lane's short name (`<type>/<purpose>-<short>[-<agent>]`,
-Rule 2.1, longest registered name wins) count next to the legacy
-`lane/<short>/*` and `feature/lane-<id>/*`; without a registered short name the
+Rule 2.1, longest registered name wins) count; without a registered short name the
 lane name is used, as `lane-assertion.sh` does. The registry is `--lanes-file PATH`,
 else `MERCURY_LANES_FILE`, else the project's lane home
 (`.mercury/packs/lanes/scripts/lane-paths.sh lanes-file`). A missing registry only warns and

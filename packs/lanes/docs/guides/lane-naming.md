@@ -111,26 +111,26 @@ an error when nothing resolves (they do not guess):
 and, as a fourth step, reads the remote's real HEAD with
 `git ls-remote --symref origin HEAD` when `origin/HEAD` is missing locally.
 
-### Backward compatibility (old formats)
+### Old formats (retired)
 
-- Existing branches are **not renamed**. The old formats `lane/<short>/...`
-  and `feature/lane-<lane>/TASK-*` stay valid until their work is finished. The main lane's old
-  `feature/TASK-<N>-*` needs no special case: it is an ordinary new-format
-  name, owned by the lane whose suffix it ends with, else by `main`.
-- Read-only status and scan scripts (`lane-status.sh`, `lane-sweep.sh`,
-  `check-main-idle.sh`) recognize both the old and the new format.
-- Assertion-style checks (`lane-assertion.sh`, the `lane-close.sh` ownership
-  warning) keep accepting the old formats so that in-progress work is not
-  interrupted. This is a compatibility allowance, not a recommendation.
-- New branches MUST use the new format; nothing creates `lane/<short>/...`
-  branches any more.
+- The pre-#703 formats `lane/<short>/...` and `feature/lane-<lane>/TASK-*`
+  were accepted only until their work finished. Once no project that installs
+  the lanes pack had such a branch left, the lanes scripts stopped recognizing
+  them: `lane-assertion.sh` rejects them, the `lane-close.sh` ownership check
+  warns on them, and `lane-status.sh`, `lane-sweep.sh` and `check-main-idle.sh`
+  no longer count them.
+- The main lane's old `feature/TASK-<N>-*` needs no special case: it is an
+  ordinary new-format name, owned by the lane whose suffix it ends with, else
+  by `main`.
+- `scripts/codex/guard.ps1` is separate from the lanes pack and keeps its own
+  allowance for existing `feature/TASK-<id>` and `lane/<lane>/...` branches.
 
 ### Script support (current state)
 
 `lane-sweep.sh` and `check-main-idle.sh` read every **local and remote-tracking**
 branch (`git for-each-ref refs/heads refs/remotes`); `lane-status.sh` reads the
 **remote** branches only (`git ls-remote origin 'refs/heads/*'`). All three
-match a lane's branches by suffix (new format) plus the old prefixes. Because
+match a lane's branches by suffix (new format) only. Because
 the new format has no common prefix, they list every branch and match it
 against the registered lane names, where a lane's name is its Short name, else
 its lane name. `lane-status.sh` works out each branch's owner once, outside the
@@ -424,7 +424,7 @@ above sidesteps the collision by creating a new branch from `origin/<integration
 lane's actual work branches (Rule 2.1 suffix format `<type>/<purpose>-<short>-<agent>`)
 are created later inside the worktree; the `init` branch can be deleted
 once a real work branch exists. (The `init` name follows the same suffix rule so
-`lane-assertion.sh` accepts it; the old `lane/<short>/init` is still accepted as a legacy name.)
+`lane-assertion.sh` accepts it; the old `lane/<short>/init` is no longer accepted.)
 
 ### Operational expectation
 
@@ -630,7 +630,7 @@ work. The script compares:
 |--------|----------|---------------|
 | `[LANE=<name>]` marker (CLI / `MERCURY_LANE_MARKER` / `BOOTSTRAP_PROMPT` / stdin) | parsable lane name (`[a-z0-9-]+`) | `1` |
 | Encoded cwd vs encoded `Worktree path` from `LANES.md` | byte-equal after `: \\ /` → `-` slash-encoding | `2` |
-| `git branch --show-current` | matches lane's branch convention (Rule 2.1: `<type>/<purpose>-<short>[-<agent>]`, longest registered lane suffix wins; legacy compatibility: `lane/<short>/*` or `feature/lane-<lane>/TASK-*`). For **side lanes** no protected branch is tolerated (`develop` is frozen; `master`/`main` are NOT either) — accepting one would mean a misrouted session on those branches passes the assertion. **Main lane** tolerates all three (`develop`/`master`/`main`) since they are legitimate main-lane operating branches, and accepts any new-format branch that no other registered lane owns. | `3` |
+| `git branch --show-current` | matches lane's branch convention (Rule 2.1: `<type>/<purpose>-<short>[-<agent>]`, longest registered lane suffix wins; the pre-#703 `lane/<short>/*` and `feature/lane-<lane>/TASK-*` are rejected). For **side lanes** no protected branch is tolerated (`develop` is frozen; `master`/`main` are NOT either) — accepting one would mean a misrouted session on those branches passes the assertion. **Main lane** tolerates all three (`develop`/`master`/`main`) since they are legitimate main-lane operating branches, and accepts any new-format branch that no other registered lane owns. | `3` |
 | `Worktree path` field present in lane's `LANES.md` section | non-empty | `4` |
 
 Marker source priority: `--marker` CLI → `MERCURY_LANE_MARKER` env →

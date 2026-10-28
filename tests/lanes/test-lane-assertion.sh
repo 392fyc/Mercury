@@ -72,7 +72,7 @@ type: project
 - **Handoff file**: `session-handoff.md`
 - **Latest session**: S82
 - **Worktree path** (per Rule 5.1, Issue #342): `/var/test/main-lane`
-- **Branch prefix**: `feature/lane-main/TASK-<N>-*` or `lane/main/<N>-<slug>`
+- **Branch prefix**: `<type>/<purpose>[-<agent>]` (#703)
 - **Status**: `active`
 
 ### `side-multi-lane`
@@ -81,7 +81,7 @@ type: project
 - **Latest session**: S16-side-multi-lane
 - **Worktree path** (per Rule 5.1, Issue #342 — landed S15 2026-05-03): `/var/test/side-mlane` ✅ materialized at S16
 - **Short name**: `side-mlane` (8 char)
-- **Branch prefix**: `lane/side-mlane/<N>-<slug>` (Rule 2.1)
+- **Branch prefix**: `<type>/<purpose>-side-mlane[-<agent>]` (#703)
 - **Status**: `active`
 
 ### `nopath`
@@ -117,35 +117,35 @@ assert_eq "main lane on develop — rc=0" "0" "$rc"
 assert_contains "main lane on develop — verdict aligned" "aligned" "$err"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=main]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch 'feature/lane-main/TASK-100-foo' 2>&1)
-rc=$?
-assert_eq "main lane legacy branch — rc=0" "0" "$rc"
-
-err=$(env MERCURY_LANE_MARKER='[LANE=main]' bash "$ASSERTION" \
   --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch 'feature/TASK-200-bar' 2>&1)
 rc=$?
-assert_eq "main lane legacy TASK- branch — rc=0" "0" "$rc"
-
-err=$(env MERCURY_LANE_MARKER='[LANE=main]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch 'lane/main/345-handoff' 2>&1)
-rc=$?
-assert_eq "main lane Rule 2.1 short prefix — rc=0" "0" "$rc"
+assert_eq "main lane feature/TASK- branch (new format, no lane suffix) — rc=0" "0" "$rc"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=side-multi-lane]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd '/var/test/side-mlane' --branch 'lane/side-mlane/init' 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/side-mlane' --branch 'chore/init-side-mlane-claude' 2>&1)
 rc=$?
 assert_eq "side lane scaffold init branch — rc=0" "0" "$rc"
 assert_contains "side lane verdict line includes lane name" "side-multi-lane" "$err"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=side-multi-lane]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd '/var/test/side-mlane' --branch 'lane/side-mlane/342-foo' 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/side-mlane' --branch 'feature/342-foo-side-mlane-codex' 2>&1)
 rc=$?
-assert_eq "side lane Rule 2.1 work branch — rc=0" "0" "$rc"
+assert_eq "side lane suffix work branch — rc=0" "0" "$rc"
 
-err=$(env MERCURY_LANE_MARKER='[LANE=side-multi-lane]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd '/var/test/side-mlane' --branch 'feature/lane-side-multi-lane/TASK-310-foo' 2>&1)
-rc=$?
-assert_eq "side lane legacy long-prefix branch — rc=0" "0" "$rc"
+# The pre-#703 forms are no longer accepted (no such branches remain).
+for legacy in 'feature/lane-main/TASK-100-foo' 'lane/main/345-handoff'; do
+  err=$(env MERCURY_LANE_MARKER='[LANE=main]' bash "$ASSERTION" \
+    --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch "$legacy" 2>&1)
+  rc=$?
+  assert_eq "main lane pre-#703 branch $legacy rejected — rc=3" "3" "$rc"
+  assert_contains "main lane pre-#703 branch $legacy — explains expected" "expects" "$err"
+done
+for legacy in 'lane/side-mlane/init' 'lane/side-mlane/342-foo' 'feature/lane-side-multi-lane/TASK-310-foo'; do
+  err=$(env MERCURY_LANE_MARKER='[LANE=side-multi-lane]' bash "$ASSERTION" \
+    --memory-dir "$MEMDIR" --cwd '/var/test/side-mlane' --branch "$legacy" 2>&1)
+  rc=$?
+  assert_eq "side lane pre-#703 branch $legacy rejected — rc=3" "3" "$rc"
+done
 
 # ───────────────────────────────────────────────────────────────
 # Marker missing / malformed → exit 1
@@ -181,7 +181,7 @@ assert_eq "marker has uppercase/underscore (Rule 2.1 violation) — rc=1" "1" "$
 printf '\n=== cwd mismatch (exit 2) ===\n'
 
 err=$(env MERCURY_LANE_MARKER='[LANE=side-multi-lane]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch 'lane/side-mlane/init' 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch 'chore/init-side-mlane-claude' 2>&1)
 rc=$?
 assert_eq "side lane marker but cwd is main checkout — rc=2" "2" "$rc"
 assert_contains "cwd mismatch — guidance points at cd worktree" "cd " "$err"
@@ -199,10 +199,10 @@ assert_eq "main lane marker but cwd is side worktree — rc=2" "2" "$rc"
 printf '\n=== Branch mismatch (exit 3) ===\n'
 
 err=$(env MERCURY_LANE_MARKER='[LANE=main]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch 'lane/side-mlane/init' 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/main-lane' --branch 'chore/init-side-mlane-claude' 2>&1)
 rc=$?
 assert_eq "main lane on side branch — rc=3" "3" "$rc"
-assert_contains "branch mismatch — explains expected" "expects" "$err"
+assert_contains "branch mismatch — names the owning lane" "belongs to that lane" "$err"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=side-multi-lane]' bash "$ASSERTION" \
   --memory-dir "$MEMDIR" --cwd '/var/test/side-mlane' --branch 'feature/something-unrelated' 2>&1)
@@ -210,9 +210,10 @@ rc=$?
 assert_eq "side lane on unrelated branch — rc=3" "3" "$rc"
 
 err=$(env MERCURY_LANE_MARKER='[LANE=side-multi-lane]' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd '/var/test/side-mlane' --branch 'lane/wrong-short/init' 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/side-mlane' --branch 'feature/x-wrong-claude' 2>&1)
 rc=$?
 assert_eq "side lane wrong short-name in branch — rc=3" "3" "$rc"
+assert_contains "side lane wrong suffix — explains expected" "expects" "$err"
 
 # ───────────────────────────────────────────────────────────────
 # Worktree path missing in LANES.md → exit 4
@@ -292,7 +293,7 @@ rc=$?
 assert_eq "stdin marker fallback — rc=0" "0" "$rc"
 
 err=$(env BOOTSTRAP_PROMPT='[LANE=side-multi-lane] continue from handoff' bash "$ASSERTION" \
-  --memory-dir "$MEMDIR" --cwd '/var/test/side-mlane' --branch 'lane/side-mlane/init' 2>&1)
+  --memory-dir "$MEMDIR" --cwd '/var/test/side-mlane' --branch 'chore/init-side-mlane-claude' 2>&1)
 rc=$?
 assert_eq "BOOTSTRAP_PROMPT env marker — rc=0" "0" "$rc"
 
@@ -715,10 +716,10 @@ assert_eq "side lane: develop rejected (frozen)"            "3" "$(suf guard /va
 assert_eq "side lane: master rejected"                      "3" "$(suf guard /var/test/s-guard 'master')"
 assert_eq "main: forbidden prefix rejected"               "3" "$(suf main /var/test/s-main 'codex/foo')"
 assert_eq "main: develop/main/master protected branches"  "0" "$(suf main /var/test/s-main 'master')"
-# legacy formats still accepted (pre-#703 in-flight work)
-assert_eq "legacy: lane/<short>/ for side lane"           "0" "$(suf guard /var/test/s-guard 'lane/guard/621-x')"
-assert_eq "legacy: feature/lane-<lane>/TASK- for side"    "0" "$(suf side-multi-lane /var/test/s-mlane 'feature/lane-side-multi-lane/TASK-5-x')"
-assert_eq "legacy: feature/TASK- for main"                "0" "$(suf main /var/test/s-main 'feature/TASK-5-x')"
+# pre-#703 formats are rejected; feature/TASK-* is an ordinary new-format name
+assert_eq "pre-#703: lane/<short>/ for side lane rejected"        "3" "$(suf guard /var/test/s-guard 'lane/guard/621-x')"
+assert_eq "pre-#703: feature/lane-<lane>/TASK- for side rejected" "3" "$(suf side-multi-lane /var/test/s-mlane 'feature/lane-side-multi-lane/TASK-5-x')"
+assert_eq "new format: feature/TASK- for main"                    "0" "$(suf main /var/test/s-main 'feature/TASK-5-x')"
 
 # ───────────────────────────────────────────────────────────────
 # Summary

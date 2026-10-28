@@ -272,11 +272,12 @@ commit_on() {  # commit_on <branch> <iso date>
 commit_on "feature/1-old-guard-codex" "2020-01-01T00:00:00Z"
 commit_on "fix/2-new-guard"           "2020-06-01T00:00:00Z"
 commit_on "feature/3-art-work-art-claude" "2021-01-01T00:00:00Z"
-commit_on "lane/guard/4-legacy"       "2022-01-01T00:00:00Z"
+commit_on "lane/guard/4-legacy"       "2024-06-01T00:00:00Z"  # pre-#703 forms, newest: must not count
+commit_on "feature/lane-guard/TASK-8-x" "2024-06-01T00:00:00Z"
 commit_on "feature/5-unowned-claude"  "2023-01-01T00:00:00Z"
 commit_on "feature/TASK-12-x-guard-codex" "2024-01-01T00:00:00Z"
 ts() { date -u -d "$1" +%s 2>/dev/null || date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$1" +%s; }
-eq "last_ts guard: newest of suffix + legacy branches (feature/TASK-12-x-guard-codex is guard's)" "$(lane_branch_last_ts "$BR" guard "$REGF")" "$(ts 2024-01-01T00:00:00Z)"
+eq "last_ts guard: newest suffix branch; pre-#703 lane/guard/, feature/lane-guard/ not counted" "$(lane_branch_last_ts "$BR" guard "$REGF")" "$(ts 2024-01-01T00:00:00Z)"
 eq "last_ts main: new-format branches no lane owns (feature/TASK-* of guard not counted, #703 M1)" "$(lane_branch_last_ts "$BR" main "$REGF")" "$(ts 2023-01-01T00:00:00Z)"
 eq "last_ts art (unregistered): its own suffix only"   "$(lane_branch_last_ts "$BR" art "$REGF")" "$(ts 2021-01-01T00:00:00Z)"
 eq "last_ts: lane without branches -> empty"           "$(lane_branch_last_ts "$BR" nobody "$REGF")" ""
