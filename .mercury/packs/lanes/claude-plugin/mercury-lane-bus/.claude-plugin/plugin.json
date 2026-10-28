@@ -1,0 +1,7 @@
+{
+  "name": "mercury-lane-bus",
+  "description": "Delivers lane-bus messages to the session holding this lane's Claude seat, idle or mid-task (Issue #712).",
+  "version": "0.1.0",
+  "author": {"name": "Mercury"},
+  "experimental": {"monitors": "./monitors/monitors.json"}
+}

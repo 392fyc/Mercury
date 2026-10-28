@@ -46,5 +46,34 @@
     ],
     "revisit_when": "Only if the user asks for a persistent concise-output mode again.",
     "issue": "392fyc/Mercury#678"
+  },
+  {
+    "upstream_repo": "Get-Concord-AI/concord-mcp",
+    "evaluated_at": "2026-10-28",
+    "sha_at_evaluation": "37d48f7c7712efac7dd230c4e1fdb95fd13dcfab",
+    "license": "MIT",
+    "scope": "lane message relay between Claude Code and Codex sessions",
+    "decision": "not-imported",
+    "reasons": [
+      "Used as the design reference for packs/lanes/scripts/lane-bus.py: a Claude Code plugin monitor that polls an inbox, and a Codex client that resumes a thread through app-server.",
+      "Its model is many agents in an open room with telemetry on by default; the lane model is one seat per harness with retirement on handoff and the lane provenance tag, so a mapping layer would be as large as the prototype and would follow upstream changes.",
+      "Its Codex path drives the thread from its own app-server; with the desktop app's embedded app-server that makes two writers on one thread, which the prototype does not do."
+    ],
+    "revisit_when": "Codex offers a supported way to wake an idle desktop thread, or the lane model grows beyond one seat per harness.",
+    "issue": "392fyc/Mercury#712"
+  },
+  {
+    "upstream_repo": "Dicklesworthstone/mcp_agent_mail",
+    "evaluated_at": "2026-10-28",
+    "sha_at_evaluation": "426d4f30dca7ea41189c31a617382be616dd1aa7",
+    "license": "MIT with a rider (GitHub reports NOASSERTION)",
+    "scope": "agent mailbox MCP server for lane messages",
+    "decision": "not-imported",
+    "reasons": [
+      "The license adds a rider that names OpenAI and Anthropic as restricted parties, so it is not the permissive license the import protocol requires.",
+      "It is a full server with its own storage and web UI, far beyond the 200-line integration limit for a feature that one SQLite file covers."
+    ],
+    "revisit_when": "The rider is removed and a lane needs more than direct seat-to-seat messages.",
+    "issue": "392fyc/Mercury#712"
   }
 ]

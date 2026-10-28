@@ -1,0 +1,7 @@
+[
+  {
+    "name": "lane-bus",
+    "command": "bash \"${CLAUDE_PROJECT_DIR}/.mercury/packs/lanes/scripts/lane-bus.sh\" watch --harness claude",
+    "description": "Messages from this lane's Codex session"
+  }
+]

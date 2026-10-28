@@ -109,6 +109,8 @@ jobs:
             bash scripts/ci/run-isolated.sh "$t" || { echo "::error::$t failed"; fail=1; }
           done
           exit $fail
+      - name: Lane bus (#712)
+        run: python3 -B -m unittest discover -s tests/lanes -p test_lane_bus.py
       - name: Branch cleanup script
         run: bash scripts/ci/run-isolated.sh tests/test_cleanup_worktree_branch.sh
       - name: Worktree reaper
@@ -132,6 +134,8 @@ jobs:
             bash scripts/ci/run-isolated.sh "$t" || { echo "::error::$t failed"; fail=1; }
           done
           exit $fail
+      - name: Lane bus (#712)
+        run: python -B -m unittest discover -s tests/lanes -p test_lane_bus.py
       - name: Tool-call XML linter self-test
         run: bash scripts/ci/run-isolated.sh scripts/test-toolcall-xml-lint.sh
       - name: Branch cleanup script
