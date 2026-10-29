@@ -149,7 +149,7 @@ config.toml 里控制认证的键是 **`forced_login_method = "chatgpt" | "api"`
 （网上流传的 `preferred_auth_method` 官方文档里没有，是第三方说法）。
 
 **G0-2 的做法**：把 `[projects.'\\?\<workspace>\Mercury']` 改成 `[projects.'<workspace>\Mercury']`；
-补上缺失的 `<downstream-workspace>\SoT-fyc-space` 与活跃 worktree `<workspace>\Mercury-sidebug-q`；
+补上缺失的 `<downstream-repo>` 与活跃 worktree `<workspace>\Mercury-sidebug-q`；
 `<workspace>\Mercury-side-bug` 指向的目录已不存在。
 
 **回滚**：`mv ~/.codex/config.toml.backup-pre-codex-migration-20260814 ~/.codex/config.toml`
@@ -245,7 +245,7 @@ ChatGPT web 的定时任务跑在云上、碰不到本地仓库，不适用。
 **G5-2 的选型**：Codex 的内置 multi-agent 工具（`spawn_agent` / `send_input` / `wait_agent` 等）
 虽然能做父子间的过程中交互，但**工具名不在官方文档、随时可变**，且**父读不到子的中间状态**、
 **没有共享任务列表**。所以跨组协作**不要**押在它上面，用文件式收件箱
-（`<downstream-workspace>\SoT-fyc-space\docs\cross-lane-inbox.md`，37 KB，本来就是干这个的）。
+（`<downstream-repo>\docs\cross-lane-inbox.md`，37 KB，本来就是干这个的）。
 代价是实时性（秒级 → 下一轮会话）与自动空闲检测；换来的是全部持久化、可审计。
 
 **G5-3 能迁的三个**：SessionStart / SessionEnd / PreCompact，Codex 都有同名事件。

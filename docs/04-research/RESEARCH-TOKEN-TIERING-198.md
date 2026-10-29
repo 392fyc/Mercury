@@ -148,9 +148,9 @@ Source: [Building agents with the Claude Agent SDK — Anthropic Engineering](ht
 
 ## Q3: Codex Plugin (`codex-plugin-cc`) Cost/Latency Profile
 
-**Verdict: NOT ZERO-COST — incurs OpenAI API costs, but practically negligible (~¥10/month) relative to the Claude subscription in use. Effective cost ratio <1.5%. Adds latency through sequential cross-provider execution.**
+**Verdict: NOT ZERO-COST — incurs OpenAI API costs, but practically negligible (a few dollars a month at most) relative to the Claude subscription in use. Effective cost ratio <1.5%. Adds latency through sequential cross-provider execution.**
 
-**User-verified actual spend**: ~¥10 RMB/month observed in practice. This makes Codex a **viable offload lane for second-opinion tasks**, not just dual-verify.
+**User-verified actual spend**: a negligible amount observed in practice. This makes Codex a **viable offload lane for second-opinion tasks**, not just dual-verify.
 
 ### What It Is
 
@@ -165,7 +165,7 @@ Source: [Building agents with the Claude Agent SDK — Anthropic Engineering](ht
 - Dual-billing: one Anthropic-side token charge (Claude) + one OpenAI-side charge (Codex) per invocation
 - README explicitly: "Usage will contribute to your Codex usage limits"
 
-**The "free-tier" characterization in Issue #198 is technically incorrect** — there is an OpenAI cost per invocation. However, user-observed spend (~¥10/month) confirms the practical impact is negligible (<1.5% of the subscription cost). For tiering policy purposes, Codex is treated as **near-zero-cost** and eligible for broader offload use than originally scoped.
+**The "free-tier" characterization in Issue #198 is technically incorrect** — there is an OpenAI cost per invocation. However, user-observed spend (a few dollars a month at most) confirms the practical impact is negligible (<1.5% of the subscription cost). For tiering policy purposes, Codex is treated as **near-zero-cost** and eligible for broader offload use than originally scoped.
 
 ### Latency Reality
 
@@ -240,7 +240,7 @@ Source: [code.claude.com/docs/en/model-config](https://code.claude.com/docs/en/m
 
 ### Codex plugin reassessment (Final — user decision)
 
-**Final verdict**: Codex replaces Haiku tier. gpt-5.4 has strong code performance; ~¥10/month spend is negligible. **Haiku tier is dropped from Mercury's tiering policy.**
+**Final verdict**: Codex replaces Haiku tier. gpt-5.4 has strong code performance; the observed spend is negligible. **Haiku tier is dropped from Mercury's tiering policy.**
 
 Revised Codex scope:
 - **Mechanical code tasks** (boilerplate edits, path rewrites, Argus-finding fixes, PR body templating, skim reads) — replaces Haiku

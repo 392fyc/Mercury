@@ -182,11 +182,9 @@ For project-specific TypeScript and Vue rules: rule-based prompting by injecting
 
 ## 5. Docker Deployment on a Self-Hosted Server
 
-### 5.1 Container Station Compatibility
+### 5.1 Host Compatibility
 
-Container Station 3 ships with Docker Compose V2. The legacy docker-compose standalone binary is not available; use the docker compose subcommand instead. Compose V2 format YAML is fully supported. The host is x86_64, so no ARM32 limitations apply.
-
-Official docs: https://www.qnap.com/en/software/container-station and https://www.qnap.com/en/how-to/faq/article/why-cant-i-use-docker-compose-commands-in-container-station
+Any x86_64 Docker host with Docker Compose V2 works; use the `docker compose` subcommand and Compose V2 YAML.
 
 ### 5.2 docker-compose.yml Structure for PR Review Agent
 
@@ -308,8 +306,8 @@ All technical claims verified against official vendor documentation.
 13. ASTChunk open-source toolkit: https://github.com/yilinjz/astchunk
 14. Pydantic AI output documentation: https://ai.pydantic.dev/output/
 15. Pydantic LLM introduction: https://pydantic.dev/articles/llm-intro
-16. QNAP Container Station product page: https://www.qnap.com/en/software/container-station
-17. QNAP docker compose FAQ: https://www.qnap.com/en/how-to/faq/article/why-cant-i-use-docker-compose-commands-in-container-station
+16. (removed: vendor-specific host documentation)
+17. (removed: vendor-specific host documentation)
 18. FastAPI Docker deployment official docs: https://fastapi.tiangolo.com/deployment/docker/
 19. Cloudflare Tunnel official documentation: https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/
 20. Cloudflare Tunnel Docker Compose community example: https://community.cloudflare.com/t/can-i-use-cloudflared-in-a-docker-compose-yml/407168

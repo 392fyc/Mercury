@@ -65,10 +65,8 @@ Source: https://platform.claude.com/docs/en/build-with-claude/structured-outputs
 
 ## Q5：Docker部署（自托管服务器）
 
-x86_64 主机，兼容标准 amd64 镜像
-Container Station 3：Docker Compose V2 (v2.15.1-qnap1)，使用 `docker compose`
+任意 x86_64 Docker 主机，使用 Docker Compose V2（`docker compose`）
 资源估算：< 0.6 core / < 320MB 内存 / < 200MB 磁盘
-Source: https://www.qnap.com/en/how-to/tutorial/article/how-to-use-container-station-3
 
 docker-compose.yml: pr-review-agent (FastAPI, port 8080) + cloudflared (TUNNEL_TOKEN)
 
@@ -122,7 +120,7 @@ Mercury KB记录
 13. https://arxiv.org/abs/2506.15655 (cAST, EMNLP 2025: +4.3 Recall@5, +2.67 Pass@1)
 14. https://github.com/yilinjz/astchunk
 15. https://arxiv.org/html/2603.27277
-16. https://www.qnap.com/en/how-to/tutorial/article/how-to-use-container-station-3
+16. (removed: vendor-specific host documentation)
 17. https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/
 18. https://community.cloudflare.com/t/can-i-use-cloudflared-in-a-docker-compose-yml/407168
 19. https://dev.to/aryan_shourie/secure-tunneling-explained-ngrok-vs-cloudflared-mcl

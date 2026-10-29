@@ -52,7 +52,7 @@
 
 ### Category 3 — MEDIUM salvage value (repo-specific but reusable pattern)
 
-**`scripts/rsync-agentkb-to-nas.sh` (109 LOC) + `rsync-invoke.ps1` (113 LOC) + `rsync-exclude.list`**
+**`scripts/rsync-agentkb-to-server.sh` (109 LOC) + `rsync-invoke.ps1` (113 LOC) + `rsync-exclude.list`**
 - One-way self-hosted server mirror with off-LAN CF Tunnel fallback, Windows Task Scheduler hourly trigger, single-instance lock, Cygwin/MSYS2 fd-incompat workaround via PowerShell proxy.
 - Pattern worth preserving; the scripts themselves are AgentKB-pathed.
 - **Action**: copy as templates to Mercury `scripts/` with `${SOURCE_DIR}` parameter and doc the Cygwin quirk + CF Tunnel fallback in Mercury guides. Record `AgentKB/scripts/rsync-*` as the original reference. (Follow-up issue needed.)
@@ -84,7 +84,7 @@ Before marking AgentKB fork archived, file Mercury issues for:
 
 1. **Issue: port `handoff-orchestrator.py` to Mercury** — reads `session-checkpoint.md`, writes `session_chain` SQLite, spawns new Claude Code. Referenced by `/handoff:auto` skill. Medium effort, ~1 session.
 2. **Issue: port `skill_stats.py` to Mercury** — transcript JSONL → SQLite telemetry. Standalone, reusable across repos. Small effort, ~30 min.
-3. **Issue: template-ize `rsync-*nas*` as Mercury `scripts/sync-to-nas.*`** — parameterize `${SOURCE_DIR}`, preserve Cygwin fd-fix + CF Tunnel fallback. Small effort, ~30 min.
+3. **Issue: template-ize `rsync-*` as Mercury `scripts/sync-to-server.*`** — parameterize `${SOURCE_DIR}`, preserve Cygwin fd-fix + CF Tunnel fallback. Small effort, ~30 min.
 4. **Issue: AgentKB fork archival notice** — README banner "archived; see Mercury #252 / mem0 memory layer for replacement". No code change.
 
 ## Decision matrix
@@ -127,7 +127,7 @@ After user-supplied context review, each salvage target gets re-homed rather tha
 - **Action**: move `skill_stats.py` + its SQLite to `~/.claude/scripts/skill_stats.py` + `~/.claude/stats/skill-usage.db`. Hook registration stays in the user-level `settings.json` (already the right scope) — just re-point the command path. Cross-project analytics come for free once the AgentKB prefix is gone.
 - Open question: is the DB value-worth-preserving? Current rows are Mercury-only and arguably disposable. If so, archive the file and start fresh at user-level.
 
-### 3. `rsync-*` (mem2nas) → **re-target to mem0-state**, keep in AgentKB until archival, then move
+### 3. `rsync-*` (memory mirror) → **re-target to mem0-state**, keep in AgentKB until archival, then move
 
 - Current rsync mirrors the entire AgentKB tree. Post-mem0 adoption, the value-bearing payload is:
   - `AgentKB/scripts/mem0-state/qdrant/` (vector store)
@@ -154,7 +154,7 @@ File these issues before archival banner:
 1. **Port `handoff-orchestrator.py` into `claude-handoff` repo** — natural home, `session_chain/db.py` already sits there. Medium effort.
 2. **Promote `skill_stats.py` to user-level (`~/.claude/`)** — cross-project analytics. Small effort.
 3. **Re-home `session-end.py` + `pre-compact.py` + `flush.py` + `mem0_hooks.py` + `mem0_bridge.py` to user-level `~/.claude/hooks/` + `~/.claude/scripts/`**, repoint `~/.claude/settings.json`. Medium effort — this is the critical path for removing AgentKB as a runtime dependency.
-4. **Parameterize and move `rsync-*` (mem2nas)** — new target is `~/.claude/scripts/mem0-state/` after step 3 completes. Small effort.
+4. **Parameterize and move `rsync-*` (memory mirror)** — new target is `~/.claude/scripts/mem0-state/` after step 3 completes. Small effort.
 5. **Only AFTER steps 3+4**: archive AgentKB fork with README banner.
 
 ## Critical path dependency
