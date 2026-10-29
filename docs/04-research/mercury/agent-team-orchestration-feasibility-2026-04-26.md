@@ -705,6 +705,6 @@ Both the `59` raw line count and the visible final numeric `44` (last carved-out
 
 ### Mercury Context
 41. [Mercury multi-lane-protocol-2026-04-25.md — in-repo](multi-lane-protocol-2026-04-25.md) — Background
-42. [Mercury DIRECTION.md — in-repo](../../../.mercury/docs/DIRECTION.md) — Background
+42. Mercury DIRECTION.md — in-repo: `.mercury/docs/DIRECTION.md` — Background
 43. [Mercury archive/docs/architecture-evolution-plan.md — in-repo](archive/docs/architecture-evolution-plan.md) — Dim 2
 44. [Mercury archive/roles/*.yaml — in-repo](archive/roles/) — Dim 2

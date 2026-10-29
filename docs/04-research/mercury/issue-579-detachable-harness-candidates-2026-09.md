@@ -8,7 +8,7 @@
 
 GitHub stars、许可证标识和最近推送时间取自公开 GitHub REST API，于 2026-09-25 02:56 UTC 查询；这些是认可信号和活跃度线索，不证明质量或实际提效。候选能力与安装边界取自各项目 README、LICENSE 和官方文档；没有跑性能或行为基准。源链接指向上游主页/API，数字记录的是本次查询快照。
 
-本地基线与方向一致：`.mercury/docs/DIRECTION.md` 将 Mercury 定义为薄本体，不自建编排层，外挂需可拆卸。`.codex/agents/main.toml` 已指定 Astra 主代理，`dev.toml` 已指定 Luna Max；`.agents/skills/` 已有 Mercury 的 `dev-pipeline`、`dual-verify`、`mercury-subagent-driven-development` 等工作流；`modules/` 目前只有 `.gitkeep`。`adapters/playwright-mcp/` 已留有 Microsoft MCP 的固定版本适配器与安全闸，但当前 [`.mcp.json`](../../../.mcp.json) 的 `mcpServers` 为空；适配器说明记录它曾因存储态环境变量缺失而撤销注册。仓库已有 `obra/superpowers` 的 Claude 文件来源记录，Codex 侧改用不同名称的 Mercury 版本；README 另记录了 Claude Code 的 `oh-my-claudecode` 插件。它与下面的 `oh-my-codex` 是不同项目。
+本地基线与方向一致：`.mercury/docs/DIRECTION.md` 将 Mercury 定义为薄本体，不自建编排层，外挂需可拆卸。`.codex/agents/main.toml` 已指定 Astra 主代理，`dev.toml` 已指定 Luna Max；`.agents/skills/` 已有 Mercury 的 `dev-pipeline`、`dual-verify`、`mercury-subagent-driven-development` 等工作流；`modules/` 目前只有 `.gitkeep`。`adapters/playwright-mcp/` 已留有 Microsoft MCP 的固定版本适配器与安全闸，但当前 `.mcp.json`（此文件后已从仓库移除）的 `mcpServers` 为空；适配器说明记录它曾因存储态环境变量缺失而撤销注册。仓库已有 `obra/superpowers` 的 Claude 文件来源记录，Codex 侧改用不同名称的 Mercury 版本；README 另记录了 Claude Code 的 `oh-my-claudecode` 插件。它与下面的 `oh-my-codex` 是不同项目。
 
 ## 优先评估的六项
 
