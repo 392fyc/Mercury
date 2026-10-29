@@ -54,7 +54,7 @@ prefix_rule(
 prefix_rule(
     pattern = ["git", "merge"],
     decision = "forbidden",
-    justification = "Do not run git merge directly; to take in the latest master use scripts/codex/git-safe.ps1 sync, and merge into master only through the Mercury PR flow.",
+    justification = "Do not run git merge directly; to take in the latest master use scripts/codex/git-safe.ps1 sync (and git-safe.ps1 abort-sync to abandon it), and merge into master only through the Mercury PR flow.",
     match = [
         "git merge develop",
     ],
