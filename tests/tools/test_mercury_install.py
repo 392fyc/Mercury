@@ -626,7 +626,7 @@ class SourceCommands(unittest.TestCase):
         # Everything happens in the scratch repository self.root, never in the Mercury index.
         self.set_api()
         self.assertEqual(self.add()[0][0], 0)
-        scripts = ROOT / "scripts/codex"
+        scripts = ROOT / "packs/git-safe/scripts"  # the source; scripts/codex only forwards to it (#723)
         (self.root / "scripts/codex").mkdir(parents=True)
         for name in ("git-safe.ps1", "guard.ps1"):
             shutil.copyfile(scripts / name, self.root / "scripts/codex" / name)

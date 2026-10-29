@@ -1,6 +1,7 @@
 """git-safe.ps1 add: files only, plus registered submodule paths (#684). Runs the real script in a throwaway repository."""
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -8,7 +9,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-SCRIPTS = Path(__file__).resolve().parents[3] / "scripts" / "codex"
+SCRIPTS = Path(__file__).resolve().parents[3] / "packs" / "git-safe" / "scripts"
+FORWARDERS = Path(__file__).resolve().parents[3] / "scripts" / "codex"
 PWSH = shutil.which("pwsh") or shutil.which("powershell")
 
 
@@ -377,6 +379,172 @@ class GitSafeSyncTest(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertIn("No staged changes found", out)
 
+
+
+
+def run_ps(script, *args, cwd):
+    r = subprocess.run([PWSH, "-NoLogo", "-NoProfile", "-NonInteractive", "-File", str(script), *args],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=cwd, timeout=120)
+    return r.returncode, r.stdout + r.stderr
+
+
+@unittest.skipUnless(PWSH, "PowerShell is not available")
+class GitSafePackTest(unittest.TestCase):
+    """The pack copy acts on the work tree that holds it and keeps its review mark in the Git directory (#723)."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        self.caller = root / "caller"  # the checkout the agent happens to run in
+        make_repo(self.caller)
+        git(self.caller, "checkout", "-q", "-b", "feature/TASK-2-claude")
+        self.project = root / "project"  # the downstream project with the pack installed
+        make_repo(self.project)
+        git(self.project, "checkout", "-q", "-b", "docs/kb-links-claude")
+        self.scripts = self.project / ".mercury/packs/git-safe/scripts"
+        self.scripts.mkdir(parents=True)
+        for name in ("git-safe.ps1", "guard.ps1"):
+            shutil.copyfile(SCRIPTS / name, self.scripts / name)
+        (self.project / ".git/info/exclude").write_text(".mercury/\n")
+
+    def test_the_target_is_the_work_tree_holding_the_script_not_the_caller(self):
+        (self.project / "note.md").write_text("note\n")
+        (self.caller / "note.md").write_text("caller\n")
+        code, out = run_ps(self.scripts / "git-safe.ps1", "add", "note.md", cwd=self.caller)
+        self.assertEqual(code, 0, out)
+        self.assertIn("note.md", git(self.project, "diff", "--cached", "--name-only"))
+        self.assertEqual(git(self.caller, "diff", "--cached", "--name-only").strip(), "")
+        code, out = run_ps(self.scripts / "guard.ps1", "status", cwd=self.caller)
+        self.assertEqual(code, 0, out)
+        self.assertIn("branch=docs/kb-links-claude", out)
+
+    def test_the_review_mark_lives_in_the_git_directory(self):
+        (self.project / "note.md").write_text("note\n")
+        git(self.project, "add", "note.md")
+        code, out = run_ps(self.scripts / "guard.ps1", "mark-review", cwd=self.project)
+        self.assertEqual(code, 0, out)
+        self.assertTrue((self.project / ".git/mercury-review-passed").is_file())
+        self.assertFalse((self.project / ".mercury/state").exists())
+        code, out = run_ps(self.scripts / "git-safe.ps1", "commit", "-Message", "docs(TASK-2): note", cwd=self.caller)
+        self.assertEqual(code, 0, out)
+        self.assertIn("docs(TASK-2): note", git(self.project, "log", "-1", "--format=%s"))
+        self.assertEqual(git(self.caller, "log", "--format=%s").strip(), "seed")
+
+    def test_an_unusable_integration_branch_is_refused(self):
+        (self.project / ".mercury/config.json").write_text('{"params": {"integration_branch": "main; rm -rf"}}')
+        code, out = run_ps(self.scripts / "git-safe.ps1", "sync", cwd=self.project)
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("not a plain branch name", out)
+
+
+@unittest.skipUnless(PWSH, "PowerShell is not available")
+class GitSafeSyncIntegrationBranchTest(unittest.TestCase):
+    """sync merges origin/<params.integration_branch>, here main, not master (#723)."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        origin = root / "origin.git"
+        git(root, "init", "-q", "--bare", "-b", "main", origin.as_posix())
+        self.trunk = root / "trunk"
+        git(root, "clone", "-q", origin.as_posix(), "trunk")
+        git(self.trunk, "config", "core.autocrlf", "false")
+        git(self.trunk, "checkout", "-q", "-b", "main")
+        (self.trunk / "shared.txt").write_text("one\n")
+        git(self.trunk, "add", "shared.txt")
+        git(self.trunk, "commit", "-q", "-m", "seed")
+        git(self.trunk, "push", "-q", "origin", "main")
+        self.repo = root / "repo"
+        git(root, "clone", "-q", origin.as_posix(), "repo")
+        for key, value in (("core.autocrlf", "false"), ("user.name", "t"), ("user.email", "t@example.com")):
+            git(self.repo, "config", key, value)
+        git(self.repo, "checkout", "-q", "-b", "feature/TASK-3-codex")
+        self.scripts = self.repo / ".mercury/packs/git-safe/scripts"
+        self.scripts.mkdir(parents=True)
+        for name in ("git-safe.ps1", "guard.ps1"):
+            shutil.copyfile(SCRIPTS / name, self.scripts / name)
+        (self.repo / ".mercury/config.json").write_text('{"params": {"integration_branch": "main"}}')
+        (self.repo / ".git/info/exclude").write_text(".mercury/\n")
+
+    def test_sync_merges_the_integration_branch(self):
+        (self.trunk / "theirs.txt").write_text("theirs\n")
+        git(self.trunk, "add", "theirs.txt")
+        git(self.trunk, "commit", "-q", "-m", "land theirs")
+        git(self.trunk, "push", "-q", "origin", "main")
+        code, out = run_ps(self.scripts / "git-safe.ps1", "sync", cwd=self.repo)
+        self.assertEqual(code, 0, out)
+        self.assertIn("sync=merged", out)
+        self.assertTrue((self.repo / "theirs.txt").is_file())
+        self.assertTrue((self.repo / ".git/MERGE_HEAD").exists())
+
+
+@unittest.skipUnless(PWSH, "PowerShell is not available")
+class ForwarderTest(unittest.TestCase):
+    """Mercury's scripts/codex entries forward to the pack with their parameters intact (#723).
+
+    Runs in a throw-away repository laid out like Mercury and on a task branch, so the result never depends on what the
+    Mercury checkout running the tests has checked out (CI checks out a detached merge commit)."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.repo = Path(tmp.name) / "mercury"
+        make_repo(self.repo)
+        git(self.repo, "checkout", "-q", "-b", "feature/TASK-5-claude")
+        for rel, source in (("scripts/codex", FORWARDERS), ("packs/git-safe/scripts", SCRIPTS)):
+            (self.repo / rel).mkdir(parents=True)
+            for name in ("git-safe.ps1", "guard.ps1"):
+                shutil.copyfile(source / name, self.repo / rel / name)
+        (self.repo / ".git/info/exclude").write_text("scripts/" + chr(10) + "packs/" + chr(10))
+        self.forwarders = self.repo / "scripts/codex"
+
+    def test_remaining_arguments_reach_the_pack_script_and_its_exit_code_comes_back(self):
+        # Only the pack script knows that master is protected, so this message proves the arguments arrived.
+        code, out = run_ps(self.forwarders / "git-safe.ps1", "push", "origin", "HEAD:master", cwd=self.repo)
+        self.assertEqual(code, 1, out)
+        self.assertIn("targets a protected branch", out)
+
+    def test_named_parameters_reach_the_guard(self):
+        # The receipt check runs inside the pack guard before anything else, so it fires only if -NativeReviewReceipt arrived.
+        code, out = run_ps(self.forwarders / "guard.ps1", "status", "-NativeReviewReceipt", "x.json", cwd=self.repo)
+        self.assertEqual(code, 1, out)
+        self.assertIn("valid only with the pre-merge action", out)
+        code, out = run_ps(self.forwarders / "guard.ps1", "status", cwd=self.repo)
+        self.assertEqual(code, 0, out)
+        self.assertIn("branch=feature/TASK-5-claude", out)
+
+@unittest.skipUnless(PWSH, "PowerShell is not available")
+class ProtectionTest(unittest.TestCase):
+    """A custom integration branch is protected, and inherited Git variables are refused (#723)."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.repo = Path(tmp.name) / "project"
+        make_repo(self.repo)
+        git(self.repo, "checkout", "-q", "-b", "feature/TASK-4-codex")
+        self.scripts = self.repo / ".mercury/packs/git-safe/scripts"
+        self.scripts.mkdir(parents=True)
+        for name in ("git-safe.ps1", "guard.ps1"):
+            shutil.copyfile(SCRIPTS / name, self.scripts / name)
+        (self.repo / ".mercury/config.json").write_text('{"params": {"integration_branch": "trunk"}}')
+        (self.repo / ".git/info/exclude").write_text(".mercury/\n")
+
+    def test_pushing_to_the_integration_branch_is_refused(self):
+        for target in ("HEAD:trunk", "HEAD:refs/heads/trunk", "HEAD:master"):
+            with self.subTest(target=target):
+                code, out = run_ps(self.scripts / "git-safe.ps1", "push", "origin", target, cwd=self.repo)
+                self.assertEqual(code, 1, out)
+                self.assertIn("protected branch", out)
+
+    def test_inherited_git_variables_are_refused(self):
+        env = dict(os.environ, GIT_DIR=str(self.repo / ".git"))
+        r = subprocess.run([PWSH, "-NoLogo", "-NoProfile", "-NonInteractive", "-File", str(self.scripts / "guard.ps1"), "status"],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=self.repo, env=env, timeout=60)
+        self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("GIT_DIR", r.stdout + r.stderr)
 
 if __name__ == "__main__":
     unittest.main()
