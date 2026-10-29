@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -24,7 +25,8 @@ def git(repo, *args):
 def make_repo(path):
     path.mkdir(parents=True, exist_ok=True)
     git(path, "init", "-q")
-    git(path, "config", "core.autocrlf", "false")
+    for key, value in (("core.autocrlf", "false"), ("user.name", "t"), ("user.email", "t@example.com")):
+        git(path, "config", key, value)  # the scripts under test commit without the -c identity this helper adds
     (path / "seed.txt").write_text("seed\n")
     git(path, "add", "seed.txt")
     git(path, "commit", "-q", "-m", "seed")
@@ -435,7 +437,9 @@ class GitSafePackTest(unittest.TestCase):
         (self.project / ".mercury/config.json").write_text('{"params": {"integration_branch": "main; rm -rf"}}')
         code, out = run_ps(self.scripts / "git-safe.ps1", "sync", cwd=self.project)
         self.assertNotEqual(code, 0, out)
-        self.assertIn("not a plain branch name", out)
+        # PowerShell colours and wraps the error to the console width (with a "| " gutter on Linux); compare the bare words.
+        bare = re.sub(r"\x1b\[[0-9;]*m|[\s|]", "", out)
+        self.assertIn("notaplainbranchname", bare)
 
 
 @unittest.skipUnless(PWSH, "PowerShell is not available")

@@ -38,7 +38,8 @@ class GitSafeInstall(unittest.TestCase):
         for repo in (self.src, self.dst):
             repo.mkdir(parents=True)
             git(repo, "init", "-q")
-            git(repo, "config", "core.autocrlf", "false")
+            for key, value in (("core.autocrlf", "false"), ("user.name", "t"), ("user.email", "t@example.com")):
+                git(repo, "config", key, value)  # the installed scripts commit without the -c identity of git()
         git(self.src, "remote", "add", "origin", "https://github.com/test/mercury.git")
         write(self.src / "mercury.json", json.dumps({"schema_version": 1, "packs": {
             "core": {"enabled": True, "required": True}, "git-safe": {"enabled": True}}}))
