@@ -50,6 +50,14 @@ an automatic worktree, must rename it before the first commit.
    staged snapshot with `scripts/codex/guard.ps1 mark-review`, and use
    `scripts/codex/git-safe.ps1 commit/push` for delivery. Changed staged content
    requires renewed review and a fresh mark; the mark alone is not review evidence.
+   When the branch needs the latest `master` (a PR that conflicts with it, or
+   work that depends on a newer trunk), run `scripts/codex/git-safe.ps1 sync`
+   (#716). It refuses protected branches, a detached HEAD, uncommitted changes
+   and an operation in progress, fetches `origin/master`, and merges it with
+   `--no-ff --no-commit`. On conflicts it lists the files and exits 1: resolve
+   each keeping the intent of both sides and stage it with `git-safe add`. Then
+   review the merge result, mark it, and conclude with `git-safe commit`. It never
+   pushes, rebases or takes another base; raw `git merge` stays forbidden.
 4. The assigned delivery owner opens the Issue-linked PR into `master`; the
    coordinating agent obtains independent native subagent review as described in
    [PR Review and Merge](#pr-review-and-merge).
@@ -187,7 +195,8 @@ type: feat / fix / refactor / chore / docs
 |---------|-----------|
 | Guarded staging of explicit assigned files | `git switch` / `git checkout <branch>` |
 | Guarded commit when assigned and reviewed | `git branch -d` / `git reset` / `git stash` |
-| Guarded push to the assigned task branch when assigned | `git rebase` / `git merge` |
+| Guarded push to the assigned task branch when assigned | `git rebase` / `git merge` (use `git-safe.ps1 sync`) |
+| Guarded `git-safe.ps1 sync` of `origin/master` into the task branch | |
 | `git diff` / `git status` / `git log` | `git add -A` / `git add .` |
 | | `git push --force` |
 | | Direct writes to master / develop / main |
