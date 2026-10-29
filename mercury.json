@@ -20,6 +20,9 @@
     "deploy": {
       "enabled": true
     },
+    "git-safe": {
+      "enabled": true
+    },
     "playwright-mcp": {
       "enabled": false
     }

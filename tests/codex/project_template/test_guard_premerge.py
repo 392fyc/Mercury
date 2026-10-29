@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 
-GUARD = Path(__file__).resolve().parents[3] / "scripts/codex/guard.ps1"
+GUARD = Path(__file__).resolve().parents[3] / "packs/git-safe/scripts/guard.ps1"
 
 
 # PowerShell writes its own error frame (the "At line" / "Line |" block) in the
@@ -267,6 +267,17 @@ class GuardPreMergeTests(unittest.TestCase):
         self.fixture["pr"]["baseRefName"] = "main"
         self.write_fixture()
         self.assert_rejected()
+
+    def test_base_branch_follows_the_project_integration_branch(self):
+        # A downstream project integrates elsewhere (#723): params.integration_branch replaces master.
+        config = self.root / ".mercury" / "config.json"
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text(json.dumps({"params": {"integration_branch": "develop"}}), encoding="utf-8")
+        self.assert_rejected()  # the fixture PR still targets master
+        self.fixture["pr"]["baseRefName"] = "develop"
+        self.write_fixture()
+        result = self.run_guard()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_native_receipt_never_overrides_active_reviewer_rejection(self):
         self.fixture["pages"]["reviews"] = [review_page([review("CHANGES_REQUESTED"), review("COMMENT")])]

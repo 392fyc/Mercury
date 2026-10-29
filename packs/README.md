@@ -26,6 +26,7 @@ Packs: `core` (required: web-research, test-file-delivery, the five roles, Git s
 Claude Code plugin, `docs/guides/lane-bus.md`),
 `dot-link` (dot-link skill, the agents event gateway and dispatcher scripts, the dot-link installer),
 `deploy` (the two workflows that deliver released Mercury commits to a downstream project; see "The deploy pack"),
+`git-safe` (the controlled Git entry `scripts/git-safe.ps1` with its guard `scripts/guard.ps1`; see "The git-safe pack"),
 `playwright-mcp` (disabled; see below).
 
 Pack-relative paths are the paths inside the installed pack: `packs/lanes/scripts/lane-claim.sh`
@@ -341,6 +342,28 @@ read-only one that `merge` uses for `mercury.py check`, and it never talks to th
 Exit codes of `tools/mercury_update.py`: 0 nothing to do, published or merged; 1 stopped (the reason is printed: a condition
 is not met, the queue is not unique, a branch is not the tool's); 2 usage or safety error (bad arguments, a cross-repository
 update branch, incomplete pagination, unreadable data). Credentials are redacted from all output.
+
+## The git-safe pack
+
+Optional. It installs Mercury's controlled Git entry into a project: `.mercury/packs/git-safe/scripts/git-safe.ps1`
+(`add` explicit files, `commit`, `push`, `sync`, `abort-sync`) and the guard it calls, `scripts/guard.ps1`
+(`mark-review`, `pre-stage`, `pre-commit`, `pre-push`, `pre-merge`), and adds a managed-section paragraph that routes
+Git writes through it. These are the same scripts Mercury uses; Mercury's `scripts/codex/git-safe.ps1` and `guard.ps1`
+only forward to `packs/git-safe/scripts/` (Issue #723).
+
+- **Which repository.** The scripts act on the Git work tree that holds them (`git -C <script dir> rev-parse
+  --show-toplevel`), never on the caller's current directory. An agent working from another checkout calls the copy
+  inside the target project's task worktree and acts on that worktree. This is what lets a session whose own project
+  denies raw `git push` (for example Mercury's `.claude/settings.json`) still deliver a branch in a downstream project.
+- **Integration branch.** `sync` merges `origin/<params.integration_branch>`; `pre-merge` with `-NativeReviewReceipt`
+  requires the PR to target it; it is protected like `develop`, `main` and `master`. Without the parameter the
+  branch is `master`.
+- **Review mark.** `mark-review` writes a snapshot of the staged tree to `mercury-review-passed` in the work tree's Git
+  directory (`git rev-parse --git-path`), so it is never committed, needs no ignore rule and is separate per worktree.
+- **Branch names and protected branches** are Mercury's: `<type>/<purpose>[-<lane>]-<agent>`; `develop`, `main`,
+  `master` and the integration branch cannot be committed or pushed to. Inherited `GIT_DIR`, `GIT_WORK_TREE`,
+  `GIT_COMMON_DIR` or `GIT_INDEX_FILE` make the scripts refuse to run.
+- The read-only guard already treats `git-safe.ps1` as a write script, so read-only roles cannot call it.
 
 ## Sources
 
