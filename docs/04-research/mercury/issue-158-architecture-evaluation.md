@@ -2,8 +2,8 @@
 
 ## Related Documentation
 
-- [Mercury Architecture Guide](../guides/architecture.md) — current architecture design
-- [SoT Workflow Guide](../guides/sot-workflow.md) — task state machine reference
+- Mercury Architecture Guide: `.mercury/docs/guides/architecture.md` — current architecture design
+- SoT Workflow Guide (`sot-workflow.md`, no longer in the repository) — task state machine reference
 
 ## Research Questions
 
