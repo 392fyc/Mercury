@@ -1,0 +1,8 @@
+{
+  "name": "mercury-lanes",
+  "owner": {"name": "Mercury"},
+  "plugins": [
+    {"name": "mercury-lane-bus", "source": "./mercury-lane-bus",
+     "description": "Direct messages between the active Claude Code and Codex sessions of a Mercury lane (Issue #712)."}
+  ]
+}

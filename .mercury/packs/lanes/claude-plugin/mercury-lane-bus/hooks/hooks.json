@@ -1,0 +1,8 @@
+{
+  "description": "lane-bus: tell the session holding the Claude seat about unread messages at turn boundaries",
+  "hooks": {
+    "SessionStart": [{"hooks": [{"type": "command", "command": "bash \"${CLAUDE_PROJECT_DIR}/.mercury/packs/lanes/scripts/lane-bus.sh\" hook --harness claude", "timeout": 30}]}],
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "bash \"${CLAUDE_PROJECT_DIR}/.mercury/packs/lanes/scripts/lane-bus.sh\" hook --harness claude", "timeout": 30}]}],
+    "Stop": [{"hooks": [{"type": "command", "command": "bash \"${CLAUDE_PROJECT_DIR}/.mercury/packs/lanes/scripts/lane-bus.sh\" hook --harness claude", "timeout": 30}]}]
+  }
+}
