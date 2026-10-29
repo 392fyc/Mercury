@@ -46,17 +46,6 @@ These rules bind the main agent and every subagent in both Codex and Claude Code
 <!-- lane-receiver-rule:end -->
 
 The full lane contract is `.mercury/packs/lanes/docs/mercury-lane-contract.md`; the project's lane document follows `.mercury/packs/lanes/docs/mercury-lane-project-template.md`.
-
-## Linked repositories
-
-Declared in `linked_repos` in `.mercury/config.json`; Mercury renders this section from it. Each entry says what the repository is for, how to find it without a machine path, how to use it quickly (skills, scripts, commands) and the rules that bind work in it. Anything its rules do not allow needs its own authorized scope.
-
-### Mercury_KB
-
-- Purpose: Obsidian vault with Mercury's knowledge, decisions, research and handoffs.
-- Locate: Read the `kb_dir` key of `.handoff-config` in the main checkout (a gitignored file); see `.mercury/docs/guides/kb-structure.md`.
-- Use: Read `.mercury/docs/guides/kb-structure.md` for the folder layout, then start from the navigation notes and the decision index in `00-index` of the vault; formal research is in `04-research` and decisions in `03-decisions`.
-- Rules: Read when a task needs prior decisions or research. Writing needs its own authorized scope and follows the per-folder write rights in `.mercury/docs/guides/kb-structure.md`.
 <!-- MERCURY:END -->
 
 # Mercury — Codex working contract
@@ -89,7 +78,7 @@ Declared in `linked_repos` in `.mercury/config.json`; Mercury renders this secti
 - The files Mercury installs in a project are recorded in that project's `.mercury/lock.json` and described in `.mercury/packs/core/docs/mercury-harness-ownership.md`. Do not hand-edit them or overwrite project-owned content; change the pack in Mercury and let `tools/mercury.py apply` (or the deploy pack's update pull request) carry it.
 - For downstream provenance verification and reviewed automatic updates (the release gate, the update pull request and its merge conditions, the GitHub App credentials), see the deploy pack in `packs/README.md`.
 - For prior context, start with `.mercury/memory/README.md` when present and load indexed entries on demand. This is local private memory, excluded from the public repository. Protected archives and chat records are not active memory.
-- Mercury_KB remains active; its configured location is the `kb_dir` key of `.handoff-config` in the main checkout (also declared under `linked_repos` in `.mercury/config.json`). Consult `.mercury/docs/guides/kb-structure.md` when working with KB structure.
+- The knowledge base is `docs/` in this repository (an Obsidian vault; the private Mercury_KB vault was merged as an audited snapshot in #718 and archived). Change `docs/` in the task worktree together with the work it documents and deliver both in one pull request; `docs/` is public, so keep credentials, machine paths and private project details out. Layout and rules: `.mercury/docs/guides/kb-structure.md`.
 
 ## External dependencies and imports
 
@@ -124,7 +113,7 @@ Upstreams evaluated and deliberately not imported are recorded in
 
 - Planning: `.mercury/docs/EXECUTION-PLAN.md`.
 - Git details: `.mercury/docs/guides/git-flow.md`.
-- Hook history: Mercury_KB: `04-research/mercury/codex-hooks-adoption-2026-05.md`.
-- Migration history: Mercury_KB: `04-research/mercury/issue-571-codex-migration-2026-08.md` and Issue #571. Recheck version-specific runtime conclusions.
+- Hook history: Mercury `docs/04-research/mercury/codex-hooks-adoption-2026-05.md`.
+- Migration history: Mercury `docs/04-research/mercury/issue-571-codex-migration-2026-08.md` and Issue #571. Recheck version-specific runtime conclusions.
 
 <!-- MERCURY_AGENTS_MD_TAIL_SENTINEL -->

@@ -1,39 +1,34 @@
 # KB 结构
 
-Obsidian vault 命名约定: `{Project}_KB`（如 `Mercury_KB`）。路径由项目配置决定，不硬编码。
-
-| 路径 | 内容 | 写权限 |
-|------|------|--------|
-| `00-index/` | 导航、仪表盘、handoff指南、决策索引 | Main only |
-| `01-registry/` | 全局索引、阶段注册表、策略 | Main only |
-| `01-research/` | Session 级探索性笔记和快速分析（临时性、高频） | Research agent / Main |
-| `02-context/` | 当前session账本、checkpoint、计划 | Main only |
-| `03-decisions/` | 架构决策记录 (ADR) | Main only |
-| `04-research/` | 跨 session 持久化的正式研究报告（低频、经审阅，如 prompt 架构、框架分析） | Research agent / Main |
-| `10-tasks/` | TaskBundle JSON | Main 创建, Dev 填 receipt |
-| `11-issues/` | IssueBundle JSON | 任意角色创建, Main triage |
-| `12-acceptances/` | AcceptanceBundle JSON | Main 创建, Acceptance 填结果 |
-| `13-handoff/` | Handoff packets, session context | Main + 发起方 |
-| `99-templates/` | Bundle 模板（只读参考） | Main only |
-| `archive/` | 已归档制品（过期handoff、旧研究） | Main only |
-
-KB 路径通过 orchestrator 启动配置注入，各 Agent 指令文件中引用相对路径 `{Project}_KB/{子目录}/`。
-
-## 目录编号约定
-
-- `00-09`: 元数据层（导航、注册表、研究、上下文、决策）— `01-registry` 和 `01-research` 共享前缀是有意设计，二者均属「只读参考数据」类别
-- `01-research` vs `04-research` 区分规则：快速探索笔记放 `01`，正式跨 session 研究报告放 `04`
-- `04`: 专项研究层（深度研究报告，跨 session 持久化）
-- `10-19`: 工作制品层（tasks、issues、acceptances、handoffs）— 由 orchestrator 读写
-- `99`: 模板层（只读参考）
-- `archive/`: 已过期制品归档
-
-## 项目内文档结构
-
-项目内部文档统一存放于 `.mercury/`:
+Mercury 的知识库是本仓库的 `docs/`，同时是一个 Obsidian vault。它在 #718 中由私有的 Mercury_KB vault 以审计后的当前快照并入；旧仓库保持私有并归档，保存完整历史和未公开的材料。
 
 | 路径 | 内容 |
 |------|------|
-| `.mercury/docs/guides/architecture.md` | 项目架构 |
+| `docs/00-index/` | 入口说明与决策索引 |
+| `docs/01-registry/` | 长期有效的策略 |
+| `docs/03-decisions/` | 架构决策记录（ADR） |
+| `docs/03-research/` | 早期（phase 3）研究报告 |
+| `docs/04-research/` | 研究报告；`mercury/` 子目录是 Mercury 专题系列，含 `articles/`、`design/`、`incidents/` |
+
+## 维护规则
+
+- **随任务一起推进**：研究、决策和设计说明与它解释的代码改动在同一个任务 worktree 中修改、在同一个 PR 中交付。新增 ADR 时同步更新 `docs/00-index/decisions-index.md`。
+- **读写方式**：代理直接读写 `docs/` 下的文件。Obsidian 打开主 checkout 的 `docs/` 浏览；Obsidian MCP 指向主 checkout，只看得到已合并内容，代理不经它写入。
+- **公开边界**：本仓库公开。`docs/` 中不得出现凭据、本机绝对路径（用 `<repo-root>`、`<workspace>` 等占位）、家庭或私有基础设施细节、私有项目内容和个人信息。`docs/.obsidian/` 整体被 Git 忽略（插件 `data.json` 含 API 密钥）。
+- **引用写法**：Mercury 自身文件写 `docs/<路径>`；会被安装到下游项目的 pack 文档写 “Mercury `docs/<路径>`”，避免与下游项目自己的 `docs/` 混淆。
+- **研究过程状态**：研究流程的机器状态写在被忽略的 `.research/state/`，不进入 `docs/`。
+
+## 交接文档
+
+交接（handoff）文档是临时工作态，不进入 `docs/`。主 checkout 的 `.handoff-config` 不再设置 `kb_dir`，lanes pack 回退到被忽略的 `<主 checkout>/.handoff/`。
+
+## 项目内其他文档
+
+Harness 自身的文档留在 `.mercury/`：
+
+| 路径 | 内容 |
+|------|------|
+| `.mercury/docs/DIRECTION.md` | 发展方向 |
+| `.mercury/docs/EXECUTION-PLAN.md` | 执行计划 |
 | `.mercury/docs/guides/git-flow.md` | Git 分支规范 |
 | `.mercury/docs/guides/kb-structure.md` | 本文件 |

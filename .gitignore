@@ -96,8 +96,10 @@ __pycache__/
 # Private active memory (local-only; exclusion must survive cloning)
 /.mercury/memory/
 
-# KB managed separately in parallel directory (D:/Mercury/Mercury_KB), never inside repo
-Mercury_KB/
+# docs/ is the knowledge base and an Obsidian vault (#718): keep per-machine vault state and
+# plugin data out (the Local REST API plugin stores its key in data.json)
+/docs/.obsidian/
+/docs/.trash/
 
 # OMC plugin runtime state (per-user, populated after /plugin install oh-my-claudecode)
 .omc/
