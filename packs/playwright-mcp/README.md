@@ -8,7 +8,7 @@ browser control lives in the upstream MCP server; Mercury only enforces
 security defaults before the server starts.
 
 Design authority:
-Mercury_KB: `04-research/mercury/issue-154-web-automation-2026-05.md`
+Mercury `docs/04-research/mercury/issue-154-web-automation-2026-05.md`
 (Phase 1 ADR). This adapter is Phase 2 **Slice A** (mount + governance gate +
 config封装). See Issue #458 / #154.
 

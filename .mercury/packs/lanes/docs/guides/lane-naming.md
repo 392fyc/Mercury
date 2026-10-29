@@ -141,7 +141,7 @@ shared logic is in `.mercury/packs/lanes/scripts/lib/lane-paths.sh`
 
 ## Δ7 — HARD-CAP at 5 active lanes
 
-> **Superseded (2026-09, Issue [#605](https://github.com/392fyc/Mercury/issues/605)).** Lanes are no longer capped (#599 ADR (Mercury_KB: `04-research/mercury/issue-599-cross-harness-lane-isolation-2026-09.md`) D1). `lane-spawn.sh` no longer refuses at the cap, and `lane-cap-check.sh` only reports the count unless you pass `--max N`. This section is kept as the historical record. Current `lane-cap-check.sh` usage: with no flags it prints the active count with verdict `uncapped` and exits 0; `--max N` (a positive integer) opts in to a threshold of your own, with verdict `within_cap` / `exceeded` and exit 1 when exceeded.
+> **Superseded (2026-09, Issue [#605](https://github.com/392fyc/Mercury/issues/605)).** Lanes are no longer capped (#599 ADR (Mercury `docs/04-research/mercury/issue-599-cross-harness-lane-isolation-2026-09.md`) D1). `lane-spawn.sh` no longer refuses at the cap, and `lane-cap-check.sh` only reports the count unless you pass `--max N`. This section is kept as the historical record. Current `lane-cap-check.sh` usage: with no flags it prints the active count with verdict `uncapped` and exits 0; `--max N` (a positive integer) opts in to a threshold of your own, with verdict `within_cap` / `exceeded` and exit 1 when exceeded.
 
 ### Cap value
 
@@ -678,7 +678,7 @@ unconditional infrastructure.
   auto-iso HYBRID mechanism, cost-tracker gap, kill switch)
 - `.mercury/packs/lanes/skills/lane-handoff/SKILL.md` Step 5 Auto mode for the spawn-side
   contract
-- Mercury_KB: `04-research/mercury/issue-599-cross-harness-lane-isolation-2026-09.md`
+- Mercury `docs/04-research/mercury/issue-599-cross-harness-lane-isolation-2026-09.md`
   (ADR, Issue #599) presets how Codex lanes and Claude Code lanes stay
   isolated, read each other, and exchange messages when they collaborate
 - `.mercury/packs/lanes/scripts/lane-assertion.sh` + `tests/lanes/test-lane-assertion.sh` for the
