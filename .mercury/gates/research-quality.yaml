@@ -76,8 +76,9 @@ verification:
 jsonl_schema:
   file_pattern: "results-{ISSUE_NUM}.jsonl"   # Mercury mode
   standalone_file_pattern: "results.jsonl"    # Standalone mode (no ISSUE_NUM)
-  path: "Mercury_KB/04-research/.research-state/"
-  standalone_path: ".research/state/"                # Used when Mercury_KB is absent
+  # Machine state of a research run is local working data, not a published document (#718).
+  path: ".research/state/"
+  standalone_path: ".research/state/"
   required_fields:
     - name: round
       type: integer
