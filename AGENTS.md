@@ -113,7 +113,7 @@ Upstreams evaluated and deliberately not imported are recorded in
 
 - Planning: `.mercury/docs/EXECUTION-PLAN.md`.
 - Git details: `.mercury/docs/guides/git-flow.md`.
-- Hook history: Mercury `docs/04-research/mercury/codex-hooks-adoption-2026-05.md`.
-- Migration history: Mercury `docs/04-research/mercury/issue-571-codex-migration-2026-08.md` and Issue #571. Recheck version-specific runtime conclusions.
+- Hook history: [`docs/04-research/mercury/codex-hooks-adoption-2026-05.md`](docs/04-research/mercury/codex-hooks-adoption-2026-05.md).
+- Migration history: [`docs/04-research/mercury/issue-571-codex-migration-2026-08.md`](docs/04-research/mercury/issue-571-codex-migration-2026-08.md) and Issue #571. Recheck version-specific runtime conclusions.
 
 <!-- MERCURY_AGENTS_MD_TAIL_SENTINEL -->
