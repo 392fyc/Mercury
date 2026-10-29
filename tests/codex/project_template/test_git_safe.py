@@ -326,6 +326,51 @@ class GitSafeSyncTest(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertFalse(self.merging())
 
+    def test_abort_sync_abandons_a_conflicted_sync_and_restores_the_branch(self):
+        self.commit_on_branch("shared.txt", "branch edit\n")
+        self.land_on_master("shared.txt", "master edit\n")
+        head = git(self.repo, "rev-parse", "HEAD")
+        code, out = self.sync()
+        self.assertEqual(code, 1, out)
+        self.assertIn("git-safe abort-sync", out)
+        code, out = self.run_ps("git-safe.ps1", "abort-sync")
+        self.assertEqual(code, 0, out)
+        self.assertIn("sync=aborted", out)
+        self.assertFalse(self.merging())
+        self.assertEqual(git(self.repo, "rev-parse", "HEAD"), head)
+        self.assertEqual((self.repo / "shared.txt").read_text(), "branch edit\n")
+        self.assertEqual(git(self.repo, "status", "--porcelain", "--untracked-files=no"), "")
+
+    def test_abort_sync_refuses_without_a_sync_merge(self):
+        code, out = self.run_ps("git-safe.ps1", "abort-sync")
+        self.assertNotEqual(code, 0)
+        self.assertIn("No merge is in progress", out)
+        for args in (("origin",), ("-Message", "x")):
+            with self.subTest(args=args):
+                code, out = self.run_ps("git-safe.ps1", "abort-sync", *args)
+                self.assertNotEqual(code, 0)
+                self.assertIn("takes no arguments", out)
+        # A merge of something other than trunk commits is left alone.
+        git(self.repo, "checkout", "-q", "-b", "feature/side-codex")
+        self.commit_on_branch("side.txt", "side\n")
+        git(self.repo, "checkout", "-q", "feature/TASK-1-codex")
+        self.commit_on_branch("mine.txt", "mine\n")
+        git(self.repo, "merge", "-q", "--no-ff", "--no-commit", "feature/side-codex")
+        code, out = self.run_ps("git-safe.ps1", "abort-sync")
+        self.assertNotEqual(code, 0)
+        self.assertIn("not a git-safe sync of origin/master", out)
+        self.assertTrue(self.merging())
+
+    def test_abort_sync_refuses_a_protected_branch(self):
+        self.land_on_master("theirs.txt", "theirs\n")
+        self.assertEqual(self.sync()[0], 0)
+        git(self.repo, "branch", "-f", "master", "feature/TASK-1-codex")
+        (self.repo / ".git/HEAD").write_text("ref: refs/heads/master\n")  # as if the merge had been started on master
+        code, out = self.run_ps("git-safe.ps1", "abort-sync")
+        self.assertNotEqual(code, 0)
+        self.assertIn("Protected branch 'master'", out)
+        self.assertTrue(self.merging())
+
     def test_an_ordinary_commit_with_nothing_staged_is_still_refused(self):
         self.assertEqual(self.run_ps("guard.ps1", "mark-review")[0], 0)
         code, out = self.run_ps("git-safe.ps1", "commit", "-Message", "chore(TASK-1): nothing")

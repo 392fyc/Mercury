@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true, Position = 0)]
-  [ValidateSet("add", "commit", "push", "sync")]
+  [ValidateSet("add", "commit", "push", "sync", "abort-sync")]
   [string]$Action,
 
   [string]$Message,
@@ -245,6 +245,7 @@ switch ($Action) {
       Write-Output "sync=conflicts"
       $unmerged | ForEach-Object { Write-Output "conflict: $_" }
       Write-Output "Resolve each file keeping the intent of both sides, stage it with git-safe add, review the result, run guard.ps1 mark-review, then git-safe commit."
+      Write-Output "If the conflicts cannot be resolved, git-safe abort-sync abandons the merge and restores the branch (everything staged since the merge began is discarded)."
       exit 1
     }
     if ($mergeExit -ne 0 -or -not (Test-GitPath -Name "MERGE_HEAD")) {
@@ -252,6 +253,34 @@ switch ($Action) {
     }
     Write-Output "sync=merged"
     Write-Output "The merge is staged but not committed: review it, run guard.ps1 mark-review, then git-safe commit."
+    exit 0
+  }
+  "abort-sync" {
+    # Abandon a merge that sync left unconcluded (#719); raw `git merge --abort` stays forbidden. Only a merge of trunk
+    # commits is abandoned, so this never discards some other operation.
+    if (($Arguments -and $Arguments.Count -gt 0) -or -not [string]::IsNullOrEmpty($Message)) {
+      throw "git-safe abort-sync takes no arguments: it abandons the merge that git-safe sync started."
+    }
+    Invoke-Guard -GuardAction "pre-stage"
+    if (-not (Test-GitPath -Name "MERGE_HEAD")) {
+      throw "No merge is in progress; there is nothing for git-safe abort-sync to abandon."
+    }
+    $mergeHeadPath = git -C $repoRoot rev-parse --git-path MERGE_HEAD
+    if (-not [System.IO.Path]::IsPathRooted($mergeHeadPath)) {
+      $mergeHeadPath = Join-Path $repoRoot $mergeHeadPath
+    }
+    $mergeHeads = @(Get-Content -LiteralPath $mergeHeadPath | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $fromTrunk = $false
+    if ($mergeHeads.Count -eq 1) {
+      & git -C $repoRoot merge-base --is-ancestor $mergeHeads[0].Trim() refs/remotes/origin/master
+      $fromTrunk = ($LASTEXITCODE -eq 0)
+    }
+    if (-not $fromTrunk) {
+      throw "The merge in progress is not a git-safe sync of origin/master; abandon it by hand or ask the user."
+    }
+    Invoke-Git -GitArgs @("-C", $repoRoot, "merge", "--abort")
+    Write-Output "sync=aborted"
+    Write-Output "head=$((git -C $repoRoot rev-parse HEAD).Trim())"
     exit 0
   }
 }
