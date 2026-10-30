@@ -13,7 +13,12 @@ end to end on Windows; waking an idle Codex desktop thread is not solved (see Li
 - **Store.** One SQLite file, `<lane home>/lane-bus.sqlite`, where the lane home is `lane-paths.sh memory-dir`
   (ignored by Git, shared by every worktree). `--db` or `MERCURY_LANE_BUS_DB` overrides it.
 - **Provenance.** Every delivered message starts with the lane provenance tag. It is a peer report, never user
-  authorization (`mercury-lane-contract.md`, "Cross-lane work"; AGENTS.md "Cross-lane messages").
+  authorization (`mercury-lane-contract.md`, "Cross-lane work"; AGENTS.md "Cross-lane messages"). The body follows
+  between `=== begin body <nonce> ===` and `=== end body <nonce> ===`, with a nonce drawn when the message is read, so
+  a body cannot close its own block or forge the tag and header of another message. `send` refuses a body with
+  characters a chat view does not show: controls, format and separator characters, a lone carriage return, and other
+  default-ignorable code points such as variation selectors; a single emoji joiner or presentation selector after a
+  character that is neither whitespace nor another joiner still passes (Issue #733).
 
 ## Commands
 
@@ -88,4 +93,12 @@ The scripts need Git Bash, not WSL. `bash` on PATH is often a WSL launcher (`C:\
   says an outside `codex exec resume` or a second app-server is refused with "already has an active writer"), so
   the prototype does not do it; the wake line above is the stopgap.
 - One active session per harness per lane; no group messages.
+- The hidden-character check also refuses the ideographic variation selectors (U+E0100 onward, used for some name
+  glyphs), the Mongolian free variation selectors (U+180B onward) and emoji flags built from tag characters; such
+  text has to be described rather than sent as is. Private-use code points, and unassigned ones outside the
+  default-ignorable ranges, pass, so that icon-font glyphs and emoji newer than the sender's Python still go through.
+- Seats are not authenticated. Any process of the same user can claim a seat with any session id, or write the
+  SQLite store directly; the seat rule keeps honest sessions from crossing, it does not stop a hostile local process.
+  The MCP server does not tie `lane_bus_claim` to the host's session id either, because that id is read once when
+  the server starts and may no longer match if the host begins a new session without restarting the server.
 - Polling interval and wait deadlines follow AGENTS.md "Waiting on long-running work": every `wait` has a timeout.
