@@ -43,6 +43,7 @@ ALLOWED = [
     "grep -n sync-downstream-pr.py README.md",
     "cat scripts/codex/git-safe.ps1",
     "rg git-safe.ps1 docs",
+    "rg image_api.py docs",
     "pwsh -File scripts/other-tool.ps1 -Action List",
 ]
 
@@ -87,6 +88,11 @@ BLOCKED = [
     "sh .mercury/packs/lanes/scripts/lane-close.sh",
     ".mercury/packs/lanes/scripts/lane-claim.sh --lane a",
     "bash .mercury/packs/lanes/scripts/lane-init.sh",
+    "python -B .mercury/packs/core/skills/image-api/scripts/image_api.py --config private.json --card card.json --execute",
+    "py -3.12 packs/core/skills/image-api/scripts/image_api.py --config private.json --card card.json --execute",
+    "uv run python .mercury/packs/core/skills/image-api/scripts/image_api.py --config private.json --card card.json --execute",
+    "uv run --no-project --python 3.14 python .mercury/packs/core/skills/image-api/scripts/image_api.py --execute",
+    "python -B -X utf8 .mercury/packs/core/skills/image-api/scripts/image_api.py --execute",
 ]
 
 SCRIPT = HOOKS / "readonly_guard.py"
