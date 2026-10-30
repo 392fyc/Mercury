@@ -53,6 +53,36 @@ class LaneBus(unittest.TestCase):
         self.assertEqual(self.run_tool("send", "codex", "done, two findings", session="x-1")[0], 0)
         self.assertIn("done, two findings", self.run_tool("read", "claude", session="c-1")[1])
 
+    def test_a_message_to_codex_comes_with_a_wake_line_that_leaves_out_the_body(self):
+        # An idle Codex thread is not woken, so the sender gets a line for the user to paste; pasted text is user
+        # input to Codex, so it names the message and the read command but never carries the body (#731).
+        self.seat("claude", "c-1", lane="art")
+        self.seat("codex", "x-1", lane="art")
+        rc, out, err = self.run_tool("send", "claude", "SECRET-BODY please review", session="c-1", lane="art")
+        self.assertEqual(rc, 0, err)
+        wake = out.splitlines()[-1]
+        self.assertTrue(wake.startswith("[LANE=art] lane-bus message 1 "), out)
+        self.assertIn("lane-bus.sh read --harness codex --lane art", wake)
+        self.assertNotIn("SECRET-BODY", out)
+        rc, out, _ = self.run_tool("send", "codex", "reply", session="x-1", lane="art")
+        self.assertEqual((rc, out.strip()), (0, "sent lane-bus message 2"))  # no wake line toward the claude seat
+        # Without --lane or MERCURY_LANE, lane main is only assumed, so the line carries no lane marker.
+        self.seat("claude", "c-2")
+        self.seat("codex", "x-2")
+        out = self.run_tool("send", "claude", "SECRET-BODY", session="c-2")[1]
+        self.assertTrue(out.splitlines()[-1].startswith("lane-bus message 3 "), out)
+        self.assertNotIn("SECRET-BODY", out)
+        out = self.mcp("claude", [self.call(1, "lane_bus_claim", session_id="c-2"),
+                                  self.call(2, "lane_bus_send", body="SECRET-BODY via mcp")])
+        self.assertIn("\nlane-bus message 4 from the claude seat", self.text(out[1]))
+        self.assertNotIn("[LANE=", self.text(out[1]))
+        self.assertNotIn("SECRET-BODY", self.text(out[1]))
+        # A lane named through MERCURY_LANE marks the line the same way, on the MCP path too.
+        out = self.mcp("claude", [self.call(1, "lane_bus_claim", session_id="c-1"),
+                                  self.call(2, "lane_bus_send", body="SECRET-BODY art")], env={"MERCURY_LANE": "art"})
+        self.assertIn("\n[LANE=art] lane-bus message 5 ", self.text(out[1]))
+        self.assertNotIn("SECRET-BODY", self.text(out[1]))
+
     def test_a_session_without_the_seat_can_neither_read_nor_send(self):
         self.seat("codex", "x-1")
         for command, stdin in (("send", "hi"), ("read", "")):
