@@ -384,7 +384,7 @@ GUARD_MAX = 20
 # WRITE_SCRIPTS of packs/core/hooks/readonly_guard.py (a test keeps the two equal): the guard blocks these outright, so
 # naming one in guard_write_actions would promise a per-action rule that never applies.
 GUARD_BUILTIN_SCRIPTS = frozenset({"git-safe.ps1", "sync-downstream-pr.py", "lane-spawn.sh", "lane-close.sh",
-                                   "lane-claim.sh", "lane-init.sh"})
+                                   "lane-claim.sh", "lane-init.sh", "image_api.py"})
 
 
 def link_text(value, what):
