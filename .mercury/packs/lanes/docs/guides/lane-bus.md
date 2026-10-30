@@ -52,7 +52,12 @@ The session id is `CLAUDE_CODE_SESSION_ID` in Claude Code and `CODEX_THREAD_ID` 
   continues the turn once while messages are unread. It speaks only to the seat holder, never marks anything read,
   and lets the session go on after any failure. A SessionStart in a session that does not hold the seat says who
   does and how to claim it.
-- **Codex.** The thread reads on its own turns (`read`, or the hook). An idle Codex desktop thread is not woken.
+- **Codex.** The thread reads on its own turns (`read`, or the hook). An idle Codex desktop thread is not woken, so
+  until Codex offers a way in, the user wakes it (Issue #731). A `send` to the codex seat, from the CLI or
+  `lane_bus_send`, also prints a wake line: the lane marker when the lane was named (`--lane` or `MERCURY_LANE`), the
+  message id and the `read` command. Claude shows that line to the user as its own code block, and the user pastes it
+  into the Codex thread. The line never carries the body: whatever the user pastes reaches Codex as user input, while
+  the body has to stay behind its provenance tag, which marks it as a peer report and not user authorization.
 
 ## Claude Code plugin
 
@@ -79,6 +84,8 @@ The scripts need Git Bash, not WSL. `bash` on PATH is often a WSL launcher (`C:\
 ## Limits
 
 - Codex idle wake: the Codex desktop app runs its own embedded app-server; starting a turn from a second app-server
-  would make two writers on one thread, so the prototype does not do it.
+  would make two writers on one thread (openai/codex#54683, an open community report on codex-cli 0.154 to 0.162,
+  says an outside `codex exec resume` or a second app-server is refused with "already has an active writer"), so
+  the prototype does not do it; the wake line above is the stopgap.
 - One active session per harness per lane; no group messages.
 - Polling interval and wait deadlines follow AGENTS.md "Waiting on long-running work": every `wait` has a timeout.
