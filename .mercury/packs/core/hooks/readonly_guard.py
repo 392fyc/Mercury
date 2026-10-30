@@ -68,6 +68,7 @@ FILE_WRITERS = {
 }
 WRITE_SCRIPTS = (
     "git-safe.ps1", "sync-downstream-pr.py", "lane-spawn.sh", "lane-close.sh", "lane-claim.sh", "lane-init.sh",
+    "image_api.py",
 )
 SHELLS = {"bash", "sh", "zsh", "powershell", "pwsh", "cmd"}
 INTERPRETERS = {"python", "python3", "py", "pwsh", "powershell", "bash", "sh", "uv", "uvx", "node"}
@@ -314,6 +315,9 @@ def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), 
     # so reading or searching for them stays allowed.
     executed = [word] if word.endswith((".ps1", ".py", ".sh")) else []
     if word in INTERPRETERS:
+        # uv run and interpreter flag values can precede this paid helper.
+        if any(command_word(a) == "image_api.py" for a in args):
+            raise Blocked("image_api.py")
         executed += [command_word(a) for a in args if not a.startswith("-")][:1]
         executed += [command_word(args[i + 1]) for i, a in enumerate(args[:-1])
                      if a.lower() in ("-file", "-f")]
