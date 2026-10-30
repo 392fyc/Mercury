@@ -34,6 +34,11 @@ repositories, tools and machines.
 
 ## Session identity
 
+- Lanes are optional. A session whose starting instruction has no
+  `[LANE=<id>]` marker works outside any lane: it does ordinary task work and
+  delivery without asking for a lane, and it writes no lane state. It asks
+  about a lane only when the user names one or when lane state must be
+  written.
 - Before a session writes lane state (registry, checkpoint, handoff), it must
   know its lane: from an explicit `[LANE=<id>]` marker in its starting
   instruction, or by asking the user. Never infer the lane from the task. A
