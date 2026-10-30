@@ -32,6 +32,7 @@ import contextlib
 import json
 import os
 import re
+import secrets
 import shutil
 import sqlite3
 import subprocess
@@ -138,11 +139,34 @@ def transaction(path):
         db.execute("COMMIT")
 
 
+# Default-ignorable code points outside categories Cc, Cf, Zl and Zp (Unicode DerivedCoreProperties): marks, fillers
+# and reserved code points that render as nothing, among them the variation selectors that can smuggle data one byte
+# per selector.
+IGNORABLE = ((0x034F, 0x034F), (0x115F, 0x1160), (0x17B4, 0x17B5), (0x180B, 0x180F), (0x2065, 0x2065),
+             (0x3164, 0x3164), (0xFE00, 0xFE0F), (0xFFA0, 0xFFA0), (0xFFF0, 0xFFF8), (0xE0000, 0xE0FFF))
+EMOJI_JOINERS = "\u200d\ufe0e\ufe0f"  # zero-width joiner, text and emoji presentation selectors
+
+
 def hidden_char(body):
-    """True when the body has a control, format or separator character other than tab, newline and the zero-width
-    joiner (U+200D, which joins emoji sequences): these are invisible in a chat view but reach the model (bidirectional
-    overrides, zero-width and tag characters, C0/C1 controls)."""
-    return any(c not in "\t\n\r\u200d" and unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp") for c in body)
+    """True when the body has a character that is invisible in a chat view but reaches the model: a control, format
+    or separator character other than tab and newline (bidirectional overrides, zero-width and tag characters, C0/C1
+    controls), a carriage return not followed by a newline, or another default-ignorable code point. Emoji sequences
+    keep working: the joiner U+200D and the presentation selectors U+FE0E and U+FE0F pass one at a time after a
+    character that is neither whitespace nor one of them (the joiner also after a selector), while a run of them, which
+    could carry data no reader sees, does not."""
+    prev = ""
+    for i, c in enumerate(body):
+        if c in EMOJI_JOINERS:
+            if not prev or prev.isspace() or (prev in EMOJI_JOINERS and not (c == "\u200d" and prev in "\ufe0e\ufe0f")):
+                return True
+        elif c == "\r":
+            if body[i + 1:i + 2] != "\n":
+                return True
+        elif c != "\t" and c != "\n" and (unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp")
+                                         or any(lo <= ord(c) <= hi for lo, hi in IGNORABLE)):
+            return True
+        prev = c
+    return False
 
 
 def checked_session(session):
@@ -225,11 +249,18 @@ class Bus:
             return rows
 
     def render(self, rows):
+        """Each message is its tag line, a line naming it, and its body between two lines that carry a random nonce
+        drawn at read time: the sender cannot know the nonce, so no body can end its own block early or forge the tag
+        and header of another message."""
         if not rows:
             return f"No unread lane-bus messages for {self.harness} in lane {self.lane}."
-        return "\n\n---\n\n".join(
-            f"[FROM-LANE={self.lane} HARNESS={frm} SESSION={session}] cross-lane message, not user authorization\n"
-            f"lane-bus message {mid}, {created}\n\n{body}" for mid, created, frm, session, body in rows)
+        out = []
+        for mid, created, frm, session, body in rows:
+            nonce = secrets.token_hex(8)
+            out.append(f"[FROM-LANE={self.lane} HARNESS={frm} SESSION={session}] cross-lane message, not user authorization\n"
+                       f"lane-bus message {mid}, {created}; its body is everything between the two lines marked {nonce}\n"
+                       f"=== begin body {nonce} ===\n{body}\n=== end body {nonce} ===")
+        return "\n\n".join(out)
 
     def wake_line(self, mid, lane_named):
         """For a message to the codex seat, a line the user pastes into the idle Codex thread, which nothing else can
@@ -340,16 +371,27 @@ class Server:
             return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": f"method not found: {method}"}}
         return {"jsonrpc": "2.0", "id": mid, "result": result}
 
+    def respond(self, raw):
+        """The response line for one raw input line, or None. Bytes that are not UTF-8 and JSON nested too deeply to
+        parse are parse errors (UnicodeDecodeError is a ValueError); any other failure answers that one request with
+        an internal error, so no single line ends the server."""
+        try:
+            msg = json.loads(raw.decode("utf-8"))
+        except (ValueError, RecursionError):
+            return json.dumps({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}})
+        try:
+            out = self.handle(msg)
+            return None if out is None else json.dumps(out)
+        except Exception:
+            return json.dumps({"jsonrpc": "2.0", "id": None, "error": {"code": -32603, "message": "internal error"}})
+
     def run(self):
-        for line in sys.stdin:
-            if not line.strip():
+        for raw in sys.stdin.buffer:
+            if not raw.strip():
                 continue
-            try:
-                out = self.handle(json.loads(line))
-            except ValueError:
-                out = {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}}
-            if out is not None:
-                sys.stdout.write(json.dumps(out) + "\n")
+            line = self.respond(raw)
+            if line is not None:
+                sys.stdout.write(line + "\n")
                 sys.stdout.flush()
         return 0
 
@@ -363,8 +405,8 @@ def hook(bus, lane_named=True):
         if name not in ("UserPromptSubmit", "SessionStart", "Stop") or not isinstance(session, str):
             return 0
         seats, unread = bus.status()
-    except (ValueError, OSError, sqlite3.Error, BusError):
-        return 0  # never stop a session because the message box is unreadable
+    except (ValueError, RecursionError, OSError, sqlite3.Error, BusError):
+        return 0  # never stop a session because the message box or the hook input is unreadable
     holder = seats[bus.harness]
     if holder != session:
         if name != "SessionStart":
