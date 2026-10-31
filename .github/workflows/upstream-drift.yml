@@ -13,14 +13,14 @@ name: upstream-drift
 # Tier 1 (mechanical) of Mercury's upstream-staleness mechanism. Tier 2 is the
 # periodic /mercury-staleness-audit LLM workflow (dead-component + version-lag
 # judgment that blob drift cannot see). Cadence + triage protocol:
-# .mercury/docs/guides/upstream-drift-routine.md.
+# docs/02-guides/upstream-drift-routine.md.
 #
 # This job runs READ-ONLY: it does NOT write last_drift_check back to the repo
 # (GHA must not push to master — Mercury PR-only rule). last_drift_check is the
 # "last human-reviewed" marker, stamped by local `upstream-drift-check.sh
 # --write-back` runs committed via PR; this job is the automated alarm.
 #
-# Fully detachable (DIRECTION.md modular design): delete this file +
+# Fully detachable (principle P3 in docs/01-rules/principles.md): delete this file +
 # scripts/upstream-drift-check.sh and the mechanism is gone; the tracking Issue
 # and the `upstream-drift` label then become harmless orphans.
 
@@ -114,7 +114,7 @@ jobs:
           {
             echo "Automated upstream drift report — $TODAY ([run log]($RUN_URL))."
             echo
-            echo "The monthly \`upstream-drift\` watch found cherry-picked / version-pinned artifacts whose upstream changed since import (CHANGED) or went away (UPSTREAM_GONE). Triage per \`.mercury/docs/guides/upstream-drift-routine.md\`: for each, decide pull-update / re-pin / accept-as-owned, then run \`bash scripts/upstream-drift-check.sh --write-back\` locally and commit the refreshed \`last_drift_check\` via PR."
+            echo "The monthly \`upstream-drift\` watch found cherry-picked / version-pinned artifacts whose upstream changed since import (CHANGED) or went away (UPSTREAM_GONE). Triage per \`docs/02-guides/upstream-drift-routine.md\`: for each, decide pull-update / re-pin / accept-as-owned, then run \`bash scripts/upstream-drift-check.sh --write-back\` locally and commit the refreshed \`last_drift_check\` via PR."
             echo
             echo '```'
             cat drift-report.txt

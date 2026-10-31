@@ -279,14 +279,14 @@ cwd-encoded project state directory is also distinct.
 
 This § is about **lane-level** isolation (one worktree per active lane,
 long-lived). It is NOT the same scope as the **task-level** worktree spec in
-`.mercury/docs/guides/worktree-workflow.md`, which
+Mercury `docs/02-guides/worktree-workflow.md`, which
 covers `.worktrees/{taskId}` worktrees created for a
 single dev task and removed after the PR merge is verified.
 
 | Scope | Path | Lifecycle | Purpose |
 |-------|------|-----------|---------|
 | **Lane-level** (this §) | `<repo-root>/.worktrees/lanes/<short>` | Per active lane; long-lived; removed at lane close | Isolate per-cwd Claude Code session transcripts (jsonl); user-memory dir (MEMORY.md / SESSION_INDEX.md / sessions/ / handoffs) is canonical by design — see §Operational expectation |
-| **Task-level** (`.mercury/docs/guides/worktree-workflow.md`) | `<repo-root>/.worktrees/{taskId}` | Per dev task; ephemeral; removed after PR merge is verified | Isolate concurrent dev-task branch checkouts |
+| **Task-level** (Mercury `docs/02-guides/worktree-workflow.md`) | `<repo-root>/.worktrees/{taskId}` | Per dev task; ephemeral; removed after PR merge is verified | Isolate concurrent dev-task branch checkouts |
 
 Both kinds live under the repository's own `.worktrees/` (Issue #663). The
 `lanes/` subdirectory is reserved for lane-level worktrees: task-level cleanup
@@ -548,7 +548,7 @@ skips anything under `.worktrees/lanes/` by design.
 If the worktree has uncommitted content or the merge cannot be verified, do
 not remove anything; report the path and branch. A lane abandoned without
 merging is listed for the user and removed only after the user confirms (see
-`.mercury/docs/guides/worktree-workflow.md` for the confirmed-deletion
+Mercury `docs/02-guides/worktree-workflow.md` for the confirmed-deletion
 steps, including the SHA read-back before the remote branch is deleted via
 `gh api -X DELETE`; `main`, `master`, `develop` (frozen) and the default branch are never deleted).
 
@@ -670,7 +670,7 @@ unconditional infrastructure.
   convention and of the Δ10/Δ11 contracts
 - Each lane MUST state its `Worktree path` field in its own `LANES.md`
   section (`.mercury/packs/lanes/scripts/lane-init.sh` and `.mercury/packs/lanes/scripts/lane-spawn.sh` write it)
-- `.mercury/docs/guides/worktree-workflow.md` covers the orthogonal
+- Mercury `docs/02-guides/worktree-workflow.md` covers the orthogonal
   task-level worktree scope
 - `.mercury/packs/lanes/docs/guides/agent-view-dispatch.md` covers Path B dispatch
   convention for Claude Code's agent view UI layer on top of Mercury

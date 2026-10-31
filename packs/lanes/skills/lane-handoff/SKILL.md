@@ -126,7 +126,7 @@ git branch --show-current 2>/dev/null
 
 ### Layer 5: GitHub Project / Issues (best-effort — skip cleanly if unavailable)
 
-If the project uses GitHub Issues + a GitHub Project (v2), query for next-task selection. This layer is **best-effort**: if `gh` is missing, unauthenticated, or the repo has no Project, skip this layer and fall back to Layers 1–4 + `.mercury/docs/EXECUTION-PLAN.md` (or the repo's equivalent plan). Never let a Layer 5 failure block the handoff.
+If the project uses GitHub Issues + a GitHub Project (v2), query for next-task selection. This layer is **best-effort**: if `gh` is missing, unauthenticated, or the repo has no Project, skip this layer and fall back to Layers 1–4 + the repo's progress page (Mercury `docs/00-progress/README.md`, or the repo's equivalent plan). Never let a Layer 5 failure block the handoff.
 
 ```bash
 # Pre-flight: bail out gracefully if gh is unavailable or unauthenticated.
@@ -170,7 +170,7 @@ Selection criteria (in order):
 1. Actively blocked P1 bugs with known root cause
 2. In-Progress items from the Project board
 3. Highest-priority P0 Todo from Project board
-4. Next Phase sub-item per `.mercury/docs/EXECUTION-PLAN.md` (or equivalent)
+4. Next item on the project's progress page (Mercury `docs/00-progress/README.md`, or equivalent)
 
 Pick **one** primary task + one secondary fallback. Never produce a menu.
 

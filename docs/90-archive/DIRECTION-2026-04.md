@@ -1,3 +1,5 @@
+> **已取代**：现行原则见 `docs/01-rules/principles.md`（2026-10-31，#736）。本文原为 `.mercury/docs/DIRECTION.md`，其余部分只作历史。
+
 # Mercury 项目方向定义
 
 > 状态: **生效中** | 制定日期: 2026-04-06 | 决策者: 392fyc

@@ -10,7 +10,7 @@ Mercury 不仅是一套 harness 框架，更是一组设计哲学与工程实证
 
 - 关注 long-running AI agent / agent harness 设计的开发者
 - 参考 Mercury 工程模式（multi-lane / dev-pipeline / dual-verify / external adapter）的项目
-- 作为 Mercury 自身演进的"为什么"档案（per `.mercury/docs/DIRECTION.md` P4: 方法论先于工具）
+- 作为 Mercury 自身演进的"为什么"档案（原 DIRECTION P4“方法论先于工具”，现存 `docs/90-archive/DIRECTION-2026-04.md`）
 
 ## 写作约定
 
@@ -19,15 +19,15 @@ Mercury 不仅是一套 harness 框架，更是一组设计哲学与工程实证
 | 语言 | 简体中文（zh-CN） |
 | 长度 | 长文 8000-12000 字；ADR-style 4000-6000 字 |
 | 受众 | 技术开发者；假定 Claude Code / GitHub / git workflow 基础认知 |
-| 引用 | in-repo 路径优先（DIRECTION.md / .mercury/docs/）；外部 URL 限于官方文档或权威一手来源 |
+| 引用 | in-repo 路径优先（`docs/01-rules/`、`docs/02-guides/`）；外部 URL 限于官方文档或权威一手来源 |
 | 实证 | 每 section 至少 1 个 Mercury 自身工程案例（PR # / Issue # / commit SHA） |
 | Trade-off | 显性化设计权衡；不只讲"做了什么"，更讲"为什么不做替代方案" |
 
 ## Article 索引
 
-| # | 标题 | 状态 | 主题 |
-|---|------|------|------|
-| 001 | [Mercury harness 设计：让 AI Agent 持续自主工作的轻量框架](001-mercury-harness-overview.md) | 草稿中 | 综述：Mercury 哲学 + multi-lane v1 + dev-pipeline + dual-verify + Argus + production-readiness gate |
+| 文档 | 状态 | 主题 |
+|---|---|---|
+| [001-mercury-harness-overview.md](001-mercury-harness-overview.md) | 草稿 | Mercury harness 设计综述：Mercury 哲学 + multi-lane v1 + dev-pipeline + dual-verify + Argus + production-readiness gate |
 
 ## 后续候选主题（Issue #376 候选清单）
 

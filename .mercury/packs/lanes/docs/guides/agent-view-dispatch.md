@@ -264,7 +264,7 @@ that point `git branch -D worktree-<name>` is the confirmed deletion, and a
 pushed branch is deleted with `gh api -X DELETE repos/<owner>/<repo>/git/refs/heads/worktree-<name>`
 (not a bare `git push`), after reading it back with `gh api repos/<owner>/<repo>/git/ref/heads/worktree-<name>`
 and confirming the SHA equals the tip commit you listed (otherwise stop). Never delete `main`, `master`,
-`develop` (frozen) or the default branch. Lifecycle rules: `.mercury/docs/guides/worktree-workflow.md`.
+`develop` (frozen) or the default branch. Lifecycle rules: Mercury `docs/02-guides/worktree-workflow.md`.
 
 The `<name>` placeholder is operator-supplied (NOT auto-substituted by the
 shell) — copy-pasting verbatim targets a literal directory named `<name>`.
@@ -284,7 +284,7 @@ Mercury has a separate, manual `.claude/worktrees/` use-case predating
 agent view: earlier manual workflows (such as the retired `dev-pipeline` skill) created
 `.claude/worktrees/<task-id>/` for per-task isolation. Task worktrees now live
 at `.worktrees/<task-id>/` in the repository root (see
-`.mercury/docs/guides/worktree-workflow.md`); agent view's auto-iso keeps
+Mercury `docs/02-guides/worktree-workflow.md`); agent view's auto-iso keeps
 using `.claude/worktrees/`.
 
 | Source | Name pattern | Lifecycle | Branch |
@@ -430,7 +430,7 @@ the `<lane-worktree>` placeholder and carry no machine-specific paths.
   (file-editing bg + hook lifecycle + cost-tracker gap empirical)
 - [`lane-naming.md`](lane-naming.md) — lane short name + Worktree path
   convention + Δ10/Δ11 handoff/lane-assertion contracts
-- `.mercury/docs/guides/worktree-workflow.md` — task-level worktree
+- Mercury `docs/02-guides/worktree-workflow.md` — task-level worktree
   scope (orthogonal to agent view auto-iso, shares
   `.claude/worktrees/` parent)
 - [Anthropic: Manage multiple agents with agent view](https://code.claude.com/docs/en/agent-view)

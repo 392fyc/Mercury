@@ -8,8 +8,8 @@ This is a **doc-only protocol delta** plus an optional helper script
 
 ## Why
 
-Rule 4 grants the main lane exclusive edit rights over `.mercury/docs/DIRECTION.md`
-and `.mercury/docs/EXECUTION-PLAN.md`. Side lanes that need a spec change must
+Rule 4 grants the main lane exclusive edit rights over the project's current rules
+and progress pages (in Mercury, `docs/01-rules/` and `docs/00-progress/`). Side lanes that need a spec change must
 file an Issue and wait for main to act on it.
 
 This works fine when main is responsive. It fails when main is unresponsive
@@ -27,8 +27,8 @@ merge.
 
 All of:
 
-1. Side lane needs a change to `DIRECTION.md` or `EXECUTION-PLAN.md` to make
-   forward progress on its claimed Issues.
+1. Side lane needs a change to the project's current rules or progress pages to
+   make forward progress on its claimed Issues.
 2. The blocking concern was filed on a coordination Issue (`lane:main` +
    `coordination` labels) at least 48 hours before the escalation PR is opened.
 3. Main lane has been idle for 48+ hours — defined objectively as **all three**
@@ -60,7 +60,7 @@ intuition.
    [EMERGENCY-<lane>] <short summary>
    ```
 
-   Example: `[EMERGENCY-side-multi-lane] DIRECTION.md §3 cap-5 bypass for #292 close`
+   Example: `[EMERGENCY-side-multi-lane] current-rules lane cap change for #292 close`
 
 3. **PR body MUST include**:
    - Reference to this rule: `Per Rule 4.1 (lane-emergency-escalation.md)`.
@@ -157,4 +157,4 @@ fixture report fields, and JSON output structure.
 - Issue [#312](https://github.com/392fyc/Mercury/issues/312) — acceptance criteria
 - [v0.1 Delta companion](../lane-protocol-v0.1-deltas.md#delta-4--rule-41-emergency-spec-change-escalation-p2)
 - [Overcoming the Pitfalls of the Spotify Model](https://medium.com/@ss-tech/overcoming-the-pitfalls-of-the-spotify-model-8e09edc9583b)
-- [lane-protocol.md](lane-protocol.md) Rule 4 (DIRECTION/EXECUTION-PLAN exclusivity)
+- [lane-protocol.md](lane-protocol.md) Rule 4 (main-lane exclusivity over current rules and progress)

@@ -56,7 +56,7 @@ Mercury `docs/04-research/mercury/articles/001-mercury-harness-overview.md`
 | 3 — tmp isolation: each lane keeps scratch files in `.tmp/lane-<lane>/` | yes | [lane-close.md](lane-close.md), `.mercury/packs/lanes/scripts/lane-close.sh` |
 | 3.1 — 14-day stale lane sweep (branch, handoff and Issue signals; report-only) | yes | [lane-sweep.md](lane-sweep.md), `.mercury/packs/lanes/scripts/lane-sweep.sh` |
 | 3.2 — `.tmp/lane-<lane>/` pruned when the lane closes | yes | [lane-close.md](lane-close.md), `.mercury/packs/lanes/scripts/lane-close.sh` |
-| 4 — only the main lane edits `DIRECTION.md` / `EXECUTION-PLAN.md`; other lanes open an Issue | yes | [lane-emergency-escalation.md](lane-emergency-escalation.md) |
+| 4 — only the main lane edits the project's current rules and progress pages (in Mercury, `docs/01-rules/` and `docs/00-progress/`); other lanes open an Issue | yes | [lane-emergency-escalation.md](lane-emergency-escalation.md) |
 | 4.1 — emergency escalation when main is idle >48h | yes | [lane-emergency-escalation.md](lane-emergency-escalation.md), `.mercury/packs/lanes/scripts/check-main-idle.sh` |
 | 5 — per-lane state: each lane has its own `session-handoff[-<lane>].md` and session files | yes | [lane-naming.md](lane-naming.md) §Operational expectation, `.mercury/packs/lanes/scripts/lane-paths.sh handoff-file --lane <lane>` |
 | 5.1 — one worktree per lane, declared as `Worktree path` (Δ9); `/mercury-lane-handoff auto` launch (Δ10); `[LANE=<name>]` marker check (Δ11); cross-repo variant (#374) | yes | [lane-naming.md](lane-naming.md) §worktree isolation, `.mercury/packs/lanes/scripts/lane-assertion.sh`, `.mercury/packs/lanes/scripts/handoff-launch.sh`, `.mercury/packs/lanes/skills/lane-handoff/SKILL.md` Step 5 |

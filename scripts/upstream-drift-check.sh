@@ -41,7 +41,7 @@
 # Tier 1 (mechanical/deterministic) of Mercury's upstream-staleness mechanism
 # (Issue #508). Tier 2 is the periodic /mercury-staleness-audit LLM workflow
 # (dead-component + version-lag judgment). Cadence + triage protocol:
-# .mercury/docs/guides/upstream-drift-routine.md.
+# docs/02-guides/upstream-drift-routine.md.
 
 set -euo pipefail
 
