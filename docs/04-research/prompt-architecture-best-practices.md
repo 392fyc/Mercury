@@ -1,6 +1,6 @@
 # Agent Prompt Architecture Best Practices Research
 
-> 研究日期: 2026-03-21 | Task: TASK-PROMPT-R-001 | 基于: multi-agent-framework-analysis.md 扩展
+> 研究日期: 2026-03-21 | Task: TASK-PROMPT-R-001 | 基于: [multi-agent-framework-analysis.md](https://github.com/392fyc/Mercury/blob/27a5468528c4119c1250e1da2d737d111205aad0/docs/04-research/multi-agent-framework-analysis.md) 扩展
 > 本文不重复已有研究结论，聚焦 8 个具体问题的可落地回答。
 
 ---

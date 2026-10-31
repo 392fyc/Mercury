@@ -49,9 +49,9 @@ The full lane contract is `.mercury/packs/lanes/docs/mercury-lane-contract.md`; 
 
 ## Knowledge base
 
-- The project's knowledge base follows `.mercury/packs/kb/docs/kb-conventions.md`: one entry page leading to the current rules, the progress page and the decision register; a README index with a status for every document in every directory; history in the archive.
-- Before editing, read the KB documents that govern the task, starting from the entry page. When a change alters a rule, a decision or progress, update the current document and mark what it replaces (status `superseded` with its replacement) in the same pull request.
-- Every pull request names its Issue and has a line starting with `KB:` that lists the KB documents it updated, or says `KB: no impact` and why. `guard.ps1 pre-merge` refuses a pull request without both. Check the KB with `python -B .mercury/packs/kb/scripts/kb_check.py <kb-root>`.
+- The project's knowledge base follows `.mercury/packs/kb/docs/kb-conventions.md`: one entry page leading to the current rules, the progress page and the decision register; a README index with a status (`current` or `draft`) for every document in every directory; no archive.
+- Before editing, read the KB documents that govern the task, starting from the entry page. When a change alters a rule, a decision or progress, update the current document and delete what it makes outdated or wrong, with every link to it, in the same pull request. Do not keep outdated text marked as superseded: search finds it as if it were current. Git history, Issues and pull requests keep the record; cite a fixed-commit permanent link when old text must stay citable.
+- Every pull request names its Issue and has a line starting with `KB:` that lists the KB documents it updated or deleted, or says `KB: no impact` and why. `guard.ps1 pre-merge` refuses a pull request without both. Check the KB with `python -B .mercury/packs/kb/scripts/kb_check.py <kb-root>`.
 <!-- MERCURY:END -->
 
 # Mercury — Codex working contract
@@ -119,7 +119,7 @@ Upstreams evaluated and deliberately not imported are recorded in
 
 - Progress: `docs/00-progress/README.md`.
 - Git details: `docs/02-guides/git-flow.md`.
-- Hook history: [`docs/04-research/mercury/codex-hooks-adoption-2026-05.md`](docs/04-research/mercury/codex-hooks-adoption-2026-05.md).
-- Migration history: [`docs/04-research/mercury/issue-571-codex-migration-2026-08.md`](docs/04-research/mercury/issue-571-codex-migration-2026-08.md) and Issue #571. Recheck version-specific runtime conclusions.
+- Hook history (deleted from `docs/`, kept at a fixed commit): [codex-hooks-adoption-2026-05.md](https://github.com/392fyc/Mercury/blob/27a5468528c4119c1250e1da2d737d111205aad0/docs/04-research/mercury/codex-hooks-adoption-2026-05.md).
+- Migration history (deleted from `docs/`, kept at a fixed commit): [issue-571-codex-migration-2026-08.md](https://github.com/392fyc/Mercury/blob/27a5468528c4119c1250e1da2d737d111205aad0/docs/04-research/mercury/issue-571-codex-migration-2026-08.md) and Issue #571. Recheck version-specific runtime conclusions.
 
 <!-- MERCURY_AGENTS_MD_TAIL_SENTINEL -->

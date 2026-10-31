@@ -12,7 +12,7 @@ See [`docs/README.md`](docs/README.md) for the knowledge base: the current princ
 
 ## What Mercury is NOT
 
-The earlier README described a Tauri/Vue desktop application with a Node.js orchestrator sidecar. That architecture was archived in April 2026 as part of the direction pivot (see the former charter, [`docs/90-archive/DIRECTION-2026-04.md`](docs/90-archive/DIRECTION-2026-04.md) §五).
+The earlier README described a Tauri/Vue desktop application with a Node.js orchestrator sidecar. That architecture was archived in April 2026 as part of the direction pivot (see the former charter, deleted from `docs/` and kept at a fixed commit: [DIRECTION-2026-04.md](https://github.com/392fyc/Mercury/blob/27a5468528c4119c1250e1da2d737d111205aad0/docs/90-archive/DIRECTION-2026-04.md) §五).
 
 - **Not** a CLI wrapper — Mercury does not wrap `claude` / `codex` / `opencode` binaries; it configures them
 - **Not** a custom orchestrator — Claude Code native sub-agents cover the dispatch role; the old orchestrator code was removed and remains in Git history
@@ -23,7 +23,7 @@ Mercury no longer builds its own GUI: the GUI is provided by Agent Orchestrator 
 
 ## Current status (snapshot — 2026-06)
 
-Mercury was built phase by phase against the former roadmap, now archived as [`docs/90-archive/EXECUTION-PLAN.md`](docs/90-archive/EXECUTION-PLAN.md). This table is a snapshot of that history; current progress is in [`docs/00-progress/README.md`](docs/00-progress/README.md).
+Mercury was built phase by phase against the former roadmap, deleted from `docs/` and kept at a fixed commit: [EXECUTION-PLAN.md](https://github.com/392fyc/Mercury/blob/27a5468528c4119c1250e1da2d737d111205aad0/docs/90-archive/EXECUTION-PLAN.md). This table is a snapshot of that history; current progress is in [`docs/00-progress/README.md`](docs/00-progress/README.md).
 
 | Phase | Scope | Status |
 |---|---|---|
@@ -170,7 +170,7 @@ When files from an external project are cherry-picked into Mercury, the upstream
 
 ## Removed legacy components
 
-The pre-pivot orchestrator stack, the `archive/` tree, the `packages/` workspace, the root Node/TypeScript tooling, `GEMINI.md` / `OPENCODE.md`, the loop-detector and test-gate adapters, and the `dev-pipeline` / `dual-verify` skills were removed in #666. They remain available through Git history; [`docs/04-research/mercury/`](docs/04-research/mercury/) and [`docs/03-decisions/mercury/`](docs/03-decisions/mercury/) keep the historical records.
+The pre-pivot orchestrator stack, the `archive/` tree, the `packages/` workspace, the root Node/TypeScript tooling, `GEMINI.md` / `OPENCODE.md`, the loop-detector and test-gate adapters, and the `dev-pipeline` / `dual-verify` skills were removed in #666. They and the research and decision records about them remain available through Git history; `docs/` keeps only what is current (#736).
 
 ## License
 

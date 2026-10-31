@@ -67,7 +67,7 @@ Active lanes（2026-05-15）：
 | 维度 | Mercury 多 lane | Agent view |
 |------|----------------|------------|
 | 并行单元 | **lane** = 长期 scope（跨多 session, 跨周/跨月） | **session** = 短期任务（1 task / 1 lifecycle） |
-| 隔离 | manual worktree per lane | optional auto worktree per session — Phase 6 (#391, ADR `agent-view-phase6-empirical-2026-05.md`) 矫正: 是 HYBRID enforce-then-comply mechanism, NOT 纯 supervisor 暗箱 nor 纯 agent autonomy — platform PreToolUse 拒第一次 Edit on shared checkout 返 `tool_use_error`, agent 读 error 后 ToolSearch + 调用 `EnterWorktree` 进 auto-worktree, 重试 Edit in worktree path; state.json mid-flight 增 `worktreePath` + `worktreeBranch` 字段, top-level `cwd` 不变 (logical cwd shift, not OS-level); 退 worktree 走 `ExitWorktree(action:"keep")` 或 `ExitWorktree(action:"discard")` |
+| 隔离 | manual worktree per lane | optional auto worktree per session — Phase 6 (#391, ADR [agent-view-phase6-empirical-2026-05.md](https://github.com/392fyc/Mercury/blob/27a5468528c4119c1250e1da2d737d111205aad0/docs/04-research/mercury/agent-view-phase6-empirical-2026-05.md)) 矫正: 是 HYBRID enforce-then-comply mechanism, NOT 纯 supervisor 暗箱 nor 纯 agent autonomy — platform PreToolUse 拒第一次 Edit on shared checkout 返 `tool_use_error`, agent 读 error 后 ToolSearch + 调用 `EnterWorktree` 进 auto-worktree, 重试 Edit in worktree path; state.json mid-flight 增 `worktreePath` + `worktreeBranch` 字段, top-level `cwd` 不变 (logical cwd shift, not OS-level); 退 worktree 走 `ExitWorktree(action:"keep")` 或 `ExitWorktree(action:"discard")` |
 | State 持久 | 跨 reboot 永存 (user-memory + canonical files) | 1h idle 杀 process; state.json 留盘; sleep/shutdown 全杀 (state.json 仍在但 process 重启需 `claude respawn --all`) |
 | 标识 | lane short name + branch prefix `lane/<short>/<N>-<slug>` | session short ID (8-char hex e.g. `a06e1416`) + auto-name from prompt |
 | 协调 | Issue-first + Rule 6 cross-lane via Issues + LANES.md registry | sessions 互不通信 (agent-teams 是另一原语); `claude agents` 仅作 UI 集中 |
@@ -307,7 +307,7 @@ claude agents --cwd <workspace>/Mercury-side-bug  # 仅 side-bug lane sessions
 - 双 mental model: Mercury lane registry + agent view session list 各管一摊（lane = 长期 scope, session = 短期任务）
 - 未利用 agent view 的 unified UX (如 `a:lane-side-bug` filter — Path A 才能用)
 - `~/.claude/jobs/` 历史 state.json 不自动归类到 lane (但可由 `lane-status.sh` 后置 group via cwd)
-- **Phase 6 verified scenarios** (#391 ADR `agent-view-phase6-empirical-2026-05.md`):
+- **Phase 6 verified scenarios** (#391 ADR [agent-view-phase6-empirical-2026-05.md](https://github.com/392fyc/Mercury/blob/27a5468528c4119c1250e1da2d737d111205aad0/docs/04-research/mercury/agent-view-phase6-empirical-2026-05.md)):
   1. **file-editing bg workload**: ✅ agent-driven `EnterWorktree` → 隔离 branch `worktree-<name>` + dir `<lane-cwd>/.claude/worktrees/<name>/`; main lane file 不受影响; `ExitWorktree(action:"keep")` 保留 dir + branch on disk → operator 自决 merge / discard (NO automatic reconciliation, but isolation 清洁)
   2. **完整 hook lifecycle**: ✅ except SessionEnd-only hooks — bg fires `Stop` not `SessionEnd`; Mercury 任何 SessionEnd-registered hook (cost_tracker, mem0 flush 等) 对 bg SKIP
   3. **bg session API cost tracking**: ❌ NOT integrated — Mercury #361 cost-tracker daily ceiling 不 protect bg session API spend (sub-Issue #392 follow-on filed for 修复 option A/B/C)
@@ -415,7 +415,7 @@ claude agents --cwd <workspace>/Mercury-side-bug  # 仅 side-bug lane sessions
 - `memory/LANES.md` — active/closed lane registry
 - `.mercury/docs/guides/lane-naming.md` — lane naming + worktree convention
 - `scripts/lane-assertion.sh` — Δ11 path C three-way alignment check (S98 Phase 2 PASS @ main lane cwd)
-- `.mercury/docs/research/multi-lane-protocol-2026-04-25.md` — multi-lane research baseline
+- [multi-lane-protocol-2026-04-25.md](https://github.com/392fyc/Mercury/blob/27a5468528c4119c1250e1da2d737d111205aad0/docs/04-research/mercury/multi-lane-protocol-2026-04-25.md) — multi-lane research baseline
 
 ### Empirical evidence files (Phase 2)
 

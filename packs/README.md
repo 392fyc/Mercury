@@ -367,13 +367,17 @@ only forward to `packs/git-safe/scripts/` (Issue #723).
 
 ## The kb pack
 
-Optional (Issue #736). It gives a project knowledge base a read path and a way out for outdated content:
+Optional (Issue #736). It gives a project knowledge base a read path and keeps only what is in force, because search
+finds outdated text as readily as current text:
 
 - `docs/kb-conventions.md`: one entry page (current rules, progress, decision register); a README index with a status
-  (`current`, `draft`, `superseded`, `history`) for every document in every directory; one `NN-archive` directory for
-  history; specifications folded into the current rules when merged; a `KB:` line in every pull request.
-- `scripts/kb_check.py <kb-root>`: checks the parts a script can decide (exit 0 clean, 1 problems, 2 invalid root).
-  Tests: `tests/kb/`.
+  (`current` or `draft`) for every document in every directory; no archive: outdated or wrong content is deleted in
+  the pull request that makes it so, and Git history, Issues and fixed-commit links keep the record; specifications
+  folded into the current rules and deleted when merged; a `KB:` line in every pull request.
+- `scripts/kb_check.py <kb-root>`: checks the parts a script can decide, including every Markdown link and wikilink
+  in every KB document (exit 0 clean, 1 problems, 2 invalid root). Tests: `tests/kb/`. A KB laid out under the
+  first version (#737, with `superseded`/`history` and an `NN-archive`) fails it until those documents are deleted;
+  the conventions describe the upgrade.
 - `templates/issue-task.md` and `templates/pull_request_template.md`: copy them to `.github/ISSUE_TEMPLATE/task.md`
   and `.github/pull_request_template.md`; `.github/` belongs to the project, so the pack does not write there.
 - A managed-section paragraph with the reading and updating rules.

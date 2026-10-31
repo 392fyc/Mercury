@@ -100,7 +100,7 @@ Mercury 早期使用线性 session 链：每次 session 结束时生成一个 ha
 - branch 命名没有隔离，容易碰撞
 - memory 文件（MEMORY.md / SESSION_INDEX.md）没有写入所有者，两个 session 都可能覆盖
 
-这个根因在 S13-side-multi-lane session 实测确认（参见 `.mercury/docs/research/multi-lane-protocol-2026-04-25.md` §D1 "路由 bleed 失败模式"），推动了 multi-lane 协议的完整设计。
+这个根因在 S13-side-multi-lane session 实测确认（参见 [multi-lane-protocol-2026-04-25.md](https://github.com/392fyc/Mercury/blob/27a5468528c4119c1250e1da2d737d111205aad0/docs/04-research/mercury/multi-lane-protocol-2026-04-25.md) §D1 "路由 bleed 失败模式"），推动了 multi-lane 协议的完整设计。
 
 ### 8 条规则全景（v1，2026-05-03 接受）
 
@@ -112,7 +112,7 @@ v1 multi-lane 协议通过 8 条规则在技术和流程两个层面防止并行
 
 **Rule 3: Tmp 目录隔离**。每个 lane 使用 `.tmp/lane-<lane>/` 隔离临时文件。`scripts/lane-sweep.sh` 用三信号（branch commit date + handoff mtime + Issue updatedAt）检测 stale lanes，14 天阈值，report-only，永不自动变更 LANES.md（Rule 6 红线）。Lane 关闭时 `scripts/lane-close.sh <lane>` 原子执行 Status flip + tmp prune。
 
-**Rule 4: Main lane 独占 shared spec 编辑权**。`.mercury/docs/DIRECTION.md` 和 `.mercury/docs/EXECUTION-PLAN.md` 只有 main lane 可以修改。Side lane 只读。想修改 → 开 Issue 请 main 处理。紧急情况（main idle > 48h + 协调 Issue 已开 ≥48h）可通过 `[EMERGENCY-<lane>]` 前缀 PR 升级，但用户是仲裁者。
+**Rule 4: Main lane 独占 shared spec 编辑权**。`.mercury/docs/DIRECTION.md` 和 [EXECUTION-PLAN.md](https://github.com/392fyc/Mercury/blob/27a5468528c4119c1250e1da2d737d111205aad0/docs/90-archive/EXECUTION-PLAN.md) 只有 main lane 可以修改。Side lane 只读。想修改 → 开 Issue 请 main 处理。紧急情况（main idle > 48h + 协调 Issue 已开 ≥48h）可通过 `[EMERGENCY-<lane>]` 前缀 PR 升级，但用户是仲裁者。
 
 **Rule 5: Per-lane state 分离**。每个 lane 有自己的 `session-handoff[-<lane>].md` 和 `project_session<N>-<lane>_state.md`。关键 sub-rule **5.1**：side lanes 应使用独立 git worktree（`<workspace>/Mercury-<short-name>`），利用 Claude Code 基于 cwd 的项目状态目录命名机制，获得完全独立的 MEMORY.md / SESSION_INDEX.md / session transcripts。
 
@@ -529,7 +529,7 @@ Mercury 的 96 个 session（截至 S96）构成了一个清晰的演化轨迹�
 | 文件 | 说明 |
 |---|---|
 | `.mercury/docs/DIRECTION.md` | Mercury 项目方向最高准则（P1-P5，模块定义，开发准则，Post-Phase-2 观察） |
-| `.mercury/docs/research/multi-lane-protocol-2026-04-25.md` | Multi-lane protocol v0 MVP validation report（5 precedents + 6 adversarial examples） |
+| [multi-lane-protocol-2026-04-25.md](https://github.com/392fyc/Mercury/blob/27a5468528c4119c1250e1da2d737d111205aad0/docs/04-research/mercury/multi-lane-protocol-2026-04-25.md) | Multi-lane protocol v0 MVP validation report（5 precedents + 6 adversarial examples） |
 | `.mercury/docs/guides/lane-naming.md` | Δ6 短前缀规范 + Δ7 HARD-CAP 5 lanes |
 | `.claude/skills/dev-pipeline/SKILL.md` | Dev-pipeline preset chain（Phase 1-6，TaskBundle schema，receipt slim format） |
 | `.claude/skills/dual-verify/SKILL.md` | Dual-verify skill（Claude deep-review + Codex sync audit，escape-hatch exit codes） |

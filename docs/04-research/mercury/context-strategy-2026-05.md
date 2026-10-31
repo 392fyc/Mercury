@@ -1,7 +1,7 @@
 # Context Strategy Re-baseline vs 1M-ctx Norm — ADR
 
 > 状态: **生效中** | 制定日期: 2026-05-17 | 决策者: 392fyc (main lane S104) | Closes: [Issue #385](https://github.com/392fyc/Mercury/issues/385)
-> Parent context: [Issue #381 tech intel sweep](https://github.com/392fyc/Mercury/issues/381) + `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded_cwd>/memory/research/tech-intel-sweep-2026-05-12.md` (user-level memory, 不在 Mercury repo; `<encoded_cwd>` 约定见 `.mercury/docs/research/multi-lane-protocol-2026-04-25.md` §Path conventions)
+> Parent context: [Issue #381 tech intel sweep](https://github.com/392fyc/Mercury/issues/381) + `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded_cwd>/memory/research/tech-intel-sweep-2026-05-12.md` (user-level memory, 不在 Mercury repo; `<encoded_cwd>` 约定见 [multi-lane-protocol-2026-04-25.md](https://github.com/392fyc/Mercury/blob/27a5468528c4119c1250e1da2d737d111205aad0/docs/04-research/mercury/multi-lane-protocol-2026-04-25.md) §Path conventions)
 > Related: `feedback_context_protection.md` at `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded_cwd>/memory/feedback_context_protection.md` (user-memory, 60 天前 2026-03 起作; this ADR 评估其在 1M ctx norm 下是否仍 valid)
 >
 > **路径约定**: `~/.claude/...` 等价于 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/...`, 沿用 CLAUDE.md §"Related Repositories"。
@@ -279,4 +279,4 @@ max = 132,649 tokens (= 13% of 1M Opus/Sonnet budget)
 - [Issue #361 cost-tracker](https://github.com/392fyc/Mercury/issues/361) + `~/.claude/scripts/cost_tracker.py` PRICING table
 - [Issue #362 sub-agent return-size scoping](https://github.com/392fyc/Mercury/issues/362)
 - [PR #397 DIRECTION.md §模块 2 rewrite (S103 merged)](https://github.com/392fyc/Mercury/pull/397) — 相关但正交
-- [`.mercury/docs/research/cma-memory-vs-mem0-2026-05.md`](./cma-memory-vs-mem0-2026-05.md) (S102 sibling ADR, 同期同模板)
+- [cma-memory-vs-mem0-2026-05.md](https://github.com/392fyc/Mercury/blob/27a5468528c4119c1250e1da2d737d111205aad0/docs/04-research/mercury/cma-memory-vs-mem0-2026-05.md) (S102 sibling ADR, 同期同模板)

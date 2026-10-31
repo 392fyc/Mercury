@@ -5,7 +5,7 @@
 > (Closes [#386](https://github.com/392fyc/Mercury/issues/386), PR
 > [#387](https://github.com/392fyc/Mercury/pull/387)). Phase 6 empirical
 > refinements in
-> `agent-view-phase6-empirical-2026-05.md` (Mercury `docs/04-research/mercury/agent-view-phase6-empirical-2026-05.md`)
+> [agent-view-phase6-empirical-2026-05.md](https://github.com/392fyc/Mercury/blob/27a5468528c4119c1250e1da2d737d111205aad0/docs/04-research/mercury/agent-view-phase6-empirical-2026-05.md)
 > (Closes [#391](https://github.com/392fyc/Mercury/issues/391), PR
 > [#393](https://github.com/392fyc/Mercury/pull/393)). This guide is the
 > operator-facing reference; the ADRs remain the authoritative evidence
@@ -426,7 +426,7 @@ the `<lane-worktree>` placeholder and carry no machine-specific paths.
 
 - ADR: `agent-view-multi-lane-adaptation-2026-05.md` (Mercury `docs/04-research/mercury/agent-view-multi-lane-adaptation-2026-05.md`)
   (Path A/B/C eval — Path B PRIMARY)
-- ADR: `agent-view-phase6-empirical-2026-05.md` (Mercury `docs/04-research/mercury/agent-view-phase6-empirical-2026-05.md`)
+- ADR: [agent-view-phase6-empirical-2026-05.md](https://github.com/392fyc/Mercury/blob/27a5468528c4119c1250e1da2d737d111205aad0/docs/04-research/mercury/agent-view-phase6-empirical-2026-05.md)
   (file-editing bg + hook lifecycle + cost-tracker gap empirical)
 - [`lane-naming.md`](lane-naming.md) — lane short name + Worktree path
   convention + Δ10/Δ11 handoff/lane-assertion contracts
