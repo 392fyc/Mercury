@@ -52,8 +52,9 @@ generated files and project-owned files before reviewing the diff.
    state leakage, portability defects, missing negative tests, and regressions.
 4. When the project keeps a knowledge base, check that the change agrees with
    the KB documents that govern it, and that a changed rule, decision or
-   progress entry is updated in the same diff with what it replaces marked.
-   Text left current but contradicted by the change is a finding.
+   progress entry is updated in the same diff and what it makes outdated is
+   deleted. Text left in the KB but contradicted by the change is a finding,
+   whether or not it is labelled as outdated.
 5. Distinguish verified facts from inferences and missing evidence.
 
 Use read-only commands to collect fresh evidence. You are read-only: do not run

@@ -63,13 +63,13 @@ Mercury `docs/04-research/mercury/articles/001-mercury-harness-overview.md`
 | 6 — `LANES.md` is the single lane registry; each lane edits only its own section, and only the owning lane closes itself | yes | [lane-close.md](lane-close.md), [lane-sweep.md](lane-sweep.md), `.mercury/packs/lanes/scripts/lane-spawn.sh`, `.mercury/packs/lanes/scripts/lane-close.sh` |
 | 7 — per-session files `sessions/S<N>(-<lane>).md`; `MEMORY.md` / `SESSION_INDEX.md` regions regenerated from them | **no**, tooling removed by #675 | the regeneration script and its guide were deleted in #675 |
 | Δ7 — hard cap on active lanes | **no**, removed by #605 | [lane-naming.md](lane-naming.md) §Δ7 (historical) |
-| 8 — lane lifecycle autonomy: each lane owns the full lifecycle of its claimed Issues as a parallel chain, not a sub-agent of another lane; the only limits are Rule 4 and explicit cross-lane coordination Issues (earlier form: the side-lane "autonomous chain") | yes | agent-view-multi-lane-adaptation-2026-05.md (Mercury `docs/04-research/mercury/agent-view-multi-lane-adaptation-2026-05.md`), agent-team-orchestration-feasibility-2026-04-26.md (Mercury `docs/04-research/mercury/agent-team-orchestration-feasibility-2026-04-26.md`); no guide yet |
+| 8 — lane lifecycle autonomy: each lane owns the full lifecycle of its claimed Issues as a parallel chain, not a sub-agent of another lane; the only limits are Rule 4 and explicit cross-lane coordination Issues (earlier form: the side-lane "autonomous chain") | yes | agent-view-multi-lane-adaptation-2026-05.md (Mercury `docs/04-research/mercury/agent-view-multi-lane-adaptation-2026-05.md`), [agent-team-orchestration-feasibility-2026-04-26.md](https://github.com/392fyc/Mercury/blob/27a5468528c4119c1250e1da2d737d111205aad0/docs/04-research/mercury/agent-team-orchestration-feasibility-2026-04-26.md); no guide yet |
 | Cross-harness lanes (Harness / Session / Peers, provenance tag) | yes | #599 ADR (Mercury `docs/04-research/mercury/issue-599-cross-harness-lane-isolation-2026-09.md`), `AGENTS.md` "Cross-lane messages" |
 
 The deltas proposed after the first protocol cut, with their evidence, are in
 [lane-protocol-v0.1-deltas.md](../lane-protocol-v0.1-deltas.md). The design
 research is in
-multi-lane-protocol-2026-04-25.md (Mercury `docs/04-research/mercury/multi-lane-protocol-2026-04-25.md`).
+multi-lane-protocol-2026-04-25.md (Mercury [multi-lane-protocol-2026-04-25.md](https://github.com/392fyc/Mercury/blob/27a5468528c4119c1250e1da2d737d111205aad0/docs/04-research/mercury/multi-lane-protocol-2026-04-25.md)).
 
 ## Changing a rule
 

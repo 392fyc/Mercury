@@ -7,6 +7,7 @@ Refs #
 
 ## KB
 
-<!-- Replace the line below. List the knowledge-base documents this pull request updated, including status changes,
-     or write "KB: no impact" and why. guard.ps1 pre-merge refuses a pull request without a filled "KB:" line. -->
+<!-- Replace the line below. List the knowledge-base documents this pull request updated or deleted (delete what the
+     change makes outdated, with the links to it), or write "KB: no impact" and why. guard.ps1 pre-merge refuses a
+     pull request without a filled "KB:" line. -->
 KB:

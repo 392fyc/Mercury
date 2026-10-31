@@ -2,7 +2,7 @@
 
 **Status**: HISTORICAL — the protocol (v1, including accepted deltas) was accepted on 2026-05-03 (#347); the rules in force are indexed in [guides/lane-protocol.md](guides/lane-protocol.md) (#618)
 **Source**: S1-side-multi-lane research (Issue #292)
-**Companion to**: Mercury `docs/04-research/mercury/multi-lane-protocol-2026-04-25.md` (full design doc)
+**Companion to**: Mercury [multi-lane-protocol-2026-04-25.md](https://github.com/392fyc/Mercury/blob/27a5468528c4119c1250e1da2d737d111205aad0/docs/04-research/mercury/multi-lane-protocol-2026-04-25.md) (full design doc)
 **Mirror of** (historical): the v0.1 Delta Proposal section of the old user-memory lane protocol file. That file was lost in the #579 migration; the rule authority is now [guides/lane-protocol.md](guides/lane-protocol.md) (#618)
 
 ---
@@ -203,6 +203,6 @@ record, and [guides/lane-protocol.md](guides/lane-protocol.md) records which del
 
 ## Cross-references
 
-- Full research: Mercury `docs/04-research/mercury/multi-lane-protocol-2026-04-25.md`
+- Full research: Mercury [multi-lane-protocol-2026-04-25.md](https://github.com/392fyc/Mercury/blob/27a5468528c4119c1250e1da2d737d111205aad0/docs/04-research/mercury/multi-lane-protocol-2026-04-25.md)
 - Issue: [#292](https://github.com/392fyc/Mercury/issues/292)
 - Rules in force: [guides/lane-protocol.md](guides/lane-protocol.md) (#618). It replaces the lost user-memory protocol file.

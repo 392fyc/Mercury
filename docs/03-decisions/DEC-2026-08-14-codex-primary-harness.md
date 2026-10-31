@@ -5,7 +5,7 @@ Date: 2026-08-14
 ## Scope
 
 Claude 订阅暂时不可用，Mercury 的完整工作流切到 Codex CLI 0.147.0。本记录只写**决策与其代价**；
-逐条实测记录、命令与判据在 Mercury 仓 `docs/04-research/mercury/issue-571-codex-migration-2026-08.md`，
+逐条实测记录、命令与判据在固定提交的 [issue-571-codex-migration-2026-08.md](https://github.com/392fyc/Mercury/blob/27a5468528c4119c1250e1da2d737d111205aad0/docs/04-research/mercury/issue-571-codex-migration-2026-08.md)（已从 `docs/` 删除），
 执行台账在 [Mercury #571](https://github.com/392fyc/Mercury/issues/571)。
 
 ## 已定决策
