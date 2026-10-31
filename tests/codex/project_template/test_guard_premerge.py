@@ -248,6 +248,51 @@ class GuardPreMergeTests(unittest.TestCase):
         self.write_fixture()
         self.assert_rejected()
 
+    def select_kb(self):
+        (self.root / ".mercury").mkdir(exist_ok=True)
+        (self.root / ".mercury" / "config.json").write_text(
+            json.dumps({"schema_version": 1, "packs": ["core", "kb"]}), encoding="utf-8")
+
+    def test_without_the_kb_pack_the_description_is_not_checked(self):
+        self.fixture["pr"]["body"] = ""
+        self.write_fixture()
+        self.assertEqual(self.run_guard().returncode, 0)
+        (self.root / ".mercury").mkdir(exist_ok=True)
+        for config in ['{"packs": null}', '{"packs": {"kb": true}}']:
+            with self.subTest(config=config):
+                (self.root / ".mercury" / "config.json").write_text(config, encoding="utf-8")
+                result = self.run_guard()
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_the_kb_pack_requires_an_issue_reference_and_a_kb_line(self):
+        """#736: with the kb pack selected, pre-merge refuses a description without both."""
+        self.select_kb()
+        for body, fragment in [
+            (None, "does not reference its Issue"),
+            ("KB: no impact, tests only", "does not reference its Issue"),
+            ("Refs #736\n\nNo knowledge base note.", "no 'KB:' line"),
+            ("Refs #736\n<!-- KB: fill in -->", "no 'KB:' line"),
+            ("Refs #736\nKB:", "no 'KB:' line"),
+            ("<!-- Closes #1 -->\nKB: docs/README.md", "does not reference its Issue"),
+            ("Refs #736\n<!--\nKB: an example\n-->", "no 'KB:' line"),
+            ("Refs #736\nKB:<!-- fill in -->", "no 'KB:' line"),
+        ]:
+            with self.subTest(body=body):
+                self.fixture["pr"]["body"] = body
+                self.write_fixture()
+                result = self.assert_rejected()
+                self.assertIn(fragment, result.stderr)
+        for body in [
+            "Refs #736\n\n## KB\nKB: updated docs/01-rules/principles.md",
+            "Closes 392fyc/Mercury#736\n  KB: no impact (CI only)",
+            "fixes #12\r\nKB: docs/README.md",
+        ]:
+            with self.subTest(body=body):
+                self.fixture["pr"]["body"] = body
+                self.write_fixture()
+                result = self.run_guard()
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_native_receipt_does_not_override_pr_review_state(self):
         for changes in [
             {"state": "CLOSED"},

@@ -365,6 +365,25 @@ only forward to `packs/git-safe/scripts/` (Issue #723).
   `GIT_COMMON_DIR` or `GIT_INDEX_FILE` make the scripts refuse to run.
 - The read-only guard already treats `git-safe.ps1` as a write script, so read-only roles cannot call it.
 
+## The kb pack
+
+Optional (Issue #736). It gives a project knowledge base a read path and a way out for outdated content:
+
+- `docs/kb-conventions.md`: one entry page (current rules, progress, decision register); a README index with a status
+  (`current`, `draft`, `superseded`, `history`) for every document in every directory; one `NN-archive` directory for
+  history; specifications folded into the current rules when merged; a `KB:` line in every pull request.
+- `scripts/kb_check.py <kb-root>`: checks the parts a script can decide (exit 0 clean, 1 problems, 2 invalid root).
+  Tests: `tests/kb/`.
+- `templates/issue-task.md` and `templates/pull_request_template.md`: copy them to `.github/ISSUE_TEMPLATE/task.md`
+  and `.github/pull_request_template.md`; `.github/` belongs to the project, so the pack does not write there.
+- A managed-section paragraph with the reading and updating rules.
+- **Merge gate.** When `.mercury/config.json` selects `kb`, the git-safe pack's `guard.ps1 pre-merge` also reads the
+  pull request description and refuses it unless it references an Issue (`Closes`, `Fixes`, `Resolves` or `Refs #N`)
+  and has a line starting with `KB:` followed by text. Without the kb pack the description is not checked.
+
+The project keeps its directory names, which documents are authoritative and the rules themselves. Directory layout
+and cleanup of an existing KB are the project's own work.
+
 ## Sources
 
 `sources/<name>/` holds one pinned external GitHub project as a shallow Git submodule.

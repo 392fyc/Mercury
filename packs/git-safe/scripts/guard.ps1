@@ -58,6 +58,34 @@ function Get-IntegrationBranch {
   }
   return $branch
 }
+
+function Test-PackSelected {
+  # True when .mercury/config.json selects the pack (its "packs" list), as tools/mercury.py installs it.
+  param([string]$Pack)
+  $configPath = Join-Path $repoRoot ".mercury\config.json"
+  if (-not (Test-Path -LiteralPath $configPath)) { return $false }
+  try {
+    $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+  } catch {
+    throw "Unable to read .mercury/config.json."
+  }
+  if ($null -eq $config -or $config -is [array]) { return $false }
+  return ($config.PSObject.Properties.Name -contains "packs") -and (@($config.packs) -contains $Pack)
+}
+
+function Assert-KbPullRequestBody {
+  # The kb pack's merge gate (Issue #736): the PR names its Issue and states its knowledge-base impact.
+  param([int]$Number, [AllowNull()][string]$Body)
+  # Text inside HTML comments is the template's guidance, not the author's statement.
+  $text = if ($null -eq $Body) { "" } else { $Body -replace '(?s)<!--.*?-->', '' }
+  if ($text -notmatch '(?im)\b(close[sd]?|fix(e[sd])?|resolve[sd]?|refs)\s+([\w.-]+/[\w.-]+)?#\d+') {
+    throw "PR #$Number does not reference its Issue (Closes, Fixes, Resolves or Refs #N in the description)."
+  }
+  if ($text -notmatch '(?m)^[ \t]*KB:[ \t]*\S') {
+    throw "PR #$Number has no 'KB:' line: name the knowledge-base documents it updated, or write 'KB: no impact' and why."
+  }
+}
+
 # The review mark lives in the Git directory of this work tree (Issue #723): it is never committed, needs no ignore
 # rule in downstream projects, and each worktree keeps its own. Earlier versions wrote .mercury/state/review-passed.
 $reviewFlag = & git -C $repoRoot rev-parse --git-path mercury-review-passed
@@ -693,7 +721,7 @@ function Assert-PreMergeReady {
 
   $repo = Get-RepositoryCoordinate
   $repoName = "$($repo.owner)/$($repo.name)"
-  $prJson = & gh pr view $Number --repo $repoName --json number,state,isDraft,mergeable,reviewDecision,statusCheckRollup,headRefName,headRefOid,baseRefName 2>$null
+  $prJson = & gh pr view $Number --repo $repoName --json number,state,isDraft,mergeable,reviewDecision,statusCheckRollup,headRefName,headRefOid,baseRefName,body 2>$null
   if ($LASTEXITCODE -ne 0 -or -not $prJson) {
     throw "Unable to fetch PR metadata for #$Number."
   }
@@ -733,6 +761,10 @@ function Assert-PreMergeReady {
   }
   if ($pr.mergeable -cne "MERGEABLE") {
     throw "PR #$Number is not confirmed mergeable."
+  }
+  if (Test-PackSelected -Pack "kb") {
+    $body = if (Test-JsonProperty -InputObject $pr -Name "body") { [string]$pr.body } else { "" }
+    Assert-KbPullRequestBody -Number $Number -Body $body
   }
 
   $decision = if ($null -eq $pr.reviewDecision) { "" } else { [string]$pr.reviewDecision }

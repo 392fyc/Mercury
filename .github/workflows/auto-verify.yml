@@ -37,6 +37,8 @@ jobs:
           python -B tools/mercury.py check --target .
           python -B -m unittest discover -s tests/tools -p 'test_*.py' -v
           python -B -m unittest discover -s tests/core -p 'test_*.py'
+      - name: Knowledge-base checker (#736)
+        run: python -B -m unittest discover -s tests/kb -p 'test_*.py'
 
   template-contract-windows:
     name: Portable Harness contract (Windows)
@@ -67,6 +69,8 @@ jobs:
           python -B tools/mercury.py check --target .
           python -B -m unittest discover -s tests/tools -p 'test_*.py' -v
           python -B -m unittest discover -s tests/core -p 'test_*.py'
+      - name: Knowledge-base checker (#736)
+        run: python -B -m unittest discover -s tests/kb -p 'test_*.py'
       - name: The coverage checker reads Windows (CRLF) workflow files
         run: python -B -m unittest discover -s tests/ci -p 'test_*.py'
 

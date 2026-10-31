@@ -18,6 +18,13 @@ target repository, branch or worktree, and starting revision. Record forbidden
 paths, protected state, and dependencies when relevant. Use a task identifier
 when the project or coordinating agent requires one.
 
+When the project keeps a knowledge base (KB), name the KB documents that govern
+the task (current rules, decisions, progress) and read them before editing.
+When the change alters a rule, a decision or progress, update the current
+document and mark what it replaces in the same change; otherwise state that it
+has no KB impact and why. The `kb` pack's conventions and checks apply where the
+project selects it.
+
 Resolve routine details from repository context. Report an ambiguity or changed
 branch, HEAD, or governing contract when it can materially change the result;
 pause dependent writes while the mismatch is resolved. Preserve concurrent work.
@@ -154,7 +161,8 @@ records; exclude machine paths, tokens, ports, and transient process state.
 ## Implementation receipt
 
 For a routine bounded task, return changed files, criterion-specific evidence,
-commands and results, and limitations. Include branch and commit identifiers
+commands and results, the KB documents read and updated (or "no KB impact"),
+and limitations. Include branch and commit identifiers
 when relevant; an uncommitted candidate is valid.
 
 Use the following full receipt for cross-repository work, changes requiring

@@ -23,6 +23,9 @@
     "git-safe": {
       "enabled": true
     },
+    "kb": {
+      "enabled": true
+    },
     "playwright-mcp": {
       "enabled": false
     }
