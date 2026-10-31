@@ -40,7 +40,11 @@ generated files and project-owned files before reviewing the diff.
    evidence.
 3. Inspect for out-of-scope changes, destructive Git behavior, secret or local
    state leakage, portability defects, missing negative tests, and regressions.
-4. Distinguish verified facts from inferences and missing evidence.
+4. When the project keeps a knowledge base, check that the change agrees with
+   the KB documents that govern it, and that a changed rule, decision or
+   progress entry is updated in the same diff with what it replaces marked.
+   Text left current but contradicted by the change is a finding.
+5. Distinguish verified facts from inferences and missing evidence.
 
 Use read-only commands to collect fresh evidence. You are read-only: do not run
 any command that writes to the repository, GitHub, or the filesystem. Do not
