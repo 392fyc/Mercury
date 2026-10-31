@@ -12,7 +12,7 @@ Mercury 管理 `dot-link` 原生技能和签名工具。用户级安装让本地
 
 ## 任务传递
 
-接收、去重和消费回执的现行合同为 [dot 接收与回传协议](../../../.mercury/packs/dot-link/skills/dot-link/references/receiver-protocol.md)，协作版本 `dot-cooperation/1`；原有签名格式 `dot-local/0.2` 不变。安装后，本地新会话从技能入口读取该文件；共享配置指向私有协议 Page。每次投递核对协议原文件 SHA256 和接收端 ACK，不能仅因写入 Page 就声称 dot 已采用。
+接收、去重和消费回执的现行合同为 `.mercury/packs/dot-link/skills/dot-link/references/receiver-protocol.md`，协作版本 `dot-cooperation/1`；原有签名格式 `dot-local/0.2` 不变。安装后，本地新会话从技能入口读取该文件；共享配置指向私有协议 Page。每次投递核对协议原文件 SHA256 和接收端 ACK，不能仅因写入 Page 就声称 dot 已采用。
 
 持续人类授权与签名身份分别核对。已覆盖步骤直接执行；结果按原文件核验后发送签名 RECEIPT，接收端保存并确认关闭。网站入口、机器任务 API、反向会话推送和本地空闲唤醒各自验收，不把一种路径通过写成全部能力通过。
 

@@ -1,3 +1,5 @@
+> **历史**：原 `.mercury/docs/EXECUTION-PLAN.md`，2026-10-31 归档（#736）。当前进度见 `docs/00-progress/README.md`。
+
 # Mercury 执行规划
 
 > 状态: **生效中** | 制定日期: 2026-04-06

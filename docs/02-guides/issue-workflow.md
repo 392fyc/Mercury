@@ -5,7 +5,7 @@ GitHub Issues is the single source of truth for all task tracking in Mercury.
 ## Rules
 
 1. **Every task starts as an Issue** — no work without an Issue number
-2. **PRs must reference Issues** — accepted keywords, per [AGENTS.md](../../../AGENTS.md): `Closes #N` / `Fixes #N` / `Resolves #N` (auto-close) or `Refs #N` (manual close)
+2. **PRs must reference Issues** — accepted keywords, per `AGENTS.md`: `Closes #N` / `Fixes #N` / `Resolves #N` (auto-close) or `Refs #N` (manual close)
 3. **Agent progress updates** — post comments on the Issue at milestone completion
 4. **No agent-memory-only tasks** — if it's worth doing, it's worth an Issue
 
@@ -32,8 +32,8 @@ GitHub Issues is the single source of truth for all task tracking in Mercury.
 
 ## Enforcement
 
-- [AGENTS.md](../../../AGENTS.md) requires every PR to reference its Issue; check it during the independent review. (Argus used to flag a missing reference via `.pr_agent.toml`; the Argus bot is excluded for now.) The former `pr-create-guard.sh` hook was retired in #579.
-- [CLAUDE.md](../../../CLAUDE.md) MUST rule: "Issue-first workflow"
+- `AGENTS.md` requires every PR to reference its Issue; check it during the independent review. (Argus used to flag a missing reference via `.pr_agent.toml`; the Argus bot is excluded for now.) The former `pr-create-guard.sh` hook was retired in #579.
+- `CLAUDE.md` MUST rule: "Issue-first workflow"
 - Agents post milestone comments via `gh issue comment`
 
 ## Agent Workflow
@@ -41,7 +41,7 @@ GitHub Issues is the single source of truth for all task tracking in Mercury.
 ```bash
 1. Check for existing Issue (gh issue list)
 2. If none: create Issue (gh issue create --title "..." --label "..." --assignee ...)
-3. Create branch per git-flow rules (see .mercury/docs/guides/git-flow.md)
+3. Create branch per git-flow rules (see [git-flow.md](git-flow.md))
 4. Work, commit, push
 5. Post progress comment: gh issue comment N --body "Phase X complete: ..."
 6. Create PR with Issue reference keyword (e.g., Closes #N) in the gh pr create command

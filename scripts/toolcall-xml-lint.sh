@@ -62,7 +62,7 @@ if [[ "$#" -gt 0 ]]; then
 else
   # Default: the markdown/text files Claude auto-loads at session start or a skill injects.
   for f in CLAUDE.md CLAUDE.local.md AGENTS.md; do [[ -f "$f" ]] && FILES+=("$f"); done
-  for d in .claude .mercury/docs .mercury/packs; do [[ -d "$d" ]] && add_target "$d"; done
+  for d in .claude docs/01-rules docs/02-guides .mercury/packs; do [[ -d "$d" ]] && add_target "$d"; done
 fi
 
 # Fail closed on an empty scan set: a typoed path arg, or a repo somehow missing its

@@ -58,7 +58,7 @@ The full lane contract is `.mercury/packs/lanes/docs/mercury-lane-contract.md`; 
 
 ## Execution
 
-- Follow `.mercury/docs/DIRECTION.md` for development decisions. Keep Mercury thin, detachable, and compatible with stronger models; prefer native capabilities and suitable external projects.
+- Follow the current principles in `docs/01-rules/principles.md` for development decisions. Keep Mercury thin, detachable, and compatible with stronger models; prefer native capabilities and suitable external projects.
 - Default to Codex autonomous execution. Use focused skills or bounded delegation for a specific need. Invoke complex workflows or multi-stage pipelines only when the user explicitly calls for them or an established task plan requires them; a keyword mention alone does not start a workflow.
 - Keep going once the goal, acceptance criteria and start conditions are clear: work through the steps set by the user or an approved plan to a verified result without pausing to ask between them, and report at coherent delivery points instead. Do not add new tasks to extend the work, and do not start polling or background work unless authorized. Stop when the next step needs a new user decision or authorization (for example a merge confirmation, an irreversible or destructive action, credentials, a user-level configuration change, or a cross-repository or external write beyond the authorized scope), when blocked, or when the user asks to pause. This never widens existing authorization.
 - The main agent uses `gpt-6.1-sol` for planning, key decisions, integration and final verification. Codex subagents use `gpt-6-luna` / `max` for bounded implementation, retrieval, testing or independent review. Keep these defaults consistent with the Codex fields of the role sources in `packs/core/roles/` (they generate `.codex/agents/mercury-*.toml`) and with `.codex/agents/main.toml`, which this project owns. `.claude/agents/` belongs to the separate Claude Code environment; its `mercury-*` roles are generated from the same sources.
@@ -70,7 +70,7 @@ The full lane contract is `.mercury/packs/lanes/docs/mercury-lane-contract.md`; 
 ## Git and local safety
 
 - Keep unrelated changes. Stage explicit files only. Do not reset, stash, rewrite history, force-push, or remove other work to simplify a task.
-- Name task branches for their purpose, as `scripts/codex/guard.ps1` accepts them: `<type>/<purpose>[-<lane>]-<agent>`, for example `feature/TASK-703-claude`; the agent and the lane are suffixes, never prefixes (details in `.mercury/docs/guides/git-flow.md`). Never commit or push directly to `develop`, `main`, or `master`. `master` is the single trunk and develop is frozen; merge into `master` through a PR under the merge rule in `.mercury/docs/guides/git-flow.md` (PR Review and Merge): independent review of the exact head, all checks green, zero review threads (resolved ones count), no outstanding changes requested, `guard.ps1 pre-merge` passing, and the user's explicit confirmation in chat.
+- Name task branches for their purpose, as `scripts/codex/guard.ps1` accepts them: `<type>/<purpose>[-<lane>]-<agent>`, for example `feature/TASK-703-claude`; the agent and the lane are suffixes, never prefixes (details in `docs/02-guides/git-flow.md`). Never commit or push directly to `develop`, `main`, or `master`. `master` is the single trunk and develop is frozen; merge into `master` through a PR under the merge rule in `docs/02-guides/git-flow.md` (PR Review and Merge): independent review of the exact head, all checks green, zero review threads (resolved ones count), no outstanding changes requested, `guard.ps1 pre-merge` passing, and the user's explicit confirmation in chat.
 - For Git writes, use `powershell -File scripts/codex/git-safe.ps1 add/commit/push`, including outside Codex. To take in the latest `master` (for example when a PR conflicts with it), use `git-safe.ps1 sync` on the task branch: it merges `origin/master` without committing; resolve any conflicts, stage with `add`, review the result and conclude with `commit`; if the conflicts cannot be resolved, `git-safe.ps1 abort-sync` abandons that merge. Raw `git merge`, including `--abort`, stays forbidden. Before commit: stage intended files, inspect that staged diff, complete required checks and review, then run `powershell -File scripts/codex/guard.ps1 mark-review`. Changed staged content needs renewed review and a fresh mark. The mark records a snapshot, not review evidence.
 - Preserve the sandbox and command rules. Request scoped access when needed; never bypass a denial through another shell. Use `.codex/rules/` and guarded scripts. This project registers no hooks in settings files; the only hooks are the read-only guard and the wait guard in the frontmatter of the generated Claude roles. Check current official documentation before changing runtime wiring.
 - On Windows, install software under `D:\Program Files`. Keep machine paths and local state out of portable templates.
@@ -84,7 +84,7 @@ The full lane contract is `.mercury/packs/lanes/docs/mercury-lane-contract.md`; 
 - The files Mercury installs in a project are recorded in that project's `.mercury/lock.json` and described in `.mercury/packs/core/docs/mercury-harness-ownership.md`. Do not hand-edit them or overwrite project-owned content; change the pack in Mercury and let `tools/mercury.py apply` (or the deploy pack's update pull request) carry it.
 - For downstream provenance verification and reviewed automatic updates (the release gate, the update pull request and its merge conditions, the GitHub App credentials), see the deploy pack in `packs/README.md`.
 - For prior context, start with `.mercury/memory/README.md` when present and load indexed entries on demand. This is local private memory, excluded from the public repository. Protected archives and chat records are not active memory.
-- The knowledge base is `docs/` in this repository (an Obsidian vault; the private Mercury_KB vault was merged as an audited snapshot in #718 and archived). Change `docs/` in the task worktree together with the work it documents and deliver both in one pull request; `docs/` is public, so keep credentials, machine paths and private project details out. Layout and rules: `.mercury/docs/guides/kb-structure.md`.
+- The knowledge base is `docs/` in this repository (an Obsidian vault; the private Mercury_KB vault was merged as an audited snapshot in #718 and archived). Change `docs/` in the task worktree together with the work it documents and deliver both in one pull request; `docs/` is public, so keep credentials, machine paths and private project details out. Start from `docs/README.md` (current rules, progress, decisions); layout and rules: `docs/02-guides/kb-structure.md`.
 
 ## External dependencies and imports
 
@@ -108,7 +108,7 @@ The same commit must include these records as applicable to the imported files:
 
 Run `scripts/upstream-drift-check.sh` for drift monitoring. Before applying this
 protocol to CLI-generated scaffolding or registry imports, read
-`.mercury/docs/guides/cherry-pick-carve-out.md`: only the listed generators and
+`docs/02-guides/cherry-pick-carve-out.md`: only the listed generators and
 eligible source paths qualify for its exceptions. Unlisted generators and
 external file copies through local paths follow the full import protocol.
 
@@ -117,8 +117,8 @@ Upstreams evaluated and deliberately not imported are recorded in
 
 ## References on demand
 
-- Planning: `.mercury/docs/EXECUTION-PLAN.md`.
-- Git details: `.mercury/docs/guides/git-flow.md`.
+- Progress: `docs/00-progress/README.md`.
+- Git details: `docs/02-guides/git-flow.md`.
 - Hook history: [`docs/04-research/mercury/codex-hooks-adoption-2026-05.md`](docs/04-research/mercury/codex-hooks-adoption-2026-05.md).
 - Migration history: [`docs/04-research/mercury/issue-571-codex-migration-2026-08.md`](docs/04-research/mercury/issue-571-codex-migration-2026-08.md) and Issue #571. Recheck version-specific runtime conclusions.
 

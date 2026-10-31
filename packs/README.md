@@ -582,7 +582,7 @@ Each external integration is a thin translation layer: it converts an interface 
   in `packs/<pack>/build/` (generators, patches, overlays for pinned upstream submodules; never installed) and
   runtime integration wrappers such as `packs/playwright-mcp/` (JavaScript). Internal `scripts/` and `tools/`
   tooling is exempt.
-- Mount modes (see `.mercury/docs/DIRECTION.md`, section "挂载方式（三类并列）"):
+- Mount modes (see Mercury `docs/01-rules/principles.md`, rule E1):
   1. **Git submodule (default)**: pinned under `sources/`; Mercury's changes live only in the pack's `build/`
      (patches, `overlay/`, `generate.py`); the generator output is compared by `--check` in CI.
   2. **`uvx git+SHA`, runtime only**: referenced as `uvx --from git+<repo>@<SHA>` (limited exception from the

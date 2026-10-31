@@ -406,7 +406,7 @@ This is Mercury **lane '${LANE}'** session 1 (lane info in \`LANES.md\` + \`.mer
 
 ### 边界 (lane 不做)
 
-- Rule 4: 不动 \`.mercury/docs/DIRECTION.md\` / \`.mercury/docs/EXECUTION-PLAN.md\` (开 Issue 给 main lane)
+- Rule 4: 不动项目的现行规则与进度页（Mercury: \`docs/01-rules/\` / \`docs/00-progress/\`）(开 Issue 给 main lane)
 - Rule 6: 不编辑 LANES.md 其他 lane 的 section
 - Rule 7: shared index append-only (S{N}-${LANE} 自己 row OK，其他 lane row 永不动)
 

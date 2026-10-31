@@ -12,7 +12,7 @@ simultaneously and formalises the constraint in
 (dev agents must never switch branches) by giving each agent a dedicated,
 branch-locked working directory.
 
-See also: [`.mercury/docs/guides/git-flow.md`](git-flow.md) for branch naming
+See also: [git-flow.md](git-flow.md) for branch naming
 rules and merge procedures.
 
 ---
