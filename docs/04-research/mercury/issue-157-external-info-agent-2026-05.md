@@ -187,7 +187,7 @@ LLM 判定输出落成 Issue，带结构化标签:
 
 ### 5.4 与现有 review/自动化生态的关系(避免重复)
 
-参照 #86 audit 的教训(`issue-86-pr-monitor-audit-2026-05.md`): 提案能力常被现有机制 subsume。核查 #157 不与现有重复:
+参照 #86 audit 的教训([issue-86-pr-monitor-audit-2026-05.md](https://github.com/392fyc/Mercury/blob/27a5468528c4119c1250e1da2d737d111205aad0/docs/04-research/mercury/issue-86-pr-monitor-audit-2026-05.md)): 提案能力常被现有机制 subsume。核查 #157 不与现有重复:
 - A 类(依赖 bump)→ Renovate/Dependabot，**Mercury 当前无此能力**(确认非重复，是新增)。
 - B 类(外部情报 → Issue)→ 当前是 **#381 式手工扫描**，无自动化(确认非重复，是自动化先例)。
 - 建 Issue 后的开发流程 → 复用现有 issue-workflow + pr-flow + Argus，**#157 不碰这层**(只产出 `needs-triage` Issue，交回主流程)。
@@ -344,6 +344,6 @@ PoC 门槛已 discharge(Q2/Q3b/Q5/Q6 ✅);Q3/Q4 为 Phase 3 扩源门槛,任一�
 - Issue #157 body: <https://github.com/392fyc/Mercury/issues/157>
 - Issue #92 body(已 Closed as not planned): <https://github.com/392fyc/Mercury/issues/92>
 - #381 tech-intel-sweep 手工先例: MEMORY.md 索引行(原文在 user-level memory, 本 repo 不可读, 见 §1.3 + §9 Q1)
-- #86 PR Monitor audit(subsumption 核查方法论): `.mercury/docs/research/issue-86-pr-monitor-audit-2026-05.md`
+- #86 PR Monitor audit(subsumption 核查方法论): [issue-86-pr-monitor-audit-2026-05.md](https://github.com/392fyc/Mercury/blob/27a5468528c4119c1250e1da2d737d111205aad0/docs/04-research/mercury/issue-86-pr-monitor-audit-2026-05.md)
 - DIRECTION.md 适配层规范(adapter ≤200 LOC scope) + 候选挂载评估标准: `.mercury/docs/DIRECTION.md` §"适配层规范"(L231-251)
 - CLAUDE.md: MANDATORY RESEARCH PROTOCOL / modular design / scripts-exempt-from-LOC-cap carve-out

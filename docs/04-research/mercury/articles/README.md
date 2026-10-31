@@ -10,7 +10,7 @@ Mercury 不仅是一套 harness 框架，更是一组设计哲学与工程实证
 
 - 关注 long-running AI agent / agent harness 设计的开发者
 - 参考 Mercury 工程模式（multi-lane / dev-pipeline / dual-verify / external adapter）的项目
-- 作为 Mercury 自身演进的"为什么"档案（原 DIRECTION P4“方法论先于工具”，现存 `docs/90-archive/DIRECTION-2026-04.md`）
+- 作为 Mercury 自身演进的"为什么"档案（原 DIRECTION P4“方法论先于工具”，原文已删除，见固定提交 [DIRECTION-2026-04.md](https://github.com/392fyc/Mercury/blob/27a5468528c4119c1250e1da2d737d111205aad0/docs/90-archive/DIRECTION-2026-04.md)）
 
 ## 写作约定
 

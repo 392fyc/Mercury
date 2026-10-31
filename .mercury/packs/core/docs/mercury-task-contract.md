@@ -21,7 +21,8 @@ when the project or coordinating agent requires one.
 When the project keeps a knowledge base (KB), name the KB documents that govern
 the task (current rules, decisions, progress) and read them before editing.
 When the change alters a rule, a decision or progress, update the current
-document and mark what it replaces in the same change; otherwise state that it
+document and delete what it makes outdated or wrong, with the links to it, in
+the same change; otherwise state that it
 has no KB impact and why. The `kb` pack's conventions and checks apply where the
 project selects it.
 
