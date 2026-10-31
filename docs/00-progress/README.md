@@ -9,7 +9,7 @@ request that starts, finishes or redirects one of these updates this page in the
 |---|---|---|---|
 | #665 | Harness cleanup, CI and automatic delivery to projects | In progress | Remaining items of the umbrella Issue |
 | #692 | Project area, four-field linked repos, per-action guard (step 4 of #665) | In progress | See the Issue |
-| #736 | KB: kb pack, merge gate and a readable `docs/` | In progress | PR 1 merged (#737); PR 2 moves `docs/` onto the conventions; then Poke and SoT adopt the pack |
+| #736 | KB: kb pack, merge gate and a readable `docs/` | In progress | kb pack and merge gate merged (#737); `docs/` on the conventions (#738); next Poke and SoT adopt the pack |
 | #712 | Lanes: in-lane message box between Codex and Claude Code (prototype) | In progress | End-to-end wake test optional |
 | #735 | Reply language reminder and check for Claude Code (user-level) | Done, observing | Watch whether the Stop hook keeps replies in Chinese |
 | #651 | AO pilot: trust configuration, credential isolation, recovery entry | Paused | #650 (pilot C) open |
@@ -17,9 +17,6 @@ request that starts, finishes or redirects one of these updates this page in the
 | #621 | Decouple SoT ownership, automate downstream updates | Paused | Superseded in part by the deploy pack; review whether to close |
 | #579 | Simplify Astra defaults, prepare Windows development | Paused | Review whether to close |
 | #584 | Research: a lightweight classifier as a harness pre-check | Not started | — |
-
-Delivered but still open (their pull requests merged; close them with the evidence): #725 (#726), #727 (#728),
-#731 (#732), #733 (#734).
 
 Automated tracking Issues, not work items: #466 (intel-watch state), #549 (upstream drift report).
 
