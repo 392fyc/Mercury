@@ -346,7 +346,7 @@ update branch, incomplete pagination, unreadable data). Credentials are redacted
 ## The git-safe pack
 
 Optional. It installs Mercury's controlled Git entry into a project: `.mercury/packs/git-safe/scripts/git-safe.ps1`
-(`add` explicit files, `commit`, `push`, `sync`, `abort-sync`) and the guard it calls, `scripts/guard.ps1`
+(`add` explicit files, `commit`, `push`, `sync`, `abort-sync`, `fast-forward`) and the guard it calls, `scripts/guard.ps1`
 (`mark-review`, `pre-stage`, `pre-commit`, `pre-push`, `pre-merge`), and adds a managed-section paragraph that routes
 Git writes through it. These are the same scripts Mercury uses; Mercury's `scripts/codex/git-safe.ps1` and `guard.ps1`
 only forward to `packs/git-safe/scripts/` (Issue #723).
@@ -355,6 +355,13 @@ only forward to `packs/git-safe/scripts/` (Issue #723).
   --show-toplevel`), never on the caller's current directory. An agent working from another checkout calls the copy
   inside the target project's task worktree and acts on that worktree. This is what lets a session whose own project
   denies raw `git push` (for example Mercury's `.claude/settings.json`) still deliver a branch in a downstream project.
+- **Main checkout.** `fast-forward` (Issue #741) brings the checkout that holds the script up to
+  `origin/<integration branch>`, for a main checkout that people read (an Obsidian vault, for example) while agents
+  work in task worktrees. It acts only in a main checkout (not a linked worktree) on the integration branch and only by
+  fast-forward (`--no-autostash`); it refuses, without moving HEAD, on local commits, an operation in progress,
+  arguments, or local changes the update would overwrite, and keeps the ones it does not touch. It prints `fast-forward=up-to-date` or `fast-forward=updated` with
+  the commits, and lists initialized submodules whose recorded commit now differs without updating them. A scheduler
+  on the user's machine may run it; Mercury installs none.
 - **Integration branch.** `sync` merges `origin/<params.integration_branch>`; `pre-merge` with `-NativeReviewReceipt`
   requires the PR to target it; it is protected like `develop`, `main` and `master`. Without the parameter the
   branch is `master`.

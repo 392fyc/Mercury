@@ -384,6 +384,151 @@ class GitSafeSyncTest(unittest.TestCase):
 
 
 
+@unittest.skipUnless(PWSH, "PowerShell is not available")
+class GitSafeFastForwardTest(unittest.TestCase):
+    """git-safe fast-forward brings the main checkout on the integration branch up to origin, and nothing else (#741)."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        origin = root / "origin.git"
+        git(root, "init", "-q", "--bare", "-b", "main", origin.as_posix())
+        self.trunk = root / "trunk"  # where merged pull requests land
+        git(root, "clone", "-q", origin.as_posix(), "trunk")
+        git(self.trunk, "config", "core.autocrlf", "false")
+        git(self.trunk, "checkout", "-q", "-b", "main")
+        (self.trunk / "shared.txt").write_text("one\n")
+        git(self.trunk, "add", "shared.txt")
+        git(self.trunk, "commit", "-q", "-m", "seed")
+        git(self.trunk, "push", "-q", "origin", "main")
+        self.repo = root / "main-checkout"
+        git(root, "clone", "-q", origin.as_posix(), "main-checkout")
+        for key, value in (("core.autocrlf", "false"), ("user.name", "t"), ("user.email", "t@example.com")):
+            git(self.repo, "config", key, value)
+        self.scripts = self.repo / ".mercury/packs/git-safe/scripts"
+        self.scripts.mkdir(parents=True)
+        for name in ("git-safe.ps1", "guard.ps1"):
+            shutil.copyfile(SCRIPTS / name, self.scripts / name)
+        (self.repo / ".mercury/config.json").write_text('{"params": {"integration_branch": "main"}}')
+        (self.repo / ".git/info/exclude").write_text(".mercury/\n")
+
+    def ff(self, *args, cwd=None):
+        return run_ps(self.scripts / "git-safe.ps1", "fast-forward", *args, cwd=cwd or self.repo)
+
+    def land(self, name, text):
+        (self.trunk / name).write_text(text)
+        git(self.trunk, "add", name)
+        git(self.trunk, "commit", "-q", "-m", f"land {name}")
+        git(self.trunk, "push", "-q", "origin", "main")
+        return git(self.trunk, "rev-parse", "HEAD").strip()
+
+    def head(self):
+        return git(self.repo, "rev-parse", "HEAD").strip()
+
+    def test_up_to_date_changes_nothing(self):
+        head = self.head()
+        code, out = self.ff()
+        self.assertEqual(code, 0, out)
+        self.assertIn("fast-forward=up-to-date", out)
+        self.assertEqual(self.head(), head)
+
+    def test_fast_forwards_and_keeps_local_changes_it_does_not_touch(self):
+        (self.repo / "shared.txt").write_text("human edit\n")
+        (self.repo / "scratch.txt").write_text("untracked\n")
+        target = self.land("theirs.txt", "theirs\n")
+        code, out = self.ff(cwd=self.trunk)  # the target is the checkout holding the script, not the caller
+        self.assertEqual(code, 0, out)
+        self.assertIn("fast-forward=updated", out)
+        self.assertIn(f"head={target}", out)
+        self.assertEqual(self.head(), target)
+        self.assertEqual(git(self.repo, "rev-list", "--count", "HEAD"), "2\n")  # no merge commit
+        self.assertEqual((self.repo / "shared.txt").read_text(), "human edit\n")
+        self.assertTrue((self.repo / "scratch.txt").exists())
+
+    def test_refuses_to_overwrite_a_local_change_even_with_autostash(self):
+        """Review of #741: merge.autoStash would stash the edit, move HEAD and could leave the edit stashed."""
+        (self.repo / "shared.txt").write_text("human edit\n")
+        self.land("shared.txt", "two\n")
+        head = self.head()
+        for autostash in ("false", "true"):
+            with self.subTest(autostash=autostash):
+                git(self.repo, "config", "merge.autoStash", autostash)
+                code, out = self.ff()
+                self.assertNotEqual(code, 0, out)
+                self.assertIn("HEAD was not moved", out)
+                self.assertEqual(self.head(), head)
+                self.assertEqual((self.repo / "shared.txt").read_text(), "human edit\n")
+                self.assertEqual(git(self.repo, "stash", "list").strip(), "")
+
+    def test_refuses_to_overwrite_an_untracked_file(self):
+        (self.repo / "theirs.txt").write_text("mine, untracked\n")
+        self.land("theirs.txt", "theirs\n")
+        head = self.head()
+        code, out = self.ff()
+        self.assertNotEqual(code, 0, out)
+        self.assertEqual(self.head(), head)
+        self.assertEqual((self.repo / "theirs.txt").read_text(), "mine, untracked\n")
+
+    def test_refuses_a_linked_worktree_on_the_trunk(self):
+        self.land("theirs.txt", "theirs\n")
+        git(self.repo, "checkout", "-q", "--detach")
+        linked = self.repo.parent / "linked"
+        git(self.repo, "worktree", "add", "-q", linked.as_posix(), "main")
+        code, out = run_ps(self.scripts / "git-safe.ps1", "fast-forward", cwd=linked)
+        self.assertNotEqual(code, 0, out)  # the script copy in the main checkout acts on the main checkout: detached
+        scripts = linked / ".mercury/packs/git-safe/scripts"
+        scripts.mkdir(parents=True)
+        for name in ("git-safe.ps1", "guard.ps1"):
+            shutil.copyfile(SCRIPTS / name, scripts / name)
+        (linked / ".mercury/config.json").write_text('{"params": {"integration_branch": "main"}}')
+        head = git(linked, "rev-parse", "HEAD").strip()
+        code, out = run_ps(scripts / "git-safe.ps1", "fast-forward", cwd=linked)
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("only on the main checkout", out)
+        self.assertEqual(git(linked, "rev-parse", "HEAD").strip(), head)
+
+    def test_without_a_config_the_trunk_is_master(self):
+        (self.repo / ".mercury/config.json").unlink()
+        code, out = self.ff()
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("acts only on the integration branch 'master'", out)
+
+    def test_refuses_local_commits(self):
+        (self.repo / "local.txt").write_text("local\n")
+        git(self.repo, "add", "local.txt")
+        git(self.repo, "commit", "-q", "-m", "local")
+        self.land("theirs.txt", "theirs\n")
+        head = self.head()
+        code, out = self.ff()
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("a fast-forward is impossible", out)
+        self.assertEqual(self.head(), head)
+
+    def test_refuses_other_branches_arguments_and_operations_in_progress(self):
+        self.land("theirs.txt", "theirs\n")
+        head = self.head()
+        for args in (("origin", "main"), ("-Message", "x")):
+            with self.subTest(args=args):
+                code, out = self.ff(*args)
+                self.assertNotEqual(code, 0)
+                self.assertIn("takes no arguments", out)
+        (self.repo / ".git/MERGE_HEAD").write_text(head + "\n")
+        code, out = self.ff()
+        self.assertNotEqual(code, 0)
+        self.assertIn("(MERGE_HEAD)", out)
+        (self.repo / ".git/MERGE_HEAD").unlink()
+        git(self.repo, "checkout", "-q", "-b", "feature/TASK-4-claude")
+        code, out = self.ff()
+        self.assertNotEqual(code, 0)
+        self.assertIn("acts only on the integration branch 'main'", out)
+        git(self.repo, "checkout", "-q", "--detach")
+        code, out = self.ff()
+        self.assertNotEqual(code, 0)
+        self.assertIn("acts only on the integration branch", out)
+        self.assertEqual(self.head(), head)
+
+
 def run_ps(script, *args, cwd):
     r = subprocess.run([PWSH, "-NoLogo", "-NoProfile", "-NonInteractive", "-File", str(script), *args],
                        capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=cwd, timeout=120)

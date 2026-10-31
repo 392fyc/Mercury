@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true, Position = 0)]
-  [ValidateSet("add", "commit", "push", "sync", "abort-sync")]
+  [ValidateSet("add", "commit", "push", "sync", "abort-sync", "fast-forward")]
   [string]$Action,
 
   [string]$Message,
@@ -205,13 +205,19 @@ function Test-GitPath {
   return (Test-Path -LiteralPath $path)
 }
 
-function Assert-ReadyToSync {
-  # Every state that a merge would mix into, or that a merge would leave half done, is refused before anything changes.
+function Assert-NoOperationInProgress {
+  param([string]$Command)
+
   foreach ($name in @("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD", "rebase-merge", "rebase-apply", "BISECT_LOG")) {
     if (Test-GitPath -Name $name) {
-      throw "Another Git operation is in progress ($name). Finish or abandon it before git-safe sync."
+      throw "Another Git operation is in progress ($name). Finish or abandon it before git-safe $Command."
     }
   }
+}
+
+function Assert-ReadyToSync {
+  # Every state that a merge would mix into, or that a merge would leave half done, is refused before anything changes.
+  Assert-NoOperationInProgress -Command "sync"
   $changes = git -C $repoRoot status --porcelain --untracked-files=no
   if ($LASTEXITCODE -ne 0) {
     throw "Unable to inspect the working tree."
@@ -319,6 +325,60 @@ switch ($Action) {
     Invoke-Git -GitArgs @("-C", $repoRoot, "merge", "--abort")
     Write-Output "sync=aborted"
     Write-Output "head=$((git -C $repoRoot rev-parse HEAD).Trim())"
+    exit 0
+  }
+  "fast-forward" {
+    $trunk = Get-IntegrationBranch
+    $trunkRef = "refs/remotes/origin/$trunk"
+    # Bring the main checkout, the human reference that agents never work in, up to origin/<integration branch> (#741).
+    # Only a fast-forward: no merge commit, no local commit dropped, no local change overwritten. It runs no guard
+    # because the main checkout sits on the protected trunk by design; it refuses on any other branch, so a task
+    # worktree is never touched.
+    if (($Arguments -and $Arguments.Count -gt 0) -or -not [string]::IsNullOrEmpty($Message)) {
+      throw "git-safe fast-forward takes no arguments: it always fast-forwards $trunk to origin/$trunk."
+    }
+    $branch = git -C $repoRoot symbolic-ref --quiet --short HEAD
+    if ($LASTEXITCODE -ne 0 -or "$branch".Trim() -cne $trunk) {
+      throw "git-safe fast-forward acts only on the integration branch '$trunk'; this checkout is on '$("$branch".Trim())'."
+    }
+    # Only the main checkout: a linked worktree that happens to sit on the trunk is someone's working copy.
+    $gitDir = [System.IO.Path]::GetFullPath("$(git -C $repoRoot rev-parse --absolute-git-dir)".Trim())
+    $commonDir = [System.IO.Path]::GetFullPath("$(git -C $repoRoot rev-parse --path-format=absolute --git-common-dir)".Trim())
+    if ($gitDir.TrimEnd("\", "/") -ne $commonDir.TrimEnd("\", "/")) {
+      throw "git-safe fast-forward acts only on the main checkout, not on a linked worktree."
+    }
+    Assert-NoOperationInProgress -Command "fast-forward"
+    Invoke-Git -GitArgs @("-C", $repoRoot, "fetch", "--no-tags", "--no-recurse-submodules", "origin", "+refs/heads/${trunk}:$trunkRef")
+    $before = (git -C $repoRoot rev-parse HEAD).Trim()
+    $target = (git -C $repoRoot rev-parse $trunkRef).Trim()
+    if ($before -eq $target) {
+      Write-Output "fast-forward=up-to-date"
+      Write-Output "head=$before"
+      exit 0
+    }
+    & git -C $repoRoot merge-base --is-ancestor HEAD $trunkRef
+    if ($LASTEXITCODE -ne 0) {
+      throw "$trunk has commits that origin/$trunk lacks; a fast-forward is impossible. HEAD was not moved (origin/$trunk was refreshed)."
+    }
+    # --no-autostash: with merge.autoStash set, Git would stash local changes, move HEAD and possibly leave them stashed.
+    & git -C $repoRoot merge --ff-only --no-autostash --quiet $trunkRef
+    if ($LASTEXITCODE -ne 0 -or (git -C $repoRoot rev-parse HEAD).Trim() -ne $target) {
+      throw "The fast-forward was refused, usually because it would overwrite local changes. HEAD was not moved; check git status."
+    }
+    Write-Output "fast-forward=updated"
+    Write-Output "from=$before"
+    Write-Output "head=$target"
+    # Initialized submodules keep their checkout; report those whose recorded commit now differs. Reporting only: a
+    # failure here must not turn a completed fast-forward into a failed run.
+    try {
+      foreach ($line in @(git -C $repoRoot submodule status 2>&1)) {
+        if ("$line" -match '^\+[0-9a-f]+ (.+?)( \(.*\))?$') {
+          Write-Output "submodule-differs: $($Matches[1])"
+        }
+      }
+    } catch {
+      Write-Output "submodule-status: unavailable ($($_.Exception.Message))"
+    }
     exit 0
   }
 }

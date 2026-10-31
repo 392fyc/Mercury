@@ -72,6 +72,12 @@ an automatic worktree, must rename it before the first commit.
 6. The merge is the release: downstream projects take it through their own
    update pull request, which merges only when their required checks pass.
 
+The main checkout is the human reference (Obsidian reads its `docs/`); agents do
+not work in it. `scripts/codex/git-safe.ps1 fast-forward` (#741) brings it up to
+`origin/master`: only in the main checkout, only on `master`, only by
+fast-forward, never over local commits or over local changes it would overwrite.
+A scheduler on the user's machine may run it; Mercury installs none.
+
 **Direct commits or pushes to develop, main, or master are forbidden.** All code
 enters master through PRs. Never publish merely because implementation finished.
 
@@ -203,6 +209,7 @@ type: feat / fix / refactor / chore / docs
 | Guarded commit when assigned and reviewed | `git branch -d` / `git reset` / `git stash` |
 | Guarded push to the assigned task branch when assigned | `git rebase` / `git merge` (use `git-safe.ps1 sync`) |
 | Guarded `git-safe.ps1 sync` of `origin/master` into the task branch, and `git-safe.ps1 abort-sync` to abandon it | |
+| `git-safe.ps1 fast-forward` of the main checkout on `master` | |
 | `git diff` / `git status` / `git log` | `git add -A` / `git add .` |
 | | `git push --force` |
 | | Direct writes to master / develop / main |
