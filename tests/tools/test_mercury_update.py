@@ -66,6 +66,7 @@ class FakeGh:
         self.total_override = {}
         self.next_number = 1
         self.fail_on = None
+        self.on_comment = None  # called with the pull request after `gh pr comment`
 
     def sha(self, ref):
         r = subprocess.run(["git", "-C", str(self.bare), "rev-parse", "--verify", "--quiet", f"refs/heads/{ref}"],
@@ -126,6 +127,16 @@ class FakeGh:
             opt = dict(zip(args[3::2], args[4::2]))
             pr = next(p for p in self.prs if p["number"] == int(args[2]))
             pr["title"], pr["body"] = opt["--title"], Path(opt["--body-file"]).read_text(encoding="utf-8")
+            return ""
+        if args[:2] == ["pr", "comment"]:
+            pr = next(p for p in self.prs if p["number"] == int(args[2]))
+            pr.setdefault("comments", []).append(dict(zip(args[3::2], args[4::2]))["--body"])
+            if self.on_comment:
+                self.on_comment(pr)
+            return ""
+        if args[:2] == ["pr", "close"]:
+            pr = next(p for p in self.prs if p["number"] == int(args[2]))
+            pr["state"] = "closed"
             return ""
         if args[:2] == ["pr", "merge"]:
             pr = next(p for p in self.prs if p["number"] == int(args[2]))
@@ -466,12 +477,16 @@ class Publish(Fixture):
 
     def test_the_tool_has_no_force_push_anywhere(self):
         text = TOOL.read_text(encoding="utf-8")
-        pushes = [l for l in text.splitlines() if '"push"' in l]
-        self.assertEqual(len(pushes), 1, pushes)
+        pushes = [l.strip() for l in text.splitlines() if '"push"' in l]
+        self.assertEqual(len(pushes), 2, pushes)
         self.assertNotIn("force", pushes[0])
         self.assertNotIn('"+', pushes[0])
-        self.assertNotIn("--force-with-lease", text)
-        self.assertEqual([l.strip() for l in text.splitlines() if "--force" in l], ['git(target, "worktree", "remove", "--force", str(tree))'])
+        # The other push only deletes a stale branch, conditional on its checked commit; it never updates a branch.
+        self.assertEqual(pushes[1], 'git(target, "push", "origin", f"--force-with-lease=refs/heads/{branch}:{head}", '
+                                    'f":refs/heads/{branch}")')
+        self.assertEqual(text.count("--force-with-lease"), 2, "the docstring and the delete")
+        self.assertEqual([l.strip() for l in text.splitlines() if "--force" in l and "--force-with-lease" not in l],
+                         ['git(target, "worktree", "remove", "--force", str(tree))'])
 
     def test_a_branch_with_someone_elses_commit_is_never_built_on(self):
         branch, head, pr = self.published()
@@ -543,6 +558,113 @@ class Publish(Fixture):
         rc, out, err = self.publish()
         self.assertEqual(rc, 2)
         self.assertNotIn(SECRET, out + err)
+
+
+class PublishStale(Fixture):
+    """An update branch that no longer merges cleanly with the base, or whose update the base already has, is closed and
+    deleted, and a fresh update is opened from the base (#746)."""
+
+    def base_commit(self, edits):
+        """The project commits on its base branch outside the update pull request."""
+        git(self.target, "switch", "-q", BASE)
+        for rel, text in edits.items():
+            write(self.target / rel, text)
+        git(self.target, "add", "-A")
+        git(self.target, "commit", "-q", "-m", "project work")
+        git(self.target, "push", "-q", "origin", BASE)
+        self.reset_target()
+
+    def test_a_branch_that_conflicts_with_a_hand_run_apply_on_the_base_is_rebuilt_from_the_base(self):
+        c2, c3 = self.m_commit(2), self.m_commit(3)
+        self.release(c3)
+        branch, head, old_pr = self.published(c3)
+        self.advance_base(c2)  # an agent ran `mercury.py apply` for c2 by hand: the same managed files, other content
+        self.reset_target()
+        rc, out, err = self.publish()
+        self.assertEqual(rc, 0, out + err)
+        self.assertIn("conflicts with", out)
+        self.assertEqual(old_pr["state"], "closed")
+        self.assertIn("conflicts with", old_pr["comments"][0])
+        new_pr = self.gh.prs[-1]
+        self.assertNotEqual(new_pr["number"], old_pr["number"])
+        self.assertEqual((new_pr["state"], new_pr["ref"]), ("open", branch))  # the same name, a new branch
+        new_head = self.gh.sha(branch)
+        self.assertNotEqual(new_head, head)
+        self.assertEqual(git(self.bare, "merge-base", BASE, branch), git(self.bare, "rev-parse", BASE))  # cut from the base
+        self.assertEqual(new_lock_commit(git(self.bare, "show", f"{branch}:{LOCK}")), c3)
+        self.assertEqual(git(self.bare, "log", "--format=%ce", f"{BASE}..{branch}").split(), [BOT])
+        self.assertEqual(subprocess.run(["git", "-C", str(self.bare), "merge-tree", "--write-tree", BASE, branch],
+                                        capture_output=True).returncode, 0)
+
+    def test_a_pull_request_whose_update_the_base_already_has_is_closed_and_nothing_is_opened(self):
+        branch, head, pr = self.published()
+        self.advance_base(new_lock_commit(git(self.bare, "show", f"{branch}:{LOCK}")))
+        self.reset_target()
+        rc, out, err = self.publish()
+        self.assertEqual(rc, 0, out + err)
+        self.assertIn("already matches", out)
+        self.assertEqual(pr["state"], "closed")
+        self.assertEqual(self.remote_branches(), [BASE])
+        self.assertEqual(len(self.gh.named("pr", "create")), 1)
+
+    def test_a_base_that_only_moved_ahead_keeps_the_pull_request(self):
+        branch, head, pr = self.published()
+        self.base_commit({"src/app.py": "print('app 2')\n"})
+        rc, out, err = self.publish()
+        self.assertEqual(rc, 0, out + err)
+        self.assertIn("already carries", out)
+        self.assertEqual((pr["state"], self.gh.sha(branch), self.gh.named("pr", "close")), ("open", head, []))
+        c3 = self.m_commit(3)
+        self.release(c3)
+        rc, out, err = self.publish()
+        self.assertEqual(rc, 0, out + err)
+        self.assertIn(f"updated pull request #{pr['number']}", out)
+        self.assertEqual(subprocess.run(["git", "-C", str(self.bare), "merge-base", "--is-ancestor", head, branch]).returncode, 0)
+        self.assertEqual((pr["state"], len(self.gh.named("pr", "create"))), ("open", 1))
+
+    def test_a_stale_branch_with_someone_elses_commit_is_neither_closed_nor_deleted(self):
+        c2, c3 = self.m_commit(2), self.m_commit(3)
+        self.release(c3)
+        branch, head, pr = self.published(c3)
+        theirs = self.edit_branch(branch, {"notes.txt": "mine\n"})
+        self.advance_base(c2)
+        self.reset_target()
+        rc, out, err = self.publish()
+        self.assertEqual(rc, 1, out + err)
+        self.assertIn("did not make", err)
+        self.assertEqual((pr["state"], self.gh.sha(branch), self.gh.named("pr", "close")), ("open", theirs, []))
+
+    def test_a_branch_that_moves_before_the_deletion_is_kept(self):
+        c2, c3 = self.m_commit(2), self.m_commit(3)
+        self.release(c3)
+        branch, head, pr = self.published(c3)
+        self.advance_base(c2)
+        self.reset_target()
+        moved = []
+        self.gh.on_comment = lambda _pr: moved.append(self.edit_branch(branch, {"late.txt": "late\n"}, email=BOT))
+        rc, out, err = self.publish()
+        self.assertEqual(rc, 2, out + err)
+        self.assertEqual(self.gh.sha(branch), moved[0])  # the lease refused the deletion
+        self.assertEqual((pr["state"], self.gh.named("pr", "close")), ("open", []))  # and the pull request stays open
+        self.assertEqual(len(self.gh.named("pr", "create")), 1)
+
+    def test_a_failure_of_the_merge_test_retires_nothing(self):
+        c2, c3 = self.m_commit(2), self.m_commit(3)
+        self.release(c3)
+        branch, head, pr = self.published(c3)
+        self.advance_base(c2)
+        self.reset_target()
+        real = U.execute
+
+        def broken(args, cwd=None, timeout=120):
+            return (129, b"", b"usage: git merge-tree") if "merge-tree" in args else real(args, cwd, timeout)
+
+        with unittest.mock.patch.object(U, "execute", broken):
+            rc, out, err = self.publish()
+        self.assertEqual(rc, 2, out + err)
+        self.assertIn("Git 2.38", err)
+        self.assertEqual((pr["state"], self.gh.sha(branch), self.gh.named("pr", "comment"), self.gh.named("pr", "close")),
+                         ("open", head, [], []))
 
 
 class PublishV1(Fixture):
@@ -889,7 +1011,7 @@ class Merge(Fixture):
         pr["mergeable"] = None
         self.assertStopped(self.merge(), "has not computed whether it is mergeable yet")
         pr["mergeable"] = False
-        self.assertStopped(self.merge(), f"conflicts with {BASE} and cannot be merged. Close it and delete its branch {branch}")
+        self.assertStopped(self.merge(), f"conflicts with {BASE} and cannot be merged; the next publish closes it, deletes {branch}")
 
     def test_a_head_that_moves_during_verification_stops(self):
         branch, head, pr = self.ready()
