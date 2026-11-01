@@ -8,8 +8,12 @@ end to end on Windows; waking an idle Codex desktop thread is not solved (see Li
 
 - **Seat.** Each lane has one seat per harness (`claude`, `codex`). A session takes the seat with `claim`; the
   session it replaces is retired and can no longer read, send or reclaim. Messages are addressed to the seat, so
-  whatever the old session left unread passes to its successor. This is the handoff rule: the session a handoff opens
-  claims the seat, the old one retires.
+  whatever the old session left unread passes to its successor. This is the handoff rule (AGENTS.md "Lane seat on
+  handoff", Issue #744): the session that hands off puts a `claim` in the new session's starting prompt and, once the
+  handoff is delivered, gives the seat up with `release`; the new session's `claim` then takes the empty seat. Without
+  `release` the old session would keep the seat, and its Stop hook would keep it reading, until the new one claims.
+  Release is final, so a session the user keeps working in does not release; if the new session claimed first,
+  `release` reports that the seat is held by it, and the handoff is already complete.
 - **Store.** One SQLite file, `<lane home>/lane-bus.sqlite`, where the lane home is `lane-paths.sh memory-dir`
   (ignored by Git, shared by every worktree). `--db` or `MERCURY_LANE_BUS_DB` overrides it.
 - **Provenance.** Every delivered message starts with the lane provenance tag. It is a peer report, never user
@@ -33,11 +37,12 @@ assumed instead of simply suggesting a claim.
 | Command | Use |
 |---|---|
 | `claim --harness H --session ID` | take the seat for this session |
+| `release --harness H --session ID` | the holder gives the seat up when it hands off: it is retired and the seat stays empty until the next `claim` |
 | `send --harness H --session ID --body-file F` | send to the other harness's seat (or the body on stdin) |
 | `read --harness H --session ID` | print unread messages and mark them read |
 | `status --harness H` | show both seats and unread counts |
 | `wait --harness H --session ID --timeout S` | block until a message arrives (default 1800 s, at most 86400): exit 0 message, 3 timeout, 4 not the seat holder |
-| `watch --harness claude` | Claude Code plugin monitor (CLI only, see below); ends after `--max-hours` (default 24, at most 72) or when the seat passes on |
+| `watch --harness claude` | Claude Code plugin monitor (CLI only, see below); ends after `--max-hours` (default 24, at most 72) or when the seat passes on or is released |
 | `hook --harness H` | SessionStart / UserPromptSubmit / Stop hook |
 | `serve --harness H` | MCP server on stdio (optional; its `lane_bus_wait` is capped at 55 s, below Codex's default 60 s tool timeout) |
 

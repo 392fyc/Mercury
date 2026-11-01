@@ -7,3 +7,10 @@
 <!-- lane-receiver-rule:end -->
 
 The full lane contract is `.mercury/packs/lanes/docs/mercury-lane-contract.md`; the project's lane document follows `.mercury/packs/lanes/docs/mercury-lane-project-template.md`.
+
+## Lane seat on handoff
+
+A session that holds its lane's lane-bus seat (`bash .mercury/packs/lanes/scripts/lane-bus.sh status --harness <claude|codex> --lane <lane>` names the holder) passes the seat on whenever it hands off, with any handoff skill or none (Mercury #744):
+
+- The starting prompt tells the receiving session to claim the same lane's seat for its harness with its own session id, as soon as it has read the handoff and before it reads or sends lane-bus messages or starts the work: `bash .mercury/packs/lanes/scripts/lane-bus.sh claim --harness <harness> --lane <lane> --session <its own session id>` (or the `lane_bus_claim` tool).
+- Once the handoff is delivered, the old session runs `lane-bus.sh release --harness <harness> --lane <lane> --session <its own session id>` (or `lane_bus_release`) and stops reading or sending on the bus; messages that arrive meanwhile wait in the seat for the new session. Release is final: a released session can never take the seat back. So release when the work moves to the new session (always when a new session was launched; for a prompt the user will paste, unless the user says this session goes on working), and say so to the user. If `release` reports that the seat is already held by the new session, the handoff is complete; do nothing more.
