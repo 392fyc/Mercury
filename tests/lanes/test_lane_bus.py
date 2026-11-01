@@ -138,6 +138,46 @@ class LaneBus(unittest.TestCase):
         self.assertIn("claude=c-new, codex=x-1", self.run_tool("status", "codex")[1])
         self.assertNotIn("retired", self.seat("claude", "c-new"))  # claiming the seat it holds changes nothing
 
+    def test_release_on_handoff_empties_the_seat_and_the_successor_gets_the_messages(self):
+        """#744: the session that hands off gives the seat up at once, so it cannot read its successor's messages."""
+        self.seat("claude", "c-old")
+        self.seat("codex", "x-1")
+        rc, _, err = self.run_tool("release", "claude", session="c-other")  # only the holder can release
+        self.assertEqual(rc, 2)
+        self.assertIn("is not the active claude session of lane main (active: c-old)", err)
+        rc, out, err = self.run_tool("release", "claude", session="c-old")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("released the claude seat of lane main", out)
+        self.assertIn("claude=none, codex=x-1", self.run_tool("status", "codex")[1])
+        self.assertEqual(self.run_tool("send", "codex", "for the next session", session="x-1")[0], 0)
+        for command, stdin in (("read", ""), ("send", "late"), ("release", "")):
+            with self.subTest(command=command):
+                rc, _, err = self.run_tool(command, "claude", stdin, session="c-old")
+                self.assertEqual(rc, 2)
+                self.assertIn("(active: none)", err)
+        rc, _, err = self.run_tool("claim", "claude", session="c-old")  # released means retired: no way back
+        self.assertEqual(rc, 2)
+        self.assertIn("cannot take the seat back", err)
+        out = self.seat("claude", "c-new")
+        self.assertNotIn("retired", out)  # nobody held it
+        self.assertIn("for the next session", self.run_tool("read", "claude", session="c-new")[1])
+        rc, _, err = self.run_tool("release", "claude")  # no session at all
+        self.assertEqual(rc, 2)
+        self.assertIn("invalid session id", err)
+
+    def test_release_through_mcp(self):
+        out = self.mcp("claude", [self.call(1, "lane_bus_release"),
+                                  self.call(2, "lane_bus_claim", session_id="c-1"),
+                                  self.call(3, "lane_bus_release"),
+                                  self.call(4, "lane_bus_send", body="after release"),
+                                  self.call(5, "lane_bus_status")])
+        self.assertTrue(out[0]["result"]["isError"])
+        self.assertIn("nothing to release", self.text(out[0]))
+        self.assertIn("released the claude seat of lane main", self.text(out[2]))
+        self.assertTrue(out[3]["result"]["isError"])  # the connection is detached
+        self.assertIn("claude=none", self.text(out[4]))
+        self.assertIn("this connection: claude not attached", self.text(out[4]))
+
     def test_lanes_are_separate(self):
         self.seat("codex", "x-art", lane="art")
         self.seat("claude", "c-art", lane="art")
@@ -219,7 +259,8 @@ class LaneBus(unittest.TestCase):
         self.assertEqual([r.get("id") for r in out], [1, 2, 3, 4, 5, 6, 7, None])  # the notification gets no response
         self.assertEqual(out[0]["result"]["capabilities"], {"tools": {}})
         self.assertEqual({t["name"] for t in out[1]["result"]["tools"]},
-                         {"lane_bus_claim", "lane_bus_status", "lane_bus_send", "lane_bus_read", "lane_bus_wait"})
+                         {"lane_bus_claim", "lane_bus_release", "lane_bus_status", "lane_bus_send", "lane_bus_read",
+                          "lane_bus_wait"})
         self.assertTrue(out[2]["result"]["isError"])
         self.assertIn("not attached to a session", self.text(out[2]))
         self.assertIn("session c-1 holds the claude seat of lane main", self.text(out[3]))
@@ -336,6 +377,17 @@ class LaneBus(unittest.TestCase):
         self.assertIn("session=c-1", log)
         self.assertIn("reason=retired", log)
 
+    def test_watch_ends_when_its_session_releases_the_seat(self):
+        self.seat("claude", "c-1")
+        proc = self.start_watch("c-1")
+        time.sleep(1.0)
+        self.assertEqual(self.run_tool("release", "claude", session="c-1")[0], 0)  # #744: handoff gives the seat up
+        start = time.monotonic()
+        proc.communicate(timeout=30)
+        self.assertEqual(proc.returncode, 0)
+        self.assertLess(time.monotonic() - start, 4)
+        self.assertIn("reason=released", (self.db.parent / "lane-bus-watch.log").read_text(encoding="utf-8"))
+
     # --- wait (a session's own background command) ---
 
     def run_wait(self, session, timeout="10"):
@@ -418,6 +470,24 @@ class LaneBus(unittest.TestCase):
         self.assertIsNone(self.hook("codex", {"hook_event_name": "Stop", "session_id": "x-2"}))
         self.assertIsNone(self.hook("codex", {"hook_event_name": "UserPromptSubmit", "session_id": "x-2"}))
         self.assertIn("ping", self.run_tool("read", "codex", session="x-1")[1])  # the hook marked nothing read
+
+    def test_after_release_the_old_session_is_left_alone_and_the_new_one_is_told_the_seat_is_empty(self):
+        """#744: once released, the old session's Stop hook no longer pulls it into reading; its wait ends with 4."""
+        self.seat("claude", "c-old")
+        self.seat("codex", "x-1")
+        proc, _ = self.run_wait("c-old", "30")
+        self.addCleanup(proc.kill)
+        time.sleep(1.0)
+        self.assertEqual(self.run_tool("release", "claude", session="c-old")[0], 0)
+        proc.communicate(timeout=30)
+        self.assertEqual(proc.returncode, 4)
+        self.run_tool("send", "codex", "for the successor", session="x-1")
+        for name in ("Stop", "UserPromptSubmit"):
+            self.assertIsNone(self.hook("claude", {"hook_event_name": name, "session_id": "c-old"}, lane="main"))
+        out = self.hook("claude", {"hook_event_name": "SessionStart", "session_id": "c-new"}, lane="main")
+        note = out["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("(active: none)", note)
+        self.assertIn("no session holds the seat now", note)
 
     def test_hook_tells_a_new_session_how_to_take_over(self):
         self.seat("claude", "c-old")

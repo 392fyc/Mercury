@@ -250,6 +250,11 @@ content_sha256: <Step 2.2 M5 — body hash, filled after the body is final; omit
 ### 当前状态
 <repo / branch / commit / clean or dirty>
 
+### 接过 lane 席位（仅当交出方持有 lane-bus 席位时保留本节）
+读完本交接后、收发 lane-bus 消息或开始工作之前，先用本会话自己的会话 id 接过 lane `<lane>` 的 `<harness>` 席位：
+`bash .mercury/packs/lanes/scripts/lane-bus.sh claim --harness <harness> --lane <lane> --session <本会话 id>`
+（或 `lane_bus_claim`）。交出方会 release 席位，席位里的未读消息归你。
+
 ### S{N+1} 主任务：<Issue #N — specific title>
 
 **背景**：<1-2 lines why this is highest priority, cite Issue/Project>
@@ -555,6 +560,15 @@ Confirm each:
   continue after handoff.
 - **No unsaved state.** Edits / commits / writes are actually on disk.
 - **No pending user questions.** If the old session owes a reply, answer it.
+- **Lane seat (Issue #744).** Check `bash .mercury/packs/lanes/scripts/lane-bus.sh status --harness <harness> --lane <lane>`.
+  If this session holds the seat, keep the Starting Prompt's "接过 lane 席位" section with the lane, harness and
+  claim command filled in (otherwise drop the section). After Step 5 has delivered the handoff, run
+  `lane-bus.sh release --harness <harness> --lane <lane> --session <this session's id>` (or `lane_bus_release`) and
+  stop reading or sending on the bus; messages that arrive meanwhile wait for the new session's claim. Release is
+  final: a released session can never take the seat back. Auto mode always releases. Manual mode releases too,
+  unless the user says this session goes on working (then keep the seat; the new session's claim retires this one
+  later); tell the user which you did. If `release` reports that the seat is already held by the new session (it
+  claimed first), the handoff is complete.
 
 If any item is incomplete, finish or defer explicitly. Surface status:
 "All pending work done — ready to hand off?"
@@ -574,7 +588,8 @@ Always do **both** of these — never skip either:
 
 After Step 5.1 + 5.2, **stop**. Tell the user the old session stays alive;
 they can copy the prompt to a new session manually or continue working in
-this one. Do NOT spawn any new process.
+this one. If this session held a lane seat and released it (Step 4), it can no
+longer use the lane bus. Do NOT spawn any new process.
 
 Optional: offer to launch if the user later says so (Step 6).
 

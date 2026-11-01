@@ -11,11 +11,12 @@ own native app and neither can push a turn into the other, so delivery happens a
     lane-bus.py watch  --harness claude [--session ID] [--interval S] [--max-hours H]   Claude Code plugin monitor
     lane-bus.py wait   --harness H [--session ID] [--timeout S]   a session's own background wait (exit 0 on a message)
     lane-bus.py claim  --harness H --session ID [--lane NAME] [--db PATH]
+    lane-bus.py release --harness H --session ID [--lane NAME] [--db PATH]   the holder gives the seat up (handoff)
     lane-bus.py send   --harness H --session ID [--lane NAME] [--db PATH] < body
     lane-bus.py read   --harness H --session ID [--lane NAME] [--db PATH]
     lane-bus.py status --harness H [--lane NAME] [--db PATH]
 
-MCP tools: lane_bus_claim, lane_bus_status, lane_bus_send, lane_bus_read and lane_bus_wait (bounded: default 50 s,
+MCP tools: lane_bus_claim, lane_bus_release, lane_bus_status, lane_bus_send, lane_bus_read and lane_bus_wait (bounded: default 50 s,
 at most 55 s, below Codex's default 60 s tool timeout, so a message is never marked read after the host gave up). The server attaches
 to the session in $CLAUDE_CODE_SESSION_ID / $CODEX_THREAD_ID only when that session already holds the seat; otherwise
 the agent calls lane_bus_claim. The hook reads the session id from its input and speaks only to the active session:
@@ -206,6 +207,16 @@ class Bus:
                        (self.lane, self.harness, session, stamp))
             return prev
 
+    def release(self, session):
+        """Retire `session` from the seat it holds and leave the seat empty (Issue #744): a session that hands off
+        gives the seat up at once, so it reads none of the messages meant for its successor. Messages are addressed
+        to the seat, so those that arrive meanwhile wait for the next claim. A released session cannot claim again."""
+        session = checked_session(session)
+        with transaction(self.path) as db:
+            self.require_active(db, session)
+            db.execute("UPDATE seats SET retired_at = ? WHERE lane = ? AND harness = ? AND session = ? AND retired_at IS NULL",
+                       (now(), self.lane, self.harness, session))
+
     def require_active(self, db, session):
         if session is None:
             raise BusError(f"this connection is not attached to a session; call lane_bus_claim with this "
@@ -289,6 +300,10 @@ TOOLS = [
      "description": "Take this lane's seat for your harness with your own session id: the session holding it is retired, "
                     "and unread messages pass to you. Call it when this session takes over the lane, for example after a handoff.",
      "inputSchema": {"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"]}},
+    {"name": "lane_bus_release",
+     "description": "Give up this lane's seat for your harness when this session hands off: it is retired at once and the "
+                    "seat stays empty until the new session claims it, so unread messages wait for that session.",
+     "inputSchema": {"type": "object", "properties": {}}},
     {"name": "lane_bus_status",
      "description": "Show the active claude and codex sessions of this lane, the session this connection is attached to, "
                     "and the number of unread messages for your seat.",
@@ -322,6 +337,13 @@ class Server:
             self.session = session
             return (f"session {session} holds the {bus.harness} seat of lane {bus.lane}"
                     + (f"; retired {prev}" if prev else ""))
+        if name == "lane_bus_release":
+            if self.session is None:
+                raise BusError("this connection is not attached to a session holding the seat; nothing to release")
+            session = self.session
+            bus.release(session)
+            self.session = None  # only after the store recorded it, so a failed release keeps the connection attached
+            return f"session {session} released the {bus.harness} seat of lane {bus.lane}; the seat is empty until the next claim"
         if name == "lane_bus_status":
             seats, unread = bus.status()
             return (f"lane {bus.lane}: claude={seats['claude'] or 'none'}, codex={seats['codex'] or 'none'}; "
@@ -416,7 +438,8 @@ def hook(bus, lane_named=True):
         if lane_named:
             note = (f"lane-bus: this {bus.harness} session ({session}) does not hold the {bus.harness} seat of lane {bus.lane} "
                     f"(active: {holder or 'none'}). If this session takes over the lane, for example after a handoff, run "
-                    f"{claim}; the previous session is then retired.")
+                    + (f"{claim}; the previous session is then retired." if holder else
+                       f"{claim}; no session holds the seat now, and its unread messages wait for you."))
         else:
             # No --lane and no MERCURY_LANE: lane main is only a default, and claiming the wrong lane's seat would retire
             # that lane's session and take its messages (mercury-lane-contract.md, "Session identity").
@@ -442,17 +465,21 @@ def watch(bus, session, interval, max_seconds):
     """A Claude Code plugin monitor: every line it prints reaches the session as a notification, the one channel that
     wakes a session idle at its prompt. It prints one line per batch of new messages for the seat while `session`
     holds it, marks nothing read, stays quiet otherwise (a later claim starts delivery), and ends at the deadline or
-    once the seat it held passes to another session (a host may leave a monitor running after its session ends)."""
+    once the seat it held passes to another session or is released (a host may leave a monitor running after its
+    session ends)."""
     seen, held, deadline = set(), False, time.monotonic() + max_seconds
     while time.monotonic() < deadline:
         try:
             holder, ids = seat_and_unread(bus)
+            readable = True
         except sqlite3.Error:
-            holder, ids = None, []  # a locked or missing store must not end the monitor
+            holder, ids, readable = None, [], False  # a locked or missing store must not end the monitor
         if holder == session:
             held = True
         elif held and holder is not None:
             return "retired"
+        elif held and readable:
+            return "released"  # a released session can never claim again (#744)
         new = [i for i in ids if i not in seen] if holder == session else []
         if new:
             print(f"lane-bus: {len(new)} new message(s) for the {bus.harness} seat of lane {bus.lane} "
@@ -513,7 +540,7 @@ def main(argv=None):
         if hasattr(s, "reconfigure"):
             s.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(prog="lane-bus.py", description=__doc__.split("\n\n")[0])
-    ap.add_argument("command", choices=("serve", "hook", "watch", "wait", "claim", "send", "read", "status"))
+    ap.add_argument("command", choices=("serve", "hook", "watch", "wait", "claim", "release", "send", "read", "status"))
     ap.add_argument("--harness", required=True, choices=HARNESSES)
     ap.add_argument("--lane")
     ap.add_argument("--db")
@@ -559,6 +586,9 @@ def main(argv=None):
         if args.command == "claim":
             prev = bus.claim(session)
             print(f"session {session} holds the {bus.harness} seat of lane {bus.lane}" + (f"; retired {prev}" if prev else ""))
+        elif args.command == "release":
+            bus.release(session)
+            print(f"session {session} released the {bus.harness} seat of lane {bus.lane}; the seat is empty until the next claim")
         elif args.command == "send":
             if args.body_file:
                 # utf-8-sig: Windows tools often write a BOM; stdin is avoided because PowerShell pipes re-encode text.

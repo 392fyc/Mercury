@@ -44,6 +44,7 @@ ALLOWED = [
     "cat scripts/codex/git-safe.ps1",
     "rg git-safe.ps1 docs",
     "rg image_api.py docs",
+    "cat .mercury/packs/lanes/scripts/lane-bus.py",
     "pwsh -File scripts/other-tool.ps1 -Action List",
 ]
 
@@ -93,6 +94,10 @@ BLOCKED = [
     "uv run python .mercury/packs/core/skills/image-api/scripts/image_api.py --config private.json --card card.json --execute",
     "uv run --no-project --python 3.14 python .mercury/packs/core/skills/image-api/scripts/image_api.py --execute",
     "python -B -X utf8 .mercury/packs/core/skills/image-api/scripts/image_api.py --execute",
+    # #744: the lane bus writes its store, and release cannot be undone
+    "bash .mercury/packs/lanes/scripts/lane-bus.sh release --harness claude --lane main",
+    "bash .mercury/packs/lanes/scripts/lane-bus.sh read --harness claude",
+    "python -B .mercury/packs/lanes/scripts/lane-bus.py claim --harness claude --session x",
 ]
 
 SCRIPT = HOOKS / "readonly_guard.py"

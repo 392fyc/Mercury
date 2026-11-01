@@ -69,6 +69,8 @@ FILE_WRITERS = {
 WRITE_SCRIPTS = (
     "git-safe.ps1", "sync-downstream-pr.py", "lane-spawn.sh", "lane-close.sh", "lane-claim.sh", "lane-init.sh",
     "image_api.py",
+    # The lane bus writes its store on claim, release, send and read (reading marks read); release cannot be undone (#744).
+    "lane-bus.sh", "lane-bus.py",
 )
 SHELLS = {"bash", "sh", "zsh", "powershell", "pwsh", "cmd"}
 INTERPRETERS = {"python", "python3", "py", "pwsh", "powershell", "bash", "sh", "uv", "uvx", "node"}
