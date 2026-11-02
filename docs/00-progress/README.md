@@ -1,6 +1,6 @@
 # Current progress
 
-Updated 2026-10-31 (#736). GitHub Issues hold the detail; this page lists what is open and what comes next. A pull
+Updated 2026-11-02 (#736). GitHub Issues hold the detail; this page lists what is open and what comes next. A pull
 request that starts, finishes or redirects one of these updates this page in the same change.
 
 ## Open tracking Issues
@@ -14,14 +14,6 @@ request that starts, finishes or redirects one of these updates this page in the
 | #735 | Reply language reminder and check for Claude Code (user-level) | Done, observing | Watch whether the Stop hook keeps replies in Chinese |
 | #651 | AO pilot: trust configuration, credential isolation, recovery entry | Paused | #650 (pilot C) open |
 | #657 | Native bidirectional Dot and source Codex wake-up | Paused | See the Issue |
-| #621 | Decouple SoT ownership, automate downstream updates | Paused | Superseded in part by the deploy pack; review whether to close |
-| #579 | Simplify Astra defaults, prepare Windows development | Paused | Review whether to close |
 | #584 | Research: a lightweight classifier as a harness pre-check | Not started | — |
 
-Automated tracking Issues, not work items: #466 (intel-watch state), #549 (upstream drift report).
-
-## Stale Issues
-
-18 open Issues have not changed since before 2026-09 (#101, #233, #289, #389, #392, #458, #462, #464, #478, #483,
-#496, #506, #550, #553, #554, #566, #568, #573). Each is closed, with the evidence for it, only after the user
-confirms it; until then they are not part of the plan above.
+Automated tracking Issue, not a work item: #549 (upstream drift report).
