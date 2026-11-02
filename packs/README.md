@@ -288,10 +288,15 @@ and only as optional; an existing flag is never removed, renamed or made require
 `mercury-update@users.noreply.github.com`, pushes, and opens the one update pull request (source commit link, upstream
 change summary, files taken over or deleted). If an update pull request already exists and is behind Mercury `master`,
 the new state is committed on top of its branch with a regular push; the tool has no force option, so a regular push can
-never discard anyone's commits. It builds only on a branch that is same-repository, named `mercury/update-<12 hex>`, and
-whose every commit beyond the base carries the tool's committer identity; any other branch is left alone and reported. That
-identity test is a courtesy heuristic and not a security boundary (a committer email is free text and can be forged). What makes
-a forged branch harmless is that a regular push never discards anything and that `merge` re-validates the content of the head
+never discard anyone's commits. An update branch that went stale is not built on: when it no longer merges cleanly with
+the base (the base changed the same managed files another way, for example by a hand-run `tools/mercury.py apply`) or the
+base already matches the release, `publish` closes its pull request with a comment, deletes the branch only while it is
+still at the commit it checked (a deletion conditional on that commit, never a forced update), and opens a fresh update
+from the current base when one is needed. A base that only moved ahead keeps its pull request. Testing the merge uses
+`git merge-tree --write-tree` (Git 2.38 or later). It builds on or deletes only a branch that is same-repository, named
+`mercury/update-<12 hex>`, and whose every commit beyond the base carries the tool's committer identity; any other branch is
+left alone and reported. That identity test is a courtesy heuristic and not a security boundary (a committer email is free
+text and can be forged). What makes a forged branch harmless is that a regular push never discards anything and that `merge` re-validates the content of the head
 whoever wrote it.
 
 Credentials: `actions/checkout@v7` keeps the token in a separate file under `$RUNNER_TEMP` and wires it through git
@@ -335,8 +340,8 @@ read-only one that `merge` uses for `mercury.py check`, and it never talks to th
    - The project's own `required_checks` may be satisfied by a check run of any app or by a commit status (external CI is a
      legitimate source and the project chose the names). The project is responsible for those names not being claimable by
      an untrusted writer. When one name is reported by several sources, all of them must be green.
-6. The pull request is open, not a draft and GitHub reports it mergeable. `mergeable: false` (a conflict with the base) stops
-   with the instruction to close the pull request and delete its branch, after which the next `publish` opens a fresh one;
+6. The pull request is open, not a draft and GitHub reports it mergeable. `mergeable: false` (a conflict with the base) stops;
+   the next `publish` closes that pull request, deletes its branch and opens a fresh one;
    `mergeable: null` (not computed yet) stops and says the next run will look again.
 
 Exit codes of `tools/mercury_update.py`: 0 nothing to do, published or merged; 1 stopped (the reason is printed: a condition

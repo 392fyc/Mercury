@@ -13,7 +13,9 @@ every Git call; both are reached through one seam each so tests can replace them
 publish  Reads the newest commit of Mercury's `origin/master`, and when the project's managed files differ from it,
          applies it with `tools/mercury.py apply` on a branch `mercury/update-<12 hex>` and opens the one update pull
          request. When an update pull request already exists and is behind, the new state goes on top of its branch
-         with a regular push (see "Branch rule").
+         with a regular push (see "Branch rule"). An update branch that went stale (it no longer merges cleanly with
+         the base, because the base changed the same managed files another way, or the base already matches the
+         release) has its pull request closed and its branch deleted, and a fresh update is opened from the base.
 merge    Merges the one update pull request (squash, `--match-head-commit`) only when ALL of these hold on its exact head:
            1. it is from a same-repository `mercury/update-<12 hex>` branch and is the only such open pull request;
            2. every changed path (merge base to head) is Mercury-managed: in the old or the new lock, a v1 file being
@@ -31,9 +33,11 @@ merge    Merges the one update pull request (squash, `--match-head-commit`) only
 verify   Read-only form of 2 and 3 for the `Mercury verify` job: with a head ref that is not an update branch it does nothing.
 
 Branch rule: the tool never force-pushes and has no force option. A regular push cannot discard anyone's commits (the
-remote refuses anything that is not a fast-forward). It only builds on an existing update branch that is same-repository,
-named `mercury/update-<12 hex>`, whose every commit beyond the base was committed by the tool's own identity
-(`mercury-update@users.noreply.github.com`); otherwise it stops and leaves the branch alone. That identity test is a
+remote refuses anything that is not a fast-forward). The only other push deletes a stale update branch, on the condition
+that the branch is still at the commit it checked (`--force-with-lease=<ref>:<sha>` on a deletion is only that
+condition), so a commit pushed in between is never lost. It only builds on or deletes an existing update branch that is
+same-repository, named `mercury/update-<12 hex>`, whose every commit beyond the base was committed by the tool's own
+identity (`mercury-update@users.noreply.github.com`); otherwise it stops and leaves the branch alone. That identity test is a
 courtesy heuristic, not a security boundary: a committer email is free text, so anyone can forge it. What makes a forged
 branch harmless is that a regular push never discards anything and that `merge` re-validates the head's content (paths,
 provenance, `mercury.py check`) whoever wrote it.
@@ -559,6 +563,67 @@ def our_branch(target, base, pr):
     return head
 
 
+def open_update(a, gh, target, mercury, new):
+    """Open the one update pull request from the tip of the base (the checkout is there and clean)."""
+    rc, _ = installer("check", target, mercury, new)
+    if rc == 0:
+        print(f"nothing to do: the project already matches Mercury {new[:12]}")
+        return 0
+    branch = BRANCH_PREFIX + new[:12]
+    if git(target, "ls-remote", "--heads", "origin", f"refs/heads/{branch}"):
+        raise Stop(f"{branch} exists on the remote without an open pull request; delete it (the tool never overwrites a branch)")
+    old_raw = show(target, f"origin/{a.base}", LOCK_REL)
+    old = lock_commit(old_raw)
+    git(target, "switch", "--no-track", "-C", branch)  # a local leftover of a retired branch is replaced
+    apply_update(target, mercury, new)
+    made = commit_update(target, mercury, a.base, new, old)
+    if made is None:
+        print(f"nothing to do: applying Mercury {new[:12]} changed nothing")
+        return 0
+    push_branch(target, branch)
+    tmp, body = write_body(made[1])
+    try:
+        print(gh(["pr", "create", "--repo", a.repo, "--base", a.base, "--head", branch, "--title", made[0],
+                  "--body-file", str(body)]).strip())
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    set_output("published", "true")
+    print(f"published update pull request for Mercury {new[:12]}")
+    return 0
+
+
+def stale_reason(target, mercury, base, head, new):
+    """Why an update branch can no longer carry the update, or None. It is stale when it does not merge cleanly with the
+    base (the base changed the same managed files another way, for example by a hand-run `mercury.py apply`) or when the
+    base already matches `new`. A base that only moved ahead keeps its branch."""
+    rc, _ = installer("check", target, mercury, new)  # the checkout is at the tip of the base
+    if rc == 0:
+        return f"{base} already matches Mercury {new[:12]}"
+    rc, out, err = execute(["git", "-C", str(target), "-c", "core.fsmonitor=false", "merge-tree", "--write-tree",
+                            "--no-messages", f"refs/remotes/origin/{base}", head])
+    if rc == 1:
+        return f"it conflicts with {base}"
+    if rc:
+        detail = redact(err.decode("utf-8", "replace"), 600)
+        raise Unsafe("cannot test the update branch against the base (git merge-tree needs Git 2.38 or later)"
+                     + (f"\n{detail}" if detail else ""))
+    return None
+
+
+def retire(a, gh, target, pr, head, reason):
+    """Retire a stale update pull request of this tool: comment, delete its branch only while it is still at `head`, then
+    close it. When the deletion is refused nothing but the comment has changed, and the pull request stays open."""
+    n, branch = pr["number"], pr["head"]["ref"]
+    gh(["pr", "comment", str(n), "--repo", a.repo, "--body",
+        f"The Mercury update job retires this pull request: {reason}, so this branch cannot carry the update. "
+        f"It deletes {branch} if the branch is still at {head[:12]}, then closes this pull request and opens a fresh "
+        f"update from the current {a.base} when one is needed."])
+    # A deletion is never a forced update; the lease only makes it conditional on the branch still being at `head`.
+    git(target, "push", "origin", f"--force-with-lease=refs/heads/{branch}:{head}", f":refs/heads/{branch}")
+    gh(["pr", "close", str(n), "--repo", a.repo])  # GitHub may have closed it with its branch; gh then reports that
+    print(f"closed stale update pull request #{n} and deleted {branch}: {reason}")
+
+
 def cmd_publish(a, gh):
     target, mercury = checkout_root(a.target, "--target"), checkout_root(a.mercury, "--mercury")
     git(target, "fetch", "--no-tags", "origin", f"+refs/heads/{a.base}:refs/remotes/origin/{a.base}")
@@ -570,31 +635,7 @@ def cmd_publish(a, gh):
     new = mercury_master(mercury)
     pr = update_queue(gh, a.repo, a.base)
     if pr is None:
-        rc, _ = installer("check", target, mercury, new)
-        if rc == 0:
-            print(f"nothing to do: the project already matches Mercury {new[:12]}")
-            return 0
-        branch = BRANCH_PREFIX + new[:12]
-        if git(target, "ls-remote", "--heads", "origin", f"refs/heads/{branch}"):
-            raise Stop(f"{branch} exists on the remote without an open pull request; delete it (the tool never overwrites a branch)")
-        old_raw = show(target, f"origin/{a.base}", LOCK_REL)
-        old = lock_commit(old_raw)
-        git(target, "switch", "--no-track", "-c", branch)
-        apply_update(target, mercury, new)
-        made = commit_update(target, mercury, a.base, new, old)
-        if made is None:
-            print(f"nothing to do: applying Mercury {new[:12]} changed nothing")
-            return 0
-        push_branch(target, branch)
-        tmp, body = write_body(made[1])
-        try:
-            print(gh(["pr", "create", "--repo", a.repo, "--base", a.base, "--head", branch, "--title", made[0],
-                      "--body-file", str(body)]).strip())
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
-        set_output("published", "true")
-        print(f"published update pull request for Mercury {new[:12]}")
-        return 0
+        return open_update(a, gh, target, mercury, new)
     branch = pr["head"]["ref"]
     head = our_branch(target, a.base, pr)
     raw = show(target, head, LOCK_REL)
@@ -603,12 +644,16 @@ def cmd_publish(a, gh):
     here = lock_commit(raw)
     if here is None:
         raise Stop(f"{branch}: its lock has no valid source_commit")
-    if here == new:
-        print(f"nothing to publish: pull request #{pr['number']} already carries Mercury {new[:12]}")
-        return 0
     if not ancestor(mercury, here, new):
         raise Stop(f"pull request #{pr['number']} carries {here[:12]}, which is not an ancestor of Mercury master {new[:12]}; "
                    "not touching it")
+    reason = stale_reason(target, mercury, a.base, head, new)
+    if reason:
+        retire(a, gh, target, pr, head, reason)
+        return open_update(a, gh, target, mercury, new)
+    if here == new:
+        print(f"nothing to publish: pull request #{pr['number']} already carries Mercury {new[:12]}")
+        return 0
     git(target, "switch", "--no-track", "-C", branch, f"refs/remotes/origin/{branch}")
     apply_update(target, mercury, new)
     old = lock_commit(show(target, f"origin/{a.base}", LOCK_REL))
@@ -670,8 +715,8 @@ def cmd_merge(a, gh):
     if problems:
         raise Stop(f"pull request #{n} is waiting for its checks on {head_sha[:12]}:\n  " + "\n  ".join(problems))
     if pr.get("mergeable") is False:
-        raise Stop(f"pull request #{n} conflicts with {a.base} and cannot be merged. Close it and delete its branch "
-                   f"{branch}; the next publish opens a fresh update from the current base")
+        raise Stop(f"pull request #{n} conflicts with {a.base} and cannot be merged; the next publish closes it, deletes "
+                   f"{branch} and opens a fresh update from the current base")
     if pr.get("mergeable") is not True:
         raise Stop(f"pull request #{n}: GitHub has not computed whether it is mergeable yet; the next run will look again")
     # The server compares the head again; no admin or bypass flag is used.
