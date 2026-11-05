@@ -12,7 +12,7 @@ Mercury 是一套轻量的多代理协作 harness：它配置 Claude Code 与 Co
 packs/          可装载内容（技能、脚本、指南）的源；pack.json 声明技能，build/ 放生成器；playwright-mcp 在 mercury.json 中停用
 mercury.json    总控：哪些 pack 存在、哪些启用（core 必选）
 sources/        外部项目原样（pinned git submodule）
-tools/          mercury.py：check / apply --target 装载 pack
+tools/          mercury.py：check / apply --target 装载 pack；harness_monitor/：本机 harness 报告（M4）
 scripts/        Mercury 专用维护脚本与 Codex 受控 Git 脚本
 ```
 
