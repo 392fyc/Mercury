@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Harness 报告</title>
+<style>
+:root { color-scheme: light; --bg:#fcfcfb; --card:#ffffff; --line:#e4e3de; --ink:#0b0b0b; --ink2:#52514e; --claude:#2a78d6; --codex:#eb6834; }
+@media (prefers-color-scheme: dark) {
+  :root { color-scheme: dark; --bg:#1a1a19; --card:#232322; --line:#3a3a37; --ink:#f0efec; --ink2:#c3c2b7; --claude:#3987e5; --codex:#d95926; }
+}
+* { box-sizing: border-box; }
+body { margin: 0 auto; max-width: 1120px; padding: 24px 16px 48px; background: var(--bg); color: var(--ink); font: 14px/1.55 system-ui, "Microsoft YaHei", sans-serif; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+h2 { font-size: 16px; margin: 32px 0 8px; }
+.sub, .note { color: var(--ink2); }
+.note { font-size: 13px; }
+#health { margin: 16px 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); }
+#health.bad { border-width: 2px; border-color: var(--ink); }
+.filters { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
+select { font: inherit; padding: 4px 8px; color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 6px; }
+.scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; background: var(--card); }
+th, td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+td.reason { white-space: normal; min-width: 220px; color: var(--ink2); }
+.legend { display: flex; gap: 16px; margin: 4px 0 8px; color: var(--ink2); }
+.key { display: inline-block; width: 16px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 6px; }
+.key.dash { border-top-style: dashed; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+.chart { position: relative; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); }
+.chart h3 { font-size: 14px; margin: 0 0 4px; }
+.chart svg { display: block; width: 100%; height: 130px; touch-action: none; }
+#tip { position: fixed; display: none; pointer-events: none; padding: 6px 8px; font-size: 13px; color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,.18); }
+</style>
+</head>
+<body>
+<h1>Harness 报告</h1>
+<div class="sub">Agent 实际查了什么，用来判断哪些入口该改。这里是调用次数，不代表内容被用上。</div>
+<div id="health"></div>
+<div class="filters">
+  <label>时间 <select id="range"><option value="4">最近 4 周</option><option value="12" selected>最近 12 周</option><option value="0">全部</option></select></label>
+  <label>项目 <select id="project"><option value="">全部项目</option></select></label>
+</div>
+<h2>总览</h2>
+<div class="note">“会话”是至少查过一次该类内容的会话占比，最适合看入口有没有被用上。标“未验证”的格子不要用来下结论。</div>
+<div class="scroll"><table id="summary"></table></div>
+<h2>每周趋势</h2>
+<div class="legend"><span><i class="key" style="border-color:var(--claude)"></i>Claude</span><span><i class="key" style="border-color:var(--codex)"></i>Codex</span><span><i class="key dash" style="border-color:var(--ink2)"></i>虚线：未验证</span></div>
+<div class="grid" id="charts"></div>
+<h2>按项目</h2>
+<div class="scroll"><table id="projects"></table></div>
+<h2>Skill 使用</h2>
+<div class="note">名称来自 Skill 工具的参数或 SKILL.md 所在目录，没有单独验证过。没出现的 skill 就是这段时间没被用到。</div>
+<div class="scroll"><table id="skills"></table></div>
+<h2>规则之外</h2>
+<div class="note">验证日期之后才出现的工具，规则没有审过；下表第二部分是一直不在统计范围内的工具。</div>
+<div class="scroll"><table id="tools"></table></div>
+<div id="tip"></div>
+<script>
+const HOSTS = [["claude", "Claude"], ["codex", "Codex"]];
+const $ = id => document.getElementById(id);
+const data = /*DATA*/null;
+
+function el(tag, text, cls) {
+  const node = document.createElement(tag);
+  if (text !== undefined) node.textContent = text; // names come from logs, so never use innerHTML
+  if (cls) node.className = cls;
+  return node;
+}
+function row(table, cells, head) {
+  const tr = el("tr");
+  cells.forEach(c => {
+    const [text, cls] = Array.isArray(c) ? c : [c, ""];
+    tr.append(el(head ? "th" : "td", text, cls));
+  });
+  table.append(tr);
+}
+function selected() {
+  const seen = data.rows.map(r => r[0]).filter(w => w !== "unknown").sort(), weeks = [];
+  if (seen.length) {
+    const last = Date.parse(seen[seen.length - 1] + "T00:00:00Z");
+    for (let t = Date.parse(seen[0] + "T00:00:00Z"); t <= last; t += 604800000) weeks.push(new Date(t).toISOString().slice(0, 10));
+  }
+  const n = Number($("range").value);
+  const keep = new Set(n ? weeks.slice(-n) : weeks);
+  const project = $("project").value;
+  const wanted = r => keep.has(r[0]) && (!project || r[2] === project);
+  return { weeks: weeks.filter(w => keep.has(w)), rows: data.rows.filter(wanted), skillRows: data.skills.filter(wanted) };
+}
+function total(rows, host, cell) {
+  return rows.reduce((sum, r) => sum + (r[1] === host && r[3] === cell ? r[4] : 0), 0);
+}
+function reach(rows, host, cell) {
+  return new Set(rows.filter(r => r[1] === host && r[3] === cell).map(r => r[5])).size;
+}
+function health() {
+  const h = data.health, box = $("health"), bad = [];
+  const age = h.updated_at ? (Date.now() - Date.parse(h.updated_at)) / 3600000 : Infinity;
+  if (h.sync_error) bad.push("这次运行有问题，数字可能是旧的：" + h.sync_error);
+  if (age > 72) bad.push("这份报告已超过 3 天，重新运行后再看");
+  if (!h.rules_ok) bad.push("规则已改动但未重新验证，所有格子都不可信");
+  box.className = bad.length ? "bad" : "";
+  const parts = bad.length ? ["⚠ " + bad.join("；")] : ["✓ 本次没有报错"];
+  parts.push("生成于 " + (h.updated_at ? new Date(h.updated_at).toLocaleString() : "无"));
+  parts.push("日志最新变动 " + (h.source_latest ? new Date(h.source_latest).toLocaleString() : "无"));
+  parts.push("规则 " + h.rules_sha256);
+  parts.push("验证 " + data.validated_on + "，" + data.sample_rows + " 条样本");
+  if (data.new_tools.length) parts.push(data.new_tools.length + " 个新工具未审");
+  box.textContent = parts.join(" · ");
+}
+function summary(rows) {
+  const t = $("summary"); t.replaceChildren();
+  row(t, ["类别", ...HOSTS.flatMap(([, n]) => [[n + " 调用", "n"], ["会话", "n"], "状态"]), "说明"], true);
+  const usable = (h, k) => data.health.rules_ok && data.cells[h][k].usable;
+  Object.entries(data.classes).forEach(([k, name]) => {
+    const cells = [name], why = [];
+    HOSTS.forEach(([h, n]) => {
+      const c = total(rows, h, k), all = reach(rows, h, "ALL");
+      cells.push([c.toLocaleString(), "n"], [all ? (reach(rows, h, k) / all * 100).toFixed(0) + "%" : "–", "n"], usable(h, k) ? "可用" : "未验证");
+      if (data.cells[h][k].reason) why.push(n + "：" + data.cells[h][k].reason);
+    });
+    cells.push([why.join("；"), "reason"]);
+    row(t, cells);
+  });
+  row(t, ["已覆盖调用", ...HOSTS.flatMap(([h]) => [[total(rows, h, "ALL").toLocaleString(), "n"], [reach(rows, h, "ALL") + " 个", "n"], ""]), ""]);
+}
+function chart(name, k, weeks, rows) {
+  const W = 320, H = 130, L = 34, R = 8, T = 8, B = 20;
+  const series = HOSTS.map(([h, n]) => ({ h, n, v: weeks.map(w => rows.reduce((s, r) => s + (r[0] === w && r[1] === h && r[3] === k ? r[4] : 0), 0)) }));
+  const max = Math.max(1, ...series.flatMap(s => s.v));
+  const x = i => L + (weeks.length > 1 ? i * (W - L - R) / (weeks.length - 1) : (W - L - R) / 2);
+  const y = v => T + (1 - v / max) * (H - T - B);
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", name + " 每周调用次数");
+  const add = (tag, attrs, text) => {
+    const n = document.createElementNS(ns, tag);
+    Object.entries(attrs).forEach(([a, v]) => n.setAttribute(a, v));
+    if (text !== undefined) n.textContent = text;
+    svg.append(n);
+    return n;
+  };
+  [0, max].forEach(v => {
+    add("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), stroke: "var(--line)" });
+    add("text", { x: L - 4, y: y(v) + 4, "text-anchor": "end", "font-size": 10, fill: "var(--ink2)" }, v.toLocaleString());
+  });
+  if (weeks.length) {
+    add("text", { x: L, y: H - 5, "font-size": 10, fill: "var(--ink2)" }, weeks[0].slice(5));
+    add("text", { x: W - R, y: H - 5, "text-anchor": "end", "font-size": 10, fill: "var(--ink2)" }, weeks[weeks.length - 1].slice(5));
+  }
+  series.forEach(s => {
+    const ok = data.health.rules_ok && data.cells[s.h][k].usable;
+    const attrs = { d: s.v.map((v, i) => (i ? "L" : "M") + x(i) + " " + y(v)).join(""), fill: "none", stroke: `var(--${s.h})`, "stroke-width": 2, "stroke-linejoin": "round" };
+    if (!ok) attrs["stroke-dasharray"] = "5 4";
+    add("path", attrs);
+    if (weeks.length === 1) add("circle", { cx: x(0), cy: y(s.v[0]), r: 4, fill: `var(--${s.h})` });
+  });
+  const hair = add("line", { y1: T, y2: H - B, stroke: "var(--ink2)", visibility: "hidden" });
+  const tip = $("tip");
+  svg.addEventListener("pointermove", e => {
+    if (!weeks.length) return;
+    const box = svg.getBoundingClientRect();
+    const px = (e.clientX - box.left) / box.width * W;
+    const i = Math.max(0, Math.min(weeks.length - 1, Math.round((px - L) / ((W - L - R) / Math.max(1, weeks.length - 1)))));
+    hair.setAttribute("x1", x(i)); hair.setAttribute("x2", x(i)); hair.setAttribute("visibility", "visible");
+    tip.replaceChildren(el("div", weeks[i] + " 这周"));
+    series.forEach(s => tip.append(el("div", s.v[i].toLocaleString() + " · " + s.n)));
+    tip.style.display = "block";
+    tip.style.left = Math.min(e.clientX + 12, innerWidth - 140) + "px";
+    tip.style.top = e.clientY + 12 + "px";
+  });
+  svg.addEventListener("pointerleave", () => { hair.setAttribute("visibility", "hidden"); tip.style.display = "none"; });
+  const card = el("div", undefined, "chart");
+  card.append(el("h3", name), svg);
+  return card;
+}
+function projects(rows) {
+  const t = $("projects"); t.replaceChildren();
+  const keys = Object.keys(data.classes);
+  row(t, ["项目", "宿主", ["已覆盖调用", "n"], ...keys.map(k => [data.classes[k], "n"])], true);
+  const map = new Map();
+  rows.forEach(r => {
+    const id = r[2] + "\0" + r[1];
+    if (!map.has(id)) map.set(id, { p: r[2], h: r[1], c: {} });
+    const m = map.get(id); m.c[r[3]] = (m.c[r[3]] || 0) + r[4];
+  });
+  [...map.values()].sort((a, b) => (b.c.ALL || 0) - (a.c.ALL || 0)).forEach(m => {
+    row(t, [m.p, m.h === "claude" ? "Claude" : "Codex", [(m.c.ALL || 0).toLocaleString(), "n"],
+      ...keys.map(k => [(m.c[k] || 0).toLocaleString() + (data.health.rules_ok && data.cells[m.h][k].usable ? "" : " *"), "n"])]);
+  });
+  const note = el("tr"); const td = el("td", "* 未验证格子"); td.colSpan = keys.length + 3; td.className = "reason"; note.append(td); t.append(note);
+}
+function skills(rows) {
+  const t = $("skills"); t.replaceChildren();
+  row(t, ["Skill", ...HOSTS.map(([, n]) => [n, "n"])], true);
+  const map = new Map();
+  rows.forEach(r => {
+    if (!map.has(r[3])) map.set(r[3], { claude: 0, codex: 0 });
+    map.get(r[3])[r[1]] += r[4];
+  });
+  [...map].sort((a, b) => b[1].claude + b[1].codex - a[1].claude - a[1].codex)
+    .forEach(([name, c]) => row(t, [name, [c.claude.toLocaleString(), "n"], [c.codex.toLocaleString(), "n"]]));
+}
+function tools() {
+  const t = $("tools"); t.replaceChildren();
+  row(t, ["类型", "宿主", "工具", ["调用", "n"]], true);
+  data.new_tools.forEach(r => row(t, ["新工具", r[0], r[1], [r[2].toLocaleString(), "n"]]));
+  data.out_of_scope.forEach(r => row(t, ["不在范围", r[0], r[1], [r[2].toLocaleString(), "n"]]));
+}
+function render() {
+  health();
+  const { weeks, rows, skillRows } = selected();
+  summary(rows);
+  $("charts").replaceChildren(...Object.entries(data.classes).map(([k, n]) => chart(n, k, weeks, rows)));
+  projects(rows);
+  skills(skillRows);
+  tools();
+}
+if (data) {
+  const names = [...new Set(data.rows.map(r => r[2]))].sort();
+  $("project").append(...names.map(n => el("option", n)));
+  $("range").onchange = render;
+  $("project").onchange = render;
+  render();
+} else {
+  $("health").textContent = "这是报告模板。运行 tools/harness_monitor/monitor.py 生成报告。";
+}
+</script>
+</body>
+</html>

@@ -8,9 +8,10 @@
 
 | 编号 | 规则 | 来源 |
 |---|---|---|
-| M1 | Mercury 是一套让 Claude Code 与 Codex 持续、自主、高质量工作的轻量 harness：配置宿主、提供可装载的 pack，不自建编排层、CLI 包装或桌面应用。 | DIRECTION 一；#645、#666 |
+| M1 | Mercury 是一套让 Claude Code 与 Codex 持续、自主、高质量工作的轻量 harness：配置宿主、提供可装载的 pack，不自建编排层、CLI 包装或桌面应用（唯一例外见 M4）。 | DIRECTION 一；#645、#666 |
 | M2 | 多会话管理交给宿主原生能力或 Agent Orchestrator；角色使用原生子代理（`packs/core/roles/` 生成）。 | DIRECTION 三·模块 4；#645、#682 |
 | M3 | 长期记忆是文件式的：项目私有记忆、会话索引和 handoff 文档；没有向量召回层。 | DIRECTION 三·模块 2；#518 |
+| M4 | `tools/harness_monitor/` 是 M1 的具名例外：它只用来检验 harness 配置的入口有没有被 Agent 用上，把结果反馈给项目改进。保持运行一次出报告的轻量形态，不常驻、不下发到下游、不保存对话内容；超出这些边界需要新的决定。它依赖的 agentsview 是本机安装的程序，版本钉在代码里并在运行时校验，不适用 E1 的挂载记录。 | `03-decisions/DEC-2026-11-05-harness-monitor.md`；#755 |
 
 ## 架构原则
 

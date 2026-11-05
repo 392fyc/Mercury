@@ -7,6 +7,7 @@ in Git history.
 
 | Document | Status | Content |
 |---|---|---|
+| [DEC-2026-11-05-harness-monitor.md](DEC-2026-11-05-harness-monitor.md) | current | `tools/harness_monitor/` is the named exception to M1: a run-once report on whether agents use what the harness configures |
 | [DEC-2026-08-14-codex-primary-harness.md](DEC-2026-08-14-codex-primary-harness.md) | current | Codex CLI becomes the primary harness: personal-subscription auth, three enforcement layers, no Git writes under the sandbox |
 
 Some decisions are recorded as ADR-style research reports in [04-research](../04-research/README.md), for
