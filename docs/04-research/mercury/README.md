@@ -5,6 +5,7 @@ from the Mercury repository in #675. Subdirectories: [incidents/](incidents/READ
 
 | Document | Status | Content |
 |---|---|---|
+| [issue-749-api-offload-2026-11.md](issue-749-api-offload-2026-11.md) | draft | API credits for bounded work: routing evaluation, host wake tests, design |
 | [issue-158-architecture-evaluation.md](issue-158-architecture-evaluation.md) | current | Architecture direction: thin core plus mounted projects (basis of P1) |
 | [context-strategy-2026-05.md](context-strategy-2026-05.md) | current | Context strategy against the 1M-context norm (ADR) |
 | [settings-permissions-vs-hooks-2026-06.md](settings-permissions-vs-hooks-2026-06.md) | current | settings.json permissions versus PreToolUse hooks (#486 ADR) |
