@@ -67,6 +67,34 @@ class ImageApiTests(unittest.TestCase):
         self.assertEqual(result["status"], "dry-run")
         self.assertFalse((self.private / "state").exists())
 
+    def test_default_model_is_2_6_flare_alias(self):
+        result = api.run(self.config, self.card)
+        self.assertEqual(result["model"], "gpt-image-2.6-flare")
+
+    def test_explicit_2_6_aliases_and_existing_2_5_names_are_supported(self):
+        models = (
+            "gpt-image-2.6-flare",
+            "gpt-image-2.6-sunburst",
+            "gpt-image-2.5-flare",
+            "gpt-image-2.5-sunburst",
+            "gpt-image-2.5-flare-2026-09-08",
+            "gpt-image-2.5-sunburst-2026-09-08",
+        )
+        for model in models:
+            with self.subTest(model=model):
+                self.job["model"] = model
+                self.save()
+                result = api.run(self.config, self.card)
+                self.assertEqual(result["model"], model)
+
+    def test_unsupported_model_is_refused_before_network(self):
+        self.job["model"] = "gpt-image-2.6-flare-2026-09-08"
+        self.save()
+        with patch.object(api, "request") as request:
+            with self.assertRaisesRegex(ValueError, "unsupported model"):
+                api.run(self.config, self.card, True)
+        request.assert_not_called()
+
     def test_generate_settles_actual_usage_and_saves_exact_image(self):
         result, request = self.execute()
         self.assertEqual(result["status"], "ok")

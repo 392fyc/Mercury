@@ -14,8 +14,9 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
-MODELS = {f"gpt-image-2.5-{name}{date}" for name in ("flare", "sunburst")
-          for date in ("", "-2026-09-08")}
+MODELS = ({f"gpt-image-2.5-{name}{date}" for name in ("flare", "sunburst")
+           for date in ("", "-2026-09-08")} |
+          {f"gpt-image-2.6-{name}" for name in ("flare", "sunburst")})
 PNG = b"\x89PNG\r\n\x1a\n"
 
 
@@ -61,7 +62,7 @@ def load_job(config_path, card_path):
     require(mode in ("generate", "edit"), "mode must be generate or edit")
     prompt = card["prompt"]
     require(isinstance(prompt, str) and 0 < len(prompt) <= 32000, "invalid prompt length")
-    body = {"model": card.get("model", "gpt-image-2.5-flare-2026-09-08"), "prompt": prompt,
+    body = {"model": card.get("model", "gpt-image-2.6-flare"), "prompt": prompt,
             "size": card.get("size", "1024x1024"), "quality": card.get("quality", "low"),
             "background": card.get("background", "opaque"), "output_format": "png", "n": 1}
     require(body["model"] in MODELS, "unsupported model; recheck model and prices before adding one")
