@@ -32,7 +32,7 @@ SQLite 的 `BEGIN IMMEDIATE` 将检查与预留放进同一事务，避免并行
 ```json
 {
   "mode": "generate",
-  "model": "gpt-image-2.5-flare-2026-09-08",
+  "model": "gpt-image-2.6-flare",
   "prompt": "Create one original dark-fantasy silver leaf emblem. Centered isolated object, muted antique metal, transparent background. No letters, numbers, border or interface.",
   "size": "1024x1024",
   "quality": "low",
@@ -45,7 +45,7 @@ SQLite 的 `BEGIN IMMEDIATE` 将检查与预留放进同一事务，避免并行
 ```json
 {
   "mode": "edit",
-  "model": "gpt-image-2.5-sunburst-2026-09-08",
+  "model": "gpt-image-2.6-sunburst",
   "prompt": "Image 1 is the edit target. Preserve its silhouette, proportions and material detail. Change only the small central gemstone from red to blue. Keep the original background transparency. No text or extra objects.",
   "references": ["assets/approved-emblem.png"],
   "size": "1024x1024",
@@ -54,7 +54,7 @@ SQLite 的 `BEGIN IMMEDIATE` 将检查与预留放进同一事务，避免并行
 }
 ```
 
-支持 `flare`、`sunburst` 的上述快照及无日期别名；默认使用固定日期的 flare。只接受 `1024x1024`、`1536x1024`、`1024x1536` 与 `low`、`medium`、`high`，每次 `n=1`，PNG 输出。编辑接受 1—16 张本地 PNG/JPEG/WebP，每张不超过 10 MiB。第一张为编辑目标时，在提示词中明确说明；其余图片逐一说明是身份、材质还是构图参考。此小工具不提供蒙版、远程图片 URL 或批量接口。
+支持 `gpt-image-2.6-flare`、`gpt-image-2.6-sunburst`（官方暂无日期快照），默认使用 `gpt-image-2.6-flare`；为复现旧素材，仍接受 2.5 的 `flare`、`sunburst` 及其 `-2026-09-08` 快照。只接受 `1024x1024`、`1536x1024`、`1024x1536` 与 `low`、`medium`、`high`，每次 `n=1`，PNG 输出。编辑接受 1—16 张本地 PNG/JPEG/WebP，每张不超过 10 MiB。第一张为编辑目标时，在提示词中明确说明；其余图片逐一说明是身份、材质还是构图参考。此小工具不提供蒙版、远程图片 URL 或批量接口。
 
 输出回执记录请求参数、提示词 SHA-256、实际发送的各参考图字节数与 SHA-256、生成图字节数/尺寸/SHA-256，以及用量和费用。它不含 key、提示词正文和本机路径；原任务卡仍须保留，以便复现输入。`actual_usd=null` 表示不能确认费用，`accounted_usd` 是账本当前占用，不得写作实际账单。错误只报告类型，不输出服务器正文或 traceback。
 
@@ -62,6 +62,8 @@ SQLite 的 `BEGIN IMMEDIATE` 将检查与预留放进同一事务，避免并行
 
 2026-10-30 核对的 [生成接口](https://developers.openai.com/api/reference/resources/images/methods/generate) 和 [编辑接口](https://developers.openai.com/api/reference/resources/images/methods/edit) 支持 JSON 请求；编辑的 `images` 使用本地原字节编码的 data URL。请求固定发送到 OpenAI 官方 Images 端点，拒绝重定向，不将 Authorization 转发给新地址。
 
-[Flare 模型页](https://developers.openai.com/api/docs/models/gpt-image-2.5-flare) 与 [Sunburst 模型页](https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst) 当前的 Standard 费率相同：每百万文本输入 token 5 美元、图像输入 token 8 美元、输出图像 token 30 美元。脚本按这三个费率计算完整用量，不采用缓存折扣。模型、端点或计费方式变化后先核对文档再改费率，不能任意传模型名继续沿用旧价格。
+2026-11-05 核对的 2.6 [Flare 模型页](https://developers.openai.com/api/docs/models/gpt-image-2.6-flare) 与 [Sunburst 模型页](https://developers.openai.com/api/docs/models/gpt-image-2.6-sunburst) 费率相同，也与 2.5 相同：每百万文本输入 token 5 美元、图像输入 token 8 美元、输出图像 token 30 美元。脚本按这三个费率计算完整用量，不采用缓存折扣。模型、端点或计费方式变化后先核对文档再改费率，不能任意传模型名继续沿用旧价格。
+
+费率相同不等于单张同价：2026-11-05 实测，`gpt-image-2.6-flare` 的 `low` 档 1024x1024 生成一张用了 824 个输出 token，约 0.025 美元；旧任务卡若未写 `model`，现在也会改用 2.6，`reserve_usd` 请按实测设置。工具不发送 `complexity`，模型按官方默认 `high` 处理；token 增加是否由它引起尚未核实。
 
 官方提示，人物跨图一致性、精确构图与文字仍可能出错；蒙版也是指导而非逐像素保证。详见[图像生成指南](https://developers.openai.com/api/docs/guides/image-generation)。这些限制应由项目实际验收覆盖，不以模型名称或高质量档代替检查。
