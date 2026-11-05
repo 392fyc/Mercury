@@ -78,6 +78,15 @@ class ImageApiTests(unittest.TestCase):
         self.assertEqual(result["dimensions"], [1, 1])
         self.assertNotIn("synthetic-private-key", (output / "receipt.json").read_text())
         self.assertEqual(request.call_args.args[0]["n"], 1)
+        self.assertEqual(request.call_args.args[0]["model"], "gpt-image-2.6-flare")
+
+    def test_current_models_and_old_snapshots_are_accepted(self):
+        self.cfg["max_calls"] = 3
+        for model in ("gpt-image-2.6-flare", "gpt-image-2.6-sunburst", "gpt-image-2.5-flare-2026-09-08"):
+            self.job["model"] = model
+            self.save()
+            _, request = self.execute()
+            self.assertEqual(request.call_args.args[0]["model"], model)
 
     def test_edit_sends_exact_reference_bytes_and_records_their_digest(self):
         (self.root / "source.png").write_bytes(IMAGE)

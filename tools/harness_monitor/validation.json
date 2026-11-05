@@ -1,0 +1,26 @@
+{
+  "rules_sha256": "0b985c9a5c07eb36969b01f0d4d4e69d5704d1d8d52cf32cf08bb8cd90353c65",
+  "validated_on": "2026-11-05",
+  "sample_rows": 901,
+  "tools": ["Bash", "PowerShell", "exec", "js", "Read", "Grep", "Glob", "WebFetch", "WebSearch", "Skill"],
+  "cells": {
+    "claude": {
+      "M": {"usable": false, "reason": "召回未证实：定向样本 0 漏判，但样本量压不低上限"},
+      "B": {"usable": false, "reason": "召回未证实：定向样本 0 漏判，但样本量压不低上限"},
+      "S": {"usable": false, "reason": "精确率未过线（33/39）：把算哈希、查 BOM、写 SKILL.md 算成了读取"},
+      "K": {"usable": true, "reason": ""},
+      "R": {"usable": false, "reason": "精确率未过线（36/39）：把脚本里的字符串算成了读取"},
+      "W": {"usable": true, "reason": "只含已覆盖的工具，不含浏览器工具"},
+      "G": {"usable": true, "reason": ""}
+    },
+    "codex": {
+      "M": {"usable": true, "reason": ""},
+      "B": {"usable": true, "reason": ""},
+      "S": {"usable": true, "reason": ""},
+      "K": {"usable": true, "reason": ""},
+      "R": {"usable": true, "reason": ""},
+      "W": {"usable": false, "reason": "召回未证实：js 工具驱动的浏览器操作规则认不出"},
+      "G": {"usable": true, "reason": ""}
+    }
+  }
+}
