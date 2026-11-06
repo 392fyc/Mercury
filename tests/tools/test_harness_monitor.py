@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT / "tools" / "harness_monitor"))
 import monitor  # noqa: E402
 
 SCHEMA = """
-create table sessions(id text, agent text, project text, cwd text, file_size int, file_mtime int, file_hash text,
+create table sessions(id text, agent text, project text, cwd text, relationship_type text, file_size int, file_mtime int, file_hash text,
   message_count int, deleted_at text, local_modified_at text);
 create table messages(id integer primary key, timestamp text);
 create table tool_calls(id integer primary key, session_id text, message_id int, tool_use_id text, tool_name text,
@@ -40,9 +40,9 @@ class Base(unittest.TestCase):
         self.con.execute("insert into messages values(1,'2026-11-02T10:00:00Z')")
         self.con.execute("insert into messages values(2,'2026-11-09T10:00:00Z')")
 
-    def session(self, sid="s1", agent="claude", project="alpha", cwd="", size=1, deleted=None):
+    def session(self, sid="s1", agent="claude", project="alpha", cwd="", size=1, deleted=None, relationship=""):
         self.con.execute("delete from sessions where id=?", (sid,))
-        self.con.execute("insert into sessions values(?,?,?,?,?,1,'h',1,?,'2026-11-05T00:00:00Z')", (sid, agent, project, cwd, size, deleted))
+        self.con.execute("insert into sessions values(?,?,?,?,?,?,1,'h',1,?,'2026-11-05T00:00:00Z')", (sid, agent, project, cwd, relationship, size, deleted))
         self.con.commit()
 
     def call(self, sid, use_id, tool, command=None, path="", message=1):
@@ -53,7 +53,7 @@ class Base(unittest.TestCase):
     def cells(self, host="claude"):
         rows = monitor.snapshot(self.stats)["rows"]
         out = {}
-        for _, h, _, cell, n, _ in rows:
+        for _, h, _, cell, n, _, _ in rows:
             if h == host:
                 out[cell] = out.get(cell, 0) + n
         return out
@@ -85,6 +85,25 @@ class Validation(unittest.TestCase):
         self.assertEqual(monitor.classify("Bash", json.dumps({"command": "gh issue list"}), ""), {"G"})
         self.assertEqual(monitor.classify("Bash", json.dumps({"command": "bash lane-bus.sh read --lane main"}), ""), {"B"})
 
+    def test_memory_is_split_by_source(self):
+        read = lambda path: monitor.classify("Read", "{}", path)  # noqa: E731
+        self.assertEqual(read(".sot/memory/projects/x/MEMORY.md"), {"M"})
+        self.assertEqual(read("C:/Users/u/.codex/memories/MEMORY.md"), {"N"})
+        self.assertEqual(read("C:/Users/u/.codex/memories/rollout_summaries/a.md"), {"N"})
+
+    def test_two_sources_in_one_command_both_count(self):
+        command = "cat .mercury/memory/index.jsonl ~/.codex/memories/MEMORY.md"
+        self.assertEqual(monitor.classify("Bash", json.dumps({"command": command}), ""), {"M", "N"})
+
+    def test_evidence_files_are_not_memory(self):
+        self.assertEqual(monitor.classify("Read", "{}", ".sot/memory/projects/x/lanes/ui/evidence/run.json"), set())
+        command = r"$p='D:\\p\\.sot\\memory\\lanes\\ui\\evidence\\a.json'; Get-Content $p"
+        self.assertEqual(monitor.classify("PowerShell", json.dumps({"command": command}), ""), set())
+
+    def test_a_memory_edit_is_not_recall(self):
+        command = "python -c \"p='.sot/memory/x/MEMORY.md'; t=open(p).read(); open(p,'w').write(t)\""
+        self.assertEqual(monitor.classify("Bash", json.dumps({"command": command}), ""), set())
+
 
 class Update(Base):
     def test_counts_classes_and_total(self):
@@ -94,6 +113,44 @@ class Update(Base):
         self.call("s1", "c", "Bash", "ls")
         monitor.update(self.source, self.stats, config())
         self.assertEqual(self.cells(), {"ALL": 3, "M": 1, "W": 1})
+
+    def test_main_sessions_and_subagents_stay_apart(self):
+        self.session("s1")
+        self.session("s2", relationship="subagent")
+        self.session("s3", relationship="continuation")
+        for sid in ("s1", "s2", "s3"):
+            self.call(sid, "a" + sid, "WebSearch")
+        monitor.update(self.source, self.stats, config())
+        roles = sorted(r[6] for r in monitor.snapshot(self.stats)["rows"] if r[3] == "W")
+        self.assertEqual(roles, ["main", "main", "subagent"])
+
+    def test_skills_carry_the_role(self):
+        self.session(relationship="subagent")
+        self.call("s1", "a", "Skill")
+        monitor.update(self.source, self.stats, config())
+        self.assertEqual(monitor.snapshot(self.stats)["skills"][0][5], "subagent")
+
+    def test_counts_from_before_the_split_are_rebuilt(self):
+        con = sqlite3.connect(self.stats)
+        con.executescript("create table counts(session_id text, day text, host text, project text, cell text, calls integer);"
+                          "create table skills(session_id text, day text, host text, project text, skill text, calls integer);"
+                          "create table seen(session_id text primary key, fingerprint text not null);"
+                          "insert into seen values('old','x');")
+        con.close()
+        self.session()
+        self.call("s1", "a", "WebSearch")
+        monitor.update(self.source, self.stats, config())
+        self.assertEqual(self.cells()["W"], 1)
+
+    def test_a_half_finished_rebuild_recovers(self):
+        con = sqlite3.connect(self.stats)
+        con.executescript("create table counts(session_id text, day text, host text, role text, project text, cell text, calls integer);"
+                          "create table skills(session_id text, day text, host text, project text, skill text, calls integer);")
+        con.close()
+        self.session()
+        self.call("s1", "a", "Skill")
+        monitor.update(self.source, self.stats, config())
+        self.assertEqual(self.cells()["S"], 1)
 
     def test_repeated_tool_use_id_counts_once(self):
         self.session()
@@ -282,6 +339,17 @@ class Report(Base):
         page = self.report()
         self.assertNotIn(SECRET, page)
         self.assertNotIn("session-id-private", page)
+
+    def test_every_view_reads_a_cell_through_one_status(self):
+        """A second reading of `usable` is how the summary and the charts came to disagree about a cell."""
+        self.assertEqual((ROOT / "tools" / "harness_monitor" / "page.html").read_text(encoding="utf-8").count(".usable"), 1)
+
+    def test_report_has_no_view_that_mixes_roles(self):
+        self.session()
+        self.call("s1", "a", "WebSearch")
+        page = self.report()
+        self.assertIn('<option value="subagent">', page)
+        self.assertNotIn('<option value="">全部会话', page)
 
     def test_failed_sync_is_shown(self):
         self.session()
