@@ -105,6 +105,99 @@ class Validation(unittest.TestCase):
         self.assertEqual(monitor.classify("Bash", json.dumps({"command": command}), ""), set())
 
 
+class CodexForms(unittest.TestCase):
+    def test_an_inbox_file_is_a_message_not_memory(self):
+        labels = monitor.analyse("exec", "Get-Content .mercury/memory/lanes/inbox-dev.md -Tail 5")
+        self.assertIn("B", labels)
+        self.assertNotIn("M", labels)
+
+    def test_a_verify_list_is_not_recall(self):
+        text = "$paths=@('lanes/a/session-checkpoint.md');\nforeach($p in $paths){ & './scripts/codex/sot-memory.ps1' -Action Verify -Path $p };\nGet-Content x"
+        self.assertNotIn("M", monitor.analyse("exec", text))
+
+    def test_comparing_bytes_under_a_hash_is_not_recall(self):
+        text = "import hashlib\nb=(root/'.sot/memory/x/session-checkpoint.md').read_bytes()\nprint(hashlib.sha256(b).hexdigest())"
+        self.assertNotIn("M", monitor.analyse("exec", text))
+
+    def test_reading_text_next_to_a_hash_stays_recall(self):
+        text = "import hashlib\nb=(root/'.sot/memory/x/session-checkpoint.md').read_text()\nprint(hashlib.sha256(b.encode()).hexdigest())"
+        self.assertIn("M", monitor.analyse("exec", text))
+
+    def test_a_browser_tab_on_an_outside_page_is_web(self):
+        for code in ("await tab.goto('https://example.org/a')", "await cua.createBrowserTab('iab', 'https://example.org/')", "await cua.getTab({url:'https://example.org/'})"):
+            self.assertIn("W", monitor.analyse("js", code), code)
+
+    def test_a_browser_tab_on_a_local_page_is_not_web(self):
+        self.assertNotIn("W", monitor.analyse("js", "await tab.goto('http://localhost:5173/')"))
+
+    def test_a_url_in_text_is_not_web(self):
+        self.assertNotIn("W", monitor.analyse("exec", "echo 'see https://example.org/a'"))
+
+    def test_a_request_assigned_to_a_variable_is_web(self):
+        self.assertIn("W", monitor.analyse("exec", "$r=Invoke-WebRequest -Uri 'https://example.org/a'"))
+
+
+class CodexWrapping(unittest.TestCase):
+    def test_a_command_inside_a_js_bash_helper_is_read(self):
+        code = 'nodeRepl.write((await bash(base+"sed -n 1,9p .mercury/memory/lanes/LANES.md")).stdout)'
+        self.assertIn("M", monitor.analyse("exec", code))
+        self.assertIn("M", monitor.analyse("js", code))
+
+    def test_printing_a_result_is_not_a_memory_write(self):
+        code = "var s=fs.readFileSync('.sot/memory/x/session-checkpoint.md','utf8');nodeRepl.write(s)"
+        self.assertIn("M", monitor.analyse("exec", code))
+
+    def test_an_arrow_function_is_not_a_redirect(self):
+        code = "await fs.readFile(root+'/.mercury/memory/lanes/LANES.md','utf8').catch(e=>({error:e.code}))"
+        self.assertIn("M", monitor.analyse("exec", code))
+
+    def test_a_reassigned_variable_uses_its_last_value(self):
+        text = "$p='a/task.md'; Get-Content $p; $p='.sot/memory/x/session-checkpoint.md'; Get-Content $p"
+        self.assertIn("M", monitor.analyse("exec", text))
+
+    def test_a_command_inside_an_if_block_is_read(self):
+        text = "$p='.sot/memory/x/LANES.md'; if(Test-Path -LiteralPath $p){rg -n gameplay $p}"
+        self.assertIn("M", monitor.analyse("exec", text))
+
+    def test_a_byte_read_through_the_memory_base_variable_is_not_recall(self):
+        self.assertNotIn("M", monitor.analyse("exec", "let b=await fs.readFile(path.join(memoryBase,r.rel));sha(b)"))
+
+    def test_a_message_about_memory_beside_the_host_store_is_not_project_memory(self):
+        text = "$mem='C:/Users/u/.codex/memories/MEMORY.md'; if (Test-Path $mem) { rg -n x $mem } else { 'MEMORY.md not found' }"
+        labels = monitor.analyse("exec", text)
+        self.assertNotIn("M", labels)
+
+    def test_a_lane_inbox_file_is_not_memory(self):
+        self.assertNotIn("M", monitor.analyse("exec", "Get-Content .sot/memory/projects/x/lanes/ui/inbox.md -Tail 5"))
+
+    def test_reading_back_to_compare_a_hash_is_not_recall(self):
+        code = "var t=fs.readFileSync('.sot/memory/x/session-checkpoint.md','utf8');if(sha256(t)!==want)throw Error('changed')"
+        self.assertNotIn("M", monitor.analyse("exec", code))
+
+    def test_a_direct_read_beside_a_hash_check_stays_recall(self):
+        text = "Get-Content .sot/memory/x/session-checkpoint.md; python -c 'assert sha256(a)==b'"
+        self.assertIn("M", monitor.analyse("exec", text))
+
+    def test_the_unwrapping_stays_out_of_claude_commands(self):
+        command = "$p='a/task.md'; Get-Content $p; $p='.sot/memory/x/session-checkpoint.md'; Get-Content $p"
+        for tool in ("Bash", "PowerShell"):
+            self.assertNotIn("M", monitor.analyse(tool, command), tool)
+        self.assertIn("M", monitor.analyse("js", command))
+
+    def test_decoding_a_byte_read_next_to_a_hash_is_read(self):
+        code = "import hashlib;b=(root/'.sot/memory/x/session-checkpoint.md').read_bytes();t=b.decode();print(hashlib.sha256(b))"
+        self.assertIn("M", monitor.analyse("exec", code))
+
+    def test_both_stores_in_one_call_keep_project_memory(self):
+        text = "$a='C:/Users/u/.codex/memories/MEMORY.md'; if(Test-Path $a){rg x $a}; $b='.sot/memory/x/LANES.md'; if(Test-Path $b){rg x $b}"
+        self.assertIn("M", monitor.analyse("exec", text))
+
+    def test_each_way_of_comparing_a_hash_counts_as_a_check(self):
+        read = "import hashlib;t=open('.sot/memory/x/session-checkpoint.md').read();"
+        for check in ("assert h==w", "raise E", "if ($h -ne $w) { }", "if(h!==w){}", "throw e"):
+            self.assertNotIn("M", monitor.analyse("exec", read + check), check)
+
+
 class Update(Base):
     def test_counts_classes_and_total(self):
         self.session()

@@ -1,4 +1,4 @@
-"""Fifth rule set. Splits memory by source: the project's store is M, the host's own store is N.
+"""Eighth rule set. Memory is split by source: the project's store is M, the host's own store is N.
 
 Key labels: M project memory read, N host memory read, B cross-lane message read, S skill doc read, K KB read,
 R rule file read, W external web, G GitHub.
@@ -14,6 +14,7 @@ HOSTMEM = re.compile(r"\.codex" + SEP + r"memories|\.codex" + SEP + r"projects" 
 EVIDENCE = re.compile(SEP + r"evidence(?:" + SEP + r"|$)", I)  # a task's working files kept under a lane folder, not recall
 BUSDB = re.compile(r"[^\s'\"`]*lane-bus\.sqlite[^\s'\"`]*", I)
 BUSCMD = re.compile(r"lane-bus\.(?:sh|py)['\"]?\s+read\b", I)
+MAILBOX = re.compile(SEP + r"inbox\.md", I)  # a lane's own message file; only memory ignores it, so B stays as validated
 INBOX = re.compile(r"lanes" + SEP + r"inbox-|" + SEP + r"inbox-[\w.-]*\.md", I)
 SKEND = r"skills(?:[\\/]|\s|$|['\"])"
 SKILL = re.compile(r"(?:^|[\\/\s'\"])SKILL\.md|\.(?:agents|claude|codex)" + SEP + SKEND + r"|packs" + SEP + r"[\w-]+" + SEP + SKEND + r"|plugins" + SEP + r".*" + SKEND + r"|sot-skill\.md")
@@ -33,9 +34,11 @@ TEST = re.compile(r"^(npm\s+(run|test)|pnpm|npx\s+(vite|tsc|vitest|playwright)|v
 WRITE = re.compile(r"^(cp|mv|rm|mkdir|rmdir|touch|tee|Set-Content|Add-Content|Out-File|Copy-Item|Move-Item|Remove-Item|New-Item)\b|(^|[^0-9&2])>{1,2}\s*[^&\s]|\.write(_text|_bytes|File)?\(|writeFile|WriteAllText|open\([^)]*['\"][wax]b?['\"]", I)
 NULLW = re.compile(r">{1,2}\s*(/dev/null|\$null|nul)\b", I)
 PYRD = re.compile(r"open\(|read_text|readFile|read_bytes|json\.load", I)
-NETCLI = re.compile(r"(?:^|\$\(|[\s(])(curl|wget|Invoke-WebRequest|Invoke-RestMethod|iwr|irm)\b", I)
+NETCLI = re.compile(r"(?:^|\$\(|[\s(=])(curl|wget|Invoke-WebRequest|Invoke-RestMethod|iwr|irm)\b", I)
 NETPY = re.compile(r"urlopen\(|urllib\.request\.Request\(|requests\.(get|post)\(", I)
 URL = re.compile(r"https?://([^/\s'\"`\\:)]+)", I)
+# A browser tab opened on a page, as Codex drives it from js: the address is the call's own argument.
+BROWSE = re.compile(r"(?:\.goto|createBrowserTab|\bgetTab)\([^)\n]{0,80}?https?://[^\s'\"`]+", I)
 PRIVATE = re.compile(r"^(localhost|127\.|0\.0\.0\.0|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|\[::1\])|\.localhost$|\$|\{")
 SPLIT = re.compile(r"\\n|\n|⏎|&&|\|\||;")
 VAR = re.compile(r"^(?:export\s+|const\s+|let\s+|var\s+)?\$?\{?([A-Za-z_]\w*)\}?\s*=\s*(.+)$")
@@ -49,15 +52,25 @@ CODE = re.compile(r"\bpython\d?\b|\bnode\b|nodeRepl|sqlite3|\bfunction\s|foreach
 READCALL = re.compile(r"read_text|read_bytes|readFile|\.read\(|\bopen\(|json\.load|Get-Content|Show-Range|\brg\s|Select-String|sed\s+-n", I)
 SCRIPTWRITE = re.compile(r"write_text|write_bytes|writeFile|WriteAllText|Set-Content|\.write\(|open\([^)]*['\"][wax]b?['\"]", I)
 HASHONLY = re.compile(r"hashlib|sha256|Get-FileHash", I)
+VERIFY = re.compile(r"sot-memory\.ps1.*?-Action\s+Verify", I | re.S)  # checks a file's hash; the paths around it are not read
 LITERAL = re.compile(r"'([^'\n]{4,260})'|\"([^\"\n]{4,260})\"|`([^`\n]{4,260})`")
 TOK = re.compile(r"[^\s'\"`]+")
+# Codex wraps commands in JS, which hides project memory reads from the plain pass. These undo that wrapping.
+OUTPUT = re.compile(r"nodeRepl\.write\(|console\.log\(")  # prints a result, not a file write
+WRAPPER = re.compile(r"""\b\w*bash\w*\((?:\w+\+)?\\?["'`]""", I)
+BLOCK = re.compile(r"\b(?:if|foreach|for)\s*\((?:[^(){}]|\([^()]*\))*\)\s*\{", I)
+TEXTREAD = re.compile(r"read_text|Get-Content|\.read\(\)")
+STORE = re.compile(r"\.(?:sot|mercury)" + SEP + r"memory|sot-memory", I)
+SELFCHECK = re.compile(r"\bassert\b|!==|\bthrow\b|\braise\b|\s-ne\s", I)  # compares a hash against an expected value
+DIRECT = re.compile(r"(?:Get-Content|\bcat|\bsed|\brg|\bhead|\btail)\b[^\n;|]*?\.(?:sot|mercury)" + SEP + r"memory", I)
+DEEPTEXT = re.compile(TEXTREAD.pattern + r"|\.decode\(|toString\(|readFile(?:Sync)?\([^)]*utf-?8", I)
 
 
 def memory(target):
     """The memory labels a target earns, judged path by path so that one path cannot lend its label to another."""
     labels = set()
     for token in TOK.findall(target):
-        if EVIDENCE.search(token):
+        if EVIDENCE.search(token) or INBOX.search(token) or MAILBOX.search(token):
             continue
         if HOSTMEM.search(token):
             labels.add("N")
@@ -78,12 +91,12 @@ def external(text):
     return any(not PRIVATE.search(h) and "." in h for h in URL.findall(text))
 
 
-def hit(target, stage_is_listing, labels):
-    """Add the read labels a target earns; return whether any was added."""
+def hit(target, stage_is_listing, labels, recall=True):
+    """Add the read labels a target earns; return whether any was added. Without recall, memory paths earn nothing."""
     if stage_is_listing:
         return False
     target = BUSDB.sub(" ", target)
-    read = memory(target)
+    read = memory(target) if recall else set()
     labels |= read
     found = bool(read)
     for ok, lab in ((skill_doc(target), "S"), (RULE.search(target), "R"), (KB.search(without_skill(target)), "K")):
@@ -119,6 +132,23 @@ def native(name, text, path):
 
 
 def analyse(name, text, path=""):
+    labels = classify(name, text, path)
+    if name not in ("exec", "js"):
+        return labels
+    if "M" not in labels:
+        # A second look for project memory only, so that no other class depends on this unwrapping.
+        plain = BLOCK.sub("\n", WRAPPER.sub("\n", OUTPUT.sub("(", text or "").replace("=>", " ")))
+        deep = classify(name, plain, path, deep=True)
+        # A bare MEMORY.md beside the host's store is that store's file or a message about it.
+        if "M" in deep and ("N" not in deep or STORE.search(plain)):
+            labels.add("M")
+    # Reading a file back to compare its hash confirms a write; it is not recall.
+    if "M" in labels and HASHONLY.search(text or "") and SELFCHECK.search(text or "") and not DIRECT.search(text or ""):
+        labels.discard("M")
+    return labels
+
+
+def classify(name, text, path="", deep=False):
     labels = set()
     if name in ("Glob", "Grep", "WebSearch", "WebFetch", "Skill"):
         return native(name, text, path)
@@ -147,6 +177,7 @@ def analyse(name, text, path=""):
     body = re.sub(r"(?:tools\.\w+\(\{\s*)?\bcmd\s*:\s*(String\.raw)?[`'\"]", "\n", body)
     body = re.sub(r"bash\w*\([\"'`]|String\.raw`|@'|'@", "\n", body)
     ctx, variables = "", {}
+    hashing = HASHONLY.search(body) and not (DEEPTEXT if deep else TEXTREAD).search(body)
     for seg in SPLIT.split(body):
         if GHCMD.search(seg.strip()):
             labels.add("G")
@@ -155,6 +186,8 @@ def analyse(name, text, path=""):
         stage = seg.split(" | ")[0].strip().strip("(").strip()
         if not stage:
             continue
+        if deep and VAR.match(stage):
+            variables.pop(VAR.match(stage).group(1), None)  # a new value replaces the old one
         for k in sorted(variables, key=len, reverse=True):
             stage = re.sub(r"\$\{?" + k + r"\b\}?", lambda m, v=variables[k]: v, stage)
         mf = re.match(r"for\s+(\w+)\s+in\s+(.+)$", stage)
@@ -188,7 +221,7 @@ def analyse(name, text, path=""):
         if red or grep or listing:
             if BUSDB.search(target) or INBOX.search(target):
                 labels.add("B")
-            found = hit(target, listing, labels)
+            found = hit(target, listing, labels, not (hashing and "read_bytes" in stage))
             if not found and (grep or listing or READ.match(verb)):
                 labels.add("C" if grep or listing else "F")
         if GITR.match(verb):
@@ -209,18 +242,20 @@ def analyse(name, text, path=""):
             labels.add("O")
     if NETPY.search(body) and external(body):
         labels.add("W")
+    if any(external(m) for m in BROWSE.findall(body)):
+        labels.add("W")
     if BUSDB.search(body) and re.search(r"sqlite3|select\s", body, I):
         labels.add("B")
     # A script can name a path on one line and read it on another, so check its path literals as a whole.
     if CODE.search(body) and READCALL.search(body):
-        hashing = HASHONLY.search(body) and not re.search(r"read_text|Get-Content|\.read\(\)", body)
         writes = SCRIPTWRITE.search(body)
+        verifying = VERIFY.search(body)
         kept = "\n".join(x for x in SPLIT.split(body) if not re.search(r"\bgit\s+(diff|add|status|commit)\b|Test-Path", x))
         for groups in LITERAL.findall(kept):
             lit = next(g for g in groups if g)
             if any(x in lit for x in ("|", "\\.", "://", "[", "(")) or len(TOK.findall(lit)) > 2 or BUSDB.search(lit):
                 continue
-            if memory(lit) and not hashing:
+            if memory(lit) and not hashing and not verifying:
                 labels |= {"Mw"} if writes else memory(lit)
             if skill_doc(lit) and not hashing:
                 labels.add("S")

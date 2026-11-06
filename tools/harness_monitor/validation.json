@@ -1,7 +1,7 @@
 {
-  "rules_sha256": "daadf2f0fb48d4dc34d66de0e1edc677793d8be9a47c7e34729ae5a7faaad44b",
+  "rules_sha256": "8d736bf1970115f7b873e65a43ee0a7132e239067333b7a8398c39b75e75a2ef",
   "validated_on": "2026-11-06",
-  "sample_rows": 1528,
+  "sample_rows": 3318,
   "tools": ["Bash", "PowerShell", "exec", "js", "Read", "Grep", "Glob", "WebFetch", "WebSearch", "Skill"],
   "cells": {
     "claude": {
@@ -15,13 +15,13 @@
       "G": {"usable": true, "reason": ""}
     },
     "codex": {
-      "M": {"usable": false, "reason": "精确率未过线（32/40）：把 -Action Verify、lane 收件箱和只算哈希的脚本算成了读取，数字偏高"},
+      "M": {"usable": true, "reason": "试了三版才过线；回读校验和真正查阅的边界本来就模糊"},
       "N": {"usable": true, "reason": ""},
       "B": {"usable": true, "reason": ""},
       "S": {"usable": true, "reason": ""},
       "K": {"usable": true, "reason": ""},
       "R": {"usable": true, "reason": ""},
-      "W": {"usable": false, "reason": "召回未证实：js 工具驱动的浏览器操作规则认不出"},
+      "W": {"usable": true, "reason": "认不出 git ls-remote、HttpClient 和脚本自定义的 fetch"},
       "G": {"usable": true, "reason": ""}
     }
   }
