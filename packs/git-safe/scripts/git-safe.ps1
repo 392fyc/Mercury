@@ -19,11 +19,33 @@ foreach ($inherited in @("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDE
     throw "Unset the inherited $inherited before using this script."
   }
 }
+function Invoke-Utf8Native {
+  # git and gh write UTF-8, but PowerShell decodes an external command's output with the console code page. Under GBK
+  # that garbles non-ASCII text such as Chinese paths and check names, and can swallow a closing quote so JSON stops
+  # parsing. Read the output as UTF-8 and put the console back. Without a console the assignment can throw; then keep
+  # the old behaviour rather than fail.
+  param([string]$Command, [string[]]$NativeArgs)
+
+  $previousEncoding = [Console]::OutputEncoding
+  $switched = $false
+  try {
+    [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+    $switched = $true
+  } catch {
+    $switched = $false
+  }
+  try {
+    & $Command @NativeArgs 2>$null
+  } finally {
+    if ($switched) { [Console]::OutputEncoding = $previousEncoding }
+  }
+}
+
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 # The repository is the Git work tree that holds this script, never the caller's current directory: an agent in
 # another checkout that calls this copy acts on this copy's work tree (installed under .mercury/packs/git-safe/scripts/
 # or, in Mercury itself, under packs/git-safe/scripts/). Issue #723.
-$repoRoot = & git -C $scriptDir rev-parse --show-toplevel 2>$null
+$repoRoot = Invoke-Utf8Native "git" @("-C", $scriptDir, "rev-parse", "--show-toplevel")
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace("$repoRoot")) {
   throw "This script must live inside the Git work tree it guards."
 }
@@ -101,7 +123,11 @@ function Test-RegisteredSubmodule {
   }
 
   $registered = @()
-  $lines = & git config --file $modulesFile --get-regexp '^submodule\..*\.path$'
+  try {
+    $lines = Invoke-Utf8Native "git" @("config", "--file", $modulesFile, "--get-regexp", '^submodule\..*\.path$')
+  } catch {
+    return $false  # a .gitmodules Git cannot parse registers nothing
+  }
   if ($LASTEXITCODE -eq 0) {
     foreach ($line in @($lines)) {
       if ($line -match '^submodule\..+\.path (?<value>.+)$') {
@@ -115,7 +141,7 @@ function Test-RegisteredSubmodule {
   }
 
   try {
-    $top = & git -C $Item.FullName rev-parse --show-toplevel 2>&1
+    $top = Invoke-Utf8Native "git" @("-C", $Item.FullName, "rev-parse", "--show-toplevel")
     if ($LASTEXITCODE -ne 0) {
       return $false
     }
@@ -195,7 +221,7 @@ function Assert-HasStagedChanges {
 function Test-GitPath {
   param([string]$Name)
 
-  $path = git -C $repoRoot rev-parse --git-path $Name
+  $path = Invoke-Utf8Native "git" @("-C", $repoRoot, "rev-parse", "--git-path", $Name)
   if ($LASTEXITCODE -ne 0) {
     throw "Unable to locate $Name in the Git directory."
   }
@@ -309,7 +335,7 @@ switch ($Action) {
     if (-not (Test-GitPath -Name "MERGE_HEAD")) {
       throw "No merge is in progress; there is nothing for git-safe abort-sync to abandon."
     }
-    $mergeHeadPath = git -C $repoRoot rev-parse --git-path MERGE_HEAD
+    $mergeHeadPath = Invoke-Utf8Native "git" @("-C", $repoRoot, "rev-parse", "--git-path", "MERGE_HEAD")
     if (-not [System.IO.Path]::IsPathRooted($mergeHeadPath)) {
       $mergeHeadPath = Join-Path $repoRoot $mergeHeadPath
     }
@@ -342,8 +368,8 @@ switch ($Action) {
       throw "git-safe fast-forward acts only on the integration branch '$trunk'; this checkout is on '$("$branch".Trim())'."
     }
     # Only the main checkout: a linked worktree that happens to sit on the trunk is someone's working copy.
-    $gitDir = [System.IO.Path]::GetFullPath("$(git -C $repoRoot rev-parse --absolute-git-dir)".Trim())
-    $commonDir = [System.IO.Path]::GetFullPath("$(git -C $repoRoot rev-parse --path-format=absolute --git-common-dir)".Trim())
+    $gitDir = [System.IO.Path]::GetFullPath("$(Invoke-Utf8Native "git" @("-C", $repoRoot, "rev-parse", "--absolute-git-dir"))".Trim())
+    $commonDir = [System.IO.Path]::GetFullPath("$(Invoke-Utf8Native "git" @("-C", $repoRoot, "rev-parse", "--path-format=absolute", "--git-common-dir"))".Trim())
     if ($gitDir.TrimEnd("\", "/") -ne $commonDir.TrimEnd("\", "/")) {
       throw "git-safe fast-forward acts only on the main checkout, not on a linked worktree."
     }

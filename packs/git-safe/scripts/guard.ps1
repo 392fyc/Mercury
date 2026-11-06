@@ -28,11 +28,33 @@ foreach ($inherited in @("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDE
     throw "Unset the inherited $inherited before using this script."
   }
 }
+function Invoke-Utf8Native {
+  # git and gh write UTF-8, but PowerShell decodes an external command's output with the console code page. Under GBK
+  # that garbles non-ASCII text such as Chinese paths and check names, and can swallow a closing quote so JSON stops
+  # parsing. Read the output as UTF-8 and put the console back. Without a console the assignment can throw; then keep
+  # the old behaviour rather than fail.
+  param([string]$Command, [string[]]$NativeArgs)
+
+  $previousEncoding = [Console]::OutputEncoding
+  $switched = $false
+  try {
+    [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+    $switched = $true
+  } catch {
+    $switched = $false
+  }
+  try {
+    & $Command @NativeArgs 2>$null
+  } finally {
+    if ($switched) { [Console]::OutputEncoding = $previousEncoding }
+  }
+}
+
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 # The repository is the Git work tree that holds this script, never the caller's current directory: an agent in
 # another checkout that calls this copy acts on this copy's work tree (installed under .mercury/packs/git-safe/scripts/
 # or, in Mercury itself, under packs/git-safe/scripts/). Issue #723.
-$repoRoot = & git -C $scriptDir rev-parse --show-toplevel 2>$null
+$repoRoot = Invoke-Utf8Native "git" @("-C", $scriptDir, "rev-parse", "--show-toplevel")
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace("$repoRoot")) {
   throw "This script must live inside the Git work tree it guards."
 }
@@ -88,7 +110,7 @@ function Assert-KbPullRequestBody {
 
 # The review mark lives in the Git directory of this work tree (Issue #723): it is never committed, needs no ignore
 # rule in downstream projects, and each worktree keeps its own. Earlier versions wrote .mercury/state/review-passed.
-$reviewFlag = & git -C $repoRoot rev-parse --git-path mercury-review-passed
+$reviewFlag = Invoke-Utf8Native "git" @("-C", $repoRoot, "rev-parse", "--git-path", "mercury-review-passed")
 if ($LASTEXITCODE -ne 0) {
   throw "Unable to locate the Git directory for the review mark."
 }
@@ -344,23 +366,8 @@ function Assert-GhCliAvailable {
   throw "GitHub CLI authentication check failed for hosts [$($candidateHosts -join ', ')]. $($errors -join ' | ')"
 }
 
-function Invoke-GhJson {
-  # gh writes UTF-8, but PowerShell decodes an external command's output with the console code page.
-  # Under GBK that garbles non-ASCII text such as Chinese check names and can swallow the closing quote,
-  # so the JSON stops parsing. Read gh as UTF-8 and put the console back afterwards.
-  param([string[]]$GhArgs)
-
-  $previousEncoding = [Console]::OutputEncoding
-  [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
-  try {
-    & gh @GhArgs 2>$null
-  } finally {
-    [Console]::OutputEncoding = $previousEncoding
-  }
-}
-
 function Get-RepositoryCoordinate {
-  $repoJson = Invoke-GhJson @("repo", "view", "--json", "owner,name")
+  $repoJson = Invoke-Utf8Native "gh" @("repo", "view", "--json", "owner,name")
   if ($LASTEXITCODE -ne 0) {
     throw "Unable to determine the current GitHub repository via 'gh repo view --json owner,name'."
   }
@@ -519,7 +526,7 @@ function Invoke-PreMergeGraphqlQuery {
     $graphqlArgs += @("-F", "after=$After")
   }
 
-  $rawResponse = Invoke-GhJson (@("api") + $graphqlArgs)
+  $rawResponse = Invoke-Utf8Native "gh" (@("api") + $graphqlArgs)
   if ($LASTEXITCODE -ne 0) {
     throw "Unable to fetch $Purpose for PR #$Number."
   }
@@ -736,7 +743,7 @@ function Assert-PreMergeReady {
 
   $repo = Get-RepositoryCoordinate
   $repoName = "$($repo.owner)/$($repo.name)"
-  $prJson = Invoke-GhJson @("pr", "view", "$Number", "--repo", $repoName, "--json", "number,state,isDraft,mergeable,reviewDecision,statusCheckRollup,headRefName,headRefOid,baseRefName,body")
+  $prJson = Invoke-Utf8Native "gh" @("pr", "view", "$Number", "--repo", $repoName, "--json", "number,state,isDraft,mergeable,reviewDecision,statusCheckRollup,headRefName,headRefOid,baseRefName,body")
   if ($LASTEXITCODE -ne 0 -or -not $prJson) {
     throw "Unable to fetch PR metadata for #$Number."
   }
