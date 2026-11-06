@@ -152,14 +152,6 @@ class Update(Base):
         monitor.update(self.source, self.stats, config())
         self.assertEqual(self.cells()["S"], 1)
 
-    def test_coverage_shows_each_hosts_log_range(self):
-        self.session("s1")
-        self.session("s2", agent="codex")
-        self.call("s1", "a", "WebSearch", message=1)
-        self.call("s2", "b", "WebSearch", message=2)
-        monitor.update(self.source, self.stats, config())
-        self.assertEqual(monitor.snapshot(self.stats)["coverage"], {"claude": ["2026-11-02", "2026-11-02"], "codex": ["2026-11-09", "2026-11-09"]})
-
     def test_repeated_tool_use_id_counts_once(self):
         self.session()
         self.call("s1", "a", "WebSearch")

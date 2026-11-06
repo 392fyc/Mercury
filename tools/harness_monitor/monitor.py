@@ -258,7 +258,6 @@ def snapshot(stats_db, health=None):
             "sample_rows": validation["sample_rows"],
             "rows": [[k[0], k[1], k[2], k[3], v, k[4], k[5]] for k, v in sorted(grouped.items())],
             "skills": [[k[0], k[1], k[2], k[3], v, k[4]] for k, v in sorted(skills.items())],
-            "coverage": {h: [a, b] for h, a, b in con.execute("select host,min(day),max(day) from counts where day<>'unknown' group by host")},
             "new_tools": new_tools,
             "out_of_scope": skipped,
             "health": {

@@ -118,7 +118,8 @@ function status(h, k) {
 }
 function summary(rows) {
   const t = $("summary"); t.replaceChildren();
-  $("coverage").textContent = "日志范围：" + HOSTS.map(([h, n]) => n + " " + (data.coverage[h] || ["无", "无"]).join(" 至 ")).join("；") + "。两边范围不同时，比较要打折扣。";
+  const span = h => { const w = rows.filter(r => r[1] === h).map(r => r[0]).sort(); return w.length ? w[0] + " 至 " + w[w.length - 1] + " 这周" : "无数据"; };
+  $("coverage").textContent = "当前筛选下的数据范围：" + HOSTS.map(([h, n]) => n + " " + span(h)).join("；") + "。两边范围不同时，比较要打折扣；范围之外的周画成 0 不代表没有使用。";
   row(t, ["类别", ...HOSTS.flatMap(([, n]) => [[n + " 调用", "n"], ["会话", "n"], "状态"]), "说明"], true);
   Object.entries(data.classes).forEach(([k, name]) => {
     const cells = [name], why = [];
