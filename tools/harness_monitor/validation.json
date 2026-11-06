@@ -1,11 +1,12 @@
 {
-  "rules_sha256": "0b985c9a5c07eb36969b01f0d4d4e69d5704d1d8d52cf32cf08bb8cd90353c65",
-  "validated_on": "2026-11-05",
-  "sample_rows": 901,
+  "rules_sha256": "daadf2f0fb48d4dc34d66de0e1edc677793d8be9a47c7e34729ae5a7faaad44b",
+  "validated_on": "2026-11-06",
+  "sample_rows": 1528,
   "tools": ["Bash", "PowerShell", "exec", "js", "Read", "Grep", "Glob", "WebFetch", "WebSearch", "Skill"],
   "cells": {
     "claude": {
-      "M": {"usable": false, "reason": "召回未证实：定向样本 0 漏判，但样本量压不低上限"},
+      "M": {"usable": true, "reason": "召回的关键词下限刚过线（70%）：引号里的分号会造成漏算"},
+      "N": {"usable": false, "na": true, "reason": "本机关闭了 Claude 自动记忆，日志里 0 条；开启后它会混进项目记忆，要重新拆分"},
       "B": {"usable": false, "reason": "召回未证实：定向样本 0 漏判，但样本量压不低上限"},
       "S": {"usable": false, "reason": "精确率未过线（33/39）：把算哈希、查 BOM、写 SKILL.md 算成了读取"},
       "K": {"usable": true, "reason": ""},
@@ -14,7 +15,8 @@
       "G": {"usable": true, "reason": ""}
     },
     "codex": {
-      "M": {"usable": true, "reason": ""},
+      "M": {"usable": false, "reason": "精确率未过线（32/40）：把 -Action Verify、lane 收件箱和只算哈希的脚本算成了读取，数字偏高"},
+      "N": {"usable": true, "reason": ""},
       "B": {"usable": true, "reason": ""},
       "S": {"usable": true, "reason": ""},
       "K": {"usable": true, "reason": ""},

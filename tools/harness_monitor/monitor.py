@@ -22,23 +22,23 @@ from rules import analyse  # noqa: E402
 
 AGENTSVIEW_VERSION = "0.46.1"
 SYNC_SECONDS = 900  # the first import reads every log
-CLASSES = {"M": "记忆读取", "B": "跨 lane 消息", "S": "skill 文档", "K": "知识库", "R": "规则文件", "W": "网络查询", "G": "GitHub"}
+CLASSES = {"M": "项目记忆", "N": "宿主自带记忆", "B": "跨 lane 消息", "S": "skill 文档", "K": "知识库", "R": "规则文件", "W": "网络查询", "G": "GitHub"}
 ALL = "ALL"  # the count of every validated call, whatever its class
 HOSTS = ("claude", "codex")
 SKILL_PATH = re.compile(r"[\\/]([A-Za-z0-9_.:-]+)[\\/]+SKILL\.md")
 TOOLS = ("Bash", "PowerShell", "exec", "js", "Read", "Grep", "Glob", "WebFetch", "WebSearch", "Skill")
 SOURCE_COLUMNS = {
-    "sessions": {"id", "agent", "project", "cwd", "file_size", "file_mtime", "file_hash", "message_count", "deleted_at", "local_modified_at"},
+    "sessions": {"id", "agent", "project", "cwd", "relationship_type", "file_size", "file_mtime", "file_hash", "message_count", "deleted_at", "local_modified_at"},
     "tool_calls": {"session_id", "message_id", "tool_use_id", "tool_name", "input_json", "file_path"},
     "messages": {"id", "timestamp"},
 }
 SCHEMA = """
 create table if not exists seen(session_id text primary key, fingerprint text not null);
-create table if not exists counts(session_id text, day text, host text, project text, cell text, calls integer);
+create table if not exists counts(session_id text, day text, host text, role text, project text, cell text, calls integer);
 create index if not exists counts_session on counts(session_id);
 create table if not exists tools(session_id text, host text, tool text, day text, calls integer);
 create index if not exists tools_session on tools(session_id);
-create table if not exists skills(session_id text, day text, host text, project text, skill text, calls integer);
+create table if not exists skills(session_id text, day text, host text, role text, project text, skill text, calls integer);
 create index if not exists skills_session on skills(session_id);
 create table if not exists meta(key text primary key, value text);
 """
@@ -124,6 +124,9 @@ def open_stats(path):
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(path, timeout=30)
     con.execute("pragma secure_delete=on")  # a project excluded later must not linger in free pages
+    tables = [{r[1] for r in con.execute(f"pragma table_info({t})")} for t in ("counts", "skills")]
+    if any(have and "role" not in have for have in tables):  # from before the split: recount, all or nothing
+        con.executescript("begin; drop table if exists counts; drop table if exists skills; drop table if exists seen; commit;")
     con.executescript(SCHEMA)
     return con
 
@@ -142,7 +145,12 @@ def forget(con, session_id):
         con.execute(f"delete from {table} where session_id=?", (session_id,))
 
 
-def count_session(src, session_id, key, host, project, private):
+def role_of(relationship):
+    """A subagent works from the prompt its parent wrote, so its habits say little about the entry points a main session sees."""
+    return "subagent" if relationship == "subagent" else "main"
+
+
+def count_session(src, session_id, key, host, role, project, private):
     """Return the session's rows for the three count tables. A call that matches the private text is left out."""
     counts, tools, skills, used = {}, {}, {}, set()
     query = (
@@ -165,9 +173,9 @@ def count_session(src, session_id, key, host, project, private):
         for skill in skill_names(tool, raw, path) if "S" in cells else ():
             skills[(day, skill)] = skills.get((day, skill), 0) + 1
     return (
-        [(key, d, host, project, c, n) for (d, c), n in counts.items()],
+        [(key, d, host, role, project, c, n) for (d, c), n in counts.items()],
         [(key, host, t, d, n) for (t, d), n in tools.items()],
-        [(key, d, host, project, s, n) for (d, s), n in skills.items()],
+        [(key, d, host, role, project, s, n) for (d, s), n in skills.items()],
     )
 
 
@@ -184,23 +192,23 @@ def update(source_db, stats_db, config):
                 con.execute(f"delete from {table}")  # execute, not executescript: a failed pass must roll this back
         known = dict(con.execute("select session_id,fingerprint from seen"))
         sessions = src.execute(
-            "select s.id,s.agent,s.project,s.cwd,s.file_size,s.file_mtime,s.file_hash,s.message_count,"
+            "select s.id,s.agent,s.project,s.cwd,s.relationship_type,s.file_size,s.file_mtime,s.file_hash,s.message_count,"
             "(select count(*) from tool_calls t where t.session_id=s.id) from sessions s where s.deleted_at is null"
         ).fetchall()
         live, changed = set(), 0
-        for sid, host, project, cwd, *parts in sessions:
+        for sid, host, project, cwd, relationship, *parts in sessions:
             if host not in HOSTS or any(x in (project or "") or x in (cwd or "") for x in excluded):
                 continue
             key = key_of(sid)
             live.add(key)
-            fingerprint = normal_sha256("|".join(str(p) for p in (project, *parts)).encode())
+            fingerprint = normal_sha256("|".join(str(p) for p in (project, relationship, *parts)).encode())
             if known.get(key) == fingerprint:
                 continue
             forget(con, key)
-            counts, tools, skills = count_session(src, sid, key, host, aliases.get(project, project or "unknown"), private)
-            con.executemany("insert into counts values(?,?,?,?,?,?)", counts)
+            counts, tools, skills = count_session(src, sid, key, host, role_of(relationship), aliases.get(project, project or "unknown"), private)
+            con.executemany("insert into counts values(?,?,?,?,?,?,?)", counts)
             con.executemany("insert into tools values(?,?,?,?,?)", tools)
-            con.executemany("insert into skills values(?,?,?,?,?,?)", skills)
+            con.executemany("insert into skills values(?,?,?,?,?,?,?)", skills)
             con.execute("insert into seen values(?,?)", (key, fingerprint))
             changed += 1
         for key in set(known) - live:
@@ -229,11 +237,11 @@ def snapshot(stats_db, health=None):
     con = open_stats(stats_db)
     try:
         grouped, numbers, skills = {}, {}, {}
-        for session, day, host, project, cell, calls in con.execute("select session_id,day,host,project,cell,calls from counts"):
-            key = (week_of(day), host, project, cell, numbers.setdefault(session, len(numbers)))
+        for session, day, host, role, project, cell, calls in con.execute("select session_id,day,host,role,project,cell,calls from counts"):
+            key = (week_of(day), host, project, cell, numbers.setdefault(session, len(numbers)), role)
             grouped[key] = grouped.get(key, 0) + calls
-        for day, host, project, skill, calls in con.execute("select day,host,project,skill,sum(calls) from skills group by 1,2,3,4"):
-            key = (week_of(day), host, project, skill)
+        for day, host, role, project, skill, calls in con.execute("select day,host,role,project,skill,sum(calls) from skills group by 1,2,3,4,5"):
+            key = (week_of(day), host, project, skill, role)
             skills[key] = skills.get(key, 0) + calls
         since = validation["validated_on"]
         new_tools = con.execute(
@@ -248,8 +256,9 @@ def snapshot(stats_db, health=None):
             "cells": validation["cells"],
             "validated_on": since,
             "sample_rows": validation["sample_rows"],
-            "rows": [[k[0], k[1], k[2], k[3], v, k[4]] for k, v in sorted(grouped.items())],
-            "skills": [[*k, v] for k, v in sorted(skills.items())],
+            "rows": [[k[0], k[1], k[2], k[3], v, k[4], k[5]] for k, v in sorted(grouped.items())],
+            "skills": [[k[0], k[1], k[2], k[3], v, k[4]] for k, v in sorted(skills.items())],
+            "coverage": {h: [a, b] for h, a, b in con.execute("select host,min(day),max(day) from counts where day<>'unknown' group by host")},
             "new_tools": new_tools,
             "out_of_scope": skipped,
             "health": {

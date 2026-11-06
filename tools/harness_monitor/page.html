@@ -41,9 +41,11 @@ td.reason { white-space: normal; min-width: 220px; color: var(--ink2); }
 <div class="filters">
   <label>时间 <select id="range"><option value="4">最近 4 周</option><option value="12" selected>最近 12 周</option><option value="0">全部</option></select></label>
   <label>项目 <select id="project"><option value="">全部项目</option></select></label>
+  <label>会话 <select id="role"><option value="main" selected>主会话</option><option value="subagent">子代理</option></select></label>
 </div>
 <h2>总览</h2>
-<div class="note">“会话”是至少查过一次该类内容的会话占比，最适合看入口有没有被用上。标“未验证”的格子不要用来下结论。</div>
+<div class="note">“会话”是至少查过一次该类内容的会话占比，最适合看入口有没有被用上。标“未验证”的格子不要用来下结论。主会话和子代理分开看：子代理按主会话写的提示词工作，两者不能混算，所以这里没有“全部”。</div>
+<div class="note" id="coverage"></div>
 <div class="scroll"><table id="summary"></table></div>
 <h2>每周趋势</h2>
 <div class="legend"><span><i class="key" style="border-color:var(--claude)"></i>Claude</span><span><i class="key" style="border-color:var(--codex)"></i>Codex</span><span><i class="key dash" style="border-color:var(--ink2)"></i>虚线：未验证</span></div>
@@ -54,7 +56,7 @@ td.reason { white-space: normal; min-width: 220px; color: var(--ink2); }
 <div class="note">名称来自 Skill 工具的参数或 SKILL.md 所在目录，没有单独验证过。没出现的 skill 就是这段时间没被用到。</div>
 <div class="scroll"><table id="skills"></table></div>
 <h2>规则之外</h2>
-<div class="note">验证日期之后才出现的工具，规则没有审过；下表第二部分是一直不在统计范围内的工具。</div>
+<div class="note">验证日期之后才出现的工具，规则没有审过；下表第二部分是一直不在统计范围内的工具。这张表是清单，不随上面的筛选变化。</div>
 <div class="scroll"><table id="tools"></table></div>
 <div id="tip"></div>
 <script>
@@ -85,8 +87,9 @@ function selected() {
   const n = Number($("range").value);
   const keep = new Set(n ? weeks.slice(-n) : weeks);
   const project = $("project").value;
-  const wanted = r => keep.has(r[0]) && (!project || r[2] === project);
-  return { weeks: weeks.filter(w => keep.has(w)), rows: data.rows.filter(wanted), skillRows: data.skills.filter(wanted) };
+  const role = $("role").value;
+  const wanted = (r, i) => keep.has(r[0]) && (!project || r[2] === project) && r[i] === role;
+  return { weeks: weeks.filter(w => keep.has(w)), rows: data.rows.filter(r => wanted(r, 6)), skillRows: data.skills.filter(r => wanted(r, 5)) };
 }
 function total(rows, host, cell) {
   return rows.reduce((sum, r) => sum + (r[1] === host && r[3] === cell ? r[4] : 0), 0);
@@ -109,15 +112,19 @@ function health() {
   if (data.new_tools.length) parts.push(data.new_tools.length + " 个新工具未审");
   box.textContent = parts.join(" · ");
 }
+function status(h, k) {
+  if (data.cells[h][k].na) return "不适用";
+  return data.health.rules_ok && data.cells[h][k].usable ? "可用" : "未验证";
+}
 function summary(rows) {
   const t = $("summary"); t.replaceChildren();
+  $("coverage").textContent = "日志范围：" + HOSTS.map(([h, n]) => n + " " + (data.coverage[h] || ["无", "无"]).join(" 至 ")).join("；") + "。两边范围不同时，比较要打折扣。";
   row(t, ["类别", ...HOSTS.flatMap(([, n]) => [[n + " 调用", "n"], ["会话", "n"], "状态"]), "说明"], true);
-  const usable = (h, k) => data.health.rules_ok && data.cells[h][k].usable;
   Object.entries(data.classes).forEach(([k, name]) => {
     const cells = [name], why = [];
     HOSTS.forEach(([h, n]) => {
       const c = total(rows, h, k), all = reach(rows, h, "ALL");
-      cells.push([c.toLocaleString(), "n"], [all ? (reach(rows, h, k) / all * 100).toFixed(0) + "%" : "–", "n"], usable(h, k) ? "可用" : "未验证");
+      cells.push([c.toLocaleString(), "n"], [all ? (reach(rows, h, k) / all * 100).toFixed(0) + "%" : "–", "n"], status(h, k));
       if (data.cells[h][k].reason) why.push(n + "：" + data.cells[h][k].reason);
     });
     cells.push([why.join("；"), "reason"]);
@@ -127,7 +134,7 @@ function summary(rows) {
 }
 function chart(name, k, weeks, rows) {
   const W = 320, H = 130, L = 34, R = 8, T = 8, B = 20;
-  const series = HOSTS.map(([h, n]) => ({ h, n, v: weeks.map(w => rows.reduce((s, r) => s + (r[0] === w && r[1] === h && r[3] === k ? r[4] : 0), 0)) }));
+  const series = HOSTS.filter(([h]) => !data.cells[h][k].na).map(([h, n]) => ({ h, n, v: weeks.map(w => rows.reduce((s, r) => s + (r[0] === w && r[1] === h && r[3] === k ? r[4] : 0), 0)) }));
   const max = Math.max(1, ...series.flatMap(s => s.v));
   const x = i => L + (weeks.length > 1 ? i * (W - L - R) / (weeks.length - 1) : (W - L - R) / 2);
   const y = v => T + (1 - v / max) * (H - T - B);
@@ -152,7 +159,7 @@ function chart(name, k, weeks, rows) {
     add("text", { x: W - R, y: H - 5, "text-anchor": "end", "font-size": 10, fill: "var(--ink2)" }, weeks[weeks.length - 1].slice(5));
   }
   series.forEach(s => {
-    const ok = data.health.rules_ok && data.cells[s.h][k].usable;
+    const ok = status(s.h, k) === "可用";
     const attrs = { d: s.v.map((v, i) => (i ? "L" : "M") + x(i) + " " + y(v)).join(""), fill: "none", stroke: `var(--${s.h})`, "stroke-width": 2, "stroke-linejoin": "round" };
     if (!ok) attrs["stroke-dasharray"] = "5 4";
     add("path", attrs);
@@ -189,7 +196,7 @@ function projects(rows) {
   });
   [...map.values()].sort((a, b) => (b.c.ALL || 0) - (a.c.ALL || 0)).forEach(m => {
     row(t, [m.p, m.h === "claude" ? "Claude" : "Codex", [(m.c.ALL || 0).toLocaleString(), "n"],
-      ...keys.map(k => [(m.c[k] || 0).toLocaleString() + (data.health.rules_ok && data.cells[m.h][k].usable ? "" : " *"), "n"])]);
+      ...keys.map(k => [status(m.h, k) === "不适用" ? "–" : (m.c[k] || 0).toLocaleString() + (status(m.h, k) === "可用" ? "" : " *"), "n"])]);
   });
   const note = el("tr"); const td = el("td", "* 未验证格子"); td.colSpan = keys.length + 3; td.className = "reason"; note.append(td); t.append(note);
 }
@@ -224,6 +231,7 @@ if (data) {
   $("project").append(...names.map(n => el("option", n)));
   $("range").onchange = render;
   $("project").onchange = render;
+  $("role").onchange = render;
   render();
 } else {
   $("health").textContent = "这是报告模板。运行 tools/harness_monitor/monitor.py 生成报告。";

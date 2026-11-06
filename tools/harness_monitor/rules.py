@@ -1,6 +1,7 @@
-"""Fourth rule set. Adds B (cross-lane message read), native tools, command prefixes and script-level reads.
+"""Fifth rule set. Splits memory by source: the project's store is M, the host's own store is N.
 
-Key labels: M memory read, B cross-lane message read, S skill doc read, K KB read, R rule file read, W external web, G GitHub.
+Key labels: M project memory read, N host memory read, B cross-lane message read, S skill doc read, K KB read,
+R rule file read, W external web, G GitHub.
 Other labels: Mw, Kw, X writes; GR, GW git; T test; C search; F file read; P script; O other.
 """
 import json
@@ -8,7 +9,9 @@ import re
 
 I = re.I
 SEP = r"[\\/]+"
-MEM = re.compile(r"\.(sot|mercury)" + SEP + r"memory|\.codex" + SEP + r"memories|\.codex" + SEP + r"projects" + SEP + r".*memory|\bMEMORY\.md|SESSION_INDEX|session-checkpoint\.md|gap-list\.md", I)
+MEM = re.compile(r"\.(sot|mercury)" + SEP + r"memory|\bMEMORY\.md|SESSION_INDEX|session-checkpoint\.md|gap-list\.md", I)
+HOSTMEM = re.compile(r"\.codex" + SEP + r"memories|\.codex" + SEP + r"projects" + SEP + r".*memory", I)
+EVIDENCE = re.compile(SEP + r"evidence(?:" + SEP + r"|$)", I)  # a task's working files kept under a lane folder, not recall
 BUSDB = re.compile(r"[^\s'\"`]*lane-bus\.sqlite[^\s'\"`]*", I)
 BUSCMD = re.compile(r"lane-bus\.(?:sh|py)['\"]?\s+read\b", I)
 INBOX = re.compile(r"lanes" + SEP + r"inbox-|" + SEP + r"inbox-[\w.-]*\.md", I)
@@ -50,6 +53,19 @@ LITERAL = re.compile(r"'([^'\n]{4,260})'|\"([^\"\n]{4,260})\"|`([^`\n]{4,260})`"
 TOK = re.compile(r"[^\s'\"`]+")
 
 
+def memory(target):
+    """The memory labels a target earns, judged path by path so that one path cannot lend its label to another."""
+    labels = set()
+    for token in TOK.findall(target):
+        if EVIDENCE.search(token):
+            continue
+        if HOSTMEM.search(token):
+            labels.add("N")
+        elif MEM.search(token):
+            labels.add("M")
+    return labels
+
+
 def skill_doc(target):
     return any(SKILL.search(t) and not CODEEXT.search(t) for t in TOK.findall(target))
 
@@ -67,8 +83,10 @@ def hit(target, stage_is_listing, labels):
     if stage_is_listing:
         return False
     target = BUSDB.sub(" ", target)
-    found = False
-    for ok, lab in ((MEM.search(target), "M"), (skill_doc(target), "S"), (RULE.search(target), "R"), (KB.search(without_skill(target)), "K")):
+    read = memory(target)
+    labels |= read
+    found = bool(read)
+    for ok, lab in ((skill_doc(target), "S"), (RULE.search(target), "R"), (KB.search(without_skill(target)), "K")):
         if ok:
             labels.add(lab)
             found = True
@@ -119,7 +137,7 @@ def analyse(name, text, path=""):
     if any(t.startswith("mcp__codex_app__") or t in ("write_stdin", "view_image", "clock__curr_time") for t in tools):
         labels.add("O")
     for p in PATCHFILE.findall(text):
-        labels.add("Mw" if MEM.search(p) else "Kw" if KB.search(p) else "X")
+        labels.add("Mw" if memory(p) else "Kw" if KB.search(p) else "X")
     if "apply_patch" in tools and not labels & {"Mw", "Kw", "X"}:
         labels.add("X")
     text = PATCH.sub(" ", text)
@@ -184,7 +202,7 @@ def analyse(name, text, path=""):
             if external(stage) or (not URL.search(stage) and external(body)):
                 labels.add("W")
         if wr:
-            labels.add("Mw" if MEM.search(target) else "Kw" if KB.search(target) else "X")
+            labels.add("Mw" if memory(target) else "Kw" if KB.search(target) else "X")
         if re.match(r"(python\d?|node|pwsh|powershell|bash)\b", verb, I):
             labels.add("P")
         if "lane-bus" in stage:
@@ -202,8 +220,8 @@ def analyse(name, text, path=""):
             lit = next(g for g in groups if g)
             if any(x in lit for x in ("|", "\\.", "://", "[", "(")) or len(TOK.findall(lit)) > 2 or BUSDB.search(lit):
                 continue
-            if MEM.search(lit) and not hashing:
-                labels.add("Mw" if writes else "M")
+            if memory(lit) and not hashing:
+                labels |= {"Mw"} if writes else memory(lit)
             if skill_doc(lit) and not hashing:
                 labels.add("S")
             if RULE.search(lit) and not hashing and not writes:
@@ -211,6 +229,6 @@ def analyse(name, text, path=""):
             if KBLIT.search(without_skill(lit)) and not hashing and not writes:
                 labels.add("K")
     # Reading a memory file and writing it back in one call is an edit, not recall.
-    if "M" in labels and "Mw" in labels:
-        labels.discard("M")
+    if "Mw" in labels:
+        labels -= {"M", "N"}
     return labels or {"O"}
