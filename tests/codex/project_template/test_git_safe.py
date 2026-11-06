@@ -695,5 +695,86 @@ class ProtectionTest(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("GIT_DIR", r.stdout + r.stderr)
 
+GBK_WRAPPER = """param([string]$Script, [Parameter(ValueFromRemainingArguments = $true)][string[]]$Rest)
+$ErrorActionPreference = "Stop"
+[Console]::OutputEncoding = [System.Text.Encoding]::GetEncoding(936)
+if ([Console]::OutputEncoding.CodePage -ne 936) { exit 99 }
+$ErrorActionPreference = "Continue"
+$at = [array]::IndexOf($Rest, "-Message")
+if ($at -ge 0) { & $Script $Rest[0] -Message $Rest[$at + 1] } else { & $Script @Rest }
+exit $LASTEXITCODE
+"""
+
+
+@unittest.skipUnless(PWSH and os.name == "nt", "the console code page is a Windows concern")
+class NonAsciiRepositoryPathTest(unittest.TestCase):
+    """Real git under a GBK console: 5 Chinese characters are 15 UTF-8 bytes, which GBK cannot read back (#766)."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.repo = Path(tmp.name) / "张三的项目" / "repo"
+        make_repo(self.repo)
+        git(self.repo, "checkout", "-q", "-b", "feature/TASK-1-codex")
+        (self.repo / "scripts/codex").mkdir(parents=True)
+        for name in ("git-safe.ps1", "guard.ps1"):
+            shutil.copyfile(SCRIPTS / name, self.repo / "scripts/codex" / name)
+        self.wrapper = Path(tmp.name) / "gbk.ps1"
+        self.wrapper.write_text(GBK_WRAPPER, encoding="ascii")
+        self.upstream = Path(tmp.name) / "upstream"
+        make_repo(self.upstream)
+        git(self.repo, "clone", "-q", self.upstream.as_posix(), "sources/子模块")
+
+    def linked_worktree(self, branch):
+        tree = self.repo.parent / "linked"
+        git(self.repo, "worktree", "add", "-q", "-b", branch, str(tree))
+        (tree / "scripts/codex").mkdir(parents=True)
+        for name in ("git-safe.ps1", "guard.ps1"):
+            shutil.copyfile(SCRIPTS / name, tree / "scripts/codex" / name)
+        return tree
+
+    def run_script(self, name, *args, repo=None):
+        r = subprocess.run([PWSH, "-NoLogo", "-NoProfile", "-NonInteractive", "-File", str(self.wrapper),
+                            str((repo or self.repo) / "scripts/codex" / name), *args],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=self.repo)
+        return r.returncode, r.stdout + r.stderr
+
+    def test_a_linked_worktree_marks_review_and_commits(self):
+        # A linked worktree's git paths are absolute, so they carry the Chinese part of the path.
+        tree = self.linked_worktree("feature/TASK-2-codex")
+        (tree / "plain.txt").write_text("x\n")
+        self.assertEqual(self.run_script("git-safe.ps1", "add", "plain.txt", repo=tree)[0], 0)
+        code, out = self.run_script("guard.ps1", "mark-review", repo=tree)
+        self.assertEqual(code, 0, out)
+        code, out = self.run_script("git-safe.ps1", "commit", "-Message", "chore(TASK-2): add", repo=tree)
+        self.assertEqual(code, 0, out)
+        self.assertIn("plain.txt", git(tree, "show", "--name-only", "--format=", "HEAD"))
+
+    def test_a_linked_worktree_sees_a_merge_in_progress(self):
+        tree = self.linked_worktree("feature/TASK-2-codex")
+        git(self.repo, "commit", "-q", "--allow-empty", "-m", "other")
+        git(tree, "merge", "-q", "--no-ff", "--no-commit", "feature/TASK-1-codex")
+        code, out = self.run_script("git-safe.ps1", "sync", repo=tree)
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("MERGE_HEAD", out)
+
+    def test_guard_status_runs(self):
+        code, out = self.run_script("guard.ps1", "status")
+        self.assertEqual(code, 0, out)
+
+    def test_git_safe_adds_a_plain_file(self):
+        (self.repo / "plain.txt").write_text("x\n")
+        code, out = self.run_script("git-safe.ps1", "add", "plain.txt")
+        self.assertEqual(code, 0, out)
+        self.assertIn("plain.txt", git(self.repo, "diff", "--cached", "--name-only"))
+
+    def test_git_safe_stages_a_registered_non_ascii_submodule(self):
+        (self.repo / ".gitmodules").write_text(
+            '[submodule "sources/子模块"]\n\tpath = sources/子模块\n\turl = https://github.com/o/r.git\n', encoding="utf-8")
+        code, out = self.run_script("git-safe.ps1", "add", "sources/子模块")
+        self.assertEqual(code, 0, out)
+        self.assertIn("160000", git(self.repo, "ls-files", "-s", "--", "sources"))
+
+
 if __name__ == "__main__":
     unittest.main()
