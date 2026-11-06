@@ -74,6 +74,20 @@ A session that holds its lane's lane-bus seat (`bash .mercury/packs/lanes/script
 - Commit at coherent delivery points when the task calls for Git delivery. Workers commit or push only when assigned, using the guarded sequence below.
 - Reply in clear, complete Simplified Chinese. Keep useful technical names unchanged; code, commit messages, and PR bodies follow their existing conventions.
 
+## Standing user preferences
+
+- Estimate work as the points that need a human decision or confirmation; do not give days, hours or size bands.
+- When adding a `.example` file, write how to use it in the README.
+- Give proposals and conclusions in full in the chat; do not send the user to a document, except an HTML page for large visual content.
+- Make decision items self-contained and lead with the conclusion: review is the user's burden.
+- When changing existing content, check for parallel statements elsewhere.
+- Verify state claims with a command instead of reusing an old observation; a user's leaning is not a decision.
+- A surface that looks supported is not a reason to stop checking the substance.
+- Green mock tests do not accept guard code; prove it in the real environment.
+- Do a handoff only when the user asks for it now; after it, do no further task work in that session.
+- Do not hardcode deployment-specific tools, PR numbers or Issue numbers in shared files.
+- Do not use high-cost models such as Fable or Astra without approval. Before any paid API call, state the model and expected cost and wait for the user's yes; check the host's default model first.
+
 ## Git and local safety
 
 - Keep unrelated changes. Stage explicit files only. Do not reset, stash, rewrite history, force-push, or remove other work to simplify a task.
@@ -90,7 +104,7 @@ A session that holds its lane's lane-bus seat (`bash .mercury/packs/lanes/script
 - Downstream agents must not modify or initiate changes to Mercury-generated paths. Harness changes originate in a Mercury Issue/PR, are released to `master`, then reach projects through `tools/mercury.py`. SoT owns its game, design-library software, KB, domain workflows and project memory.
 - The files Mercury installs in a project are recorded in that project's `.mercury/lock.json` and described in `.mercury/packs/core/docs/mercury-harness-ownership.md`. Do not hand-edit them or overwrite project-owned content; change the pack in Mercury and let `tools/mercury.py apply` (or the deploy pack's update pull request) carry it.
 - For downstream provenance verification and reviewed automatic updates (the release gate, the update pull request and its merge conditions, the GitHub App credentials), see the deploy pack in `packs/README.md`.
-- Before starting work, main sessions and implementers read `.mercury/memory/projects/D--Mercury-Mercury/preferences.md` in the main checkout when it is present: it holds the user's standing work preferences. Read-only review roles need not. For other prior context, start with `.mercury/memory/README.md` when present and load indexed entries on demand. This is local private memory, excluded from the public repository. Protected archives and chat records are not active memory.
+- For prior context, start with `.mercury/memory/README.md` when present and load indexed entries on demand. This is local private memory, excluded from the public repository. Protected archives and chat records are not active memory.
 - The knowledge base is `docs/` in this repository (an Obsidian vault; the private Mercury_KB vault was merged as an audited snapshot in #718 and archived). Change `docs/` in the task worktree together with the work it documents and deliver both in one pull request; `docs/` is public, so keep credentials, machine paths and private project details out. Start from `docs/README.md` (current rules, progress, decisions); layout and rules: `docs/02-guides/kb-structure.md`.
 
 ## External dependencies and imports
