@@ -344,8 +344,23 @@ function Assert-GhCliAvailable {
   throw "GitHub CLI authentication check failed for hosts [$($candidateHosts -join ', ')]. $($errors -join ' | ')"
 }
 
+function Invoke-GhJson {
+  # gh writes UTF-8, but PowerShell decodes an external command's output with the console code page.
+  # Under GBK that garbles non-ASCII text such as Chinese check names and can swallow the closing quote,
+  # so the JSON stops parsing. Read gh as UTF-8 and put the console back afterwards.
+  param([string[]]$GhArgs)
+
+  $previousEncoding = [Console]::OutputEncoding
+  [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+  try {
+    & gh @GhArgs 2>$null
+  } finally {
+    [Console]::OutputEncoding = $previousEncoding
+  }
+}
+
 function Get-RepositoryCoordinate {
-  $repoJson = & gh repo view --json owner,name 2>$null
+  $repoJson = Invoke-GhJson @("repo", "view", "--json", "owner,name")
   if ($LASTEXITCODE -ne 0) {
     throw "Unable to determine the current GitHub repository via 'gh repo view --json owner,name'."
   }
@@ -504,7 +519,7 @@ function Invoke-PreMergeGraphqlQuery {
     $graphqlArgs += @("-F", "after=$After")
   }
 
-  $rawResponse = & gh api @graphqlArgs 2>$null
+  $rawResponse = Invoke-GhJson (@("api") + $graphqlArgs)
   if ($LASTEXITCODE -ne 0) {
     throw "Unable to fetch $Purpose for PR #$Number."
   }
@@ -721,7 +736,7 @@ function Assert-PreMergeReady {
 
   $repo = Get-RepositoryCoordinate
   $repoName = "$($repo.owner)/$($repo.name)"
-  $prJson = & gh pr view $Number --repo $repoName --json number,state,isDraft,mergeable,reviewDecision,statusCheckRollup,headRefName,headRefOid,baseRefName,body 2>$null
+  $prJson = Invoke-GhJson @("pr", "view", "$Number", "--repo", $repoName, "--json", "number,state,isDraft,mergeable,reviewDecision,statusCheckRollup,headRefName,headRefOid,baseRefName,body")
   if ($LASTEXITCODE -ne 0 -or -not $prJson) {
     throw "Unable to fetch PR metadata for #$Number."
   }

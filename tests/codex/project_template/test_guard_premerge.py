@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -18,6 +19,13 @@ GUARD = Path(__file__).resolve().parents[3] / "packs/git-safe/scripts/guard.ps1"
 # really are UTF-8 on every locale (#686).
 GH_FUNCTION = r'''
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+# A function hands PowerShell strings, so it cannot show how a real gh is decoded.
+# With GUARD_NATIVE_PYTHON set, the JSON comes out of an external process as UTF-8 bytes.
+function global:Write-Fixture([string]$Json) {
+  if (-not $env:GUARD_NATIVE_PYTHON) { Write-Output $Json; return }
+  [IO.File]::WriteAllText("$env:GUARD_FIXTURE.out", $Json, [System.Text.UTF8Encoding]::new($false))
+  & $env:GUARD_NATIVE_PYTHON -c "import os,sys; sys.stdout.buffer.write(open(os.environ['GUARD_FIXTURE']+'.out','rb').read())"
+}
 function global:gh {
   param([Parameter(ValueFromRemainingArguments = $true)][string[]]$GhArgs)
   $global:LASTEXITCODE = 0
@@ -30,7 +38,7 @@ function global:gh {
     return
   }
   if ($GhArgs.Count -ge 2 -and $GhArgs[0] -eq "pr" -and $GhArgs[1] -eq "view") {
-    Write-Output ($fixture.pr | ConvertTo-Json -Depth 30 -Compress)
+    Write-Fixture ($fixture.pr | ConvertTo-Json -Depth 30 -Compress)
     return
   }
   if ($GhArgs.Count -ge 2 -and $GhArgs[0] -eq "api" -and $GhArgs[1] -eq "graphql") {
@@ -68,7 +76,7 @@ function global:gh {
     if ($pageIndex -ge $pages.Count) { throw "fixture page is missing" }
     Add-Content -LiteralPath $env:GUARD_CALL_LOG -Value ("{0}:{1}" -f $kind, $after) -Encoding utf8
     $page = $pages[$pageIndex]
-    Write-Output ($page | ConvertTo-Json -Depth 30 -Compress)
+    Write-Fixture ($page | ConvertTo-Json -Depth 30 -Compress)
     return
   }
   throw "unexpected gh command"
@@ -80,7 +88,9 @@ try {
     $receiptParts = @($env:GUARD_RECEIPT_ARGS -split "\|")
     $receiptArgs[$receiptParts[0].TrimStart("-")] = $receiptParts[1]
   }
+  if ($env:GUARD_CONSOLE_CP) { [Console]::OutputEncoding = [System.Text.Encoding]::GetEncoding([int]$env:GUARD_CONSOLE_CP) }
   & $env:GUARD_SCRIPT pre-merge -PullRequestNumber 123 @receiptArgs
+  if ($env:GUARD_CONSOLE_CP) { [IO.File]::WriteAllText("$env:GUARD_FIXTURE.cp", [string][Console]::OutputEncoding.CodePage) }
   exit 0
 } catch {
   [Console]::Error.WriteLine((($_ | Out-String) + $_.ScriptStackTrace))
@@ -217,6 +227,20 @@ class GuardPreMergeTests(unittest.TestCase):
         result = self.run_guard(receipt=receipt)
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         return result
+
+    @unittest.skipUnless(os.name == "nt", "the console code page is a Windows concern")
+    def test_non_ascii_check_names_survive_a_gbk_console(self):
+        # 11 Chinese characters are 33 UTF-8 bytes: read as GBK, the odd last byte
+        # swallows the closing quote and the JSON stops parsing (#764).
+        check = dict(success_check(), name="仓库契约与采集配置测试")
+        self.fixture["pr"]["statusCheckRollup"] = [check]
+        self.fixture["pages"]["checks"] = [check_page([check])]
+        self.write_fixture()
+        self.env["GUARD_NATIVE_PYTHON"] = sys.executable
+        self.env["GUARD_CONSOLE_CP"] = "936"
+        result = self.run_guard()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(Path(f"{self.fixture_path}.cp").read_text(), "936")
 
     def test_default_mode_still_requires_github_approval(self):
         self.assert_rejected(receipt=False)
