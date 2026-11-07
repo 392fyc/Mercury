@@ -50,7 +50,7 @@ project's own file: it selects the packs, declares linked repositories (`linked_
 use, rules), and sets parameters (`params`). Linked repositories are listed in the managed section of `AGENTS.md`;
 anything their rules do not allow needs its own authorized scope.
 
-Read-only roles (reviewer, acceptance, design, research) must not write. On Codex the sandbox enforces this; on
+Read-only roles (reviewer, acceptance, design, research) must not write. On Codex this holds by instruction only: a subagent follows the parent session's sandbox and approval settings; on
 Claude Code the role carries a `PreToolUse` guard that blocks write commands. A project can name more write-type
 scripts for the guard in `params.guard_write_scripts` (blocked outright) and `params.guard_write_actions` (blocked only
 for the listed `-Action` values, and whenever the action cannot be read).

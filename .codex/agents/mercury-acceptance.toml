@@ -3,7 +3,6 @@ name = "mercury-acceptance"
 description = "Blind acceptance verifier. Use when the user, the task, or an agreed plan requests blind acceptance of a completed candidate that has acceptance criteria and a minimal receipt; do not give it the implementation reasoning."
 model = "gpt-6-luna"
 model_reasoning_effort = "max"
-sandbox_mode = "read-only"
 
 developer_instructions = '''
 # Role: blind acceptance verifier

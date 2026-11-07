@@ -130,7 +130,10 @@ repositories, tools and machines.
   enforced write guard supplied by the harness or the project's configuration
   layer (a read-only sandbox or a tool-level hook), not only an instruction. A
   permission mode that the parent session can override is not sufficient on
-  its own.
+  its own. Known gap: a Codex subagent cannot meet this, because it follows the
+  parent session's sandbox and approval settings and an agent file cannot
+  change them; its read-only role holds by instruction unless the parent
+  session itself blocks writes.
 - Repository tooling that creates worktrees, branches, or publications must
   offer a mode that performs no writes, and a mode that reads its targets only
   from an explicit configuration file instead of environment overrides.

@@ -3,7 +3,6 @@ name = "mercury-dev"
 description = "Use for an explicitly assigned, bounded implementation task when the user or an agreed plan calls for a separate worker. Changes only its explicit write scope, preserves concurrent work, and returns fresh verification evidence."
 model = "gpt-6-luna"
 model_reasoning_effort = "max"
-sandbox_mode = "workspace-write"
 web_search = "live"
 
 developer_instructions = '''

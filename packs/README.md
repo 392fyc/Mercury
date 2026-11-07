@@ -506,10 +506,11 @@ What is written:
 - Roles: every `roles/<role>.md` of a selected pack (lowercase name) becomes `.claude/agents/mercury-<role>.md` and
   `.codex/agents/mercury-<role>.toml`. The source has a frontmatter with a one-line `description` and per-host sections
   (`claude:` with `model` (required), `tools`, `disallowedTools`, `permissionMode`, `readonly_guard`; `codex:` with
-  `sandbox_mode` (required for a pack role; a project-area role may leave it out. Current Codex documentation says a
-  subagent always inherits the parent's current sandbox and approval settings (including changes made during the
-  session) and that a custom agent file cannot override them, so the key changes nothing at run time either way; see
-  #665) and the optional `model`, `model_reasoning_effort` and `web_search`) and an optional
+  the optional `model`, `model_reasoning_effort`, `web_search` and `sandbox_mode`. Pack roles leave `sandbox_mode` out: a
+  subagent follows the parent's current sandbox and approval settings (including changes made during the session) and
+  a custom agent file cannot override them. Checked on Codex CLI 0.160.1: a subagent with `sandbox_mode = "read-only"`
+  wrote a file under a `workspace-write` parent (#770). Turning off `features.shell_tool` removes the shell but leaves
+  `apply_patch` (a write inside the project was not tried), and reviewers need the shell. Recheck on a new Codex version) and an optional
   `attribution` (see "The project area"; it works the same for pack roles) whose values are `true`/`false`, a double-quoted string or a
   plain token; anything else, an unknown key, a control character, or a body that cannot be written safely (a TOML
   literal string cannot hold `'''`) is an error and nothing is written. The body is shared and in English. Strings are
