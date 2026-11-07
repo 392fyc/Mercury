@@ -15,6 +15,7 @@ from the Mercury repository in #675. Subdirectories: [incidents/](incidents/READ
 | [issue-517-slim-audit-2026-06.md](issue-517-slim-audit-2026-06.md) | current | Slimming audit; retired mem0 and other unused parts |
 | [issue-525-zh-output-readability-2026-06.md](issue-525-zh-output-readability-2026-06.md) | current | Chinese output readability: causes and fixes |
 | [issue-535-fable5-scheduling-2026-07.md](issue-535-fable5-scheduling-2026-07.md) | current | Weekly quota scheduling and statusline display |
+| [agent-lookup-measurement-2026-11.md](agent-lookup-measurement-2026-11.md) | current | Whether agents consult local code, KB and memory, and what makes a requirement take effect |
 | [harness-monitor-validation-2026-11.md](harness-monitor-validation-2026-11.md) | current | How the harness report classification rules were validated: method, per-cell results, limits |
 | [image-api-skill-2026-10.md](image-api-skill-2026-10.md) | current | General image API skill |
 | [issue-154-web-automation-2026-05.md](issue-154-web-automation-2026-05.md) | current | Web automation via pinned Playwright MCP (pack currently disabled) |
