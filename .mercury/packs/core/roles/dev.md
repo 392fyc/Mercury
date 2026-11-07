@@ -5,7 +5,6 @@ claude:
 codex:
   model: gpt-6-luna
   model_reasoning_effort: max
-  sandbox_mode: workspace-write
   web_search: live
 ---
 

@@ -3,7 +3,6 @@ name = "mercury-design"
 description = "Architecture and specification designer. Use when the user or an agreed plan requests a specification, architecture proposal, or technical evaluation. Produces options and trade-offs in its reply; does not edit files or dispatch implementation."
 model = "gpt-6-luna"
 model_reasoning_effort = "max"
-sandbox_mode = "read-only"
 web_search = "live"
 
 developer_instructions = '''

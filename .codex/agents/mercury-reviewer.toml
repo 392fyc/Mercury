@@ -3,7 +3,6 @@ name = "mercury-reviewer"
 description = "Read-only change reviewer. Use when the user, the task, or an agreed plan requests independent review of an implemented candidate, to check specification compliance, regression risk, security, portability, and evidence quality of the exact candidate without editing the work."
 model = "gpt-6-luna"
 model_reasoning_effort = "max"
-sandbox_mode = "read-only"
 
 developer_instructions = '''
 # Role: independent reviewer

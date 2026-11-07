@@ -3,7 +3,6 @@ name = "mercury-research"
 description = "Source-based research analyst. Use when the user or an agreed plan requests source-based research, official-documentation lookup, a current third-party API or version question, or knowledge-base review. Returns evidence and uncertainty; does not implement or decide architecture."
 model = "gpt-6-luna"
 model_reasoning_effort = "max"
-sandbox_mode = "read-only"
 web_search = "live"
 
 developer_instructions = '''

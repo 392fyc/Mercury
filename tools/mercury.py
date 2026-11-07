@@ -837,7 +837,7 @@ ROLE_ENUMS = {
     "sandbox_mode": {"read-only", "workspace-write"},
     "web_search": {"live", "cached", "disabled"},
 }
-ROLE_REQUIRED = {"claude": {"model"}, "codex": {"sandbox_mode"}}
+ROLE_REQUIRED = {"claude": {"model"}, "codex": set()}
 BODY_BAD = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029" + HIDDEN + "]")
 
 
@@ -882,9 +882,9 @@ def attribution_text(text, what):
     return lines
 
 
-def parse_role(data, what, local=False):
+def parse_role(data, what):
     """{'description', 'claude': {...}, 'codex': {...}, 'body'} from a role source; unknown keys and odd syntax are errors.
-    A project-area role (local) may leave out the Codex sandbox_mode, so the role runs in the session's own sandbox."""
+    A Codex role may set sandbox_mode, but on Codex CLI 0.160.1 it changes nothing: a subagent follows the session."""
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
@@ -948,7 +948,7 @@ def parse_role(data, what, local=False):
     if not hosts:
         raise BuildError(f"{what}: declare at least one of: {', '.join(ROLE_SECTIONS)}")
     for h in hosts:
-        missing = ROLE_REQUIRED[h] - set(role[h]) - ({"sandbox_mode"} if local else set())
+        missing = ROLE_REQUIRED[h] - set(role[h])
         if missing:
             raise BuildError(f"{what}: {h} section needs: {', '.join(sorted(missing))}")
     body = m.group(2).strip("\n")
@@ -1135,7 +1135,7 @@ def load_local(target):
             raise BuildError(f"{what}: the source must be {LOCAL_ROLES_REL}/{name}.md, not {rel!r}")
         data = read_local_source(target, rel, what)
         sources[rel] = digest(data)
-        for dest, out in role_outputs(name, rel, parse_role(data, what, local=True)).items():
+        for dest, out in role_outputs(name, rel, parse_role(data, what)).items():
             add(dest, out, what)
     for name, sspec in sorted(skills.items()):
         what = f"{LOCAL_REL}: skill {name}"

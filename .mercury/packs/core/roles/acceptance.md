@@ -9,7 +9,6 @@ claude:
 codex:
   model: gpt-6-luna
   model_reasoning_effort: max
-  sandbox_mode: read-only
 ---
 
 # Role: blind acceptance verifier

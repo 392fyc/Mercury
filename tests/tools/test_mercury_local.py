@@ -170,10 +170,9 @@ class Generation(Base):
         self.assertFalse((self.dst / ".claude/agents/game-analyst.md").exists())
         self.assertTrue((self.dst / ".codex/agents/game-analyst.toml").exists())
 
-    def test_a_project_role_may_leave_the_codex_sandbox_to_the_session(self):
+    def test_a_role_may_leave_the_codex_sandbox_to_the_session(self):
         text = ROLE.replace("  sandbox_mode: read-only\n", "")
-        with self.assertRaises(T.BuildError):  # a pack role still needs it
-            T.parse_role(text.encode(), "t")
+        self.assertNotIn("sandbox_mode", T.parse_role(text.encode(), "t")["codex"])  # a pack role parses the same way
         self.role(text=text)
         self.manifest(roles={"game-analyst": ".mercury/local/roles/game-analyst.md"})
         self.assertEqual(self.apply()[0], 0)
