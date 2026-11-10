@@ -11,6 +11,7 @@ How to do recurring work in this repository. Moved here from `.mercury/docs/guid
 | [issue-workflow.md](issue-workflow.md) | current | Issue-first workflow and labels |
 | [kb-structure.md](kb-structure.md) | current | How Mercury's own `docs/` is laid out and maintained |
 | [architecture.md](architecture.md) | current | What the harness consists of today |
+| [context-continuity.md](context-continuity.md) | current | Keeping rules in effect through compaction: compact window, briefs re-injected by the SessionStart hook |
 | [cherry-pick-carve-out.md](cherry-pick-carve-out.md) | current | Exceptions to the upstream import protocol for generated scaffolding |
 | [upstream-drift-routine.md](upstream-drift-routine.md) | current | Monthly upstream drift check |
 | [dot-local-collaboration.md](dot-local-collaboration.md) | current | dot-link signed collaboration with local Codex |
