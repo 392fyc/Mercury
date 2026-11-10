@@ -864,6 +864,17 @@ class PushTargetTest(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertEqual(self.remote_ref(self.BRANCH), git(self.repo, "rev-parse", "HEAD").strip())
 
+    def test_the_pre_push_hook_runs_once_even_with_verify(self):
+        hooks = self.repo / ".git" / "hooks"
+        hooks.mkdir(parents=True, exist_ok=True)
+        log = self.repo.parent / "hook-runs.txt"
+        hook = hooks / "pre-push"
+        hook.write_text(f'#!/bin/sh\necho run >> "{log.as_posix()}"\n', newline="\n")
+        hook.chmod(0o755)
+        code, out = self.push("--verify", "origin", self.BRANCH)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(log.read_text().splitlines(), ["run"])
+
     def test_combined_short_options_still_push(self):
         code, out = self.push("-qu", "origin", self.BRANCH)
         self.assertEqual(code, 0, out)

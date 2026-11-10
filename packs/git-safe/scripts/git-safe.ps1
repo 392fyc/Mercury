@@ -129,7 +129,9 @@ function Assert-PushTargets {
     }
     $dryArgs += $arg
   }
-  $output = @(Invoke-Utf8Native "git" (@("-C", $repoRoot, "push", "--dry-run", "--porcelain", "--no-verify") + $dryArgs) -WithStderr)
+  # --no-verify comes after the caller's arguments so that a --verify among them cannot run the hook a second time;
+  # with "--" refused above, everything after the arguments is still read as an option.
+  $output = @(Invoke-Utf8Native "git" (@("-C", $repoRoot, "push", "--dry-run", "--porcelain") + $dryArgs + @("--no-verify")) -WithStderr)
   $dryExit = $LASTEXITCODE
   $protected = @(@("develop", "main", "master") + @(Get-IntegrationBranch) | Select-Object -Unique)
   $updates = 0
