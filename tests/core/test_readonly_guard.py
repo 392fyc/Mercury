@@ -54,6 +54,8 @@ ALLOWED = [
 
 BLOCKED = [
     "echo x >& result.txt",
+    "echo x >&١",
+    "echo x >& out.txt",
     "echo x >&result.txt",
     "echo x 2>&1 >&out.log",
     "git commit -m x",

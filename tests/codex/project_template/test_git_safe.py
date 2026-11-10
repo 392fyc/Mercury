@@ -846,6 +846,22 @@ class PushTargetTest(unittest.TestCase):
         self.assertEqual(self.remote_ref("master"), self.master)
         self.assertEqual(self.remote_ref(self.BRANCH), git(self.repo, "rev-parse", "HEAD").strip())
 
+    def test_arguments_that_could_turn_the_dry_run_into_a_real_push_are_refused(self):
+        git(self.repo, "config", "remote.origin.push", f"refs/heads/{self.BRANCH}:refs/heads/master")
+        for args in (("--no-dry-run", "origin", self.BRANCH), ("--no-dry", "origin", self.BRANCH),
+                     ("origin", "--", self.BRANCH)):
+            with self.subTest(args=args):
+                code, out = self.push(*args)
+                self.assertEqual(code, 1, out)
+                self.assertEqual(self.remote_ref("master"), self.master)
+                self.assertIsNone(self.remote_ref(self.BRANCH))
+
+    def test_combined_short_options_still_push(self):
+        code, out = self.push("-qu", "origin", self.BRANCH)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.remote_ref(self.BRANCH), git(self.repo, "rev-parse", "HEAD").strip())
+        self.assertEqual(git(self.repo, "config", f"branch.{self.BRANCH}.remote").strip(), "origin")
+
     def test_a_quiet_push_and_an_up_to_date_push_both_succeed(self):
         code, out = self.push("-q", "origin", self.BRANCH)
         self.assertEqual(code, 0, out)

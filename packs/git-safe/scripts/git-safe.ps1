@@ -106,8 +106,24 @@ function Assert-PushTargets {
   # status lines, and runs no pre-push hook (--no-verify): the real push runs it once.
   param([string[]]$PushArgs)
 
-  $dropped = @("-u", "--set-upstream", "-q", "--quiet")
-  $dryArgs = @($PushArgs | Where-Object { $dropped -notcontains $_ })
+  # Git parses options left to right and the last one wins, so an argument could switch the dry run back into a real
+  # push (--no-dry-run or any abbreviation of it), and after "--" nothing is an option any more. Refuse both.
+  foreach ($arg in $PushArgs) {
+    if ($arg -ceq "--" -or $arg -match '^--no-d') {
+      throw "Push argument '$arg' is not allowed: it could turn the target check into a real push."
+    }
+  }
+  $dryArgs = @()
+  foreach ($arg in $PushArgs) {
+    if (@("-u", "--set-upstream", "-q", "--quiet") -ccontains $arg) { continue }
+    if ($arg -cmatch '^-[A-Za-z]{2,}$') {
+      # Combined short options such as -qu: drop q and u, keep the rest.
+      $kept = ($arg.Substring(1).ToCharArray() | Where-Object { $_ -cne [char]'q' -and $_ -cne [char]'u' }) -join ""
+      if ($kept) { $dryArgs += "-$kept" }
+      continue
+    }
+    $dryArgs += $arg
+  }
   $output = @(Invoke-Utf8Native "git" (@("-C", $repoRoot, "push", "--dry-run", "--porcelain", "--no-verify") + $dryArgs) -WithStderr)
   $dryExit = $LASTEXITCODE
   $protected = @(@("develop", "main", "master") + @(Get-IntegrationBranch) | Select-Object -Unique)
