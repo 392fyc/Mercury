@@ -14,7 +14,7 @@ did not hold, a check at the end of the turn did.
 | Baseline | What the hook checks itself | What an independent role checks |
 |---|---|---|
 | External lookup and data verification | The delivery has the sections `数值与来源`, `解释不了的现象`, `反面证据`. On Claude Code a web lookup is on record since the check was switched on; on Codex the reply carries a source link. A line `【无需联网】` plus a reason replaces the lookup. | Every conclusion is supported by the data and every number's source holds. The verdict line `RESEARCH-CHECK: pass` is recorded by the hook, not by the main agent. |
-| Local KB, code and rules | The project's required reading was read in full since the last compaction or `/clear`, by the agent that acts. The delivery has the section `适用规则`. | The output does not violate the rules, checked against the rule text. Verdict line `RULES-CHECK: pass`. |
+| Local KB, code and rules | The project's required reading for the path being changed was read in full since the last compaction or `/clear`, by the agent that acts. The delivery has the section `适用规则`. | The output does not violate the rules, checked against the rule text. Verdict line `RULES-CHECK: pass`. |
 
 The verifier is a read-only role (`mercury-acceptance` or `mercury-reviewer`) that gets the conclusions or the output
 and where the data or rules are, not the main agent's reasoning.
@@ -44,6 +44,14 @@ and where the data or rules are, not the main agent's reasoning.
 
 `.mercury/gate.json`, described in the core pack's `mercury-scenario-gate.md` (template next to it). Without the file
 a project is not gated on modifications and the design check has no reading requirement.
+
+The file holds a general list (`required_reading`, for every modification) and groups by path (`scoped_reading`:
+these files before changing those paths). The groups exist because one list for a whole repository forced a bad
+choice in the first projects that adopted the gate. Where several lanes share a repository, a long design rule table
+binds whoever changes the design documents while the lane that implements code works from other sources: a single
+list either made every code change re-read the design rules after each compaction or left code changes ungated. Where
+one long rule page serves the whole project, it could only be split into a core page and topic pages at the price of
+no longer enforcing the topic pages. With groups, each kind of change has its own list.
 
 ## Differences between the hosts
 

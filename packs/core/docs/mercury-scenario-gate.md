@@ -10,16 +10,44 @@ Copy the template to `.mercury/gate.json`, commit it, and adjust it to the repos
 
 | Key | Meaning |
 |---|---|
-| `required_reading` | Files, relative to the project root, that must be read in full before a file of the project is modified, and before a design is delivered. The record is forgotten at every compaction and at `/clear`, so they are read again then. |
+| `required_reading` | Files, relative to the project root, that must be read in full before any file of the project is modified, and before a design is delivered. The record is forgotten at every compaction and at `/clear`, so they are read again then. |
+| `scoped_reading` | A list of groups `{"paths": [...], "read": [...]}`. Before a file whose path matches one of a group's `paths` patterns is modified, that group's `read` files must have been read as well. A file can match several groups; all of them apply. |
 | `design_lanes` | Lane names. A session whose prompt starts with `[LANE=<name>]` for one of them has the design check on for the whole session. |
-| `exempt` | Extra glob patterns, relative to the project root, for files that may be modified without the reading. `.tmp/*` and `.handoff/*` are always exempt. |
+| `exempt` | Extra glob patterns, relative to the project root, for files that may be modified without the reading. `.tmp/*`, `.handoff/*` and `.mercury/memory/*` are always exempt. |
 
-Choosing the list:
+Patterns in `paths` and `exempt` are matched against the path relative to the project root, and `*` also matches
+across `/`: `src/*` covers every file below `src/`. These are not gitignore patterns: `**` means the same as `*`, so
+`src/**/*.py` needs at least one folder between `src/` and the file and misses `src/x.py`; write `src/*.py` for all of
+them. An absolute pattern never matches. A pattern that matches nothing leaves those paths ungated without a notice,
+so try a new group once.
+
+Example: a rule page for everyone, one more page for the battle code, and the design rules only for those who change
+the design documents.
+
+```json
+{
+  "required_reading": ["docs/rules/core.md"],
+  "scoped_reading": [
+    {"paths": ["src/battle/*"], "read": ["docs/rules/battle.md"]},
+    {"paths": ["docs/design/*"], "read": ["docs/rules/design-rules.md"]}
+  ],
+  "design_lanes": [],
+  "exempt": ["assets/*"]
+}
+```
+
+Choosing the lists:
 
 - List what a change must not contradict: the rule table, the decision or principles page, standing preferences. Do
   not list instruction files the host already loads (`AGENTS.md`, `CLAUDE.md`).
-- Keep it short. Every listed file is read again after each compaction, by the main session and by every subagent
-  that modifies files.
+- Keep the general list short. Every file in it is read again after each compaction, by the main session and by
+  every subagent that modifies files, whatever they change. Put a page that binds only one kind of change (the rules
+  of one subsystem, the discipline of one lane) into a group for the paths that change touches. A project where
+  several lanes work on different parts needs this; so does a rule document split into a core page and topic pages.
+- A group can only name files of this project. Reading that has to come from elsewhere (another repository, a
+  service) cannot be enforced here: list the page that tells the agent how to fetch it.
+- The design check has no path to go by, so it names the general list and every group, and the agent reads the
+  groups that bear on the output.
 - A file the Read tool cannot return in one call needs `allow_large: true`; a file over the tool's size limit cannot
   be satisfied at all, so split it or list a shorter digest.
 - Entries that point outside the project or to a file that does not exist are not enforced; the hook reports them
