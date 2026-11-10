@@ -1,0 +1,8 @@
+{
+  "required_reading": [
+    "docs/01-rules/principles.md",
+    ".mercury/packs/core/docs/mercury-task-contract.md"
+  ],
+  "design_lanes": [],
+  "exempt": []
+}

@@ -15,6 +15,7 @@ from the Mercury repository in #675. Subdirectories: [incidents/](incidents/READ
 | [issue-517-slim-audit-2026-06.md](issue-517-slim-audit-2026-06.md) | current | Slimming audit; retired mem0 and other unused parts |
 | [issue-525-zh-output-readability-2026-06.md](issue-525-zh-output-readability-2026-06.md) | current | Chinese output readability: causes and fixes |
 | [issue-535-fable5-scheduling-2026-07.md](issue-535-fable5-scheduling-2026-07.md) | current | Weekly quota scheduling and statusline display |
+| [scenario-gate-triggers-2026-11.md](scenario-gate-triggers-2026-11.md) | current | What should switch a delivery check on: five trigger types compared on recorded turns, phrases taken from the user's own prompts |
 | [context-compaction-2026-11.md](context-compaction-2026-11.md) | current | Why rules stop applying in long sessions: compaction types measured, the compact window and brief budget chosen |
 | [agent-lookup-measurement-2026-11.md](agent-lookup-measurement-2026-11.md) | current | Whether agents consult local code, KB and memory, and what makes a requirement take effect |
 | [harness-monitor-validation-2026-11.md](harness-monitor-validation-2026-11.md) | current | How the harness report classification rules were validated: method, per-cell results, limits |

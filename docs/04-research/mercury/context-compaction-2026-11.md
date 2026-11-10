@@ -8,7 +8,8 @@ Issue：[#777](https://github.com/392fyc/Mercury/issues/777)。现行做法见 [
 - **主要原因是 compact 之后规则正文回不来。** 5 个最大的会话共 26 次 compact，其中 22 次是空闲触发的。每次之后启动钩子都运行了，但只给出记忆文件的路径；用户偏好文件在一个四天的会话里只在开头读过一次。
 - **次要原因可能是上下文过长。** 规则还在上下文里却没用上的 4 次失误，都发生在 60 万 token 以上。这只是一个会话里的对应关系，外部实测不支持“变长就会忘”。
 - **采取的做法。** compact 窗口从默认的约 96.7 万调到 40 万；启动钩子在每次启动和 compact 之后注入项目简报的正文；lane 简报在 compact 和恢复会话之后注入，目前只用于 SoT 的目录布局。空闲 compact 保持默认。
-- **没有做的。** 不做向量检索，不做每轮注入，不改 Codex。
+- **没有做的。** 不做向量检索，不做每轮注入。
+- **Codex。** 同一套启动钩子也装在 Codex 上，注入同一份简报；它的 compact 触发点不改，因为实测已经在窗口的 95% 左右触发（见下文“Codex 的测量”）。
 
 ## 术语
 
@@ -62,6 +63,23 @@ Issue：[#777](https://github.com/392fyc/Mercury/issues/777)。现行做法见 [
 - 原生 1M 上下文的模型默认在约 96.7 万 token 时 compact；`autoCompactWindow` 可设为 10 万到 100 万。用 `/autocompact` 设的值按模型保存在 `modelSettings` 里，对该模型优先于同一文件里顶层的 `autoCompactWindow`。见 [Model configuration](https://code.claude.com/docs/en/model-config)。
 - 空闲 compact 的条件和开关见 [`idleCompaction`](https://code.claude.com/docs/en/settings-reference)，最小规模默认 200,000 token。
 - `CLAUDE.md` 建议每个文件不超过 200 行，更长会降低遵守程度。见 [How Claude remembers your project](https://code.claude.com/docs/en/memory)。
+
+## Codex 的测量
+
+数据来自本机的 Codex 会话记录。
+
+| 模型窗口 | 实际触发 compact 的位置 |
+|---|---|
+| 258,400 token | 大多数在 23.7 万到 24.8 万 |
+| 475,000 token | 大多数在 44.3 万到 45.2 万 |
+
+两组各有少量离群值（例如 258,400 窗口下有 4 次在 22.5 万附近），不影响“约 95%”这个结论。
+
+- 观察到的 compact 都是写满触发，没有空闲触发。其中一个会话 compact 了 16 次，都在 23.8 万到 24.7 万之间（14 次在 24 万到 24.5 万之间）。
+- compact 之后 Codex 会重新给出 `AGENTS.md`，并保留用户消息的原文。
+- 原先装在 Codex 上的启动钩子是旧脚本，在下游项目的目录里没有任何输出。
+- 实测（Codex 0.167，手动 `/compact`）：钩子的消息在 compact 记录之后、下一条用户消息之前再次出现。回合进行中的自动 compact 没有测到；更早版本的记录里，3 次 compact 之后只有 1 次能看到钩子消息。
+- Codex 钩子输出的上限按 token 计，默认约 2,500。一份 4,371 字符的中英混排文档估算约 2,500 token（模型估算，本机没有分词工具），所以把这个钩子的上限设为 10,000。
 
 ## 外部情况
 
