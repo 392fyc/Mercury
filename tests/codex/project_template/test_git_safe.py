@@ -856,6 +856,14 @@ class PushTargetTest(unittest.TestCase):
                 self.assertEqual(self.remote_ref("master"), self.master)
                 self.assertIsNone(self.remote_ref(self.BRANCH))
 
+    def test_an_option_value_that_looks_like_a_flag_is_kept(self):
+        # "-q" here is the value of --push-option, not the quiet flag; dropping it would make the branch name the
+        # repository. (The short -o cannot reach the script: PowerShell reads it as -OutVariable/-OutBuffer.)
+        git(self.origin, "config", "receive.advertisePushOptions", "true")
+        code, out = self.push("--push-option", "-q", "origin", self.BRANCH)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.remote_ref(self.BRANCH), git(self.repo, "rev-parse", "HEAD").strip())
+
     def test_combined_short_options_still_push(self):
         code, out = self.push("-qu", "origin", self.BRANCH)
         self.assertEqual(code, 0, out)

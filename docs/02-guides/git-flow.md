@@ -115,8 +115,9 @@ one Argus review of the final head and the merge, which the main agent does
 itself once every gate holds. Subagents never merge. The rest of this section is
 how Mercury applies it.
 
-Mentioning a PR that the main agent did not open does not start the procedure or
-authorize commits, pushes, merges or branch deletion. Use the current harness's
+Mentioning a PR that the main agent neither opened nor received from its own
+subagent does not start the procedure or authorize commits, pushes, merges or
+branch deletion. Use the current harness's
 native independent subagents for review.
 
 ### Review and repairs
@@ -138,7 +139,8 @@ native independent subagents for review.
   This is an instruction-level budget, not a runtime enforcement setting.
 - Check all existing review requests and paginate the complete review-thread
   list. Outstanding change requests must be addressed. Manually resolving
-  threads does not establish merge eligibility. On a PR the main agent opened,
+  threads does not establish merge eligibility. On a PR the main agent opened
+  or received from its own subagent,
   commenting `@argus-review review` and replying in Argus threads are steps of
   the procedure; other external comments and replies still require explicit
   authorization.
@@ -200,8 +202,9 @@ or push directly to protected branches.
 Git writes follow AGENTS.md and the controlled entrypoints. Immediately before
 merging, recheck current head, CI, and review state. Any changed candidate needs
 a new review under the repair-focused method above. Address obstacles only
-within necessary authorized scope; for a PR the main agent did not open,
-return the review result instead of merging.
+within necessary authorized scope. A PR the main agent opened, or one its own
+subagent handed back to it, is the main agent's to merge; for any other PR it
+only mentioned, return the review result instead of merging.
 
 Keep the current wait bounded. Schedule future monitoring only when explicitly
 requested. When the requested criteria and delivery stage are satisfied, report

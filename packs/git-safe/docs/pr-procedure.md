@@ -57,5 +57,6 @@ remove these.
 - Argus threads stay unresolved after two further review runs, Argus's budget is used up while threads are still
   unresolved, or two repair rounds made no progress.
 
-Commenting `@argus-review review` and replying in Argus threads on a pull request the main agent opened are steps of
-this procedure and need no separate authorization; other external comments still do.
+Commenting `@argus-review review` and replying in Argus threads on a pull request the main agent opened, or one its
+own subagent handed back, are steps of this procedure and need no separate authorization; other external comments
+still do.

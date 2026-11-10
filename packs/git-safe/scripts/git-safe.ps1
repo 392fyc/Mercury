@@ -114,9 +114,14 @@ function Assert-PushTargets {
     }
   }
   $dryArgs = @()
+  # Options that take the next argument as their value: the value is copied as it is, never read as an option.
+  $takesValue = @("-o", "--push-option", "--repo", "--receive-pack", "--exec")
+  $copyNext = $false
   foreach ($arg in $PushArgs) {
+    if ($copyNext) { $dryArgs += $arg; $copyNext = $false; continue }
+    if ($takesValue -ccontains $arg) { $dryArgs += $arg; $copyNext = $true; continue }
     if (@("-u", "--set-upstream", "-q", "--quiet") -ccontains $arg) { continue }
-    if ($arg -cmatch '^-[A-Za-z]{2,}$') {
+    if ($arg -cmatch '^-[A-Za-np-z]{2,}$') {  # not -o<value>, whose value must stay as it is
       # Combined short options such as -qu: drop q and u, keep the rest.
       $kept = ($arg.Substring(1).ToCharArray() | Where-Object { $_ -cne [char]'q' -and $_ -cne [char]'u' }) -join ""
       if ($kept) { $dryArgs += "-$kept" }
