@@ -7,6 +7,7 @@ in Git history.
 
 | Document | Status | Content |
 |---|---|---|
+| [DEC-2026-11-10-pr-procedure-argus.md](DEC-2026-11-10-pr-procedure-argus.md) | current | Argus reviews only on request; the main agent merges its own PR once every gate holds (one Argus review of the final head, no unresolved thread, agents never resolve threads); protected default and integration branches in all five repositories. |
 | [DEC-2026-11-05-harness-monitor.md](DEC-2026-11-05-harness-monitor.md) | current | `tools/harness_monitor/` is the named exception to M1: a run-once report on whether agents use what the harness configures |
 | [DEC-2026-08-14-codex-primary-harness.md](DEC-2026-08-14-codex-primary-harness.md) | current | Codex CLI becomes the primary harness: personal-subscription auth, three enforcement layers, no Git writes under the sandbox |
 

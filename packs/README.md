@@ -375,6 +375,15 @@ only forward to `packs/git-safe/scripts/` (Issue #723).
 - **Branch names and protected branches** are Mercury's: `<type>/<purpose>[-<lane>]-<agent>`; `develop`, `main`,
   `master` and the integration branch cannot be committed or pushed to. Inherited `GIT_DIR`, `GIT_WORK_TREE`,
   `GIT_COMMON_DIR` or `GIT_INDEX_FILE` make the scripts refuse to run.
+- **PR procedure.** `docs/pr-procedure.md` is the pull request procedure every project with this pack follows, and the
+  managed section points to it (#773): the main agent carries its own pull request through independent review, CI,
+  one Argus review of the final head and the merge; subagents never merge; agents never resolve review threads, use
+  `--admin` or auto-merge. `pre-merge` with `-NativeReviewReceipt` accepts resolved threads and refuses unresolved ones.
+- **Push targets.** `push` needs an explicit refspec (`push -u origin <branch>`); a push without one, a force-update
+  refspec (`+<src>:<dst>`) and a pattern refspec (`*`) are refused. Before pushing, `git push --dry-run --porcelain`
+  lists every remote ref the push would really update, including through `push.default` or `remote.<name>.push`, and
+  the push stops on a protected target, a forced update, a deletion, a rejected update or a refspec that matches no remote ref (#772); a push that is already up to date
+  succeeds as before.
 - The read-only guard already treats `git-safe.ps1` as a write script, so read-only roles cannot call it.
 
 ## The kb pack

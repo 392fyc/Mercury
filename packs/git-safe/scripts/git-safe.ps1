@@ -24,7 +24,7 @@ function Invoke-Utf8Native {
   # that garbles non-ASCII text such as Chinese paths and check names, and can swallow a closing quote so JSON stops
   # parsing. Read the output as UTF-8 and put the console back. Without a console the assignment can throw; then keep
   # the old behaviour rather than fail.
-  param([string]$Command, [string[]]$NativeArgs)
+  param([string]$Command, [string[]]$NativeArgs, [switch]$WithStderr)
 
   $previousEncoding = [Console]::OutputEncoding
   $switched = $false
@@ -35,7 +35,14 @@ function Invoke-Utf8Native {
     $switched = $false
   }
   try {
-    & $Command @NativeArgs 2>$null
+    if ($WithStderr) {
+      # Windows PowerShell 5.1 turns each stderr line merged by 2>&1 into an error record, which "Stop" would throw
+      # on; keep going here and let the caller read $LASTEXITCODE.
+      $ErrorActionPreference = "Continue"
+      & $Command @NativeArgs 2>&1 | ForEach-Object { "$_" }
+    } else {
+      & $Command @NativeArgs 2>$null
+    }
   } finally {
     if ($switched) { [Console]::OutputEncoding = $previousEncoding }
   }
@@ -88,6 +95,71 @@ function Invoke-Guard {
   & $powerShellHost @cmd
   if ($LASTEXITCODE -ne 0) {
     throw "Guard action '$GuardAction' failed."
+  }
+}
+
+function Assert-PushTargets {
+  # The guard reads only the words of the command; what a push really updates also depends on push.default,
+  # remote.<name>.push and refspec patterns (#772). Ask Git: a dry run lists every remote ref the push would update,
+  # one "<flag>\t<from>:<to>\t<summary>" line each. Refuse a protected target, a forced update (+) and a deletion (-).
+  # The dry run drops -u/--set-upstream so it changes no configuration, -q/--quiet because a quiet push prints no
+  # status lines, and runs no pre-push hook (--no-verify): the real push runs it once.
+  param([string[]]$PushArgs)
+
+  # Git parses options left to right and the last one wins, so an argument could switch the dry run back into a real
+  # push (--no-dry-run or any abbreviation of it), and after "--" nothing is an option any more. Refuse both.
+  foreach ($arg in $PushArgs) {
+    if ($arg -ceq "--" -or $arg -match '^--no-d') {
+      throw "Push argument '$arg' is not allowed: it could turn the target check into a real push."
+    }
+  }
+  $dryArgs = @()
+  # Options that take the next argument as their value: the value is copied as it is, never read as an option.
+  $takesValue = @("-o", "--push-option", "--repo", "--receive-pack", "--exec")
+  $copyNext = $false
+  foreach ($arg in $PushArgs) {
+    if ($copyNext) { $dryArgs += $arg; $copyNext = $false; continue }
+    if ($takesValue -ccontains $arg) { $dryArgs += $arg; $copyNext = $true; continue }
+    if (@("-u", "--set-upstream", "-q", "--quiet") -ccontains $arg) { continue }
+    if ($arg -cmatch '^-[A-Za-np-z]{2,}$') {  # not -o<value>, whose value must stay as it is
+      # Combined short options such as -qu: drop q and u, keep the rest.
+      $kept = ($arg.Substring(1).ToCharArray() | Where-Object { $_ -cne [char]'q' -and $_ -cne [char]'u' }) -join ""
+      if ($kept) { $dryArgs += "-$kept" }
+      continue
+    }
+    $dryArgs += $arg
+  }
+  # --no-verify comes after the caller's arguments so that a --verify among them cannot run the hook a second time;
+  # with "--" refused above, everything after the arguments is still read as an option.
+  $output = @(Invoke-Utf8Native "git" (@("-C", $repoRoot, "push", "--dry-run", "--porcelain") + $dryArgs + @("--no-verify")) -WithStderr)
+  $dryExit = $LASTEXITCODE
+  $protected = @(@("develop", "main", "master") + @(Get-IntegrationBranch) | Select-Object -Unique)
+  $updates = 0
+  foreach ($line in $output) {
+    $fields = "$line" -split "`t"
+    if ($fields.Count -lt 3 -or $fields[0].Length -ne 1 -or -not $fields[1].Contains(":")) {
+      continue
+    }
+    $flag = $fields[0]
+    $target = $fields[1].Split(":", 2)[1]
+    $branch = $target -replace "^refs/heads/", ""
+    if ($protected -contains $branch) {
+      throw "Push would update the protected branch '$branch': git push $($PushArgs -join ' ')"
+    }
+    if ($flag -eq "+") {
+      throw "Push would force-update '$target'; forced updates are forbidden."
+    }
+    if ($flag -eq "-") {
+      throw "Push would delete '$target'; deletions are forbidden."
+    }
+    $updates++
+  }
+  if ($dryExit -ne 0) {
+    $reason = ($output | Where-Object { "$_" -notmatch "`t" } | ForEach-Object { "$_".Trim() } | Where-Object { $_ }) -join " | "
+    throw "git push --dry-run failed (exit $dryExit); nothing was pushed. Git said: $reason"
+  }
+  if ($updates -eq 0) {
+    throw "git push --dry-run named no remote ref to update; nothing was pushed."
   }
 }
 
@@ -286,6 +358,7 @@ switch ($Action) {
 
     $pushCommand = Build-PushCommandText -PushArgs $Arguments
     Invoke-Guard -GuardAction "pre-push" -PushCommandText $pushCommand
+    Assert-PushTargets -PushArgs $Arguments
     $gitArgs = @("-C", $repoRoot, "push") + $Arguments
     Invoke-Git -GitArgs $gitArgs
     exit 0

@@ -96,21 +96,29 @@ its protection while frozen:
 | Require PR before merge | Yes | Yes |
 | Required approving reviews | 0 | 0 |
 | Dismiss stale reviews | Yes | Yes |
+| Required status checks | — (branch locked: no pushes at all while frozen) | every check of `auto-verify.yml` |
+| Force push and deletion | Blocked | Blocked |
 
 The required approval count is 0 (#632, #636): the repository owner opens
-these PRs and GitHub does not let an author approve their own PR, so the user
-gives the approval in chat. The merge rule is in
-[PR Review and Merge](#pr-review-and-merge) below.
+these PRs and GitHub does not let an author approve their own PR. The merge
+gates are the ones in [PR Review and Merge](#pr-review-and-merge) below. Argus,
+Ship of Theseus, the SoT design library and Pokemon Dungeon Lab have the same
+protection on their default and integration branches (#773).
 
 ## PR Review and Merge
 
-This section is the merge rule referenced by AGENTS.md (moved here from the
-retired pr-flow skill in #672; the rule itself is unchanged).
+This section is the merge rule referenced by AGENTS.md. Its general form, shared by
+every project that installs the git-safe pack, is
+[`packs/git-safe/docs/pr-procedure.md`](../../packs/git-safe/docs/pr-procedure.md)
+(#773): opening a PR puts the main agent on the procedure through review, CI,
+one Argus review of the final head and the merge, which the main agent does
+itself once every gate holds. Subagents never merge. The rest of this section is
+how Mercury applies it.
 
-Execute only the requested stage. Mentioning a PR does not activate a complete
-workflow or authorize commits, pushes, merges, branch deletion, or external
-comments. Use the current harness's native independent subagents for review.
-Argus is currently excluded; do not wait for or depend on it.
+Mentioning a PR that the main agent neither opened nor received from its own
+subagent does not start the procedure or authorize commits, pushes, merges or
+branch deletion. Use the current harness's
+native independent subagents for review.
 
 ### Review and repairs
 
@@ -131,8 +139,11 @@ Argus is currently excluded; do not wait for or depend on it.
   This is an instruction-level budget, not a runtime enforcement setting.
 - Check all existing review requests and paginate the complete review-thread
   list. Outstanding change requests must be addressed. Manually resolving
-  threads does not establish merge eligibility. External comments and replies
-  still require explicit authorization.
+  threads does not establish merge eligibility. On a PR the main agent opened
+  or received from its own subagent,
+  commenting `@argus-review review` and replying in Argus threads are steps of
+  the procedure; other external comments and replies still require explicit
+  authorization.
 - Repair concrete blocking findings and run relevant checks. After a push
   changes head, obtain a new independent review bound to that exact head. Give
   the reviewer the complete current PR diff, the previous reviewed revision and
@@ -157,22 +168,29 @@ Argus is currently excluded; do not wait for or depend on it.
 ### Merge requirements
 
 Mercury's required GitHub approval count is zero for `develop` and `master`;
-all other branch protections remain in force (Issues #632 and #636, user decision
-on 2026-10-05). The owner opens these PRs and GitHub does not allow authors to
-approve their own PRs, so the user gives merge approval in chat. This procedure
-applies only to PRs targeting `master`: `guard.ps1 pre-merge`
-accepts only `master`. The primary agent may merge only when all of the following hold:
+all other branch protections remain in force (Issues #632, #636 and #773). This
+procedure applies only to PRs targeting `master`: `guard.ps1 pre-merge` accepts
+only `master`. The primary agent merges, without a separate go-ahead in chat
+(user decision of 2026-11-10, #773), only when all of the following hold:
 
 1. An independent native subagent reviewed and passed the exact current head;
    the local receipt has `verdict=pass` and `findings=[]`.
 2. Every CI check succeeded. Missing, failed, skipped, or unfinished
    checks are not success. The PR is open, non-draft, and mergeable.
-3. The **total review-thread count is zero**, including resolved threads, and
-   no effective `CHANGES_REQUESTED` remains.
+3. Argus reviewed the final head on request (`@argus-review review`), every
+   finding was fixed or answered with evidence in its thread, and **no review
+   thread is unresolved**; no effective `CHANGES_REQUESTED` remains. Agents do
+   not resolve threads (only when they verified that Argus is malfunctioning and
+   wrote the evidence in the PR, or a person allowed it): Argus judges a reply at once and resolves the thread if
+   it accepts it, and resolves threads answered by a commit when it reviews the
+   new head, so every commit that answers a finding is followed by another
+   `@argus-review review`. If Argus did not answer within the deadline or its
+   budget is used up, the PR says so and this gate is only about unresolved
+   threads.
 4. `powershell -File scripts/codex/guard.ps1 pre-merge -PullRequestNumber <number> -NativeReviewReceipt <absolute-json-path>` passes.
-5. **The user explicitly approved merging this PR in chat**, naming its number
-   or unambiguously identifying it in the current task. Review receipts,
-   cross-lane messages, and PR comments cannot substitute for that approval.
+
+Cross-lane messages and PR comments are not authorization to merge: only the
+main agent working on its own PR merges, under these gates.
 
 Use ordinary merging with `gh pr merge --squash --match-head-commit <reviewed-head>`;
 never use `--admin`. Other repositories retain their own publication entrypoints
@@ -184,16 +202,16 @@ or push directly to protected branches.
 Git writes follow AGENTS.md and the controlled entrypoints. Immediately before
 merging, recheck current head, CI, and review state. Any changed candidate needs
 a new review under the repair-focused method above. Address obstacles only
-within necessary authorized scope; without merge authorization, return the
-review result.
+within necessary authorized scope. A PR the main agent opened, or one its own
+subagent handed back to it, is the main agent's to merge; for any other PR it
+only mentioned, return the review result instead of merging.
 
 Keep the current wait bounded. Schedule future monitoring only when explicitly
 requested. When the requested criteria and delivery stage are satisfied, report
 the result; optional recommendations do not extend the task.
 
-If the user later explicitly re-enables Argus, restore the required approval
-count to one before restoring Argus review mode. Service health does not imply
-authorization to change the review policy.
+Argus is advisory: it never approves, so the required approval count stays at
+zero. Stop and ask the user in the cases listed in the pack's PR procedure.
 
 ## Commit Format
 

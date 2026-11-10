@@ -39,6 +39,10 @@ ALLOWED = [
     "echo done > /dev/null",
     "Get-Content x > $null",
     "cat a.txt 2>&1",
+    "cat a.txt >&2",
+    "cat a.txt 1>&2; echo ok",
+    "cat a.txt >& 2",
+    "cat a.txt 2>&-",
     "FOO=1 git log",
     "grep -n sync-downstream-pr.py README.md",
     "cat scripts/codex/git-safe.ps1",
@@ -49,6 +53,11 @@ ALLOWED = [
 ]
 
 BLOCKED = [
+    "echo x >& result.txt",
+    "echo x >&١",
+    "echo x >& out.txt",
+    "echo x >&result.txt",
+    "echo x 2>&1 >&out.log",
     "git commit -m x",
     "git -C D:/repo add file",
     "git push origin HEAD",

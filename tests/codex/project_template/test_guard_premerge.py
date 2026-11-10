@@ -381,12 +381,14 @@ class GuardPreMergeTests(unittest.TestCase):
         result = self.run_guard()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_resolved_and_unresolved_threads_both_block_native_bypass(self):
-        for thread in [{"isResolved": True}, {"isResolved": False}]:
-            with self.subTest(thread=thread):
-                self.fixture["pages"]["threads"] = [thread_page([thread])]
-                self.write_fixture()
-                self.assert_rejected()
+    def test_native_receipt_allows_resolved_threads_but_rejects_unresolved_ones(self):
+        self.fixture["pages"]["threads"] = [thread_page([{"isResolved": True}, {"isResolved": True}])]
+        self.write_fixture()
+        result = self.run_guard()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.fixture["pages"]["threads"] = [thread_page([{"isResolved": True}, {"isResolved": False}])]
+        self.write_fixture()
+        self.assert_rejected()
 
     def test_default_allows_resolved_thread_but_rejects_unresolved_thread(self):
         self.fixture["pr"]["reviewDecision"] = "APPROVED"
@@ -397,10 +399,10 @@ class GuardPreMergeTests(unittest.TestCase):
         self.write_fixture()
         self.assert_rejected(receipt=False)
 
-    def test_review_thread_pagination_counts_resolved_threads(self):
+    def test_review_thread_pagination_finds_an_unresolved_thread_on_a_later_page(self):
         self.fixture["pages"]["threads"] = [
-            thread_page([], has_next=True, cursor="thread-page-2"),
-            thread_page([{"isResolved": True}]),
+            thread_page([{"isResolved": True}], has_next=True, cursor="thread-page-2"),
+            thread_page([{"isResolved": False}]),
         ]
         self.write_fixture()
         result = self.assert_rejected()

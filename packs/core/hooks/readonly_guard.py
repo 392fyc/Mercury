@@ -152,9 +152,14 @@ def check_redirects(segment: str) -> None:
             continue
         if ch != ">":
             continue
-        rest = segment[i + 1:].lstrip(">").lstrip()
+        rest = segment[i + 1:].lstrip(">").lstrip(" \t")
         if rest.startswith("&"):
-            continue
+            # `>&2` and `>&-` duplicate or close a descriptor; `>& file` and `>&file` write stdout and stderr to a
+            # file, so only a number or `-` is let through (#772). ASCII only: Bash reads neither other Unicode digits
+            # nor other Unicode spaces that way, so `>&١` writes a file named ١.
+            rest = rest[1:].lstrip(" \t")
+            if re.match(r"([0-9]+|-)(?=$|[ \t\n;|&)<>])", rest):
+                continue
         target = tokenize(rest)[0].lower() if tokenize(rest) else ""
         if target not in SAFE_REDIRECT_TARGETS:
             raise Blocked(f"output redirection to a file ({target or 'unknown'})")

@@ -288,6 +288,24 @@ function Assert-SafePushTarget {
 
   $tokens = $CommandText -split '\s+'
   $knownTokens = @("git", "push") + (Get-ConfiguredRemote)
+  $refspecs = 0
+  foreach ($token in $tokens) {
+    if ([string]::IsNullOrWhiteSpace($token) -or $token -in $knownTokens -or $token.StartsWith("-")) {
+      continue
+    }
+    # A leading + forces the update like --force, and a pattern can reach branches the words do not name (#772).
+    if ($token.StartsWith("+")) {
+      throw "Force-update refspecs (+<src>:<dst>) are forbidden in Codex guard mode: $CommandText"
+    }
+    if ($token.Contains("*")) {
+      throw "Pattern refspecs (*) are forbidden in Codex guard mode: $CommandText"
+    }
+    $refspecs++
+  }
+  if ($refspecs -eq 0) {
+    # Without a refspec the target comes from push.default and remote.<name>.push, which the words do not show.
+    throw "Name what to push: git push <remote> <branch>. A push without a refspec is forbidden in Codex guard mode: $CommandText"
+  }
   foreach ($token in $tokens) {
     if ($token -match '^-[^-][A-Za-z]+$') {
       $shortFlags = $token.Substring(1).ToCharArray()
@@ -832,7 +850,6 @@ function Assert-PreMergeReady {
 
   $cursor = $null
   $seenThreadCursors = @{}
-  $threadCount = 0
   $unresolvedCount = 0
   $threadQuery = @'
 query($owner: String!, $name: String!, $number: Int!, $after: String) {
@@ -855,7 +872,6 @@ query($owner: String!, $name: String!, $number: Int!, $after: String) {
     }
     $threadPage = $threadPullRequest.reviewThreads
     Assert-GraphqlConnectionShape -Connection $threadPage -Description "review thread" -Number $Number
-    $threadCount += $threadPage.nodes.Count
     foreach ($node in @($threadPage.nodes)) {
       if (-not (Test-JsonProperty -InputObject $node -Name "isResolved") -or $node.isResolved -isnot [bool]) {
         throw "GitHub returned an incomplete review thread for PR #$Number."
@@ -877,9 +893,8 @@ query($owner: String!, $name: String!, $number: Int!, $after: String) {
     }
   } while ($cursor)
 
-  if ($UseNativeReceipt -and $threadCount -gt 0) {
-    throw "PR #$Number has $threadCount review thread(s); native review receipt requires zero threads."
-  }
+  # Resolved threads do not block, with or without a native receipt: an advisory reviewer such as Argus resolves the
+  # threads it accepts, and agents do not resolve them (PR procedure, #773).
   if ($unresolvedCount -gt 0) {
     throw "PR #$Number still has $unresolvedCount unresolved review thread(s)."
   }
