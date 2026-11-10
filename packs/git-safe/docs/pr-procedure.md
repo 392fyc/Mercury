@@ -11,8 +11,9 @@ remove these.
   go-ahead, and reports the result afterwards.
 - **Subagents** implement or review. They never merge. A subagent that produced a pull request hands it back to the
   main agent with its branch, head commit and evidence.
-- **Argus**, where the project uses it, is an advisory reviewer: it comments, never approves or requests changes,
-  and reviews only when someone comments `@argus-review review`. Each run costs money from a monthly budget.
+- **Argus** is an advisory reviewer: it comments, never approves or requests changes, and reviews only when someone
+  comments `@argus-review review`. Each run costs money from a monthly budget. Where Argus is not installed on the
+  repository, the pull request says so and step 3 is treated as a review that did not come.
 
 ## Steps
 
@@ -35,6 +36,9 @@ remove these.
      wrote the evidence in the pull request, or a person allowed it.
 4. **Merge gates.** All of these hold on the head to be merged:
    - the receipt from step 1 is for this exact head, with `verdict=pass` and `findings=[]`;
+   - Argus reviewed this exact head, or the pull request says why it did not (deadline passed, budget used up, not
+     installed). Any change of head after step 3, for whatever reason (a repair, a sync with the integration
+     branch), goes back to step 3;
    - every CI check succeeded;
    - no review thread is unresolved, and no `CHANGES_REQUESTED` review is in effect;
    - `guard.ps1 pre-merge -PullRequestNumber <n> -NativeReviewReceipt <absolute path>` passes;

@@ -96,7 +96,7 @@ its protection while frozen:
 | Require PR before merge | Yes | Yes |
 | Required approving reviews | 0 | 0 |
 | Dismiss stale reviews | Yes | Yes |
-| Required status checks | — (locked) | every check of `auto-verify.yml` |
+| Required status checks | — (branch locked: no pushes at all while frozen) | every check of `auto-verify.yml` |
 | Force push and deletion | Blocked | Blocked |
 
 The required approval count is 0 (#632, #636): the repository owner opens
@@ -178,7 +178,8 @@ only `master`. The primary agent merges, without a separate go-ahead in chat
 3. Argus reviewed the final head on request (`@argus-review review`), every
    finding was fixed or answered with evidence in its thread, and **no review
    thread is unresolved**; no effective `CHANGES_REQUESTED` remains. Agents do
-   not resolve threads: Argus judges a reply at once and resolves the thread if
+   not resolve threads (only when they verified that Argus is malfunctioning and
+   wrote the evidence in the PR, or a person allowed it): Argus judges a reply at once and resolves the thread if
    it accepts it, and resolves threads answered by a commit when it reviews the
    new head, so every commit that answers a finding is followed by another
    `@argus-review review`. If Argus did not answer within the deadline or its
