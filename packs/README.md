@@ -375,6 +375,10 @@ only forward to `packs/git-safe/scripts/` (Issue #723).
 - **Branch names and protected branches** are Mercury's: `<type>/<purpose>[-<lane>]-<agent>`; `develop`, `main`,
   `master` and the integration branch cannot be committed or pushed to. Inherited `GIT_DIR`, `GIT_WORK_TREE`,
   `GIT_COMMON_DIR` or `GIT_INDEX_FILE` make the scripts refuse to run.
+- **Push targets.** `push` needs an explicit refspec (`push -u origin <branch>`); a push without one, a force-update
+  refspec (`+<src>:<dst>`) and a pattern refspec (`*`) are refused. Before pushing, `git push --dry-run --porcelain`
+  lists every remote ref the push would really update, including through `push.default` or `remote.<name>.push`, and
+  the push stops on a protected target, a forced update, a deletion, a rejected update or no update at all (#772).
 - The read-only guard already treats `git-safe.ps1` as a write script, so read-only roles cannot call it.
 
 ## The kb pack

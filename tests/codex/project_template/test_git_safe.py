@@ -776,5 +776,99 @@ class NonAsciiRepositoryPathTest(unittest.TestCase):
         self.assertIn("160000", git(self.repo, "ls-files", "-s", "--", "sources"))
 
 
+
+@unittest.skipUnless(PWSH, "PowerShell is not available")
+class PushTargetTest(unittest.TestCase):
+    """A push is checked by what Git would really update, not only by its words (#772)."""
+
+    BRANCH = "feature/TASK-9-claude"
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.origin = Path(tmp.name) / "origin.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(self.origin)], check=True)
+        self.repo = Path(tmp.name) / "project"
+        make_repo(self.repo)
+        git(self.repo, "branch", "-M", "master")
+        git(self.repo, "remote", "add", "origin", self.origin.as_posix())
+        git(self.repo, "push", "-q", "origin", "master")
+        git(self.repo, "checkout", "-q", "-b", self.BRANCH)
+        (self.repo / "work.txt").write_text("work\n")
+        git(self.repo, "add", "work.txt")
+        git(self.repo, "commit", "-q", "-m", "work")
+        self.scripts = self.repo / ".mercury/packs/git-safe/scripts"
+        self.scripts.mkdir(parents=True)
+        for name in ("git-safe.ps1", "guard.ps1"):
+            shutil.copyfile(SCRIPTS / name, self.scripts / name)
+        (self.repo / ".git/info/exclude").write_text(".mercury/\n")
+        self.master = self.remote_ref("master")
+
+    def remote_ref(self, branch):
+        r = subprocess.run(["git", "-C", str(self.origin), "rev-parse", "--verify", "-q", f"refs/heads/{branch}"],
+                           capture_output=True, text=True)
+        return r.stdout.strip() or None
+
+    def push(self, *args):
+        return run_ps(self.scripts / "git-safe.ps1", "push", *args, cwd=self.repo)
+
+    def test_an_explicit_task_branch_push_still_works_and_sets_the_upstream(self):
+        code, out = self.push("-u", "origin", self.BRANCH)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.remote_ref(self.BRANCH), git(self.repo, "rev-parse", "HEAD").strip())
+        self.assertEqual(git(self.repo, "config", f"branch.{self.BRANCH}.remote").strip(), "origin")
+
+    def test_a_push_without_a_refspec_is_refused(self):
+        code, out = self.push("origin")
+        self.assertEqual(code, 1, out)
+        self.assertIn("Name what to push", out)
+
+    def test_force_update_and_pattern_refspecs_are_refused(self):
+        for spec, message in ((f"+HEAD:refs/heads/{self.BRANCH}", "Force-update"),
+                              ("refs/heads/*:refs/heads/*", "Pattern")):
+            with self.subTest(spec=spec):
+                code, out = self.push("origin", spec)
+                self.assertEqual(code, 1, out)
+                self.assertIn(message, out)
+        self.assertIsNone(self.remote_ref(self.BRANCH))
+
+    def test_a_configured_push_mapping_cannot_reach_a_protected_branch(self):
+        git(self.repo, "config", "remote.origin.push", f"refs/heads/{self.BRANCH}:refs/heads/master")
+        # A branch name is mapped through remote.origin.push, so the words name the task branch while Git would
+        # update master: only the dry run sees that.
+        code, out = self.push("origin", self.BRANCH)
+        self.assertEqual(code, 1, out)
+        self.assertIn("protected branch", out)
+        self.assertEqual(self.remote_ref("master"), self.master)
+        # HEAD is not mapped (Git 2.43, measured here): it updates the branch of the same name.
+        code, out = self.push("origin", "HEAD")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.remote_ref("master"), self.master)
+        self.assertEqual(self.remote_ref(self.BRANCH), git(self.repo, "rev-parse", "HEAD").strip())
+
+    def test_a_quiet_push_and_an_up_to_date_push_both_succeed(self):
+        code, out = self.push("-q", "origin", self.BRANCH)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.remote_ref(self.BRANCH), git(self.repo, "rev-parse", "HEAD").strip())
+        code, out = self.push("origin", self.BRANCH)       # nothing new: porcelain reports "="
+        self.assertEqual(code, 0, out)
+
+    def test_a_push_git_would_reject_is_not_attempted(self):
+        # The remote task branch moved on; a plain push would be a non-fast-forward.
+        other = Path(self.repo.parent) / "other"
+        git(self.repo.parent, "clone", "-q", self.origin.as_posix(), "other")
+        git(other, "checkout", "-q", "-b", self.BRANCH)
+        (other / "theirs.txt").write_text("theirs\n")
+        git(other, "add", "theirs.txt")
+        git(other, "commit", "-q", "-m", "theirs")
+        git(other, "push", "-q", "origin", self.BRANCH)
+        theirs = self.remote_ref(self.BRANCH)
+        code, out = self.push("origin", self.BRANCH)
+        self.assertEqual(code, 1, out)
+        self.assertIn("Git said:", out)
+        self.assertEqual(self.remote_ref(self.BRANCH), theirs)
+
+
 if __name__ == "__main__":
     unittest.main()
+

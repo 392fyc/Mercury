@@ -288,6 +288,24 @@ function Assert-SafePushTarget {
 
   $tokens = $CommandText -split '\s+'
   $knownTokens = @("git", "push") + (Get-ConfiguredRemote)
+  $refspecs = 0
+  foreach ($token in $tokens) {
+    if ([string]::IsNullOrWhiteSpace($token) -or $token -in $knownTokens -or $token.StartsWith("-")) {
+      continue
+    }
+    # A leading + forces the update like --force, and a pattern can reach branches the words do not name (#772).
+    if ($token.StartsWith("+")) {
+      throw "Force-update refspecs (+<src>:<dst>) are forbidden in Codex guard mode: $CommandText"
+    }
+    if ($token.Contains("*")) {
+      throw "Pattern refspecs (*) are forbidden in Codex guard mode: $CommandText"
+    }
+    $refspecs++
+  }
+  if ($refspecs -eq 0) {
+    # Without a refspec the target comes from push.default and remote.<name>.push, which the words do not show.
+    throw "Name what to push: git push <remote> <branch>. A push without a refspec is forbidden in Codex guard mode: $CommandText"
+  }
   foreach ($token in $tokens) {
     if ($token -match '^-[^-][A-Za-z]+$') {
       $shortFlags = $token.Substring(1).ToCharArray()

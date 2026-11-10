@@ -43,7 +43,7 @@
     ".mercury/packs/core/claude.md": "a41db75ae5f575cf43e7f98e25b7bd9eb3488a248005bf9d78895e91476de95c",
     ".mercury/packs/core/docs/mercury-harness-ownership.md": "fda876a559a41118bd662cfbbab525a51352b422ff5b7b2afed6ade317542226",
     ".mercury/packs/core/docs/mercury-task-contract.md": "dd26def2fcaf6106d4beba92a18ca0aa368faf7cdfa2cda863f759e385fdb8e1",
-    ".mercury/packs/core/hooks/readonly_guard.py": "463953aabbb7e630ce0a55f34ff058d4e3bbcb7c39963702a9e1bfba3cbfd603",
+    ".mercury/packs/core/hooks/readonly_guard.py": "c3b8cb32a8f3a7b6d2c5ef7def39befd2d4b1a22fddd10e1e0bdbd56f406522a",
     ".mercury/packs/core/hooks/readonly_guard.sh": "f7823f1ea505f3d7c08847a72d00249b45dd476b426fc8e3adffbd9dc5cde1b3",
     ".mercury/packs/core/hooks/wait_guard.py": "dd2460862ea736f8ad1969e076a916b7b8de8cbae8546d1f9a0587526063b675",
     ".mercury/packs/core/hooks/wait_guard.sh": "5fd3b2ffb6b5ee053f75b6ba0636f353e098f9467989c07daf0628138a2788c5",

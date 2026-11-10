@@ -1,0 +1,30 @@
+# Argus 审查模块：Argus 在审查本仓库 PR 前读取这个文件和下面列出的规则文件。
+# 读取位置是 PR 的目标分支（master），所以规则改动要先合并才会生效。格式见 392fyc/Argus 的 README。
+
+focus = """
+本仓库是 Mercury：给 Claude Code 和 Codex 用的轻量 harness。packs/ 是可安装内容的源，tools/mercury.py 是唯一安装器，docs/ 是公开的知识库。审查时重点看：
+
+1. 架构原则（docs/01-rules/principles.md）：不自建编排层、CLI 包装或桌面应用，`tools/harness_monitor/` 是 M4 写明的例外；能用宿主原生能力或外部项目的不自研；每个 pack 可单独拆除，依赖写在依赖方文档里；外部集成和 packs/<pack>/build/ 的转换层不超过 200 行，内部 scripts/ 和 tools/ 不受这个限制。
+2. 受管文件：改动在 packs/ 的源里做，再由 `python tools/mercury.py apply --target .` 生成 `.mercury/packs/`、生成的角色与技能入口和 `.mercury/lock.json`。源和生成物是否一致由 CI 里的 `mercury.py check` 机械检查；PR 只改了生成物、没改对应源时，在对应的 packs/ 源文件或 PR 层面指出。AGENTS.md 和 CLAUDE.md 的受管段落不手改。
+3. Git 安全：git-safe.ps1、guard.ps1 和钩子的行为改动，要在真实环境里证明（例如真实的临时 Git 仓库），只有模拟测试不算；不得放宽受保护分支、强制推送、删除分支的限制。
+4. 外部导入：从外部项目复制文件要有宽松许可证、经核实的源提交 SHA，以及 upstream-manifest、frontmatter 或署名注释记录；不得使用浮动 npm 版本；submodule 指针变动要在 PR 里说明是否做过兼容验证（E2）。
+5. 共享文件里不得硬编码部署专用的工具、PR 编号或 Issue 编号；docs/ 公开，不得出现凭据、本机路径或私人项目细节；代理上下文文件里的工具调用 XML 标记要转义。
+6. 知识库：改规则、决策或进度时更新现行文档，并删除因此过时的内容和指向它的链接，不保留“已取代”标记；PR 正文要引用 Issue，并有一行以 “KB:” 开头。
+
+审查整个 PR 的累积改动，不只看最新提交。只报真正影响正确性、安全或上面这些规则的问题，不报措辞和格式偏好。
+"""
+
+context_files = [
+  "docs/01-rules/principles.md",
+  "docs/02-guides/kb-structure.md",
+  "docs/02-guides/git-flow.md",
+]
+
+max_context_chars = 60000
+
+# 自安装生成的受管副本和原样保存的外部项目：问题应在 packs/ 的源或 PR 层面指出，这些路径上的发现不报。
+skip_paths = [
+  ".mercury/packs/**",
+  ".mercury/lock.json",
+  "sources/**",
+]

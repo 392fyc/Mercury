@@ -154,7 +154,11 @@ def check_redirects(segment: str) -> None:
             continue
         rest = segment[i + 1:].lstrip(">").lstrip()
         if rest.startswith("&"):
-            continue
+            # `>&2` and `>&-` duplicate or close a descriptor; `>& file` and `>&file` write stdout and stderr to a
+            # file, so only a number or `-` is let through (#772).
+            rest = rest[1:].lstrip()
+            if re.match(r"(\d+|-)(?=$|[\s;|&)<>])", rest):
+                continue
         target = tokenize(rest)[0].lower() if tokenize(rest) else ""
         if target not in SAFE_REDIRECT_TARGETS:
             raise Blocked(f"output redirection to a file ({target or 'unknown'})")
