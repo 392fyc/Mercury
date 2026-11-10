@@ -129,6 +129,11 @@ function Assert-PushTargets {
     }
     $dryArgs += $arg
   }
+  if ($copyNext) {
+    # The last argument is an option that needs a value. Git would read the --no-verify added below as that value and
+    # the dry run would run the pre-push hook; the real push fails on the missing value anyway, so say it now (#775).
+    throw "Push option '$($PushArgs[-1])' needs a value; nothing was pushed."
+  }
   # --no-verify comes after the caller's arguments so that a --verify among them cannot run the hook a second time;
   # with "--" refused above, everything after the arguments is still read as an option.
   $output = @(Invoke-Utf8Native "git" (@("-C", $repoRoot, "push", "--dry-run", "--porcelain") + $dryArgs + @("--no-verify")) -WithStderr)

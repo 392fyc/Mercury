@@ -875,6 +875,20 @@ class PushTargetTest(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertEqual(log.read_text().splitlines(), ["run"])
 
+    def test_an_option_without_its_value_is_refused_before_any_push(self):
+        log = self.repo.parent / "hook-runs.txt"
+        hook = self.repo / ".git" / "hooks" / "pre-push"
+        hook.parent.mkdir(parents=True, exist_ok=True)
+        hook.write_text('#!/bin/sh\necho run >> "' + log.as_posix() + '"\n', newline="\n")
+        hook.chmod(0o755)
+        for option in ("--push-option", "--repo", "--receive-pack", "--exec"):
+            with self.subTest(option=option):
+                code, out = self.push("origin", self.BRANCH, option)
+                self.assertEqual(code, 1, out)
+                self.assertIn("needs a value", out)
+        self.assertFalse(log.exists())                      # the dry run never ran the hook
+        self.assertIsNone(self.remote_ref(self.BRANCH))
+
     def test_combined_short_options_still_push(self):
         code, out = self.push("-qu", "origin", self.BRANCH)
         self.assertEqual(code, 0, out)

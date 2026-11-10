@@ -382,7 +382,9 @@ only forward to `packs/git-safe/scripts/` (Issue #723).
 - **Push targets.** `push` needs an explicit refspec (`push -u origin <branch>`); a push without one, a force-update
   refspec (`+<src>:<dst>`) and a pattern refspec (`*`) are refused. Before pushing, `git push --dry-run --porcelain`
   lists every remote ref the push would really update, including through `push.default` or `remote.<name>.push`, and
-  the push stops on a protected target, a forced update, a deletion, a rejected update or a refspec that matches no remote ref (#772); a push that is already up to date
+  the push stops on a protected target, a forced update, a deletion, a rejected update or a refspec that matches no remote ref (#772), and an option that needs a value
+  (`--push-option`, `--repo`, `--receive-pack`, `--exec`) given as the last argument is refused before any push
+  (#775); a push that is already up to date
   succeeds as before.
 - The read-only guard already treats `git-safe.ps1` as a write script, so read-only roles cannot call it.
 
