@@ -73,4 +73,19 @@ A project without a `brief.md` gets the previous behavior: the hook prints where
   the context grows.
 - It does not replace handoff. A new session for a new batch of work still starts from a handoff; the handoff can be
   short when the lane brief is current.
-- It does not cover Codex.
+
+## Codex
+
+The same SessionStart hook script is installed for Codex and injects the same briefs; the two hosts share one
+`brief.md` per project and lane.
+
+- **Compaction threshold: unchanged.** Codex already compacts at about 95% of the model's window (measured: mostly 237K to
+  248K on 258,400-token models and 443K to 452K on 475,000-token models, with a few outliers), so there is nothing to lower.
+- **Injection limit:** Codex measures a hook's `additionalContext` in tokens; the limit for this hook is set to 10,000
+  so that 6,000 mostly Chinese characters fit.
+- **Lane:** Codex opens a session with user-role messages the user did not type (the AGENTS.md instructions, tagged
+  notices from the app). The hook skips them and takes the tag from the first message that remains.
+- **Verified:** after a manual `/compact` the hook's message appears again before the next user message (Codex
+  0.167). Automatic compaction in the middle of a turn was not exercised.
+- Codex skips a hook whose definition changed until it is trusted again with `/hooks`, and a running session keeps
+  the hooks it started with.
