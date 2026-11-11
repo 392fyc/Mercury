@@ -30,10 +30,18 @@ forgotten in the middle of work, and nothing else.
 | Project brief | the project's bucket in its memory root | on every source |
 | Lane brief | `lanes/<name>/` in that bucket | the transcript's first user message starts with `[LANE=<name>]` (a name of up to 64 letters, digits, `_` or `-`) and that lane has a `brief.md` |
 
+A project that keeps its memory in its own main checkout, as the lanes pack does, uses these locations instead. The
+hook walks up from the working directory to the nearest `.mercury/memory/`; memory is ignored by Git, so from a task
+worktree under `.worktrees/` the walk ends at the main checkout.
+
+| Brief | Location | Injected when |
+|---|---|---|
+| Project brief | `.mercury/memory/brief.md` | on every source |
+| Lane brief | `brief-<name>.md` in the lane directory that `.mercury/memory/lane-home` names, next to that lane's inbox | as above |
+
 Limits of the lane brief as wired today:
 
-- It is wired only for the SoT layout, where each lane has a directory under the project bucket. Mercury's own
-  lanes get the project brief only.
+- It is wired for those two layouts. Mercury's own lanes get the project brief only.
 - The hook finds the lane in the transcript, so the lane brief arrives on `compact` and `resume`, not on `startup`
   (nothing has been said yet) or after `/clear` (a new transcript). The starting prompt or handoff of a lane session
   therefore still names the lane brief as a file to read first; the hook brings it back after each compaction.
