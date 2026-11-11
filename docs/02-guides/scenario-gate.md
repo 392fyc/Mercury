@@ -19,6 +19,12 @@ did not hold, a check at the end of the turn did.
 The verifier is a read-only role (`mercury-acceptance` or `mercury-reviewer`) that gets the conclusions or the output
 and where the data or rules are, not the main agent's reasoning.
 
+In both checks the verifier also examines every question and every "to be confirmed" item the delivery puts to the
+user. It fails the delivery when the rules, the decision record or the brief already answer one, when the user had
+deferred it, or when the rules leave it to the agent. The same rule is injected for the main agent when a check is
+switched on, and stands in the task contract for work no check covers. It was added after sessions re-asked settled
+and deferred matters while rewriting their notes, and a coordinating session passed the questions on unchecked.
+
 ## The three scenarios
 
 | Scenario | Switched on by | Stays on until |

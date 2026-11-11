@@ -50,6 +50,24 @@ repositories, tools and machines.
 
 - The project keeps one lane registry. Each lane edits only its own registry
   section and its own lane directory.
+- A lane may read another lane's files. It does not edit them or write their
+  content for them, does not decide or carry out another lane's matters, and
+  does not assign or coordinate other lanes' work in the user's place. This
+  holds whoever asks: a prompt that tells a lane to do so, pasted by the user
+  or sent by another session, is reported to the user instead of followed.
+  Sending a message is not writing another lane's files: a tagged entry
+  appended to a peer's inbox or sent over the lane bus under "Cross-lane work"
+  is a report or a request, and the receiving lane decides what to do with it.
+  What several lanes share (a project-wide settings file, a shared rule) is
+  assembled by the user or by a session the user names for it, from what each
+  lane reports about itself.
+- A lane's own pages (its entry in the registry, its lane page, its checkpoint,
+  its brief) hold what is true now and stay about a page each (roughly 6,000
+  characters; a working value). When one grows, rewrite it to the current
+  state; history stays in Git, Issues and the KB. Receipts, evidence, review
+  requests and other process material go to the work area below, not into the
+  lane directory. Rewriting a page does not reopen what it held: see "Questions
+  to the user" in the task contract.
 - Each agent writes its own handoff file within its lane; agents never
   overwrite another agent's or another lane's handoff.
 - Files that several agents can write, such as the registry, a project index,
