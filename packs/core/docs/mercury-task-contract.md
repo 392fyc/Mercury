@@ -32,6 +32,22 @@ pause dependent writes while the mismatch is resolved. Preserve concurrent work.
 Commit and publication actions require explicit inclusion in the assignment and
 completion of the repository's review and guarded Git requirements.
 
+**Questions to the user.** Before putting a question or a decision to the user, look for the answer where
+the project keeps it: the rules, the decision record, the KB page for the
+subject, the brief. Then:
+
+- an answer that exists is applied, not asked again;
+- something the user said to do later stays deferred, with the user's words and
+  the condition for taking it up, and is not raised before that condition holds;
+- a matter the rules leave to the agent is decided by the agent and labeled as
+  its inference.
+
+A question that remains names the work it blocks and the places searched. The
+same holds when notes are rewritten or handed over: an old open item is checked
+against the record first and is not turned into a new question for the user.
+Another agent's statement that no decision exists is a claim to check, not a
+finding.
+
 ## Explanation and reasoning
 
 These rules apply to the main agent and every subagent, in Codex and Claude Code.

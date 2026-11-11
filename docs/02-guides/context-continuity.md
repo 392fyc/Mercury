@@ -67,6 +67,32 @@ Rules for the pages:
 
 A project without a `brief.md` gets the previous behavior: the hook prints where the memory files are.
 
+## The other lane pages
+
+A brief only helps if the pages around it stay readable. A lane's checkpoint and lane page are read at every start, so
+they follow the same rule as a brief: current state only, about a page. Where the start hook knows the lane's
+directory it checks two things and, when one is over, tells the session to tell the user and to tidy up at a natural
+pause:
+
+| Checked | Limit (working values) |
+|---|---|
+| `session-checkpoint.md` and `LANE.md` of the session's own lane | 6,000 characters each, the size of the brief budget |
+| Files directly in the lane's directory | 30; receipts, evidence and review requests belong in the lane's work area |
+
+Both checks run for the layout with one directory per lane under the project bucket, for a session whose first
+message names its lane. In Mercury's own bucket only the project checkpoint's size is checked. In the layout that
+keeps memory in the project's main checkout nothing is checked yet: a lane's pages there sit in places the project
+chooses, so the rule holds by the lane contract alone.
+
+Two rules go with the tidying, and the notice repeats them:
+
+- **Tidying does not reopen anything.** An old open item is checked against the KB first. What has an answer is
+  recorded with where the answer is; what the user said to do later is recorded as deferred, with the user's words
+  and the condition for taking it up; what the rules leave to the agent is decided and labeled as inference. None of
+  these becomes a question to the user. The first rewrites of long checkpoints did the opposite: they turned every
+  old pending line into "please confirm", including matters the KB had settled and matters the user had deferred.
+- **Own lane only.** A session tidies its own lane's pages. Other lanes' pages can be read, never written.
+
 ## Checking that it works
 
 - **Window:** in a new session, `/autocompact` shows the window in effect. In a transcript, `compactMetadata.preTokens`
