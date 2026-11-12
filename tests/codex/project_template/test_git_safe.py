@@ -335,6 +335,38 @@ class GitSafeSyncTest(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn("sync=merged", out)
 
+    def folders_that_differ_only_in_case(self, mine):
+        # The other side adds files under `Build` and `build`; a local ignored file sits at one of the two paths.
+        probe = self.repo / "CaseProbe"
+        probe.write_text("x")
+        same = (self.repo / "caseprobe").exists()
+        probe.unlink()
+        if same:
+            self.skipTest("this file system does not tell Build from build")
+        for name in ("Build/a.txt", "build/b.txt"):
+            (self.trunk / name).parent.mkdir()
+            (self.trunk / name).write_text("theirs\n")
+            git(self.trunk, "add", name)
+        git(self.trunk, "commit", "-q", "-m", "two folders")
+        git(self.trunk, "push", "-q", "origin", "master")
+        (self.repo / ".git/info/exclude").write_text("scripts/\n.mercury/\nBuild/\nbuild/\n")
+        (self.repo / mine).parent.mkdir()
+        (self.repo / mine).write_text("mine\n")
+        self.commit_on_branch("mine.txt", "mine\n")
+        head = git(self.repo, "rev-parse", "HEAD")
+        code, out = self.sync()
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("would overwrite local files", out)
+        self.assertEqual((self.repo / mine).read_text(), "mine\n")
+        self.assertEqual(git(self.repo, "rev-parse", "HEAD"), head)
+        self.assertFalse(self.merging())
+
+    def test_an_ignored_file_under_the_capitalized_folder_is_in_the_way(self):
+        self.folders_that_differ_only_in_case("Build/a.txt")
+
+    def test_an_ignored_file_under_the_lower_case_folder_is_in_the_way(self):
+        self.folders_that_differ_only_in_case("build/b.txt")
+
     def test_an_ignored_file_where_a_folder_is_needed_is_in_the_way(self):
         (self.trunk / "build").mkdir()
         self.land_on_master("build/out.txt", "theirs\n")

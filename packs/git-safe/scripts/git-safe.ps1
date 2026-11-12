@@ -363,7 +363,11 @@ function Assert-NoLocalFileInTheWay {
   $added = @(Get-NulSeparated -GitArgs @("-C", $repoRoot, "diff", "-z", "--name-only", "--no-renames", "--diff-filter=A", "HEAD", $Ref))
   if ($added.Count -eq 0) { return }
   # Only the top-level entries the other side adds under need listing; that keeps large ignored trees elsewhere out.
-  $tops = @($added | ForEach-Object { $_.Split("/")[0] } | Sort-Object -Unique)
+  # Exact, case-sensitive de-duplication: `Sort-Object -Unique` treats `Build` and `build` as one name, and where
+  # they are two folders the dropped one would go unlisted.
+  $topSet = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::Ordinal)
+  foreach ($path in $added) { [void]$topSet.Add($path.Split("/")[0]) }
+  $tops = @($topSet)
   $local = @(Get-NulSeparated -GitArgs (@("--literal-pathspecs", "-C", $repoRoot, "ls-files", "-z", "--others", "--") + $tops))
   if ($local.Count -eq 0) { return }
   $comparer = if ([System.IO.Path]::DirectorySeparatorChar -eq "\") { [System.StringComparer]::OrdinalIgnoreCase } else { [System.StringComparer]::Ordinal }
