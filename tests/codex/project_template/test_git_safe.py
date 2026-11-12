@@ -571,7 +571,9 @@ class GitSafeMergeTest(unittest.TestCase):
         tip = git(self.trunk, "rev-parse", "HEAD").strip()
         code, out = self.merge(self.HELPER)  # not a local branch
         self.assertNotEqual(code, 0)
-        self.assertIn("For a branch on origin", out)  # the hint; long messages wrap in the error display
+        # PowerShell wraps a long error at the terminal width, which differs between hosts: compare without the wrapping.
+        flat = " ".join(re.sub(r"\x1b\[[0-9;]*m|[|]", " ", out).split())
+        self.assertIn(f"For a branch on origin, name it origin/{self.HELPER}", flat)
         code, out = self.merge(f"origin/{self.HELPER}")
         self.assertEqual(code, 0, out)
         self.assertIn("merge=merged", out)
