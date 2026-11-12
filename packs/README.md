@@ -381,6 +381,11 @@ only forward to `packs/git-safe/scripts/` (Issue #723).
   same refusals as `sync`, and refuses a protected branch (the trunk comes in through `sync`) and the current
   branch (use `pull`). The merge is always `--no-ff --no-commit` (`merge=merged`, `merge=conflicts` with exit 1, or
   `merge=up-to-date`); the source branch is not moved and nothing is pushed.
+- **Local files.** `sync`, `pull`, `merge` and `fast-forward` do not replace a local file that is not tracked,
+  ignored files included (local settings, scratch output); they refuse and leave the branch where it was. A
+  fast-forward relies on Git's `--no-overwrite-ignore`. Git replaces an ignored file silently in a true merge, so
+  before one the script compares the paths the other side adds with the files Git lists as untracked, and also
+  refuses a local file that sits where a folder is needed or the reverse.
 - **Abandoning.** `abort-sync` abandons only a merge that `sync`, `pull` or `merge` started: the script records the
   merged commit in the Git directory when it starts one and compares it with the merge in progress. A merge started
   any other way is left alone.

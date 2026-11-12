@@ -341,11 +341,65 @@ function Test-RemoteBranch {
   throw "Unable to read origin (git ls-remote exit $LASTEXITCODE). Nothing was changed."
 }
 
+function Get-NulSeparated {
+  # The entries of a `-z` listing: names arrive unquoted, whatever characters they hold.
+  param([string[]]$GitArgs)
+
+  $raw = (@(Invoke-Utf8Native "git" $GitArgs) -join "`n")
+  if ($LASTEXITCODE -ne 0) {
+    throw "git command failed: git $($GitArgs -join ' ')"
+  }
+  return @($raw.Split([char]0) | Where-Object { $_ -ne "" })
+}
+
+function Assert-NoLocalFileInTheWay {
+  # Git refuses a merge that would overwrite an untracked file, except an ignored one: a true merge replaces it
+  # silently, and --no-overwrite-ignore only covers fast-forwards. So before a merge, the paths the other side has and
+  # HEAD lacks are compared with the files Git itself lists as untracked, ignored ones included. Asking Git, not the
+  # disk, keeps a tracked file out of it: on a case-insensitive file system a rename that only changes case would
+  # otherwise look like a file in the way.
+  param([string]$Ref, [string]$Label)
+
+  $added = @(Get-NulSeparated -GitArgs @("-C", $repoRoot, "diff", "-z", "--name-only", "--no-renames", "--diff-filter=A", "HEAD", $Ref))
+  if ($added.Count -eq 0) { return }
+  # Only the top-level entries the other side adds under need listing; that keeps large ignored trees elsewhere out.
+  $tops = @($added | ForEach-Object { $_.Split("/")[0] } | Sort-Object -Unique)
+  $local = @(Get-NulSeparated -GitArgs (@("--literal-pathspecs", "-C", $repoRoot, "ls-files", "-z", "--others", "--") + $tops))
+  if ($local.Count -eq 0) { return }
+  $comparer = if ([System.IO.Path]::DirectorySeparatorChar -eq "\") { [System.StringComparer]::OrdinalIgnoreCase } else { [System.StringComparer]::Ordinal }
+  $files = New-Object "System.Collections.Generic.HashSet[string]" ($comparer)
+  $folders = New-Object "System.Collections.Generic.HashSet[string]" ($comparer)
+  foreach ($path in $local) {
+    [void]$files.Add($path)
+    $cut = $path.LastIndexOf("/")
+    while ($cut -gt 0) {
+      if (-not $folders.Add($path.Substring(0, $cut))) { break }
+      $cut = $path.LastIndexOf("/", $cut - 1)
+    }
+  }
+  $inTheWay = New-Object "System.Collections.Generic.List[string]"
+  foreach ($path in $added) {
+    # The same path, a local file where the other side needs a folder, or a local folder where it needs a file.
+    $hit = $files.Contains($path) -or $folders.Contains($path)
+    $cut = $path.LastIndexOf("/")
+    while (-not $hit -and $cut -gt 0) {
+      $hit = $files.Contains($path.Substring(0, $cut))
+      $cut = $path.LastIndexOf("/", $cut - 1)
+    }
+    if ($hit) { $inTheWay.Add($path) }
+  }
+  if ($inTheWay.Count -gt 0) {
+    $shown = (@($inTheWay) | Select-Object -First 10) -join ", "
+    throw "Merging $Label would overwrite local files that are not tracked here: $shown. Move them aside first. Nothing was changed."
+  }
+}
+
 function Complete-GuardedMerge {
   # Merge $Ref into the current branch without committing, and report under the action's name.
   param([string]$Ref, [string]$Label, [string]$Verb)
 
-  & git -C $repoRoot merge --no-ff --no-commit --no-autostash $Ref
+  Assert-NoLocalFileInTheWay -Ref $Ref -Label $Label
+  & git -C $repoRoot merge --no-ff --no-commit --no-autostash --no-overwrite-ignore $Ref
   $mergeExit = $LASTEXITCODE
   Save-MergeRecord
   $unmerged = @(git -C $repoRoot diff --name-only --diff-filter=U)
@@ -480,9 +534,9 @@ switch ($Action) {
     & git -C $repoRoot merge-base --is-ancestor HEAD $remoteRef
     if ($LASTEXITCODE -eq 0) {
       # --no-autostash: with merge.autoStash set, Git would stash local changes, move HEAD and possibly leave them stashed.
-      & git -C $repoRoot merge --ff-only --no-autostash --quiet $remoteRef
+      & git -C $repoRoot merge --ff-only --no-autostash --no-overwrite-ignore --quiet $remoteRef
       if ($LASTEXITCODE -ne 0 -or (git -C $repoRoot rev-parse HEAD).Trim() -ne $target) {
-        throw "The fast-forward to origin/$branch was refused, usually because it would overwrite an untracked file. HEAD was not moved; check git status."
+        throw "The fast-forward to origin/$branch was refused, usually because it would overwrite an untracked or ignored local file. HEAD was not moved; check git status."
       }
       Write-Output "pull=fast-forwarded"
       Write-Output "from=$before"
@@ -603,7 +657,7 @@ switch ($Action) {
       throw "$trunk has commits that origin/$trunk lacks; a fast-forward is impossible. HEAD was not moved (origin/$trunk was refreshed)."
     }
     # --no-autostash: with merge.autoStash set, Git would stash local changes, move HEAD and possibly leave them stashed.
-    & git -C $repoRoot merge --ff-only --no-autostash --quiet $trunkRef
+    & git -C $repoRoot merge --ff-only --no-autostash --no-overwrite-ignore --quiet $trunkRef
     if ($LASTEXITCODE -ne 0 -or (git -C $repoRoot rev-parse HEAD).Trim() -ne $target) {
       throw "The fast-forward was refused, usually because it would overwrite local changes. HEAD was not moved; check git status."
     }

@@ -314,10 +314,40 @@ class GitSafeSyncTest(unittest.TestCase):
         head = git(self.repo, "rev-parse", "HEAD")
         code, out = self.sync()
         self.assertNotEqual(code, 0)
-        self.assertIn("git merge of origin/master failed", out)
+        self.assertIn("would overwrite local files", out)
         self.assertFalse(self.merging())
         self.assertEqual(git(self.repo, "rev-parse", "HEAD"), head)
         self.assertEqual((self.repo / "theirs.txt").read_text(), "untracked, would be overwritten\n")
+        # An ignored file is in the way just the same; Git alone would replace it silently in a true merge.
+        (self.repo / ".git/info/exclude").write_text("scripts/\n.mercury/\ntheirs.txt\n")
+        code, out = self.sync()
+        self.assertNotEqual(code, 0)
+        self.assertEqual((self.repo / "theirs.txt").read_text(), "untracked, would be overwritten\n")
+        self.assertFalse(self.merging())
+        self.assertEqual(git(self.repo, "rev-parse", "HEAD"), head)
+
+    def test_a_rename_that_only_changes_case_is_not_a_file_in_the_way(self):
+        git(self.trunk, "mv", "shared.txt", "Shared.txt")  # on Windows and macOS the old name answers for the new one
+        git(self.trunk, "commit", "-q", "-m", "rename")
+        git(self.trunk, "push", "-q", "origin", "master")
+        self.commit_on_branch("mine.txt", "mine\n")
+        code, out = self.sync()
+        self.assertEqual(code, 0, out)
+        self.assertIn("sync=merged", out)
+
+    def test_an_ignored_file_where_a_folder_is_needed_is_in_the_way(self):
+        (self.trunk / "build").mkdir()
+        self.land_on_master("build/out.txt", "theirs\n")
+        (self.repo / ".git/info/exclude").write_text("scripts/\n.mercury/\nbuild\n")
+        (self.repo / "build").write_text("mine\n")
+        self.commit_on_branch("mine.txt", "mine\n")
+        head = git(self.repo, "rev-parse", "HEAD")
+        code, out = self.sync()
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("would overwrite local files", out)
+        self.assertEqual((self.repo / "build").read_text(), "mine\n")
+        self.assertEqual(git(self.repo, "rev-parse", "HEAD"), head)
+        self.assertFalse(self.merging())
 
     def test_a_merge_that_changes_no_file_can_still_be_concluded(self):
         self.commit_on_branch("theirs.txt", "same\n")  # the branch already has what master brings
@@ -506,6 +536,25 @@ class GitSafePullTest(unittest.TestCase):
         self.assertIn("Unable to read origin", out)  # also under Windows PowerShell 5.1, where stderr used to stop the script
         self.assertEqual(self.head(), head)
 
+    def test_an_ignored_local_file_is_never_overwritten(self):
+        """A file the worktree ignores (local settings, scratch output) that the remote now tracks: refused, kept."""
+        self.publish()
+        (self.repo / ".git/info/exclude").write_text("scripts/\n.mercury/\nlocal-settings.json\n")
+        (self.repo / "local-settings.json").write_text("mine\n")
+        self.peer_pushes("local-settings.json", "theirs\n")
+        head = self.head()
+        code, out = self.pull()  # only the remote moved: the fast-forward path
+        self.assertNotEqual(code, 0, out)
+        self.assertEqual((self.repo / "local-settings.json").read_text(), "mine\n")
+        self.assertEqual(self.head(), head)
+        self.commit_on_branch("mine.txt", "mine\n")
+        head = self.head()
+        code, out = self.pull()  # both sides moved: the merge path
+        self.assertNotEqual(code, 0, out)
+        self.assertEqual((self.repo / "local-settings.json").read_text(), "mine\n")
+        self.assertEqual(self.head(), head)
+        self.assertFalse(self.merging())
+
     def test_abort_sync_leaves_a_merge_this_script_did_not_start(self):
         self.publish()  # origin/<this branch> exists, as after any push
         git(self.repo, "checkout", "-q", "-b", "feature/side-codex")
@@ -670,6 +719,16 @@ class GitSafeFastForwardTest(unittest.TestCase):
         code, out = self.ff()
         self.assertEqual(code, 0, out)
         self.assertIn("fast-forward=up-to-date", out)
+        self.assertEqual(self.head(), head)
+
+    def test_an_ignored_local_file_is_never_overwritten(self):
+        (self.repo / ".git/info/exclude").write_text(".mercury/\nlocal-settings.json\n")
+        (self.repo / "local-settings.json").write_text("mine\n")
+        self.land("local-settings.json", "theirs\n")
+        head = self.head()
+        code, out = self.ff()
+        self.assertNotEqual(code, 0, out)
+        self.assertEqual((self.repo / "local-settings.json").read_text(), "mine\n")
         self.assertEqual(self.head(), head)
 
     def test_fast_forwards_and_keeps_local_changes_it_does_not_touch(self):
