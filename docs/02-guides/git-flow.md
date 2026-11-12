@@ -59,11 +59,23 @@ an automatic worktree, must rename it before the first commit.
    `git-safe add`. Then review the merge result, mark it, and conclude with
    `git-safe commit`. If the conflicts cannot be resolved, `git-safe.ps1
    abort-sync` (#719) abandons the merge and restores the branch; it acts only on
-   a task branch and only on a merge of `origin/master` commits. Everything staged
+   a task branch and only on a merge that `sync`, `pull` or `merge` started. Everything staged
    since the merge began is discarded, including conflict resolutions; unstaged
    edits and untracked files are kept. Neither command
    pushes, rebases or takes another base; raw `git merge` (including
    `git merge --abort`) stays forbidden.
+   When the task branch itself gained commits on the remote that the worktree
+   lacks (a helper pull request merged into it, or a second session's push),
+   run `scripts/codex/git-safe.ps1 pull` (#783). With the same refusals as
+   `sync`, it fetches `origin/<the task branch>` and fast-forwards; when the
+   local branch has commits of its own as well, it merges with `--no-ff
+   --no-commit` and the merge is reviewed, marked and concluded like a `sync`
+   merge, or abandoned with `abort-sync`. Raw `git pull` stays forbidden.
+   To take another task branch into this one (a helper branch whose work
+   belongs in the task), run `git-safe.ps1 merge <branch>` for a local branch
+   or `git-safe.ps1 merge origin/<branch>` for one on origin (#783): the same
+   uncommitted merge, concluded or abandoned the same way. It does not take
+   `master` (use `sync`) or the current branch (use `pull`).
 4. The assigned delivery owner opens the Issue-linked PR into `master`; the
    coordinating agent obtains independent native subagent review as described in
    [PR Review and Merge](#pr-review-and-merge).
@@ -225,8 +237,10 @@ type: feat / fix / refactor / chore / docs
 |---------|-----------|
 | Guarded staging of explicit assigned files | `git switch` / `git checkout <branch>` |
 | Guarded commit when assigned and reviewed | `git branch -d` / `git reset` / `git stash` |
-| Guarded push to the assigned task branch when assigned | `git rebase` / `git merge` (use `git-safe.ps1 sync`) |
+| Guarded push to the assigned task branch when assigned | `git rebase` / `git merge` (use `git-safe.ps1 sync`, `pull` or `merge`) |
 | Guarded `git-safe.ps1 sync` of `origin/master` into the task branch, and `git-safe.ps1 abort-sync` to abandon it | |
+| Guarded `git-safe.ps1 pull` of the task branch's own remote branch into the worktree | `git pull` (use `git-safe.ps1 pull`) |
+| Guarded `git-safe.ps1 merge <branch>` of another task branch into the task branch | |
 | `git-safe.ps1 fast-forward` of the main checkout on `master` | |
 | `git diff` / `git status` / `git log` | `git add -A` / `git add .` |
 | | `git push --force` |

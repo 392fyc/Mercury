@@ -24,6 +24,39 @@ The project must not edit these paths by hand or initiate changes to their conte
 under `packs/`, or the tool), and then reaches the project by running `python tools/mercury.py apply --target <project>`
 from a Mercury checkout.
 
+## Reporting a problem to Mercury
+
+A project does not change the Mercury area, so a problem in it is fixed in Mercury. The agent that meets the problem
+reports it itself; the user is not the messenger. A problem is anything Mercury installed that blocks legitimate work,
+lacks an entry the work needs, contradicts another installed rule, or states something that turned out false.
+
+1. Find the repository: `source_repo` in `.mercury/lock.json` (in Mercury itself, its own repository). `source_commit`
+   in the same file is the installed release. If the lock file names no repository, ask the user where Mercury's
+   Issues are kept.
+2. Search its open Issues (`gh issue list -R <source_repo> --search "<keywords>"`). If one covers the problem, add a
+   comment with the new evidence instead of opening another.
+3. Otherwise open one (`gh issue create -R <source_repo>`) whose title starts with `[downstream-feedback]`, and add the
+   label `downstream-feedback` when the account may set it (GitHub drops a label silently when it may not; the
+   title prefix is what the report is found by). The Issue states:
+   - what was being done and which installed file or command was involved (path under `.mercury/packs/`, or the
+     managed section);
+   - what happened: the command and its exact output, or the rule's wording, and what the agent did instead;
+   - what is needed: the missing entry or the corrected behavior, as an outcome, not as a patch;
+   - the installed release (`source_commit`), the host (Claude Code or Codex) and the operating system;
+   - whether work is blocked now or a compliant detour exists.
+4. Tell the user the link, record it where the project tracks the blocked task, and continue with what does not depend
+   on the fix. The fix arrives through the next Mercury update.
+
+The repository may be public: no credentials, tokens or secret-matching text, no machine paths, no private content of
+the project (describe its role, for example "a downstream game project", and quote only what the problem needs).
+The standing authorization covers opening such an Issue and commenting on one. It does not cover pull requests, labels
+on other Issues, closing Issues, or any write to Mercury's branches. A detour that breaks the rule in question is not
+a compliant detour: stop that step and say so in the Issue.
+
+In Mercury, the main agent starts harness work from the open Issues that carry the label `downstream-feedback` or
+the title prefix `[downstream-feedback]` (and adds the label where it is missing), checks each report
+against the code and the evidence before acting on it (a report is a claim, not a finding), and answers on the Issue.
+
 ## The project area
 
 The project owns its own roles and skills and declares them in `.mercury/local.json`; Mercury updates never change them.

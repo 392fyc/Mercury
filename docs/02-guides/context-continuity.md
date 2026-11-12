@@ -49,7 +49,11 @@ Limits of the lane brief as wired today:
 
 Rules for the pages:
 
-- **Size.** All briefs injected into one session share 6,000 characters. The hook never cuts a page: a page that does
+- **Size.** All briefs injected into one session share 6,000 characters. The count is in characters, not bytes: a
+  Chinese character counts one, although it takes three bytes in the file, so `wc -c` (and `wc -m` in a shell
+  without a UTF-8 locale) reports about three times the real size of a Chinese page. Measure with
+  `python -c "import sys;print(len(open(sys.argv[1],encoding='utf-8').read().strip()))" <file>`, or read the
+  count the hook prints beside each injected page. The hook never cuts a page: a page that does
   not fit is left out, and the session is told to read the file and to tell the user that the page needs trimming.
   If the hook's whole output would still pass 9,500 characters (very long paths), it injects no page body and names
   the files to read instead.

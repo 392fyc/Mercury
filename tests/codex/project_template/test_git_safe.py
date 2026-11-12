@@ -362,7 +362,7 @@ class GitSafeSyncTest(unittest.TestCase):
         git(self.repo, "merge", "-q", "--no-ff", "--no-commit", "feature/side-codex")
         code, out = self.run_ps("git-safe.ps1", "abort-sync")
         self.assertNotEqual(code, 0)
-        self.assertIn("not a git-safe sync of origin/master", out)
+        self.assertIn("was not started by git-safe sync, pull or merge", out)
         self.assertTrue(self.merging())
 
     def test_abort_sync_refuses_a_protected_branch(self):
@@ -381,6 +381,243 @@ class GitSafeSyncTest(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertIn("No staged changes found", out)
 
+
+@unittest.skipUnless(PWSH, "PowerShell is not available")
+class GitSafePullTest(unittest.TestCase):
+    """git-safe pull brings the task branch up to origin/<the same branch> (#783)."""
+
+    BRANCH = "feature/TASK-1-codex"
+    setUp = GitSafeSyncTest.setUp
+    run_ps = GitSafeSyncTest.run_ps
+    commit_on_branch = GitSafeSyncTest.commit_on_branch
+    merging = GitSafeSyncTest.merging
+
+    def publish(self):
+        git(self.repo, "push", "-q", "origin", self.BRANCH)
+
+    def peer_pushes(self, name, text):
+        """Another checkout adds a commit to the task branch on origin, as a merged helper pull request does."""
+        git(self.trunk, "fetch", "-q", "origin")
+        git(self.trunk, "checkout", "-q", "-B", self.BRANCH, f"origin/{self.BRANCH}")
+        (self.trunk / name).write_text(text)
+        git(self.trunk, "add", name)
+        git(self.trunk, "commit", "-q", "-m", f"peer {name}")
+        git(self.trunk, "push", "-q", "origin", self.BRANCH)
+        return git(self.trunk, "rev-parse", "HEAD").strip()
+
+    def pull(self, *args):
+        return self.run_ps("git-safe.ps1", "pull", *args)
+
+    def head(self):
+        return git(self.repo, "rev-parse", "HEAD").strip()
+
+    def test_fast_forwards_when_only_the_remote_moved(self):
+        self.publish()
+        (self.repo / "note.txt").write_text("untracked, untouched\n")
+        peer = self.peer_pushes("theirs.txt", "theirs\n")
+        code, out = self.pull()
+        self.assertEqual(code, 0, out)
+        self.assertIn("pull=fast-forwarded", out)
+        self.assertEqual(self.head(), peer)
+        self.assertFalse(self.merging())
+        self.assertEqual((self.repo / "note.txt").read_text(), "untracked, untouched\n")
+        code, out = self.pull()
+        self.assertEqual(code, 0, out)
+        self.assertIn("pull=up-to-date", out)
+
+    def test_local_commits_ahead_of_the_remote_are_up_to_date(self):
+        self.publish()
+        self.commit_on_branch("mine.txt", "mine\n")
+        head = self.head()
+        code, out = self.pull()
+        self.assertEqual(code, 0, out)
+        self.assertIn("pull=up-to-date", out)
+        self.assertEqual(self.head(), head)
+
+    def test_both_sides_moved_stops_as_a_merge_concluded_with_git_safe_commit(self):
+        self.publish()
+        peer = self.peer_pushes("theirs.txt", "theirs\n")
+        self.commit_on_branch("mine.txt", "mine\n")
+        code, out = self.pull()
+        self.assertEqual(code, 0, out)
+        self.assertIn("pull=merged", out)
+        self.assertTrue(self.merging())
+        self.assertEqual(self.run_ps("guard.ps1", "mark-review")[0], 0)
+        code, out = self.run_ps("git-safe.ps1", "commit", "-Message", "chore(TASK-1): merge the remote branch")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(git(self.repo, "rev-list", "--parents", "-n", "1", "HEAD").split()[2], peer)
+        self.assertTrue((self.repo / "mine.txt").exists() and (self.repo / "theirs.txt").exists())
+
+    def test_conflicts_are_listed_and_abort_sync_restores_the_branch(self):
+        self.publish()
+        self.peer_pushes("shared.txt", "peer edit\n")
+        self.commit_on_branch("shared.txt", "branch edit\n")
+        head = self.head()
+        code, out = self.pull()
+        self.assertEqual(code, 1, out)
+        self.assertIn("pull=conflicts", out)
+        self.assertIn("conflict: shared.txt", out)
+        code, out = self.run_ps("git-safe.ps1", "abort-sync")
+        self.assertEqual(code, 0, out)
+        self.assertFalse(self.merging())
+        self.assertEqual(self.head(), head)
+        self.assertEqual((self.repo / "shared.txt").read_text(), "branch edit\n")
+
+    def test_refusals_change_nothing(self):
+        head = self.head()
+        code, out = self.pull()  # never published
+        self.assertNotEqual(code, 0)
+        self.assertIn("origin has no branch", out)
+        self.publish()
+        self.peer_pushes("theirs.txt", "theirs\n")
+        (self.repo / "shared.txt").write_text("unstaged\n")
+        code, out = self.pull()
+        self.assertNotEqual(code, 0)
+        self.assertIn("before git-safe pull", out)
+        git(self.repo, "checkout", "-q", "--", "shared.txt")
+        (self.repo / "theirs.txt").write_text("untracked, would be overwritten\n")
+        code, out = self.pull()
+        self.assertNotEqual(code, 0)
+        self.assertIn("fast-forward to origin/feature/TASK-1-codex was refused", out)
+        self.assertEqual((self.repo / "theirs.txt").read_text(), "untracked, would be overwritten\n")
+        (self.repo / "theirs.txt").unlink()
+        for args in (("origin",), ("-Message", "x")):
+            with self.subTest(args=args):
+                code, out = self.pull(*args)
+                self.assertNotEqual(code, 0)
+                self.assertIn("takes no arguments", out)
+        self.assertEqual(self.head(), head)
+        git(self.repo, "checkout", "-q", "-B", "master")
+        code, out = self.pull()
+        self.assertNotEqual(code, 0)
+        self.assertIn("Protected branch 'master'", out)
+
+    def test_pull_never_writes_to_origin_and_reports_an_unreachable_origin(self):
+        self.publish()
+        peer = self.peer_pushes("theirs.txt", "theirs\n")
+        self.commit_on_branch("mine.txt", "mine\n")
+        self.assertEqual(self.pull()[0], 0)
+        self.assertEqual(git(self.origin, "rev-parse", f"refs/heads/{self.BRANCH}").strip(), peer)
+        self.assertEqual(self.run_ps("git-safe.ps1", "abort-sync")[0], 0)
+        head = self.head()
+        git(self.repo, "remote", "set-url", "origin", (self.repo.parent / "gone.git").as_posix())
+        code, out = self.pull()
+        self.assertNotEqual(code, 0)
+        self.assertIn("Unable to read origin", out)  # also under Windows PowerShell 5.1, where stderr used to stop the script
+        self.assertEqual(self.head(), head)
+
+    def test_abort_sync_leaves_a_merge_this_script_did_not_start(self):
+        self.publish()  # origin/<this branch> exists, as after any push
+        git(self.repo, "checkout", "-q", "-b", "feature/side-codex")
+        self.commit_on_branch("side.txt", "side\n")
+        git(self.repo, "checkout", "-q", self.BRANCH)
+        self.commit_on_branch("mine.txt", "mine\n")
+        git(self.repo, "merge", "-q", "--no-ff", "--no-commit", "feature/side-codex")
+        code, out = self.run_ps("git-safe.ps1", "abort-sync")
+        self.assertNotEqual(code, 0)
+        self.assertIn("was not started by git-safe", out)
+        self.assertTrue(self.merging())
+
+
+@unittest.skipUnless(PWSH, "PowerShell is not available")
+class GitSafeMergeTest(unittest.TestCase):
+    """git-safe merge takes another task branch into the current one and stops before committing (#783)."""
+
+    BRANCH = "feature/TASK-1-codex"
+    HELPER = "fix/TASK-1-helper-codex"
+    setUp = GitSafeSyncTest.setUp
+    run_ps = GitSafeSyncTest.run_ps
+    commit_on_branch = GitSafeSyncTest.commit_on_branch
+    merging = GitSafeSyncTest.merging
+
+    def merge(self, *args):
+        return self.run_ps("git-safe.ps1", "merge", *args)
+
+    def head(self):
+        return git(self.repo, "rev-parse", "HEAD").strip()
+
+    def local_helper(self, name, text):
+        git(self.repo, "checkout", "-q", "-b", self.HELPER)
+        self.commit_on_branch(name, text)
+        tip = self.head()
+        git(self.repo, "checkout", "-q", self.BRANCH)
+        return tip
+
+    def test_a_local_branch_is_merged_and_concluded_with_git_safe_commit(self):
+        tip = self.local_helper("helper.txt", "helper\n")
+        self.commit_on_branch("mine.txt", "mine\n")
+        code, out = self.merge(self.HELPER)
+        self.assertEqual(code, 0, out)
+        self.assertIn("merge=merged", out)
+        self.assertTrue(self.merging())
+        self.assertEqual((self.repo / ".git/mercury-git-safe-merge").read_text().strip(), tip)  # recorded when started
+        self.assertEqual(self.run_ps("git-safe.ps1", "commit", "-Message", "chore(TASK-1): merge the helper")[0], 1)  # no review mark
+        self.assertEqual(self.run_ps("guard.ps1", "mark-review")[0], 0)
+        code, out = self.run_ps("git-safe.ps1", "commit", "-Message", "chore(TASK-1): merge the helper")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(git(self.repo, "rev-list", "--parents", "-n", "1", "HEAD").split()[2], tip)
+        self.assertEqual(git(self.repo, "rev-parse", self.HELPER).strip(), tip)  # the source branch is not moved
+        self.assertFalse((self.repo / ".git/mercury-git-safe-merge").exists())  # the record ends with the merge
+        code, out = self.merge(self.HELPER)
+        self.assertEqual(code, 0, out)
+        self.assertIn("merge=up-to-date", out)
+
+    def test_a_branch_on_origin_is_fetched_and_merged(self):
+        git(self.trunk, "checkout", "-q", "-b", self.HELPER)
+        (self.trunk / "helper.txt").write_text("helper\n")
+        git(self.trunk, "add", "helper.txt")
+        git(self.trunk, "commit", "-q", "-m", "helper")
+        git(self.trunk, "push", "-q", "origin", self.HELPER)
+        tip = git(self.trunk, "rev-parse", "HEAD").strip()
+        code, out = self.merge(self.HELPER)  # not a local branch
+        self.assertNotEqual(code, 0)
+        self.assertIn("For a branch on origin", out)  # the hint; long messages wrap in the error display
+        code, out = self.merge(f"origin/{self.HELPER}")
+        self.assertEqual(code, 0, out)
+        self.assertIn("merge=merged", out)
+        self.assertEqual(git(self.repo, "rev-parse", "MERGE_HEAD").strip(), tip)
+
+    def test_conflicts_are_listed_and_abort_sync_restores_the_branch(self):
+        self.local_helper("shared.txt", "helper edit\n")
+        self.commit_on_branch("shared.txt", "branch edit\n")
+        head = self.head()
+        code, out = self.merge(self.HELPER)
+        self.assertEqual(code, 1, out)
+        self.assertIn("merge=conflicts", out)
+        self.assertIn("conflict: shared.txt", out)
+        code, out = self.run_ps("git-safe.ps1", "abort-sync")
+        self.assertEqual(code, 0, out)
+        self.assertFalse(self.merging())
+        self.assertEqual(self.head(), head)
+        self.assertEqual((self.repo / "shared.txt").read_text(), "branch edit\n")
+
+    def test_refusals_change_nothing(self):
+        self.local_helper("helper.txt", "helper\n")
+        head = self.head()
+        cases = (((), "exactly one argument"), ((self.HELPER, "extra"), "exactly one argument"),
+                 ((self.HELPER, "-Message", "x"), "exactly one argument"),
+                 (("master",), "does not take a protected branch"), (("origin/master",), "does not take a protected branch"),
+                 ((self.BRANCH,), "Use git-safe pull"), (("origin/feature/none-codex",), "origin has no branch"),
+                 (("feature/none-codex",), "There is no local branch"),
+                 (("Master",), "does not take a protected branch"), (("origin/origin/x",), "origin has no branch"),
+                 (("--abort",), "plain branch name"), (("a..b",), "plain branch name"), (("HEAD~1",), "plain branch name"),
+                 (("refs/heads/x:y",), "plain branch name"))
+        for args, reason in cases:
+            with self.subTest(args=args):
+                code, out = self.merge(*args)
+                self.assertNotEqual(code, 0)
+                self.assertIn(reason, out)
+                self.assertFalse(self.merging())
+        (self.repo / "shared.txt").write_text("unstaged\n")
+        code, out = self.merge(self.HELPER)
+        self.assertNotEqual(code, 0)
+        self.assertIn("staged or unstaged changes", out)
+        git(self.repo, "checkout", "-q", "--", "shared.txt")
+        self.assertEqual(self.head(), head)
+        git(self.repo, "checkout", "-q", "-B", "master")
+        code, out = self.merge(self.HELPER)
+        self.assertNotEqual(code, 0)
+        self.assertIn("Protected branch 'master'", out)
 
 
 
