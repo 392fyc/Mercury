@@ -39,10 +39,10 @@
     ".codex/agents/mercury-research.toml": "7d29fd0ec2ec598388b3ca60f6cd5e82a5cb5e473b6cac75ddd4624ad71d502f",
     ".codex/agents/mercury-reviewer.toml": "c7ce9bef0c3d8e38e90986182c581b39b137020282deae63eba75c4e59399ec0",
     ".codex/rules/mercury-git-safety.rules": "a755ec542cfbbc42dd496613fc7978a3c9d0c02b94868c8c1e8338be656b22c7",
-    ".mercury/packs/core/agents.md": "e091598b38215c7faa6eadac132e5c6f3e986381c58d2c5a19994ac80bbc01a2",
+    ".mercury/packs/core/agents.md": "fe502268f5818118817c532853990897280c53e36b84384267a8b91d0bc702a8",
     ".mercury/packs/core/claude.md": "a41db75ae5f575cf43e7f98e25b7bd9eb3488a248005bf9d78895e91476de95c",
     ".mercury/packs/core/docs/mercury-gate.template.json": "92e253fe3f022594e06089b299ae1c8444834f386f7334b0dc25ee527458de39",
-    ".mercury/packs/core/docs/mercury-harness-ownership.md": "fda876a559a41118bd662cfbbab525a51352b422ff5b7b2afed6ade317542226",
+    ".mercury/packs/core/docs/mercury-harness-ownership.md": "9daa404c4bb2a34b67bf07788bf1b393044304c36378747e7c177543d0472a6d",
     ".mercury/packs/core/docs/mercury-scenario-gate.md": "e3d3ebe8974849668d219438cfc13d48871042e1a66aaf4607e10d2e09522b19",
     ".mercury/packs/core/docs/mercury-task-contract.md": "5418af9dc8c6f866357ffbf8908095b83d54c0c9d4e41f1e837a1ef836339ebe",
     ".mercury/packs/core/hooks/readonly_guard.py": "54baec615b515bd5277565492dfaaab72d3cb2d94c5fb0af10c01601f8eaab0f",
@@ -144,7 +144,7 @@
   "mercury_json_sha256": "03e73b8e2f043108012eb3ce864710d9dc0d3f370103b86952f42bbe367ddc99",
   "schema_version": 1,
   "sections": {
-    "AGENTS.md": "b8afc96a536c3911c8c44f3571755a5fdf39579e8e45eab8ed08a5a8e6581a53",
+    "AGENTS.md": "ee60777fe54b582a3c494e225907647e8faf79b2bae7fa3c9ac1d147805c54b1",
     "CLAUDE.md": "c8adcf29c1d31304ea737b7a1a7dd801ed3ce007436a18a2647ef8a68aaf99f1"
   },
   "source": "self"

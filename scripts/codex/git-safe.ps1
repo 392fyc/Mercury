@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true, Position = 0)]
-  [ValidateSet("add", "commit", "push", "sync", "abort-sync", "fast-forward")]
+  [ValidateSet("add", "commit", "push", "sync", "pull", "merge", "abort-sync", "fast-forward")]
   [string]$Action,
 
   [string]$Message,

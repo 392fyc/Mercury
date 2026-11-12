@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true, Position = 0)]
-  [ValidateSet("add", "commit", "push", "sync", "abort-sync", "fast-forward")]
+  [ValidateSet("add", "commit", "push", "sync", "pull", "merge", "abort-sync", "fast-forward")]
   [string]$Action,
 
   [string]$Message,
@@ -295,7 +295,7 @@ function Assert-HasStagedChanges {
   }
 }
 
-function Test-GitPath {
+function Get-GitPath {
   param([string]$Name)
 
   $path = Invoke-Utf8Native "git" @("-C", $repoRoot, "rev-parse", "--git-path", $Name)
@@ -305,7 +305,121 @@ function Test-GitPath {
   if (-not [System.IO.Path]::IsPathRooted($path)) {
     $path = Join-Path $repoRoot $path
   }
-  return (Test-Path -LiteralPath $path)
+  return $path
+}
+
+function Test-GitPath {
+  param([string]$Name)
+
+  return (Test-Path -LiteralPath (Get-GitPath -Name $Name))
+}
+
+# The merge that sync, pull or merge left uncommitted is remembered by its MERGE_HEAD, so that abort-sync abandons only
+# a merge this script started. A stale record is harmless: it is compared with the merge actually in progress.
+$mergeRecordName = "mercury-git-safe-merge"
+
+function Get-MergeHeads {
+  if (-not (Test-GitPath -Name "MERGE_HEAD")) { return @() }
+  return @(Get-Content -LiteralPath (Get-GitPath -Name "MERGE_HEAD") | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { $_.Trim() })
+}
+
+function Save-MergeRecord {
+  $heads = @(Get-MergeHeads)
+  if ($heads.Count -eq 1) {
+    [System.IO.File]::WriteAllText((Get-GitPath -Name $mergeRecordName), $heads[0])
+  }
+}
+
+function Test-RemoteBranch {
+  # True when origin has the branch, false when it has not; throws when origin cannot be read. Read through
+  # Invoke-Utf8Native -WithStderr: under Windows PowerShell 5.1 a redirected stderr line would otherwise stop the script.
+  param([string]$Name)
+
+  $null = Invoke-Utf8Native "git" @("-C", $repoRoot, "ls-remote", "--exit-code", "--heads", "origin", "refs/heads/$Name") -WithStderr
+  if ($LASTEXITCODE -eq 0) { return $true }
+  if ($LASTEXITCODE -eq 2) { return $false }
+  throw "Unable to read origin (git ls-remote exit $LASTEXITCODE). Nothing was changed."
+}
+
+function Get-NulSeparated {
+  # The entries of a `-z` listing: names arrive unquoted, whatever characters they hold.
+  param([string[]]$GitArgs)
+
+  $raw = (@(Invoke-Utf8Native "git" $GitArgs) -join "`n")
+  if ($LASTEXITCODE -ne 0) {
+    throw "git command failed: git $($GitArgs -join ' ')"
+  }
+  return @($raw.Split([char]0) | Where-Object { $_ -ne "" })
+}
+
+function Assert-NoLocalFileInTheWay {
+  # Git refuses a merge that would overwrite an untracked file, except an ignored one: a true merge replaces it
+  # silently, and --no-overwrite-ignore only covers fast-forwards. So before a merge, the paths the other side has and
+  # HEAD lacks are compared with the files Git itself lists as untracked, ignored ones included. Asking Git, not the
+  # disk, keeps a tracked file out of it: on a case-insensitive file system a rename that only changes case would
+  # otherwise look like a file in the way.
+  param([string]$Ref, [string]$Label)
+
+  $added = @(Get-NulSeparated -GitArgs @("-C", $repoRoot, "diff", "-z", "--name-only", "--no-renames", "--diff-filter=A", "HEAD", $Ref))
+  if ($added.Count -eq 0) { return }
+  # Only the top-level entries the other side adds under need listing; that keeps large ignored trees elsewhere out.
+  # Exact, case-sensitive de-duplication: `Sort-Object -Unique` treats `Build` and `build` as one name, and where
+  # they are two folders the dropped one would go unlisted.
+  $topSet = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::Ordinal)
+  foreach ($path in $added) { [void]$topSet.Add($path.Split("/")[0]) }
+  $tops = @($topSet)
+  $local = @(Get-NulSeparated -GitArgs (@("--literal-pathspecs", "-C", $repoRoot, "ls-files", "-z", "--others", "--") + $tops))
+  if ($local.Count -eq 0) { return }
+  $comparer = if ([System.IO.Path]::DirectorySeparatorChar -eq "\") { [System.StringComparer]::OrdinalIgnoreCase } else { [System.StringComparer]::Ordinal }
+  $files = New-Object "System.Collections.Generic.HashSet[string]" ($comparer)
+  $folders = New-Object "System.Collections.Generic.HashSet[string]" ($comparer)
+  foreach ($path in $local) {
+    [void]$files.Add($path)
+    $cut = $path.LastIndexOf("/")
+    while ($cut -gt 0) {
+      if (-not $folders.Add($path.Substring(0, $cut))) { break }
+      $cut = $path.LastIndexOf("/", $cut - 1)
+    }
+  }
+  $inTheWay = New-Object "System.Collections.Generic.List[string]"
+  foreach ($path in $added) {
+    # The same path, a local file where the other side needs a folder, or a local folder where it needs a file.
+    $hit = $files.Contains($path) -or $folders.Contains($path)
+    $cut = $path.LastIndexOf("/")
+    while (-not $hit -and $cut -gt 0) {
+      $hit = $files.Contains($path.Substring(0, $cut))
+      $cut = $path.LastIndexOf("/", $cut - 1)
+    }
+    if ($hit) { $inTheWay.Add($path) }
+  }
+  if ($inTheWay.Count -gt 0) {
+    $shown = (@($inTheWay) | Select-Object -First 10) -join ", "
+    throw "Merging $Label would overwrite local files that are not tracked here: $shown. Move them aside first. Nothing was changed."
+  }
+}
+
+function Complete-GuardedMerge {
+  # Merge $Ref into the current branch without committing, and report under the action's name.
+  param([string]$Ref, [string]$Label, [string]$Verb)
+
+  Assert-NoLocalFileInTheWay -Ref $Ref -Label $Label
+  & git -C $repoRoot merge --no-ff --no-commit --no-autostash --no-overwrite-ignore $Ref
+  $mergeExit = $LASTEXITCODE
+  Save-MergeRecord
+  $unmerged = @(git -C $repoRoot diff --name-only --diff-filter=U)
+  if ($unmerged.Count -gt 0) {
+    Write-Output "$Verb=conflicts"
+    $unmerged | ForEach-Object { Write-Output "conflict: $_" }
+    Write-Output "Resolve each file keeping the intent of both sides, stage it with git-safe add, review the result, run guard.ps1 mark-review, then git-safe commit."
+    Write-Output "If the conflicts cannot be resolved, git-safe abort-sync abandons the merge and restores the branch (everything staged since the merge began is discarded)."
+    exit 1
+  }
+  if ($mergeExit -ne 0 -or -not (Test-GitPath -Name "MERGE_HEAD")) {
+    throw "git merge of $Label failed (exit $mergeExit)."
+  }
+  Write-Output "$Verb=merged"
+  Write-Output "The merge is staged but not committed: review it, run guard.ps1 mark-review, then git-safe commit."
+  exit 0
 }
 
 function Assert-NoOperationInProgress {
@@ -320,13 +434,14 @@ function Assert-NoOperationInProgress {
 
 function Assert-ReadyToSync {
   # Every state that a merge would mix into, or that a merge would leave half done, is refused before anything changes.
-  Assert-NoOperationInProgress -Command "sync"
+  param([string]$Command = "sync")
+  Assert-NoOperationInProgress -Command $Command
   $changes = git -C $repoRoot status --porcelain --untracked-files=no
   if ($LASTEXITCODE -ne 0) {
     throw "Unable to inspect the working tree."
   }
   if (-not [string]::IsNullOrWhiteSpace(($changes -join ""))) {
-    throw "The branch has staged or unstaged changes. Commit them through git-safe, or set them aside, before git-safe sync."
+    throw "The branch has staged or unstaged changes. Commit them through git-safe, or set them aside, before git-safe $Command."
   }
 }
 
@@ -349,6 +464,14 @@ switch ($Action) {
     Assert-HasStagedChanges
     $gitArgs = @("-C", $repoRoot, "commit", "-m", $Message)
     Invoke-Git -GitArgs $gitArgs
+    try {
+      if (-not (Test-GitPath -Name "MERGE_HEAD")) {
+        # The merge this script started, if any, is concluded: its record must not outlive it.
+        Remove-Item -LiteralPath (Get-GitPath -Name $mergeRecordName) -ErrorAction SilentlyContinue
+      }
+    } catch {
+      # Housekeeping only: a commit that succeeded is never reported as failed over it.
+    }
     try {
       Invoke-Guard -GuardAction "clear-review"
     } catch {
@@ -384,49 +507,122 @@ switch ($Action) {
       Write-Output "sync=up-to-date"
       exit 0
     }
-    & git -C $repoRoot merge --no-ff --no-commit $trunkRef
-    $mergeExit = $LASTEXITCODE
-    $unmerged = @(git -C $repoRoot diff --name-only --diff-filter=U)
-    if ($unmerged.Count -gt 0) {
-      Write-Output "sync=conflicts"
-      $unmerged | ForEach-Object { Write-Output "conflict: $_" }
-      Write-Output "Resolve each file keeping the intent of both sides, stage it with git-safe add, review the result, run guard.ps1 mark-review, then git-safe commit."
-      Write-Output "If the conflicts cannot be resolved, git-safe abort-sync abandons the merge and restores the branch (everything staged since the merge began is discarded)."
-      exit 1
+    Complete-GuardedMerge -Ref $trunkRef -Label "origin/$trunk" -Verb "sync"
+  }
+  "pull" {
+    # Bring the current task branch up to origin/<the same branch> (#783): commits that reached the remote branch
+    # without passing through this worktree, such as a helper pull request merged into it or a second session's push.
+    # A fast-forward when this branch has no commits of its own; otherwise a merge left uncommitted, concluded like sync.
+    if (($Arguments -and $Arguments.Count -gt 0) -or -not [string]::IsNullOrEmpty($Message)) {
+      throw "git-safe pull takes no arguments: it always brings the current task branch up to the branch of the same name on origin."
     }
-    if ($mergeExit -ne 0 -or -not (Test-GitPath -Name "MERGE_HEAD")) {
-      throw "git merge of origin/$trunk failed (exit $mergeExit)."
+    Invoke-Guard -GuardAction "pre-stage"
+    Assert-ReadyToSync -Command "pull"
+    $branch = "$(git -C $repoRoot symbolic-ref --quiet --short HEAD)".Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($branch)) {
+      throw "git-safe pull needs a checked-out task branch."
     }
-    Write-Output "sync=merged"
-    Write-Output "The merge is staged but not committed: review it, run guard.ps1 mark-review, then git-safe commit."
-    exit 0
+    $remoteRef = "refs/remotes/origin/$branch"
+    if (-not (Test-RemoteBranch -Name $branch)) {
+      throw "origin has no branch '$branch'; there is nothing to pull. Nothing was changed."
+    }
+    Invoke-Git -GitArgs @("-C", $repoRoot, "fetch", "--no-tags", "--no-recurse-submodules", "origin", "+refs/heads/${branch}:$remoteRef")
+    $before = (git -C $repoRoot rev-parse HEAD).Trim()
+    $target = (git -C $repoRoot rev-parse $remoteRef).Trim()
+    & git -C $repoRoot merge-base --is-ancestor $remoteRef HEAD
+    if ($LASTEXITCODE -eq 0) {
+      Write-Output "pull=up-to-date"
+      Write-Output "head=$before"
+      exit 0
+    }
+    & git -C $repoRoot merge-base --is-ancestor HEAD $remoteRef
+    if ($LASTEXITCODE -eq 0) {
+      # --no-autostash: with merge.autoStash set, Git would stash local changes, move HEAD and possibly leave them stashed.
+      & git -C $repoRoot merge --ff-only --no-autostash --no-overwrite-ignore --quiet $remoteRef
+      if ($LASTEXITCODE -ne 0 -or (git -C $repoRoot rev-parse HEAD).Trim() -ne $target) {
+        throw "The fast-forward to origin/$branch was refused, usually because it would overwrite an untracked or ignored local file. HEAD was not moved; check git status."
+      }
+      Write-Output "pull=fast-forwarded"
+      Write-Output "from=$before"
+      Write-Output "head=$target"
+      exit 0
+    }
+    # Both sides have commits (also after the remote branch was rewritten): stop as a merge for review.
+    Complete-GuardedMerge -Ref $remoteRef -Label "origin/$branch" -Verb "pull"
+  }
+  "merge" {
+    # Merge another task branch into the current one (#783), for example a helper branch whose work belongs in this
+    # task: `merge <branch>` takes the local branch, `merge origin/<branch>` fetches and takes the remote one. Never
+    # committed here; concluded like sync. The trunk comes in through sync, this branch's own remote through pull.
+    if (-not [string]::IsNullOrEmpty($Message) -or -not $Arguments -or $Arguments.Count -ne 1) {
+      throw "git-safe merge takes exactly one argument: <branch> for a local task branch, or origin/<branch> for one on origin."
+    }
+    $source = [string]$Arguments[0]
+    if ($source -cnotmatch '^(origin/)?[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)*\z' -or $source.Contains("..") -or $source.EndsWith(".lock")) {
+      throw "git-safe merge takes a plain branch name (letters, digits, '.', '_', '-', '/'), optionally prefixed with origin/."
+    }
+    Invoke-Guard -GuardAction "pre-stage"
+    Assert-ReadyToSync -Command "merge"
+    $trunk = Get-IntegrationBranch
+    $branch = "$(git -C $repoRoot symbolic-ref --quiet --short HEAD)".Trim()
+    $fromOrigin = $source.StartsWith("origin/")
+    $name = if ($fromOrigin) { $source.Substring(7) } else { $source }
+    if (@("develop", "main", "master", $trunk) -contains $name) {
+      throw "git-safe merge does not take a protected branch. Use git-safe sync for origin/$trunk."
+    }
+    if ($name -ceq $branch) {
+      throw "'$name' is the current branch. Use git-safe pull to take in its commits from origin."
+    }
+    if ($fromOrigin) {
+      if (-not (Test-RemoteBranch -Name $name)) {
+        throw "origin has no branch '$name'. Nothing was changed."
+      }
+      $ref = "refs/remotes/origin/$name"
+      Invoke-Git -GitArgs @("-C", $repoRoot, "fetch", "--no-tags", "--no-recurse-submodules", "origin", "+refs/heads/${name}:$ref")
+    } else {
+      $ref = "refs/heads/$name"
+      & git -C $repoRoot show-ref --verify --quiet $ref
+      if ($LASTEXITCODE -ne 0) {
+        throw "There is no local branch '$name'. For a branch on origin, name it origin/$name. Nothing was changed."
+      }
+    }
+    & git -C $repoRoot merge-base --is-ancestor $ref HEAD
+    if ($LASTEXITCODE -eq 0) {
+      Write-Output "merge=up-to-date"
+      exit 0
+    }
+    Complete-GuardedMerge -Ref $ref -Label $source -Verb "merge"
   }
   "abort-sync" {
     $trunk = Get-IntegrationBranch
     $trunkRef = "refs/remotes/origin/$trunk"
-    # Abandon a merge that sync left unconcluded (#719); raw `git merge --abort` stays forbidden. Only a merge of trunk
-    # commits is abandoned, so this never discards some other operation.
+    # Abandon a merge that sync, pull or merge left unconcluded (#719, #783); raw `git merge --abort` stays forbidden.
+    # Only a merge this script recorded when it started it is abandoned, so this never discards some other operation.
     if (($Arguments -and $Arguments.Count -gt 0) -or -not [string]::IsNullOrEmpty($Message)) {
-      throw "git-safe abort-sync takes no arguments: it abandons the merge that git-safe sync started."
+      throw "git-safe abort-sync takes no arguments: it abandons the merge that git-safe sync, pull or merge started."
     }
     Invoke-Guard -GuardAction "pre-stage"
     if (-not (Test-GitPath -Name "MERGE_HEAD")) {
       throw "No merge is in progress; there is nothing for git-safe abort-sync to abandon."
     }
-    $mergeHeadPath = Invoke-Utf8Native "git" @("-C", $repoRoot, "rev-parse", "--git-path", "MERGE_HEAD")
-    if (-not [System.IO.Path]::IsPathRooted($mergeHeadPath)) {
-      $mergeHeadPath = Join-Path $repoRoot $mergeHeadPath
-    }
-    $mergeHeads = @(Get-Content -LiteralPath $mergeHeadPath | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    $fromTrunk = $false
+    $mergeHeads = @(Get-MergeHeads)
+    $ours = $false
     if ($mergeHeads.Count -eq 1) {
-      & git -C $repoRoot merge-base --is-ancestor $mergeHeads[0].Trim() $trunkRef
-      $fromTrunk = ($LASTEXITCODE -eq 0)
+      $recordPath = Get-GitPath -Name $mergeRecordName
+      if (Test-Path -LiteralPath $recordPath) {
+        $ours = ((Get-Content -LiteralPath $recordPath -Raw).Trim() -eq $mergeHeads[0])
+      }
+      if (-not $ours) {
+        # A sync started by a release that kept no record: a merge of trunk commits.
+        & git -C $repoRoot merge-base --is-ancestor $mergeHeads[0] $trunkRef
+        $ours = ($LASTEXITCODE -eq 0)
+      }
     }
-    if (-not $fromTrunk) {
-      throw "The merge in progress is not a git-safe sync of origin/$trunk; abandon it by hand or ask the user."
+    if (-not $ours) {
+      throw "The merge in progress was not started by git-safe sync, pull or merge; abandon it by hand or ask the user."
     }
     Invoke-Git -GitArgs @("-C", $repoRoot, "merge", "--abort")
+    Remove-Item -LiteralPath (Get-GitPath -Name $mergeRecordName) -ErrorAction SilentlyContinue
     Write-Output "sync=aborted"
     Write-Output "head=$((git -C $repoRoot rev-parse HEAD).Trim())"
     exit 0
@@ -465,7 +661,7 @@ switch ($Action) {
       throw "$trunk has commits that origin/$trunk lacks; a fast-forward is impossible. HEAD was not moved (origin/$trunk was refreshed)."
     }
     # --no-autostash: with merge.autoStash set, Git would stash local changes, move HEAD and possibly leave them stashed.
-    & git -C $repoRoot merge --ff-only --no-autostash --quiet $trunkRef
+    & git -C $repoRoot merge --ff-only --no-autostash --no-overwrite-ignore --quiet $trunkRef
     if ($LASTEXITCODE -ne 0 -or (git -C $repoRoot rev-parse HEAD).Trim() -ne $target) {
       throw "The fast-forward was refused, usually because it would overwrite local changes. HEAD was not moved; check git status."
     }

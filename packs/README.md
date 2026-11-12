@@ -351,7 +351,7 @@ update branch, incomplete pagination, unreadable data). Credentials are redacted
 ## The git-safe pack
 
 Optional. It installs Mercury's controlled Git entry into a project: `.mercury/packs/git-safe/scripts/git-safe.ps1`
-(`add` explicit files, `commit`, `push`, `sync`, `abort-sync`, `fast-forward`) and the guard it calls, `scripts/guard.ps1`
+(`add` explicit files, `commit`, `push`, `sync`, `pull`, `merge`, `abort-sync`, `fast-forward`) and the guard it calls, `scripts/guard.ps1`
 (`mark-review`, `pre-stage`, `pre-commit`, `pre-push`, `pre-merge`), and adds a managed-section paragraph that routes
 Git writes through it. These are the same scripts Mercury uses; Mercury's `scripts/codex/git-safe.ps1` and `guard.ps1`
 only forward to `packs/git-safe/scripts/` (Issue #723).
@@ -367,6 +367,28 @@ only forward to `packs/git-safe/scripts/` (Issue #723).
   arguments, or local changes the update would overwrite, and keeps the ones it does not touch. It prints `fast-forward=up-to-date` or `fast-forward=updated` with
   the commits, and lists initialized submodules whose recorded commit now differs without updating them. A scheduler
   on the user's machine may run it; Mercury installs none.
+- **The task branch's own remote.** `pull` (Issue #783) brings the current task branch up to `origin/<the same
+  branch>`, for commits that reached the remote branch without passing through this worktree: a helper pull request
+  merged into it, or a second session's push. It takes no arguments and refuses protected branches, a detached HEAD,
+  uncommitted changes to tracked files, an operation in progress and a branch that origin does not have. It
+  fast-forwards when the local branch has no commits of its own (`pull=fast-forwarded`); when both sides have
+  commits it merges with `--no-ff --no-commit` and stops (`pull=merged`, or `pull=conflicts` with exit 1), to be
+  reviewed, marked and concluded with `commit`, or abandoned with `abort-sync`. It never pushes. If the remote
+  branch was rewritten, the result is such a merge too; review it before concluding.
+- **Another task branch.** `merge <branch>` (Issue #783) merges a local task branch into the current one, and
+  `merge origin/<branch>` fetches that branch from origin and merges it: for a helper branch whose work belongs in
+  this task, without a pull request between the two branches. It takes exactly one plain branch name, with the
+  same refusals as `sync`, and refuses a protected branch (the trunk comes in through `sync`) and the current
+  branch (use `pull`). The merge is always `--no-ff --no-commit` (`merge=merged`, `merge=conflicts` with exit 1, or
+  `merge=up-to-date`); the source branch is not moved and nothing is pushed.
+- **Local files.** `sync`, `pull`, `merge` and `fast-forward` do not replace a local file that is not tracked,
+  ignored files included (local settings, scratch output); they refuse and leave the branch where it was. A
+  fast-forward relies on Git's `--no-overwrite-ignore`. Git replaces an ignored file silently in a true merge, so
+  before one the script compares the paths the other side adds with the files Git lists as untracked, and also
+  refuses a local file that sits where a folder is needed or the reverse.
+- **Abandoning.** `abort-sync` abandons only a merge that `sync`, `pull` or `merge` started: the script records the
+  merged commit in the Git directory when it starts one and compares it with the merge in progress. A merge started
+  any other way is left alone.
 - **Integration branch.** `sync` merges `origin/<params.integration_branch>`; `pre-merge` with `-NativeReviewReceipt`
   requires the PR to target it; it is protected like `develop`, `main` and `master`. Without the parameter the
   branch is `master`.
