@@ -16,6 +16,11 @@ tools/          mercury.py：check / apply --target 装载 pack；harness_monito
 scripts/        Mercury 专用维护脚本与 Codex 受控 Git 脚本
 ```
 
+## deploy 工作流运行器
+
+`deploy` pack 的 verify 工作流默认使用 `ubuntu-latest`。下游项目可在 `.mercury/config.json` 的
+`params.verify_runs_on` 中指定一个运行器名称或一组标签；该配置只作用于 `Mercury verify`，不会改变 update 工作流的运行器设置。
+
 ## 角色定义
 
 Claude Code 的角色定义在 `.claude/agents/mercury-*.md`，Codex 的在 `.codex/agents/mercury-*.toml`；二者由 `tools/mercury.py` 从 `packs/core/roles/` 单一来源生成，不手工修改。`.codex/agents/main.toml` 归项目所有，描述主会话本身，不是子代理。当前主会话就是 Mercury 主代理。

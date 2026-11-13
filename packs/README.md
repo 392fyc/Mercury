@@ -199,15 +199,17 @@ human in the loop when (and only when) the conditions below hold. It installs tw
 Both are *rendered* files: the pack holds templates (`templates/*.yml`, with `@@NAME@@` placeholders) and `pack.json`
 maps each destination to its template in a `rendered` object. A destination must be `.github/workflows/mercury-<name>.yml`.
 `tools/mercury.py` fills the placeholders from the project's params, hashes the result into the lock like any other file,
-and `check` renders again to compare. Values are written as JSON strings (valid YAML double-quoted scalars), so no param can
+and `check` renders again to compare. Values are written as JSON literals that are valid YAML (strings are double-quoted scalars and arrays are flow sequences), so no param can
 end its scalar or add a line; non-ASCII is written as escapes.
+When `verify_runs_on` is unset, the default remains the original bare `ubuntu-latest`
+scalar so the rendered workflow bytes stay unchanged.
 
 ### Params (in `.mercury/config.json`)
 
 ```json
 {"schema_version": 1, "packs": ["core", "deploy"],
  "params": {"integration_branch": "develop", "required_checks": ["Godot headless", "Repository contract"],
-            "update_schedule": "17 3 * * *"}}
+            "update_schedule": "17 3 * * *", "verify_runs_on": ["self-hosted", "Linux", "X64"]}}
 ```
 
 - `integration_branch` (required with `deploy`): the branch update pull requests target. Letters, digits, `.`, `_`, `/`,
@@ -228,6 +230,14 @@ end its scalar or add a line; non-ASCII is written as escapes.
   between Python versions, because unassigned code points are refused.)
 - `update_schedule` (optional, default `17 3 * * *`, UTC): five space-separated cron fields of numbers, `*`, ranges, `/n`
   steps and commas, each number in range (day of week 0-6).
+- `verify_runs_on` (optional, default `ubuntu-latest`): sets `runs-on` for `Mercury verify` only. Use a literal runner
+  string or a non-empty list of non-empty label strings. All-whitespace values, control characters and GitHub Actions expressions
+  are refused; custom values are JSON-escaped before insertion into the YAML template.
+
+  A self-hosted runner executes a PR-controlled workflow: a PR author can change the workflow itself. Select one only
+  for trusted PR authors, with an isolated runner that has no production credentials, host mounts or host admin access. Read-only token
+  permissions do not isolate the runner host. Keep untrusted fork workflows disabled or enforce an equivalent trust
+  boundary; see [GitHub's self-hosted runner security guidance](https://docs.github.com/en/actions/reference/security/secure-use#hardening-for-self-hosted-runners).
 
 Because `.mercury/config.json` may not change inside an update pull request, changing a param is a normal project pull
 request followed by `python tools/mercury.py apply` from a released Mercury commit.
