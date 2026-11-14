@@ -165,6 +165,19 @@ class Params(unittest.TestCase):
         self.refuses(["x"], "may only hold")
         self.assertEqual(self.check({"guard_write_scripts": ["a.sh"]}), {"guard_write_scripts": ["a.sh"]})
 
+    def test_verify_runs_on_accepts_literal_names_and_refuses_invalid_values(self):
+        self.assertEqual(self.check({"verify_runs_on": "self-hosted"}), {"verify_runs_on": "self-hosted"})
+        labels = ["self-hosted", "Linux", "X64"]
+        self.assertEqual(self.check({"verify_runs_on": labels}), {"verify_runs_on": labels})
+        for bad in ("", "   ", [], None, 7, {}, [""], ["  "], ["self-hosted", 7], "runner\nname",
+                    ["runner", "line\tbreak"], "\x85", "$" + "{{ github.run_id }}",
+                    ["self-hosted", "$" + "{{ secrets.RUNNER }}"],
+                    # a label that looks right and matches no runner would leave the check waiting for ever
+                    "ubuntu-latest ", " ubuntu-latest", "run\u200bner", "run\u202ener", "\ufeffrunner", "run\ud800ner",
+                    "run\U0001f600ner", "r" * 101, ["self-hosted", "self-hosted"], ["label"] * 21):
+            with self.subTest(bad=bad):
+                self.refuses({"verify_runs_on": bad}, "verify_runs_on")
+
 
 class DeployInstall(unittest.TestCase):
     def setUp(self):
@@ -232,6 +245,35 @@ class DeployInstall(unittest.TestCase):
         before = (self.dst / UPDATE).read_bytes()
         self.assertEqual(self.tool()[0], 0)
         self.assertEqual((self.dst / UPDATE).read_bytes(), before)
+
+    def test_default_verify_runner_preserves_the_previous_rendered_bytes(self):
+        code, out = self.tool()
+        self.assertEqual(code, 0, out)
+        template = (ROOT / "packs/deploy/templates/mercury-verify.yml").read_bytes().replace(b"\r\n", b"\n")
+        expected = template.replace(b"@@VERIFY_RUNS_ON@@", b"ubuntu-latest")
+        expected = expected.replace(b"@@INTEGRATION_BRANCH@@", b'"develop"')
+        self.assertEqual((self.dst / VERIFY).read_bytes(), expected)
+        self.assertEqual(self.yaml(VERIFY)["jobs"]["verify"]["runs-on"], "ubuntu-latest")
+        # Naming the default explicitly gives the same bytes as leaving the param out.
+        self.set_config(["core", "deploy"], {**PARAMS, "verify_runs_on": "ubuntu-latest"})
+        code, out = self.tool()
+        self.assertEqual(code, 0, out)
+        self.assertEqual((self.dst / VERIFY).read_bytes(), expected)
+
+    def test_custom_verify_runner_installs_and_reads_back_for_string_and_labels(self):
+        code, out = self.tool()
+        self.assertEqual(code, 0, out)
+        default_update = (self.dst / UPDATE).read_bytes()
+        for runner in ("worker: # GPU", ["self-hosted", "Linux", "X64"]):
+            with self.subTest(runner=runner):
+                self.set_config(["core", "deploy"], {**PARAMS, "verify_runs_on": runner})
+                code, out = self.tool()
+                self.assertEqual(code, 0, out)
+                text = (self.dst / VERIFY).read_text(encoding="utf-8")
+                self.assertIn("    runs-on: " + json.dumps(runner, ensure_ascii=True), text)
+                self.assertEqual(self.yaml(VERIFY)["jobs"]["verify"]["runs-on"], runner)
+                self.assertEqual((self.dst / UPDATE).read_bytes(), default_update)
+                self.assertEqual(self.tool("check")[0], 0)
 
     def test_update_workflow_reads_back_with_the_params_and_the_required_shape(self):
         self.assertEqual(self.tool()[0], 0)
@@ -355,7 +397,8 @@ class DeployInstall(unittest.TestCase):
             self.skipTest("PyYAML is not installed; the rendered workflows are read back by a real YAML parser only where it is")
         names = ['quote " and \\ backslash', "colon: x # hash", "'single'", "{{ braces }}", "$HOME `tick` $(x)", "回归 \U0001f600", "a, b]", "- dash"]
         self.set_config(["core", "deploy"], {**PARAMS, "required_checks": names, "integration_branch": "release/2.x",
-                                             "update_schedule": "*/30 6-18 * * 1-5"})
+                                             "update_schedule": "*/30 6-18 * * 1-5",
+                                             "verify_runs_on": ["self-hosted", "Linux", "project-ci"]})
         self.assertEqual(self.tool()[0], 0)
         update = yaml.safe_load((self.dst / UPDATE).read_text(encoding="utf-8"))
         verify = yaml.safe_load((self.dst / VERIFY).read_text(encoding="utf-8"))
@@ -373,6 +416,7 @@ class DeployInstall(unittest.TestCase):
         von = verify.get("on", verify.get(True))
         self.assertEqual(von, {"pull_request": {"branches": ["release/2.x"]}})
         self.assertEqual(verify["jobs"]["verify"]["name"], UPDATER.VERIFY_CHECK_NAME)
+        self.assertEqual(verify["jobs"]["verify"]["runs-on"], ["self-hosted", "Linux", "project-ci"])
         for doc in (update, verify):
             for job in doc["jobs"].values():
                 for step in job["steps"]:
@@ -400,6 +444,15 @@ class DeployInstall(unittest.TestCase):
         self.set_config(["core", "deploy"], {**PARAMS, "required_checks": ["${{ secrets.X }}"]})
         code, out = self.tool()
         self.assertEqual(code, 2, out)
+        self.assertFalse((self.dst / ".github").exists())
+        self.assertFalse((self.dst / LOCK).exists())
+
+    def test_invalid_verify_runner_stops_before_anything_is_written(self):
+        shutil.rmtree(self.dst / ".github", ignore_errors=True)
+        self.set_config(["core", "deploy"], {**PARAMS, "verify_runs_on": "$" + "{{ secrets.RUNNER }}"})
+        code, out = self.tool()
+        self.assertEqual(code, 2, out)
+        self.assertIn("verify_runs_on", out)
         self.assertFalse((self.dst / ".github").exists())
         self.assertFalse((self.dst / LOCK).exists())
 

@@ -376,8 +376,9 @@ LINK_PATHS = [re.compile(p, re.I) for p in (
 )]
 CONFIG_KEYS = {"schema_version", "packs", "linked_repos", "params"}
 PARAM_KEYS = {"guard_write_actions", "guard_write_scripts", "integration_branch", "required_checks", "skip_skills",
-              "update_schedule"}
-PARAM_DEFAULTS = {"update_schedule": "17 3 * * *"}  # the others have no sensible default: a project must name them
+              "update_schedule", "verify_runs_on"}
+DEFAULT_VERIFY_RUNS_ON = "ubuntu-latest"
+PARAM_DEFAULTS = {"update_schedule": "17 3 * * *", "verify_runs_on": DEFAULT_VERIFY_RUNS_ON}
 SCRIPT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.(?:sh|ps1|py)\Z")
 ACTION_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*\Z")
 GUARD_MAX = 20
@@ -470,6 +471,25 @@ def check_names(value, what):
     return list(value)
 
 
+def verify_runs_on(value, what):
+    """A literal runner name or a list of 1-20 distinct literal runner labels, each held to the rule for check names:
+    1-100 characters, no edge spaces, no control or hidden character, no expression start. A character outside the
+    Basic Multilingual Plane is refused too: it would be written as two escapes that YAML does not join again."""
+    if isinstance(value, str):
+        labels = [value]
+    elif isinstance(value, list) and 0 < len(value) <= 20:
+        labels = value
+    else:
+        raise BuildError(f"{what}: must be a runner name or a list of 1-20 runner labels")
+    for label in labels:
+        plain = isinstance(label, str) and 0 < len(label) <= 100 and label == label.strip()
+        if not plain or any(invisible(c) or ord(c) > 0xFFFF for c in label) or "$" + "{{" in label:
+            raise BuildError(f"{what}: a runner label must be 1-100 characters, without edge spaces, control or hidden characters, characters above U+FFFF or an expression start: {label!r}")
+    if len(set(labels)) != len(labels):
+        raise BuildError(f"{what}: duplicate runner label")
+    return value if isinstance(value, str) else list(value)
+
+
 def cron_text(value, what):
     """Five space-separated fields of numbers, `*`, ranges `a-b`, steps `/n` and lists `,`; every number in range."""
     fields = value.split(" ") if isinstance(value, str) else []
@@ -529,6 +549,8 @@ def load_params(params):
         out["required_checks"] = check_names(params["required_checks"], f"{CONFIG_REL}: params.required_checks")
     if "update_schedule" in params:
         out["update_schedule"] = cron_text(params["update_schedule"], f"{CONFIG_REL}: params.update_schedule")
+    if "verify_runs_on" in params:
+        out["verify_runs_on"] = verify_runs_on(params["verify_runs_on"], f"{CONFIG_REL}: params.verify_runs_on")
     if "skip_skills" in params:
         # Pack skills whose entry files the project does not want, because a project skill does the same job.
         skip = params["skip_skills"]
@@ -543,7 +565,8 @@ def load_params(params):
 
 PLACEHOLDER_RE = re.compile(r"@@(\w*)@@")
 RENDER_NEEDS = {"INTEGRATION_BRANCH": "integration_branch", "INTEGRATION_BRANCH_EXPR": "integration_branch",
-                "REQUIRED_CHECKS": "required_checks", "UPDATE_SCHEDULE": "update_schedule"}
+                "REQUIRED_CHECKS": "required_checks", "UPDATE_SCHEDULE": "update_schedule",
+                "VERIFY_RUNS_ON": "verify_runs_on"}
 
 
 def load_rendered(raw, pack):
@@ -567,8 +590,9 @@ def load_rendered(raw, pack):
 def render_template(raw, params, what):
     """The template's text with every @@NAME@@ replaced by a YAML-safe value built from the params (bytes, LF).
 
-    Values are JSON strings, and JSON strings are valid YAML double-quoted scalars, so no param value can end its scalar,
-    start a new key or add a line. required_checks is a JSON list inside such a string. The params were validated in
+    Custom values are JSON literals valid in YAML, so no param can start a new key or add a line. required_checks is a
+    JSON list inside a string; verify_runs_on may be a string or array, with its fixed default kept as a bare scalar.
+    The params were validated in
     load_params. An unknown placeholder, a stray `@@` or a missing required param is an error."""
     try:
         text = raw.decode("utf-8").replace("\r\n", "\n")
@@ -583,6 +607,10 @@ def render_template(raw, params, what):
         value = params.get(key, PARAM_DEFAULTS.get(key))
         if value is None:
             raise BuildError(f"{CONFIG_REL}: params.{key} is required by {what}")
+        if name == "VERIFY_RUNS_ON" and value == DEFAULT_VERIFY_RUNS_ON:
+            # Keep the default workflow byte-for-byte compatible with the original bare scalar.
+            values[name] = value
+            continue
         if name == "INTEGRATION_BRANCH_EXPR":
             # A single-quoted expression literal. The branch regex (no quote character) makes quoting trivial; check anyway.
             if not BRANCH_RE.match(value):

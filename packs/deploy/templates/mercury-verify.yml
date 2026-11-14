@@ -14,7 +14,7 @@ jobs:
   verify:
     # The job name is the check name that the update job requires before it merges. Do not rename it.
     name: Mercury verify
-    runs-on: ubuntu-latest
+    runs-on: @@VERIFY_RUNS_ON@@
     timeout-minutes: 10
     env:
       MERCURY_BASE: @@INTEGRATION_BRANCH@@
