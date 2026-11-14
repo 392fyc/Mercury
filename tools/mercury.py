@@ -472,20 +472,21 @@ def check_names(value, what):
 
 
 def verify_runs_on(value, what):
-    """A literal runner name or a non-empty list of literal runner labels."""
+    """A literal runner name or a list of 1-20 distinct literal runner labels, each held to the rule for check names:
+    1-100 characters, no edge spaces, no control or hidden character, no expression start. A character outside the
+    Basic Multilingual Plane is refused too: it would be written as two escapes that YAML does not join again."""
     if isinstance(value, str):
         labels = [value]
-    elif isinstance(value, list) and value:
+    elif isinstance(value, list) and 0 < len(value) <= 20:
         labels = value
     else:
-        raise BuildError(f"{what}: must be a non-empty string or a non-empty list of non-empty label strings")
+        raise BuildError(f"{what}: must be a runner name or a list of 1-20 runner labels")
     for label in labels:
-        if not isinstance(label, str) or not label or not label.strip():
-            raise BuildError(f"{what}: must be a non-empty string or a non-empty list of non-empty label strings")
-        if any(unicodedata.category(ch) == "Cc" for ch in label):
-            raise BuildError(f"{what}: runner labels must not contain control characters")
-        if "$" + "{{" in label:
-            raise BuildError(f"{what}: runner labels must be literal values, not expressions")
+        plain = isinstance(label, str) and 0 < len(label) <= 100 and label == label.strip()
+        if not plain or any(invisible(c) or ord(c) > 0xFFFF for c in label) or "$" + "{{" in label:
+            raise BuildError(f"{what}: a runner label must be 1-100 characters, without edge spaces, control or hidden characters, characters above U+FFFF or an expression start: {label!r}")
+    if len(set(labels)) != len(labels):
+        raise BuildError(f"{what}: duplicate runner label")
     return value if isinstance(value, str) else list(value)
 
 

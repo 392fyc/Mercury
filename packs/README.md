@@ -231,8 +231,9 @@ scalar so the rendered workflow bytes stay unchanged.
 - `update_schedule` (optional, default `17 3 * * *`, UTC): five space-separated cron fields of numbers, `*`, ranges, `/n`
   steps and commas, each number in range (day of week 0-6).
 - `verify_runs_on` (optional, default `ubuntu-latest`): sets `runs-on` for `Mercury verify` only. Use a literal runner
-  string or a non-empty list of non-empty label strings. All-whitespace values, control characters and GitHub Actions expressions
-  are refused; custom values are JSON-escaped before insertion into the YAML template.
+  string or a list of 1-20 distinct label strings. Each label follows the rule for check names (1-100 characters, no edge
+  spaces, no control or hidden character, no GitHub Actions expression start); characters outside the Basic Multilingual
+  Plane are refused as well. Custom values are JSON-escaped before insertion into the YAML template.
 
   A self-hosted runner executes a PR-controlled workflow: a PR author can change the workflow itself. Select one only
   for trusted PR authors, with an isolated runner that has no production credentials, host mounts or host admin access. Read-only token

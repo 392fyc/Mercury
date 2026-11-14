@@ -171,7 +171,10 @@ class Params(unittest.TestCase):
         self.assertEqual(self.check({"verify_runs_on": labels}), {"verify_runs_on": labels})
         for bad in ("", "   ", [], None, 7, {}, [""], ["  "], ["self-hosted", 7], "runner\nname",
                     ["runner", "line\tbreak"], "\x85", "$" + "{{ github.run_id }}",
-                    ["self-hosted", "$" + "{{ secrets.RUNNER }}"]):
+                    ["self-hosted", "$" + "{{ secrets.RUNNER }}"],
+                    # a label that looks right and matches no runner would leave the check waiting for ever
+                    "ubuntu-latest ", " ubuntu-latest", "run\u200bner", "run\u202ener", "\ufeffrunner", "run\ud800ner",
+                    "run\U0001f600ner", "r" * 101, ["self-hosted", "self-hosted"], ["label"] * 21):
             with self.subTest(bad=bad):
                 self.refuses({"verify_runs_on": bad}, "verify_runs_on")
 
@@ -251,6 +254,11 @@ class DeployInstall(unittest.TestCase):
         expected = expected.replace(b"@@INTEGRATION_BRANCH@@", b'"develop"')
         self.assertEqual((self.dst / VERIFY).read_bytes(), expected)
         self.assertEqual(self.yaml(VERIFY)["jobs"]["verify"]["runs-on"], "ubuntu-latest")
+        # Naming the default explicitly gives the same bytes as leaving the param out.
+        self.set_config(["core", "deploy"], {**PARAMS, "verify_runs_on": "ubuntu-latest"})
+        code, out = self.tool()
+        self.assertEqual(code, 0, out)
+        self.assertEqual((self.dst / VERIFY).read_bytes(), expected)
 
     def test_custom_verify_runner_installs_and_reads_back_for_string_and_labels(self):
         code, out = self.tool()
