@@ -77,6 +77,8 @@
 
 ### D4 消息:文件式收件箱 + 来源标记
 
+> 同一 lane 两个席位经 lane bus 互发的消息另有规定,其中用户亲手递交的那一条视为用户认可:见 [DEC-2026-11-17-lane-bus-delivery.md](../../03-decisions/DEC-2026-11-17-lane-bus-delivery.md)。
+
 - **M1 文件式收件箱(默认,两边通用)**:沿用 `.mercury/docs/guides/cross-lane-on-codex.md` 的条目格式与纪律(最新条目在最上面;只写指针:文件名 + 函数名 + 需要对方做什么)。有结对的 lane 各有一个收件箱文件 `lane-inbox-<lane>.md`,放在 `LANES.md` 同目录(独立 lane 不必设);别的 lane 写入,本 lane 读。会话开始时读、结束前写。
   - 代价要认:这个文件在本机、不进版本库,不像 SoT 那份进了版本库的 `cross-lane-inbox.md` 那样可审计。需要留痕的结论同时写进 Issue 评论或 commit。
   - 多个 lane 可能同时写同一个收件箱,P2 的写入脚本要加文件锁。

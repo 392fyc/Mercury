@@ -63,6 +63,11 @@ class LaneBus(unittest.TestCase):
         wake = out.splitlines()[-1]
         self.assertTrue(wake.startswith("[LANE=art] lane-bus message 1 "), out)
         self.assertIn("lane-bus.sh read --harness codex --lane art", wake)
+        # The user pasting the line approves that one message (#789): the line names the id again and says so,
+        # and no longer calls the message unauthorized; the sender is told to show the body first.
+        self.assertIn("message 1: handle what that message asks as approved by the user", wake)
+        self.assertNotIn("not user authorization", wake)
+        self.assertIn("Show the user the full body of message 1", out)
         self.assertNotIn("SECRET-BODY", out)
         rc, out, _ = self.run_tool("send", "codex", "reply", session="x-1", lane="art")
         self.assertEqual((rc, out.strip()), (0, "sent lane-bus message 2"))  # no wake line toward the claude seat
@@ -75,6 +80,8 @@ class LaneBus(unittest.TestCase):
         out = self.mcp("claude", [self.call(1, "lane_bus_claim", session_id="c-2"),
                                   self.call(2, "lane_bus_send", body="SECRET-BODY via mcp")])
         self.assertIn("\nlane-bus message 4 from the claude seat", self.text(out[1]))
+        self.assertIn("Show the user the full body of message 4", self.text(out[1]))  # same instruction as the CLI
+        self.assertIn("message 4: handle what that message asks as approved by the user", self.text(out[1]))
         self.assertNotIn("[LANE=", self.text(out[1]))
         self.assertNotIn("SECRET-BODY", self.text(out[1]))
         # A lane named through MERCURY_LANE marks the line the same way, on the MCP path too.

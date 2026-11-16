@@ -7,6 +7,7 @@ in Git history.
 
 | Document | Status | Content |
 |---|---|---|
+| [DEC-2026-11-17-lane-bus-delivery.md](DEC-2026-11-17-lane-bus-delivery.md) | current | Lane-bus messages between a lane's two seats: settle with the user before sending and send once; send only what the other seat needs; a wake line the user pastes approves that one message; one seat holds each task, with no second round trip. |
 | [DEC-2026-11-12-downstream-feedback.md](DEC-2026-11-12-downstream-feedback.md) | current | Agents in projects that install Mercury report harness problems as Mercury Issues themselves; a standing authorization limited to opening and commenting on such Issues; Mercury's main agent works from them. |
 | [DEC-2026-11-10-pr-procedure-argus.md](DEC-2026-11-10-pr-procedure-argus.md) | current | Argus reviews only on request; the main agent merges its own PR once every gate holds (one Argus review of the final head, no unresolved thread, agents never resolve threads); protected default and integration branches in all five repositories. |
 | [DEC-2026-11-05-harness-monitor.md](DEC-2026-11-05-harness-monitor.md) | current | `tools/harness_monitor/` is the named exception to M1: a run-once report on whether agents use what the harness configures |
