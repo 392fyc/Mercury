@@ -143,14 +143,14 @@ A lane's Claude Code session and Codex session exchange messages over the lane
 bus (`guides/lane-bus.md`). These rules keep a task from being passed back and
 forth with nobody doing it (Mercury #789).
 
-- The two seats work in one of two patterns, recorded with each seat's role in
-  the registry. Executor and support: one seat does the work, the other
-  reviews, designs or supplies reference, and the executor decides what to do
-  with what it receives. Upstream and downstream: one seat's work starts when
-  the other's is finished and handed over. Unless the lane's registry section
-  says otherwise, the lead harness is the executor or the upstream seat;
-  formal judgment stays with the lead harness in either pattern ("Lanes and
-  agents").
+- The two seats work in one of two patterns. Executor and support: one seat
+  does the work, the other reviews, designs or supplies reference. Upstream
+  and downstream: one seat's work starts when the other's is finished and
+  handed over. Unless the lane's registry section says otherwise, the lead
+  harness is the executor or the upstream seat. The seat that holds a task
+  decides how to carry it out, including what to do with the opinions it
+  receives; formal judgment on the lane's direction and conclusions stays
+  with the lead harness in either pattern ("Lanes and agents").
 - Each task is held by exactly one seat at any time. A message is one of
   three things and says which: a request, which asks the receiver to do a
   named thing; an opinion or report, which asks for no action and leaves the

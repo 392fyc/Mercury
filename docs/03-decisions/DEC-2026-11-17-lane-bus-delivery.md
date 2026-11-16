@@ -20,7 +20,8 @@ For the messages a lane's Claude Code seat and Codex seat send each other over t
    stays a peer report, as the #599 ADR (D4) says for every cross-lane message.
 4. **One seat holds each task.** The two seats work as executor and support (review, design, reference) or as
    upstream and downstream; unless the lane's registry section says otherwise, the lead harness is the executor or
-   the upstream seat, and formal judgment stays with the lead harness. Each message is a request, an opinion or
+   the upstream seat. The seat that holds a task decides how to carry it out; formal judgment on the lane's direction
+   and conclusions stays with the lead harness. Each message is a request, an opinion or
    report, or a handover, and says which. The receiver of a request inside its role does it; it returns a request
    only when the thing is outside its role or authorization or when it lacks something only the sender has, naming
    what is missing. The request may be sent once more with that thing supplied; apart from that, a task that came
