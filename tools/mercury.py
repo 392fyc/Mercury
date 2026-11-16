@@ -378,7 +378,7 @@ CONFIG_KEYS = {"schema_version", "packs", "linked_repos", "params"}
 PARAM_KEYS = {"guard_write_actions", "guard_write_scripts", "integration_branch", "required_checks", "skip_skills",
               "update_schedule", "verify_runs_on"}
 DEFAULT_VERIFY_RUNS_ON = "ubuntu-latest"
-PARAM_DEFAULTS = {"update_schedule": "17 3 * * *", "verify_runs_on": DEFAULT_VERIFY_RUNS_ON}
+PARAM_DEFAULTS = {"update_schedule": "0 3,10 * * *", "verify_runs_on": DEFAULT_VERIFY_RUNS_ON}
 SCRIPT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.(?:sh|ps1|py)\Z")
 ACTION_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*\Z")
 GUARD_MAX = 20

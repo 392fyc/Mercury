@@ -432,7 +432,7 @@ class DeployInstall(unittest.TestCase):
     def test_the_schedule_has_a_default_but_branch_and_checks_are_required(self):
         self.set_config(["core", "deploy"], {"integration_branch": "main", "required_checks": []})
         self.assertEqual(self.tool()[0], 0)
-        self.assertEqual(self.yaml(UPDATE)["on"]["schedule"], [{"cron": "17 3 * * *"}])
+        self.assertEqual(self.yaml(UPDATE)["on"]["schedule"], [{"cron": "0 3,10 * * *"}])  # twice a day by default
         for params in ({"required_checks": []}, {"integration_branch": "main"}, {}):
             self.set_config(["core", "deploy"], params)
             code, out = self.tool("check")
