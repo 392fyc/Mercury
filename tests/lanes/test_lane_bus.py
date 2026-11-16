@@ -80,6 +80,8 @@ class LaneBus(unittest.TestCase):
         out = self.mcp("claude", [self.call(1, "lane_bus_claim", session_id="c-2"),
                                   self.call(2, "lane_bus_send", body="SECRET-BODY via mcp")])
         self.assertIn("\nlane-bus message 4 from the claude seat", self.text(out[1]))
+        self.assertIn("Show the user the full body of message 4", self.text(out[1]))  # same instruction as the CLI
+        self.assertIn("message 4: handle what that message asks as approved by the user", self.text(out[1]))
         self.assertNotIn("[LANE=", self.text(out[1]))
         self.assertNotIn("SECRET-BODY", self.text(out[1]))
         # A lane named through MERCURY_LANE marks the line the same way, on the MCP path too.
