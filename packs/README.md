@@ -230,9 +230,11 @@ scalar so the rendered workflow bytes stay unchanged.
   between Python versions, because unassigned code points are refused.)
 - `update_schedule` (optional, default `0 3,10 * * *`, UTC: twice a day, at 03:00 and 10:00): five space-separated cron
   fields of numbers, `*`, ranges, `/n` steps and commas, each number in range (day of week 0-6). The time is the
-  earliest moment a run can start, not a promise: GitHub starts scheduled runs late under load, and runs set for 03:17
-  UTC were observed to start 7 to 8.5 hours later on eight consecutive days. Start a run by hand (`workflow_dispatch`)
-  when an update must not wait.
+  earliest moment a run can start, not a promise: GitHub may start a scheduled run late (its documentation names
+  high load). Runs set for 03:17 UTC were observed to start 7 to 8.5 hours later on eight consecutive days; the cause
+  was not established. GitHub reads the schedule from the workflow file on the default branch, so a new schedule
+  takes effect only once it reaches that branch. Start a run by hand (`workflow_dispatch`) when an update must not
+  wait.
 - `verify_runs_on` (optional, default `ubuntu-latest`): sets `runs-on` for `Mercury verify` only. Use a literal runner
   string or a list of 1-20 distinct label strings. Each label follows the rule for check names (1-100 characters, no edge
   spaces, no control or hidden character, no GitHub Actions expression start); characters outside the Basic Multilingual
