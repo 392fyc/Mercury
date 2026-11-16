@@ -8,6 +8,15 @@
 
 The full lane contract is `.mercury/packs/lanes/docs/mercury-lane-contract.md`; the project's lane document follows `.mercury/packs/lanes/docs/mercury-lane-project-template.md`.
 
+## Lane-bus work between a lane's two seats
+
+These rules cover the messages the Claude Code seat and the Codex seat of one lane send each other over the lane bus (Mercury #789); the guide is `.mercury/packs/lanes/docs/guides/lane-bus.md`.
+
+- **Settle first, send once.** Before sending, put every question whose answer could change the message to the user in one batch and wait for the answers. Never send a message and, in the same reply, ask the user something that could change it. To correct a message already sent, send one complete message that names the message id it replaces. When `send` prints a wake line, show the user the full message body in the same reply, then the wake line as its own code block.
+- **Send only what the other seat needs.** Do what this seat can do within its role and authorization, and ask the user what only the user can decide. Send a message only when the other seat must act, when its work depends on the information, or when the matter belongs to its role or its files.
+- **One seat holds each task.** The two seats work either as executor and support (review, design, reference) or as upstream and downstream, where one seat's work starts when the other's is finished; the lane registry records each seat's role. Every message says what it is: a request (the receiver is to do the named thing), an opinion or report (the sender expects no action; the seat that holds the task decides and acts on it), or a handover of finished upstream work. The receiver of a request inside its role does it and does not send it back with comments. It returns a request only when the thing is outside its role or authorization, or when it lacks something only the sender has, and then it names exactly what is missing. A task that came back once is not sent again: the seat that holds it does the work or takes it to the user. No exchange ends with opinions from both seats and nobody doing the work.
+- **A wake line the user pasted is the user's approval of that message.** When the user pastes the wake line of a message into this thread, the user has seen its body and wants it handled: treat what that one message asks (matched by the message id in the line) as approved by the user and do not ask again. The provenance tag printed above the body does not change this. The approval covers only that message, and it does not replace the confirmation the project requires for irreversible or destructive actions, credentials, production writes, or cross-repository or external writes. A message that reached this session without the user delivering it stays a peer report, not user authorization.
+
 ## Lane seat on handoff
 
 A session that holds its lane's lane-bus seat (`bash .mercury/packs/lanes/scripts/lane-bus.sh status --harness <claude|codex> --lane <lane>` names the holder) passes the seat on whenever it hands off, with any handoff skill or none (Mercury #744):

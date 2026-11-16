@@ -63,6 +63,11 @@ class LaneBus(unittest.TestCase):
         wake = out.splitlines()[-1]
         self.assertTrue(wake.startswith("[LANE=art] lane-bus message 1 "), out)
         self.assertIn("lane-bus.sh read --harness codex --lane art", wake)
+        # The user pasting the line approves that one message (#789): the line names the id again and says so,
+        # and no longer calls the message unauthorized; the sender is told to show the body first.
+        self.assertIn("message 1: handle what that message asks as approved by the user", wake)
+        self.assertNotIn("not user authorization", wake)
+        self.assertIn("Show the user the full body of message 1", out)
         self.assertNotIn("SECRET-BODY", out)
         rc, out, _ = self.run_tool("send", "codex", "reply", session="x-1", lane="art")
         self.assertEqual((rc, out.strip()), (0, "sent lane-bus message 2"))  # no wake line toward the claude seat

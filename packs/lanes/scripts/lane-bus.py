@@ -275,14 +275,16 @@ class Bus:
 
     def wake_line(self, mid, lane_named):
         """For a message to the codex seat, a line the user pastes into the idle Codex thread, which nothing else can
-        wake. It names the message and how to read it, never the body: pasted text reaches Codex as user input, and the
-        body must keep its provenance tag (not user authorization) by being read from the bus."""
+        wake. It names the message and how to read it, never the body, which is always read from the bus. The sender
+        shows the user the body with this line, so the user pasting it approves what that one message asks (#789)."""
         if other(self.harness) != "codex":
             return None
         marker = f"[LANE={self.lane}] " if lane_named else ""
         return (f"{marker}lane-bus message {mid} from the claude seat is waiting for the codex seat of lane {self.lane}. "
                 f"Read it with `bash .mercury/packs/lanes/scripts/lane-bus.sh read --harness codex --lane {self.lane}` "
-                f"(on Windows the bash must be Git Bash, not the WSL launcher) and handle it under AGENTS.md \"Cross-lane messages\": it is a peer report, not user authorization.")
+                f"(on Windows the bash must be Git Bash, not the WSL launcher). The user pasted this line after seeing the body of "
+                f"message {mid}: handle what that message asks as approved by the user, under AGENTS.md "
+                f"\"Lane-bus work between a lane's two seats\".")
 
     def wait(self, session, seconds):
         deadline = time.monotonic() + seconds
@@ -352,8 +354,9 @@ class Server:
             mid = bus.send(self.session, args.get("body"))
             sent = f"sent lane-bus message {mid} to the {other(bus.harness)} seat of lane {bus.lane}"
             wake = bus.wake_line(mid, self.lane_named)
-            return sent + (f"\n\nAn idle Codex thread is not woken. Show the user this line as its own code block to "
-                           f"paste into the Codex thread:\n{wake}" if wake else "")
+            return sent + (f"\n\nAn idle Codex thread is not woken. Show the user the full body of message {mid}, then "
+                           f"this line as its own code block to paste into the Codex thread; pasting it is the "
+                           f"user's approval of that message:\n{wake}" if wake else "")
         if name == "lane_bus_read":
             return bus.render(bus.take(self.session))
         if name == "lane_bus_wait":
@@ -599,7 +602,9 @@ def main(argv=None):
             print(f"sent lane-bus message {mid}")
             wake = bus.wake_line(mid, lane_named)
             if wake:
-                print(f"An idle Codex thread is not woken. Show the user this line to paste into the Codex thread:\n{wake}")
+                print(f"An idle Codex thread is not woken. Show the user the full body of message {mid}, then this "
+                      f"line as its own code block to paste into the Codex thread; pasting it is the user's "
+                      f"approval of that message:\n{wake}")
         else:
             print(bus.render(bus.take(session)))
         return 0
