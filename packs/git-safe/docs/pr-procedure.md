@@ -43,7 +43,8 @@ remove these.
    - no review thread is unresolved, and no `CHANGES_REQUESTED` review is in effect;
    - `guard.ps1 pre-merge -PullRequestNumber <n> -NativeReviewReceipt <absolute path>` passes;
    - the branch protection is satisfied without `--admin`.
-5. **Merge.** `gh pr merge <n> --squash --match-head-commit <reviewed head>`. Never `--admin`, never auto-merge, never
+5. **Merge.** `gh pr merge <n> --squash --match-head-commit <reviewed head>` (a release into a default branch that
+   is not the integration branch is merged differently, see the next section). Never `--admin`, never auto-merge, never
    a force push, never a change to branch protection to get a merge through. Recheck head, checks and threads right
    before merging. Then clean up the worktree and branch under the project's worktree rules and report.
 
@@ -61,8 +62,8 @@ apply, with these differences (Mercury #793):
 - When the default branch has commits the integration branch lacks, `git-safe.ps1 merge origin/<default branch>` brings
   them into the release branch (uncommitted, concluded like `sync`).
 - Merge a release of the integration branch with `gh pr merge <n> --merge --match-head-commit <reviewed head>`, not
-  `--squash`: a squash would leave the default branch without the integration branch's commits, and the next release
-  would conflict with its own earlier content.
+  `--squash`: a squash would leave the default branch without the integration branch's commits, so a later release
+  can conflict with content an earlier one already delivered. The repository must allow merge commits for this.
 
 ## When to stop and ask the user
 
