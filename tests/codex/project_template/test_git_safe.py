@@ -660,6 +660,37 @@ class GitSafeMergeTest(unittest.TestCase):
         self.assertIn("merge=merged", out)
         self.assertEqual(git(self.repo, "rev-parse", "MERGE_HEAD").strip(), tip)
 
+    def test_origins_default_branch_comes_in_when_the_project_integrates_elsewhere(self):
+        """#793: a release of the integration branch (master here) into the default branch (main) takes main in."""
+        for name in ("main", "develop"):
+            git(self.trunk, "checkout", "-q", "-B", name, "master")
+            (self.trunk / f"{name}.txt").write_text(f"{name}\n")
+            git(self.trunk, "add", f"{name}.txt")
+            git(self.trunk, "commit", "-q", "-m", name)
+            git(self.trunk, "push", "-q", "origin", name)
+        tip = git(self.trunk, "rev-parse", "main").strip()
+        head = self.head()
+        # origin's default branch is still master, the integration branch: main is only a protected name.
+        code, out = self.merge("origin/main")
+        self.assertNotEqual(code, 0)
+        self.assertIn("does not take a protected branch", out)
+        git(self.origin, "symbolic-ref", "HEAD", "refs/heads/main")
+        git(self.repo, "branch", "-q", "main", "master")
+        for source in ("main", "origin/develop", "origin/master", "origin/Main"):
+            with self.subTest(source=source):  # a local copy, another protected branch, the trunk, another spelling
+                code, out = self.merge(source)
+                self.assertNotEqual(code, 0)
+                self.assertIn("does not take a protected branch", out)
+                self.assertFalse(self.merging())
+        self.assertEqual(self.head(), head)
+        code, out = self.merge("origin/main")
+        self.assertEqual(code, 0, out)
+        self.assertIn("merge=merged", out)
+        self.assertEqual(git(self.repo, "rev-parse", "MERGE_HEAD").strip(), tip)
+        code, out = self.run_ps("git-safe.ps1", "abort-sync")
+        self.assertEqual(code, 0, out)
+        self.assertFalse(self.merging())
+
     def test_conflicts_are_listed_and_abort_sync_restores_the_branch(self):
         self.local_helper("shared.txt", "helper edit\n")
         self.commit_on_branch("shared.txt", "branch edit\n")

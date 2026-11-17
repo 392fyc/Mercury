@@ -43,9 +43,27 @@ remove these.
    - no review thread is unresolved, and no `CHANGES_REQUESTED` review is in effect;
    - `guard.ps1 pre-merge -PullRequestNumber <n> -NativeReviewReceipt <absolute path>` passes;
    - the branch protection is satisfied without `--admin`.
-5. **Merge.** `gh pr merge <n> --squash --match-head-commit <reviewed head>`. Never `--admin`, never auto-merge, never
+5. **Merge.** `gh pr merge <n> --squash --match-head-commit <reviewed head>` (a release into a default branch that
+   is not the integration branch is merged differently, see the next section). Never `--admin`, never auto-merge, never
    a force push, never a change to branch protection to get a merge through. Recheck head, checks and threads right
    before merging. Then clean up the worktree and branch under the project's worktree rules and report.
+
+## Pull requests into a default branch that is not the integration branch
+
+A project may integrate on one branch and keep another as the repository's default branch; GitHub reads workflow
+schedules only from the default branch, so such a project releases there from time to time. The same steps and gates
+apply, with these differences (Mercury #793):
+
+- `guard.ps1 pre-merge` with a receipt accepts the integration branch and the repository's default branch as the base
+  of a pull request, and no other branch.
+- The pull request's branch is cut from the integration branch, so that it carries the installed scripts: `pre-merge`
+  checks the work tree that holds it against the pull request's head. A branch cut from a default branch that does not
+  carry the pack cannot be checked; release the integration branch instead of patching the default branch.
+- When the default branch has commits the integration branch lacks, `git-safe.ps1 merge origin/<default branch>` brings
+  them into the release branch (uncommitted, concluded like `sync`).
+- Merge a release of the integration branch with `gh pr merge <n> --merge --match-head-commit <reviewed head>`, not
+  `--squash`: a squash would leave the default branch without the integration branch's commits, so a later release
+  can conflict with content an earlier one already delivered. The repository must allow merge commits for this.
 
 ## When to stop and ask the user
 

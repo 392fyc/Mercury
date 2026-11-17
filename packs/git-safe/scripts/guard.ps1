@@ -408,6 +408,32 @@ function Get-RepositoryCoordinate {
   }
 }
 
+function Get-DefaultBranch {
+  # The repository's default branch as GitHub reports it (#793). A project may integrate on one branch and keep another
+  # as its default (GitHub reads workflow schedules only from the default one), so a pull request into the default
+  # branch is a supported target too. Asked only when a pull request targets something else than the integration branch.
+  param([string]$Repository)
+
+  $repoJson = Invoke-Utf8Native "gh" @("repo", "view", $Repository, "--json", "defaultBranchRef")
+  if ($LASTEXITCODE -ne 0 -or -not $repoJson) {
+    throw "Unable to determine the default branch of $Repository via 'gh repo view --json defaultBranchRef'."
+  }
+  try {
+    $repo = ($repoJson -join "`n") | ConvertFrom-Json -ErrorAction Stop
+  } catch {
+    throw "GitHub CLI returned invalid default-branch metadata."
+  }
+  if ($null -eq $repo -or
+      -not (Test-JsonProperty -InputObject $repo -Name "defaultBranchRef") -or
+      $null -eq $repo.defaultBranchRef -or
+      -not (Test-JsonProperty -InputObject $repo.defaultBranchRef -Name "name") -or
+      $repo.defaultBranchRef.name -isnot [string] -or
+      [string]::IsNullOrWhiteSpace($repo.defaultBranchRef.name)) {
+    throw "GitHub CLI returned incomplete default-branch metadata."
+  }
+  return $repo.defaultBranchRef.name
+}
+
 function Get-CheckLabel {
   param([object]$Check)
 
@@ -790,7 +816,12 @@ function Assert-PreMergeReady {
   }
   $trunk = Get-IntegrationBranch
   if ($UseNativeReceipt -and $pr.baseRefName -cne $trunk) {
-    throw "PR #$Number targets '$($pr.baseRefName)'; pre-merge checks require the integration branch '$trunk' (params.integration_branch)."
+    # The only other supported target is the repository's default branch (#793), for a project that integrates on one
+    # branch and releases to another. Every check below applies to such a pull request unchanged.
+    $defaultBranch = Get-DefaultBranch -Repository $repoName
+    if ($pr.baseRefName -cne $defaultBranch) {
+      throw "PR #$Number targets '$($pr.baseRefName)'; pre-merge checks accept the integration branch '$trunk' (params.integration_branch) or the repository's default branch '$defaultBranch'."
+    }
   }
 
   if ($pr.state -cne "OPEN") {

@@ -341,6 +341,19 @@ function Test-RemoteBranch {
   throw "Unable to read origin (git ls-remote exit $LASTEXITCODE). Nothing was changed."
 }
 
+function Get-RemoteDefaultBranch {
+  # The branch origin's HEAD points at, read from origin itself (the local refs/remotes/origin/HEAD can be stale or
+  # absent). Throws when origin cannot be read or names no default branch.
+  $lines = @(Invoke-Utf8Native "git" @("-C", $repoRoot, "ls-remote", "--symref", "origin", "HEAD") -WithStderr)
+  if ($LASTEXITCODE -ne 0) {
+    throw "Unable to read origin (git ls-remote exit $LASTEXITCODE). Nothing was changed."
+  }
+  foreach ($line in $lines) {
+    if ("$line" -cmatch '^ref: refs/heads/(\S+)\s+HEAD$') { return $Matches[1] }
+  }
+  throw "origin does not name a default branch. Nothing was changed."
+}
+
 function Get-NulSeparated {
   # The entries of a `-z` listing: names arrive unquoted, whatever characters they hold.
   param([string[]]$GitArgs)
@@ -568,7 +581,13 @@ switch ($Action) {
     $fromOrigin = $source.StartsWith("origin/")
     $name = if ($fromOrigin) { $source.Substring(7) } else { $source }
     if (@("develop", "main", "master", $trunk) -contains $name) {
-      throw "git-safe merge does not take a protected branch. Use git-safe sync for origin/$trunk."
+      # One protected branch may come in (#793): origin's default branch when the project integrates elsewhere, so a
+      # pull request that releases the integration branch into the default branch can take in what only the default
+      # branch has. Only the copy on origin, and only when origin itself names that branch as its default.
+      $defaultBranch = if ($fromOrigin -and $name -cne $trunk) { Get-RemoteDefaultBranch } else { "" }
+      if ($name -cne $defaultBranch) {
+        throw "git-safe merge does not take a protected branch. Use git-safe sync for origin/$trunk."
+      }
     }
     if ($name -ceq $branch) {
       throw "'$name' is the current branch. Use git-safe pull to take in its commits from origin."

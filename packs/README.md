@@ -395,7 +395,8 @@ only forward to `packs/git-safe/scripts/` (Issue #723).
   `merge origin/<branch>` fetches that branch from origin and merges it: for a helper branch whose work belongs in
   this task, without a pull request between the two branches. It takes exactly one plain branch name, with the
   same refusals as `sync`, and refuses a protected branch (the trunk comes in through `sync`) and the current
-  branch (use `pull`). The merge is always `--no-ff --no-commit` (`merge=merged`, `merge=conflicts` with exit 1, or
+  branch (use `pull`). One protected branch is taken (Issue #793): `merge origin/<default branch>`, when origin's
+  default branch is not the integration branch, for a pull request that releases the integration branch into it. The merge is always `--no-ff --no-commit` (`merge=merged`, `merge=conflicts` with exit 1, or
   `merge=up-to-date`); the source branch is not moved and nothing is pushed.
 - **Local files.** `sync`, `pull`, `merge` and `fast-forward` do not replace a local file that is not tracked,
   ignored files included (local settings, scratch output); they refuse and leave the branch where it was. A
@@ -406,8 +407,9 @@ only forward to `packs/git-safe/scripts/` (Issue #723).
   merged commit in the Git directory when it starts one and compares it with the merge in progress. A merge started
   any other way is left alone.
 - **Integration branch.** `sync` merges `origin/<params.integration_branch>`; `pre-merge` with `-NativeReviewReceipt`
-  requires the PR to target it; it is protected like `develop`, `main` and `master`. Without the parameter the
-  branch is `master`.
+  requires the PR to target it or the repository's default branch, which it asks GitHub for when the two differ
+  (Issue #793; `docs/pr-procedure.md` says how such a release is made); it is protected like `develop`, `main` and
+  `master`. Without the parameter the branch is `master`.
 - **Review mark.** `mark-review` writes a snapshot of the staged tree to `mercury-review-passed` in the work tree's Git
   directory (`git rev-parse --git-path`), so it is never committed, needs no ignore rule and is separate per worktree.
 - **Branch names and protected branches** are Mercury's: `<type>/<purpose>[-<lane>]-<agent>`; `develop`, `main`,
