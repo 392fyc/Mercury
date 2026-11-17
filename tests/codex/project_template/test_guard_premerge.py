@@ -34,6 +34,12 @@ function global:gh {
     return
   }
   if ($GhArgs.Count -ge 2 -and $GhArgs[0] -eq "repo" -and $GhArgs[1] -eq "view") {
+    if ($GhArgs -contains "defaultBranchRef") {
+      Add-Content -LiteralPath $env:GUARD_CALL_LOG -Value "default-branch:" -Encoding utf8
+      if ($fixture.PSObject.Properties["default_branch_exit"]) { $global:LASTEXITCODE = [int]$fixture.default_branch_exit }
+      Write-Output ($fixture.default_branch | ConvertTo-Json -Depth 5 -Compress)
+      return
+    }
     Write-Output '{"owner":{"login":"392fyc"},"name":"Mercury"}'
     return
   }
@@ -188,6 +194,7 @@ class GuardPreMergeTests(unittest.TestCase):
                 "headRefOid": self.head,
                 "baseRefName": "master",
             },
+            "default_branch": {"defaultBranchRef": {"name": "master"}},
             "pages": {
                 "checks": [check_page([success_check()])],
                 "reviews": [review_page([])],
@@ -335,13 +342,53 @@ class GuardPreMergeTests(unittest.TestCase):
     def test_wrong_base_branch_is_rejected(self):
         self.fixture["pr"]["baseRefName"] = "main"
         self.write_fixture()
-        self.assert_rejected()
+        result = self.assert_rejected()
+        self.assertIn("or the repository's default branch 'master'", " ".join(result.stderr.replace("|", " ").split()))
+
+    def test_the_default_branch_is_accepted_as_a_base_when_the_project_integrates_elsewhere(self):
+        """#793: the project integrates on develop, its default branch is main; a pull request into main is checked."""
+        config = self.root / ".mercury" / "config.json"
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text(json.dumps({"params": {"integration_branch": "develop"}}), encoding="utf-8")
+        self.fixture["pr"]["baseRefName"] = "main"
+        self.fixture["default_branch"] = {"defaultBranchRef": {"name": "main"}}
+        self.write_fixture()
+        result = self.run_guard()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("default-branch:", self.call_log.read_text(encoding="utf-8-sig"))
+        # Every other gate still applies to such a pull request.
+        self.fixture["pages"]["threads"] = [thread_page([{"isResolved": False}])]
+        self.write_fixture()
+        self.assertIn("unresolved review thread", self.assert_rejected().stderr)
+        self.fixture["pages"]["threads"] = [thread_page([])]
+        # The default branch is asked only when the base is not the integration branch.
+        self.fixture["pr"]["baseRefName"] = "develop"
+        self.write_fixture()
+        self.assertEqual(self.run_guard().returncode, 0)
+        self.assertNotIn("default-branch:", self.call_log.read_text(encoding="utf-8-sig"))
+
+    def test_an_unreadable_default_branch_fails_closed(self):
+        self.fixture["pr"]["baseRefName"] = "main"
+        for changes in [
+            {"default_branch": {"defaultBranchRef": {"name": "Main"}}},
+            {"default_branch": {"defaultBranchRef": {"name": ""}}},
+            {"default_branch": {"defaultBranchRef": None}},
+            {"default_branch": {}},
+            {"default_branch": {"defaultBranchRef": {"name": "main"}}, "default_branch_exit": 1},
+        ]:
+            with self.subTest(changes=changes):
+                self.fixture.pop("default_branch_exit", None)
+                self.fixture.update(changes)
+                self.write_fixture()
+                self.assert_rejected()
 
     def test_base_branch_follows_the_project_integration_branch(self):
         # A downstream project integrates elsewhere (#723): params.integration_branch replaces master.
         config = self.root / ".mercury" / "config.json"
         config.parent.mkdir(parents=True, exist_ok=True)
         config.write_text(json.dumps({"params": {"integration_branch": "develop"}}), encoding="utf-8")
+        self.fixture["default_branch"] = {"defaultBranchRef": {"name": "develop"}}
+        self.write_fixture()
         self.assert_rejected()  # the fixture PR still targets master
         self.fixture["pr"]["baseRefName"] = "develop"
         self.write_fixture()
