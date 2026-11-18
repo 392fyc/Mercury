@@ -126,7 +126,7 @@ def split_groups(segment: str) -> list[str]:
     command. The `{` of `${name}` opens a variable name, not a command, so it does not split; `${ cmd; }` and
     `${| cmd; }` (Bash 5.3) run a command and do. The pieces are checked in addition to the whole segment, never
     instead of it, so this can only block more. Substitutions inside quotes are found by substitutions()."""
-    pieces, current, quote, i = [], [], None, 0
+    pieces, current, quote, i, names = [], [], None, 0, 0
     while i < len(segment):
         ch = segment[i]
         if quote:
@@ -139,8 +139,14 @@ def split_groups(segment: str) -> list[str]:
         elif ch in "'\"":
             quote = ch
             current.append(ch)
-        elif ch in "(){}" and not (ch == "{" and i > 0 and segment[i - 1] == "$"
-                                   and i + 1 < len(segment) and not segment[i + 1].isspace() and segment[i + 1] != "|"):
+        elif (ch == "{" and i > 0 and segment[i - 1] == "$" and i + 1 < len(segment)
+              and not segment[i + 1].isspace() and segment[i + 1] != "|"):
+            names += 1  # `${name`: the braces of a variable stay inside the word, as in `cat ${repo}/a.ps1`
+            current.append(ch)
+        elif ch == "}" and names:
+            names -= 1
+            current.append(ch)
+        elif ch in "(){}":
             pieces.append("".join(current))
             current = []
         else:

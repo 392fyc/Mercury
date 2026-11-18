@@ -62,6 +62,9 @@ ALLOWED = [
     "Get-ChildItem | Where-Object { $_.Name -eq 'x' } | ForEach-Object { $_.FullName }",
     "(Get-Content a.txt).Count",
     "find . -name '*.py' -exec grep -l x {} +",
+    "cat ${repo}/scripts/codex/git-safe.ps1",
+    "echo ${prefix}rm ${a:-${b}}/lane-bus.sh",
+    "Get-Content ${env:TEMP}\\git-safe.ps1",
     "echo \"head: $(git rev-parse HEAD)\"",
     "echo \"on `git branch --show-current`\"",
     "rg '$(git push)' docs",
@@ -144,6 +147,8 @@ BLOCKED = [
     "echo `git push`",
     "echo \"now `git push`\"",
     "x=${ git push; }",
+    "echo ${x}; { git push; }",
+    "echo ${x:-$(git push)}",
 ]
 
 SCRIPT = HOOKS / "readonly_guard.py"
