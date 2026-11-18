@@ -119,7 +119,9 @@ def _is_redirect_amp(command: str, i: int) -> bool:
 
 
 _MEMBER = r"(?:\.|::)[A-Za-z_][A-Za-z0-9_]*\Z"
-VALUE_MEMBER = re.compile(r"[$'\"]\S*" + _MEMBER)  # `$x.Foo`, `'a'.Foo`: a member of a variable or a string, anywhere
+# `$x.Foo`, `${env:X}.a.Foo`, `'a'.Foo`: the whole word is one variable or one quoted string and its member chain.
+# `$dir/a.txt` or `"a"b.Foo` is a plain argument in PowerShell, and the `(` after it runs a command.
+VALUE_MEMBER = re.compile(r"""(?:\$(?:\{[^}]*\}|[A-Za-z_]\w*(?::\w+)?)|'[^']*'|"[^"]*")(?:(?:\.|::)[A-Za-z_]\w*)+""")
 TYPE_MEMBER = re.compile(r"\[\S*" + _MEMBER)  # `[math]::Max`: an expression only as the first word of its piece
 CHAIN_MEMBER = re.compile(r"\.[A-Za-z_][A-Za-z0-9_]*\Z")  # `.Trim`: only right after a `)`
 
@@ -127,8 +129,9 @@ CHAIN_MEMBER = re.compile(r"\.[A-Za-z_][A-Za-z0-9_]*\Z")  # `.Trim`: only right 
 def _method_call(text: str, after_close: bool) -> bool:
     """True when `text`, the piece so far, ends in the name of a method, so that the `(` after it opens method
     arguments (expressions) and not a command group. Checked against both PowerShell editions with a harmless command
-    in the parentheses: these forms do not run it, while `Write-Output [math]::Max(cmd)`, `Write-Output a$x.Foo(cmd)`
-    and `git.exe(cmd)` do, because there the word before `(` is a plain argument or a command name."""
+    in the parentheses: these forms do not run it, while `Write-Output [math]::Max(cmd)`, `Write-Output a$x.Foo(cmd)`,
+    `Get-Content $dir/a.txt(cmd)` and `git.exe(cmd)` do, because there the word before `(` is a plain argument or a
+    command name. A form this does not recognize (`$x[0].Foo(`, a quoted string with a space) is split and checked."""
     if after_close:
         return bool(CHAIN_MEMBER.fullmatch(text))
     words = text.split()
@@ -197,8 +200,9 @@ def substitutions(command: str) -> list[str]:
     and starts nothing in PowerShell, so it is skipped; backslashes are read in pairs, so that the backtick after an
     escaped backslash (`echo \\\\`git push``) still counts. A backslash before `$(` is not honored, because PowerShell
     still runs `"\\$(...)"`, and in PowerShell an unescaped backtick is an escape character, not a substitution: both
-    are read as commands here, which can only block more. Each result is checked as a command of its own, so a
-    substitution nested inside it is found on that pass."""
+    are read as commands here, which can only block more. Not seen, as before #795: a substitution after a Bash
+    `\\'` outside quotes, which this reads as the start of a quoted string. Each result is checked as a command of
+    its own, so a substitution nested inside it is found on that pass."""
     found, quote, i = [], None, 0
     while i < len(command):
         ch = command[i]
