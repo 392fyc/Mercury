@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -65,7 +66,6 @@ ALLOWED = [
     "Get-Content a.txt | Where-Object { $_.Contains('Remove-Item') }",
     "[math]::Max(1, 2)",
     "(Get-Content a.txt).Replace('rm', 'del').Trim()",
-    "rg \"\\`git push origin\\`\" docs",
     "rg \\`git\\ push\\` docs",
     "(Get-Date).ToString('Remove-Item')",
     "Write-Output $x.y.Replace('rm', 'del')",
@@ -78,7 +78,6 @@ ALLOWED = [
     "echo ${prefix}rm ${a:-${b}}/lane-bus.sh",
     "Get-Content ${env:TEMP}\\git-safe.ps1",
     "echo \"head: $(git rev-parse HEAD)\"",
-    "echo \"on `git branch --show-current`\"",
     "rg '$(git push)' docs",
     "rg '`git push`' docs",
     "Write-Output \"a`nb`tc\"",
@@ -187,6 +186,80 @@ BLOCKED = [
     "echo ${x:-$(git push)}",
 ]
 
+# #798: each shell lexes with its own quote, escape and comment rules. A command checked without a shell
+# (shell=None) is read both ways and blocked if either reading blocks it, so these pass only under their shell.
+SHELL_ALLOWED = [
+    ("bash", r'rg "\`git push origin\`" docs'),
+    ("bash", 'echo "on `git branch --show-current`"'),
+    ("bash", r"""echo "$(printf ')')" """),
+    ("bash", r'''echo "\$(git push)" '''),  # an escaped $ in double quotes is text in bash
+    ("bash", "echo a;#x; git push"),  # '#' after ';' starts a comment
+    ("bash", r"echo $'\' ; git push ; echo \''"),  # one ANSI-C string: \' is an escaped quote
+    ("powershell", r'Write-Output "file: `"$path`""'),  # the backtick escapes the quote
+    ("powershell", r"$lines[0].StartsWith('Remove-Item')"),
+    ("powershell", r"'a b'.Contains('Remove-Item')"),
+    # Bash here-document bodies are checked as commands (not read as input), so only read-only bodies pass here;
+    # PowerShell here-string bodies are input
+    ("bash", "cat <<'EOF' | python -\nimport os; print(1) # it's\nEOF\necho done"),
+    ("bash", "x=1; (( x += 2 )); echo $x $((1+2)) \"$((3-1))\""),
+    ("bash", "cat <<\"END-1\" | python -\nprint(\"it's\")\nEND-1"),
+    ("bash", "echo $$"),
+    ("powershell", "Write-Output @'\nit's $(Remove-Item x)\n'@"),
+    ("powershell", "Write-Output @\"\nit's `$(Remove-Item x)\n\"@"),
+]
+
+SHELL_BLOCKED = [
+    ("bash", r"echo \' $(git push) \'"),  # \' is an escaped quote, so $(...) is live
+    ("bash", r"echo \' ; git push ; echo \'"),
+    ("bash", "echo a # it's\ngit push\necho 'b'"),  # the quote in the comment opens nothing
+    ("bash", r"gi\t push"),
+    ("bash", r"""echo "$(echo \'$( true ; echo \') ; git push )" """),
+    ("bash", r"echo ${#x}; git push"),  # '#' after '{' is not a comment
+    ("powershell", "Write-Output ‘a\"b’ ; Remove-Item x ; Write-Output ‘c\"d’"),  # curly quotes
+    ("powershell", r"gi`t push"),
+    ("powershell", r'''Write-Output "\$(git push)" '''),  # '\' is no escape in PowerShell
+    ("powershell", "<# it's #> Remove-Item x"),
+    ("powershell", "Write-Output a#b; Remove-Item x"),  # '#' inside a word is not a comment
+    (None, r"echo \' $(git push) \'"),
+    (None, r'Write-Output "file: `"$path`""'),  # bash would read an open quote
+    # an escaped space, ';' or newline is text, so the '#' after it starts no comment
+    ("bash", r"echo a\ #; git push"),
+    ("bash", r"echo \;#; git push"),
+    ("bash", "echo a\\\n#; git push"),
+    ("bash", r"bash -c 'echo a\ #; git push'"),
+    ("powershell", r"Write-Output a` #; Remove-Item x"),
+    ("powershell", r"Write-Output `;#; Remove-Item x"),
+    ("powershell", "Write-Output a`\n#; Remove-Item x"),
+    ("bash", r"echo $$'\'; git push #'"),  # `$$` is the process id, the quote after it a plain one
+    ("bash", r"echo `echo \`git push\``"),  # \` inside backticks nests a substitution
+    ("bash", r'echo "`echo \`git push\``"'),
+    # Bash here-documents: commands after the body, or expanded in it, are still seen (a quote in the body that
+    # hides the next command is a known limitation, see the module docstring)
+    ("bash", "cat <<A <<'B'\nit's\nA\nb's\nB\ngit push"),
+    ("bash", "cat <<EOF\nx $(git push) y\nEOF"),  # an unquoted delimiter expands the body
+    ("bash", "cat <<EOF\nx `git push` y\nEOF"),
+    ("bash", "cat <<EOF\nit's\n"),  # no end line
+    ("bash", "echo $((1<<2))\ngit push\n2"),  # a shift, so the next line is a command
+    ("bash", "echo $[1<<X]\ngit push\nX]"),
+    ("bash", "cat <<EOF\r\nEOF\r\ngit push #\r\nEOF"),  # the delimiter is EOF\r, so the third line runs
+    ("bash", "cat <<EOF\v\nEOF\v\ngit push #\nEOF"),
+    ("bash", "x=abc\necho ${x:0<<1}\ngit push\n1}"),
+    ("bash", "echo ${x:-<<EOF}\ngit push\nEOF}"),
+    ("bash", "a[1<<2]=x\ngit push\n2]=x"),
+    ("bash", "cat <<$'EOF'\nb\nEOF\ngit push\n$EOF"),
+    ("bash", "cat <<$\"EOF\"\nb\nEOF\ngit push\n$EOF"),
+    ("bash", "cat <<EOF; echo $(\ngit push\n)\nEOF"),
+    ("bash", "cat <<E\"O\"F\nx\nEOF\ngit push"),
+    # a quote inside a PowerShell here-string body opens nothing
+    ("powershell", "$x = @'\nfoo\r'@\nRemove-Item x\n'@'\n#'"),  # PowerShell ends a line at a lone \r
+    ("powershell", "$x = @\"\nfoo\r\"@\nRemove-Item x\n\"@\"\n#\""),
+    ("powershell", "Write-Output @'\nit's\n'@; Remove-Item x # '"),
+    ("powershell", "Write-Output @\"\nit\"s\n\"@; Remove-Item x # \""),
+    ("powershell", "Write-Output @'\nit's\n  '@\n'@; Remove-Item x # '"),  # an indented end is body
+    ("powershell", "Write-Output @\"\nx $(Remove-Item x) y\n\"@"),
+    ("powershell", "Write-Output @'\nit's\n"),  # no end line
+]
+
 SCRIPT = HOOKS / "readonly_guard.py"
 LAUNCHER = HOOKS / "readonly_guard.sh"
 
@@ -209,6 +282,27 @@ class GuardCommands(unittest.TestCase):
         for command in BLOCKED:
             with self.subTest(command=command):
                 with self.assertRaises(Blocked):
+                    check_command(command)
+
+    def test_shell_specific_lexing(self):
+        for shell, command in SHELL_ALLOWED:
+            with self.subTest(shell=shell, command=command):
+                check_command(command, shell=shell)
+        for shell, command in SHELL_BLOCKED:
+            with self.subTest(shell=shell, command=command):
+                with self.assertRaises(Blocked):
+                    check_command(command, shell=shell)
+
+    def test_without_a_shell_both_readings_must_pass(self):
+        for shell, command in SHELL_ALLOWED:
+            other = "powershell" if shell == "bash" else "bash"
+            with self.subTest(command=command):
+                try:
+                    check_command(command, shell=other)
+                except Blocked:
+                    with self.assertRaises(Blocked):
+                        check_command(command)
+                else:
                     check_command(command)
 
     def test_no_user_machine_or_sot_names_are_left_in_the_guard(self):
@@ -266,7 +360,7 @@ class GuardActions(unittest.TestCase):
         for case, command in reproduced.items():
             with self.subTest(case=case):
                 with self.assertRaises(Blocked) as ctx:
-                    check_command(command, actions=self.ACTIONS)
+                    check_command(command, actions=self.ACTIONS, shell="powershell")
                 self.assertIn("in its arguments", str(ctx.exception))  # refused by the allowlist, not by luck
 
     def test_block_comment_is_refused_on_purpose_not_as_a_redirect(self):
@@ -310,6 +404,29 @@ class GuardHook(unittest.TestCase):
         self.assertEqual(run_hook({"tool_name": "PowerShell", "tool_input": {"command": "git status"}}).returncode, 0)
         self.assertEqual(run_hook({"tool_name": "Read", "tool_input": {"file_path": "x"}}).returncode, 0)
         self.assertEqual(run_hook({"tool_name": "Bash", "tool_input": {}}).returncode, 0)
+
+    def test_hook_lexes_with_the_shell_of_the_tool(self):
+        command = 'Write-Output "file: `"$path`""'
+        self.assertEqual(run_hook({"tool_name": "PowerShell", "tool_input": {"command": command}}).returncode, 0)
+        self.assertEqual(run_hook({"tool_name": "Bash", "tool_input": {"command": command}}).returncode, 2)
+        command = r"echo \' $(git push) \'"
+        self.assertEqual(run_hook({"tool_name": "Bash", "tool_input": {"command": command}}).returncode, 2)
+
+    def test_hook_blocks_when_the_check_itself_fails(self):
+        # third review B9: 600 nested "$(...)" overflow the recursion; the hook must block (2), not crash (1)
+        command = 'echo "$(' * 600 + "git push" + ')"' * 600
+        result = run_hook({"tool_name": "Bash", "tool_input": {"command": command}})
+        self.assertEqual(result.returncode, 2, result.stderr[-300:])
+
+    def test_long_method_chain_is_checked_in_time(self):
+        # fourth review R1: each `(` lexed its piece again, so 16k characters took seconds and 64k over a minute
+        # fifth review: rebuilding the piece at every `(` and `)` of an inert member chain was quadratic as well
+        for command in ("Write-Output " + "a.b(" * 16000 + ")" * 16000, "$a.b()" + ".c()" * 32000,
+                        "Write-Output " + "$a.b( " * 16000 + ")" * 16000):
+            with self.subTest(length=len(command), start=command[:16]):
+                started = time.monotonic()
+                check_command(command, shell="powershell")
+                self.assertLess(time.monotonic() - started, 10)
 
     def test_hook_reads_project_extension_from_the_project_config(self):
         with tempfile.TemporaryDirectory() as tmp:

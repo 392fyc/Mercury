@@ -5,10 +5,12 @@ Subagent `permissionMode: plan` is ignored when the main conversation runs in by
 or auto mode, so this hook is the effective write guard. It blocks repository, GitHub and filesystem writes in
 Bash and PowerShell commands by exiting 2. It is best-effort, not an OS sandbox: arbitrary interpreters
 (python -c, node -e) can still write. A command inside a subshell, a command group, a substitution or a script
-block (`(...)`, `{ ...; }`, `$(...)` also inside double quotes, backticks, `& { ... }`) is checked as well (#795),
-again best-effort: inside a quoted `$(...)` the closing parenthesis is found by counting, so an escaped `\\)`, a
-quoted `')'`, the `)` of a `case` branch or of a here-document or one in a comment ends it early. What follows is
-then hidden, or the cut leaves a quote open and a read-only command is refused (`echo "$(printf ')')"`).
+block (`(...)`, `{ ...; }`, `$(...)` also inside double quotes, backticks, `& { ... }`) is checked as well (#795).
+Quotes, escapes and comments are read with the rules of the shell that runs the command (#798; see lex): the hook
+payload's tool_name picks Bash or PowerShell, and a nested `bash -c`, `pwsh -Command` or `cmd /c` uses its own;
+PowerShell here-strings are read too. Still best-effort: Bash here-documents are not read (their body is checked as
+if it were commands, so an odd quote in a body can hide the next command from the guard), and neither are `case`
+patterns; in both, a `)` inside `"$(...)"` can end the substitution early for the guard.
 
 A project adds write-type scripts of its own in `.mercury/config.json`:
     {"params": {"guard_write_scripts": ["deploy.sh"]}}
@@ -29,6 +31,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 GIT_WRITE = {
     "add", "am", "apply", "checkout", "cherry-pick", "clean", "clone", "commit",
@@ -86,32 +89,183 @@ class Blocked(Exception):
     pass
 
 
-def split_segments(command: str) -> list[str]:
-    """Split on ; && || | & and newlines outside quotes."""
-    segments, current, quote, i = [], [], None, 0
-    while i < len(command):
-        ch = command[i]
-        if quote:
-            current.append(ch)
-            if ch == quote:
-                quote = None
-            elif ch == "\\" and quote == '"' and i + 1 < len(command):
-                current.append(command[i + 1])
+class Rules(NamedTuple):
+    """How one shell reads quotes, escapes, substitutions and comments (#798)."""
+    single: str               # characters that open and close a literal string
+    double: str               # characters that open and close a string with substitutions
+    escape: str               # the escape character outside single quotes
+    dq_escapes: str | None    # what it escapes inside double quotes (None: every character)
+    substitutes: bool         # "$(...)" inside double quotes runs a command
+    backticks: bool           # `...` runs a command
+    ansi: bool                # $'...' strings, where a backslash escapes
+    comments: bool            # '#' at the start of a word starts a comment that ends at the newline
+    block_comments: bool      # <# ... #>
+    here_strings: bool        # @' ... '@ and @" ... "@ here-strings
+
+
+# PowerShell also reads the curly quotes as quotes (U+2018-U+201B single, U+201C-U+201E double); Bash and cmd do not.
+RULES = {
+    "bash": Rules("'", '"', "\\", "$`\"\\\n", True, True, True, True, False, False),
+    "powershell": Rules("'‘’‚‛", '"“”„', "`", None, True, False, False, True, True, True),
+    "cmd": Rules("", '"', "^", "", False, False, False, False, False, False),
+}
+# Line breaks that one shell may honour and the other not (PowerShell ends a line at a lone \r); refused outright.
+ODD_BREAKS = re.compile("\r(?!\n)|[\v\f\x85  ]")
+SHELL_OF = {"bash": "bash", "sh": "bash", "zsh": "bash", "powershell": "powershell", "pwsh": "powershell", "cmd": "cmd"}
+LIVE, SYNTAX, TEXT, COMMENT = 0, 1, 2, 3
+WORD_BREAK = " \t\n;|&()"  # a '#' after one of these (or at the start) starts a word, and so a comment
+
+
+def lex(text: str, shell: str) -> tuple[list[int], list[str]]:
+    """The kind of every character of `text` as `shell` reads it, and the commands its substitutions run (#798).
+
+    LIVE: shell syntax (separators, grouping, redirection, the words of a command). SYNTAX: a quote or escape character,
+    which the shell removes. TEXT: quoted or escaped text, and the whole of a substitution inside double quotes or
+    backticks. COMMENT: a comment. The second result lists each such substitution's command once (the outermost ones);
+    a substitution nested inside one is found when that command is checked. An open quote at the end is refused.
+    PowerShell here-strings (`@'` and `@"` at a line end) are read as PowerShell reads them: their body is text, with
+    substitutions unless single-quoted, and a missing end line is refused. Bash here-documents are not read: their body
+    is lexed as commands, as before #798 (reading them exactly needs a real Bash parser). Not read either: `case` patterns and other syntax where a `)` or a quote means something else; there a substitution can
+    end early, hiding what follows, or a read-only command is refused."""
+    kinds = [LIVE] * len(text)
+    subs: list[str] = []
+    _scan(text, 0, RULES[shell], kinds, subs, "top")
+    return kinds, subs
+
+
+def _scan(text: str, i: int, rules: Rules, kinds: list[int], subs: list[str], mode: str) -> int:
+    """Mark kinds from i on. In mode "sub" (inside a `$(`) stop at the `)` that closes it and return its index."""
+    n, depth, quote = len(text), 0, None
+    while i < n:
+        ch = text[i]
+        if quote == "single":
+            kinds[i] = SYNTAX if ch in rules.single else TEXT
+            quote = None if ch in rules.single else quote
+        elif quote == "ansi":
+            if ch == "\\" and i + 1 < n:
+                kinds[i], kinds[i + 1] = SYNTAX, TEXT
                 i += 1
-        elif ch in "'\"":
-            quote = ch
-            current.append(ch)
-        elif ch in ";|\n" or (ch == "&" and not _is_redirect_amp(command, i)):
-            segments.append("".join(current))
-            current = []
-            if command[i:i + 2] in ("&&", "||"):
+            else:
+                kinds[i] = SYNTAX if ch == "'" else TEXT
+                quote = None if ch == "'" else quote
+        elif quote == "double":
+            if ch in rules.double:
+                kinds[i], quote = SYNTAX, None
+            elif ch == rules.escape and i + 1 < n and (rules.dq_escapes is None or text[i + 1] in rules.dq_escapes):
+                kinds[i], kinds[i + 1] = SYNTAX, SYNTAX if text[i + 1] == "\n" else TEXT
                 i += 1
-        else:
-            current.append(ch)
+            elif rules.substitutes and ch == "$" and text[i + 1:i + 2] == "(":
+                i = _substitution(text, i, i + 2, rules, kinds, subs)
+            elif rules.backticks and ch == "`":
+                i = _substitution(text, i, i + 1, rules, kinds, subs)
+            else:
+                kinds[i] = TEXT
+        elif ch == rules.escape and i + 1 < n:
+            kinds[i], kinds[i + 1] = SYNTAX, SYNTAX if text[i + 1] == "\n" else TEXT  # escaped newline: continuation
+            i += 1
+        elif rules.here_strings and ch == "@" and text[i + 1:i + 2] and text[i + 1] in rules.single + rules.double \
+                and re.match(r"[ \t]*\r?\n", text[i + 2:]):
+            i = _here_string(text, i, rules, kinds, subs)
+            continue
+        elif ch in rules.single:
+            dollars = 0  # `$'` opens an ANSI string, but `$$` is the process id: an odd run of live `$` counts
+            while i - dollars > 0 and text[i - dollars - 1] == "$" and kinds[i - dollars - 1] == LIVE:
+                dollars += 1
+            ansi = rules.ansi and dollars % 2 == 1
+            kinds[i], quote = SYNTAX, "ansi" if ansi else "single"
+        elif ch in rules.double:
+            kinds[i], quote = SYNTAX, "double"
+        elif (rules.comments and ch == "#" or rules.block_comments and text.startswith("<#", i)) \
+                and (i == 0 or kinds[i - 1] == LIVE and text[i - 1] in WORD_BREAK):  # an escaped break is text
+            end = text.find("#>", i + 2) + 2 if ch == "<" else text.find("\n", i)
+            if ch == "<" and end < 2:
+                raise Blocked("unterminated <# comment; command could not be checked")
+            end = n if end < 0 else end
+            kinds[i:end] = [COMMENT] * (end - i)
+            i = end
+            continue
+        elif rules.backticks and ch == "`":
+            i = _substitution(text, i, i + 1, rules, kinds, subs)
+        elif mode == "sub" and ch == "(":
+            depth += 1
+        elif mode == "sub" and ch == ")":
+            if depth == 0:
+                return i
+            depth -= 1
         i += 1
     if quote:
         raise Blocked("unbalanced quotes; command could not be checked")
-    segments.append("".join(current))
+    return n
+
+
+def _substitution(text: str, start: int, inner: int, rules: Rules, kinds: list[int], subs: list[str]) -> int:
+    """Record the command of the substitution that starts at `start` and return the index of its closing character.
+    Inside `$(...)` the shell reads a new command with its own quotes; inside backticks Bash looks only for the next
+    backtick that no backslash escapes."""
+    if text[start] == "`":
+        end = inner
+        while end < len(text) and text[end] != "`":
+            end += 2 if text[end] == "\\" else 1
+        end = min(end, len(text))
+        # Inside backticks Bash turns \` \\ \$ back into ` \ $ before it runs the command, so `echo \`git push\``
+        # nests a second substitution.
+        subs.append(re.sub(r"\\([`\\$])", r"\1", text[inner:end]))
+    else:
+        end = _scan(text, inner, rules, kinds, [], "sub")
+        subs.append(text[inner:end])
+    kinds[start:end + 1] = [TEXT] * len(kinds[start:end + 1])
+    return end
+
+
+def _body(text: str, a: int, b: int, rules: Rules, kinds: list[int], subs: list[str], escapes: str | None) -> None:
+    """Mark text[a:b], the body of a double-quoted here-string: text, apart from escapes and the substitutions in it,
+    which must end inside the body."""
+    i = a
+    while i < b:
+        ch = text[i]
+        if ch == rules.escape and i + 1 < b and (escapes is None or text[i + 1] in escapes):
+            kinds[i], kinds[i + 1] = SYNTAX, TEXT
+            i += 2
+            continue
+        if ch == "$" and text[i + 1:i + 2] == "(" or rules.backticks and ch == "`":
+            i = _substitution(text, i, i + (1 if ch == "`" else 2), rules, kinds, subs)
+            if i >= b:
+                raise Blocked("substitution runs past the end of a here-string; command could not be checked")
+        else:
+            kinds[i] = TEXT
+        i += 1
+
+
+def _here_string(text: str, i: int, rules: Rules, kinds: list[int], subs: list[str]) -> int:
+    """PowerShell `@'` or `@"` at the end of a line: the body runs to a line that starts with the closing quote and `@`
+    (at the very start of the line: an indented one is body). Return the index after that `@`."""
+    single = text[i + 1] in rules.single
+    body = text.index("\n", i) + 1
+    close = re.compile(r"(?m)^[" + re.escape(rules.single if single else rules.double) + "]@").search(text, body)
+    if not close:
+        raise Blocked("here-string without its end line; command could not be checked")
+    kinds[i:body] = [SYNTAX] * (body - i)
+    if single:
+        kinds[body:close.start()] = [TEXT] * (close.start() - body)
+    else:
+        _body(text, body, close.start(), rules, kinds, subs, None)
+    kinds[close.start():close.end()] = [SYNTAX, SYNTAX]
+    return close.end()
+
+
+def split_segments(command: str, shell: str = "bash") -> list[str]:
+    """Split on ; && || | & and newlines that the shell reads as syntax (not quoted, escaped or in a comment)."""
+    kinds, _ = lex(command, shell)
+    segments, start, i = [], 0, 0
+    while i < len(command):
+        ch = command[i]
+        if kinds[i] == LIVE and (ch in ";|\n" or (ch == "&" and not _is_redirect_amp(command, i))):
+            segments.append(command[start:i])
+            if command[i:i + 2] in ("&&", "||") and kinds[i + 1] == LIVE:
+                i += 1
+            start = i + 1
+        i += 1
+    segments.append(command[start:])
     return [s.strip() for s in segments if s.strip()]
 
 
@@ -122,29 +276,39 @@ def _is_redirect_amp(command: str, i: int) -> bool:
 _MEMBER = r"(?:\.|::)[A-Za-z_][A-Za-z0-9_]*\Z"
 # `$x.Foo`, `${env:X}.a.Foo`, `'a'.Foo`: the whole word is one variable or one quoted string and its member chain.
 # `$dir/a.txt` or `"a"b.Foo` is a plain argument in PowerShell, and the `(` after it runs a command.
-VALUE_MEMBER = re.compile(r"""(?:\$(?:\{[^}]*\}|[A-Za-z_]\w*(?::\w+)?)|'[^']*'|"[^"]*")(?:(?:\.|::)[A-Za-z_]\w*)+""")
+# A variable may carry indexes first (`$lines[0].StartsWith`); an index holds no space, quote or parenthesis (#798).
+VALUE_MEMBER = re.compile(r"""(?:\$(?:\{[^}]*\}|[A-Za-z_]\w*(?::\w+)?)(?:\[[^\]\s()'"]*\])*|'[^']*'|"[^"]*")"""
+                          r"""(?:(?:\.|::)[A-Za-z_]\w*)+""")
 TYPE_MEMBER = re.compile(r"\[\S*" + _MEMBER)  # `[math]::Max`: an expression only as the first word of its piece
 MEMBER_CHAIN = re.compile(r"(?:(?:\.|::)[A-Za-z_]\w*)+")  # `.a.Trim`: after the `)` of a method call, at `chain`
 CHAIN_MEMBER = re.compile(r"\.[A-Za-z_][A-Za-z0-9_]*\Z")  # `.Trim`: only right after a `)`
 
 
-def _method_call(text: str, after_close: bool, chain: int | None = None) -> bool:
-    """True when `text`, the piece so far, ends in the name of a method, so that the `(` after it opens method
+SPACES = re.compile(r"\s*")
+
+
+def _method_call(text: str, start: int, end: int, after_close: bool, chain: int | None, last_space: int) -> bool:
+    """True when `text[start:end]`, the piece so far, ends in the name of a method, so that the `(` after it opens method
     arguments (expressions) and not a command group. Checked against both PowerShell editions with a harmless command
     in the parentheses: these forms do not run it, while `Write-Output [math]::Max(cmd)`, `Write-Output a$x.Foo(cmd)`,
     `Get-Content $dir/a.txt(cmd)` and `git.exe(cmd)` do, because there the word before `(` is a plain argument or a
-    command name. A form this does not recognize (`$x[0].Foo(`, a quoted string with a space) is split and checked."""
-    if chain is not None and MEMBER_CHAIN.fullmatch(text[chain:]):
+    command name. Words are split where the shell splits them, so a quoted string with a space is one word (#798).
+    Bash reads none of these forms as a call; there a word followed by `(` is a syntax error and runs nothing.
+    split_groups passes positions in the whole segment instead of copies, so that a long command costs linear time
+    (#798): `chain` is where a member chain may start (after the `)` of a method call), `last_space` the last
+    unquoted, unescaped whitespace before `end`."""
+    if chain is not None and MEMBER_CHAIN.fullmatch(text, chain, end):
         return True  # `$_.Name.ToLower().Contains(`: members directly after the `)` of a method call
     if after_close:
-        return bool(CHAIN_MEMBER.fullmatch(text))
-    words = text.split()
-    if not words or text[-1].isspace():
-        return False
-    return bool(VALUE_MEMBER.fullmatch(words[-1]) or (len(words) == 1 and TYPE_MEMBER.fullmatch(words[0])))
+        return bool(CHAIN_MEMBER.fullmatch(text, start, end))
+    word = max(start, last_space + 1)  # the last word of the piece
+    if word == end:
+        return False  # an empty piece, or one that ends in a break
+    first_word = bool(SPACES.fullmatch(text, start, word))
+    return bool(VALUE_MEMBER.fullmatch(text, word, end) or (first_word and TYPE_MEMBER.fullmatch(text, word, end)))
 
 
-def split_groups(segment: str) -> list[str]:
+def split_groups(segment: str, shell: str = "bash") -> list[str]:
     """The commands that grouping hides inside `segment`: split on ( ) { } outside quotes (#795).
 
     A subshell `(git push)`, a command group `{ git push; }`, a substitution `$(git push)` and a PowerShell script
@@ -157,98 +321,58 @@ def split_groups(segment: str) -> list[str]:
     parentheses of a method call (`$_.Contains('Remove-Item')`, `[math]::Max(1, 2)`, `(Get-Date).ToString('yyyy')`;
     see _method_call), whose arguments are expressions, not commands. A group or a script block inside either pair
     still splits (`$x.Where({ Remove-Item y })`, `$x.Foo((git push))`). `open` pairs each closer with its opener."""
-    pieces, current, quote, i, open, after_close, chain = [], [], None, 0, [], False, None
-    while i < len(segment):
-        ch = segment[i]
-        if quote:
-            current.append(ch)
-            if ch == quote:
-                quote = None
-            elif ch == "\\" and quote == '"' and i + 1 < len(segment):
-                current.append(segment[i + 1])
-                i += 1
-        elif ch in "'\"":
-            quote = ch
-            current.append(ch)
+    kinds, _ = lex(segment, shell)
+    # The current piece is segment[start:i]: a character either stays in it or, as a splitting ( ) { }, ends it.
+    pieces, start, open, after_close, chain, last_space = [], 0, [], False, None, -1
+    for i, ch in enumerate(segment):
+        if kinds[i] != LIVE:
+            continue
+        if ch.isspace():
+            last_space = i
         elif ch in "({":
             if ch == "{":
                 inert = (i > 0 and segment[i - 1] == "$" and i + 1 < len(segment)
                          and not segment[i + 1].isspace() and segment[i + 1] != "|")
             else:
-                inert = _method_call("".join(current), after_close, chain)
+                inert = _method_call(segment, start, i, after_close, chain, last_space)
             open.append((ch, inert))
-            if inert:
-                current.append(ch)
-            else:
-                pieces.append("".join(current))
-                current, after_close, chain = [], False, None
+            if not inert:
+                pieces.append(segment[start:i])
+                start, after_close, chain = i + 1, False, None
         elif ch in ")}":
             # A closer that does not match the innermost opener is unbalanced text: it splits and leaves `open` alone.
             inert = bool(open) and open[-1][0] == "({"[")}".index(ch)] and open.pop()[1]
             if inert:
-                current.append(ch)
-                chain = len("".join(current)) if ch == ")" else chain  # a member chain may go on from here
+                chain = i + 1 if ch == ")" else chain  # a member chain may go on from here
             else:
-                pieces.append("".join(current))
-                chain = None
-                current, after_close = [], ch == ")"  # `(Get-Date).ToString(`: the piece that starts here may be `.name`
-        else:
-            current.append(ch)
-        i += 1
-    pieces.append("".join(current))
+                pieces.append(segment[start:i])
+                start, chain = i + 1, None
+                after_close = ch == ")"  # `(Get-Date).ToString(`: the piece that starts here may be `.name`
+    pieces.append(segment[start:])
     return [p.strip() for p in pieces if p.strip()]
 
 
-def substitutions(command: str) -> list[str]:
-    """The commands that `command` runs through a substitution a quote would hide: `$(...)` inside "..." and
-    `...` in backticks anywhere outside '...' (#795). Both shells run `$(...)` inside double quotes; neither runs
-    anything inside single quotes. A backtick after a backslash is literal text in Bash (`rg "\\`git push\\`" docs`)
-    and starts nothing in PowerShell, so it is skipped; backslashes are read in pairs, so that the backtick after an
-    escaped backslash (`echo \\\\`git push``) still counts. A backslash before `$(` is not honored, because PowerShell
-    still runs `"\\$(...)"`, and in PowerShell an unescaped backtick is an escape character, not a substitution: both
-    are read as commands here, which can only block more. Not seen, as before #795: a substitution after a Bash
-    `\\'` outside quotes, which this reads as the start of a quoted string. Each result is checked as a command of
-    its own, so a substitution nested inside it is found on that pass."""
-    found, quote, i = [], None, 0
-    while i < len(command):
-        ch = command[i]
-        if quote == "'":
-            quote = None if ch == "'" else quote
-        elif ch == "\\" and command[i + 1:i + 2] in ("`", "\\", '"' if quote else ""):
-            i += 1
-        elif ch == "'" and quote is None:
-            quote = "'"
-        elif ch == '"':
-            quote = None if quote else '"'
-        elif ch == "`":
-            end = command.find("`", i + 1)
-            if end > i:
-                found.append(command[i + 1:end])
-                i = end
-        elif ch == "$" and quote == '"' and command[i + 1:i + 2] == "(":
-            # Every parenthesis counts, quoted or not (limits: module docstring). Skipping quoted ones needs the
-            # shell's own escape rules: with `\\'` read as a quote, `"$(echo \\'$(true; echo \\'); git push)"` passed.
-            depth, j = 1, i + 2
-            while j < len(command) and depth:
-                depth += {"(": 1, ")": -1}.get(command[j], 0)
-                j += 1
-            found.append(command[i + 2:j - 1] if depth == 0 else command[i + 2:])
-            i = j - 1
-        i += 1
-    return found
+def substitutions(command: str, shell: str = "bash") -> list[str]:
+    """The commands that `command` runs through a substitution a quote would hide (#795): `$(...)` inside double
+    quotes in both shells, and in Bash `...` in backticks outside single quotes. The shell's own escapes decide
+    (#798): in Bash `\\$(` and `\\`` start nothing and `\\'` outside quotes is a plain character; in PowerShell a
+    backslash is plain text, the backtick is the escape character and backticks run nothing. Inside `$(...)` quotes
+    are read as the shell reads them, so a quoted `)` does not end it. Each result is checked as a command of its
+    own, so a substitution nested inside it is found on that pass."""
+    return lex(command, shell)[1]
 
 
-def tokenize(segment: str) -> list[str]:
-    tokens, current, quote, has = [], [], None, False
-    for ch in segment:
-        if quote:
-            if ch == quote:
-                quote = None
-            else:
-                current.append(ch)
-        elif ch in "'\"":
-            quote, has = ch, True
-        elif ch.isspace():
+def tokenize(segment: str, shell: str = "bash") -> list[str]:
+    """The words of `segment` as the shell passes them on: quotes and escape characters removed, comments dropped."""
+    kinds, _ = lex(segment, shell)
+    escape = RULES[shell].escape
+    tokens, current, has = [], [], False
+    for ch, kind in zip(segment, kinds):
+        if kind == COMMENT:
+            continue
+        if kind == SYNTAX:
+            has = has or ch != escape and ch != "\n"
+        elif kind == LIVE and ch.isspace():
             if current or has:
                 tokens.append("".join(current))
             current, has = [], False
@@ -264,16 +388,10 @@ def command_word(token: str) -> str:
     return word[:-4] if word.endswith(".exe") else word
 
 
-def check_redirects(segment: str) -> None:
-    quote = None
+def check_redirects(segment: str, shell: str = "bash") -> None:
+    kinds, _ = lex(segment, shell)
     for i, ch in enumerate(segment):
-        if quote:
-            quote = None if ch == quote else quote
-            continue
-        if ch in "'\"":
-            quote = ch
-            continue
-        if ch != ">":
+        if ch != ">" or kinds[i] != LIVE:
             continue
         rest = segment[i + 1:].lstrip(">").lstrip(" \t")
         if rest.startswith("&"):
@@ -283,7 +401,11 @@ def check_redirects(segment: str) -> None:
             rest = rest[1:].lstrip(" \t")
             if re.match(r"([0-9]+|-)(?=$|[ \t\n;|&)<>])", rest):
                 continue
-        target = tokenize(rest)[0].lower() if tokenize(rest) else ""
+        try:
+            words = tokenize(rest, shell)
+        except Blocked:
+            words = []
+        target = words[0].lower() if words else ""
         if target not in SAFE_REDIRECT_TARGETS:
             raise Blocked(f"output redirection to a file ({target or 'unknown'})")
 
@@ -430,11 +552,12 @@ def check_action(script: str, segment: str, blocked: frozenset) -> None:
         raise Blocked(f"{script} -Action {values[0]}")
 
 
-def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), actions: dict | None = None) -> None:
+def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), actions: dict | None = None,
+                  shell: str = "bash") -> None:
     actions = actions or {}
     if depth > 3:
         raise Blocked("nested shell depth exceeded")
-    tokens = tokenize(segment)
+    tokens = tokenize(segment, shell)
     while tokens and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
         tokens = tokens[1:]
     while tokens and tokens[0] in ("&", ".", "env", "command", "exec", "time", "nice", "sudo"):
@@ -459,7 +582,7 @@ def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), 
             if actions[script] is None:
                 raise Blocked(f"{script} (blocked outright by guard_write_actions)")
             check_action(script, segment, actions[script])
-    check_redirects(segment)
+    check_redirects(segment, shell)
     if not tokens:
         return
     for script in executed:
@@ -470,7 +593,8 @@ def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), 
     if word in SHELLS:
         for j, a in enumerate(args):
             if a.lower() in INLINE_FLAGS and j + 1 < len(args):
-                check_command(" ".join(args[j + 1:]) if word == "cmd" else args[j + 1], depth + 1, extra, actions)
+                check_command(" ".join(args[j + 1:]) if word == "cmd" else args[j + 1], depth + 1, extra, actions,
+                              SHELL_OF[word])
                 return
         return
     if word == "git":
@@ -483,17 +607,27 @@ def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), 
         raise Blocked(f"{word} in-place edit")
 
 
-def check_command(command: str, depth: int = 0, extra: frozenset = frozenset(), actions: dict | None = None) -> None:
-    for segment in split_segments(command):
-        check_segment(segment, depth, extra, actions)
-        pieces = split_groups(segment)
+def check_command(command: str, depth: int = 0, extra: frozenset = frozenset(), actions: dict | None = None,
+                  shell: str | None = None) -> None:
+    """Check `command` as `shell` ("bash", "powershell" or "cmd") reads it. Without a shell (a caller that does not
+    know which tool ran the command) it is checked as both Bash and PowerShell and refused if either refuses."""
+    if shell is None:
+        for each in ("bash", "powershell"):
+            check_command(command, depth, extra, actions, each)
+        return
+    if ODD_BREAKS.search(command):
+        raise Blocked("a lone carriage return or another unusual line break; command could not be checked")
+    _, subs = lex(command, shell)
+    for segment in split_segments(command, shell):
+        check_segment(segment, depth, extra, actions, shell)
+        pieces = split_groups(segment, shell)
         if pieces != [segment]:
             for piece in pieces:
-                check_segment(piece, depth, extra, actions)
-    for inner in substitutions(command):
+                check_segment(piece, depth, extra, actions, shell)
+    for inner in subs:
         if depth >= 3:
             raise Blocked("nested shell depth exceeded")
-        check_command(inner, depth + 1, extra, actions)
+        check_command(inner, depth + 1, extra, actions, shell)
 
 
 def project_params(payload: dict) -> dict:
@@ -540,6 +674,9 @@ def write_actions(payload: dict, params: dict | None = None) -> dict:
     return out
 
 
+TOOL_SHELL = {"Bash": "bash", "PowerShell": "powershell"}  # the hook payload's tool_name decides the shell (#798)
+
+
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
@@ -552,10 +689,15 @@ def main() -> int:
         return 0
     try:
         params = project_params(payload)
-        check_command(command, extra=extra_scripts(payload, params), actions=write_actions(payload, params))
+        check_command(command, extra=extra_scripts(payload, params), actions=write_actions(payload, params),
+                      shell=TOOL_SHELL[payload["tool_name"]])
     except Blocked as exc:
         print(f"Blocked by the read-only agent guard (Mercury): {exc}. "
               "This agent must not write; report the needed change instead.", file=sys.stderr)
+        return 2
+    except Exception as exc:  # noqa: BLE001 - any failure to read the command must block, not let it run (exit 1 does)
+        print(f"Blocked by the read-only agent guard (Mercury): the command could not be checked "
+              f"({type(exc).__name__}). This agent must not write; report the needed change instead.", file=sys.stderr)
         return 2
     return 0
 
