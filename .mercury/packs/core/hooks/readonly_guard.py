@@ -118,7 +118,23 @@ def _is_redirect_amp(command: str, i: int) -> bool:
     return (i > 0 and command[i - 1] in "<>") or (i + 1 < len(command) and command[i + 1] == ">")
 
 
-METHOD_CALL = re.compile(r"(?:\.|::)[A-Za-z_][A-Za-z0-9_]*\Z")  # the text before a `(` that opens method arguments
+_MEMBER = r"(?:\.|::)[A-Za-z_][A-Za-z0-9_]*\Z"
+VALUE_MEMBER = re.compile(r"[$'\"]\S*" + _MEMBER)  # `$x.Foo`, `'a'.Foo`: a member of a variable or a string, anywhere
+TYPE_MEMBER = re.compile(r"\[\S*" + _MEMBER)  # `[math]::Max`: an expression only as the first word of its piece
+CHAIN_MEMBER = re.compile(r"\.[A-Za-z_][A-Za-z0-9_]*\Z")  # `.Trim`: only right after a `)`
+
+
+def _method_call(text: str, after_close: bool) -> bool:
+    """True when `text`, the piece so far, ends in the name of a method, so that the `(` after it opens method
+    arguments (expressions) and not a command group. Checked against both PowerShell editions with a harmless command
+    in the parentheses: these forms do not run it, while `Write-Output [math]::Max(cmd)`, `Write-Output a$x.Foo(cmd)`
+    and `git.exe(cmd)` do, because there the word before `(` is a plain argument or a command name."""
+    if after_close:
+        return bool(CHAIN_MEMBER.fullmatch(text))
+    words = text.split()
+    if not words or text[-1].isspace():
+        return False
+    return bool(VALUE_MEMBER.fullmatch(words[-1]) or (len(words) == 1 and TYPE_MEMBER.fullmatch(words[0])))
 
 
 def split_groups(segment: str) -> list[str]:
@@ -131,10 +147,10 @@ def split_groups(segment: str) -> list[str]:
     instead of it, so this can only block more. Substitutions inside quotes are found by substitutions().
 
     Two pairs are not grouping and stay inside their word, with what they hold: the braces of `${name}`, and the
-    parentheses of a method call (`$_.Contains('Remove-Item')`, `[math]::Max(1, 2)`: a `(` right after `.name` or
-    `::name`), whose arguments are expressions, not commands. A group or a script block inside either pair still
-    splits (`$x.Where({ Remove-Item y })`, `$x.Foo((git push))`). `open` pairs each closer with its opener."""
-    pieces, current, quote, i, open = [], [], None, 0, []
+    parentheses of a method call (`$_.Contains('Remove-Item')`, `[math]::Max(1, 2)`, `(Get-Date).ToString('yyyy')`;
+    see _method_call), whose arguments are expressions, not commands. A group or a script block inside either pair
+    still splits (`$x.Where({ Remove-Item y })`, `$x.Foo((git push))`). `open` pairs each closer with its opener."""
+    pieces, current, quote, i, open, after_close = [], [], None, 0, [], False
     while i < len(segment):
         ch = segment[i]
         if quote:
@@ -152,13 +168,13 @@ def split_groups(segment: str) -> list[str]:
                 inert = (i > 0 and segment[i - 1] == "$" and i + 1 < len(segment)
                          and not segment[i + 1].isspace() and segment[i + 1] != "|")
             else:
-                inert = bool(METHOD_CALL.search("".join(current)))
+                inert = _method_call("".join(current), after_close)
             open.append((ch, inert))
             if inert:
                 current.append(ch)
             else:
                 pieces.append("".join(current))
-                current = []
+                current, after_close = [], False
         elif ch in ")}":
             # A closer that does not match the innermost opener is unbalanced text: it splits and leaves `open` alone.
             inert = bool(open) and open[-1][0] == "({"[")}".index(ch)] and open.pop()[1]
@@ -166,7 +182,7 @@ def split_groups(segment: str) -> list[str]:
                 current.append(ch)
             else:
                 pieces.append("".join(current))
-                current = []
+                current, after_close = [], ch == ")"  # `(Get-Date).ToString(`: the piece that starts here may be `.name`
         else:
             current.append(ch)
         i += 1
@@ -178,7 +194,8 @@ def substitutions(command: str) -> list[str]:
     """The commands that `command` runs through a substitution a quote would hide: `$(...)` inside "..." and
     `...` in backticks anywhere outside '...' (#795). Both shells run `$(...)` inside double quotes; neither runs
     anything inside single quotes. A backtick after a backslash is literal text in Bash (`rg "\\`git push\\`" docs`)
-    and starts nothing in PowerShell, so it is skipped. A backslash before `$(` is not honored, because PowerShell
+    and starts nothing in PowerShell, so it is skipped; backslashes are read in pairs, so that the backtick after an
+    escaped backslash (`echo \\\\`git push``) still counts. A backslash before `$(` is not honored, because PowerShell
     still runs `"\\$(...)"`, and in PowerShell an unescaped backtick is an escape character, not a substitution: both
     are read as commands here, which can only block more. Each result is checked as a command of its own, so a
     substitution nested inside it is found on that pass."""
@@ -187,7 +204,7 @@ def substitutions(command: str) -> list[str]:
         ch = command[i]
         if quote == "'":
             quote = None if ch == "'" else quote
-        elif ch == "\\" and (command[i + 1:i + 2] == "`" or (quote == '"' and command[i + 1:i + 2] in ('"', "\\"))):
+        elif ch == "\\" and command[i + 1:i + 2] in ("`", "\\", '"' if quote else ""):
             i += 1
         elif ch == "'" and quote is None:
             quote = "'"
