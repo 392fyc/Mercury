@@ -6,8 +6,9 @@ or auto mode, so this hook is the effective write guard. It blocks repository, G
 Bash and PowerShell commands by exiting 2. It is best-effort, not an OS sandbox: arbitrary interpreters
 (python -c, node -e) can still write. A command inside a subshell, a command group, a substitution or a script
 block (`(...)`, `{ ...; }`, `$(...)` also inside double quotes, backticks, `& { ... }`) is checked as well (#795),
-again best-effort: inside a quoted `$(...)` the closing parenthesis is found by counting, so an escaped `\\)`, the
-`)` of a `case` branch or one in a comment ends it early and hides what follows.
+again best-effort: inside a quoted `$(...)` the closing parenthesis is found by counting, so an escaped `\\)`, a
+quoted `')'`, the `)` of a `case` branch or of a here-document or one in a comment ends it early. What follows is
+then hidden, or the cut leaves a quote open and a read-only command is refused (`echo "$(printf ')')"`).
 
 A project adds write-type scripts of its own in `.mercury/config.json`:
     {"params": {"guard_write_scripts": ["deploy.sh"]}}
@@ -225,14 +226,11 @@ def substitutions(command: str) -> list[str]:
                 found.append(command[i + 1:end])
                 i = end
         elif ch == "$" and quote == '"' and command[i + 1:i + 2] == "(":
-            depth, j, inner = 1, i + 2, None  # `inner`: a quote opened inside the substitution, "$(printf ')')"
+            # Every parenthesis counts, quoted or not (limits: module docstring). Skipping quoted ones needs the
+            # shell's own escape rules: with `\\'` read as a quote, `"$(echo \\'$(true; echo \\'); git push)"` passed.
+            depth, j = 1, i + 2
             while j < len(command) and depth:
-                if inner:
-                    inner = None if command[j] == inner else inner
-                elif command[j] in "'\"":
-                    inner = command[j]
-                else:
-                    depth += {"(": 1, ")": -1}.get(command[j], 0)
+                depth += {"(": 1, ")": -1}.get(command[j], 0)
                 j += 1
             found.append(command[i + 2:j - 1] if depth == 0 else command[i + 2:])
             i = j - 1
