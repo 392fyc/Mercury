@@ -4,7 +4,11 @@ Registered in the `hooks` frontmatter of the read-only `mercury-*` Claude roles 
 Subagent `permissionMode: plan` is ignored when the main conversation runs in bypassPermissions, acceptEdits
 or auto mode, so this hook is the effective write guard. It blocks repository, GitHub and filesystem writes in
 Bash and PowerShell commands by exiting 2. It is best-effort, not an OS sandbox: arbitrary interpreters
-(python -c, node -e) can still write.
+(python -c, node -e) can still write. A command inside a subshell, a command group, a substitution or a script
+block (`(...)`, `{ ...; }`, `$(...)` also inside double quotes, backticks, `& { ... }`) is checked as well (#795),
+again best-effort: inside a quoted `$(...)` the closing parenthesis is found by counting, so an escaped `\\)`, a
+quoted `')'`, the `)` of a `case` branch or of a here-document or one in a comment ends it early. What follows is
+then hidden, or the cut leaves a quote open and a read-only command is refused (`echo "$(printf ')')"`).
 
 A project adds write-type scripts of its own in `.mercury/config.json`:
     {"params": {"guard_write_scripts": ["deploy.sh"]}}
@@ -113,6 +117,125 @@ def split_segments(command: str) -> list[str]:
 
 def _is_redirect_amp(command: str, i: int) -> bool:
     return (i > 0 and command[i - 1] in "<>") or (i + 1 < len(command) and command[i + 1] == ">")
+
+
+_MEMBER = r"(?:\.|::)[A-Za-z_][A-Za-z0-9_]*\Z"
+# `$x.Foo`, `${env:X}.a.Foo`, `'a'.Foo`: the whole word is one variable or one quoted string and its member chain.
+# `$dir/a.txt` or `"a"b.Foo` is a plain argument in PowerShell, and the `(` after it runs a command.
+VALUE_MEMBER = re.compile(r"""(?:\$(?:\{[^}]*\}|[A-Za-z_]\w*(?::\w+)?)|'[^']*'|"[^"]*")(?:(?:\.|::)[A-Za-z_]\w*)+""")
+TYPE_MEMBER = re.compile(r"\[\S*" + _MEMBER)  # `[math]::Max`: an expression only as the first word of its piece
+MEMBER_CHAIN = re.compile(r"(?:(?:\.|::)[A-Za-z_]\w*)+")  # `.a.Trim`: after the `)` of a method call, at `chain`
+CHAIN_MEMBER = re.compile(r"\.[A-Za-z_][A-Za-z0-9_]*\Z")  # `.Trim`: only right after a `)`
+
+
+def _method_call(text: str, after_close: bool, chain: int | None = None) -> bool:
+    """True when `text`, the piece so far, ends in the name of a method, so that the `(` after it opens method
+    arguments (expressions) and not a command group. Checked against both PowerShell editions with a harmless command
+    in the parentheses: these forms do not run it, while `Write-Output [math]::Max(cmd)`, `Write-Output a$x.Foo(cmd)`,
+    `Get-Content $dir/a.txt(cmd)` and `git.exe(cmd)` do, because there the word before `(` is a plain argument or a
+    command name. A form this does not recognize (`$x[0].Foo(`, a quoted string with a space) is split and checked."""
+    if chain is not None and MEMBER_CHAIN.fullmatch(text[chain:]):
+        return True  # `$_.Name.ToLower().Contains(`: members directly after the `)` of a method call
+    if after_close:
+        return bool(CHAIN_MEMBER.fullmatch(text))
+    words = text.split()
+    if not words or text[-1].isspace():
+        return False
+    return bool(VALUE_MEMBER.fullmatch(words[-1]) or (len(words) == 1 and TYPE_MEMBER.fullmatch(words[0])))
+
+
+def split_groups(segment: str) -> list[str]:
+    """The commands that grouping hides inside `segment`: split on ( ) { } outside quotes (#795).
+
+    A subshell `(git push)`, a command group `{ git push; }`, a substitution `$(git push)` and a PowerShell script
+    block `& { git push }` all run the command inside, but the segment's first word is then `(git`, `{` or the outer
+    command. The `{` of `${name}` opens a variable name, not a command, so it does not split; `${ cmd; }` and
+    `${| cmd; }` (Bash 5.3) run a command and do. The pieces are checked in addition to the whole segment, never
+    instead of it, so this can only block more. Substitutions inside quotes are found by substitutions().
+
+    Two pairs are not grouping and stay inside their word, with what they hold: the braces of `${name}`, and the
+    parentheses of a method call (`$_.Contains('Remove-Item')`, `[math]::Max(1, 2)`, `(Get-Date).ToString('yyyy')`;
+    see _method_call), whose arguments are expressions, not commands. A group or a script block inside either pair
+    still splits (`$x.Where({ Remove-Item y })`, `$x.Foo((git push))`). `open` pairs each closer with its opener."""
+    pieces, current, quote, i, open, after_close, chain = [], [], None, 0, [], False, None
+    while i < len(segment):
+        ch = segment[i]
+        if quote:
+            current.append(ch)
+            if ch == quote:
+                quote = None
+            elif ch == "\\" and quote == '"' and i + 1 < len(segment):
+                current.append(segment[i + 1])
+                i += 1
+        elif ch in "'\"":
+            quote = ch
+            current.append(ch)
+        elif ch in "({":
+            if ch == "{":
+                inert = (i > 0 and segment[i - 1] == "$" and i + 1 < len(segment)
+                         and not segment[i + 1].isspace() and segment[i + 1] != "|")
+            else:
+                inert = _method_call("".join(current), after_close, chain)
+            open.append((ch, inert))
+            if inert:
+                current.append(ch)
+            else:
+                pieces.append("".join(current))
+                current, after_close, chain = [], False, None
+        elif ch in ")}":
+            # A closer that does not match the innermost opener is unbalanced text: it splits and leaves `open` alone.
+            inert = bool(open) and open[-1][0] == "({"[")}".index(ch)] and open.pop()[1]
+            if inert:
+                current.append(ch)
+                chain = len("".join(current)) if ch == ")" else chain  # a member chain may go on from here
+            else:
+                pieces.append("".join(current))
+                chain = None
+                current, after_close = [], ch == ")"  # `(Get-Date).ToString(`: the piece that starts here may be `.name`
+        else:
+            current.append(ch)
+        i += 1
+    pieces.append("".join(current))
+    return [p.strip() for p in pieces if p.strip()]
+
+
+def substitutions(command: str) -> list[str]:
+    """The commands that `command` runs through a substitution a quote would hide: `$(...)` inside "..." and
+    `...` in backticks anywhere outside '...' (#795). Both shells run `$(...)` inside double quotes; neither runs
+    anything inside single quotes. A backtick after a backslash is literal text in Bash (`rg "\\`git push\\`" docs`)
+    and starts nothing in PowerShell, so it is skipped; backslashes are read in pairs, so that the backtick after an
+    escaped backslash (`echo \\\\`git push``) still counts. A backslash before `$(` is not honored, because PowerShell
+    still runs `"\\$(...)"`, and in PowerShell an unescaped backtick is an escape character, not a substitution: both
+    are read as commands here, which can only block more. Not seen, as before #795: a substitution after a Bash
+    `\\'` outside quotes, which this reads as the start of a quoted string. Each result is checked as a command of
+    its own, so a substitution nested inside it is found on that pass."""
+    found, quote, i = [], None, 0
+    while i < len(command):
+        ch = command[i]
+        if quote == "'":
+            quote = None if ch == "'" else quote
+        elif ch == "\\" and command[i + 1:i + 2] in ("`", "\\", '"' if quote else ""):
+            i += 1
+        elif ch == "'" and quote is None:
+            quote = "'"
+        elif ch == '"':
+            quote = None if quote else '"'
+        elif ch == "`":
+            end = command.find("`", i + 1)
+            if end > i:
+                found.append(command[i + 1:end])
+                i = end
+        elif ch == "$" and quote == '"' and command[i + 1:i + 2] == "(":
+            # Every parenthesis counts, quoted or not (limits: module docstring). Skipping quoted ones needs the
+            # shell's own escape rules: with `\\'` read as a quote, `"$(echo \\'$(true; echo \\'); git push)"` passed.
+            depth, j = 1, i + 2
+            while j < len(command) and depth:
+                depth += {"(": 1, ")": -1}.get(command[j], 0)
+                j += 1
+            found.append(command[i + 2:j - 1] if depth == 0 else command[i + 2:])
+            i = j - 1
+        i += 1
+    return found
 
 
 def tokenize(segment: str) -> list[str]:
@@ -363,6 +486,14 @@ def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), 
 def check_command(command: str, depth: int = 0, extra: frozenset = frozenset(), actions: dict | None = None) -> None:
     for segment in split_segments(command):
         check_segment(segment, depth, extra, actions)
+        pieces = split_groups(segment)
+        if pieces != [segment]:
+            for piece in pieces:
+                check_segment(piece, depth, extra, actions)
+    for inner in substitutions(command):
+        if depth >= 3:
+            raise Blocked("nested shell depth exceeded")
+        check_command(inner, depth + 1, extra, actions)
 
 
 def project_params(payload: dict) -> dict:

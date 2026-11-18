@@ -26,6 +26,12 @@ remove these.
 3. **Argus on the final head.** When steps 1 and 2 hold, comment `@argus-review review` once. Wait for Argus's review
    of that head with a deadline (15 minutes); if it does not arrive, or Argus reports that its budget is used up,
    say so in the pull request and continue: Argus is advisory.
+   - When Argus reports that a run failed (for example that the model call timed out), do not comment
+     `@argus-review review` again with nothing changed: the same run can fail the same way, and a failed run may
+     still be billed (Mercury #796). Find the cause first, for example the size of the diff or a limit of Argus itself.
+     If you can change something that addresses the cause, change it and run once more. Otherwise, or when that
+     run fails too, write the failure and its cause in the pull request and continue as for a review that did not
+     arrive, or, when the review matters for this pull request, ask the user whether to pay for another run.
    - Handle every finding: fix it, or reply in its thread with the evidence why it does not apply.
    - A reply is judged at once: Argus answers in the thread and resolves it if it accepts the reply. Wait for that
      answer (with the same deadline); do not start another review for a reply.
@@ -36,9 +42,9 @@ remove these.
      wrote the evidence in the pull request, or a person allowed it.
 4. **Merge gates.** All of these hold on the head to be merged:
    - the receipt from step 1 is for this exact head, with `verdict=pass` and `findings=[]`;
-   - Argus reviewed this exact head, or the pull request says why it did not (deadline passed, budget used up, not
-     installed). Any change of head after step 3, for whatever reason (a repair, a sync with the integration
-     branch), goes back to step 3;
+   - Argus reviewed this exact head, or the pull request says why it did not (deadline passed, budget used up,
+     the run failed, not installed). Any change of head after step 3, for whatever reason (a repair, a sync with
+     the integration branch), goes back to step 3;
    - every CI check succeeded;
    - no review thread is unresolved, and no `CHANGES_REQUESTED` review is in effect;
    - `guard.ps1 pre-merge -PullRequestNumber <n> -NativeReviewReceipt <absolute path>` passes;
