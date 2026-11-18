@@ -118,6 +118,9 @@ def _is_redirect_amp(command: str, i: int) -> bool:
     return (i > 0 and command[i - 1] in "<>") or (i + 1 < len(command) and command[i + 1] == ">")
 
 
+METHOD_CALL = re.compile(r"(?:\.|::)[A-Za-z_][A-Za-z0-9_]*\Z")  # the text before a `(` that opens method arguments
+
+
 def split_groups(segment: str) -> list[str]:
     """The commands that grouping hides inside `segment`: split on ( ) { } outside quotes (#795).
 
@@ -125,8 +128,13 @@ def split_groups(segment: str) -> list[str]:
     block `& { git push }` all run the command inside, but the segment's first word is then `(git`, `{` or the outer
     command. The `{` of `${name}` opens a variable name, not a command, so it does not split; `${ cmd; }` and
     `${| cmd; }` (Bash 5.3) run a command and do. The pieces are checked in addition to the whole segment, never
-    instead of it, so this can only block more. Substitutions inside quotes are found by substitutions()."""
-    pieces, current, quote, i, names = [], [], None, 0, 0
+    instead of it, so this can only block more. Substitutions inside quotes are found by substitutions().
+
+    Two pairs are not grouping and stay inside their word, with what they hold: the braces of `${name}`, and the
+    parentheses of a method call (`$_.Contains('Remove-Item')`, `[math]::Max(1, 2)`: a `(` right after `.name` or
+    `::name`), whose arguments are expressions, not commands. A group or a script block inside either pair still
+    splits (`$x.Where({ Remove-Item y })`, `$x.Foo((git push))`). `open` pairs each closer with its opener."""
+    pieces, current, quote, i, open = [], [], None, 0, []
     while i < len(segment):
         ch = segment[i]
         if quote:
@@ -139,16 +147,26 @@ def split_groups(segment: str) -> list[str]:
         elif ch in "'\"":
             quote = ch
             current.append(ch)
-        elif (ch == "{" and i > 0 and segment[i - 1] == "$" and i + 1 < len(segment)
-              and not segment[i + 1].isspace() and segment[i + 1] != "|"):
-            names += 1  # `${name`: the braces of a variable stay inside the word, as in `cat ${repo}/a.ps1`
-            current.append(ch)
-        elif ch == "}" and names:
-            names -= 1
-            current.append(ch)
-        elif ch in "(){}":
-            pieces.append("".join(current))
-            current = []
+        elif ch in "({":
+            if ch == "{":
+                inert = (i > 0 and segment[i - 1] == "$" and i + 1 < len(segment)
+                         and not segment[i + 1].isspace() and segment[i + 1] != "|")
+            else:
+                inert = bool(METHOD_CALL.search("".join(current)))
+            open.append((ch, inert))
+            if inert:
+                current.append(ch)
+            else:
+                pieces.append("".join(current))
+                current = []
+        elif ch in ")}":
+            # A closer that does not match the innermost opener is unbalanced text: it splits and leaves `open` alone.
+            inert = bool(open) and open[-1][0] == "({"[")}".index(ch)] and open.pop()[1]
+            if inert:
+                current.append(ch)
+            else:
+                pieces.append("".join(current))
+                current = []
         else:
             current.append(ch)
         i += 1
@@ -159,15 +177,17 @@ def split_groups(segment: str) -> list[str]:
 def substitutions(command: str) -> list[str]:
     """The commands that `command` runs through a substitution a quote would hide: `$(...)` inside "..." and
     `...` in backticks anywhere outside '...' (#795). Both shells run `$(...)` inside double quotes; neither runs
-    anything inside single quotes. A backslash before `$(` or a backtick is not honored, and in PowerShell a backtick
-    is an escape character, not a substitution: both are read as commands here, which can only block more. Each
-    result is checked as a command of its own, so a substitution nested inside it is found on that pass."""
+    anything inside single quotes. A backtick after a backslash is literal text in Bash (`rg "\\`git push\\`" docs`)
+    and starts nothing in PowerShell, so it is skipped. A backslash before `$(` is not honored, because PowerShell
+    still runs `"\\$(...)"`, and in PowerShell an unescaped backtick is an escape character, not a substitution: both
+    are read as commands here, which can only block more. Each result is checked as a command of its own, so a
+    substitution nested inside it is found on that pass."""
     found, quote, i = [], None, 0
     while i < len(command):
         ch = command[i]
         if quote == "'":
             quote = None if ch == "'" else quote
-        elif ch == "\\" and quote == '"' and command[i + 1:i + 2] in ('"', "\\"):
+        elif ch == "\\" and (command[i + 1:i + 2] == "`" or (quote == '"' and command[i + 1:i + 2] in ('"', "\\"))):
             i += 1
         elif ch == "'" and quote is None:
             quote = "'"
