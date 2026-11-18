@@ -75,7 +75,6 @@ ALLOWED = [
     "(Get-Date).ToString().Trim('rm')",
     "Write-Output ${env:TEMP}.Replace('rm', 'del') $env:TEMP.Contains('rm')",
     "cat ${repo}/scripts/codex/git-safe.ps1",
-    "echo ${prefix}rm ${a:-${b}}/lane-bus.sh",
     "Get-Content ${env:TEMP}\\git-safe.ps1",
     "echo \"head: $(git rev-parse HEAD)\"",
     "rg '$(git push)' docs",
@@ -193,17 +192,21 @@ SHELL_ALLOWED = [
     ("bash", 'echo "on `git branch --show-current`"'),
     ("bash", r"""echo "$(printf ')')" """),
     ("bash", r'''echo "\$(git push)" '''),  # an escaped $ in double quotes is text in bash
-    ("bash", "echo a;#x; git push"),  # '#' after ';' starts a comment
+    ("bash", "echo hi # a comment"),
     ("bash", r"echo $'\' ; git push ; echo \''"),  # one ANSI-C string: \' is an escaped quote
     ("powershell", r'Write-Output "file: `"$path`""'),  # the backtick escapes the quote
     ("powershell", r"$lines[0].StartsWith('Remove-Item')"),
     ("powershell", r"'a b'.Contains('Remove-Item')"),
     # Bash here-document bodies are checked as commands (not read as input), so only read-only bodies pass here;
     # PowerShell here-string bodies are input
-    ("bash", "cat <<'EOF' | python -\nimport os; print(1) # it's\nEOF\necho done"),
     ("bash", "x=1; (( x += 2 )); echo $x $((1+2)) \"$((3-1))\""),
     ("bash", "cat <<\"END-1\" | python -\nprint(\"it's\")\nEND-1"),
     ("bash", "echo $$"),
+    # nested ${...} is Bash only: PowerShell's name ends at the first `}`
+    ("bash", "echo ${prefix}rm ${a:-${b}}/lane-bus.sh"),
+    ("bash", "echo ${x:-a # b} ${#x} ${x#y}"),
+    ("powershell", "Write-Output ${a b} ${env:X}"),
+    ("powershell", "$v = @'\nit's\n'@"),
     ("powershell", "Write-Output @'\nit's $(Remove-Item x)\n'@"),
     ("powershell", "Write-Output @\"\nit's `$(Remove-Item x)\n\"@"),
 ]
@@ -250,6 +253,59 @@ SHELL_BLOCKED = [
     ("bash", "cat <<$\"EOF\"\nb\nEOF\ngit push\n$EOF"),
     ("bash", "cat <<EOF; echo $(\ngit push\n)\nEOF"),
     ("bash", "cat <<E\"O\"F\nx\nEOF\ngit push"),
+    # Every command is also read without comments (#799), so a comment that holds an odd quote or a write is refused,
+    # as before #798, even where the shell skips it
+    ("bash", "echo a;#x; git push"),
+    ("bash", "cat <<'EOF' | python -\nimport os; print(1) # it's\nEOF\necho done"),
+    ("bash", "(echo a)# it's"),
+    ("powershell", "Write-Output (1)# it's"),
+    # both readings at every depth: the outer command needs one, the `bash -c` inside it the other
+    ("bash", "echo a # x'\nbash -c \"(( 1 #)); git push\"\necho \\'"),
+    ("bash", "echo a # x'\nbash -c \"shopt -s extglob\necho @(a|#)x; git push\"\necho \\'"),
+    # PowerShell drops escaped whitespace before a command name
+    ("powershell", "` Remove-Item v"),
+    ("powershell", "Write-Output a; ` Remove-Item v"),
+    ("powershell", "& ` Remove-Item v"),
+    ("powershell", "`\tRemove-Item v"),
+    ("powershell", "` git push"),
+    # fifth review: Bash reads no comment in `(( ))`, `for (( ))` or an extglob pattern
+    ("bash", "(( 1 #)); git push"),
+    ("bash", "for (( i=0; i<1; i++ #)); do :; done; git push"),
+    ("bash", "shopt -s extglob\necho @(a|#)x; git push"),
+    ("bash", "shopt -s extglob\necho @(#)x; git push"),
+    # Argus on #799: after the `)` of `$(...)`, `$((...))`, `<(...)`, `a=(...)` the word goes on, so `#` is no comment
+    ("bash", "echo $(true)#; git push"),
+    ("bash", "echo $((1))#; git push"),
+    ("bash", "cat <(true)#; git push"),
+    ("bash", "a=(1 2)#; git push"),
+    ("bash", "echo $( (true) )#; git push"),
+    ("bash", "x=$(true)#; git push"),
+    # review of the fix: after the `()` of a function definition `#` is a comment, and its quote opens nothing
+    ("bash", "f()#'\n{ git push; }\nf\necho \\'"),
+    ("bash", "function f()#'\n{ git push; }\nf\necho \\'"),
+    # review of the fix: no comment inside ${...}; inside [[ ]] only after whitespace; PowerShell ${...} is a name
+    ("bash", "echo ${x:- #}; git push"),
+    ("bash", "echo ${x:-(a)#}; git push"),
+    ("bash", "echo ${x:-a;#}; git push"),
+    ("bash", "echo ${x:+a b #c}; git push"),
+    ("bash", "echo ${x:-${y:- #}}; git push"),
+    ("bash", "[[ a =~ (a)# ]]; git push"),
+    ("bash", "[[ a =~ a|# ]]; git push"),
+    ("bash", "[[ a == a # it's\n ]] && git push #'"),
+    ("bash", "[[ (a)#'\n]]\ngit push\necho \\'"),  # a grouping `)` inside [[ ]]: ambiguous, refused
+    ("bash", "[[ a == a && (a)#'\n]]\ngit push\necho \\'"),
+    ("bash", "[[ ( a )#'\n]]\ngit push\necho \\'"),
+    ("bash", "echo $${x #'\ngit push\necho \\'"),  # `$$` is the process id, `{x` plain text, `#'` a comment
+    ("bash", "echo a$${b c #'\ngit push\necho \\'"),  # after whitespace it is a comment, so the quote opens nothing
+    ("powershell", "Write-Output ${a #}; Remove-Item x"),
+    ("powershell", "Write-Output ${a # it's}\nRemove-Item x"),
+    ("powershell", "Write-Output ${a"),
+    # Argus on #799: `@'` inside a word is no here-string (a plain argument and a plain string)
+    ("powershell", "Write-Output x@'\n'; Remove-Item victim <#\n'@\n#>"),
+    ("powershell", "Write-Output $v@\"\n\"; Remove-Item victim <#\n\"@\n#>"),
+    ("powershell", "Write-Output -@'\n'; Remove-Item victim <#\n'@\n#>"),
+    ("powershell", "Write-Output a`x@'\n'; Remove-Item victim <#\n'@\n#>"),
+    ("powershell", "Write-Output 1<@'\nx\n'@"),  # neither list: refused
     # a quote inside a PowerShell here-string body opens nothing
     ("powershell", "$x = @'\nfoo\r'@\nRemove-Item x\n'@'\n#'"),  # PowerShell ends a line at a lone \r
     ("powershell", "$x = @\"\nfoo\r\"@\nRemove-Item x\n\"@\"\n#\""),

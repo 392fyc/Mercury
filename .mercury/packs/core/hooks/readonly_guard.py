@@ -8,9 +8,10 @@ Bash and PowerShell commands by exiting 2. It is best-effort, not an OS sandbox:
 block (`(...)`, `{ ...; }`, `$(...)` also inside double quotes, backticks, `& { ... }`) is checked as well (#795).
 Quotes, escapes and comments are read with the rules of the shell that runs the command (#798; see lex): the hook
 payload's tool_name picks Bash or PowerShell, and a nested `bash -c`, `pwsh -Command` or `cmd /c` uses its own;
-PowerShell here-strings are read too. Still best-effort: Bash here-documents are not read (their body is checked as
-if it were commands, so an odd quote in a body can hide the next command from the guard), and neither are `case`
-patterns; in both, a `)` inside `"$(...)"` can end the substitution early for the guard.
+PowerShell here-strings are read too. Every command is read once with comments and once without, and refused if
+either reading refuses (#799; see check_command). Still best-effort: Bash here-documents are not read (their body
+is checked as if it were commands, so an odd quote in a body can hide the next command from the guard), and neither
+are `case` patterns; in both, a `)` inside `"$(...)"` can end the substitution early for the guard.
 
 A project adds write-type scripts of its own in `.mercury/config.json`:
     {"params": {"guard_write_scripts": ["deploy.sh"]}}
@@ -26,6 +27,7 @@ blocks every call of that script; a list of script names under this key blocks t
 """
 from __future__ import annotations
 
+import contextvars
 import json
 import os
 import re
@@ -101,19 +103,31 @@ class Rules(NamedTuple):
     comments: bool            # '#' at the start of a word starts a comment that ends at the newline
     block_comments: bool      # <# ... #>
     here_strings: bool        # @' ... '@ and @" ... "@ here-strings
+    braced_names: bool        # PowerShell: `${...}` is a variable name, text up to its `}`
 
 
 # PowerShell also reads the curly quotes as quotes (U+2018-U+201B single, U+201C-U+201E double); Bash and cmd do not.
 RULES = {
-    "bash": Rules("'", '"', "\\", "$`\"\\\n", True, True, True, True, False, False),
-    "powershell": Rules("'‘’‚‛", '"“”„', "`", None, True, False, False, True, True, True),
-    "cmd": Rules("", '"', "^", "", False, False, False, False, False, False),
+    "bash": Rules("'", '"', "\\", "$`\"\\\n", True, True, True, True, False, False, False),
+    "powershell": Rules("'‘’‚‛", '"“”„', "`", None, True, False, False, True, True, True, True),
+    "cmd": Rules("", '"', "^", "", False, False, False, False, False, False, False),
 }
+# Whether lex reads comments; check_command reads every command both ways (see there).
+READ_COMMENTS: contextvars.ContextVar[bool] = contextvars.ContextVar("READ_COMMENTS", default=True)
 # Line breaks that one shell may honour and the other not (PowerShell ends a line at a lone \r); refused outright.
 ODD_BREAKS = re.compile("\r(?!\n)|[\v\f\x85  ]")
 SHELL_OF = {"bash": "bash", "sh": "bash", "zsh": "bash", "powershell": "powershell", "pwsh": "powershell", "cmd": "cmd"}
 LIVE, SYNTAX, TEXT, COMMENT = 0, 1, 2, 3
-WORD_BREAK = " \t\n;|&()"  # a '#' after one of these (or at the start) starts a word, and so a comment
+# A '#' after one of these unescaped characters (or at the start) is read as a comment when comments are read. That is
+# wider than either shell: Bash reads no comment after the `)` of `$(...)`, inside `${...}`, `(( ))` or a `=~` regex,
+# and the second reading without comments covers each such place (#799).
+COMMENT_AFTER = " \t\n;|&()<>{}"
+# PowerShell reads `${...}` as a variable name: quotes and `#` in it are part of the name (`${a #}; Remove-Item x`).
+# A PowerShell here-string starts only where a token can start (checked in both editions): at the start, after
+# whitespace, one of these characters or a quote. After a word character (`x@'`, `$v@'`, `-@'`, `a:@'`) the `@` and
+# the quote are a plain argument and a plain string.
+HERE_AFTER = " \t\n=(,;|{&+)]}>@"
+HERE_IN_WORD = "$-:./*[%!_?\\~^#"
 
 
 def lex(text: str, shell: str) -> tuple[list[int], list[str]]:
@@ -123,13 +137,15 @@ def lex(text: str, shell: str) -> tuple[list[int], list[str]]:
     which the shell removes. TEXT: quoted or escaped text, and the whole of a substitution inside double quotes or
     backticks. COMMENT: a comment. The second result lists each such substitution's command once (the outermost ones);
     a substitution nested inside one is found when that command is checked. An open quote at the end is refused.
-    PowerShell here-strings (`@'` and `@"` at a line end) are read as PowerShell reads them: their body is text, with
-    substitutions unless single-quoted, and a missing end line is refused. Bash here-documents are not read: their body
-    is lexed as commands, as before #798 (reading them exactly needs a real Bash parser). Not read either: `case` patterns and other syntax where a `)` or a quote means something else; there a substitution can
-    end early, hiding what follows, or a read-only command is refused."""
+    PowerShell here-strings (`@'` and `@"` at a line end, where a token starts) are read as PowerShell reads them:
+    their body is text, with substitutions unless single-quoted, and a missing end line is refused. Bash here-documents
+    are not read: their body is lexed as commands, as before #798 (reading them exactly needs a real Bash parser, #800).
+    Not read either: `case` patterns and other syntax where a `)` or a quote means something else; there, and in a
+    here-document, a substitution can end early, hiding what follows, or a read-only command is refused."""
     kinds = [LIVE] * len(text)
     subs: list[str] = []
-    _scan(text, 0, RULES[shell], kinds, subs, "top")
+    rules = RULES[shell] if READ_COMMENTS.get() else RULES[shell]._replace(comments=False, block_comments=False)
+    _scan(text, 0, rules, kinds, subs, "top")
     return kinds, subs
 
 
@@ -164,7 +180,7 @@ def _scan(text: str, i: int, rules: Rules, kinds: list[int], subs: list[str], mo
             kinds[i], kinds[i + 1] = SYNTAX, SYNTAX if text[i + 1] == "\n" else TEXT  # escaped newline: continuation
             i += 1
         elif rules.here_strings and ch == "@" and text[i + 1:i + 2] and text[i + 1] in rules.single + rules.double \
-                and re.match(r"[ \t]*\r?\n", text[i + 2:]):
+                and re.match(r"[ \t]*\r?\n", text[i + 2:]) and _here_string_start(text, i, rules, kinds):
             i = _here_string(text, i, rules, kinds, subs)
             continue
         elif ch in rules.single:
@@ -176,7 +192,7 @@ def _scan(text: str, i: int, rules: Rules, kinds: list[int], subs: list[str], mo
         elif ch in rules.double:
             kinds[i], quote = SYNTAX, "double"
         elif (rules.comments and ch == "#" or rules.block_comments and text.startswith("<#", i)) \
-                and (i == 0 or kinds[i - 1] == LIVE and text[i - 1] in WORD_BREAK):  # an escaped break is text
+                and (i == 0 or kinds[i - 1] == LIVE and text[i - 1] in COMMENT_AFTER):  # an escaped break is text
             end = text.find("#>", i + 2) + 2 if ch == "<" else text.find("\n", i)
             if ch == "<" and end < 2:
                 raise Blocked("unterminated <# comment; command could not be checked")
@@ -186,6 +202,14 @@ def _scan(text: str, i: int, rules: Rules, kinds: list[int], subs: list[str], mo
             continue
         elif rules.backticks and ch == "`":
             i = _substitution(text, i, i + 1, rules, kinds, subs)
+        elif rules.braced_names and ch == "$" and text[i + 1:i + 2] == "{":
+            end = i + 2  # PowerShell: the name runs to the first `}` that no backtick escapes
+            while end < n and text[end] != "}":
+                end += 2 if text[end] == rules.escape else 1
+            if end >= n:
+                raise Blocked("unterminated ${ variable name; command could not be checked")
+            kinds[i:end + 1] = [TEXT] * (end + 1 - i)
+            i = end
         elif mode == "sub" and ch == "(":
             depth += 1
         elif mode == "sub" and ch == ")":
@@ -234,6 +258,19 @@ def _body(text: str, a: int, b: int, rules: Rules, kinds: list[int], subs: list[
         else:
             kinds[i] = TEXT
         i += 1
+
+
+def _here_string_start(text: str, i: int, rules: Rules, kinds: list[int]) -> bool:
+    """Whether the `@` at i, followed by a quote at a line end, starts a here-string (see HERE_AFTER). A character
+    before it that neither list covers is refused: reading it wrongly either way can hide a command."""
+    if i == 0:
+        return True
+    prev, kind = text[i - 1], kinds[i - 1]
+    if kind == LIVE and prev in HERE_AFTER or kind == SYNTAX and prev in rules.single + rules.double:
+        return True
+    if kind == TEXT or kind == LIVE and (prev.isalnum() or prev in HERE_IN_WORD):
+        return False
+    raise Blocked(f"cannot tell whether {prev!r}@ starts a here-string; command could not be checked")
 
 
 def _here_string(text: str, i: int, rules: Rules, kinds: list[int], subs: list[str]) -> int:
@@ -384,7 +421,8 @@ def tokenize(segment: str, shell: str = "bash") -> list[str]:
 
 
 def command_word(token: str) -> str:
-    word = token.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    # PowerShell drops escaped whitespace before a command name: `` ` Remove-Item x`` runs Remove-Item (#799)
+    word = token.strip().replace("\\", "/").rsplit("/", 1)[-1].lower()
     return word[:-4] if word.endswith(".exe") else word
 
 
@@ -610,11 +648,29 @@ def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), 
 def check_command(command: str, depth: int = 0, extra: frozenset = frozenset(), actions: dict | None = None,
                   shell: str | None = None) -> None:
     """Check `command` as `shell` ("bash", "powershell" or "cmd") reads it. Without a shell (a caller that does not
-    know which tool ran the command) it is checked as both Bash and PowerShell and refused if either refuses."""
+    know which tool ran the command) it is checked as both Bash and PowerShell and refused if either refuses.
+
+    Each command is also read twice, with comments and without, and refused if either reading refuses (#799). Where a
+    `#` starts a comment depends on far more of the shell's grammar than a lexer models (`$(true)#`, `${x:- #}`,
+    `(( 1 #))`, a `=~` regex, extglob switched on earlier), and a wrong guess either way lets a quote or the comment
+    itself hide a command. One of the two readings is right, so its refusal stands. The reading without comments is
+    how the guard read before #798, so an odd quote in a real comment (`echo hi # it's`) is refused, as it was then,
+    and so are PowerShell comments."""
     if shell is None:
         for each in ("bash", "powershell"):
             check_command(command, depth, extra, actions, each)
         return
+    # At every depth: a `bash -c` inside a comment-free outer command may need the reading with comments, and the other
+    # way round (at most 2 ** 4 readings, as nesting stops at depth 3).
+    for comments in (True, False):
+        token = READ_COMMENTS.set(comments)
+        try:
+            _check_command(command, depth, extra, actions, shell)
+        finally:
+            READ_COMMENTS.reset(token)
+
+
+def _check_command(command: str, depth: int, extra: frozenset, actions: dict | None, shell: str) -> None:
     if ODD_BREAKS.search(command):
         raise Blocked("a lone carriage return or another unusual line break; command could not be checked")
     _, subs = lex(command, shell)
