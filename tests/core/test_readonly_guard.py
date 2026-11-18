@@ -50,6 +50,23 @@ ALLOWED = [
     "rg image_api.py docs",
     "cat .mercury/packs/lanes/scripts/lane-bus.py",
     "pwsh -File scripts/other-tool.ps1 -Action List",
+    # #795: grouping around read-only commands stays allowed
+    "(git status)",
+    "(cd 'app' && git log --oneline -3)",
+    "cd 'app' && { git status; }",
+    "echo $(git rev-parse HEAD)",
+    "echo ${HOME} ${rm}",
+    "git show HEAD@{1}",
+    "git log --format='%h (%s)' -3",
+    "rg \"(git push)\" docs",
+    "Get-ChildItem | Where-Object { $_.Name -eq 'x' } | ForEach-Object { $_.FullName }",
+    "(Get-Content a.txt).Count",
+    "find . -name '*.py' -exec grep -l x {} +",
+    "echo \"head: $(git rev-parse HEAD)\"",
+    "echo \"on `git branch --show-current`\"",
+    "rg '$(git push)' docs",
+    "rg '`git push`' docs",
+    "Write-Output \"a`nb`tc\"",
 ]
 
 BLOCKED = [
@@ -107,6 +124,26 @@ BLOCKED = [
     "bash .mercury/packs/lanes/scripts/lane-bus.sh release --harness claude --lane main",
     "bash .mercury/packs/lanes/scripts/lane-bus.sh read --harness claude",
     "python -B .mercury/packs/lanes/scripts/lane-bus.py claim --harness claude --session x",
+    # #795: a write inside a subshell, a command group, a substitution or a script block
+    "(git push)",
+    "(cd 'app' && git push)",
+    "cd 'app' && { git push; }",
+    "{ rm x; }",
+    "echo $(git commit -m x)",
+    "((git push))",
+    "bash -c \"(git push)\"",
+    "(gh pr merge 3 --squash)",
+    "(powershell -File scripts/codex/git-safe.ps1 commit -m x)",
+    "& { Remove-Item x }",
+    "Get-ChildItem | ForEach-Object { Remove-Item $_ }",
+    "if (Test-Path x) { Set-Content x hi }",
+    "echo \"$(git push)\"",
+    "Write-Output \"$(Remove-Item x)\"",
+    "echo \"head: $(cd app && git commit -m x) done\"",
+    "echo \"$(echo \"$(git push)\")\"",
+    "echo `git push`",
+    "echo \"now `git push`\"",
+    "x=${ git push; }",
 ]
 
 SCRIPT = HOOKS / "readonly_guard.py"

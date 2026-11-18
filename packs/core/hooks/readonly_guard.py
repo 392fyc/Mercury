@@ -4,7 +4,10 @@ Registered in the `hooks` frontmatter of the read-only `mercury-*` Claude roles 
 Subagent `permissionMode: plan` is ignored when the main conversation runs in bypassPermissions, acceptEdits
 or auto mode, so this hook is the effective write guard. It blocks repository, GitHub and filesystem writes in
 Bash and PowerShell commands by exiting 2. It is best-effort, not an OS sandbox: arbitrary interpreters
-(python -c, node -e) can still write.
+(python -c, node -e) can still write. A command inside a subshell, a command group, a substitution or a script
+block (`(...)`, `{ ...; }`, `$(...)` also inside double quotes, backticks, `& { ... }`) is checked as well (#795),
+again best-effort: inside a quoted `$(...)` the closing parenthesis is found by counting, so an escaped `\\)`, the
+`)` of a `case` branch or one in a comment ends it early and hides what follows.
 
 A project adds write-type scripts of its own in `.mercury/config.json`:
     {"params": {"guard_write_scripts": ["deploy.sh"]}}
@@ -113,6 +116,71 @@ def split_segments(command: str) -> list[str]:
 
 def _is_redirect_amp(command: str, i: int) -> bool:
     return (i > 0 and command[i - 1] in "<>") or (i + 1 < len(command) and command[i + 1] == ">")
+
+
+def split_groups(segment: str) -> list[str]:
+    """The commands that grouping hides inside `segment`: split on ( ) { } outside quotes (#795).
+
+    A subshell `(git push)`, a command group `{ git push; }`, a substitution `$(git push)` and a PowerShell script
+    block `& { git push }` all run the command inside, but the segment's first word is then `(git`, `{` or the outer
+    command. The `{` of `${name}` opens a variable name, not a command, so it does not split; `${ cmd; }` and
+    `${| cmd; }` (Bash 5.3) run a command and do. The pieces are checked in addition to the whole segment, never
+    instead of it, so this can only block more. Substitutions inside quotes are found by substitutions()."""
+    pieces, current, quote, i = [], [], None, 0
+    while i < len(segment):
+        ch = segment[i]
+        if quote:
+            current.append(ch)
+            if ch == quote:
+                quote = None
+            elif ch == "\\" and quote == '"' and i + 1 < len(segment):
+                current.append(segment[i + 1])
+                i += 1
+        elif ch in "'\"":
+            quote = ch
+            current.append(ch)
+        elif ch in "(){}" and not (ch == "{" and i > 0 and segment[i - 1] == "$"
+                                   and i + 1 < len(segment) and not segment[i + 1].isspace() and segment[i + 1] != "|"):
+            pieces.append("".join(current))
+            current = []
+        else:
+            current.append(ch)
+        i += 1
+    pieces.append("".join(current))
+    return [p.strip() for p in pieces if p.strip()]
+
+
+def substitutions(command: str) -> list[str]:
+    """The commands that `command` runs through a substitution a quote would hide: `$(...)` inside "..." and
+    `...` in backticks anywhere outside '...' (#795). Both shells run `$(...)` inside double quotes; neither runs
+    anything inside single quotes. A backslash before `$(` or a backtick is not honored, and in PowerShell a backtick
+    is an escape character, not a substitution: both are read as commands here, which can only block more. Each
+    result is checked as a command of its own, so a substitution nested inside it is found on that pass."""
+    found, quote, i = [], None, 0
+    while i < len(command):
+        ch = command[i]
+        if quote == "'":
+            quote = None if ch == "'" else quote
+        elif ch == "\\" and quote == '"' and command[i + 1:i + 2] in ('"', "\\"):
+            i += 1
+        elif ch == "'" and quote is None:
+            quote = "'"
+        elif ch == '"':
+            quote = None if quote else '"'
+        elif ch == "`":
+            end = command.find("`", i + 1)
+            if end > i:
+                found.append(command[i + 1:end])
+                i = end
+        elif ch == "$" and quote == '"' and command[i + 1:i + 2] == "(":
+            depth, j = 1, i + 2
+            while j < len(command) and depth:
+                depth += {"(": 1, ")": -1}.get(command[j], 0)
+                j += 1
+            found.append(command[i + 2:j - 1] if depth == 0 else command[i + 2:])
+            i = j - 1
+        i += 1
+    return found
 
 
 def tokenize(segment: str) -> list[str]:
@@ -363,6 +431,14 @@ def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), 
 def check_command(command: str, depth: int = 0, extra: frozenset = frozenset(), actions: dict | None = None) -> None:
     for segment in split_segments(command):
         check_segment(segment, depth, extra, actions)
+        pieces = split_groups(segment)
+        if pieces != [segment]:
+            for piece in pieces:
+                check_segment(piece, depth, extra, actions)
+    for inner in substitutions(command):
+        if depth >= 3:
+            raise Blocked("nested shell depth exceeded")
+        check_command(inner, depth + 1, extra, actions)
 
 
 def project_params(payload: dict) -> dict:

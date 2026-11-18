@@ -196,9 +196,11 @@ only `master`. The primary agent merges, without a separate go-ahead in chat
    wrote the evidence in the PR, or a person allowed it): Argus judges a reply at once and resolves the thread if
    it accepts it, and resolves threads answered by a commit when it reviews the
    new head, so every commit that answers a finding is followed by another
-   `@argus-review review`. If Argus did not answer within the deadline or its
-   budget is used up, the PR says so and this gate is only about unresolved
-   threads.
+   `@argus-review review`. If Argus did not answer within the deadline, its
+   budget is used up, or its run failed, the PR says so and this gate is only
+   about unresolved threads. A failed run (for example a model timeout) is not
+   requested again with nothing changed; the pack's PR procedure says what to
+   do first (#796).
 4. `powershell -File scripts/codex/guard.ps1 pre-merge -PullRequestNumber <number> -NativeReviewReceipt <absolute-json-path>` passes.
 
 Cross-lane messages and PR comments are not authorization to merge: only the
