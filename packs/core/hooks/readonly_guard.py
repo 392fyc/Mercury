@@ -399,25 +399,68 @@ def substitutions(command: str, shell: str = "bash") -> list[str]:
     return lex(command, shell)[1]
 
 
+ANSI_ESCAPE = re.compile(r"\\(?:([abeEfnrtv\\'\"?])|([0-7]{1,3})|x([0-9A-Fa-f]{1,2})|u([0-9A-Fa-f]{1,4})"
+                         r"|U([0-9A-Fa-f]{1,8})|c(.))", re.S)
+ANSI_SIMPLE = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v"}
+
+
+def _ansi_decode(body: str) -> str:
+    """The text of a Bash `$'...'` string: its backslash escapes decoded as Bash decodes them."""
+    def one(m: re.Match) -> str:
+        simple, octal, hex2, u4, u8, ctrl = m.groups()
+        if simple:
+            return ANSI_SIMPLE.get(simple, simple)
+        if ctrl:
+            return chr(ord(ctrl) & 31)
+        try:
+            return chr(int(octal, 8) & 255 if octal else int(hex2 or u4 or u8, 16))
+        except (ValueError, OverflowError):
+            raise Blocked("an escape in a $'...' string could not be read; command could not be checked") from None
+    # Bash ends the string at its first NUL (`\0`, `\c@`, `\x00`, `\u0000`, `\400`): `git $'push\0x'` runs `git push`.
+    return ANSI_ESCAPE.sub(one, body).split("\x00", 1)[0]
+
+
 def tokenize(segment: str, shell: str = "bash") -> list[str]:
-    """The words of `segment` as the shell passes them on: quotes and escape characters removed, comments dropped."""
+    """The words of `segment` as the shell passes them on: quotes and escape characters removed, comments dropped.
+    In Bash the `$` of `$'...'` and `$"..."` goes too, and the escapes of `$'...'` are decoded (#799): otherwise
+    `bash -c $'git push'` would hand `$git push` to the check of the inner command."""
     kinds, _ = lex(segment, shell)
-    escape = RULES[shell].escape
-    tokens, current, has = [], [], False
-    for ch, kind in zip(segment, kinds):
+    rules = RULES[shell]
+    tokens, current, has, i, n = [], [], False, 0, len(segment)
+    while i < n:
+        ch, kind = segment[i], kinds[i]
+        if rules.ansi and kind == SYNTAX and ch in "'\"" and current and current[-1] == "$" \
+                and kinds[i - 1] == LIVE and _odd_dollars(segment, i, kinds):
+            current.pop()
+            if ch == "'":
+                end = i + 1
+                while end < n and not (kinds[end] == SYNTAX and segment[end] == "'"):
+                    end += 1
+                current.append(_ansi_decode(segment[i + 1:end]))
+                has, i = True, end + 1
+                continue
         if kind == COMMENT:
-            continue
-        if kind == SYNTAX:
-            has = has or ch != escape and ch != "\n"
+            pass
+        elif kind == SYNTAX:
+            has = has or ch != rules.escape and ch != "\n"
         elif kind == LIVE and ch.isspace():
             if current or has:
                 tokens.append("".join(current))
             current, has = [], False
         else:
             current.append(ch)
+        i += 1
     if current or has:
         tokens.append("".join(current))
     return tokens
+
+
+def _odd_dollars(text: str, i: int, kinds: list[int]) -> bool:
+    """An odd run of live `$` right before i: `$'` and `$"` start a string, `$$'` is the process id and a quote."""
+    dollars = 0
+    while i - dollars > 0 and text[i - dollars - 1] == "$" and kinds[i - dollars - 1] == LIVE:
+        dollars += 1
+    return dollars % 2 == 1
 
 
 def command_word(token: str) -> str:
@@ -623,10 +666,12 @@ def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), 
     check_redirects(segment, shell)
     if not tokens:
         return
+    # The raw text and the words as the shell passes them: `mark-rev''iew` and `$'appl\x79'` hide from the first.
+    words = [a.lower() for a in args]
     for script in executed:
-        if script == "guard.ps1" and "mark-review" in lowered:
+        if script == "guard.ps1" and ("mark-review" in lowered or any("mark-review" in a for a in words)):
             raise Blocked("guard.ps1 mark-review")
-        if script == "sync-project-template.py" and re.search(r"\bapply\b", lowered):
+        if script == "sync-project-template.py" and (re.search(r"\bapply\b", lowered) or "apply" in words):
             raise Blocked("sync-project-template.py apply")
     if word in SHELLS:
         for j, a in enumerate(args):

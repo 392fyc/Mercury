@@ -193,6 +193,8 @@ SHELL_ALLOWED = [
     ("bash", r"""echo "$(printf ')')" """),
     ("bash", r'''echo "\$(git push)" '''),  # an escaped $ in double quotes is text in bash
     ("bash", "echo hi # a comment"),
+    ("bash", r"bash -c $'echo a\tb\x21'"),
+    ("bash", "echo $'it\\'s' $$"),
     ("bash", r"echo $'\' ; git push ; echo \''"),  # one ANSI-C string: \' is an escaped quote
     ("powershell", r'Write-Output "file: `"$path`""'),  # the backtick escapes the quote
     ("powershell", r"$lines[0].StartsWith('Remove-Item')"),
@@ -262,6 +264,26 @@ SHELL_BLOCKED = [
     # both readings at every depth: the outer command needs one, the `bash -c` inside it the other
     ("bash", "echo a # x'\nbash -c \"(( 1 #)); git push\"\necho \\'"),
     ("bash", "echo a # x'\nbash -c \"shopt -s extglob\necho @(a|#)x; git push\"\necho \\'"),
+    # Argus on 6568661: `$'...'` and `$"..."` handed on as words lose their `$`, and `$'...'` escapes are decoded
+    ("bash", "bash -c $'git push'"),
+    ("bash", r"bash -c $'git\x20push'"),
+    ("bash", r"bash -c $'echo a\ngit push'"),
+    ("bash", r"bash -c $'\x67it push'"),
+    ("bash", r"bash -c $'git\040push'"),
+    ("bash", r"sh -c $'rm\x20-rf x'"),
+    ("bash", "git $'push'"),
+    ("bash", "bash -c $\"git push\""),
+    ("bash", r"bash -c $'\U110000'"),  # beyond Unicode: refused
+    # Bash ends a `$'...'` string at its first NUL
+    ("bash", r"git $'push\0junk'"),
+    ("bash", r"git $'push\c@x'"),
+    ("bash", r"git $'push\x00x'"),
+    ("bash", r"git $'push\400x'"),
+    ("bash", r"bash -c $'git push\0x'"),
+    # mark-review and apply spelled with quotes or escapes
+    ("bash", r"pwsh -File guard.ps1 $'mark\x2dreview'"),
+    ("bash", "pwsh -File guard.ps1 mark-rev''iew"),
+    ("bash", r"python sync-project-template.py $'appl\x79'"),
     # PowerShell drops escaped whitespace before a command name
     ("powershell", "` Remove-Item v"),
     ("powershell", "Write-Output a; ` Remove-Item v"),
