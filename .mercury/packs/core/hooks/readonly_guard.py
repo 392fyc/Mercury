@@ -129,8 +129,6 @@ RULES = {
 RULES["sh"] = RULES["bash"]._replace(ansi=False)
 # Whether lex reads comments; check_command reads every command both ways (see there).
 READ_COMMENTS: contextvars.ContextVar[bool] = contextvars.ContextVar("READ_COMMENTS", default=True)
-# Whether the PowerShell running the command may be Windows PowerShell 5.1 (unknown at the top; see check_segment).
-MAYBE_PS51: contextvars.ContextVar[bool] = contextvars.ContextVar("MAYBE_PS51", default=True)
 # When the check of one command must end (time.monotonic()); set by the outermost check_command.
 DEADLINE: contextvars.ContextVar[float | None] = contextvars.ContextVar("DEADLINE", default=None)
 CHECK_BUDGET_S = 20
@@ -330,7 +328,7 @@ def split_segments(command: str, shell: str = "bash") -> list[str]:
     segments, start, i = [], 0, 0
     while i < len(command):
         ch = command[i]
-        if kinds[i] == LIVE and (ch in ";|\n" or (ch == "&" and not _is_redirect_amp(command, i))):
+        if kinds[i] == LIVE and (ch in ";|\n" or (ch == "&" and not _is_redirect_amp(command, i, kinds, shell))):
             segments.append(command[start:i])
             if command[i:i + 2] in ("&&", "||") and kinds[i + 1] == LIVE:
                 i += 1
@@ -340,8 +338,14 @@ def split_segments(command: str, shell: str = "bash") -> list[str]:
     return [s.strip() for s in segments if s.strip()]
 
 
-def _is_redirect_amp(command: str, i: int) -> bool:
-    return (i > 0 and command[i - 1] in "<>") or (i + 1 < len(command) and command[i + 1] == ">")
+def _is_redirect_amp(command: str, i: int, kinds: list[int], shell: str = "bash") -> bool:
+    # Only a live `<`/`>` makes `&` part of a redirection: after an escaped one (`` `>& `` in PowerShell, `\>&` in
+    # Bash) the `&` is the background operator, and the command after it runs (#798). PowerShell has only `n>&1`
+    # and `*>&1`: its `<` is no redirection, so `a<&git push` runs `a<` in the background and then `git push`.
+    if shell == "powershell":
+        return i > 0 and command[i - 1] == ">" and kinds[i - 1] == LIVE
+    return ((i > 0 and command[i - 1] in "<>" and kinds[i - 1] == LIVE)
+            or (i + 1 < len(command) and command[i + 1] == ">" and kinds[i + 1] == LIVE))
 
 
 _MEMBER = r"(?:\.|::)[A-Za-z_][A-Za-z0-9_]*\Z"
@@ -402,7 +406,8 @@ def split_groups(segment: str, shell: str = "bash") -> list[str]:
             last_space = i
         elif ch in "({":
             if ch == "{":
-                inert = (i > 0 and segment[i - 1] == "$" and i + 1 < len(segment)
+                # An escaped `$` (`` `${git push}.Invoke() ``) is plain text: the braces then hold a script block.
+                inert = (i > 0 and segment[i - 1] == "$" and kinds[i - 1] == LIVE and i + 1 < len(segment)
                          and not segment[i + 1].isspace() and segment[i + 1] != "|")
             else:
                 inert = _method_call(segment, start, i, after_close, chain, last_space)
@@ -751,7 +756,8 @@ def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), 
     quote it adds as an escape (`git -c 'a.b=1 y<backslash>' 'z push'`), and writes an empty word as nothing
     (`git '' push`).
     Where a word holds a `"` or is empty, a cruder reading as well drops every `"` and splits at whitespace. The
-    command is refused if any reading (`requoted`) refuses. Inside a nested `pwsh` (PowerShell 7) none applies."""
+    command is refused if any reading (`requoted`) refuses. Nested `pwsh` is read this way too: PowerShell 7 passes
+    arguments the 5.1 way when `$PSNativeCommandArgumentPassing` is `Legacy`, which the command itself can set."""
     actions = actions or {}
     if depth > 3:
         raise Blocked("nested shell depth exceeded")
@@ -760,7 +766,7 @@ def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), 
         # PowerShell's stop-parsing token: the rest of the line goes to the program as typed, backticks included,
         # so ``git --% -c a.b=1` push`` runs a push that the backtick reading hides. Rare in read-only use; refused.
         raise Blocked("PowerShell --% (stop parsing); command could not be checked")
-    if requoted is None and shell == "powershell" and MAYBE_PS51.get():
+    if requoted is None and shell == "powershell":
         readings = [ps51_argv(tokens)] if ps51_argv(tokens) != tokens else []
         if any('"' in t or not t for t in tokens):  # a cruder reading as well, in case 5.1 quotes in ways not observed
             readings.append(" ".join(tokens).replace('"', "").split())
@@ -808,15 +814,8 @@ def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), 
                 # `sh` is Bash in Git Bash and macOS but dash (no `$'...'`) on Debian: read it both ways.
                 # The two differ only where `$'` or `$"` appears; otherwise one reading is enough (time).
                 both = SHELL_OF[word] == "sh" and re.search(r"\$['\"]", inner)
-                # The inner command of `pwsh` runs in PowerShell 7, which hands arguments on intact; of `powershell`,
-                # in 5.1. Reading the 5.1 way only where it may apply keeps nested `pwsh` linear in time.
-                edition = MAYBE_PS51.set(word == "powershell") if SHELL_OF[word] == "powershell" else None
-                try:
-                    for each in ("bash", "sh") if both else ("bash",) if SHELL_OF[word] == "sh" else (SHELL_OF[word],):
-                        check_command(inner, depth + 1, extra, actions, each)
-                finally:
-                    if edition is not None:
-                        MAYBE_PS51.reset(edition)
+                for each in ("bash", "sh") if both else ("bash",) if SHELL_OF[word] == "sh" else (SHELL_OF[word],):
+                    check_command(inner, depth + 1, extra, actions, each)
                 return
         return
     if word == "git":

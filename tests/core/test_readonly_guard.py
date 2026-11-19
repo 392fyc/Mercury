@@ -248,6 +248,18 @@ SHELL_BLOCKED = [
     ("powershell", "git -c 'a.b=x\"' 'y\"' push"),  # 5.1: -c 'a.b=x y' push
     ("powershell", "git -c 'a.b=1 y\\' 'z push'"),  # 5.1: -c 'a.b=1 y\" z' push
     ("powershell", "pwsh -Command \"powershell -Command 'git push`\\\"'\""),
+    # Argus on deccd8c: pwsh 7 passes arguments the 5.1 way under $PSNativeCommandArgumentPassing = 'Legacy'
+    ("bash", "pwsh -Command \"git '' push\""),
+    ("powershell", "pwsh -Command \"git '' push\""),
+    ("powershell", "pwsh -Command { $PSNativeCommandArgumentPassing='Legacy'; git 'push\"' }"),
+    # after an escaped `>` the `&` is PowerShell's background operator, not part of a redirection: git push runs
+    ("powershell", "`>& git push"),
+    ("powershell", "echo a`>& git push"),
+    ("bash", "echo a \\>& git push"),
+    ("powershell", "Write-Output `>a<&git push"),  # PowerShell has no `<&`: background `a<`, then git push
+    ("powershell", "Write-Output a<&git push"),  # master too
+    ("powershell", "Write-Output a&>git push"),
+    ("powershell", "Write-Output `${git push}.Invoke()"),  # an escaped `$`: the braces are a script block (master too)
     ("bash", "powershell -Command \"git '' push\""),
     ("powershell", "bash -c 'echo \"x;git push\"'"),
     ("powershell", "git push`0"),
