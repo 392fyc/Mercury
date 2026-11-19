@@ -11,7 +11,11 @@ payload's tool_name picks Bash or PowerShell, and a nested `bash -c`, `pwsh -Com
 PowerShell here-strings are read too. Every command is read once with comments and once without, and refused if
 either reading refuses (#799; see check_command). Still best-effort: Bash here-documents are not read (their body
 is checked as if it were commands, so an odd quote in a body can hide the next command from the guard), and neither
-are `case` patterns; in both, a `)` inside `"$(...)"` can end the substitution early for the guard.
+are `case` patterns; in both, a `)` inside `"$(...)"` can end the substitution early for the guard. It catches a
+write written plainly, not one written to evade it: a command after a keyword (`if git push; then`, `! git push`), a
+redirection before the command name, `bash -lc`, piping into a shell, brace expansion, `eval` or `iex`, a variable as
+command name, words after `pwsh -Command`'s first, `-EncodedCommand`, and quotes that Windows PowerShell 5.1 drops
+when it passes an argument to a program all pass it (as before #798).
 
 A project adds write-type scripts of its own in `.mercury/config.json`:
     {"params": {"guard_write_scripts": ["deploy.sh"]}}
@@ -81,14 +85,14 @@ WRITE_SCRIPTS = (
     # The lane bus writes its store on claim, release, send and read (reading marks read); release cannot be undone (#744).
     "lane-bus.sh", "lane-bus.py",
 )
-SHELLS = {"bash", "sh", "zsh", "powershell", "pwsh", "cmd"}
+SHELLS = {"bash", "sh", "dash", "ash", "zsh", "powershell", "pwsh", "cmd"}
 INTERPRETERS = {"python", "python3", "py", "pwsh", "powershell", "bash", "sh", "uv", "uvx", "node"}
 INLINE_FLAGS = {"-c", "-command", "/c", "-commandwithargs"}
 # Per shell, spelled without quotes or escapes (Argus on ae13a5c). Checked in real shells: in Bash, `\$null`, `null`,
 # `nul` (Git Bash too) and `$null` with a variable `null` set all write a file; in PowerShell `'$null'` and `null`
 # write a file and `/dev/null` is `\dev\null` on the current drive (pwsh 7.6 too). `nul` is the null device only on
 # Windows. Bash paths are case-sensitive; PowerShell and cmd names are not.
-SAFE_REDIRECT_TARGETS = {"bash": {"/dev/null"}, "powershell": {"$null"} | ({"nul"} if os.name == "nt" else set()),
+SAFE_REDIRECT_TARGETS = {"bash": {"/dev/null"}, "sh": {"/dev/null"},"powershell": {"$null"} | ({"nul"} if os.name == "nt" else set()),
                          "cmd": {"nul"}}
 
 
@@ -109,19 +113,24 @@ class Rules(NamedTuple):
     block_comments: bool      # <# ... #>
     here_strings: bool        # @' ... '@ and @" ... "@ here-strings
     braced_names: bool        # PowerShell: `${...}` is a variable name, text up to its `}`
+    doubled: bool = False     # PowerShell: inside a string two quotes are one literal quote (`'it''s'`, `"a""b"`)
 
 
 # PowerShell also reads the curly quotes as quotes (U+2018-U+201B single, U+201C-U+201E double); Bash and cmd do not.
 RULES = {
     "bash": Rules("'", '"', "\\", "$`\"\\\n", True, True, True, True, False, False, False),
-    "powershell": Rules("'‘’‚‛", '"“”„', "`", None, True, False, False, True, True, True, True),
+    "powershell": Rules("'‘’‚‛", '"“”„', "`", None, True, False, False, True, True, True, True, True),
     "cmd": Rules("", '"', "^", "", False, False, False, False, False, False, False),
 }
+RULES["sh"] = RULES["bash"]._replace(ansi=False)
 # Whether lex reads comments; check_command reads every command both ways (see there).
 READ_COMMENTS: contextvars.ContextVar[bool] = contextvars.ContextVar("READ_COMMENTS", default=True)
 # Line breaks that one shell may honour and the other not (PowerShell ends a line at a lone \r); refused outright.
 ODD_BREAKS = re.compile("\r(?!\n)|[\v\f\x85  ]")
-SHELL_OF = {"bash": "bash", "sh": "bash", "zsh": "bash", "powershell": "powershell", "pwsh": "powershell", "cmd": "cmd"}
+# "sh": a POSIX shell such as dash, which reads `$'...'` as `$` and a plain quote (#799: `sh -c "echo $'\' ; git push
+# ; echo $'\'"` runs `git push` in dash); a nested `sh` is read both as Bash and as "sh".
+SHELL_OF = {"bash": "bash", "sh": "sh", "dash": "sh", "ash": "sh", "zsh": "bash", "powershell": "powershell",
+            "pwsh": "powershell", "cmd": "cmd"}
 LIVE, SYNTAX, TEXT, COMMENT = 0, 1, 2, 3
 # A '#' after one of these unescaped characters (or at the start) is read as a comment when comments are read. That is
 # wider than either shell: Bash reads no comment after the `)` of `$(...)`, inside `${...}`, `(( ))` or a `=~` regex,
@@ -160,8 +169,14 @@ def _scan(text: str, i: int, rules: Rules, kinds: list[int], subs: list[str], mo
     while i < n:
         ch = text[i]
         if quote == "single":
-            kinds[i] = SYNTAX if ch in rules.single else TEXT
-            quote = None if ch in rules.single else quote
+            if rules.doubled and ch in rules.single and text[i + 1:i + 2] and text[i + 1] in rules.single:
+                # `''` is one literal quote: tokenize keeps it, as PowerShell passes it on (#799: `bash -c 'echo
+                # ''\''<LF>git push'` hands bash `echo '\'<LF>git push`, which runs `git push`)
+                kinds[i], kinds[i + 1] = SYNTAX, TEXT
+                i += 1
+            else:
+                kinds[i] = SYNTAX if ch in rules.single else TEXT
+                quote = None if ch in rules.single else quote
         elif quote == "ansi":
             if ch == "\\" and i + 1 < n:
                 kinds[i], kinds[i + 1] = SYNTAX, TEXT
@@ -170,7 +185,10 @@ def _scan(text: str, i: int, rules: Rules, kinds: list[int], subs: list[str], mo
                 kinds[i] = SYNTAX if ch == "'" else TEXT
                 quote = None if ch == "'" else quote
         elif quote == "double":
-            if ch in rules.double:
+            if rules.doubled and ch in rules.double and text[i + 1:i + 2] and text[i + 1] in rules.double:
+                kinds[i], kinds[i + 1] = SYNTAX, TEXT  # `""` is one literal quote, as `''` above
+                i += 1
+            elif ch in rules.double:
                 kinds[i], quote = SYNTAX, None
             elif ch == rules.escape and i + 1 < n and (rules.dq_escapes is None or text[i + 1] in rules.dq_escapes):
                 # A continuation in Bash; in a PowerShell string the backtick keeps the newline (Argus on ad7dcbb:
@@ -493,7 +511,7 @@ def check_redirects(segment: str, shell: str = "bash") -> None:
             words = tokenize(rest, shell)
         except Blocked:
             words = []
-        fold = (lambda s: s) if shell == "bash" else str.lower
+        fold = (lambda s: s) if shell in ("bash", "sh") else str.lower
         target = fold(words[0]) if words else ""
         spelled = fold(re.match(r"[^ \t\n;|&()<>]*", rest).group(0))
         if target not in SAFE_REDIRECT_TARGETS[shell] or spelled != target:
@@ -685,8 +703,12 @@ def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), 
     if word in SHELLS:
         for j, a in enumerate(args):
             if a.lower() in INLINE_FLAGS and j + 1 < len(args):
-                check_command(" ".join(args[j + 1:]) if word == "cmd" else args[j + 1], depth + 1, extra, actions,
-                              SHELL_OF[word])
+                inner = " ".join(args[j + 1:]) if word == "cmd" else args[j + 1]
+                # `sh` is Bash in Git Bash and macOS but dash (no `$'...'`) on Debian: read it both ways.
+                # The two differ only where `$'` or `$"` appears; otherwise one reading is enough (time).
+                both = SHELL_OF[word] == "sh" and re.search(r"\$['\"]", inner)
+                for each in ("bash", "sh") if both else ("bash",) if SHELL_OF[word] == "sh" else (SHELL_OF[word],):
+                    check_command(inner, depth + 1, extra, actions, each)
                 return
         return
     if word == "git":
@@ -707,7 +729,9 @@ def check_command(command: str, depth: int = 0, extra: frozenset = frozenset(), 
     Each command is also read twice, with comments and without, and refused if either reading refuses (#799). Where a
     `#` starts a comment depends on far more of the shell's grammar than a lexer models (`$(true)#`, `${x:- #}`,
     `(( 1 #))`, a `=~` regex, extglob switched on earlier), and a wrong guess either way lets a quote or the comment
-    itself hide a command. One of the two readings is right, so its refusal stands. The reading without comments is
+    itself hide a command. This covers a command whose `#` are all of one kind; it does not cover a real comment and
+    a misread `#` together (`echo hi # '` then `echo ${#x};git push # '` on the next line passes both readings, as it
+    passed before #798). The reading without comments is
     how the guard read before #798, so an odd quote in a real comment (`echo hi # it's`) is refused, as it was then,
     and so are PowerShell comments."""
     if shell is None:

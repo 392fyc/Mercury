@@ -191,6 +191,8 @@ SHELL_ALLOWED = [
     ("powershell", "Get-Content x > $null"),
     ("powershell", "Get-Content x 2>$NULL"),
     ("cmd", "type a.txt > nul"),
+    ("powershell", "Write-Output 'it''s' \"say \"\"hi\"\"\""),
+    ("powershell", "bash -c 'echo ''it is'' fine'"),
     # Bash drops a backslash-newline inside double quotes: one word `gitpush` is no write
     ("bash", 'bash -c "echo a; git\\\npush"'),
 ] + ([("powershell", "Get-Content x > nul")] if os.name == "nt" else []) + [
@@ -220,6 +222,13 @@ SHELL_ALLOWED = [
 ]
 
 SHELL_BLOCKED = [
+    # PowerShell `''` / `""` in a string is one literal quote, handed on to the inner shell
+    ("powershell", "bash -c 'echo ''\\''\ngit push'"),
+    ("powershell", "sh -c 'echo $''\\''\ngit push\necho $''\\'''"),
+    ("powershell", 'bash -c "echo ""\\""\ngit push"'),
+    # a nested `sh` may be dash, where `$'\'` is `$` and a plain quote: `git push` runs there
+    ("bash", "sh -c \"echo \\$'\\\\' ; git push ; echo \\$'\\\\'\""),
+    ("bash", "dash -c 'git push'"),
     # Argus on ad7dcbb: in a PowerShell string a backtick before a newline keeps it (two commands in real pwsh)
     ("powershell", 'pwsh -Command "Write-Output ok`\ngit push"'),
     ("powershell", 'powershell -Command "Write-Output ok`\nRemove-Item x"'),
