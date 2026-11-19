@@ -84,7 +84,12 @@ WRITE_SCRIPTS = (
 SHELLS = {"bash", "sh", "zsh", "powershell", "pwsh", "cmd"}
 INTERPRETERS = {"python", "python3", "py", "pwsh", "powershell", "bash", "sh", "uv", "uvx", "node"}
 INLINE_FLAGS = {"-c", "-command", "/c", "-commandwithargs"}
-SAFE_REDIRECT_TARGETS = {"/dev/null", "$null", "nul", "null"}
+# Per shell, spelled without quotes or escapes (Argus on ae13a5c). Checked in real shells: in Bash, `\$null`, `null`,
+# `nul` (Git Bash too) and `$null` with a variable `null` set all write a file; in PowerShell `'$null'` and `null`
+# write a file and `/dev/null` is `\dev\null` on the current drive (pwsh 7.6 too). `nul` is the null device only on
+# Windows. Bash paths are case-sensitive; PowerShell and cmd names are not.
+SAFE_REDIRECT_TARGETS = {"bash": {"/dev/null"}, "powershell": {"$null"} | ({"nul"} if os.name == "nt" else set()),
+                         "cmd": {"nul"}}
 
 
 class Blocked(Exception):
@@ -486,8 +491,10 @@ def check_redirects(segment: str, shell: str = "bash") -> None:
             words = tokenize(rest, shell)
         except Blocked:
             words = []
-        target = words[0].lower() if words else ""
-        if target not in SAFE_REDIRECT_TARGETS:
+        fold = (lambda s: s) if shell == "bash" else str.lower
+        target = fold(words[0]) if words else ""
+        spelled = fold(re.match(r"[^ \t\n;|&()<>]*", rest).group(0))
+        if target not in SAFE_REDIRECT_TARGETS[shell] or spelled != target:
             raise Blocked(f"output redirection to a file ({target or 'unknown'})")
 
 

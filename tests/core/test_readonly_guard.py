@@ -20,7 +20,6 @@ from readonly_guard import Blocked, check_command  # noqa: E402
 ALLOWED = [
     "git status -sb",
     "git -C D:/repo log --oneline -5",
-    "git diff HEAD~1 -- a.py 2>/dev/null",
     "git branch -a",
     "git branch --show-current",
     "git worktree list --porcelain",
@@ -37,8 +36,6 @@ ALLOWED = [
     "python -m pytest -q tests 2>&1 | tail -5",
     "Get-ChildItem -Recurse | Select-Object -First 3",
     "powershell -NoProfile -Command \"Get-Content a.txt\"",
-    "echo done > /dev/null",
-    "Get-Content x > $null",
     "cat a.txt 2>&1",
     "cat a.txt >&2",
     "cat a.txt 1>&2; echo ok",
@@ -188,6 +185,13 @@ BLOCKED = [
 # #798: each shell lexes with its own quote, escape and comment rules. A command checked without a shell
 # (shell=None) is read both ways and blocked if either reading blocks it, so these pass only under their shell.
 SHELL_ALLOWED = [
+    # the null device of each shell, spelled without quotes or escapes
+    ("bash", "git diff HEAD~1 -- a.py 2>/dev/null"),
+    ("bash", "echo done > /dev/null"),
+    ("powershell", "Get-Content x > $null"),
+    ("powershell", "Get-Content x 2>$NULL"),
+    ("cmd", "type a.txt > nul"),
+] + ([("powershell", "Get-Content x > nul")] if os.name == "nt" else []) + [
     ("bash", r'rg "\`git push origin\`" docs'),
     ("bash", 'echo "on `git branch --show-current`"'),
     ("bash", r"""echo "$(printf ')')" """),
@@ -214,6 +218,19 @@ SHELL_ALLOWED = [
 ]
 
 SHELL_BLOCKED = [
+    # Argus on ae13a5c: each of these writes a file in the real shell
+    ("bash", r"echo x > \$null"),
+    ("bash", "echo x > '$null'"),
+    ("bash", "echo x > $null"),  # writes the file named by a variable `null`
+    ("bash", "echo x > null"),
+    ("bash", "echo x > nul"),  # a real file in Git Bash too
+    ("bash", "echo x > '/dev/null'x"),
+    ("bash", "echo x > /DEV/NULL"),  # Bash paths are case-sensitive
+    ("powershell", "echo x > '$null'"),
+    ("powershell", "echo x > `$null"),
+    ("powershell", "echo x > null"),
+    ("powershell", "echo x > /dev/null"),
+    ("cmd", "echo x > null"),
     ("bash", r"echo \' $(git push) \'"),  # \' is an escaped quote, so $(...) is live
     ("bash", r"echo \' ; git push ; echo \'"),
     ("bash", "echo a # it's\ngit push\necho 'b'"),  # the quote in the comment opens nothing
