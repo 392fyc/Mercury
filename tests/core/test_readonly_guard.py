@@ -191,6 +191,8 @@ SHELL_ALLOWED = [
     ("powershell", "Get-Content x > $null"),
     ("powershell", "Get-Content x 2>$NULL"),
     ("cmd", "type a.txt > nul"),
+    # Bash drops a backslash-newline inside double quotes: one word `gitpush` is no write
+    ("bash", 'bash -c "echo a; git\\\npush"'),
 ] + ([("powershell", "Get-Content x > nul")] if os.name == "nt" else []) + [
     ("bash", r'rg "\`git push origin\`" docs'),
     ("bash", 'echo "on `git branch --show-current`"'),
@@ -218,6 +220,10 @@ SHELL_ALLOWED = [
 ]
 
 SHELL_BLOCKED = [
+    # Argus on ad7dcbb: in a PowerShell string a backtick before a newline keeps it (two commands in real pwsh)
+    ("powershell", 'pwsh -Command "Write-Output ok`\ngit push"'),
+    ("powershell", 'powershell -Command "Write-Output ok`\nRemove-Item x"'),
+    ("bash", 'pwsh -Command "Write-Output ok`\ngit push"'),
     # Argus on ae13a5c: each of these writes a file in the real shell
     ("bash", r"echo x > \$null"),
     ("bash", "echo x > '$null'"),

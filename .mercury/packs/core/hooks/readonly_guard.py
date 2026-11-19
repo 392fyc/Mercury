@@ -173,7 +173,9 @@ def _scan(text: str, i: int, rules: Rules, kinds: list[int], subs: list[str], mo
             if ch in rules.double:
                 kinds[i], quote = SYNTAX, None
             elif ch == rules.escape and i + 1 < n and (rules.dq_escapes is None or text[i + 1] in rules.dq_escapes):
-                kinds[i], kinds[i + 1] = SYNTAX, SYNTAX if text[i + 1] == "\n" else TEXT
+                # A continuation in Bash; in a PowerShell string the backtick keeps the newline (Argus on ad7dcbb:
+                # `pwsh -Command "Write-Output ok`<LF>git push"` runs two commands).
+                kinds[i], kinds[i + 1] = SYNTAX, SYNTAX if text[i + 1] == "\n" and rules.dq_escapes else TEXT
                 i += 1
             elif rules.substitutes and ch == "$" and text[i + 1:i + 2] == "(":
                 i = _substitution(text, i, i + 2, rules, kinds, subs)
