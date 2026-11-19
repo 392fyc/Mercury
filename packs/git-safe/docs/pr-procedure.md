@@ -29,9 +29,15 @@ remove these.
    - When Argus reports that a run failed (for example that the model call timed out), do not comment
      `@argus-review review` again with nothing changed: the same run can fail the same way, and a failed run may
      still be billed (Mercury #796). Find the cause first, for example the size of the diff or a limit of Argus itself.
-     If you can change something that addresses the cause, change it and run once more. Otherwise, or when that
-     run fails too, write the failure and its cause in the pull request and continue as for a review that did not
-     arrive, or, when the review matters for this pull request, ask the user whether to pay for another run.
+     If you can change something that addresses the cause, change it and run once more. If nothing can be changed,
+     or when that run fails too, write the failure and its cause in the pull request and continue as for a review
+     that did not arrive, or, when the review matters for this pull request, ask the user whether to pay for another
+     run.
+   - For a model call that timed out, the change can be one of two settings Argus takes for a single run in the
+     trigger comment: `@argus-review review --config.ai_timeout=<seconds>` (60 to 900; a longer timeout reserves more
+     of the budget) or `--config.reasoning_effort=<level>` with a lower level the deployment allows, for example
+     `medium`. Use one of them for that rerun and say in the pull request which. Argus refuses any other setting in
+     the comment before it calls the model.
    - Handle every finding: fix it, or reply in its thread with the evidence why it does not apply.
    - A reply is judged at once: Argus answers in the thread and resolves it if it accepts the reply. Wait for that
      answer (with the same deadline); do not start another review for a reply.
