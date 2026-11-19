@@ -243,6 +243,10 @@ SHELL_BLOCKED = [
     ("powershell", "git pu'\"'sh"),
     ("powershell", "git '' push"),  # 5.1 leaves out an empty argument
     ("powershell", 'git "" push'),
+    ("powershell", "git --% -c a.b=1` push"),  # after --% a backtick is no escape: git gets -c 'a.b=1`' push
+    ("powershell", "cmd /c --% echo a` & echo b"),
+    ("powershell", "git -c 'a.b=x\"' 'y\"' push"),  # 5.1: -c 'a.b=x y' push
+    ("powershell", "git -c 'a.b=1 y\\' 'z push'"),  # 5.1: -c 'a.b=1 y\" z' push
     ("powershell", "pwsh -Command \"powershell -Command 'git push`\\\"'\""),
     ("bash", "powershell -Command \"git '' push\""),
     ("powershell", "bash -c 'echo \"x;git push\"'"),
@@ -558,6 +562,17 @@ class GuardHook(unittest.TestCase):
         command = 'echo "$(' * 600 + "git push" + ')"' * 600
         result = run_hook({"tool_name": "Bash", "tool_input": {"command": command}})
         self.assertEqual(result.returncode, 2, result.stderr[-300:])
+
+    def test_ps51_argv_matches_windows_powershell_5_1(self):
+        # each pair observed in Windows PowerShell 5.1 with a program that prints its arguments (#799)
+        from readonly_guard import ps51_argv
+        for words, received in [(['push"'], ["push"]), (['push" "x'], ["push x"]), (['a" push "b'], ["a push b"]),
+                                (["", "push"], ["push"]), (["-c", "a.b=1 y\\", "z push"], ["-c", 'a.b=1 y" z', "push"]),
+                                (["-c", 'a.b=x"', 'y"', "push"], ["-c", "a.b=x y", "push"]),
+                                (['"x y"', "push"], ["x y", "push"]), (['"-c', 'a.b=1"', "push"], ["-c a.b=1", "push"]),
+                                (["a b"], ["a b"])]:
+            with self.subTest(words=words):
+                self.assertEqual(ps51_argv(words), received)
 
     def test_long_method_chain_is_checked_in_time(self):
         # fourth review R1: each `(` lexed its piece again, so 16k characters took seconds and 64k over a minute

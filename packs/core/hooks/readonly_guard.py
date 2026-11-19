@@ -16,7 +16,8 @@ write written plainly, not one written to evade it: a command after a keyword (`
 redirection before the command name, `bash -lc`, piping into a shell, brace expansion, `eval` or `iex`, a variable as
 command name, an expansion in place of a space (`git${IFS}push`), words after `pwsh -Command`'s first, and
 `-EncodedCommand` all pass it (as before #798). How Windows PowerShell 5.1 hands arguments to a program is modelled
-only in part (see check_segment): a word with a space that ends in a backslash still hides the next one.
+from observed cases (see ps51_argv), not from its source; the program's own splitting is taken to follow the usual
+Windows rules (checked with Python, not with each program).
 
 A project adds write-type scripts of its own in `.mercury/config.json`:
     {"params": {"guard_write_scripts": ["deploy.sh"]}}
@@ -692,20 +693,79 @@ def check_action(script: str, segment: str, blocked: frozenset) -> None:
         raise Blocked(f"{script} -Action {values[0]}")
 
 
+def ps51_argv(words: list[str]) -> list[str]:
+    """The arguments a program receives when Windows PowerShell 5.1 runs it with `words` (checked with a program that
+    prints its arguments, and against 900 random words): 5.1 writes an empty word as nothing (its space stays), wraps a word in quotes when it
+    holds whitespace outside quotes (each `"` in it toggles), escapes nothing, and joins with spaces; the program splits
+    that line by the usual Windows rules (2n backslashes and a quote: n backslashes and a toggle; 2n+1: n and a literal
+    quote; `""` inside quotes: a quote)."""
+    def needs_quotes(word: str) -> bool:
+        inside = False
+        for ch in word:
+            if ch == '"':
+                inside = not inside
+            elif ch.isspace() and not inside:
+                return True
+        return False
+
+    line = " ".join(f'"{w}"' if needs_quotes(w) else w for w in words)
+    args, current, has, quoted, i = [], [], False, False, 0
+    while i < len(line):
+        ch = line[i]
+        if ch == "\\":
+            run = len(line) - i - len(line[i:].lstrip("\\"))
+            if line[i + run:i + run + 1] == '"':
+                current.append("\\" * (run // 2))
+                if run % 2:
+                    current.append('"')
+                    i += run + 1
+                    continue
+                i += run
+                continue
+            current.append("\\" * run)
+            i += run
+            continue
+        if ch == '"':
+            if quoted and line[i + 1:i + 2] == '"':
+                current.append('"')
+                i += 2
+                continue
+            quoted, has = not quoted, True
+        elif ch in " \t" and not quoted:
+            if current or has:
+                args.append("".join(current))
+            current, has = [], False
+        else:
+            current.append(ch)
+        i += 1
+    if current or has:
+        args.append("".join(current))
+    return args
+
+
 def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), actions: dict | None = None,
                   shell: str = "bash", requoted: list[str] | None = None) -> None:
-    """Check one simple command. In PowerShell a command with a word that holds a `"` or is empty is also read as
-    Windows PowerShell 5.1 hands it to a program: 5.1 does not escape that quote, so the program's own parsing drops
-    it (`` git push`" ``, `git 'push"'` pass `push`) and may move word boundaries, and it leaves out an empty word
-    (`git '' push` passes `push`). That second reading (`requoted`) drops every `"` and empty word and splits at
-    whitespace; the command is refused if either reading refuses. Not modelled: a word with a space that ends in a
-    backslash, whose added closing quote the program reads as a literal one (`git -c 'a.b=1 y<backslash>' 'z push'`)."""
+    """Check one simple command. In PowerShell a command is also read as Windows PowerShell 5.1 hands it to a program
+    (`ps51_argv`), where that differs: 5.1 escapes no quote, so the program's own parsing drops it (`` git push`" ``,
+    `git 'push"'` pass `push`) or groups words with it (`git -c 'a.b=x"' 'y"' push`), reads a backslash before the
+    quote it adds as an escape (`git -c 'a.b=1 y<backslash>' 'z push'`), and writes an empty word as nothing
+    (`git '' push`).
+    Where a word holds a `"` or is empty, a cruder reading as well drops every `"` and splits at whitespace. The
+    command is refused if any reading (`requoted`) refuses. Inside a nested `pwsh` (PowerShell 7) none applies."""
     actions = actions or {}
     if depth > 3:
         raise Blocked("nested shell depth exceeded")
     tokens = tokenize(segment, shell) if requoted is None else requoted
-    if requoted is None and shell == "powershell" and MAYBE_PS51.get() and any('"' in t or not t for t in tokens):
-        check_segment(segment, depth, extra, actions, shell, " ".join(tokens).replace('"', "").split())
+    if shell == "powershell" and "--%" in tokens:
+        # PowerShell's stop-parsing token: the rest of the line goes to the program as typed, backticks included,
+        # so ``git --% -c a.b=1` push`` runs a push that the backtick reading hides. Rare in read-only use; refused.
+        raise Blocked("PowerShell --% (stop parsing); command could not be checked")
+    if requoted is None and shell == "powershell" and MAYBE_PS51.get():
+        readings = [ps51_argv(tokens)] if ps51_argv(tokens) != tokens else []
+        if any('"' in t or not t for t in tokens):  # a cruder reading as well, in case 5.1 quotes in ways not observed
+            readings.append(" ".join(tokens).replace('"', "").split())
+        for reading in readings:
+            check_segment(segment, depth, extra, actions, shell, reading)
     while tokens and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
         tokens = tokens[1:]
     while tokens and tokens[0] in ("&", ".", "env", "command", "exec", "time", "nice", "sudo"):
