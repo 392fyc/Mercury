@@ -193,6 +193,12 @@ SHELL_ALLOWED = [
     ("cmd", "type a.txt > nul"),
     ("powershell", "Write-Output 'it''s' \"say \"\"hi\"\"\""),
     ("powershell", "bash -c 'echo ''it is'' fine'"),
+    ("powershell", 'git log --format="%h`t%s"'),
+    ("powershell", 'bash -c "printf a`tb"'),
+    ("powershell", "Write-Output 'a`u{27}b'"),
+    ("powershell", 'Write-Output "a`0b"'),
+    ("powershell", "git log --format='\"%h\"'"),
+    ("powershell", "Select-String -Pattern '\"key\"' a.json"),
     # Bash drops a backslash-newline inside double quotes: one word `gitpush` is no write
     ("bash", 'bash -c "echo a; git\\\npush"'),
 ] + ([("powershell", "Get-Content x > nul")] if os.name == "nt" else []) + [
@@ -222,6 +228,30 @@ SHELL_ALLOWED = [
 ]
 
 SHELL_BLOCKED = [
+    # PowerShell decodes `n outside single quotes: the inner shell gets two commands
+    ("powershell", 'bash -c "echo a`ngit push"'),
+    ("powershell", "bash -c echo` a`ngit` push"),
+    ("powershell", 'bash -c @"\necho a`ngit push\n"@'),
+    ("powershell", 'pwsh -Command "Write-Output a`nRemove-Item x"'),
+    # a program gets each word up to its first NUL; pwsh 7 builds any character from `u{...}
+    ("bash", 'bash -c "x\x00; git push"'),  # Bash drops a literal NUL from a script
+    ("bash", "git pu\x00sh"),
+    # Windows PowerShell 5.1 does not escape a `"` in an argument it hands a program: git receives `push`
+    ("powershell", 'git push`"'),
+    ("powershell", 'git "push"""'),
+    ("powershell", "git 'push\"'"),
+    ("powershell", "git pu'\"'sh"),
+    ("powershell", "git '' push"),  # 5.1 leaves out an empty argument
+    ("powershell", 'git "" push'),
+    ("powershell", "pwsh -Command \"powershell -Command 'git push`\\\"'\""),
+    ("bash", "powershell -Command \"git '' push\""),
+    ("powershell", "bash -c 'echo \"x;git push\"'"),
+    ("powershell", "git push`0"),
+    ("powershell", "git push`0x"),
+    ("powershell", "bash -c \"echo 'a`u{27}; git push; echo `u{27}b'\""),
+    ("powershell", "git pu`u{73}h"),
+    ("powershell", "g`u{69}t push"),
+    ("powershell", "Remove-It`u{65}m x"),
     # PowerShell `''` / `""` in a string is one literal quote, handed on to the inner shell
     ("powershell", "bash -c 'echo ''\\''\ngit push'"),
     ("powershell", "sh -c 'echo $''\\''\ngit push\necho $''\\'''"),
@@ -253,7 +283,8 @@ SHELL_BLOCKED = [
     ("bash", r"""echo "$(echo \'$( true ; echo \') ; git push )" """),
     ("bash", r"echo ${#x}; git push"),  # '#' after '{' is not a comment
     ("powershell", "Write-Output ‘a\"b’ ; Remove-Item x ; Write-Output ‘c\"d’"),  # curly quotes
-    ("powershell", r"gi`t push"),
+    ("powershell", r"g`it push"),
+    ("powershell", r"Remove-It`em x"),  # `e is a plain e in Windows PowerShell 5.1
     ("powershell", r'''Write-Output "\$(git push)" '''),  # '\' is no escape in PowerShell
     ("powershell", "<# it's #> Remove-Item x"),
     ("powershell", "Write-Output a#b; Remove-Item x"),  # '#' inside a word is not a comment
@@ -537,6 +568,31 @@ class GuardHook(unittest.TestCase):
                 started = time.monotonic()
                 check_command(command, shell="powershell")
                 self.assertLess(time.monotonic() - started, 10)
+
+    def test_check_past_its_time_budget_is_refused(self):
+        # review of #799: three nested quoted `powershell -Command` of 400k characters took 76 s, past the hook timeout
+        import readonly_guard
+        saved = readonly_guard.CHECK_BUDGET_S
+        readonly_guard.CHECK_BUDGET_S = -1  # already past: Windows' monotonic clock may not move between two reads
+        try:
+            with self.assertRaises(Blocked):
+                check_command("pwsh -Command 'git status'", shell="powershell")
+        finally:
+            readonly_guard.CHECK_BUDGET_S = saved
+        check_command("pwsh -Command 'git status'", shell="powershell")
+
+    def test_hook_watchdog_blocks_a_check_stuck_in_one_step(self):
+        # review of #799: the budget was checked only between commands, so one slow step (a quadratic redirect scan)
+        # kept the real hook busy for two minutes; the hook's watchdog ends it and blocks
+        script = ("import io, json, sys, time; sys.path.insert(0, sys.argv[1]); import readonly_guard as g; "
+                  "g.CHECK_BUDGET_S = -4; g.check_command = lambda *a, **k: time.sleep(30); "
+                  "sys.stdin = io.StringIO(json.dumps({'tool_name': 'Bash', 'tool_input': {'command': 'ls'}})); "
+                  "sys.exit(g.main())")
+        started = time.monotonic()
+        result = subprocess.run([sys.executable, "-B", "-c", script, str(HOOKS)], capture_output=True, text=True,
+                                timeout=60)
+        self.assertEqual(result.returncode, 2, result.stderr[-300:])
+        self.assertLess(time.monotonic() - started, 20)
 
     def test_hook_reads_project_extension_from_the_project_config(self):
         with tempfile.TemporaryDirectory() as tmp:
