@@ -23,6 +23,7 @@ ALLOWED = [
     "timeout 20 git log -1", "timeout -k 5 20s git status", "nice -n 5 git log", "env -i A=1 git status",
     "nohup git fetch --dry-run", "xargs -n 1 grep -l push", "command -v git", "stdbuf -o0 git log", "env",
     "timeout 20 bash -c 'git status'", "time -p git log -1", "command -v rm", "command -V tee",
+    "sudo -l rm", "sudo --list git push", "sudo -u x -l rm",
     "git -C D:/repo log --oneline -5",
     "git branch -a",
     "git branch --show-current",

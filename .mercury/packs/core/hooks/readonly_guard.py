@@ -715,8 +715,8 @@ def strip_wrappers(tokens: list[str]) -> list[str]:
             i += 1
             if option == "--":
                 break
-            if wrapper == "command" and option in ("-v", "-V"):
-                return []  # `command -v rm` only says where rm is; it runs nothing
+            if wrapper == "command" and option in ("-v", "-V") or wrapper == "sudo" and option in ("-l", "--list"):
+                return []  # `command -v rm` says where rm is, `sudo -l rm` whether it may run: neither runs it
             if option in WRAPPERS[wrapper]:  # a separate value follows (`-n 5`); `-n5` and `--signal=KILL` hold it
                 i += 1
         if wrapper == "timeout" and i < len(tokens):
