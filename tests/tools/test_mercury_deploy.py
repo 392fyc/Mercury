@@ -15,6 +15,8 @@ import unicodedata
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts" / "ci"))
+from unittest_shard import load_tests  # noqa: E402,F401  CI runs one part per job (#806)
 TOOL = ROOT / "tools" / "mercury.py"
 LOCK, CONFIG = ".mercury/lock.json", ".mercury/config.json"
 UPDATE, VERIFY = ".github/workflows/mercury-update.yml", ".github/workflows/mercury-verify.yml"

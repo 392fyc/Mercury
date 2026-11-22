@@ -14,6 +14,8 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts" / "ci"))
+from unittest_shard import load_tests  # noqa: E402,F401  CI runs one part per job (#806)
 TOOL = ROOT / "tools" / "mercury.py"
 LOCK, CONFIG, LOCAL = ".mercury/lock.json", ".mercury/config.json", ".mercury/local.json"
 WORKTREE_RUNNER = ("import importlib.util, sys; spec = importlib.util.spec_from_file_location('m', sys.argv[1]); "

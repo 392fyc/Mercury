@@ -108,7 +108,7 @@ its protection while frozen:
 | Require PR before merge | Yes | Yes |
 | Required approving reviews | 0 | 0 |
 | Dismiss stale reviews | Yes | Yes |
-| Required status checks | — (branch locked: no pushes at all while frozen) | every check of `auto-verify.yml` |
+| Required status checks | — (branch locked: no pushes at all while frozen) | every check of `auto-verify.yml`; a job split into parallel parts keeps its required name on a gate job that fails unless every part passed (#806) |
 | Force push and deletion | Blocked | Blocked |
 
 The required approval count is 0 (#632, #636): the repository owner opens

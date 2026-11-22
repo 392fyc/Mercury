@@ -11,6 +11,8 @@ from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts" / "ci"))
+from unittest_shard import load_tests  # noqa: E402,F401  CI runs one part per job (#806)
 sys.path.insert(0, str(ROOT / "tools" / "harness_monitor"))
 import monitor  # noqa: E402
 

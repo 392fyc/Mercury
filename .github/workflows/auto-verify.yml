@@ -4,19 +4,36 @@ on:
   pull_request:
     branches: [master]
 
+# A newer push to the same pull request cancels the run for the older one (#806).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 # Every test file in the repository must be run here or in another workflow, on Linux and, where it can
 # pass, on Windows (#686). scripts/ci/check-test-coverage.py enforces that; its exemption and platform-gap
 # lists are scripts/ci/test-coverage.json. Shell tests run through scripts/ci/run-isolated.sh so they get a
 # throw-away HOME and never touch the runner user's real directories.
+#
+# A slow job is split into parallel parts (#806): a test file opts in to scripts/ci/unittest_shard.py and each
+# part sets MERCURY_TEST_SHARD=K/N, so the parts together run every test exactly once. The name a required status
+# check uses stays on a small gate job that needs its parts and fails unless every part succeeded, so branch
+# protection did not change. A gate runs on always(), never skipped: a skipped required check would pass.
 #
 # Action majors follow each action's own README (checkout, setup-python and setup-node all show @v7 as of
 # 2026-10). Job names are what the PR status checks show; the existing ones keep their names, new jobs add
 # new names.
 
 jobs:
-  template-contract:
-    name: Portable Harness contract
+  template-contract-gitsafe:
+    name: Portable Harness contract, git-safe tests (${{ matrix.shard }}/2)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    env:
+      MERCURY_TEST_SHARD: ${{ matrix.shard }}/2
     steps:
       - uses: actions/checkout@v7
         with:
@@ -28,6 +45,20 @@ jobs:
         run: python -m pip install PyYAML==6.0.3
       - name: Test git-safe and guard pre-merge gates
         run: python -B -m unittest discover -s tests/codex/project_template -p 'test_*.py'
+
+  template-contract-rest:
+    name: Portable Harness contract, installer and the rest
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: PyYAML, so the rendered deploy workflows are read back by a real YAML parser (#688)
+        run: python -m pip install PyYAML==6.0.3
       - name: Upstream adapters regenerate the committed files (line endings normalised) (#668)
         run: |
           python -B packs/plan/build/generate.py --check
@@ -42,10 +73,30 @@ jobs:
           python -B -m unittest discover -s tests/kb -p 'test_*.py'
           python -B .mercury/packs/kb/scripts/kb_check.py docs
 
-  template-contract-windows:
-    name: Portable Harness contract (Windows)
+  template-contract:
+    name: Portable Harness contract
+    needs: [template-contract-gitsafe, template-contract-rest]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every part passed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS"
+          echo "$NEEDS" | jq -e 'length > 0 and all(.[]; .result == "success")'
+
+  template-contract-windows-gitsafe:
+    name: Portable Harness contract (Windows), git-safe tests (${{ matrix.shard }}/2)
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    env:
+      MERCURY_TEST_SHARD: ${{ matrix.shard }}/2
     # bash, not the Windows default pwsh: a pwsh script reports only its LAST command's exit code, so a failing
     # first command in a multi-line step would pass silently. bash runs with -e and stops at the first failure.
     defaults:
@@ -62,14 +113,59 @@ jobs:
         run: python -m pip install PyYAML==6.0.3
       - name: Test git-safe and guard pre-merge gates
         run: python -B -m unittest discover -s tests/codex/project_template -p 'test_*.py'
+
+  template-contract-windows-tools:
+    name: Portable Harness contract (Windows), installer tests (${{ matrix.shard }}/3)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    env:
+      MERCURY_TEST_SHARD: ${{ matrix.shard }}/3
+    # bash, not the Windows default pwsh: a pwsh script reports only its LAST command's exit code, so a failing
+    # first command in a multi-line step would pass silently. bash runs with -e and stops at the first failure.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: PyYAML, so the rendered deploy workflows are read back by a real YAML parser (#688)
+        run: python -m pip install PyYAML==6.0.3
+      - name: The installer behaves (#674, #680, #686)
+        run: python -B -m unittest discover -s tests/tools -p 'test_*.py' -v
+
+  template-contract-windows-rest:
+    name: Portable Harness contract (Windows), packs in sync and the rest
+    runs-on: windows-latest
+    timeout-minutes: 30
+    # bash, not the Windows default pwsh: a pwsh script reports only its LAST command's exit code, so a failing
+    # first command in a multi-line step would pass silently. bash runs with -e and stops at the first failure.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: PyYAML, so the rendered deploy workflows are read back by a real YAML parser (#688)
+        run: python -m pip install PyYAML==6.0.3
       - name: Upstream adapters regenerate the committed files (line endings normalised) (#668)
         run: |
           python -B packs/plan/build/generate.py --check
           python -B packs/subagent-dev/build/generate.py --check
-      - name: Installed packs are in sync and the installer behaves (#674, #680, #686)
+      - name: Installed packs are in sync, and the core pack's scripts (#674, #686)
         run: |
           python -B tools/mercury.py check --target .
-          python -B -m unittest discover -s tests/tools -p 'test_*.py' -v
           python -B -m unittest discover -s tests/core -p 'test_*.py'
       - name: Knowledge-base checker and Mercury's docs/ (#736)
         run: |
@@ -77,6 +173,20 @@ jobs:
           python -B .mercury/packs/kb/scripts/kb_check.py docs
       - name: The coverage checker reads Windows (CRLF) workflow files
         run: python -B -m unittest discover -s tests/ci -p 'test_*.py'
+
+  template-contract-windows:
+    name: Portable Harness contract (Windows)
+    needs: [template-contract-windows-gitsafe, template-contract-windows-tools, template-contract-windows-rest]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every part passed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS"
+          echo "$NEEDS" | jq -e 'length > 0 and all(.[]; .result == "success")'
 
   toolcall-xml-lint:
     name: Tool-call XML Lint (#527)
@@ -124,10 +234,10 @@ jobs:
       - name: Worktree reaper
         run: bash scripts/ci/run-isolated.sh tests/test_worktree_reaper.sh
 
-  shell-tests-windows:
-    name: Shell tests (Windows, Git Bash) (#686)
+  shell-tests-windows-lanes:
+    name: Shell tests (Windows, Git Bash), lanes and worktree reaper (#686)
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     defaults:
       run:
         shell: bash
@@ -144,12 +254,36 @@ jobs:
           exit $fail
       - name: Lane bus (#712)
         run: python -B -m unittest discover -s tests/lanes -p test_lane_bus.py
+      - name: Worktree reaper
+        run: bash scripts/ci/run-isolated.sh tests/test_worktree_reaper.sh
+
+  shell-tests-windows-cleanup:
+    name: Shell tests (Windows, Git Bash), branch cleanup and linter (#686)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
       - name: Tool-call XML linter self-test
         run: bash scripts/ci/run-isolated.sh scripts/test-toolcall-xml-lint.sh
       - name: Branch cleanup script
         run: bash scripts/ci/run-isolated.sh tests/test_cleanup_worktree_branch.sh
-      - name: Worktree reaper
-        run: bash scripts/ci/run-isolated.sh tests/test_worktree_reaper.sh
+
+  shell-tests-windows:
+    name: Shell tests (Windows, Git Bash) (#686)
+    needs: [shell-tests-windows-lanes, shell-tests-windows-cleanup]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every part passed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS"
+          echo "$NEEDS" | jq -e 'length > 0 and all(.[]; .result == "success")'
 
   playwright-mcp-wrapper:
     name: Playwright MCP wrapper (${{ matrix.os }}, node ${{ matrix.node }}) (#686)
