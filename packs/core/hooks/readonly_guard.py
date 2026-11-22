@@ -832,7 +832,7 @@ HERE_DOC_READERS = {"cat", "tac", "grep", "egrep", "fgrep", "rg", "wc", "head", 
                     "python", "python3", "py", "node"}
 # Every command before the body, back to the start, must be one of these: any other command could give `cat` another
 # meaning first (`eval 'cat(){ bash; }'`, `function cat if ...`, `declare 'BASH_ALIASES[cat]=bash'`, review on #810).
-HERE_DOC_PLAIN = HERE_DOC_READERS | {"cd", "echo", "pwd", "true", ":"}
+HERE_DOC_PLAIN = HERE_DOC_READERS | {"cd", "echo", "pwd", "true", ":", "git"}
 # Options that make a reader run a program: `env -S'bash -s'` (strip_wrappers drops it), `sort --compress-program`.
 # GNU tools accept any unambiguous prefix of a long option (`env --sp=`, `sort --compress-prog=`) and a short option
 # inside a cluster (`env -iS`); review on #810.
@@ -849,6 +849,8 @@ def _runs_program(word: str) -> bool:
 # Wrappers whose options strip_wrappers cannot all tell apart (`xargs --process-slot-var cat sh -c`, `sudo -R cat
 # bash`) or that hand the body on: with one of them the body is not cut.
 HERE_DOC_NO_WRAPPERS = {"xargs", "sudo", "doas", "exec", "."}
+# In the body of an unquoted here-document: a backtick, a backslash, or a `$` not followed by a name character.
+HERE_DOC_EXPANDS = re.compile(r"[`\\]|\$(?![A-Za-z0-9_])")
 
 
 def _live_pieces(command: str, kinds: list[int], a: int, b: int, seps: str) -> list[tuple[int, int]]:
@@ -865,10 +867,14 @@ def _live_pieces(command: str, kinds: list[int], a: int, b: int, seps: str) -> l
 
 
 def cut_here_documents(command: str, shell: str) -> str:
-    """`command` without the bodies of its Bash here-documents whose delimiter is quoted (#800).
+    """`command` without the bodies of its Bash here-documents that run no command (#800).
 
-    Bash reads such a body as plain text, so checking it as commands refused read-only commands (`python - <<'EOF'` with
-    `if a >= b:` in the body was read as a redirection) and let an odd quote in it hide the next command. A body is cut
+    Bash reads the body of a here-document whose delimiter is quoted as plain text; with an unquoted delimiter
+    (`<<EOF`) it expands `$`, `$(...)`, backticks and backslashes but still treats quotes, `>` and `;` as text. So
+    checking a body as commands refused read-only commands (`python - <<'EOF'` with `if a >= b:` in the body was read
+    as a redirection) and let an odd quote in it hide the next command. An unquoted body is cut only when every `$` in
+    it starts a plain name and it has no backtick or backslash (HERE_DOC_EXPANDS), so nothing in it runs and no
+    backslash-newline moves its end. A body is cut
     only where the guard can tell exactly where Bash ends it: the `<<` or `<<-` is shell syntax, no `(`, `[` or `{`
     that is shell syntax comes before it (so it is not in `$((...))`, `a[...]`, `${...}`, `$(...)`, a group or a
     `case` branch, even when closers seem to balance them), the command up to the end of its line has no substitution,
@@ -883,7 +889,7 @@ def cut_here_documents(command: str, shell: str) -> str:
     then runs to the first line equal to the delimiter (after leading tabs for `<<-`; no other whitespace is
     stripped, as in Bash), or to the end. A command with a `\\r` is not cut at all: Git Bash ends a body at `EOF\\r`,
     Linux Bash does not. At the first `<<` that fails any of these the cutting stops, and the rest is read as before
-    #800: an unquoted delimiter (`<<EOF`, whose body Bash expands) is not read yet."""
+    #800."""
     if "\r" in command:
         return command
     resume, n = 0, len(command)
@@ -916,9 +922,9 @@ def cut_here_documents(command: str, shell: str) -> str:
         while k < n and command[k] in " \t":
             k += 1
         word = HERE_DOC_WORD.match(command, k)
-        if not word or not any(c in "'\"\\" for c in word.group(0)) \
-                or word.end() < n and command[word.end()] not in " \t\n;&|<>)":
+        if not word or word.end() < n and command[word.end()] not in " \t\n;&|<>)":
             return command
+        expands = not any(c in "'\"\\" for c in word.group(0))
         delimiter = "".join(next(p for p in m.groups() if p is not None) for m in HERE_DOC_PIECE.finditer(word.group(0)))
         if not delimiter or kinds[newline] != LIVE:
             return command
@@ -950,6 +956,13 @@ def cut_here_documents(command: str, shell: str) -> str:
                 end = min(stop + 1, n)
                 break
             line = stop + 1
+        # With an unquoted delimiter Bash expands the body: `$(...)` and backticks run commands, `${y@P}` or an
+        # arithmetic context can run a `$(...)` stored in a variable (review on #800), and a backslash before a newline
+        # joins two lines (so the delimiter line may not end the body). Quotes, `>` and `;` stay text. Such a body is
+        # cut only when its `$` signs all start a plain name (`$HOME`, `$1`) and it has no backtick or backslash;
+        # otherwise it is read as commands, as before.
+        if expands and (HERE_DOC_EXPANDS.search(command, newline + 1, end)):
+            return command
         command = command[:newline + 1] + command[end:]
         resume, n = word.end(), len(command)
 
