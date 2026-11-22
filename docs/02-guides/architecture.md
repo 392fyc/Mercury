@@ -30,5 +30,5 @@ Claude Code 的角色定义在 `.claude/agents/mercury-*.md`，Codex 的在 `.co
 `AGENTS.md` 是共享项目规则，`CLAUDE.md` 通过 `@AGENTS.md` 导入并补充 Claude Code 适配。其他运行时的指令文件（`GEMINI.md`、`OPENCODE.md`）已在 #666 删除。
 
 根 `AGENTS.md` 保留开工必读、授权边界、禁止事项和规则入口。操作步骤与例子放在对应合同或指南中。
-变更后按 [AGENTS.md 写入规则](../../packs/core/docs/mercury-harness-ownership.md#authoring-agentsmd)
+变更后按 `packs/core/docs/mercury-harness-ownership.md` 的「Authoring AGENTS.md」一节
 计算完整生成文件的 UTF-8 字节数，包含 Mercury 管理段和项目自有段，总计不超过 24,000 字节。
