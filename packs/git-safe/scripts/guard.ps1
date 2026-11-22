@@ -127,10 +127,11 @@ $protectedBranches = @(@("develop", "main", "master") + @(Get-IntegrationBranch)
 #   - feature/TASK-703-claude
 #   - fix/guard-premerge-guard-codex      (lane "guard")
 $branchTypes = "feature|feat|fix|hotfix|docs|chore|refactor|test|perf|ci|build"
-$featureTaskPattern = "^($branchTypes)/[A-Za-z0-9][A-Za-z0-9._-]*-(claude|codex)$"
+$branchAgents = "claude|codex|gemini"
+$featureTaskPattern = "^($branchTypes)/[A-Za-z0-9][A-Za-z0-9._-]*-($branchAgents)$"
 # Branches created before #703 keep their names and can still be committed to; do not create new ones.
 $legacyBranchPattern = "^(feature/TASK-[A-Za-z0-9._-]+|lane/[A-Za-z0-9._-]+/(init|[0-9]+(-[A-Za-z0-9._-]+)?))$"
-$branchFormHelp = "<type>/<purpose>[-<lane>]-<agent> with type in $($branchTypes.Replace('|', ', ')) and agent claude or codex, e.g. feature/TASK-703-claude"
+$branchFormHelp = "<type>/<purpose>[-<lane>]-<agent> with type in $($branchTypes.Replace('|', ', ')) and agent in $($branchAgents.Replace('|', ', ')), e.g. feature/TASK-703-claude"
 
 function Get-CurrentBranch {
   $branchOutput = git -C $repoRoot rev-parse --abbrev-ref HEAD

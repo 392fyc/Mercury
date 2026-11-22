@@ -21,7 +21,7 @@ A branch is named for its purpose so that a person can tell what it is for:
 - `purpose` is the task or direction, such as `TASK-703` or
   `talent-proposal-48c`: letters, digits, `.`, `_` and `-`, no further `/`.
   Keep it short; there is no length limit.
-- The lane and the agent (`claude` or `codex`) are suffixes only. A branch an
+- The lane and the agent (`claude`, `codex` or `gemini`) are suffixes only. A branch an
   agent creates ends with its agent; a lane branch puts the lane before it,
   for example `fix/guard-premerge-guard-codex` for lane `guard`.
 - Agent or lane prefixes such as `codex/`, `claude/` and `lane/` are not used.

@@ -1179,6 +1179,21 @@ class PushTargetTest(unittest.TestCase):
         self.assertEqual(self.remote_ref(self.BRANCH), git(self.repo, "rev-parse", "HEAD").strip())
         self.assertEqual(git(self.repo, "config", f"branch.{self.BRANCH}.remote").strip(), "origin")
 
+    def test_a_gemini_task_branch_can_stage_commit_and_push(self):
+        branch = "docs/design-note-gemini"
+        git(self.repo, "checkout", "-q", "-b", branch)
+        (self.repo / "note.md").write_text("design note\n")
+        code, out = run_ps(self.scripts / "git-safe.ps1", "add", "note.md", cwd=self.repo)
+        self.assertEqual(code, 0, out)
+        code, out = run_ps(self.scripts / "guard.ps1", "mark-review", cwd=self.repo)
+        self.assertEqual(code, 0, out)
+        code, out = run_ps(self.scripts / "git-safe.ps1", "commit", "-Message", "docs: design note", cwd=self.repo)
+        self.assertEqual(code, 0, out)
+
+        code, out = self.push("-u", "origin", branch)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(git(self.origin, "show", f"{branch}:note.md"), "design note\n")
+
     def test_a_push_without_a_refspec_is_refused(self):
         code, out = self.push("origin")
         self.assertEqual(code, 1, out)
