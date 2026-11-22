@@ -14,10 +14,9 @@ is checked as if it were commands, so an odd quote in a body can hide the next c
 are `case` patterns; in both, a `)` inside `"$(...)"` can end the substitution early for the guard. It catches a
 write written plainly, not one written to evade it: a command after a keyword (`if git push; then`, `! git push`), a
 redirection before the command name, `bash -lc`, piping into a shell, brace expansion, `eval` or `iex`, a variable as
-command name, an expansion in place of a space (`git${IFS}push`), words after `pwsh -Command`'s first, and
-`-EncodedCommand` all pass it (as before #798). How Windows PowerShell 5.1 hands arguments to a program is modelled
-from observed cases (see ps51_argv), not from its source; the program's own splitting is taken to follow the usual
-Windows rules (checked with Python, not with each program).
+command name, an expansion in place of a space (`git${IFS}push`), words after `pwsh -Command`'s first,
+`-EncodedCommand`, PowerShell escapes that build a character (`` `n ``, `` `0 ``, `` `u{...} ``), and quotes that
+Windows PowerShell 5.1 drops when it passes an argument to a program all pass it (as before #798).
 
 A project adds write-type scripts of its own in `.mercury/config.json`:
     {"params": {"guard_write_scripts": ["deploy.sh"]}}
@@ -462,11 +461,7 @@ def _ansi_decode(body: str) -> str:
 def tokenize(segment: str, shell: str = "bash") -> list[str]:
     """The words of `segment` as the shell passes them on: quotes and escape characters removed, comments dropped.
     In Bash the `$` of `$'...'` and `$"..."` goes too, and the escapes of `$'...'` are decoded (#799): otherwise
-    `bash -c $'git push'` would hand `$git push` to the check of the inner command. In PowerShell the backtick escapes
-    that stand for a control character (`` `n ``, `` `0 ``, ...) are decoded, outside single quotes as PowerShell does:
-    `bash -c "echo a`ngit push"` hands bash two commands (#799); `` `u{...} `` is refused. A NUL decoded from an escape
-    ends its word, as a program receives it (`` git push`0x `` passes `push`); a literal NUL never gets here (refused
-    in _check_command: Bash drops it from a script instead)."""
+    `bash -c $'git push'` would hand `$git push` to the check of the inner command."""
     kinds, _ = lex(segment, shell)
     rules = RULES[shell]
     tokens, current, has, i, n = [], [], False, 0, len(segment)
@@ -482,34 +477,20 @@ def tokenize(segment: str, shell: str = "bash") -> list[str]:
                 current.append(_ansi_decode(segment[i + 1:end]))
                 has, i = True, end + 1
                 continue
-        if kind == SYNTAX and ch == "`" and rules.escape == "`" and i + 1 < n and kinds[i + 1] == TEXT:
-            if segment[i + 1:i + 3] == "u{":
-                raise Blocked("PowerShell `u{...} escape (a character pwsh 7 builds, plain text in 5.1); "
-                              "command could not be checked")
-            if segment[i + 1] in PS_ESCAPES:
-                current.append(PS_ESCAPES[segment[i + 1]])
-                has, i = True, i + 2
-                continue
         if kind == COMMENT:
             pass
         elif kind == SYNTAX:
             has = has or ch != rules.escape and ch != "\n"
         elif kind == LIVE and ch.isspace():
             if current or has:
-                tokens.append("".join(current).split("\x00", 1)[0])
+                tokens.append("".join(current))
             current, has = [], False
         else:
             current.append(ch)
         i += 1
     if current or has:
-        tokens.append("".join(current).split("\x00", 1)[0])
+        tokens.append("".join(current))
     return tokens
-
-
-# PowerShell's backtick escapes for control characters. Not decoded: `e, a plain `e` in Windows PowerShell 5.1
-# (`Remove-It`em` runs there) and ESC in pwsh 7, no command break either way. `u{...}, any character in pwsh 7 and
-# plain text in 5.1, is refused in tokenize: decoding it or not would each misread one of the two.
-PS_ESCAPES = {"0": "\x00", "a": "\a", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v"}
 
 
 def _odd_dollars(text: str, i: int, kinds: list[int]) -> bool:
@@ -698,80 +679,12 @@ def check_action(script: str, segment: str, blocked: frozenset) -> None:
         raise Blocked(f"{script} -Action {values[0]}")
 
 
-def ps51_argv(words: list[str]) -> list[str]:
-    """The arguments a program receives when Windows PowerShell 5.1 runs it with `words` (checked with a program that
-    prints its arguments, and against 900 random words): 5.1 writes an empty word as nothing (its space stays), wraps a word in quotes when it
-    holds whitespace outside quotes (each `"` in it toggles), escapes nothing, and joins with spaces; the program splits
-    that line by the usual Windows rules (2n backslashes and a quote: n backslashes and a toggle; 2n+1: n and a literal
-    quote; `""` inside quotes: a quote)."""
-    def needs_quotes(word: str) -> bool:
-        inside = False
-        for ch in word:
-            if ch == '"':
-                inside = not inside
-            elif ch.isspace() and not inside:
-                return True
-        return False
-
-    line = " ".join(f'"{w}"' if needs_quotes(w) else w for w in words)
-    args, current, has, quoted, i = [], [], False, False, 0
-    while i < len(line):
-        ch = line[i]
-        if ch == "\\":
-            run = len(line) - i - len(line[i:].lstrip("\\"))
-            if line[i + run:i + run + 1] == '"':
-                current.append("\\" * (run // 2))
-                if run % 2:
-                    current.append('"')
-                    i += run + 1
-                    continue
-                i += run
-                continue
-            current.append("\\" * run)
-            i += run
-            continue
-        if ch == '"':
-            if quoted and line[i + 1:i + 2] == '"':
-                current.append('"')
-                i += 2
-                continue
-            quoted, has = not quoted, True
-        elif ch in " \t" and not quoted:
-            if current or has:
-                args.append("".join(current))
-            current, has = [], False
-        else:
-            current.append(ch)
-        i += 1
-    if current or has:
-        args.append("".join(current))
-    return args
-
-
 def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), actions: dict | None = None,
-                  shell: str = "bash", requoted: list[str] | None = None) -> None:
-    """Check one simple command. In PowerShell a command is also read as Windows PowerShell 5.1 hands it to a program
-    (`ps51_argv`), where that differs: 5.1 escapes no quote, so the program's own parsing drops it (`` git push`" ``,
-    `git 'push"'` pass `push`) or groups words with it (`git -c 'a.b=x"' 'y"' push`), reads a backslash before the
-    quote it adds as an escape (`git -c 'a.b=1 y<backslash>' 'z push'`), and writes an empty word as nothing
-    (`git '' push`).
-    Where a word holds a `"` or is empty, a cruder reading as well drops every `"` and splits at whitespace. The
-    command is refused if any reading (`requoted`) refuses. Nested `pwsh` is read this way too: PowerShell 7 passes
-    arguments the 5.1 way when `$PSNativeCommandArgumentPassing` is `Legacy`, which the command itself can set."""
+                  shell: str = "bash") -> None:
     actions = actions or {}
     if depth > 3:
         raise Blocked("nested shell depth exceeded")
-    tokens = tokenize(segment, shell) if requoted is None else requoted
-    if shell == "powershell" and "--%" in tokens:
-        # PowerShell's stop-parsing token: the rest of the line goes to the program as typed, backticks included,
-        # so ``git --% -c a.b=1` push`` runs a push that the backtick reading hides. Rare in read-only use; refused.
-        raise Blocked("PowerShell --% (stop parsing); command could not be checked")
-    if requoted is None and shell == "powershell":
-        readings = [ps51_argv(tokens)] if ps51_argv(tokens) != tokens else []
-        if any('"' in t or not t for t in tokens):  # a cruder reading as well, in case 5.1 quotes in ways not observed
-            readings.append(" ".join(tokens).replace('"', "").split())
-        for reading in readings:
-            check_segment(segment, depth, extra, actions, shell, reading)
+    tokens = tokenize(segment, shell)
     while tokens and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
         tokens = tokens[1:]
     while tokens and tokens[0] in ("&", ".", "env", "command", "exec", "time", "nice", "sudo"):
@@ -809,8 +722,7 @@ def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), 
     if word in SHELLS:
         for j, a in enumerate(args):
             if a.lower() in INLINE_FLAGS and j + 1 < len(args):
-                # In the requoted reading the inner command's own word boundaries are unknown: take all the rest.
-                inner = " ".join(args[j + 1:]) if word == "cmd" or requoted is not None else args[j + 1]
+                inner = " ".join(args[j + 1:]) if word == "cmd" else args[j + 1]
                 # `sh` is Bash in Git Bash and macOS but dash (no `$'...'`) on Debian: read it both ways.
                 # The two differ only where `$'` or `$"` appears; otherwise one reading is enough (time).
                 both = SHELL_OF[word] == "sh" and re.search(r"\$['\"]", inner)
@@ -842,7 +754,7 @@ def check_command(command: str, depth: int = 0, extra: frozenset = frozenset(), 
     how the guard read before #798, so an odd quote in a real comment (`echo hi # it's`) is refused, as it was then,
     and so are PowerShell comments."""
     if DEADLINE.get() is None:
-        # The readings multiply with nesting (comments, sh, the 5.1 reading); a huge nested command could outlast the
+        # The readings multiply with nesting (with and without comments, sh); a huge nested command could outlast the
         # hook's timeout, whose outcome is not a block. Past the budget the command is refused instead.
         budget = DEADLINE.set(time.monotonic() + CHECK_BUDGET_S)
         try:
@@ -868,10 +780,6 @@ def _check_command(command: str, depth: int, extra: frozenset, actions: dict | N
         raise Blocked(f"checking took over {CHECK_BUDGET_S} s; command could not be checked")
     if ODD_BREAKS.search(command):
         raise Blocked("a lone carriage return or another unusual line break; command could not be checked")
-    if "\x00" in command:
-        # Bash drops a NUL byte from a script where a program's argument ends at one; refused outright. A NUL
-        # decoded from an escape (`$'\0'`, PowerShell `0) ends its word in tokenize, as the program receives it.
-        raise Blocked("a NUL character; command could not be checked")
     _, subs = lex(command, shell)
     for segment in split_segments(command, shell):
         check_segment(segment, depth, extra, actions, shell)

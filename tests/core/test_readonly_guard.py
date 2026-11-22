@@ -228,30 +228,6 @@ SHELL_ALLOWED = [
 ]
 
 SHELL_BLOCKED = [
-    # PowerShell decodes `n outside single quotes: the inner shell gets two commands
-    ("powershell", 'bash -c "echo a`ngit push"'),
-    ("powershell", "bash -c echo` a`ngit` push"),
-    ("powershell", 'bash -c @"\necho a`ngit push\n"@'),
-    ("powershell", 'pwsh -Command "Write-Output a`nRemove-Item x"'),
-    # a program gets each word up to its first NUL; pwsh 7 builds any character from `u{...}
-    ("bash", 'bash -c "x\x00; git push"'),  # Bash drops a literal NUL from a script
-    ("bash", "git pu\x00sh"),
-    # Windows PowerShell 5.1 does not escape a `"` in an argument it hands a program: git receives `push`
-    ("powershell", 'git push`"'),
-    ("powershell", 'git "push"""'),
-    ("powershell", "git 'push\"'"),
-    ("powershell", "git pu'\"'sh"),
-    ("powershell", "git '' push"),  # 5.1 leaves out an empty argument
-    ("powershell", 'git "" push'),
-    ("powershell", "git --% -c a.b=1` push"),  # after --% a backtick is no escape: git gets -c 'a.b=1`' push
-    ("powershell", "cmd /c --% echo a` & echo b"),
-    ("powershell", "git -c 'a.b=x\"' 'y\"' push"),  # 5.1: -c 'a.b=x y' push
-    ("powershell", "git -c 'a.b=1 y\\' 'z push'"),  # 5.1: -c 'a.b=1 y\" z' push
-    ("powershell", "pwsh -Command \"powershell -Command 'git push`\\\"'\""),
-    # Argus on deccd8c: pwsh 7 passes arguments the 5.1 way under $PSNativeCommandArgumentPassing = 'Legacy'
-    ("bash", "pwsh -Command \"git '' push\""),
-    ("powershell", "pwsh -Command \"git '' push\""),
-    ("powershell", "pwsh -Command { $PSNativeCommandArgumentPassing='Legacy'; git 'push\"' }"),
     # after an escaped `>` the `&` is PowerShell's background operator, not part of a redirection: git push runs
     ("powershell", "`>& git push"),
     ("powershell", "echo a`>& git push"),
@@ -260,14 +236,6 @@ SHELL_BLOCKED = [
     ("powershell", "Write-Output a<&git push"),  # master too
     ("powershell", "Write-Output a&>git push"),
     ("powershell", "Write-Output `${git push}.Invoke()"),  # an escaped `$`: the braces are a script block (master too)
-    ("bash", "powershell -Command \"git '' push\""),
-    ("powershell", "bash -c 'echo \"x;git push\"'"),
-    ("powershell", "git push`0"),
-    ("powershell", "git push`0x"),
-    ("powershell", "bash -c \"echo 'a`u{27}; git push; echo `u{27}b'\""),
-    ("powershell", "git pu`u{73}h"),
-    ("powershell", "g`u{69}t push"),
-    ("powershell", "Remove-It`u{65}m x"),
     # PowerShell `''` / `""` in a string is one literal quote, handed on to the inner shell
     ("powershell", "bash -c 'echo ''\\''\ngit push'"),
     ("powershell", "sh -c 'echo $''\\''\ngit push\necho $''\\'''"),
@@ -300,7 +268,7 @@ SHELL_BLOCKED = [
     ("bash", r"echo ${#x}; git push"),  # '#' after '{' is not a comment
     ("powershell", "Write-Output ‘a\"b’ ; Remove-Item x ; Write-Output ‘c\"d’"),  # curly quotes
     ("powershell", r"g`it push"),
-    ("powershell", r"Remove-It`em x"),  # `e is a plain e in Windows PowerShell 5.1
+    ("powershell", r"Remove-It`em x"),  # a backtick escape is read as the plain character (Remove-Item in 5.1)
     ("powershell", r'''Write-Output "\$(git push)" '''),  # '\' is no escape in PowerShell
     ("powershell", "<# it's #> Remove-Item x"),
     ("powershell", "Write-Output a#b; Remove-Item x"),  # '#' inside a word is not a comment
@@ -574,17 +542,6 @@ class GuardHook(unittest.TestCase):
         command = 'echo "$(' * 600 + "git push" + ')"' * 600
         result = run_hook({"tool_name": "Bash", "tool_input": {"command": command}})
         self.assertEqual(result.returncode, 2, result.stderr[-300:])
-
-    def test_ps51_argv_matches_windows_powershell_5_1(self):
-        # each pair observed in Windows PowerShell 5.1 with a program that prints its arguments (#799)
-        from readonly_guard import ps51_argv
-        for words, received in [(['push"'], ["push"]), (['push" "x'], ["push x"]), (['a" push "b'], ["a push b"]),
-                                (["", "push"], ["push"]), (["-c", "a.b=1 y\\", "z push"], ["-c", 'a.b=1 y" z', "push"]),
-                                (["-c", 'a.b=x"', 'y"', "push"], ["-c", "a.b=x y", "push"]),
-                                (['"x y"', "push"], ["x y", "push"]), (['"-c', 'a.b=1"', "push"], ["-c a.b=1", "push"]),
-                                (["a b"], ["a b"])]:
-            with self.subTest(words=words):
-                self.assertEqual(ps51_argv(words), received)
 
     def test_long_method_chain_is_checked_in_time(self):
         # fourth review R1: each `(` lexed its piece again, so 16k characters took seconds and 64k over a minute
