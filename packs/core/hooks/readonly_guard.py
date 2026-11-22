@@ -9,9 +9,11 @@ block (`(...)`, `{ ...; }`, `$(...)` also inside double quotes, backticks, `& { 
 Quotes, escapes and comments are read with the rules of the shell that runs the command (#798; see lex): the hook
 payload's tool_name picks Bash or PowerShell, and a nested `bash -c`, `pwsh -Command` or `cmd /c` uses its own;
 PowerShell here-strings are read too. Every command is read once with comments and once without, and refused if
-either reading refuses (#799; see check_command). Still best-effort: Bash here-documents are not read (their body
-is checked as if it were commands, so an odd quote in a body can hide the next command from the guard), and neither
-are `case` patterns; in both, a `)` inside `"$(...)"` can end the substitution early for the guard. It catches a
+either reading refuses (#799; see check_command). The body of a Bash here-document with a quoted delimiter
+(`<<'EOF'`) is plain text to Bash and is left out of the check where the guard can tell where it ends (#800; see
+cut_here_documents). Still best-effort: other here-documents (`<<EOF`, or one where any condition listed in
+cut_here_documents fails, such as a `(`, `[` or `$` before it) are checked as if their body were commands, so an
+odd quote in such a body can hide the next command from the guard, and `case` patterns are not read; in both, a `)` inside `"$(...)"` can end the substitution early for the guard. It catches a
 write written plainly, not one written to evade it: a command after a keyword (`if git push; then`, `! git push`), a
 redirection before the command name, `bash -lc`, piping into a shell, brace expansion, `eval` or `iex`, a variable as
 command name, an expansion in place of a space (`git${IFS}push`), words after `pwsh -Command`'s first,
@@ -159,7 +161,8 @@ def lex(text: str, shell: str) -> tuple[list[int], list[str]]:
     a substitution nested inside one is found when that command is checked. An open quote at the end is refused.
     PowerShell here-strings (`@'` and `@"` at a line end, where a token starts) are read as PowerShell reads them:
     their body is text, with substitutions unless single-quoted, and a missing end line is refused. Bash here-documents
-    are not read: their body is lexed as commands, as before #798 (reading them exactly needs a real Bash parser, #800).
+    are not read here: their body is lexed as commands, as before #798. _check_command first cuts out the bodies it can
+    place exactly (cut_here_documents, #800).
     Not read either: `case` patterns and other syntax where a `)` or a quote means something else; there, and in a
     here-document, a substitution can end early, hiding what follows, or a read-only command is refused."""
     kinds = [LIVE] * len(text)
@@ -816,11 +819,148 @@ def check_command(command: str, depth: int = 0, extra: frozenset = frozenset(), 
             READ_COMMENTS.reset(token)
 
 
+# The delimiter word of a here-document whose body Bash reads as plain text: quoted in part or whole (`'EOF'`, `"EOF"`,
+# `\EOF`, `'E'OF`), with only plain characters besides, and no `$`, backtick or backslash inside double quotes (#800).
+HERE_DOC_WORD = re.compile(r"""(?:'[^']*'|"[^"$`\\]*"|\\[A-Za-z0-9_.+-]|[A-Za-z0-9_.+-])+""")
+HERE_DOC_PIECE = re.compile(r"""'([^']*)'|"([^"]*)"|\\(.)|(.)""")
+# Commands that read a here-document body only as data. A body is cut only when every command on the operator's line
+# is one of these (after wrappers such as `timeout`): any other command may run its input, as `bash -s`, `xargs`,
+# `env -S 'bash -s'`, `parallel`, `at` or `make -f -` do (Argus and review on #810), and no list of those is complete.
+# The interpreters run the body as their own language, which the guard leaves alone anyway (`python -c` can write).
+HERE_DOC_READERS = {"cat", "tac", "grep", "egrep", "fgrep", "rg", "wc", "head", "tail", "sort", "uniq", "cut", "tr", "nl",
+                    "column", "diff", "cmp", "comm", "jq", "base64", "md5sum", "sha1sum", "sha256sum", "od", "xxd",
+                    "python", "python3", "py", "node"}
+# Every command before the body, back to the start, must be one of these: any other command could give `cat` another
+# meaning first (`eval 'cat(){ bash; }'`, `function cat if ...`, `declare 'BASH_ALIASES[cat]=bash'`, review on #810).
+HERE_DOC_PLAIN = HERE_DOC_READERS | {"cd", "echo", "pwd", "true", ":"}
+# Options that make a reader run a program: `env -S'bash -s'` (strip_wrappers drops it), `sort --compress-program`.
+# GNU tools accept any unambiguous prefix of a long option (`env --sp=`, `sort --compress-prog=`) and a short option
+# inside a cluster (`env -iS`); review on #810.
+HERE_DOC_RUNS = ("--split-string", "--compress-program")
+HERE_DOC_RUNS_SHORT = re.compile(r"-[A-Za-z]*S")
+
+
+def _runs_program(word: str) -> bool:
+    """True if `word` is, or may abbreviate, an option in HERE_DOC_RUNS, or is a short cluster holding `-S`."""
+    if word.startswith("--"):
+        name = word.split("=", 1)[0]
+        return len(name) > 2 and any(option.startswith(name) for option in HERE_DOC_RUNS)
+    return bool(HERE_DOC_RUNS_SHORT.match(word))
+# Wrappers whose options strip_wrappers cannot all tell apart (`xargs --process-slot-var cat sh -c`, `sudo -R cat
+# bash`) or that hand the body on: with one of them the body is not cut.
+HERE_DOC_NO_WRAPPERS = {"xargs", "sudo", "doas", "exec", "."}
+
+
+def _live_pieces(command: str, kinds: list[int], a: int, b: int, seps: str) -> list[tuple[int, int]]:
+    """The non-blank pieces of command[a:b] between separators in `seps` that are shell syntax (a `&` of a redirection
+    such as `>&2` does not separate)."""
+    pieces, start = [], a
+    for p in range(a, b + 1):
+        if p == b or kinds[p] == LIVE and command[p] in seps and not (command[p] == "&" and _is_redirect_amp(
+                command, p, kinds, "bash")):
+            if command[start:p].strip():
+                pieces.append((start, p))
+            start = p + 1
+    return pieces
+
+
+def cut_here_documents(command: str, shell: str) -> str:
+    """`command` without the bodies of its Bash here-documents whose delimiter is quoted (#800).
+
+    Bash reads such a body as plain text, so checking it as commands refused read-only commands (`python - <<'EOF'` with
+    `if a >= b:` in the body was read as a redirection) and let an odd quote in it hide the next command. A body is cut
+    only where the guard can tell exactly where Bash ends it: the `<<` or `<<-` is shell syntax, no `(`, `[` or `{`
+    that is shell syntax comes before it (so it is not in `$((...))`, `a[...]`, `${...}`, `$(...)`, a group or a
+    `case` branch, even when closers seem to balance them), the command up to the end of its line has no substitution,
+    the line has no `$`, backtick, `(`, `[` or `{` that is shell syntax (Bash reads the body only after a `$(` or `<(`
+    opened there has ended), its delimiter word matches HERE_DOC_WORD, and the line ends at a newline that is shell
+    syntax. The body must also stay data: the command that holds the operator (after wrappers such as `timeout`) is
+    in HERE_DOC_READERS and every other command from the start of `command` to the end of the line in HERE_DOC_PLAIN,
+    so `bash -s`, `xargs`, `done` (the end of a loop that reads it), a pipe into a shell, or an `eval`, `function` or
+    `declare` that gives `cat` another meaning keep the body checked as commands; no word is or abbreviates one of
+    HERE_DOC_RUNS or is a short option cluster with `S` (`_runs_program`), or is one of HERE_DOC_NO_WRAPPERS (`xargs ... cat`, `sudo ... cat`); no file descriptor number comes before the `<<` (`exec 3<<'EOF'` keeps it for a later
+    `bash <&3`); and the line does not end in `|` or `|&` (which pipes it into the line after the body). The body
+    then runs to the first line equal to the delimiter (after leading tabs for `<<-`; no other whitespace is
+    stripped, as in Bash), or to the end. A command with a `\\r` is not cut at all: Git Bash ends a body at `EOF\\r`,
+    Linux Bash does not. At the first `<<` that fails any of these the cutting stops, and the rest is read as before
+    #800: an unquoted delimiter (`<<EOF`, whose body Bash expands) is not read yet."""
+    if "\r" in command:
+        return command
+    resume, n = 0, len(command)
+    while True:
+        j = command.find("<<", resume)
+        newline = command.find("\n", j)
+        if j < 0 or newline < 0:
+            return command
+        # Lex only up to the end of the operator's line: the body below it is not shell syntax (an odd quote in it
+        # would make the whole command look unbalanced). Text before a position lexes the same in a prefix.
+        try:
+            kinds, subs = lex(command[:newline + 1], shell)
+        except Blocked:
+            return command
+        if not (kinds[j] == kinds[j + 1] == LIVE and command[j + 2:j + 3] != "<" and (j == 0 or command[j - 1] != "<")):
+            resume = j + 2  # quoted, in a comment, or a `<<<` here-string
+            continue
+        if time.monotonic() > DEADLINE.get():
+            raise Blocked(f"checking took over {CHECK_BUDGET_S} s; command could not be checked")
+        # No construct may be open around the operator or on its line, not even one that looks closed again: a lone
+        # `]` or `}` is a plain word character to Bash (`echo ] ]; echo $((1<<'2'))` is a shift), and Bash reads the
+        # body only after a `$(`, `<(` or `${` opened on the operator's line has ended (#800 review).
+        line_start = command.rfind("\n", 0, j) + 1
+        if subs or any(kind == LIVE and ch in "([{" for ch, kind in zip(command[:j], kinds)) \
+                or any(kinds[p] == LIVE and command[p] in "([{$`" for p in range(line_start, newline)):
+            return command
+        k = j + 2
+        strip_tabs = command[k:k + 1] == "-"
+        k += strip_tabs
+        while k < n and command[k] in " \t":
+            k += 1
+        word = HERE_DOC_WORD.match(command, k)
+        if not word or not any(c in "'\"\\" for c in word.group(0)) \
+                or word.end() < n and command[word.end()] not in " \t\n;&|<>)":
+            return command
+        delimiter = "".join(next(p for p in m.groups() if p is not None) for m in HERE_DOC_PIECE.finditer(word.group(0)))
+        if not delimiter or kinds[newline] != LIVE:
+            return command
+        # The body is input, but stays data only if what reads it is a HERE_DOC_READERS command: a `3<<` keeps it for a
+        # later `bash <&3`, and a line ending in `|` pipes it into the line after the body.
+        tail = "".join(command[p] for p in range(line_start, newline) if kinds[p] != COMMENT).rstrip(" \t")
+        if j > 0 and command[j - 1].isdigit() or tail.endswith(("|", "|&")):
+            return command
+        # Every command from the start to the end of this line, split at `;`, `&`, `|` and newlines: those in the
+        # pipeline that reads the body must be HERE_DOC_READERS, the others at least HERE_DOC_PLAIN.
+        try:
+            pieces = [("".join(command[p] if kinds[p] != COMMENT else " " for p in range(a, b)), a <= j < b)
+                      for a, b in _live_pieces(command, kinds, 0, newline, ";|&\n")]
+            words = [(tokenize(re.sub(r"<<-?", " ", text), shell), holds) for text, holds in pieces]
+        except Blocked:
+            return command
+        commands = [(strip_wrappers(tokens), holds) for tokens, holds in words]
+        if any(_runs_program(w) or command_word(w) in HERE_DOC_NO_WRAPPERS for tokens, _ in words
+               for w in tokens) or not any(h for _, h in commands) \
+                or any(not c or command_word(c[0]) not in (HERE_DOC_READERS if h else HERE_DOC_PLAIN)
+                       for c, h in commands):
+            return command
+        end, line = n, newline + 1
+        while line <= n:
+            stop = command.find("\n", line)
+            stop = n if stop < 0 else stop
+            text = command[line:stop]
+            if (text.lstrip("\t") if strip_tabs else text) == delimiter:
+                end = min(stop + 1, n)
+                break
+            line = stop + 1
+        command = command[:newline + 1] + command[end:]
+        resume, n = word.end(), len(command)
+
+
 def _check_command(command: str, depth: int, extra: frozenset, actions: dict | None, shell: str) -> None:
     if time.monotonic() > DEADLINE.get():
         raise Blocked(f"checking took over {CHECK_BUDGET_S} s; command could not be checked")
     if ODD_BREAKS.search(command):
         raise Blocked("a lone carriage return or another unusual line break; command could not be checked")
+    if shell in ("bash", "sh"):
+        command = cut_here_documents(command, shell)
     _, subs = lex(command, shell)
     for segment in split_segments(command, shell):
         check_segment(segment, depth, extra, actions, shell)
