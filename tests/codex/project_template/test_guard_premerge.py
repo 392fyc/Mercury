@@ -11,6 +11,8 @@ import unittest
 
 
 GUARD = Path(__file__).resolve().parents[3] / "packs/git-safe/scripts/guard.ps1"
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts" / "ci"))
+from unittest_shard import load_tests  # noqa: E402,F401  CI runs one part per job (#806)
 
 
 # PowerShell writes its own error frame (the "At line" / "Line |" block) in the

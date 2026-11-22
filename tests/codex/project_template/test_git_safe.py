@@ -11,6 +11,8 @@ import unittest
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parents[3] / "packs" / "git-safe" / "scripts"
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts" / "ci"))
+from unittest_shard import load_tests  # noqa: E402,F401  CI runs one part per job (#806)
 FORWARDERS = Path(__file__).resolve().parents[3] / "scripts" / "codex"
 PWSH = shutil.which("pwsh") or shutil.which("powershell")
 
