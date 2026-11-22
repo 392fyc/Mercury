@@ -40,7 +40,7 @@
     ".codex/agents/mercury-reviewer.toml": "c7ce9bef0c3d8e38e90986182c581b39b137020282deae63eba75c4e59399ec0",
     ".codex/rules/mercury-git-safety.rules": "a755ec542cfbbc42dd496613fc7978a3c9d0c02b94868c8c1e8338be656b22c7",
     ".mercury/packs/core/agents.md": "36a7b037dd954c186592b127e83e2d677918367e71a6407e0979448545bf9647",
-    ".mercury/packs/core/claude.md": "a41db75ae5f575cf43e7f98e25b7bd9eb3488a248005bf9d78895e91476de95c",
+    ".mercury/packs/core/claude.md": "c645496b809539b0558d3f09ce3bb63c0ee0c838064a5dbe08617729fdb9d868",
     ".mercury/packs/core/docs/mercury-gate.template.json": "92e253fe3f022594e06089b299ae1c8444834f386f7334b0dc25ee527458de39",
     ".mercury/packs/core/docs/mercury-harness-ownership.md": "76d96879d62b77a26cdf770e6e1d1c5a6008f3fb858113c318bc89a0ec295478",
     ".mercury/packs/core/docs/mercury-scenario-gate.md": "e3d3ebe8974849668d219438cfc13d48871042e1a66aaf4607e10d2e09522b19",
@@ -145,7 +145,7 @@
   "schema_version": 1,
   "sections": {
     "AGENTS.md": "57c05d7b9ce3d9a6e9b0b2660cfde436589c443abc31286f433ce0bc21fbbc3f",
-    "CLAUDE.md": "1c9649d94adb61b5e6fc90963125fac95b010ee8c44616c80333e017718c9d19"
+    "CLAUDE.md": "c7c11224ca7a5a99a292aacd568fed2dea3532d15a5ca8174623ab7b33ca2a58"
   },
   "source": "self"
 }
