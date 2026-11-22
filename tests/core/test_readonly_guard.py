@@ -19,6 +19,11 @@ from readonly_guard import Blocked, check_command  # noqa: E402
 
 ALLOWED = [
     "git status -sb",
+    # wrapper commands run the command after them (#804): read-only ones stay allowed
+    "timeout 20 git log -1", "timeout -k 5 20s git status", "nice -n 5 git log", "env -i A=1 git status",
+    "nohup git fetch --dry-run", "xargs -n 1 grep -l push", "command -v git", "stdbuf -o0 git log", "env",
+    "timeout 20 bash -c 'git status'", "time -p git log -1", "command -v rm", "command -V tee",
+    "sudo -l rm", "sudo --list git push", "sudo -u x -l rm",
     "git -C D:/repo log --oneline -5",
     "git branch -a",
     "git branch --show-current",
@@ -80,6 +85,13 @@ ALLOWED = [
 ]
 
 BLOCKED = [
+    # #804: a write behind a wrapper command and its options
+    "timeout 20 git push", "timeout -k 5 20 rm -f x", "timeout --signal=KILL 20 git push",
+    "timeout 20 bash -c \"echo \\' ; rm -f x ; echo \\'\"", "nohup git push", "xargs git push",
+    "xargs -0 -I {} rm {}", "stdbuf -o0 git push", "stdbuf -o 0 git push", "nice -n 5 git push", "nice -n5 git push",
+    "sudo -u x git push", "sudo -- git push", "env -i git push", "env A=1 git push", "env -u A git push",
+    "time -p git push", "command -p git push", "exec -a x git push", "/usr/bin/timeout 20 git push",
+    "A=1 timeout 20 B=2 git push", "timeout 20 nice -n 5 git push", "stdbuf --output L git push",
     "echo x >& result.txt",
     "echo x >&١",
     "echo x >& out.txt",
