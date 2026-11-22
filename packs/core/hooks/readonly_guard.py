@@ -834,7 +834,18 @@ HERE_DOC_READERS = {"cat", "tac", "grep", "egrep", "fgrep", "rg", "wc", "head", 
 # meaning first (`eval 'cat(){ bash; }'`, `function cat if ...`, `declare 'BASH_ALIASES[cat]=bash'`, review on #810).
 HERE_DOC_PLAIN = HERE_DOC_READERS | {"cd", "echo", "pwd", "true", ":"}
 # Options that make a reader run a program: `env -S'bash -s'` (strip_wrappers drops it), `sort --compress-program`.
-HERE_DOC_RUNS = ("-S", "--split-string", "--compress-program")
+# GNU tools accept any unambiguous prefix of a long option (`env --sp=`, `sort --compress-prog=`) and a short option
+# inside a cluster (`env -iS`); review on #810.
+HERE_DOC_RUNS = ("--split-string", "--compress-program")
+HERE_DOC_RUNS_SHORT = re.compile(r"-[A-Za-z]*S")
+
+
+def _runs_program(word: str) -> bool:
+    """True if `word` is, or may abbreviate, an option in HERE_DOC_RUNS, or is a short cluster holding `-S`."""
+    if word.startswith("--"):
+        name = word.split("=", 1)[0]
+        return len(name) > 2 and any(option.startswith(name) for option in HERE_DOC_RUNS)
+    return bool(HERE_DOC_RUNS_SHORT.match(word))
 # Wrappers whose options strip_wrappers cannot all tell apart (`xargs --process-slot-var cat sh -c`, `sudo -R cat
 # bash`) or that hand the body on: with one of them the body is not cut.
 HERE_DOC_NO_WRAPPERS = {"xargs", "sudo", "doas", "exec", "."}
@@ -866,8 +877,8 @@ def cut_here_documents(command: str, shell: str) -> str:
     syntax. The body must also stay data: the command that holds the operator (after wrappers such as `timeout`) is
     in HERE_DOC_READERS and every other command from the start of `command` to the end of the line in HERE_DOC_PLAIN,
     so `bash -s`, `xargs`, `done` (the end of a loop that reads it), a pipe into a shell, or an `eval`, `function` or
-    `declare` that gives `cat` another meaning keep the body checked as commands; no word starts with one of
-    HERE_DOC_RUNS or is one of HERE_DOC_NO_WRAPPERS (`xargs ... cat`, `sudo ... cat`); no file descriptor number comes before the `<<` (`exec 3<<'EOF'` keeps it for a later
+    `declare` that gives `cat` another meaning keep the body checked as commands; no word is or abbreviates one of
+    HERE_DOC_RUNS or is a short option cluster with `S` (`_runs_program`), or is one of HERE_DOC_NO_WRAPPERS (`xargs ... cat`, `sudo ... cat`); no file descriptor number comes before the `<<` (`exec 3<<'EOF'` keeps it for a later
     `bash <&3`); and the line does not end in `|` or `|&` (which pipes it into the line after the body). The body
     then runs to the first line equal to the delimiter (after leading tabs for `<<-`; no other whitespace is
     stripped, as in Bash), or to the end. A command with a `\\r` is not cut at all: Git Bash ends a body at `EOF\\r`,
@@ -925,7 +936,7 @@ def cut_here_documents(command: str, shell: str) -> str:
         except Blocked:
             return command
         commands = [(strip_wrappers(tokens), holds) for tokens, holds in words]
-        if any(w.startswith(HERE_DOC_RUNS) or command_word(w) in HERE_DOC_NO_WRAPPERS for tokens, _ in words
+        if any(_runs_program(w) or command_word(w) in HERE_DOC_NO_WRAPPERS for tokens, _ in words
                for w in tokens) or not any(h for _, h in commands) \
                 or any(not c or command_word(c[0]) not in (HERE_DOC_READERS if h else HERE_DOC_PLAIN)
                        for c, h in commands):

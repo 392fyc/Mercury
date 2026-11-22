@@ -368,6 +368,10 @@ SHELL_BLOCKED = [
     ("bash", "shopt -s expand_aliases\ndeclare 'BASH_ALIASES[cat]=bash'\ncat <<'EOF'\ngit push\nEOF"),
     ("bash", "shopt -s expand_aliases\nprintf -v 'BASH_ALIASES[cat]' bash\ncat <<'EOF'\ngit push\nEOF"),
     ("bash", "env -S'bash -s' cat <<'EOF'\ngit push\nEOF"),
+    # GNU long-option prefixes and short clusters (Argus on #810, 0fed288): Bash runs the body.
+    ("bash", "env --sp='bash -s' cat <<'EOF'\ngit push\nEOF"),
+    ("bash", "env -iS'bash -s' cat <<'EOF'\ngit push\nEOF"),
+    ("bash", "sort --buffer-size=1K --compress-prog=sh <<'EOF'\ngit push\nEOF"),
     ("bash", "xargs -d '\\n' --process-slot-var cat sh -c <<'EOF'\ngit push\nEOF"),
     ("bash", "sudo -R cat bash <<'EOF'\ngit push\nEOF"),
     ("bash", "cat <<EOF\nx $(git push) y\nEOF"),  # an unquoted delimiter expands the body
