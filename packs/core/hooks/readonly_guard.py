@@ -823,6 +823,34 @@ def check_command(command: str, depth: int = 0, extra: frozenset = frozenset(), 
 # `\EOF`, `'E'OF`), with only plain characters besides, and no `$`, backtick or backslash inside double quotes (#800).
 HERE_DOC_WORD = re.compile(r"""(?:'[^']*'|"[^"$`\\]*"|\\[A-Za-z0-9_.+-]|[A-Za-z0-9_.+-])+""")
 HERE_DOC_PIECE = re.compile(r"""'([^']*)'|"([^"]*)"|\\(.)|(.)""")
+# Commands that read a here-document body only as data. A body is cut only when every command on the operator's line
+# is one of these (after wrappers such as `timeout`): any other command may run its input, as `bash -s`, `xargs`,
+# `env -S 'bash -s'`, `parallel`, `at` or `make -f -` do (Argus and review on #810), and no list of those is complete.
+# The interpreters run the body as their own language, which the guard leaves alone anyway (`python -c` can write).
+HERE_DOC_READERS = {"cat", "tac", "grep", "egrep", "fgrep", "rg", "wc", "head", "tail", "sort", "uniq", "cut", "tr", "nl",
+                    "column", "diff", "cmp", "comm", "jq", "base64", "md5sum", "sha1sum", "sha256sum", "od", "xxd",
+                    "python", "python3", "py", "node"}
+# Every command before the body, back to the start, must be one of these: any other command could give `cat` another
+# meaning first (`eval 'cat(){ bash; }'`, `function cat if ...`, `declare 'BASH_ALIASES[cat]=bash'`, review on #810).
+HERE_DOC_PLAIN = HERE_DOC_READERS | {"cd", "echo", "pwd", "true", ":"}
+# Options that make a reader run a program: `env -S'bash -s'` (strip_wrappers drops it), `sort --compress-program`.
+HERE_DOC_RUNS = ("-S", "--split-string", "--compress-program")
+# Wrappers whose options strip_wrappers cannot all tell apart (`xargs --process-slot-var cat sh -c`, `sudo -R cat
+# bash`) or that hand the body on: with one of them the body is not cut.
+HERE_DOC_NO_WRAPPERS = {"xargs", "sudo", "doas", "exec", "."}
+
+
+def _live_pieces(command: str, kinds: list[int], a: int, b: int, seps: str) -> list[tuple[int, int]]:
+    """The non-blank pieces of command[a:b] between separators in `seps` that are shell syntax (a `&` of a redirection
+    such as `>&2` does not separate)."""
+    pieces, start = [], a
+    for p in range(a, b + 1):
+        if p == b or kinds[p] == LIVE and command[p] in seps and not (command[p] == "&" and _is_redirect_amp(
+                command, p, kinds, "bash")):
+            if command[start:p].strip():
+                pieces.append((start, p))
+            start = p + 1
+    return pieces
 
 
 def cut_here_documents(command: str, shell: str) -> str:
@@ -835,7 +863,13 @@ def cut_here_documents(command: str, shell: str) -> str:
     `case` branch, even when closers seem to balance them), the command up to the end of its line has no substitution,
     the line has no `$`, backtick, `(`, `[` or `{` that is shell syntax (Bash reads the body only after a `$(` or `<(`
     opened there has ended), its delimiter word matches HERE_DOC_WORD, and the line ends at a newline that is shell
-    syntax. The body then runs to the first line equal to the delimiter (after leading tabs for `<<-`; no other whitespace is
+    syntax. The body must also stay data: the command that holds the operator (after wrappers such as `timeout`) is
+    in HERE_DOC_READERS and every other command from the start of `command` to the end of the line in HERE_DOC_PLAIN,
+    so `bash -s`, `xargs`, `done` (the end of a loop that reads it), a pipe into a shell, or an `eval`, `function` or
+    `declare` that gives `cat` another meaning keep the body checked as commands; no word starts with one of
+    HERE_DOC_RUNS or is one of HERE_DOC_NO_WRAPPERS (`xargs ... cat`, `sudo ... cat`); no file descriptor number comes before the `<<` (`exec 3<<'EOF'` keeps it for a later
+    `bash <&3`); and the line does not end in `|` or `|&` (which pipes it into the line after the body). The body
+    then runs to the first line equal to the delimiter (after leading tabs for `<<-`; no other whitespace is
     stripped, as in Bash), or to the end. A command with a `\\r` is not cut at all: Git Bash ends a body at `EOF\\r`,
     Linux Bash does not. At the first `<<` that fails any of these the cutting stops, and the rest is read as before
     #800: an unquoted delimiter (`<<EOF`, whose body Bash expands) is not read yet."""
@@ -876,6 +910,25 @@ def cut_here_documents(command: str, shell: str) -> str:
             return command
         delimiter = "".join(next(p for p in m.groups() if p is not None) for m in HERE_DOC_PIECE.finditer(word.group(0)))
         if not delimiter or kinds[newline] != LIVE:
+            return command
+        # The body is input, but stays data only if what reads it is a HERE_DOC_READERS command: a `3<<` keeps it for a
+        # later `bash <&3`, and a line ending in `|` pipes it into the line after the body.
+        tail = "".join(command[p] for p in range(line_start, newline) if kinds[p] != COMMENT).rstrip(" \t")
+        if j > 0 and command[j - 1].isdigit() or tail.endswith(("|", "|&")):
+            return command
+        # Every command from the start to the end of this line, split at `;`, `&`, `|` and newlines: those in the
+        # pipeline that reads the body must be HERE_DOC_READERS, the others at least HERE_DOC_PLAIN.
+        try:
+            pieces = [("".join(command[p] if kinds[p] != COMMENT else " " for p in range(a, b)), a <= j < b)
+                      for a, b in _live_pieces(command, kinds, 0, newline, ";|&\n")]
+            words = [(tokenize(re.sub(r"<<-?", " ", text), shell), holds) for text, holds in pieces]
+        except Blocked:
+            return command
+        commands = [(strip_wrappers(tokens), holds) for tokens, holds in words]
+        if any(w.startswith(HERE_DOC_RUNS) or command_word(w) in HERE_DOC_NO_WRAPPERS for tokens, _ in words
+               for w in tokens) or not any(h for _, h in commands) \
+                or any(not c or command_word(c[0]) not in (HERE_DOC_READERS if h else HERE_DOC_PLAIN)
+                       for c, h in commands):
             return command
         end, line = n, newline + 1
         while line <= n:
