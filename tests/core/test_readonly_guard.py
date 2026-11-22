@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -19,7 +20,6 @@ from readonly_guard import Blocked, check_command  # noqa: E402
 ALLOWED = [
     "git status -sb",
     "git -C D:/repo log --oneline -5",
-    "git diff HEAD~1 -- a.py 2>/dev/null",
     "git branch -a",
     "git branch --show-current",
     "git worktree list --porcelain",
@@ -36,8 +36,6 @@ ALLOWED = [
     "python -m pytest -q tests 2>&1 | tail -5",
     "Get-ChildItem -Recurse | Select-Object -First 3",
     "powershell -NoProfile -Command \"Get-Content a.txt\"",
-    "echo done > /dev/null",
-    "Get-Content x > $null",
     "cat a.txt 2>&1",
     "cat a.txt >&2",
     "cat a.txt 1>&2; echo ok",
@@ -65,7 +63,6 @@ ALLOWED = [
     "Get-Content a.txt | Where-Object { $_.Contains('Remove-Item') }",
     "[math]::Max(1, 2)",
     "(Get-Content a.txt).Replace('rm', 'del').Trim()",
-    "rg \"\\`git push origin\\`\" docs",
     "rg \\`git\\ push\\` docs",
     "(Get-Date).ToString('Remove-Item')",
     "Write-Output $x.y.Replace('rm', 'del')",
@@ -75,10 +72,8 @@ ALLOWED = [
     "(Get-Date).ToString().Trim('rm')",
     "Write-Output ${env:TEMP}.Replace('rm', 'del') $env:TEMP.Contains('rm')",
     "cat ${repo}/scripts/codex/git-safe.ps1",
-    "echo ${prefix}rm ${a:-${b}}/lane-bus.sh",
     "Get-Content ${env:TEMP}\\git-safe.ps1",
     "echo \"head: $(git rev-parse HEAD)\"",
-    "echo \"on `git branch --show-current`\"",
     "rg '$(git push)' docs",
     "rg '`git push`' docs",
     "Write-Output \"a`nb`tc\"",
@@ -187,6 +182,209 @@ BLOCKED = [
     "echo ${x:-$(git push)}",
 ]
 
+# #798: each shell lexes with its own quote, escape and comment rules. A command checked without a shell
+# (shell=None) is read both ways and blocked if either reading blocks it, so these pass only under their shell.
+SHELL_ALLOWED = [
+    # the null device of each shell, spelled without quotes or escapes
+    ("bash", "git diff HEAD~1 -- a.py 2>/dev/null"),
+    ("bash", "echo done > /dev/null"),
+    ("powershell", "Get-Content x > $null"),
+    ("powershell", "Get-Content x 2>$NULL"),
+    ("cmd", "type a.txt > nul"),
+    ("powershell", "Write-Output 'it''s' \"say \"\"hi\"\"\""),
+    ("powershell", "bash -c 'echo ''it is'' fine'"),
+    ("powershell", 'git log --format="%h`t%s"'),
+    ("powershell", 'bash -c "printf a`tb"'),
+    ("powershell", "Write-Output 'a`u{27}b'"),
+    ("powershell", 'Write-Output "a`0b"'),
+    ("powershell", "git log --format='\"%h\"'"),
+    ("powershell", "Select-String -Pattern '\"key\"' a.json"),
+    # Bash drops a backslash-newline inside double quotes: one word `gitpush` is no write
+    ("bash", 'bash -c "echo a; git\\\npush"'),
+] + ([("powershell", "Get-Content x > nul")] if os.name == "nt" else []) + [
+    ("bash", r'rg "\`git push origin\`" docs'),
+    ("bash", 'echo "on `git branch --show-current`"'),
+    ("bash", r"""echo "$(printf ')')" """),
+    ("bash", r'''echo "\$(git push)" '''),  # an escaped $ in double quotes is text in bash
+    ("bash", "echo hi # a comment"),
+    ("bash", r"bash -c $'echo a\tb\x21'"),
+    ("bash", "echo $'it\\'s' $$"),
+    ("bash", r"echo $'\' ; git push ; echo \''"),  # one ANSI-C string: \' is an escaped quote
+    ("powershell", r'Write-Output "file: `"$path`""'),  # the backtick escapes the quote
+    ("powershell", r"$lines[0].StartsWith('Remove-Item')"),
+    ("powershell", r"'a b'.Contains('Remove-Item')"),
+    # Bash here-document bodies are checked as commands (not read as input), so only read-only bodies pass here;
+    # PowerShell here-string bodies are input
+    ("bash", "x=1; (( x += 2 )); echo $x $((1+2)) \"$((3-1))\""),
+    ("bash", "cat <<\"END-1\" | python -\nprint(\"it's\")\nEND-1"),
+    ("bash", "echo $$"),
+    # nested ${...} is Bash only: PowerShell's name ends at the first `}`
+    ("bash", "echo ${prefix}rm ${a:-${b}}/lane-bus.sh"),
+    ("bash", "echo ${x:-a # b} ${#x} ${x#y}"),
+    ("powershell", "Write-Output ${a b} ${env:X}"),
+    ("powershell", "$v = @'\nit's\n'@"),
+    ("powershell", "Write-Output @'\nit's $(Remove-Item x)\n'@"),
+    ("powershell", "Write-Output @\"\nit's `$(Remove-Item x)\n\"@"),
+]
+
+SHELL_BLOCKED = [
+    # after an escaped `>` the `&` is PowerShell's background operator, not part of a redirection: git push runs
+    ("powershell", "`>& git push"),
+    ("powershell", "echo a`>& git push"),
+    ("bash", "echo a \\>& git push"),
+    ("powershell", "Write-Output `>a<&git push"),  # PowerShell has no `<&`: background `a<`, then git push
+    ("powershell", "Write-Output a<&git push"),  # master too
+    ("powershell", "Write-Output a&>git push"),
+    ("powershell", "Write-Output `${git push}.Invoke()"),  # an escaped `$`: the braces are a script block (master too)
+    # PowerShell `''` / `""` in a string is one literal quote, handed on to the inner shell
+    ("powershell", "bash -c 'echo ''\\''\ngit push'"),
+    ("powershell", "sh -c 'echo $''\\''\ngit push\necho $''\\'''"),
+    ("powershell", 'bash -c "echo ""\\""\ngit push"'),
+    # a nested `sh` may be dash, where `$'\'` is `$` and a plain quote: `git push` runs there
+    ("bash", "sh -c \"echo \\$'\\\\' ; git push ; echo \\$'\\\\'\""),
+    ("bash", "dash -c 'git push'"),
+    # Argus on ad7dcbb: in a PowerShell string a backtick before a newline keeps it (two commands in real pwsh)
+    ("powershell", 'pwsh -Command "Write-Output ok`\ngit push"'),
+    ("powershell", 'powershell -Command "Write-Output ok`\nRemove-Item x"'),
+    ("bash", 'pwsh -Command "Write-Output ok`\ngit push"'),
+    # Argus on ae13a5c: each of these writes a file in the real shell
+    ("bash", r"echo x > \$null"),
+    ("bash", "echo x > '$null'"),
+    ("bash", "echo x > $null"),  # writes the file named by a variable `null`
+    ("bash", "echo x > null"),
+    ("bash", "echo x > nul"),  # a real file in Git Bash too
+    ("bash", "echo x > '/dev/null'x"),
+    ("bash", "echo x > /DEV/NULL"),  # Bash paths are case-sensitive
+    ("powershell", "echo x > '$null'"),
+    ("powershell", "echo x > `$null"),
+    ("powershell", "echo x > null"),
+    ("powershell", "echo x > /dev/null"),
+    ("cmd", "echo x > null"),
+    ("bash", r"echo \' $(git push) \'"),  # \' is an escaped quote, so $(...) is live
+    ("bash", r"echo \' ; git push ; echo \'"),
+    ("bash", "echo a # it's\ngit push\necho 'b'"),  # the quote in the comment opens nothing
+    ("bash", r"gi\t push"),
+    ("bash", r"""echo "$(echo \'$( true ; echo \') ; git push )" """),
+    ("bash", r"echo ${#x}; git push"),  # '#' after '{' is not a comment
+    ("powershell", "Write-Output ‘a\"b’ ; Remove-Item x ; Write-Output ‘c\"d’"),  # curly quotes
+    ("powershell", r"g`it push"),
+    ("powershell", r"Remove-It`em x"),  # a backtick escape is read as the plain character (Remove-Item in 5.1)
+    ("powershell", r'''Write-Output "\$(git push)" '''),  # '\' is no escape in PowerShell
+    ("powershell", "<# it's #> Remove-Item x"),
+    ("powershell", "Write-Output a#b; Remove-Item x"),  # '#' inside a word is not a comment
+    (None, r"echo \' $(git push) \'"),
+    (None, r'Write-Output "file: `"$path`""'),  # bash would read an open quote
+    # an escaped space, ';' or newline is text, so the '#' after it starts no comment
+    ("bash", r"echo a\ #; git push"),
+    ("bash", r"echo \;#; git push"),
+    ("bash", "echo a\\\n#; git push"),
+    ("bash", r"bash -c 'echo a\ #; git push'"),
+    ("powershell", r"Write-Output a` #; Remove-Item x"),
+    ("powershell", r"Write-Output `;#; Remove-Item x"),
+    ("powershell", "Write-Output a`\n#; Remove-Item x"),
+    ("bash", r"echo $$'\'; git push #'"),  # `$$` is the process id, the quote after it a plain one
+    ("bash", r"echo `echo \`git push\``"),  # \` inside backticks nests a substitution
+    ("bash", r'echo "`echo \`git push\``"'),
+    # Bash here-documents: commands after the body, or expanded in it, are still seen (a quote in the body that
+    # hides the next command is a known limitation, see the module docstring)
+    ("bash", "cat <<A <<'B'\nit's\nA\nb's\nB\ngit push"),
+    ("bash", "cat <<EOF\nx $(git push) y\nEOF"),  # an unquoted delimiter expands the body
+    ("bash", "cat <<EOF\nx `git push` y\nEOF"),
+    ("bash", "cat <<EOF\nit's\n"),  # no end line
+    ("bash", "echo $((1<<2))\ngit push\n2"),  # a shift, so the next line is a command
+    ("bash", "echo $[1<<X]\ngit push\nX]"),
+    ("bash", "cat <<EOF\r\nEOF\r\ngit push #\r\nEOF"),  # the delimiter is EOF\r, so the third line runs
+    ("bash", "cat <<EOF\v\nEOF\v\ngit push #\nEOF"),
+    ("bash", "x=abc\necho ${x:0<<1}\ngit push\n1}"),
+    ("bash", "echo ${x:-<<EOF}\ngit push\nEOF}"),
+    ("bash", "a[1<<2]=x\ngit push\n2]=x"),
+    ("bash", "cat <<$'EOF'\nb\nEOF\ngit push\n$EOF"),
+    ("bash", "cat <<$\"EOF\"\nb\nEOF\ngit push\n$EOF"),
+    ("bash", "cat <<EOF; echo $(\ngit push\n)\nEOF"),
+    ("bash", "cat <<E\"O\"F\nx\nEOF\ngit push"),
+    # Every command is also read without comments (#799), so a comment that holds an odd quote or a write is refused,
+    # as before #798, even where the shell skips it
+    ("bash", "echo a;#x; git push"),
+    ("bash", "cat <<'EOF' | python -\nimport os; print(1) # it's\nEOF\necho done"),
+    ("bash", "(echo a)# it's"),
+    ("powershell", "Write-Output (1)# it's"),
+    # both readings at every depth: the outer command needs one, the `bash -c` inside it the other
+    ("bash", "echo a # x'\nbash -c \"(( 1 #)); git push\"\necho \\'"),
+    ("bash", "echo a # x'\nbash -c \"shopt -s extglob\necho @(a|#)x; git push\"\necho \\'"),
+    # Argus on 6568661: `$'...'` and `$"..."` handed on as words lose their `$`, and `$'...'` escapes are decoded
+    ("bash", "bash -c $'git push'"),
+    ("bash", r"bash -c $'git\x20push'"),
+    ("bash", r"bash -c $'echo a\ngit push'"),
+    ("bash", r"bash -c $'\x67it push'"),
+    ("bash", r"bash -c $'git\040push'"),
+    ("bash", r"sh -c $'rm\x20-rf x'"),
+    ("bash", "git $'push'"),
+    ("bash", "bash -c $\"git push\""),
+    ("bash", r"bash -c $'\U110000'"),  # beyond Unicode: refused
+    # Bash ends a `$'...'` string at its first NUL
+    ("bash", r"git $'push\0junk'"),
+    ("bash", r"git $'push\c@x'"),
+    ("bash", r"git $'push\x00x'"),
+    ("bash", r"git $'push\400x'"),
+    ("bash", r"bash -c $'git push\0x'"),
+    # mark-review and apply spelled with quotes or escapes
+    ("bash", r"pwsh -File guard.ps1 $'mark\x2dreview'"),
+    ("bash", "pwsh -File guard.ps1 mark-rev''iew"),
+    ("bash", r"python sync-project-template.py $'appl\x79'"),
+    # PowerShell drops escaped whitespace before a command name
+    ("powershell", "` Remove-Item v"),
+    ("powershell", "Write-Output a; ` Remove-Item v"),
+    ("powershell", "& ` Remove-Item v"),
+    ("powershell", "`\tRemove-Item v"),
+    ("powershell", "` git push"),
+    # fifth review: Bash reads no comment in `(( ))`, `for (( ))` or an extglob pattern
+    ("bash", "(( 1 #)); git push"),
+    ("bash", "for (( i=0; i<1; i++ #)); do :; done; git push"),
+    ("bash", "shopt -s extglob\necho @(a|#)x; git push"),
+    ("bash", "shopt -s extglob\necho @(#)x; git push"),
+    # Argus on #799: after the `)` of `$(...)`, `$((...))`, `<(...)`, `a=(...)` the word goes on, so `#` is no comment
+    ("bash", "echo $(true)#; git push"),
+    ("bash", "echo $((1))#; git push"),
+    ("bash", "cat <(true)#; git push"),
+    ("bash", "a=(1 2)#; git push"),
+    ("bash", "echo $( (true) )#; git push"),
+    ("bash", "x=$(true)#; git push"),
+    # review of the fix: after the `()` of a function definition `#` is a comment, and its quote opens nothing
+    ("bash", "f()#'\n{ git push; }\nf\necho \\'"),
+    ("bash", "function f()#'\n{ git push; }\nf\necho \\'"),
+    # review of the fix: no comment inside ${...}; inside [[ ]] only after whitespace; PowerShell ${...} is a name
+    ("bash", "echo ${x:- #}; git push"),
+    ("bash", "echo ${x:-(a)#}; git push"),
+    ("bash", "echo ${x:-a;#}; git push"),
+    ("bash", "echo ${x:+a b #c}; git push"),
+    ("bash", "echo ${x:-${y:- #}}; git push"),
+    ("bash", "[[ a =~ (a)# ]]; git push"),
+    ("bash", "[[ a =~ a|# ]]; git push"),
+    ("bash", "[[ a == a # it's\n ]] && git push #'"),
+    ("bash", "[[ (a)#'\n]]\ngit push\necho \\'"),  # a grouping `)` inside [[ ]]: ambiguous, refused
+    ("bash", "[[ a == a && (a)#'\n]]\ngit push\necho \\'"),
+    ("bash", "[[ ( a )#'\n]]\ngit push\necho \\'"),
+    ("bash", "echo $${x #'\ngit push\necho \\'"),  # `$$` is the process id, `{x` plain text, `#'` a comment
+    ("bash", "echo a$${b c #'\ngit push\necho \\'"),  # after whitespace it is a comment, so the quote opens nothing
+    ("powershell", "Write-Output ${a #}; Remove-Item x"),
+    ("powershell", "Write-Output ${a # it's}\nRemove-Item x"),
+    ("powershell", "Write-Output ${a"),
+    # Argus on #799: `@'` inside a word is no here-string (a plain argument and a plain string)
+    ("powershell", "Write-Output x@'\n'; Remove-Item victim <#\n'@\n#>"),
+    ("powershell", "Write-Output $v@\"\n\"; Remove-Item victim <#\n\"@\n#>"),
+    ("powershell", "Write-Output -@'\n'; Remove-Item victim <#\n'@\n#>"),
+    ("powershell", "Write-Output a`x@'\n'; Remove-Item victim <#\n'@\n#>"),
+    ("powershell", "Write-Output 1<@'\nx\n'@"),  # neither list: refused
+    # a quote inside a PowerShell here-string body opens nothing
+    ("powershell", "$x = @'\nfoo\r'@\nRemove-Item x\n'@'\n#'"),  # PowerShell ends a line at a lone \r
+    ("powershell", "$x = @\"\nfoo\r\"@\nRemove-Item x\n\"@\"\n#\""),
+    ("powershell", "Write-Output @'\nit's\n'@; Remove-Item x # '"),
+    ("powershell", "Write-Output @\"\nit\"s\n\"@; Remove-Item x # \""),
+    ("powershell", "Write-Output @'\nit's\n  '@\n'@; Remove-Item x # '"),  # an indented end is body
+    ("powershell", "Write-Output @\"\nx $(Remove-Item x) y\n\"@"),
+    ("powershell", "Write-Output @'\nit's\n"),  # no end line
+]
+
 SCRIPT = HOOKS / "readonly_guard.py"
 LAUNCHER = HOOKS / "readonly_guard.sh"
 
@@ -209,6 +407,27 @@ class GuardCommands(unittest.TestCase):
         for command in BLOCKED:
             with self.subTest(command=command):
                 with self.assertRaises(Blocked):
+                    check_command(command)
+
+    def test_shell_specific_lexing(self):
+        for shell, command in SHELL_ALLOWED:
+            with self.subTest(shell=shell, command=command):
+                check_command(command, shell=shell)
+        for shell, command in SHELL_BLOCKED:
+            with self.subTest(shell=shell, command=command):
+                with self.assertRaises(Blocked):
+                    check_command(command, shell=shell)
+
+    def test_without_a_shell_both_readings_must_pass(self):
+        for shell, command in SHELL_ALLOWED:
+            other = "powershell" if shell == "bash" else "bash"
+            with self.subTest(command=command):
+                try:
+                    check_command(command, shell=other)
+                except Blocked:
+                    with self.assertRaises(Blocked):
+                        check_command(command)
+                else:
                     check_command(command)
 
     def test_no_user_machine_or_sot_names_are_left_in_the_guard(self):
@@ -266,7 +485,7 @@ class GuardActions(unittest.TestCase):
         for case, command in reproduced.items():
             with self.subTest(case=case):
                 with self.assertRaises(Blocked) as ctx:
-                    check_command(command, actions=self.ACTIONS)
+                    check_command(command, actions=self.ACTIONS, shell="powershell")
                 self.assertIn("in its arguments", str(ctx.exception))  # refused by the allowlist, not by luck
 
     def test_block_comment_is_refused_on_purpose_not_as_a_redirect(self):
@@ -310,6 +529,54 @@ class GuardHook(unittest.TestCase):
         self.assertEqual(run_hook({"tool_name": "PowerShell", "tool_input": {"command": "git status"}}).returncode, 0)
         self.assertEqual(run_hook({"tool_name": "Read", "tool_input": {"file_path": "x"}}).returncode, 0)
         self.assertEqual(run_hook({"tool_name": "Bash", "tool_input": {}}).returncode, 0)
+
+    def test_hook_lexes_with_the_shell_of_the_tool(self):
+        command = 'Write-Output "file: `"$path`""'
+        self.assertEqual(run_hook({"tool_name": "PowerShell", "tool_input": {"command": command}}).returncode, 0)
+        self.assertEqual(run_hook({"tool_name": "Bash", "tool_input": {"command": command}}).returncode, 2)
+        command = r"echo \' $(git push) \'"
+        self.assertEqual(run_hook({"tool_name": "Bash", "tool_input": {"command": command}}).returncode, 2)
+
+    def test_hook_blocks_when_the_check_itself_fails(self):
+        # third review B9: 600 nested "$(...)" overflow the recursion; the hook must block (2), not crash (1)
+        command = 'echo "$(' * 600 + "git push" + ')"' * 600
+        result = run_hook({"tool_name": "Bash", "tool_input": {"command": command}})
+        self.assertEqual(result.returncode, 2, result.stderr[-300:])
+
+    def test_long_method_chain_is_checked_in_time(self):
+        # fourth review R1: each `(` lexed its piece again, so 16k characters took seconds and 64k over a minute
+        # fifth review: rebuilding the piece at every `(` and `)` of an inert member chain was quadratic as well
+        for command in ("Write-Output " + "a.b(" * 16000 + ")" * 16000, "$a.b()" + ".c()" * 32000,
+                        "Write-Output " + "$a.b( " * 16000 + ")" * 16000):
+            with self.subTest(length=len(command), start=command[:16]):
+                started = time.monotonic()
+                check_command(command, shell="powershell")
+                self.assertLess(time.monotonic() - started, 10)
+
+    def test_check_past_its_time_budget_is_refused(self):
+        # review of #799: three nested quoted `powershell -Command` of 400k characters took 76 s, past the hook timeout
+        import readonly_guard
+        saved = readonly_guard.CHECK_BUDGET_S
+        readonly_guard.CHECK_BUDGET_S = -1  # already past: Windows' monotonic clock may not move between two reads
+        try:
+            with self.assertRaises(Blocked):
+                check_command("pwsh -Command 'git status'", shell="powershell")
+        finally:
+            readonly_guard.CHECK_BUDGET_S = saved
+        check_command("pwsh -Command 'git status'", shell="powershell")
+
+    def test_hook_watchdog_blocks_a_check_stuck_in_one_step(self):
+        # review of #799: the budget was checked only between commands, so one slow step (a quadratic redirect scan)
+        # kept the real hook busy for two minutes; the hook's watchdog ends it and blocks
+        script = ("import io, json, sys, time; sys.path.insert(0, sys.argv[1]); import readonly_guard as g; "
+                  "g.CHECK_BUDGET_S = -4; g.check_command = lambda *a, **k: time.sleep(30); "
+                  "sys.stdin = io.StringIO(json.dumps({'tool_name': 'Bash', 'tool_input': {'command': 'ls'}})); "
+                  "sys.exit(g.main())")
+        started = time.monotonic()
+        result = subprocess.run([sys.executable, "-B", "-c", script, str(HOOKS)], capture_output=True, text=True,
+                                timeout=60)
+        self.assertEqual(result.returncode, 2, result.stderr[-300:])
+        self.assertLess(time.monotonic() - started, 20)
 
     def test_hook_reads_project_extension_from_the_project_config(self):
         with tempfile.TemporaryDirectory() as tmp:
