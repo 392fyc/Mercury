@@ -1,44 +1,38 @@
 ## Mercury-managed section
 
-This section, from the begin marker to the end marker, is installed and kept up to date by Mercury
-(`python tools/mercury.py apply`) from the packs the project selects in `.mercury/config.json`. Do not edit it by
-hand: a hand edit stops the next apply. Everything outside the markers belongs to the project and is never touched.
-Paths Mercury manages, and who may change them, are listed in `.mercury/packs/core/docs/mercury-harness-ownership.md`.
+Mercury generates this block from the selected packs in `.mercury/config.json`. Edit the pack sources and run
+`python tools/mercury.py apply`. Do not edit installed files or this block by hand. The project owns the text outside
+the markers. See `.mercury/packs/core/docs/mercury-harness-ownership.md` for ownership and the 24,000-byte
+`AGENTS.md` authoring rule.
 
 ## Explanation and reasoning
 
-These rules bind the main agent and every subagent in both Codex and Claude Code, in every kind of task.
-
-- **Explain the Feynman way.** When you explain, report, review, or hand off, write so that someone outside the task can follow it. Use plain words, define each term the reader may not know, build from what the reader already knows, and back each point with a concrete example or the actual evidence. If you cannot explain a point simply, treat it as a gap in your own understanding: return to the source and close the gap, or mark the point as unresolved. Do not cover it with jargon.
-- **Reason from first principles in research, design, and investigation.** Start from the goal, the hard constraints, and facts verified in primary sources or by direct observation, and build the conclusion up from them. Treat conventions, analogies, existing implementations, earlier conclusions, and other agents' claims as hypotheses to check, not as premises. State the assumptions a conclusion depends on and label any that remain unverified. Check the assumptions the conclusion actually depends on, in proportion to risk; evidence that stays applicable under the evidence-reuse rules counts as verified fact. User decisions and authorization are constraints, not hypotheses.
-- **Carry the rules into delegation.** When you delegate to an agent that does not load these instructions, restate both rules in the delegation prompt. Examples: Claude Code's built-in Explore and Plan agents, agents defined with `omitClaudeMd`, and agents working in another repository or directory that has its own instructions.
+All agents explain their work for a reader outside the task. Use plain words, define unfamiliar terms, and give
+concrete evidence. When an explanation has a gap, check the source or mark it unresolved.
+In research, design, and investigation, start from the goal, hard constraints, and verified facts. Check assumptions
+against primary sources or direct observation and mark uncertainty. User decisions and authorization are
+constraints. Restate both rules when delegating to an agent that does not load them.
 
 ## Scope, verification, and completion
 
-Use .mercury/packs/core/docs/mercury-task-contract.md for
-bounded scope, test relevance, evidence reuse, provenance-check triggers,
-review, and completion. Read its details when needed for these decisions;
-it does not add a mandatory workflow or weaken governing requirements.
-
-## Waiting on long-running work
-
-These rules bind the main agent and every subagent in both Codex and Claude Code (Mercury #706). A local Claude Code session puts no time limit on background commands, so a wait whose condition never comes true runs until someone notices.
-
-- **Every wait has a deadline set before it starts.** Wrap a shell wait loop or a follow command such as `tail -f` in `timeout <duration>`, give a PowerShell loop a `Get-Date` or `Stopwatch` deadline, or use a watch the host bounds itself (Claude Code `Monitor` with `timeout_ms`). To learn when a background command finishes, rely on the host's completion notice instead of a second loop that polls its output.
-- **End the wait on the watched process's exit and on every failure state**, not on counting success lines. When the deadline passes, report that the work did not finish and what it last showed; do not simply wait again.
-- **Delegate with the deadline, and clean up before reporting.** Put the deadline in the delegation prompt. Before you report completion, check the background tasks you and your subagents started and stop any that ran past its deadline or is no longer needed.
-- In Claude Code every role Mercury generates runs a `PreToolUse` guard (`.mercury/packs/core/hooks/wait_guard.sh`) that blocks a Bash or PowerShell wait loop or follow command without such a deadline. It is a heuristic check, not a time limit, and it does not cover the main session; details are in the task contract.
+Use `.mercury/packs/core/docs/mercury-task-contract.md` for scope, evidence, review, and completion.
+Use the project's required reading and checks. Set a deadline before every wait, including delegated waits. End on
+exit, failure, or the deadline, report the last state on timeout, and stop expired or unneeded background work before
+reporting completion. Restart a wait only for a stated reason.
 
 ## Mercury roles and Git safety rules
 
-- Mercury installs five roles for both hosts: `mercury-dev`, `mercury-reviewer`, `mercury-acceptance`, `mercury-design` and `mercury-research`, as `.claude/agents/mercury-*.md` and `.codex/agents/mercury-*.toml`. They are generated from `.mercury/packs/core/roles/`; change the source in Mercury, not the generated files. A project role of the same name in `.claude/agents/` takes priority over a user-level one, so these project roles apply in this project.
-- `mercury-reviewer`, `mercury-acceptance`, `mercury-design` and `mercury-research` are read-only by instruction. In Codex a subagent follows the parent session's current sandbox and approval settings and an agent file cannot change them, so a read-only role there can write whenever the parent can (checked on Codex CLI 0.160.1 with a `workspace-write` parent). The Claude roles run a `PreToolUse` guard (`.mercury/packs/core/hooks/readonly_guard.sh`) that blocks write commands in Bash and PowerShell. The guard is best-effort, not an operating-system sandbox. A project can name more write-type scripts in `params.guard_write_scripts` in `.mercury/config.json`, and scripts that write only for some `-Action` values in `params.guard_write_actions`.
-- A project's own roles and skills live in its project area: declared in `.mercury/local.json`, with role sources in `.mercury/local/roles/`. Mercury's installer (`tools/mercury.py apply`, run from a Mercury checkout) generates their `.claude/agents/`, `.codex/agents/` and skill entry files without the `mercury-` prefix; change the source or the manifest, never the generated files. Mercury updates never change the manifest or the sources; they only regenerate the outputs of unchanged sources when Mercury's renderer changes.
-- `.codex/rules/mercury-git-safety.rules` forbids raw `git push` and direct switching to `develop`, `main` or `master` in Codex. Perform Git writes through the controlled entry point that this project's own instructions name; never bypass a denial through another shell.
+`mercury-reviewer`, `mercury-acceptance`, `mercury-design`, and `mercury-research` are read-only. Codex subagents
+inherit the parent sandbox and approval settings. Claude Code's role guards check shell commands and do not provide
+OS isolation.
+Change role and skill sources, not generated entries. The ownership guide covers local roles and guard configuration.
+Use the project's controlled Git entry point. Do not run raw `git push`, switch directly to `develop`, `main`, or
+`master` in Codex, or bypass a denial through another shell.
 
 ## Reporting a harness problem to Mercury
 
-- When something Mercury installed (a script, a guard or hook, a rule, a role, a contract or guide under `.mercury/packs/`) blocks legitimate work, lacks an entry the work needs, or says something wrong, the agent that met it reports it to Mercury itself: an Issue, its title starting with `[downstream-feedback]`, in the repository that `source_repo` in `.mercury/lock.json` names (in Mercury itself, this repository). Do not ask the user to pass the problem on by word of mouth, and do not work around the rule or edit the installed copy.
-- Search that repository's open Issues first and add a comment to a matching one instead of opening a second. Then give the user the link and go on with whatever does not depend on the fix. Opening such an Issue (with its label, where the account may set one) or commenting on one is within the project's standing authorization; anything more in Mercury's repository (a pull request, labels on other Issues, closing an Issue) is not. Agents working in Mercury itself maintain its Issues under Mercury's own rules.
-- That repository may be public. Write what was attempted, what happened and what is needed in general terms; leave out credentials, machine paths and the project's private content. What the Issue contains is listed in `.mercury/packs/core/docs/mercury-harness-ownership.md`.
-
+Follow the ownership guide's reporting steps. Search the source repository named in `.mercury/lock.json` first and
+report a problem with an installed component in a matching Issue or a new `[downstream-feedback]` Issue. Report
+it yourself and give the user the link. Do not work around the rule. That feedback Issue or comment is authorized.
+Other repository writes need their own authorization. Keep credentials, machine paths, and private project content
+out of public reports.

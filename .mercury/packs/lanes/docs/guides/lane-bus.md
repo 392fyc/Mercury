@@ -12,8 +12,14 @@ end to end on Windows; waking an idle Codex desktop thread is not solved (see Li
   handoff", Issue #744): the session that hands off puts a `claim` in the new session's starting prompt and, once the
   handoff is delivered, gives the seat up with `release`; the new session's `claim` then takes the empty seat. Without
   `release` the old session would keep the seat, and its Stop hook would keep it reading, until the new one claims.
-  Release is final, so a session the user keeps working in does not release; if the new session claimed first,
-  `release` reports that the seat is held by it, and the handoff is already complete.
+  Release is final. If the new session claims first, `release` reports that it already holds the seat, which completes
+  the handoff.
+- **Handoff commands.** After reading the handoff and before any lane work or bus access, the receiving session runs
+  `bash .mercury/packs/lanes/scripts/lane-bus.sh claim --harness <harness> --lane <lane> --session <its own session id>`
+  or uses `lane_bus_claim`. Once the handoff is delivered, the old session runs the same command with `release`
+  and its own session id, or uses `lane_bus_release`. Always release when a new session was launched. For a prompt
+  the user will paste, keep the seat only if the user tells the old session to continue working. Report the release
+  to the user and stop using the seat.
 - **Store.** One SQLite file, `<lane home>/lane-bus.sqlite`, where the lane home is `lane-paths.sh memory-dir`
   (ignored by Git, shared by every worktree). `--db` or `MERCURY_LANE_BUS_DB` overrides it.
 - **Provenance.** Every delivered message starts with the lane provenance tag. It is a peer report, not user
@@ -132,4 +138,5 @@ The scripts need Git Bash, not WSL. `bash` on PATH is often a WSL launcher (`C:\
   SQLite store directly; the seat rule keeps honest sessions from crossing, it does not stop a hostile local process.
   The MCP server does not tie `lane_bus_claim` to the host's session id either, because that id is read once when
   the server starts and may no longer match if the host begins a new session without restarting the server.
-- Polling interval and wait deadlines follow AGENTS.md "Waiting on long-running work": every `wait` has a timeout.
+- Follow the task contract's "Waiting on long-running work" section for polling intervals and deadlines.
+  Every `wait` has a timeout.

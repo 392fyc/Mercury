@@ -40,7 +40,7 @@ to the body the sender showed the user; that is why showing the full body is par
 
 ## Where it lives
 
-The rule for every project is in the managed section (`packs/lanes/agents.md`, "Lane-bus work between a lane's two
-seats"). The contract text is in `packs/lanes/docs/mercury-lane-contract.md` ("Work between a lane's two seats"),
-the guide with examples in `packs/lanes/docs/guides/lane-bus.md` ("Sending and receiving"), and the wake line in
-`packs/lanes/scripts/lane-bus.py`.
+The managed section (`packs/lanes/agents.md`, "Lane-bus work between a lane's two seats") states the authorization
+boundary and directs agents to the full rules in `packs/lanes/docs/mercury-lane-contract.md` ("Work between a lane's
+two seats"). Examples are in `packs/lanes/docs/guides/lane-bus.md` ("Sending and receiving").
+`packs/lanes/scripts/lane-bus.py` formats the wake line.
