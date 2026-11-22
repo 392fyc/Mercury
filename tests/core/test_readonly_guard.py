@@ -225,10 +225,19 @@ SHELL_ALLOWED = [
     ("powershell", r'Write-Output "file: `"$path`""'),  # the backtick escapes the quote
     ("powershell", r"$lines[0].StartsWith('Remove-Item')"),
     ("powershell", r"'a b'.Contains('Remove-Item')"),
-    # Bash here-document bodies are checked as commands (not read as input), so only read-only bodies pass here;
-    # PowerShell here-string bodies are input
+    # The body of a here-document with a quoted delimiter is input, not commands (#800); PowerShell here-string bodies
+    # are input too
     ("bash", "x=1; (( x += 2 )); echo $x $((1+2)) \"$((3-1))\""),
     ("bash", "cat <<\"END-1\" | python -\nprint(\"it's\")\nEND-1"),
+    ("bash", "python - <<'EOF'\nxs = [1, 2]\nif len(xs) >= 2:\n    print(xs)\nEOF"),  # the downstream report on #800
+    ("bash", "python - <<'EOF'\nxs = [1, 2]\nif len(xs) > 1:\n    print(xs)\nEOF"),
+    ("bash", "cat <<'EOF'\nit's\nEOF"),
+    ("bash", "cat <<'EOF'\ngit push > f\nEOF\necho ok"),
+    ("bash", "cat <<\"EOF\" <<\\END\na > b\nEOF\nit's\nEND\necho ok"),
+    ("bash", "cat <<-'EOF'\n\ta > b\n\tEOF\necho ok"),
+    ("bash", "cat <<'EOF'\na > b\nEOF \ngit push\nEOF"),  # `EOF ` does not end the body
+    ("bash", "cat <<'EOF'\na > b"),  # no end line: the body runs to the end
+    ("bash", "cat <<'EOF' | python -\nimport os; print(1) # it's\nEOF\necho done"),  # refused before #800
     ("bash", "echo $$"),
     # nested ${...} is Bash only: PowerShell's name ends at the first `}`
     ("bash", "echo ${prefix}rm ${a:-${b}}/lane-bus.sh"),
@@ -297,9 +306,33 @@ SHELL_BLOCKED = [
     ("bash", r"echo $$'\'; git push #'"),  # `$$` is the process id, the quote after it a plain one
     ("bash", r"echo `echo \`git push\``"),  # \` inside backticks nests a substitution
     ("bash", r'echo "`echo \`git push\``"'),
-    # Bash here-documents: commands after the body, or expanded in it, are still seen (a quote in the body that
-    # hides the next command is a known limitation, see the module docstring)
+    # Bash here-documents: commands after the body, or expanded in it, are still seen (a quote in the body of one
+    # the guard does not cut that hides the next command is a known limitation, see the module docstring)
     ("bash", "cat <<A <<'B'\nit's\nA\nb's\nB\ngit push"),
+    ("bash", "cat <<'EOF'\nit's\nEOF\ngit push # '"),  # #800: the quote in the body no longer hides the push
+    ("bash", "cat <<'A' <<'B'\nx\nA\nit's\nB\ngit push # '"),
+    ("bash", "cat <<-'EOF'\n\tit's\n\tEOF\ngit push # '"),
+    ("bash", "cat <<'E'\"O\"F\nit's\nEOF\ngit push # '"),
+    ("bash", "cat <<'EOF' | git push\nx\nEOF"),
+    ("bash", "cat > f <<'EOF'\nx\nEOF"),
+    ("bash", "cat <<'EOF' # it's\nx\nEOF\ngit push"),
+    ("bash", "cat <<'EOF'\nx\nEOF\r\ngit push"),  # Git Bash ends the body at EOF\r: a \r stops the cutting
+    ("bash", "x=$(cat <<'EOF'\nhi\nEOF\n); git push"),
+    ("bash", "echo \"$(cat <<'EOF'\nit's\nEOF\n)\"\ngit push"),
+    ("bash", "echo $((1<<'2'))\ngit push\n2"),
+    ("bash", "x=1; echo ${x:0<<'1'}\ngit push\n1"),
+    ("bash", "{ cat <<'EOF'\nx\nEOF\n}; git push"),
+    ("bash", "case a in a) cat <<'EOF'\nx\nEOF\n;; esac\ngit push"),
+    # Bash reads the body only after a `$(`, `<(` or `${` opened on the operator's line has ended (#800 review)
+    ("bash", "cat <<'EOF' <(\ngit push\n)\nx\nEOF"),
+    ("bash", "cat <<'EOF' $(\ngit push\n)\nx\nEOF"),
+    ("bash", "cat <<'EOF' ${x:-$(\ngit push\n)}\nx\nEOF"),
+    ("bash", "cat <<'EOF' $(case a in a)\ngit push;; esac)\nx\nEOF"),
+    # a lone `]` or `}` is a word character, so it does not close an earlier `$((` (#800 review)
+    ("bash", "echo ] ]; echo $((1<<'2'))\ngit push\n2"),
+    ("bash", "echo } }; echo $((1<<'2'))\ngit push\n2"),
+    ("bash", "echo ] ]; (( x=1<<'2' ))\ngit push\n2"),
+    ("bash", "echo ] ]; for (( i=0; i<<'2'; )); do :; done\ngit push\n2"),
     ("bash", "cat <<EOF\nx $(git push) y\nEOF"),  # an unquoted delimiter expands the body
     ("bash", "cat <<EOF\nx `git push` y\nEOF"),
     ("bash", "cat <<EOF\nit's\n"),  # no end line
@@ -317,7 +350,6 @@ SHELL_BLOCKED = [
     # Every command is also read without comments (#799), so a comment that holds an odd quote or a write is refused,
     # as before #798, even where the shell skips it
     ("bash", "echo a;#x; git push"),
-    ("bash", "cat <<'EOF' | python -\nimport os; print(1) # it's\nEOF\necho done"),
     ("bash", "(echo a)# it's"),
     ("powershell", "Write-Output (1)# it's"),
     # both readings at every depth: the outer command needs one, the `bash -c` inside it the other
