@@ -240,6 +240,12 @@ SHELL_ALLOWED = [
     ("bash", "cat <<'EOF' | python -\nimport os; print(1) # it's\nEOF\necho done"),  # refused before #800
     ("bash", "timeout 20 grep -c x <<'EOF' >&2 # sh\na > b\nEOF"),  # a wrapper, `>&2` and a comment
     ("bash", "cd x && wc -l <<'EOF'\na > b\nEOF"),
+    # an unquoted delimiter: quotes and `>` in the body are text when it has no `$(`, backtick or backslash
+    ("bash", "python3 - <<EOF\nxs = [1, 2]\nif len(xs) > 1:\n    print(xs)\nEOF"),
+    ("bash", "cat <<EOF\nit's $HOME/$1 > not a file\nEOF"),
+    ("bash", "cat <<-EOF\n\ta > b\n\tEOF\necho ok"),
+    ("bash", "cat <<EOF\nit's\n"),  # no end line: the body runs to the end (refused before)
+    ("bash", "git log --oneline | python - <<'EOF'\nimport sys\nprint(sum(1 for _ in sys.stdin) > 1)\nEOF"),
     ("bash", "echo $$"),
     # nested ${...} is Bash only: PowerShell's name ends at the first `}`
     ("bash", "echo ${prefix}rm ${a:-${b}}/lane-bus.sh"),
@@ -312,6 +318,16 @@ SHELL_BLOCKED = [
     # the guard does not cut that hides the next command is a known limitation, see the module docstring)
     ("bash", "cat <<A <<'B'\nit's\nA\nb's\nB\ngit push"),
     ("bash", "cat <<'EOF'\nit's\nEOF\ngit push # '"),  # #800: the quote in the body no longer hides the push
+    ("bash", "cat <<EOF\nit's\nEOF\ngit push # '"),
+    # an unquoted body that runs a command, or whose end a backslash-newline moves, is still read as commands
+    ("bash", "cat <<EOF\n$(git push)\nEOF"),
+    ("bash", "cat <<EOF\n`git push`\nEOF"),
+    ("bash", "cat <<EOF\nx ${y:-$(git push)}\nEOF"),
+    ("bash", "cat <<EOF\na\\\nEOF\ngit push\nEOF"),
+    # a `$(` built in a variable and run by prompt expansion (review on #800, real Bash runs the push)
+    ("bash", "cat <<EOF\n${d:=$}${y:=${d}(git push)}${y@P}\nEOF"),
+    ("bash", "cat <<EOF\n${d:=$}${y:=a[${d}(git push)]}${y@P}\nEOF"),
+    ("bash", "git push | python - <<'EOF'\nx\nEOF"),
     ("bash", "cat <<'A' <<'B'\nx\nA\nit's\nB\ngit push # '"),
     ("bash", "cat <<-'EOF'\n\tit's\n\tEOF\ngit push # '"),
     ("bash", "cat <<'E'\"O\"F\nit's\nEOF\ngit push # '"),
@@ -376,7 +392,6 @@ SHELL_BLOCKED = [
     ("bash", "sudo -R cat bash <<'EOF'\ngit push\nEOF"),
     ("bash", "cat <<EOF\nx $(git push) y\nEOF"),  # an unquoted delimiter expands the body
     ("bash", "cat <<EOF\nx `git push` y\nEOF"),
-    ("bash", "cat <<EOF\nit's\n"),  # no end line
     ("bash", "echo $((1<<2))\ngit push\n2"),  # a shift, so the next line is a command
     ("bash", "echo $[1<<X]\ngit push\nX]"),
     ("bash", "cat <<EOF\r\nEOF\r\ngit push #\r\nEOF"),  # the delimiter is EOF\r, so the third line runs
