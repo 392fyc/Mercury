@@ -412,8 +412,9 @@ only forward to `packs/git-safe/scripts/` (Issue #723).
   `master`. Without the parameter the branch is `master`.
 - **Review mark.** `mark-review` writes a snapshot of the staged tree to `mercury-review-passed` in the work tree's Git
   directory (`git rev-parse --git-path`), so it is never committed, needs no ignore rule and is separate per worktree.
-- **Branch names and protected branches** are Mercury's: `<type>/<purpose>[-<lane>]-<agent>`; `develop`, `main`,
-  `master` and the integration branch cannot be committed or pushed to. Inherited `GIT_DIR`, `GIT_WORK_TREE`,
+- **Branch names and protected branches** are Mercury's: `<type>/<purpose>[-<lane>]-<agent>`, with `claude`,
+  `codex` or `gemini` as the agent suffix. `develop`, `main`, `master` and the integration branch cannot be
+  committed or pushed to. Inherited `GIT_DIR`, `GIT_WORK_TREE`,
   `GIT_COMMON_DIR` or `GIT_INDEX_FILE` make the scripts refuse to run.
 - **PR procedure.** `docs/pr-procedure.md` is the pull request procedure every project with this pack follows, and the
   managed section points to it (#773): the main agent carries its own pull request through independent review, CI,
