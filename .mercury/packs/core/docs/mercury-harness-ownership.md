@@ -24,6 +24,22 @@ The project must not edit these paths by hand or initiate changes to their conte
 under `packs/`, or the tool), and then reaches the project by running `python tools/mercury.py apply --target <project>`
 from a Mercury checkout.
 
+## Authoring AGENTS.md
+
+Keep the complete, rendered `AGENTS.md` at or below **24,000 UTF-8 bytes**, including line endings, generated
+fragments, linked repository entries, and project-owned text. Antigravity truncates individual rules files above
+this limit. See [Antigravity's rules size limits](https://antigravity.google/docs/rules/#size-limits-and-token-budgets).
+
+- Keep the rules every session needs at startup: required reading and when to read it, authorization boundaries,
+  prohibitions, and routes to the owning contracts. Before adding a rule, look there for an existing rule to update.
+  Keep procedures, examples, and host-specific details in the relevant contract or guide, and link to it where it applies.
+- Edit the owning source. Changes inside the managed markers start in the pack. Project-specific rules outside
+  the markers are edited in their own project. Avoid duplicating rules or including a whole guide in an entry file.
+- Before review, measure the generated file in Mercury and the affected downstream targets using the installer's
+  result. From the repository root, `python -c "from pathlib import Path; print(len(Path('AGENTS.md').read_bytes()))"`
+  prints the byte count of an already rendered file. When a shortening update still leaves an existing downstream
+  file over the limit, report the remaining bytes to its owner and preserve the project-owned text.
+
 ## Reporting a problem to Mercury
 
 A project does not change the Mercury area, so a problem in it is fixed in Mercury. The agent that meets the problem
