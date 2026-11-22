@@ -679,16 +679,57 @@ def check_action(script: str, segment: str, blocked: frozenset) -> None:
         raise Blocked(f"{script} -Action {values[0]}")
 
 
+# Commands that run the command after them, with the options that take a separate value (#804). `timeout` also takes
+# a duration; `env` also takes NAME=value words. Without this, `timeout 20 git push` or `nice -n 5 git push` was read
+# as the command `timeout` or `-n` and passed.
+WRAPPERS = {
+    "&": set(), ".": set(), "command": set(), "nohup": set(),
+    "env": {"-u", "--unset", "-C", "--chdir"},
+    "exec": {"-a"},
+    "time": {"-f", "--format", "-o", "--output"},
+    "nice": {"-n", "--adjustment"},
+    "sudo": {"-u", "--user", "-g", "--group", "-h", "--host", "-p", "--prompt", "-C", "--close-from", "-D",
+             "--chdir", "-r", "--role", "-t", "--type", "-U", "--other-user", "-T", "--command-timeout"},
+    "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
+    "timeout": {"-s", "--signal", "-k", "--kill-after"},
+    "xargs": {"-a", "--arg-file", "-d", "--delimiter", "-E", "-I", "-L", "-n", "--max-args", "-P", "--max-procs",
+              "-s", "--max-chars"},
+}
+ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def strip_wrappers(tokens: list[str]) -> list[str]:
+    """Drop leading NAME=value words and wrapper commands with their options, so that the command they run is the one
+    checked: `timeout -k 5 20 git push`, `env -i A=1 git push` and `sudo -u x git push` all check `git push`."""
+    i = 0
+    while i < len(tokens):
+        if ASSIGNMENT.match(tokens[i]):
+            i += 1
+            continue
+        wrapper = command_word(tokens[i]) if tokens[i] not in ("&", ".") else tokens[i]
+        if wrapper not in WRAPPERS:
+            break
+        i += 1
+        while i < len(tokens) and tokens[i].startswith("-") and len(tokens[i]) > 1:
+            option = tokens[i]
+            i += 1
+            if option == "--":
+                break
+            if wrapper == "command" and option in ("-v", "-V"):
+                return []  # `command -v rm` only says where rm is; it runs nothing
+            if option in WRAPPERS[wrapper]:  # a separate value follows (`-n 5`); `-n5` and `--signal=KILL` hold it
+                i += 1
+        if wrapper == "timeout" and i < len(tokens):
+            i += 1  # the duration
+    return tokens[i:]
+
+
 def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), actions: dict | None = None,
                   shell: str = "bash") -> None:
     actions = actions or {}
     if depth > 3:
         raise Blocked("nested shell depth exceeded")
-    tokens = tokenize(segment, shell)
-    while tokens and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
-        tokens = tokens[1:]
-    while tokens and tokens[0] in ("&", ".", "env", "command", "exec", "time", "nice", "sudo"):
-        tokens = tokens[1:]
+    tokens = strip_wrappers(tokenize(segment, shell))
     word, args = (command_word(tokens[0]), tokens[1:]) if tokens else ("", [])
     lowered = segment.lower()
     # Scripts count only when executed (directly or through an interpreter),
