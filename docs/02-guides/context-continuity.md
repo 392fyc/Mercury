@@ -129,7 +129,8 @@ The same SessionStart hook script is installed for Codex and injects the same br
   0.167).
 - **Verified, automatic in the middle of a turn (#819):** in one long main session, all 52 automatic compactions kept
   the AGENTS.md instructions in the compacted history, and the hook's message came back a few entries after each one.
-  In subagents (28 compactions across several sessions), AGENTS.md was kept as well, but the hook did not run again;
+  In subagents (28 compactions across several sessions), AGENTS.md was kept as well, but no hook message appeared
+  again (whether the hook ran without output was not checked);
   a brief the hook injected when the subagent started stays inside the compacted history. Read from the sessions'
   rollout files: a `compacted` entry, then its `replacement_history`, then the developer message that follows.
 - Codex skips a hook whose definition changed until it is trusted again with `/hooks`, and a running session keeps
