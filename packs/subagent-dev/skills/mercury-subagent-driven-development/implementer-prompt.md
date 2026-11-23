@@ -3,7 +3,6 @@
      Initial SHA: 917e5f53b16b115b70a3a355ed5f4993b9f8b73d (2026-04-10, Issue #209)
      Selective back-port: obra/superpowers v6.1.1 (commit d884ae04edebef577e82ff7c4e143debd0bbec99, 2026-07-02)
      Back-port SHA / Issue: d884ae0 / #509 (2026-07-04) — report-to-file contract
-     Mercury addition: #819 (2026-11-24) — the implementer does not delegate
      Mercury-owned adaptation, NOT a verbatim mirror. -->
 
 # Implementer Subagent Prompt Template
