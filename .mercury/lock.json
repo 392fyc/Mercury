@@ -138,7 +138,7 @@
     ".mercury/packs/subagent-dev/pack.json": "790f931dda9e26feafe4ad2300c427b2a574be4658750a31e060f14850d7de15",
     ".mercury/packs/subagent-dev/skills/mercury-subagent-driven-development/SKILL.md": "03748e0c10b6bfade63775eb1fc01a8e68dec9861e81c29cbe977d17d75d2d59",
     ".mercury/packs/subagent-dev/skills/mercury-subagent-driven-development/code-quality-reviewer-prompt.md": "0cc6c28223ba1f09bb26a403677fa1591b664d5f0f3f7f6212835e55d6dd4dc3",
-    ".mercury/packs/subagent-dev/skills/mercury-subagent-driven-development/implementer-prompt.md": "11c08ed3482c4fa5be1d2c213744d7a54132712e6dc54757ddb404da08d58522",
+    ".mercury/packs/subagent-dev/skills/mercury-subagent-driven-development/implementer-prompt.md": "3a0dfd9126f9e6f247f5ebc2dfd6e5100079935c582bc4f54691c42298ae88da",
     ".mercury/packs/subagent-dev/skills/mercury-subagent-driven-development/spec-reviewer-prompt.md": "dbc8abc65b88a65a80a701c7e6a6f4cd75cb0db95bf8e52efddc52d1abd9e3ba"
   },
   "mercury_json_sha256": "03e73b8e2f043108012eb3ce864710d9dc0d3f370103b86952f42bbe367ddc99",

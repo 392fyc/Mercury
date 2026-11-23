@@ -45,6 +45,14 @@ Task tool (general-purpose):
     - Don't restructure existing code without explicit permission
     - Keep files focused and testable
 
+    ## Do the Work Yourself
+
+    Do not dispatch subagents, start parallel agents, or hand any part of
+    this task to another agent. The controller sized this task for one
+    implementer and reviews one implementer's work. If the task looks too
+    large for one agent, stop and report NEEDS_CONTEXT (the task needs
+    re-scoping, not more context), saying how you would split it.
+
     ## If You Get Stuck
 
     It is always OK to stop and say "this is too hard for me" or
