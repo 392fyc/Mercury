@@ -69,7 +69,9 @@ Rules for the pages:
   brief before going on. After the next compaction, this page is what the session still knows.
 - A brief is memory, not authority: design facts and decisions of record stay in the design library and the KB.
 
-A project without a `brief.md` gets the previous behavior: the hook prints where the memory files are.
+A project without a `brief.md` is told where its brief belongs: the hook prints the location it computed for that
+project's layout, says the page is created only when the user asks, and says not to commit it (#816). The same holds
+for a lane brief the hook looks for and does not find.
 
 ## The other lane pages
 

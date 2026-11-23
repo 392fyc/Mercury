@@ -60,7 +60,9 @@ those pull requests changed: `packs/`, `.mercury/`, `.claude/`, `.codex/`, `.age
 - All 15 are old: merged by 2026-05-23, mostly in `adapters/` and `mercury-gui/`, which no longer exist. Of the 62
   samples numbered 500 or above, none was both routed to the API and clean under that list. **With the repository as it
   is now, Mercury itself has almost nothing to offload.** The value, if any, lies in downstream projects and in jobs
-  that change no repository files.
+  that change no repository files. #584 (a lightweight classifier as a harness pre-check) was closed on these results
+  (2026-11-23, user decision): the main agent handles its decision points under the rules, the classifier measured
+  here showed no gain, and a separate module would add maintenance.
 
 **Limits.** One repository; unbalanced classes; a broad label, since `.mercury/` once held non-harness files; a prompt
 written once with no held-out set. The evaluation asked Haiku for one word and counted any reply without "interactive"
@@ -207,4 +209,3 @@ model starts itself.
   almost none. This decides whether an API worker is worth building at all.
 - How often the user relays lane messages by hand. That count decides whether the undocumented `codex app-server` is
   worth researching.
-- Whether #584 (a lightweight classifier as a harness pre-check) is answered by these results.

@@ -4,7 +4,7 @@ name: upstream-drift
 #
 # Runs the deterministic, zero-LLM checker scripts/upstream-drift-check.sh on a
 # schedule. It compares each cherry-picked / version-pinned artifact's upstream
-# blob SHA at import vs upstream HEAD (CLEAN / CHANGED / UPSTREAM_GONE / SKIP).
+# blob SHA at its baseline (the accepted review, else the import) vs upstream HEAD (CLEAN / CHANGED / UPSTREAM_GONE / SKIP).
 # When drift is detected it find-or-creates a single tracking Issue (label
 # `upstream-drift`) and posts the report there, so drift surfaces as a standing
 # backlog item instead of silently rotting (manifest entries previously sat at
@@ -114,7 +114,7 @@ jobs:
           {
             echo "Automated upstream drift report — $TODAY ([run log]($RUN_URL))."
             echo
-            echo "The monthly \`upstream-drift\` watch found cherry-picked / version-pinned artifacts whose upstream changed since import (CHANGED) or went away (UPSTREAM_GONE). Triage per \`docs/02-guides/upstream-drift-routine.md\`: for each, decide pull-update / re-pin / accept-as-owned, then run \`bash scripts/upstream-drift-check.sh --write-back\` locally and commit the refreshed \`last_drift_check\` via PR."
+            echo "The monthly \`upstream-drift\` watch found cherry-picked / version-pinned artifacts whose upstream changed since the last accepted review or the import (CHANGED) or went away (UPSTREAM_GONE). Triage per \`docs/02-guides/upstream-drift-routine.md\`: for each, decide pull-update / re-pin / accept-as-owned (an accepted entry records the reviewed upstream commit in \`accepted_upstream_sha\`, or it is reported again next month), then run \`bash scripts/upstream-drift-check.sh --write-back\` locally and commit the refreshed \`last_drift_check\` via PR."
             echo
             echo '```'
             cat drift-report.txt

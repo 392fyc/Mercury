@@ -11,7 +11,7 @@ Mercury 挂载/借鉴了若干外部组件(cherry-pick 的 skill/agent 文件、
 |---|---|---|
 | 工具 | `scripts/upstream-drift-check.sh` | 按需人工或代理审计(原 `mercury-staleness-audit` Workflow 已于 #579 退役)|
 | 触发 | `.github/workflows/upstream-drift.yml` 月度 cron(+ `workflow_dispatch`)| 人工周期例行(建议季度,或 Tier-1 告警后)|
-| 判定 | 确定性:比较 cherry-pick artifact 的上游 blob SHA(import vs HEAD)→ `CLEAN/CHANGED/UPSTREAM_GONE/SKIP` | LLM + 对抗验证:判「落后多少」「组件是否已失效/disabled」「上游是否 archived」「破坏性变更 Mercury 是否真触达」→ `ACTIVE-RISK/ACTION-NEEDED/ACCEPTABLE-DRIFT/DORMANT-OK/NOT-STALE/UNVERIFIED` |
+| 判定 | 确定性:比较 cherry-pick artifact 的上游 blob SHA(基准 vs HEAD;基准是 `accepted_upstream_sha`,没有时是导入 SHA)→ `CLEAN/CHANGED/UPSTREAM_GONE/SKIP` | LLM + 对抗验证:判「落后多少」「组件是否已失效/disabled」「上游是否 archived」「破坏性变更 Mercury 是否真触达」→ `ACTIVE-RISK/ACTION-NEEDED/ACCEPTABLE-DRIFT/DORMANT-OK/NOT-STALE/UNVERIFIED` |
 | 抓得到 | cherry-pick 文件内容漂移、上游文件被删 | 版本落后幅度、失效/禁用组件仍被引用、上游 archived、纯 transitive 依赖(blob 模型抓不到)|
 | 成本 | 零 LLM,~秒级,gh api | 一次 run 数十 agent + web,~分钟级 |
 | 产出 | 有漂移→ find-or-create 单一 tracking issue(label `upstream-drift`)贴报告 | 分类报告(不开 issue),喂给 operator 裁决 |
@@ -28,9 +28,9 @@ Mercury 挂载/借鉴了若干外部组件(cherry-pick 的 skill/agent 文件、
 
 逐条三选一:
 
-1. **pull-update** —— 上游有实质改进/修复值得拉:按 cherry-pick 协议更新本地副本 + 更新 manifest `upstream_sha_at_import`,走独立审查 + PR。
-2. **re-pin** —— version-pin adapter 落后且值得升:更新 pin(launch 包/pyproject/Cargo)+ 重新 provision + 更新 `UPSTREAM.md` + manifest SHA,走独立审查 + PR。
-3. **accept-as-owned** —— 上游变更是 cosmetic、不可达、或 Mercury 已自有适配(cherry-pick 协议下本地副本是 Mercury-owned,无 live-sync 义务):无需改代码,仅 `--write-back` 刷新 `last_drift_check` 记录「已复核、接受现状」。
+1. **pull-update** —— 上游有实质改进/修复值得拉:按 cherry-pick 协议更新本地副本 + 更新 manifest `upstream_sha_at_import`,并删除该条目的 `accepted_upstream_sha`(若有;否则检查仍以旧的接受基线比较,升级后照样报 CHANGED),走独立审查 + PR。
+2. **re-pin** —— version-pin adapter 落后且值得升:更新 pin(launch 包/pyproject/Cargo)+ 重新 provision + 更新 `UPSTREAM.md` + manifest SHA,并删除该条目的 `accepted_upstream_sha`(若有,理由同上),走独立审查 + PR。
+3. **accept-as-owned** —— 上游变更是 cosmetic、不可达、或 Mercury 已自有适配(cherry-pick 协议下本地副本是 Mercury-owned,无 live-sync 义务):无需改代码。在该条目里记 `accepted_upstream_sha` = 复核时上游默认分支的提交 SHA(用 `gh api repos/<owner>/<repo>/commits/<branch>` 取得),再 `--write-back` 刷新 `last_drift_check`。检查脚本以 `accepted_upstream_sha`(没有时用 `upstream_sha_at_import`)为基准比较,所以已接受的变化不会每月重报,之后上游再变才会报 CHANGED;`upstream_sha_at_import` 保留为来源记录,不改。
 
 裁决后跑 `bash scripts/upstream-drift-check.sh --write-back` + 提交刷新的 manifest;tracking issue 在所有 CHANGED 裁决完成后关闭。
 
@@ -46,4 +46,4 @@ Mercury 挂载/借鉴了若干外部组件(cherry-pick 的 skill/agent 文件、
 
 - Tier-1:21 artifacts → `CLEAN=9 · CHANGED=9 · SKIP=3`。CHANGED = obra/superpowers(systematic-debugging ×2 + subagent-driven-development ×4)、JuliusBrussee/caveman ×2、microsoft/playwright-mcp。
 - Tier-2:14 items → `0 ACTIVE-RISK · 2 ACTION-NEEDED · 6 ACCEPTABLE-DRIFT · 1 DORMANT-OK · 5 NOT-STALE`。详见 #508 + side-bug user-memory。
-- 9 个 CHANGED 的裁决:superpowers 上游重构(ledger 恢复模式等)→ 单独 [#509](https://github.com/392fyc/Mercury/issues/509) 追踪 back-port(P3);caveman/agency-agents → accept-as-owned(Mercury 自有改写);playwright 0.0.76 → 低优 re-pin(机制后续监控;grammy 1.44 原亦列为 npm 漂移项,该依赖已随 [#512](https://github.com/392fyc/Mercury/issues/512) 移除)。本 PR 仅回写 `last_drift_check` 建立基线,不在 PR 内 reconcile 各 CHANGED(漂移现状 = 机制监控对象)。
+- 9 个 CHANGED 的裁决:superpowers 上游重构(ledger 恢复模式等)→ 单独 [#509](https://github.com/392fyc/Mercury/issues/509) 追踪 back-port(P3);caveman/agency-agents → accept-as-owned(Mercury 自有改写);playwright 0.0.76 → 当时定为低优 re-pin,该 pack 后已停用,2026-11-23 改为 accept-as-owned(#549)(机制后续监控;grammy 1.44 原亦列为 npm 漂移项,该依赖已随 [#512](https://github.com/392fyc/Mercury/issues/512) 移除)。本 PR 仅回写 `last_drift_check` 建立基线,不在 PR 内 reconcile 各 CHANGED(漂移现状 = 机制监控对象)。

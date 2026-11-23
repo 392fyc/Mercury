@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Upstream drift check — aggregates upstream-manifest.json from all deployment
 # layers and checks whether each cherry-picked artifact's upstream file has
-# changed since import.
+# changed since its baseline (the accepted review, else the import).
 #
 # Manifest discovery (merged in order):
 #   project-scope: $REPO_ROOT/.mercury/state/upstream-manifest.json
 #   user-scope:    ~/.claude/upstream-manifest.json  (if present)
 #
-# Compares upstream file blob SHA at recorded import SHA vs current HEAD.
+# Compares upstream file blob SHA at the baseline (accepted_upstream_sha when an
+# accept-as-owned decision recorded one, else the import SHA) vs current HEAD.
 # Does NOT compare local copy (local files have Mercury adaptations/headers).
 #
 # scope field in manifest:
@@ -136,10 +137,16 @@ for ((i=0; i<count; i++)); do
     continue
   fi
 
+  # An accept-as-owned decision records the upstream commit that was reviewed in
+  # `accepted_upstream_sha`; drift is measured from there, so an accepted change is not
+  # reported again every month (#549). `upstream_sha_at_import` keeps the provenance.
+  # An empty string counts as unset: `?ref=` would read the default branch and hide all drift.
+  baseline_sha=$(jq -r "(.[$i].accepted_upstream_sha // \"\") as \$a | if \$a == \"\" then .[$i].upstream_sha_at_import else \$a end" "$MERGED")
+
   # URL-encode upstream_path to handle spaces, #, ? and other special characters
   encoded_path=$(jq -rn --arg p "$upstream_path" '$p | @uri')
 
-  # Fetch the blob SHA at the recorded import commit. Branch on gh's EXIT CODE, not
+  # Fetch the blob SHA at the baseline commit. Branch on gh's EXIT CODE, not
   # on whether the capture is empty: gh api prints the HTTP-error body — a JSON object
   # carrying a "status" field — to STDOUT on failure, so a non-empty capture does NOT
   # mean success (a 404 body would sail past a `-z` check and be mis-compared as
@@ -149,26 +156,26 @@ for ((i=0; i<count; i++)); do
   # the need for a stderr temp file entirely. (Root-caused in #530: obra/superpowers
   # deleted spec-reviewer-prompt.md / code-quality-reviewer-prompt.md upstream; the old
   # `|| true` + `-z` guard reported CHANGED, never GONE, and exited 1 instead of 2.)
-  if snap_blob=$(gh api "repos/$upstream_repo/contents/$encoded_path?ref=$recorded_sha" --jq '.sha' 2>/dev/null); then
+  if snap_blob=$(gh api "repos/$upstream_repo/contents/$encoded_path?ref=$baseline_sha" --jq '.sha' 2>/dev/null); then
     :
   elif [[ "$(printf '%s' "$snap_blob" | jq -r '.status // empty' 2>/dev/null)" == "404" ]]; then
-    echo "UPSTREAM_GONE (import SHA unreachable: $recorded_sha)"
+    echo "UPSTREAM_GONE (baseline SHA unreachable: $baseline_sha)"
     gone=$((gone + 1))
     continue
   else
-    echo "SKIP (gh api error checking import SHA — not 404)"
+    echo "SKIP (gh api error checking baseline SHA — not 404)"
     skipped=$((skipped + 1))
     continue
   fi
   # Defensive: a 200 response with no .sha field (unexpected for the contents API)
   if [[ -z "$snap_blob" ]]; then
-    echo "SKIP (import ref returned no .sha)"
+    echo "SKIP (baseline ref returned no .sha)"
     skipped=$((skipped + 1))
     continue
   fi
 
   # Fetch the blob SHA at upstream HEAD (same exit-code + structural-status discipline
-  # as the import-SHA fetch above — parse the error body's "status" on failure to catch
+  # as the baseline fetch above — parse the error body's "status" on failure to catch
   # a file removed from upstream HEAD as UPSTREAM_GONE rather than CHANGED). See #530.
   if head_blob=$(gh api "repos/$upstream_repo/contents/$encoded_path" --jq '.sha' 2>/dev/null); then
     :
@@ -192,7 +199,7 @@ for ((i=0; i<count; i++)); do
     echo "CLEAN"
     clean=$((clean + 1))
   else
-    echo "CHANGED (upstream updated since import)"
+    echo "CHANGED (upstream updated since baseline)"
     changed=$((changed + 1))
   fi
 done
