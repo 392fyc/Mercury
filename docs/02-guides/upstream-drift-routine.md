@@ -28,8 +28,8 @@ Mercury 挂载/借鉴了若干外部组件(cherry-pick 的 skill/agent 文件、
 
 逐条三选一:
 
-1. **pull-update** —— 上游有实质改进/修复值得拉:按 cherry-pick 协议更新本地副本 + 更新 manifest `upstream_sha_at_import`,走独立审查 + PR。
-2. **re-pin** —— version-pin adapter 落后且值得升:更新 pin(launch 包/pyproject/Cargo)+ 重新 provision + 更新 `UPSTREAM.md` + manifest SHA,走独立审查 + PR。
+1. **pull-update** —— 上游有实质改进/修复值得拉:按 cherry-pick 协议更新本地副本 + 更新 manifest `upstream_sha_at_import`,并删除该条目的 `accepted_upstream_sha`(若有;否则检查仍以旧的接受基线比较,升级后照样报 CHANGED),走独立审查 + PR。
+2. **re-pin** —— version-pin adapter 落后且值得升:更新 pin(launch 包/pyproject/Cargo)+ 重新 provision + 更新 `UPSTREAM.md` + manifest SHA,并删除该条目的 `accepted_upstream_sha`(若有,理由同上),走独立审查 + PR。
 3. **accept-as-owned** —— 上游变更是 cosmetic、不可达、或 Mercury 已自有适配(cherry-pick 协议下本地副本是 Mercury-owned,无 live-sync 义务):无需改代码。在该条目里记 `accepted_upstream_sha` = 复核时上游默认分支的提交 SHA(用 `gh api repos/<owner>/<repo>/commits/<branch>` 取得),再 `--write-back` 刷新 `last_drift_check`。检查脚本以 `accepted_upstream_sha`(没有时用 `upstream_sha_at_import`)为基准比较,所以已接受的变化不会每月重报,之后上游再变才会报 CHANGED;`upstream_sha_at_import` 保留为来源记录,不改。
 
 裁决后跑 `bash scripts/upstream-drift-check.sh --write-back` + 提交刷新的 manifest;tracking issue 在所有 CHANGED 裁决完成后关闭。

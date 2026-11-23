@@ -102,7 +102,8 @@ source).
 When drift-check reports `CHANGED`: review the upstream diff for license /
 CLI-flag / tool-name changes before bumping the pinned npm version (in
 `launch.cjs` `PINNED`, the `.mcp.json` args, the adapter README, and this
-file) and the manifest `upstream_sha_at_import`.
+file) and the manifest `upstream_sha_at_import`, and remove the entry's
+`accepted_upstream_sha` so the check compares from the new pin.
 
 ## License
 
