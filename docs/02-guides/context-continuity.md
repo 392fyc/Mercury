@@ -125,7 +125,12 @@ The same SessionStart hook script is installed for Codex and injects the same br
   so that 6,000 mostly Chinese characters fit.
 - **Lane:** Codex opens a session with user-role messages the user did not type (the AGENTS.md instructions, tagged
   notices from the app). The hook skips them and takes the tag from the first message that remains.
-- **Verified:** after a manual `/compact` the hook's message appears again before the next user message (Codex
-  0.167). Automatic compaction in the middle of a turn was not exercised.
+- **Verified, manual:** after a manual `/compact` the hook's message appears again before the next user message (Codex
+  0.167).
+- **Verified, automatic in the middle of a turn (#819):** in one long main session, all 52 automatic compactions kept
+  the AGENTS.md instructions in the compacted history, and the hook's message came back a few entries after each one.
+  In subagents (28 compactions across several sessions), AGENTS.md was kept as well, but the hook did not run again;
+  a brief the hook injected when the subagent started stays inside the compacted history. Read from the sessions'
+  rollout files: a `compacted` entry, then its `replacement_history`, then the developer message that follows.
 - Codex skips a hook whose definition changed until it is trusted again with `/hooks`, and a running session keeps
   the hooks it started with.
