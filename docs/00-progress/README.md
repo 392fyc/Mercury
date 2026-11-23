@@ -1,6 +1,6 @@
 # Current progress
 
-Updated 2026-11-10 (#779). GitHub Issues hold the detail; this page lists what is open and what comes next. A pull
+Updated 2026-11-23 (#549). GitHub Issues hold the detail; this page lists what is open and what comes next. A pull
 request that starts, finishes or redirects one of these updates this page in the same change.
 
 ## Open tracking Issues
@@ -16,4 +16,6 @@ request that starts, finishes or redirects one of these updates this page in the
 | #657 | Native bidirectional Dot and source Codex wake-up | Paused | See the Issue |
 | #584 | Research: a lightweight classifier as a harness pre-check | Not started | — |
 
-Automated tracking Issue, not a work item: #549 (upstream drift report).
+Automated tracking Issue, not a work item: the open Issue labeled `upstream-drift`, which the monthly drift check
+opens when an upstream changed after its last accepted review (decisions: `docs/02-guides/upstream-drift-routine.md`).
+None is open after #549 was closed.

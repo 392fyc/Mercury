@@ -90,7 +90,9 @@ never auto-installs). See adapter README §"How it runs" for full rationale.
 ## Drift policy
 
 `scripts/upstream-drift-check.sh` compares the upstream `package.json` blob
-SHA at the pinned import SHA against the same file at upstream `HEAD`. The
+SHA at its baseline against the same file at upstream `HEAD`. The baseline is
+`accepted_upstream_sha` when an accept-as-owned review recorded one (this entry
+has one while the pack is disabled), else the pinned import SHA. The
 manifest entry sets `upstream_path: "package.json"` because that file is the
 canonical version/deps/bin contract — any change there signals the adapter's
 pinned npm version may need review. The full upstream tree is not
