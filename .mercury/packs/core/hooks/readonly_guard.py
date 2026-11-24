@@ -739,10 +739,15 @@ def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), 
     # so reading or searching for them stays allowed.
     executed = [word] if word.endswith((".ps1", ".py", ".sh")) else []
     if word in INTERPRETERS:
-        # uv run and interpreter flag values can precede these paid helpers.
-        paid = [command_word(a) for a in args if command_word(a) in ("image_api.py", "image_check.py")]
+        # uv run and interpreter flag values can precede these paid helpers. A module run (`python -m image_check`)
+        # or inline code naming one is refused like the script path; test files such as test_image_check.py are not.
+        paths = [command_word(a) for a in args]
+        modules = [command_word(m) for flag, m in zip(args, args[1:]) if flag == "-m"]
+        inline = [code.lower() for flag, code in zip(args, args[1:]) if flag.lower() in INLINE_FLAGS]
+        paid = [name for name in ("image_api", "image_check")
+                if name + ".py" in paths or name in modules or any(name in c for c in inline)]
         if paid:
-            raise Blocked(paid[0])
+            raise Blocked(paid[0] + ".py")
         executed += [command_word(a) for a in args if not a.startswith("-")][:1]
         executed += [command_word(args[i + 1]) for i, a in enumerate(args[:-1])
                      if a.lower() in ("-file", "-f")]

@@ -107,7 +107,7 @@ class ImageCheckTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             check.png_facts(bytes(data))
         whole = png(4, 4, emblem)
-        with self.assertRaisesRegex(ValueError, "IEND"):
+        with self.assertRaisesRegex(ValueError, "layout"):
             check.png_facts(whole[:-12])
         raw = zlib.compress(b"".join(bytes(10) for _ in range(4)))  # RGB rows one byte short
         short = whole[:33] + chunk(b"IDAT", raw) + chunk(b"IEND", b"")
@@ -117,6 +117,14 @@ class ImageCheckTests(unittest.TestCase):
         truncated = whole[:33] + chunk(b"IDAT", zlib.compress(bytes(68))[:-6]) + chunk(b"IEND", b"")
         with self.assertRaisesRegex(ValueError, "truncated"):
             check.png_facts(truncated)
+        with self.assertRaisesRegex(ValueError, "layout"):
+            check.png_facts(whole[:-12] + chunk(b"IEND", b"x"))
+        with self.assertRaisesRegex(ValueError, "layout"):
+            check.png_facts(whole + b"trailing")
+        stream = zlib.decompress(whole[41:-16])
+        extra = whole[:33] + chunk(b"IDAT", zlib.compress(stream) + b"junk") + chunk(b"IEND", b"")
+        with self.assertRaisesRegex(ValueError, "extra bytes"):
+            check.png_facts(extra)
         interlaced = whole[:8] + chunk(b"IHDR", struct.pack(">IIBBBBB", 4, 4, 8, 6, 0, 0, 1)) + whole[33:]
         with self.assertRaisesRegex(ValueError, "unsupported"):
             check.png_facts(interlaced)

@@ -39,7 +39,7 @@ def png_facts(data):
         ihdr = body if kind == b"IHDR" else ihdr
         idat += [body] if kind == b"IDAT" else []  # joined once below, not copied per chunk
         pos, palette = pos + 12 + length, palette or kind == b"PLTE"
-    require(kind == b"IEND" and ihdr is not None and idat, "PNG lacks IHDR, IDAT or IEND")
+    require(data[12:16] == b"IHDR" and kind == b"IEND" and not body and pos == len(data) and idat, "bad PNG layout")
     width, height, depth, color, compression, method, interlace = struct.unpack(">IIBBBBB", ihdr)
     channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}.get(color)
     depths = (1, 2, 4, 8, 16) if color == 0 else (1, 2, 4, 8) if color == 3 else (8, 16)
@@ -47,7 +47,8 @@ def png_facts(data):
             and (color != 3 or palette), "unsupported PNG format")
     inflater, rowbytes = zlib.decompressobj(), (width * channels * depth + 7) // 8
     raw = inflater.decompress(b"".join(idat), 64 * 1024 * 1024)  # bounded: a small file cannot inflate without limit
-    require(inflater.eof and len(raw) == height * (1 + rowbytes), "PNG data is truncated or the wrong length")
+    require(inflater.eof and not inflater.unused_data and len(raw) == height * (1 + rowbytes),
+            "PNG data is truncated, followed by extra bytes or the wrong length")
     require(all(raw[y * (rowbytes + 1)] <= 4 for y in range(height)), "unknown PNG filter")
     edges = None
     if depth == 8 and color == 6:  # all edge pixels transparent: necessary, not proof of the background
