@@ -91,7 +91,9 @@ WRITE_SCRIPTS = (
     "lane-bus.sh", "lane-bus.py",
 )
 SHELLS = {"bash", "sh", "dash", "ash", "zsh", "powershell", "pwsh", "cmd"}
-INTERPRETERS = {"python", "python3", "py", "pwsh", "powershell", "bash", "sh", "uv", "uvx", "node"}
+PYTHON_INTERPRETERS = {"python", "python3", "py"}
+INTERPRETERS = {"pwsh", "powershell", "bash", "sh", "uv", "uvx", "node"}
+PAID_PYTHON_HELPERS = ("image_api", "image_check")
 INLINE_FLAGS = {"-c", "-command", "/c", "-commandwithargs"}
 # Per shell, spelled without quotes or escapes (Argus on ae13a5c). Checked in real shells: in Bash, `\$null`, `null`,
 # `nul` (Git Bash too) and `$null` with a variable `null` set all write a file; in PowerShell `'$null'` and `null`
@@ -461,15 +463,34 @@ def _ansi_decode(body: str) -> str:
     return ANSI_ESCAPE.sub(one, body).split("\x00", 1)[0]
 
 
-def tokenize(segment: str, shell: str = "bash") -> list[str]:
+def tokenize(segment: str, shell: str = "bash", *, skip_redirects: bool = False) -> list[str]:
     """The words of `segment` as the shell passes them on: quotes and escape characters removed, comments dropped.
     In Bash the `$` of `$'...'` and `$"..."` goes too, and the escapes of `$'...'` are decoded (#799): otherwise
     `bash -c $'git push'` would hand `$git push` to the check of the inner command."""
     kinds, _ = lex(segment, shell)
     rules = RULES[shell]
+    redirect_chars = ">" if shell == "powershell" else "<>"
     tokens, current, has, i, n = [], [], False, 0, len(segment)
     while i < n:
         ch, kind = segment[i], kinds[i]
+        if skip_redirects and kind == LIVE and ch in redirect_chars:
+            # A live descriptor belongs to the redirection. An adjacent ordinary word is an argument.
+            prefix = "".join(current)
+            special_descriptor = "*" if shell == "powershell" else "&"
+            descriptor = prefix == special_descriptor or (prefix.isascii() and prefix.isdigit())
+            if (current or has) and not (descriptor and not has and all(k == LIVE for k in kinds[i - len(prefix):i])):
+                tokens.append(prefix)
+            current, has = [], False
+            i += 1
+            while i < n and kinds[i] == LIVE and segment[i] in redirect_chars + "&|":
+                i += 1
+            if i < n and kinds[i] == LIVE and segment[i] == "-" and segment[i - 2:i] == "<<":
+                i += 1
+            while i < n and kinds[i] == LIVE and segment[i].isspace():
+                i += 1
+            while i < n and not (kinds[i] == LIVE and (segment[i].isspace() or segment[i] in redirect_chars)):
+                i += 1
+            continue
         if rules.ansi and kind == SYNTAX and ch in "'\"" and current and current[-1] == "$" \
                 and kinds[i - 1] == LIVE and _odd_dollars(segment, i, kinds):
             current.pop()
@@ -727,6 +748,30 @@ def strip_wrappers(tokens: list[str]) -> list[str]:
     return tokens[i:]
 
 
+def python_entry(args: list[str], launcher: bool) -> tuple[str, str]:
+    """Read the interpreter options up to the script, module, inline code or stdin."""
+    if launcher and args and args[0].startswith("-V:"):
+        args = args[1:]
+    options = iter(args)
+    for arg in options:
+        if arg == "--":
+            return "script", next(options, "")
+        if arg == "-" or not arg.startswith("-"):
+            return "script", arg
+        if arg.startswith("--"):
+            if arg == "--check-hash-based-pycs":
+                next(options, None)
+            continue
+        # In a short option group, these options take the rest of the word or the next argument.
+        for i, flag in enumerate(arg[1:], start=1):
+            if flag in "cmWX":
+                value = arg[i + 1:] or next(options, "")
+                if flag in "cm":
+                    return flag, value
+                break
+    return "", ""
+
+
 def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), actions: dict | None = None,
                   shell: str = "bash") -> None:
     actions = actions or {}
@@ -738,16 +783,26 @@ def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), 
     # Scripts count only when executed (directly or through an interpreter),
     # so reading or searching for them stays allowed.
     executed = [word] if word.endswith((".ps1", ".py", ".sh")) else []
-    if word in INTERPRETERS:
-        # uv run and interpreter flag values can precede these paid helpers. A module run (`python -m image_check`)
-        # or inline code naming one is refused like the script path; test files such as test_image_check.py are not.
-        # Shell -c bodies are checked recursively below; only Python inline code is searched here (-c, -Bc).
+    if word in PYTHON_INTERPRETERS:
+        # A redirection can appear before the program; it is consumed by the shell, not by Python.
+        if "<" in segment or ">" in segment:
+            args = strip_wrappers(tokenize(segment, shell, skip_redirects=True))[1:]
+        kind, entry = python_entry(args, launcher=word == "py")
+        if kind == "script":
+            executed.append(command_word(entry))
+        else:
+            for name in PAID_PYTHON_HELPERS:
+                if (kind == "m" and command_word(entry) == name) or (kind == "c" and name in entry.lower()):
+                    raise Blocked(name + ".py")
+    elif word in INTERPRETERS:
+        # Keep checking wrappers such as uv run, whose options or wrapped interpreter can precede a paid helper.
+        # Shell -c bodies are checked recursively below.
         paths = [command_word(a) for a in args]
         modules = [command_word(m) for flag, m in zip(args, args[1:]) if flag in ("-m", "--module")]
         modules += [command_word(a[2:]) for a in args if a.startswith("-m") and len(a) > 2]
-        inline = [code.lower() for flag, code in zip(args, args[1:]) if word in ("python", "python3", "py", "uv", "uvx")
+        inline = [code.lower() for flag, code in zip(args, args[1:]) if word in ("uv", "uvx")
                   and flag.startswith("-") and not flag.startswith("--") and flag.endswith("c")]
-        paid = [name for name in ("image_api", "image_check")
+        paid = [name for name in PAID_PYTHON_HELPERS
                 if name + ".py" in paths or name in modules or any(name in c for c in inline)]
         if paid:
             raise Blocked(paid[0] + ".py")
