@@ -42,7 +42,7 @@ def png_facts(data):
     require(kind == b"IEND" and ihdr is not None and idat, "PNG lacks IHDR, IDAT or IEND")
     width, height, depth, color, _, _, interlace = struct.unpack(">IIBBBBB", ihdr)
     channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}.get(color)
-    require(channels and depth in (1, 2, 4, 8, 16) and not interlace, "unsupported PNG format")
+    require(channels and depth in (1, 2, 4, 8, 16) and not interlace and width and height, "unsupported PNG format")
     inflater, rowbytes = zlib.decompressobj(), (width * channels * depth + 7) // 8
     raw = inflater.decompress(idat, 64 * 1024 * 1024)  # bounded: a small file cannot inflate without limit
     require(inflater.eof and len(raw) == height * (1 + rowbytes),
@@ -51,12 +51,12 @@ def png_facts(data):
     corners = None
     if depth == 8 and color == 6:
         rows = unfilter(raw, width * 4, height, 4)
-        corners = all(rows[y][x * 4 + 3] == 0 for y in (0, height - 1) for x in (0, width - 1))
+        corners = all(row[x * 4 + 3] == 0 for row in rows for x in (0, width - 1))
     return {"dimensions": [width, height], "corners_transparent": corners}
 
 
-def unfilter(raw, stride, height, bpp):
-    rows, prev = [], bytearray(stride)
+def unfilter(raw, stride, height, bpp):  # returns the first and last rows; keeps only the previous row
+    first, prev = None, bytearray(stride)
     for y in range(height):
         kind, line = raw[y * (stride + 1)], bytearray(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
         if kind == 2:
@@ -68,8 +68,8 @@ def unfilter(raw, stride, height, bpp):
                 pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
                 paeth = a if pa <= pb and pa <= pc else b if pb <= pc else c
                 line[i] = (line[i] + (a if kind == 1 else (a + b) // 2 if kind == 3 else paeth)) & 0xFF
-        rows.append(prev := line)
-    return rows
+        first, prev = line if y == 0 else first, line
+    return first, prev
 
 
 def request(body, key):
@@ -83,8 +83,7 @@ def request(body, key):
 def read_key(cfg):
     if cfg.get("anthropic_key_file"):
         lines = Path(cfg["anthropic_key_file"]).read_text(encoding="utf-8-sig").splitlines()
-        keys = [line.split("=", 1)[1].strip().strip("\"'") for line in lines
-                if line.startswith("ANTHROPIC_API_KEY=")]
+        keys = [line.split("=", 1)[1].strip().strip("\"'") for line in lines if line.startswith("ANTHROPIC_API_KEY=")]
         require(len(keys) == 1, "credential reference must contain one ANTHROPIC_API_KEY")
         return keys[0]
     return os.environ.get(cfg["anthropic_key_env"], "")
@@ -115,8 +114,10 @@ def run(config_path, card_path, image_path, execute=False):
     with image_path.open("rb") as handle:  # read at most one byte past the limit
         data = handle.read(7 * 1024 * 1024 + 1)
     require(len(data) <= 7 * 1024 * 1024, "image too large to send")
-    require(not (image_path.parent / "check.json").is_symlink(), "check.json must not be a link")
-    report = private(root, image_path.parent / "check.json")
+    report = image_path.parent / "check.json"  # never a link and never one of the inputs it would overwrite
+    inputs = (config_path.resolve(), card_path.resolve(), image_path)
+    require(not report.is_symlink() and report.resolve() not in inputs, "check.json must not be a link or an input")
+    report = private(root, report)
     try:
         facts = png_facts(data)
     except (ValueError, struct.error, zlib.error):
@@ -134,9 +135,8 @@ def run(config_path, card_path, image_path, execute=False):
     key = read_key(cfg)
     require(key and not any(c.isspace() for c in key), "credential unavailable or invalid")
     state.mkdir(parents=True, exist_ok=True)
-    db_path, run_id = private(root, state / "check-usage.sqlite3"), uuid.uuid4().hex
+    db_path, run_id, charge = private(root, state / "check-usage.sqlite3"), uuid.uuid4().hex, reserved
     reserve_call(db_path, budget, cfg["max_calls"], reserved, run_id)
-    charge = reserved
     record.update(status="unknown-charge", at=datetime.now(timezone.utc).isoformat())
     listing = "\n".join(f"{i + 1}. {c}" for i, c in enumerate(criteria))
     body = {"model": model, "max_tokens": 8000, "system": SYSTEM, "thinking": {"type": "adaptive"},

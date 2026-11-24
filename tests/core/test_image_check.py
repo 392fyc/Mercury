@@ -147,6 +147,25 @@ class ImageCheckTests(unittest.TestCase):
             self.run_check()
         self.assertEqual(reads, [7 * 1024 * 1024 + 1])
 
+    def test_a_report_path_that_is_an_input_is_refused_before_anything_is_written(self):
+        card = self.image.parent / "check.json"
+        card.write_text(json.dumps(self.job), encoding="utf-8")
+        before = card.read_bytes()
+        with self.assertRaisesRegex(ValueError, "input"):
+            with patch.dict(os.environ, {"MERCURY_CHECK_TEST_KEY": "synthetic-private-key"}), \
+                 patch.object(check, "request", return_value=self.response()) as req:
+                check.run(self.config, card, self.image, True)
+        req.assert_not_called()
+        self.assertEqual(card.read_bytes(), before)
+
+    def test_unfilter_keeps_only_the_first_and_last_rows(self):
+        rows = check.unfilter(bytes([0, 1, 2]) * 999 + bytes([0, 7, 8]), 2, 1000, 1)
+        self.assertEqual(rows, (bytearray([1, 2]), bytearray([7, 8])))
+        empty = png(4, 4, emblem)
+        empty = empty[:8] + chunk(b"IHDR", struct.pack(">IIBBBBB", 4, 0, 8, 6, 0, 0, 0)) + empty[33:]
+        with self.assertRaisesRegex(ValueError, "unsupported"):
+            check.png_facts(empty)
+
     def test_an_unreadable_png_is_a_mechanical_fail_with_a_report(self):
         self.image.write_bytes(png(8, 8, emblem)[:-12])
         result, req = self.run_check()
