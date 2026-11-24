@@ -41,6 +41,7 @@ import re
 import sys
 import threading
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import NamedTuple
 
@@ -94,6 +95,14 @@ SHELLS = {"bash", "sh", "dash", "ash", "zsh", "powershell", "pwsh", "cmd"}
 PYTHON_INTERPRETERS = {"python", "python3", "py"}
 INTERPRETERS = {"pwsh", "powershell", "bash", "sh", "uv", "uvx", "node"}
 PAID_PYTHON_HELPERS = ("image_api", "image_check")
+# Options that take a value before the target program of these standard-library runners.
+PROFILE_VALUE_OPTIONS = ("os", {"--outfile", "--sort"})
+PYTHON_PROGRAM_RUNNERS = {
+    "cprofile": PROFILE_VALUE_OPTIONS,
+    "profile": PROFILE_VALUE_OPTIONS,
+    "trace": ("fC", {"--file", "--coverdir", "--ignore-module", "--ignore-dir"}),
+    "pdb": ("p", {"--pid"}),
+}
 INLINE_FLAGS = {"-c", "-command", "/c", "-commandwithargs"}
 # Per shell, spelled without quotes or escapes (Argus on ae13a5c). Checked in real shells: in Bash, `\$null`, `null`,
 # `nul` (Git Bash too) and `$null` with a variable `null` set all write a file; in PowerShell `'$null'` and `null`
@@ -754,14 +763,8 @@ def strip_wrappers(tokens: list[str]) -> list[str]:
     return tokens[i:]
 
 
-def python_entry(args: list[str], launcher: bool) -> tuple[str, str]:
+def python_entry(options: Iterator[str]) -> tuple[str, str]:
     """Read the interpreter options up to the script, module, inline code or stdin."""
-    if launcher:
-        if args and args[0].lower() == "exec":  # Python install manager: py exec [tag] [Python arguments]
-            args = args[1:]
-        if args and args[0].startswith("-V:"):
-            args = args[1:]
-    options = iter(args)
     for arg in options:
         if arg == "--":
             return "script", next(options, "")
@@ -779,6 +782,79 @@ def python_entry(args: list[str], launcher: bool) -> tuple[str, str]:
                     return flag, value
                 break
     return "", ""
+
+
+def check_python_inline(code: str) -> None:
+    code = code.lower()
+    for name in PAID_PYTHON_HELPERS:
+        if name in code:
+            raise Blocked(name + ".py")
+
+
+def pdb_target_options(options: Iterator[str]) -> Iterator[str]:
+    """Pdb claims its debugger commands even when they follow the debug target."""
+    target_options = []
+    for arg in options:
+        if arg == "--":
+            target_options.append(arg)
+            target_options.extend(options)
+            break
+        if arg in ("-c", "--command"):
+            check_python_inline(next(options, ""))
+        elif arg.startswith("-c"):
+            check_python_inline(arg[2:])
+        elif arg.startswith("--command="):
+            check_python_inline(arg.partition("=")[2])
+        else:
+            target_options.append(arg)
+    return iter(target_options)
+
+
+def python_runner_entry(runner: str, options: Iterator[str]) -> tuple[str, str]:
+    """Read a standard-library runner up to its own target, leaving the target's arguments alone."""
+    short_values, long_values = PYTHON_PROGRAM_RUNNERS[runner]
+    kind = "script"
+    for arg in options:
+        if arg == "--":
+            return kind, next(options, "")
+        if arg == "-" or not arg.startswith("-"):
+            return kind, arg
+        if arg.startswith("--"):
+            option, equals, _ = arg.partition("=")
+            takes_value = option in long_values or (runner != "pdb" and
+                                                     any(flag.startswith(option) for flag in long_values))
+            if takes_value:
+                if not equals:
+                    next(options, "")
+                if option == "--pid":
+                    return "", ""
+            elif runner == "trace" and "--module".startswith(arg):
+                kind = "m"
+            continue
+        for i, flag in enumerate(arg[1:], start=1):
+            if flag == "m" and runner != "trace":
+                if runner == "pdb":
+                    return "m", arg[i + 1:] or next(options, "")
+                kind = "m"
+            if flag in short_values:
+                if i == len(arg) - 1:
+                    next(options, "")
+                if flag == "p":
+                    return "", ""
+                break
+    return "", ""
+
+
+def check_paid_helper_arguments(args: list[str], *, scan_inline: bool) -> None:
+    """Conservatively check the arguments of a wrapper that can run another program."""
+    paths = [command_word(a) for a in args]
+    modules = [command_word(m) for flag, m in zip(args, args[1:]) if flag in ("-m", "--module")]
+    modules += [command_word(a[2:]) for a in args if a.startswith("-m") and len(a) > 2]
+    inline = [code.lower() for flag, code in zip(args, args[1:]) if scan_inline
+              and flag.startswith("-") and not flag.startswith("--") and flag.endswith("c")]
+    for name in PAID_PYTHON_HELPERS:
+        if name + ".py" in paths or name in modules or any(name in c for c in inline):
+            raise Blocked(name + ".py")
 
 
 def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), actions: dict | None = None,
@@ -802,25 +878,28 @@ def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), 
         for name in PAID_PYTHON_HELPERS:
             if name + ".py" in inputs:
                 raise Blocked(name + ".py")
-        kind, entry = python_entry(args, launcher=word == "py")
+        if word == "py":
+            if args and args[0].lower() == "exec":  # Python install manager subcommand
+                args = args[1:]
+            if args and args[0].startswith("-V:"):
+                args = args[1:]
+        options = iter(args)
+        kind, entry = python_entry(options)
+        while kind == "m" and command_word(entry) in PYTHON_PROGRAM_RUNNERS:
+            runner = command_word(entry)
+            if runner == "pdb":
+                options = pdb_target_options(options)
+            kind, entry = python_runner_entry(runner, options)
         if kind == "script":
             executed.append(command_word(entry))
-        else:
-            for name in PAID_PYTHON_HELPERS:
-                if (kind == "m" and command_word(entry) == name) or (kind == "c" and name in entry.lower()):
-                    raise Blocked(name + ".py")
+        elif kind == "m" and command_word(entry) in PAID_PYTHON_HELPERS:
+            raise Blocked(command_word(entry) + ".py")
+        elif kind == "c":
+            check_python_inline(entry)
     elif word in INTERPRETERS:
         # Keep checking wrappers such as uv run, whose options or wrapped interpreter can precede a paid helper.
         # Shell -c bodies are checked recursively below.
-        paths = [command_word(a) for a in args]
-        modules = [command_word(m) for flag, m in zip(args, args[1:]) if flag in ("-m", "--module")]
-        modules += [command_word(a[2:]) for a in args if a.startswith("-m") and len(a) > 2]
-        inline = [code.lower() for flag, code in zip(args, args[1:]) if word in ("uv", "uvx")
-                  and flag.startswith("-") and not flag.startswith("--") and flag.endswith("c")]
-        paid = [name for name in PAID_PYTHON_HELPERS
-                if name + ".py" in paths or name in modules or any(name in c for c in inline)]
-        if paid:
-            raise Blocked(paid[0] + ".py")
+        check_paid_helper_arguments(args, scan_inline=word in ("uv", "uvx"))
         executed += [command_word(a) for a in args if not a.startswith("-")][:1]
         executed += [command_word(args[i + 1]) for i, a in enumerate(args[:-1])
                      if a.lower() in ("-file", "-f")]

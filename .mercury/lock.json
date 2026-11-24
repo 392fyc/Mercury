@@ -45,7 +45,7 @@
     ".mercury/packs/core/docs/mercury-harness-ownership.md": "76d96879d62b77a26cdf770e6e1d1c5a6008f3fb858113c318bc89a0ec295478",
     ".mercury/packs/core/docs/mercury-scenario-gate.md": "e3d3ebe8974849668d219438cfc13d48871042e1a66aaf4607e10d2e09522b19",
     ".mercury/packs/core/docs/mercury-task-contract.md": "5418af9dc8c6f866357ffbf8908095b83d54c0c9d4e41f1e837a1ef836339ebe",
-    ".mercury/packs/core/hooks/readonly_guard.py": "5b943812561414e9a3e69c4440963551b0c56bcd9a87f3abfbb16a256b84691a",
+    ".mercury/packs/core/hooks/readonly_guard.py": "cc79b277b8097e9bfc2d6f7aa65681a910c473deab15762b372bcf53d20eaeb6",
     ".mercury/packs/core/hooks/readonly_guard.sh": "f7823f1ea505f3d7c08847a72d00249b45dd476b426fc8e3adffbd9dc5cde1b3",
     ".mercury/packs/core/hooks/wait_guard.py": "dd2460862ea736f8ad1969e076a916b7b8de8cbae8546d1f9a0587526063b675",
     ".mercury/packs/core/hooks/wait_guard.sh": "5fd3b2ffb6b5ee053f75b6ba0636f353e098f9467989c07daf0628138a2788c5",
