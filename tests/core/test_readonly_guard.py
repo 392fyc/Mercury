@@ -23,7 +23,7 @@ ALLOWED = [
     "python -B -m pytest -q tests/core/test_image_check.py", "python -m pytest tests/core -k image_api",
     "python -B -m pytest -rc tests/core/test_image_check.py", "python -m pytest tests -m image_check",
     "python tests/core/test_image_check.py -m image_check",
-    "python -c 'print(1)' image_check.py",
+    "python -c 'print(1)' -m image_check",
     "python 2>&1 -m pytest tests -m image_check",
     "py exec -m pytest tests -m image_check",
     "python -m cProfile -m pytest tests -m image_check",
@@ -170,6 +170,9 @@ BLOCKED = [
     "python -m trace --trace --module image_api --help",
     "python -m cProfile --so time packs/core/skills/image-api/scripts/image_check.py --help",
     "python -m pdb example.py -c 'import image_check'",
+    "python -m pdb --comm continue -m image_check --help",
+    "python {fd}>/dev/null -m image_check --help",
+    "python -m coverage run packs/core/skills/image-api/scripts/image_check.py --help",
     # #744: the lane bus writes its store, and release cannot be undone
     "bash .mercury/packs/lanes/scripts/lane-bus.sh release --harness claude --lane main",
     "bash .mercury/packs/lanes/scripts/lane-bus.sh read --harness claude",

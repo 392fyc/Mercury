@@ -488,6 +488,8 @@ def tokenize(segment: str, shell: str = "bash", *, input_files: list[str] | None
             prefix = "".join(current)
             special_descriptor = "*" if shell == "powershell" else "&"
             descriptor = prefix == special_descriptor or (prefix.isascii() and prefix.isdigit())
+            if shell in ("bash", "sh") and re.fullmatch(r"\{[A-Za-z_][A-Za-z0-9_]*\}", prefix):
+                descriptor = True
             if (current or has) and not (descriptor and not has and all(k == LIVE for k in kinds[i - len(prefix):i])):
                 tokens.append(prefix)
             current, has = [], False
@@ -799,12 +801,12 @@ def pdb_target_options(options: Iterator[str]) -> Iterator[str]:
             target_options.append(arg)
             target_options.extend(options)
             break
-        if arg in ("-c", "--command"):
-            check_python_inline(next(options, ""))
+        name, equals, value = arg.partition("=")
+        # Older pdb uses getopt, which also consumes unique prefixes of --command.
+        if arg == "-c" or (name.startswith("--") and "--command".startswith(name)):
+            check_python_inline(value if equals else next(options, ""))
         elif arg.startswith("-c"):
             check_python_inline(arg[2:])
-        elif arg.startswith("--command="):
-            check_python_inline(arg.partition("=")[2])
         else:
             target_options.append(arg)
     return iter(target_options)
@@ -869,14 +871,16 @@ def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), 
     # so reading or searching for them stays allowed.
     executed = [word] if word.endswith((".ps1", ".py", ".sh")) else []
     if word in PYTHON_INTERPRETERS:
+        # Preserve the separate exact-name check for paid scripts, including targets passed to an unknown wrapper.
+        paths = {command_word(arg) for arg in args}
         # A redirection can appear before the program; it is consumed by the shell, not by Python.
         input_files: list[str] = []
         if "<" in segment or ">" in segment:
             args = strip_wrappers(tokenize(segment, shell, input_files=input_files))[1:]
         # Keep refusing paid helpers named as input files: Python can execute code from stdin.
-        inputs = {command_word(path) for path in input_files}
+        paths.update(map(command_word, input_files))
         for name in PAID_PYTHON_HELPERS:
-            if name + ".py" in inputs:
+            if name + ".py" in paths:
                 raise Blocked(name + ".py")
         if word == "py":
             if args and args[0].lower() == "exec":  # Python install manager subcommand
