@@ -28,6 +28,7 @@ ALLOWED = [
     "py exec -m pytest tests -m image_check",
     "python -m cProfile -m pytest tests -m image_check",
     "python -m pdb -m pytest tests -m image_check",
+    "python -m coverage run -m pytest tests -m image_check",
     "bash -c 'grep -n image_check packs/core/hooks/readonly_guard.py'",
     # wrapper commands run the command after them (#804): read-only ones stay allowed
     "timeout 20 git log -1", "timeout -k 5 20s git status", "nice -n 5 git log", "env -i A=1 git status",
@@ -173,6 +174,8 @@ BLOCKED = [
     "python -m pdb --comm continue -m image_check --help",
     "python {fd}>/dev/null -m image_check --help",
     "python -m coverage run packs/core/skills/image-api/scripts/image_check.py --help",
+    "python -m coverage run --source packs/core -m image_check --help",
+    "python -m coverage run --module image_api --help",
     # #744: the lane bus writes its store, and release cannot be undone
     "bash .mercury/packs/lanes/scripts/lane-bus.sh release --harness claude --lane main",
     "bash .mercury/packs/lanes/scripts/lane-bus.sh read --harness claude",

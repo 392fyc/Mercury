@@ -95,13 +95,15 @@ SHELLS = {"bash", "sh", "dash", "ash", "zsh", "powershell", "pwsh", "cmd"}
 PYTHON_INTERPRETERS = {"python", "python3", "py"}
 INTERPRETERS = {"pwsh", "powershell", "bash", "sh", "uv", "uvx", "node"}
 PAID_PYTHON_HELPERS = ("image_api", "image_check")
-# Options that take a value before the target program of these standard-library runners.
+# Options that take a value before the target program of these runners.
 PROFILE_VALUE_OPTIONS = ("os", {"--outfile", "--sort"})
 PYTHON_PROGRAM_RUNNERS = {
     "cprofile": PROFILE_VALUE_OPTIONS,
     "profile": PROFILE_VALUE_OPTIONS,
     "trace": ("fC", {"--file", "--coverdir", "--ignore-module", "--ignore-dir"}),
     "pdb": ("p", {"--pid"}),
+    "coverage": ("", {"--concurrency", "--context", "--data-file", "--debug", "--include",
+                     "--omit", "--rcfile", "--save-signal", "--source"}),
 }
 INLINE_FLAGS = {"-c", "-command", "/c", "-commandwithargs"}
 # Per shell, spelled without quotes or escapes (Argus on ae13a5c). Checked in real shells: in Bash, `\$null`, `null`,
@@ -813,7 +815,9 @@ def pdb_target_options(options: Iterator[str]) -> Iterator[str]:
 
 
 def python_runner_entry(runner: str, options: Iterator[str]) -> tuple[str, str]:
-    """Read a standard-library runner up to its own target, leaving the target's arguments alone."""
+    """Read a runner up to its own target, leaving the target's arguments alone."""
+    if runner == "coverage" and next(options, "") != "run":
+        return "", ""
     short_values, long_values = PYTHON_PROGRAM_RUNNERS[runner]
     kind = "script"
     for arg in options:
@@ -830,7 +834,7 @@ def python_runner_entry(runner: str, options: Iterator[str]) -> tuple[str, str]:
                     next(options, "")
                 if option == "--pid":
                     return "", ""
-            elif runner == "trace" and "--module".startswith(arg):
+            elif runner in ("trace", "coverage") and "--module".startswith(arg):
                 kind = "m"
             continue
         for i, flag in enumerate(arg[1:], start=1):
