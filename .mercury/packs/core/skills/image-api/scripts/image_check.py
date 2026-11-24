@@ -30,21 +30,23 @@ SCHEMA = {"type": "object", "additionalProperties": False, "required": ["items"]
 def png_facts(data):
     """Size and corner transparency (8-bit RGBA only, else None) of a non-interlaced PNG; standard library."""
     require(data.startswith(PNG), "not a PNG")
-    pos, idat, ihdr, kind = 8, b"", None, b""
+    pos, idat, ihdr, kind, kinds = 8, [], None, b"", set()
     while pos < len(data) and kind != b"IEND":
         length, kind = struct.unpack(">I4s", data[pos:pos + 8])
         body = data[pos + 8:pos + 8 + length]
         require(len(body) == length and zlib.crc32(kind + body) ==
                 struct.unpack(">I", data[pos + 8 + length:pos + 12 + length])[0], "corrupt PNG chunk")
         ihdr = body if kind == b"IHDR" else ihdr
-        idat += body if kind == b"IDAT" else b""
-        pos += 12 + length
+        idat += [body] if kind == b"IDAT" else []  # joined once below, not copied per chunk
+        pos, kinds = pos + 12 + length, kinds | {kind}
     require(kind == b"IEND" and ihdr is not None and idat, "PNG lacks IHDR, IDAT or IEND")
-    width, height, depth, color, _, _, interlace = struct.unpack(">IIBBBBB", ihdr)
+    width, height, depth, color, compression, method, interlace = struct.unpack(">IIBBBBB", ihdr)
     channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}.get(color)
-    require(channels and depth in (1, 2, 4, 8, 16) and not interlace and width and height, "unsupported PNG format")
+    depths = (1, 2, 4, 8, 16) if color == 0 else (1, 2, 4, 8) if color == 3 else (8, 16)
+    require(channels and depth in depths and not (compression or method or interlace) and width and height
+            and (color != 3 or b"PLTE" in kinds), "unsupported PNG format")
     inflater, rowbytes = zlib.decompressobj(), (width * channels * depth + 7) // 8
-    raw = inflater.decompress(idat, 64 * 1024 * 1024)  # bounded: a small file cannot inflate without limit
+    raw = inflater.decompress(b"".join(idat), 64 * 1024 * 1024)  # bounded: a small file cannot inflate without limit
     require(inflater.eof and len(raw) == height * (1 + rowbytes),
             "PNG pixel data is truncated, too large or the wrong length")
     require(all(raw[y * (rowbytes + 1)] <= 4 for y in range(height)), "unknown PNG filter")
@@ -89,10 +91,6 @@ def read_key(cfg):
     return os.environ.get(cfg["anthropic_key_env"], "")
 
 
-def verdict(results):
-    return "fail" if "fail" in results else "pass" if set(results) == {"pass"} else "unsure"
-
-
 def run(config_path, card_path, image_path, execute=False):
     cfg = json.loads(config_path.read_text(encoding="utf-8"))
     require(set(cfg) <= {"project_root", "state_dir", "anthropic_key_file", "anthropic_key_env", "model",
@@ -132,8 +130,7 @@ def run(config_path, card_path, image_path, execute=False):
         record.update(status="checked", verdict="fail")
     if not execute or record["status"] == "checked":
         return finish(record, report, execute)
-    key = read_key(cfg)
-    require(key and not any(c.isspace() for c in key), "credential unavailable or invalid")
+    require((key := read_key(cfg)) and not any(c.isspace() for c in key), "credential unavailable or invalid")
     state.mkdir(parents=True, exist_ok=True)
     db_path, run_id, charge = private(root, state / "check-usage.sqlite3"), uuid.uuid4().hex, reserved
     reserve_call(db_path, budget, cfg["max_calls"], reserved, run_id)
@@ -159,7 +156,9 @@ def run(config_path, card_path, image_path, execute=False):
                 "answer must judge each criterion exactly once")
         record["items"] = [{"id": n, "criterion": c, "result": answer[n]["result"], "reason": answer[n]["reason"]}
                            for n, c in enumerate(criteria, 1)]
-        record.update(status="checked", verdict=verdict([i["result"] for i in record["items"]]))
+        results = {i["result"] for i in record["items"]}
+        verdict = "fail" if "fail" in results else "pass" if results == {"pass"} else "unsure"
+        record.update(status="checked", verdict=verdict)
     except Exception as error:
         record.update(status="unknown-charge" if record.get("actual_usd") is None else "failed",
                       verdict="unsure", error_type=type(error).__name__)
@@ -173,10 +172,11 @@ def run(config_path, card_path, image_path, execute=False):
 
 
 def finish(record, report, execute):
-    if execute:  # O_NOFOLLOW where the platform has it: never write through a link placed after the check
-        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
-        with open(os.open(report, flags, 0o600), "w", encoding="utf-8") as handle:
+    if execute:  # a new file renamed over check.json: never truncates a link, hard link or other alias
+        temp = report.with_name(f".check-{uuid.uuid4().hex}.json")
+        with open(os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False, indent=2) + "\n")
+        os.replace(temp, report)
     return record
 
 

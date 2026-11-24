@@ -195,6 +195,23 @@ class ImageCheckTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "link"):
             self.run_check()
 
+    def test_a_hard_linked_report_is_replaced_and_its_other_name_is_untouched(self):
+        other = self.private / "keep.json"
+        other.write_text("keep", encoding="utf-8")
+        os.link(other, self.image.parent / "check.json")
+        result, _ = self.run_check()
+        self.assertEqual(result["verdict"], "pass")
+        self.assertEqual(other.read_text(encoding="utf-8"), "keep")
+        self.assertEqual(json.loads((self.image.parent / "check.json").read_text(encoding="utf-8"))["verdict"], "pass")
+        self.assertEqual(sorted(p.name for p in self.image.parent.iterdir()), ["check.json", "image.png"])
+
+    def test_png_header_fields_and_palette_are_checked(self):
+        whole = png(4, 4, lambda x, y: (1, 2, 3), color=2)
+        for depth, color, compression, method in ((8, 3, 0, 0), (4, 2, 0, 0), (8, 2, 1, 0), (8, 2, 0, 1)):
+            bad = whole[:8] + chunk(b"IHDR", struct.pack(">IIBBBBB", 4, 4, depth, color, compression, method, 0))
+            with self.subTest(depth=depth, color=color), self.assertRaisesRegex(ValueError, "unsupported"):
+                check.png_facts(bad + whole[33:])
+
     def test_preflight_reads_no_key_and_writes_nothing(self):
         result, req = self.run_check(execute=False)
         self.assertEqual(result["status"], "dry-run")
