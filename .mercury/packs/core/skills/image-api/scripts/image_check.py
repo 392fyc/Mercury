@@ -28,7 +28,7 @@ SCHEMA = {"type": "object", "additionalProperties": False, "required": ["items"]
 
 
 def png_facts(data):
-    """Size and corner transparency (8-bit RGBA only, else None) of a non-interlaced PNG; standard library."""
+    """Size and edge transparency (8-bit RGBA only, else None) of a non-interlaced PNG; standard library."""
     require(data.startswith(PNG), "not a PNG")
     pos, idat, ihdr, kind, palette = 8, [], None, b"", False
     while pos < len(data) and kind != b"IEND":
@@ -49,15 +49,15 @@ def png_facts(data):
     raw = inflater.decompress(b"".join(idat), 64 * 1024 * 1024)  # bounded: a small file cannot inflate without limit
     require(inflater.eof and len(raw) == height * (1 + rowbytes), "PNG data is truncated or the wrong length")
     require(all(raw[y * (rowbytes + 1)] <= 4 for y in range(height)), "unknown PNG filter")
-    corners = None
-    if depth == 8 and color == 6:
-        rows = unfilter(raw, width * 4, height, 4)
-        corners = all(row[x * 4 + 3] == 0 for row in rows for x in (0, width - 1))
-    return {"dimensions": [width, height], "corners_transparent": corners}
+    edges = None
+    if depth == 8 and color == 6:  # all edge pixels transparent: necessary, not proof of the background
+        edges = all(max(row[3::4]) == 0 if y in (0, height - 1) else row[3] == row[-1] == 0
+                    for y, row in enumerate(unfilter(raw, width * 4, height, 4)))
+    return {"dimensions": [width, height], "edges_transparent": edges}
 
 
-def unfilter(raw, stride, height, bpp):  # returns the first and last rows; keeps only the previous row
-    first, prev = None, bytearray(stride)
+def unfilter(raw, stride, height, bpp):  # yields each row; keeps only the previous one
+    prev = bytearray(stride)
     for y in range(height):
         kind, line = raw[y * (stride + 1)], bytearray(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
         if kind == 2:
@@ -69,8 +69,7 @@ def unfilter(raw, stride, height, bpp):  # returns the first and last rows; keep
                 pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
                 paeth = a if pa <= pb and pa <= pc else b if pb <= pc else c
                 line[i] = (line[i] + (a if kind == 1 else (a + b) // 2 if kind == 3 else paeth)) & 0xFF
-        first, prev = line if y == 0 else first, line
-    return first, prev
+        yield (prev := line)
 
 
 def request(body, key):
@@ -118,11 +117,11 @@ def run(config_path, card_path, image_path, execute=False):
     try:
         facts = png_facts(data)
     except (ValueError, struct.error, zlib.error):
-        facts = {"dimensions": None, "corners_transparent": None}
+        facts = {"dimensions": None, "edges_transparent": None}
     mechanical = {"png": facts["dimensions"] is not None,
                   "size": facts["dimensions"] == [int(n) for n in card.get("size", "1024x1024").split("x")]}
     if card.get("background") == "transparent":  # unverifiable transparency does not pass
-        mechanical["transparent_background"] = facts["corners_transparent"] is True
+        mechanical["transparent_edges"] = facts["edges_transparent"] is True
     record = {"schema": "mercury-image-check/1", "model": model, "image_sha256": hashlib.sha256(data).hexdigest(),
               "dimensions": facts["dimensions"], "mechanical": mechanical, "status": "dry-run", "items": []}
     if not all(mechanical.values()):

@@ -93,11 +93,13 @@ class ImageCheckTests(unittest.TestCase):
 
     def test_png_facts_decode_every_filter_type(self):
         facts = check.png_facts(png(8, 8, emblem, filters=(0, 1, 2, 3, 4)))
-        self.assertEqual(facts, {"dimensions": [8, 8], "corners_transparent": True})
+        self.assertEqual(facts, {"dimensions": [8, 8], "edges_transparent": True})
         opaque = check.png_facts(png(4, 3, lambda x, y: (x * 40, y * 60, 90, 255), filters=(4, 3)))
-        self.assertFalse(opaque["corners_transparent"])
+        self.assertFalse(opaque["edges_transparent"])
+        rounded = check.png_facts(png(8, 8, lambda x, y: (0, 0, 0, 0) if x in (0, 7) and y in (0, 7) else (255,) * 4))
+        self.assertFalse(rounded["edges_transparent"])  # transparent corners on a white background
         rgb = check.png_facts(png(4, 4, lambda x, y: (1, 2, 3), color=2))
-        self.assertEqual(rgb, {"dimensions": [4, 4], "corners_transparent": None})
+        self.assertEqual(rgb, {"dimensions": [4, 4], "edges_transparent": None})
 
     def test_corrupt_png_is_refused(self):
         data = bytearray(png(4, 4, emblem))
@@ -158,9 +160,9 @@ class ImageCheckTests(unittest.TestCase):
         req.assert_not_called()
         self.assertEqual(card.read_bytes(), before)
 
-    def test_unfilter_keeps_only_the_first_and_last_rows(self):
+    def test_unfilter_yields_rows_one_at_a_time(self):
         rows = check.unfilter(bytes([0, 1, 2]) * 999 + bytes([0, 7, 8]), 2, 1000, 1)
-        self.assertEqual(rows, (bytearray([1, 2]), bytearray([7, 8])))
+        self.assertEqual((next(rows), list(rows)[-1]), (bytearray([1, 2]), bytearray([7, 8])))
         empty = png(4, 4, emblem)
         empty = empty[:8] + chunk(b"IHDR", struct.pack(">IIBBBBB", 4, 0, 8, 6, 0, 0, 0)) + empty[33:]
         with self.assertRaisesRegex(ValueError, "unsupported"):
@@ -176,7 +178,7 @@ class ImageCheckTests(unittest.TestCase):
     def test_transparency_that_cannot_be_verified_does_not_pass(self):
         self.image.write_bytes(png(8, 8, lambda x, y: (1, 2, 3), color=2))
         result, req = self.run_check()
-        self.assertEqual((result["verdict"], result["mechanical"]["transparent_background"]), ("fail", False))
+        self.assertEqual((result["verdict"], result["mechanical"]["transparent_edges"]), ("fail", False))
         req.assert_not_called()
 
     def test_a_tracked_report_is_refused_before_any_call(self):
@@ -215,7 +217,7 @@ class ImageCheckTests(unittest.TestCase):
     def test_preflight_reads_no_key_and_writes_nothing(self):
         result, req = self.run_check(execute=False)
         self.assertEqual(result["status"], "dry-run")
-        self.assertEqual(result["mechanical"], {"png": True, "size": True, "transparent_background": True})
+        self.assertEqual(result["mechanical"], {"png": True, "size": True, "transparent_edges": True})
         req.assert_not_called()
         self.assertFalse((self.private / "state").exists())
         self.assertFalse((self.image.parent / "check.json").exists())
@@ -248,7 +250,7 @@ class ImageCheckTests(unittest.TestCase):
         self.image.write_bytes(png(8, 8, lambda x, y: (9, 9, 9, 255)))
         self.job["size"] = "8x8"
         self.save()
-        self.assertFalse(self.run_check()[0]["mechanical"]["transparent_background"])
+        self.assertFalse(self.run_check()[0]["mechanical"]["transparent_edges"])
 
     def test_missing_acceptance_is_refused(self):
         del self.job["acceptance"]
