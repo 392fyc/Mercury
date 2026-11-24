@@ -188,7 +188,7 @@ def main():
     args = parser.parse_args()
     try:
         result = run(args.config, args.card, args.execute)
-        print(json.dumps(result, ensure_ascii=False))
+        print(json.dumps(result))  # ASCII escapes: the result must print on any console code page
         return 0 if result["status"] in ("ok", "dry-run") else 1
     except Exception as error:
         print(json.dumps({"status": "refused", "error_type": type(error).__name__}))

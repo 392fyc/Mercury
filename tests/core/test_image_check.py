@@ -1,6 +1,7 @@
 """Offline tests for the Claude visual check: PNG facts, verdicts, budget and refusals. No paid calls."""
-from contextlib import closing
+from contextlib import closing, redirect_stdout
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -117,6 +118,34 @@ class ImageCheckTests(unittest.TestCase):
         interlaced = whole[:8] + chunk(b"IHDR", struct.pack(">IIBBBBB", 4, 4, 8, 6, 0, 0, 1)) + whole[33:]
         with self.assertRaisesRegex(ValueError, "unsupported"):
             check.png_facts(interlaced)
+
+    def test_an_unknown_filter_in_any_format_fails_without_a_call(self):
+        data = png(4, 4, lambda x, y: (1, 2, 3), color=2)
+        raw = bytearray(zlib.decompress(data[33 + 8:-12 - 4]))
+        raw[13] = 7  # second row of 4 RGB pixels: 1 filter byte + 12 data bytes per row
+        self.image.write_bytes(data[:33] + chunk(b"IDAT", zlib.compress(bytes(raw))) + chunk(b"IEND", b""))
+        with self.assertRaisesRegex(ValueError, "unknown PNG filter"):
+            check.png_facts(self.image.read_bytes())
+        self.job.update(size="4x4", background="opaque")
+        self.save()
+        result, req = self.run_check()
+        self.assertEqual((result["verdict"], result["mechanical"]["png"]), ("fail", False))
+        req.assert_not_called()
+
+    def test_an_oversized_image_is_refused_after_a_bounded_read(self):
+        self.image.write_bytes(bytes(7 * 1024 * 1024 + 2))
+        reads = []
+        real_open = Path.open
+
+        def spy(path, *args, **kwargs):
+            handle = real_open(path, *args, **kwargs)
+            if path == self.image:
+                original = handle.read
+                handle.read = lambda n=-1: reads.append(n) or original(n)
+            return handle
+        with patch.object(Path, "open", spy), self.assertRaisesRegex(ValueError, "too large"):
+            self.run_check()
+        self.assertEqual(reads, [7 * 1024 * 1024 + 1])
 
     def test_an_unreadable_png_is_a_mechanical_fail_with_a_report(self):
         self.image.write_bytes(png(8, 8, emblem)[:-12])
@@ -241,6 +270,19 @@ class ImageCheckTests(unittest.TestCase):
               patch.dict(os.environ, {"MERCURY_CHECK_TEST_KEY": "synthetic-private-key"}),
               patch.object(check, "request", return_value=self.response())):
             self.assertEqual(check.main(), 0)
+
+    def test_stdout_is_ascii_so_a_narrow_code_page_cannot_turn_a_paid_result_into_a_refusal(self):
+        self.job["acceptance"] = ["只有一个银色徽章", "没有文字"]
+        self.save()
+        argv = ["image_check.py", "--config", str(self.config), "--card", str(self.card), "--image", str(self.image),
+                "--execute"]
+        out = io.StringIO()
+        with (patch.object(sys, "argv", argv), redirect_stdout(out),
+              patch.dict(os.environ, {"MERCURY_CHECK_TEST_KEY": "synthetic-private-key"}),
+              patch.object(check, "request", return_value=self.response())):
+            self.assertEqual(check.main(), 0)
+        self.assertTrue(out.getvalue().isascii())
+        self.assertEqual(json.loads(out.getvalue())["items"][0]["criterion"], "只有一个银色徽章")
 
     def test_unknown_model_and_public_paths_are_refused(self):
         self.cfg["model"] = "claude-unknown"

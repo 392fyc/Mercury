@@ -43,10 +43,11 @@ def png_facts(data):
     width, height, depth, color, _, _, interlace = struct.unpack(">IIBBBBB", ihdr)
     channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}.get(color)
     require(channels and depth in (1, 2, 4, 8, 16) and not interlace, "unsupported PNG format")
-    inflater = zlib.decompressobj()
+    inflater, rowbytes = zlib.decompressobj(), (width * channels * depth + 7) // 8
     raw = inflater.decompress(idat, 64 * 1024 * 1024)  # bounded: a small file cannot inflate without limit
-    require(inflater.eof and len(raw) == height * (1 + (width * channels * depth + 7) // 8),
+    require(inflater.eof and len(raw) == height * (1 + rowbytes),
             "PNG pixel data is truncated, too large or the wrong length")
+    require(all(raw[y * (rowbytes + 1)] <= 4 for y in range(height)), "unknown PNG filter")
     corners = None
     if depth == 8 and color == 6:
         rows = unfilter(raw, width * 4, height, 4)
@@ -58,7 +59,6 @@ def unfilter(raw, stride, height, bpp):
     rows, prev = [], bytearray(stride)
     for y in range(height):
         kind, line = raw[y * (stride + 1)], bytearray(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
-        require(kind <= 4, "unknown PNG filter")
         if kind == 2:
             line = bytearray((x + b) & 0xFF for x, b in zip(line, prev))
         elif kind:
@@ -101,8 +101,7 @@ def run(config_path, card_path, image_path, execute=False):
     root = primary_root(cfg["project_root"])
     private(root, config_path)
     state = private(root, root / cfg["state_dir"])
-    require(bool(cfg.get("anthropic_key_file")) != bool(cfg.get("anthropic_key_env")),
-            "choose one credential reference")
+    require(bool(cfg.get("anthropic_key_file")) != bool(cfg.get("anthropic_key_env")), "choose one key reference")
     model = cfg.get("model", "claude-opus-5-5")
     require(model in MODELS, "unsupported model; recheck model and prices before adding one")
     budget, reserved = micro(cfg["budget_usd"]), micro(cfg["reserve_usd"])
@@ -113,7 +112,8 @@ def run(config_path, card_path, image_path, execute=False):
     require(isinstance(criteria, list) and 0 < len(criteria) <= 30 and
             all(isinstance(c, str) and 0 < len(c) <= 500 for c in criteria), "card needs an acceptance list")
     image_path = private(root, image_path)
-    data = image_path.read_bytes()
+    with image_path.open("rb") as handle:  # read at most one byte past the limit
+        data = handle.read(7 * 1024 * 1024 + 1)
     require(len(data) <= 7 * 1024 * 1024, "image too large to send")
     require(not (image_path.parent / "check.json").is_symlink(), "check.json must not be a link")
     report = private(root, image_path.parent / "check.json")
@@ -188,7 +188,7 @@ def main():
     args = parser.parse_args()
     try:
         result = run(args.config, args.card, args.image, args.execute)
-        print(json.dumps(result, ensure_ascii=False))
+        print(json.dumps(result))  # ASCII escapes: a paid result must not fail on a narrow console code page
         return {"pass": 0, "fail": 1, "unsure": 2}.get(result.get("verdict"), 4)  # 4: preflight passed, not judged
     except Exception as error:
         print(json.dumps({"status": "refused", "error_type": type(error).__name__}))
