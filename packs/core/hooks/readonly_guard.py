@@ -804,11 +804,14 @@ def pdb_target_options(options: Iterator[str]) -> Iterator[str]:
             target_options.extend(options)
             break
         name, equals, value = arg.partition("=")
-        # Older pdb uses getopt, which also consumes unique prefixes of --command.
-        if arg == "-c" or (name.startswith("--") and "--command".startswith(name)):
+        # Older pdb uses getopt, which accepts combined short options and unique long prefixes.
+        short_command = re.fullmatch(r"-(m*)c(.*)", arg, re.DOTALL)
+        if short_command:
+            if short_command[1]:
+                target_options.append("-m")
+            check_python_inline(short_command[2] or next(options, ""))
+        elif name.startswith("--") and "--command".startswith(name):
             check_python_inline(value if equals else next(options, ""))
-        elif arg.startswith("-c"):
-            check_python_inline(arg[2:])
         else:
             target_options.append(arg)
     return iter(target_options)

@@ -28,6 +28,7 @@ ALLOWED = [
     "py exec -m pytest tests -m image_check",
     "python -m cProfile -m pytest tests -m image_check",
     "python -m pdb -m pytest tests -m image_check",
+    "python -m pdb -mc quit pytest tests -m image_check",
     "python -m coverage run -m pytest tests -m image_check",
     "bash -c 'grep -n image_check packs/core/hooks/readonly_guard.py'",
     # wrapper commands run the command after them (#804): read-only ones stay allowed
@@ -172,6 +173,7 @@ BLOCKED = [
     "python -m cProfile --so time packs/core/skills/image-api/scripts/image_check.py --help",
     "python -m pdb example.py -c 'import image_check'",
     "python -m pdb --comm continue -m image_check --help",
+    "python -m pdb -mc 'import image_check' example",
     "python {fd}>/dev/null -m image_check --help",
     "python -m coverage run packs/core/skills/image-api/scripts/image_check.py --help",
     "python -m coverage run --source packs/core -m image_check --help",
