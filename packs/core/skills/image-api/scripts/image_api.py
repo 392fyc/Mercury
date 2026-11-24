@@ -39,14 +39,19 @@ def private(root, path):
     return path
 
 
+def primary_root(project_root):
+    root = Path(project_root).resolve()
+    main = subprocess.run(["git", "-C", str(root), "worktree", "list", "--porcelain", "-z"],  # raw UTF-8 path
+                          capture_output=True, check=True).stdout.decode("utf-8").split(chr(0))[0]
+    require(main == "worktree " + root.as_posix(), "project_root must be the primary checkout")
+    return root
+
+
 def load_job(config_path, card_path):
     cfg = json.loads(config_path.read_text(encoding="utf-8"))
     require(set(cfg) <= {"project_root", "state_dir", "key_file", "key_env", "budget_usd",
                          "reserve_usd", "max_calls"}, "unknown config fields")
-    root = Path(cfg["project_root"]).resolve()
-    main = subprocess.run(["git", "-C", str(root), "worktree", "list", "--porcelain"],
-                          capture_output=True, text=True, check=True).stdout.splitlines()[0]
-    require(main == "worktree " + root.as_posix(), "project_root must be the primary checkout")
+    root = primary_root(cfg["project_root"])
     private(root, config_path)
     state = private(root, root / cfg["state_dir"])
     require(bool(cfg.get("key_file")) != bool(cfg.get("key_env")), "choose one credential reference")
@@ -55,7 +60,7 @@ def load_job(config_path, card_path):
             "invalid reservation or call limit")
     card_path = private(root, card_path)
     card = json.loads(card_path.read_text(encoding="utf-8"))
-    require(set(card) <= {"mode", "prompt", "references", "model", "size", "quality", "background"},
+    require(set(card) <= {"mode", "prompt", "references", "model", "size", "quality", "background", "acceptance"},
             "unknown card fields")
     mode = card["mode"]
     require(mode in ("generate", "edit"), "mode must be generate or edit")
@@ -141,16 +146,14 @@ def run(config_path, card_path, execute=False):
     run_id = uuid.uuid4().hex
     db_path = private(Path(cfg["project_root"]).resolve(), state / "usage.sqlite3")
     reserve_call(db_path, budget, cfg["max_calls"], reserved, run_id)
-    out = state / run_id
-    charge = reserved
+    out, charge = state / run_id, reserved
     record.update(run_id=run_id, status="pending", at=datetime.now(timezone.utc).isoformat())
     try:
         out.mkdir()
         response = request(body, record["mode"], key)
         usage = response.get("usage")
         charge_actual = usage_cost(usage)
-        if charge_actual is not None:
-            charge = charge_actual
+        charge = charge if charge_actual is None else charge_actual
         record.update(usage={"input_tokens": usage["input_tokens"], "output_tokens": usage["output_tokens"],
                              "input_tokens_details": {k: usage["input_tokens_details"][k]
                                                       for k in ("text_tokens", "image_tokens")}}
@@ -185,7 +188,7 @@ def main():
     args = parser.parse_args()
     try:
         result = run(args.config, args.card, args.execute)
-        print(json.dumps(result, ensure_ascii=False))
+        print(json.dumps(result))  # ASCII escapes: the result must print on any console code page
         return 0 if result["status"] in ("ok", "dry-run") else 1
     except Exception as error:
         print(json.dumps({"status": "refused", "error_type": type(error).__name__}))

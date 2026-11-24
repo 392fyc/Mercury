@@ -1,6 +1,6 @@
 ---
 name: image-api
-description: 通过 OpenAI Images API 生成或编辑位图，供没有原生生图能力的 Claude 等宿主使用，或用于用户明确指定的 API 生图任务；包含参考图编辑、私有凭据引用、预算预留和用量回执。
+description: 通过 OpenAI Images API 生成或编辑位图，供没有原生生图能力的 Claude 等宿主使用，或用于用户明确指定的 API 生图任务；包含参考图编辑、私有凭据引用、预算预留和用量回执。可选：用 Claude 对照任务卡的验收条目检查候选图，只返回判定。
 ---
 
 # API 生图与参考图编辑
@@ -26,6 +26,17 @@ python -B <skill-dir>/scripts/image_api.py --config <private-config.json> --card
 第一条只做离线输入检查，不读取 key、不创建账本、不联网。第二条才发送一次付费请求。`generate` 为文生图；`edit` 接受现有图片和提示词，可用于局部修改或带参考图的新候选。每次只输出一张 PNG，不自动重试，不自动切换模型、端点或供应商。
 
 凭据只通过明确配置的 `key_file` 或 `key_env` 读取，不让模型转抄，不把 key 写进任务卡、配置、命令参数、日志、回执或 Git。`key_file` 指向用户批准的既有本地文件，无须复制它；不要默认读取宿主认证文件或继承别的项目的凭据授权。云端需要生成时，先确认该环境已有获准凭据通道，不为方便传输本机 key。
+
+## 视觉验收（可选）
+
+候选图生成后，可用 `scripts/image_check.py` 让 Claude 对照任务卡的 `acceptance` 条目逐条判定。它先用脚本检查 PNG 本身、尺寸与透明边缘（透明背景的必要条件，不能代替目检），不通过或无法核实即判不合格、不调用模型；再把图片和条目（不含提示词）发给 Anthropic Messages API，只取 JSON 判定，写成图片旁的 `check.json`，退出码 0 合格、1 不合格、2 无法判定、3 拒绝执行（含参数错误）、4 离线预检通过但未送检。只有 0 表示合格。它不重画、不导入素材，也不替代自身目检、用户视觉批准或素材准入；这些结论分别记录。
+
+```text
+python -B <skill-dir>/scripts/image_check.py --config <private-check-config.json> --card <card.json> --image <state-dir>/<run-id>/image.png
+python -B <skill-dir>/scripts/image_check.py --config <private-check-config.json> --card <card.json> --image <state-dir>/<run-id>/image.png --execute
+```
+
+第一条只做机械检查、不读 key、不联网；第二条才发送一次付费请求。它依赖 Anthropic Messages API 和单独配置的 Anthropic 凭据，与生图的 OpenAI 凭据分开；只在项目允许把候选图发给 Anthropic 时使用。配置、费用和接口依据见[用法](references/usage.md)的“视觉验收”一节。
 
 ## 预算与结果
 

@@ -1,6 +1,6 @@
 ---
 name: mercury-image-api
-description: "通过 OpenAI Images API 生成或编辑位图，供没有原生生图能力的 Claude 等宿主使用，或用于用户明确指定的 API 生图任务；包含参考图编辑、私有凭据引用、预算预留和用量回执。"
+description: "通过 OpenAI Images API 生成或编辑位图，供没有原生生图能力的 Claude 等宿主使用，或用于用户明确指定的 API 生图任务；包含参考图编辑、私有凭据引用、预算预留和用量回执。可选：用 Claude 对照任务卡的验收条目检查候选图，只返回判定。"
 ---
 
 # mercury-image-api
