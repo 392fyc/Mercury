@@ -325,6 +325,27 @@ class ImageCheckTests(unittest.TestCase):
         self.assertTrue(out.getvalue().isascii())
         self.assertEqual(json.loads(out.getvalue())["items"][0]["criterion"], "只有一个银色徽章")
 
+    def test_a_usage_error_is_a_refusal_not_unsure_and_help_exits_0(self):
+        for argv, code in ((["image_check.py", "--config", str(self.config)], 3), (["image_check.py", "--bogus"], 3),
+                           (["image_check.py", "--help"], 0)):
+            out = io.StringIO()
+            with self.subTest(argv=argv), patch.object(sys, "argv", argv), redirect_stdout(out), \
+                 patch("sys.stderr", io.StringIO()):
+                self.assertEqual(check.main(), code)
+            if code == 3:
+                self.assertEqual(json.loads(out.getvalue())["status"], "refused")
+
+    def test_a_key_file_named_check_json_is_never_overwritten(self):
+        key_file = self.image.parent / "check.json"
+        key_file.write_text("ANTHROPIC_API_KEY=synthetic-private-key\n", encoding="utf-8")
+        self.cfg.pop("anthropic_key_env")
+        self.cfg["anthropic_key_file"] = str(key_file)
+        self.save()
+        self.image.write_bytes(png(8, 8, emblem)[:-12])  # a mechanical fail would write a report without a key
+        with self.assertRaisesRegex(ValueError, "input"):
+            self.run_check()
+        self.assertEqual(key_file.read_text(encoding="utf-8"), "ANTHROPIC_API_KEY=synthetic-private-key\n")
+
     def test_unknown_model_and_public_paths_are_refused(self):
         self.cfg["model"] = "claude-unknown"
         self.save()

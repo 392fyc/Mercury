@@ -30,7 +30,7 @@ SCHEMA = {"type": "object", "additionalProperties": False, "required": ["items"]
 def png_facts(data):
     """Size and corner transparency (8-bit RGBA only, else None) of a non-interlaced PNG; standard library."""
     require(data.startswith(PNG), "not a PNG")
-    pos, idat, ihdr, kind, kinds = 8, [], None, b"", set()
+    pos, idat, ihdr, kind, palette = 8, [], None, b"", False
     while pos < len(data) and kind != b"IEND":
         length, kind = struct.unpack(">I4s", data[pos:pos + 8])
         body = data[pos + 8:pos + 8 + length]
@@ -38,17 +38,16 @@ def png_facts(data):
                 struct.unpack(">I", data[pos + 8 + length:pos + 12 + length])[0], "corrupt PNG chunk")
         ihdr = body if kind == b"IHDR" else ihdr
         idat += [body] if kind == b"IDAT" else []  # joined once below, not copied per chunk
-        pos, kinds = pos + 12 + length, kinds | {kind}
+        pos, palette = pos + 12 + length, palette or kind == b"PLTE"
     require(kind == b"IEND" and ihdr is not None and idat, "PNG lacks IHDR, IDAT or IEND")
     width, height, depth, color, compression, method, interlace = struct.unpack(">IIBBBBB", ihdr)
     channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}.get(color)
     depths = (1, 2, 4, 8, 16) if color == 0 else (1, 2, 4, 8) if color == 3 else (8, 16)
     require(channels and depth in depths and not (compression or method or interlace) and width and height
-            and (color != 3 or b"PLTE" in kinds), "unsupported PNG format")
+            and (color != 3 or palette), "unsupported PNG format")
     inflater, rowbytes = zlib.decompressobj(), (width * channels * depth + 7) // 8
     raw = inflater.decompress(b"".join(idat), 64 * 1024 * 1024)  # bounded: a small file cannot inflate without limit
-    require(inflater.eof and len(raw) == height * (1 + rowbytes),
-            "PNG pixel data is truncated, too large or the wrong length")
+    require(inflater.eof and len(raw) == height * (1 + rowbytes), "PNG data is truncated or the wrong length")
     require(all(raw[y * (rowbytes + 1)] <= 4 for y in range(height)), "unknown PNG filter")
     corners = None
     if depth == 8 and color == 6:
@@ -99,8 +98,7 @@ def run(config_path, card_path, image_path, execute=False):
     private(root, config_path)
     state = private(root, root / cfg["state_dir"])
     require(bool(cfg.get("anthropic_key_file")) != bool(cfg.get("anthropic_key_env")), "choose one key reference")
-    model = cfg.get("model", "claude-opus-5-5")
-    require(model in MODELS, "unsupported model; recheck model and prices before adding one")
+    require((model := cfg.get("model", "claude-opus-5-5")) in MODELS, "unsupported model; recheck prices first")
     budget, reserved = micro(cfg["budget_usd"]), micro(cfg["reserve_usd"])
     require(reserved <= budget and type(cfg["max_calls"]) is int and cfg["max_calls"] > 0,
             "invalid reservation or call limit")
@@ -113,7 +111,8 @@ def run(config_path, card_path, image_path, execute=False):
         data = handle.read(7 * 1024 * 1024 + 1)
     require(len(data) <= 7 * 1024 * 1024, "image too large to send")
     report = image_path.parent / "check.json"  # never a link and never one of the inputs it would overwrite
-    inputs = (config_path.resolve(), card_path.resolve(), image_path)
+    inputs = (config_path.resolve(), card_path.resolve(), image_path,
+              Path(cfg.get("anthropic_key_file") or image_path).resolve())  # the key file is an input too
     require(not report.is_symlink() and report.resolve() not in inputs, "check.json must not be a link or an input")
     report = private(root, report)
     try:
@@ -144,8 +143,7 @@ def run(config_path, card_path, image_path, execute=False):
                 {"type": "text", "text": "Judge each criterion once; answer with its number as id:\n" + listing}]}]}
     try:
         response = request(body, key)
-        usage = response["usage"]
-        tokens = [usage["input_tokens"], usage["output_tokens"]]
+        tokens = [response["usage"]["input_tokens"], response["usage"]["output_tokens"]]
         require(all(type(n) is int and n >= 0 for n in tokens), "invalid usage")
         charge = sum(n * rate for n, rate in zip(tokens, MODELS[model]))
         record.update(usage=dict(zip(("input_tokens", "output_tokens"), tokens)), actual_usd=charge / 1e6)
@@ -185,12 +183,14 @@ def main():
     for name in ("--config", "--card", "--image"):
         parser.add_argument(name, required=True, type=Path)
     parser.add_argument("--execute", action="store_true", help="send one paid request; default is offline checks")
-    args = parser.parse_args()
     try:
+        args = parser.parse_args()  # a usage error refuses (3); it must not read as "unsure" (2)
         result = run(args.config, args.card, args.image, args.execute)
         print(json.dumps(result))  # ASCII escapes: a paid result must not fail on a narrow console code page
         return {"pass": 0, "fail": 1, "unsure": 2}.get(result.get("verdict"), 4)  # 4: preflight passed, not judged
-    except Exception as error:
+    except (Exception, SystemExit) as error:
+        if isinstance(error, SystemExit) and not error.code and "args" not in locals():  # only parse_args --help
+            return 0
         print(json.dumps({"status": "refused", "error_type": type(error).__name__}))
         return 3
 
