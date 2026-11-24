@@ -1,12 +1,13 @@
 # Current progress
 
-Updated 2026-11-23 (#549). GitHub Issues hold the detail; this page lists what is open and what comes next. A pull
+Updated 2026-11-24 (#821). GitHub Issues hold the detail; this page lists what is open and what comes next. A pull
 request that starts, finishes or redirects one of these updates this page in the same change.
 
 ## Open tracking Issues
 
 | Issue | Goal | State | Next step |
 |---|---|---|---|
+| #821 | API credit pilots: Argus dual review, image visual check, SoT batch jobs | In progress | Argus dual review deployed (Argus repository); image visual check added to the image-api skill; SoT batch jobs: proposal only |
 | #736 | KB: kb pack, merge gate and a readable `docs/` | In progress | Mercury, Poke and SoT all use the kb pack; check the remaining items and close the Issue |
 | #712 | Lanes: in-lane message box between Codex and Claude Code (prototype) | In progress | End-to-end wake test optional |
 | #779 | Scenario gate: research, design and implement checks as user-level hooks | Installed on Claude Code; on Codex without the block on modifications | Live Codex test of read recording, then enable the block there; downstream projects add `.mercury/gate.json`; review false triggers after some use |

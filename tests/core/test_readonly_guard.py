@@ -142,6 +142,8 @@ BLOCKED = [
     "uv run python .mercury/packs/core/skills/image-api/scripts/image_api.py --config private.json --card card.json --execute",
     "uv run --no-project --python 3.14 python .mercury/packs/core/skills/image-api/scripts/image_api.py --execute",
     "python -B -X utf8 .mercury/packs/core/skills/image-api/scripts/image_api.py --execute",
+    "python -B .mercury/packs/core/skills/image-api/scripts/image_check.py --config c.json --card k.json --image i.png --execute",
+    "uv run --no-project python packs/core/skills/image-api/scripts/image_check.py --execute",
     # #744: the lane bus writes its store, and release cannot be undone
     "bash .mercury/packs/lanes/scripts/lane-bus.sh release --harness claude --lane main",
     "bash .mercury/packs/lanes/scripts/lane-bus.sh read --harness claude",

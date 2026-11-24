@@ -1,0 +1,204 @@
+"""Offline tests for the Claude visual check: PNG facts, verdicts, budget and refusals. No paid calls."""
+from contextlib import closing
+import importlib.util
+import json
+import os
+from pathlib import Path
+import sqlite3
+import struct
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+import zlib
+
+ROOT = Path(__file__).resolve().parents[2]
+SCRIPT = ROOT / "packs/core/skills/image-api/scripts/image_check.py"
+sys.path.insert(0, str(SCRIPT.parent))
+spec = importlib.util.spec_from_file_location("mercury_image_check", SCRIPT)
+check = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(check)
+
+
+def chunk(kind, body):
+    return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+
+
+def png(width, height, pixel, color=6, filters=(0,)):
+    """An 8-bit PNG; pixel(x, y) gives the channel bytes; rows cycle through the given filter types."""
+    channels = {2: 3, 6: 4}[color]
+    raw, prev = b"", bytes(width * channels)
+    for y in range(height):
+        line = b"".join(bytes(pixel(x, y)) for x in range(width))
+        kind = filters[y % len(filters)]
+        out = bytearray(line)
+        for i in range(len(line)):
+            a = line[i - channels] if i >= channels else 0
+            b, c = prev[i], prev[i - channels] if i >= channels else 0
+            p = a + b - c
+            paeth = a if abs(p - a) <= abs(p - b) and abs(p - a) <= abs(p - c) else b if abs(p - b) <= abs(p - c) else c
+            out[i] = (line[i] - (0, a, b, (a + b) // 2, paeth)[kind]) & 0xFF
+        raw += bytes([kind]) + bytes(out)
+        prev = line
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, color, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
+
+
+def emblem(x, y):
+    """Transparent corners, an opaque silver centre."""
+    return (200, 200, 210, 255) if 2 <= x <= 5 and 2 <= y <= 5 else (0, 0, 0, 0)
+
+
+class ImageCheckTests(unittest.TestCase):
+    def setUp(self):
+        (ROOT / ".tmp").mkdir(exist_ok=True)
+        self.temp = tempfile.TemporaryDirectory(dir=ROOT / ".tmp")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        (self.root / ".gitignore").write_text(".private/\n", encoding="utf-8")
+        self.private = self.root / ".private"
+        (self.private / "run").mkdir(parents=True)
+        self.config, self.card = self.private / "check.json", self.private / "card.json"
+        self.image = self.private / "run/image.png"
+        self.cfg = {"project_root": str(self.root), "state_dir": ".private/state",
+                    "anthropic_key_env": "MERCURY_CHECK_TEST_KEY", "budget_usd": "1.00",
+                    "reserve_usd": "0.30", "max_calls": 2}
+        self.job = {"mode": "generate", "prompt": "A silver emblem.", "size": "8x8",
+                    "background": "transparent", "acceptance": ["One silver emblem", "No text"]}
+        self.image.write_bytes(png(8, 8, emblem, filters=(0, 1, 2, 3, 4)))
+        self.save()
+        self.answer = {"items": [{"criterion": "One silver emblem", "result": "pass", "reason": "centred"},
+                                 {"criterion": "No text", "result": "pass", "reason": "none"}]}
+
+    def save(self):
+        self.config.write_text(json.dumps(self.cfg), encoding="utf-8")
+        self.card.write_text(json.dumps(self.job), encoding="utf-8")
+
+    def response(self, answer=None, stop="end_turn"):
+        return {"stop_reason": stop, "usage": {"input_tokens": 1000, "output_tokens": 500},
+                "content": [{"type": "thinking", "thinking": "x"},
+                            {"type": "text", "text": json.dumps(answer or self.answer)}]}
+
+    def run_check(self, response=None, error=None, execute=True):
+        with patch.dict(os.environ, {"MERCURY_CHECK_TEST_KEY": "synthetic-private-key"}), \
+             patch.object(check, "request", return_value=response or self.response(), side_effect=error) as req:
+            return check.run(self.config, self.card, self.image, execute), req
+
+    def ledger(self):
+        with closing(sqlite3.connect(self.private / "state/check-usage.sqlite3")) as db:
+            return db.execute("SELECT micro, status FROM calls").fetchall()
+
+    def test_png_facts_decode_every_filter_type(self):
+        facts = check.png_facts(png(8, 8, emblem, filters=(0, 1, 2, 3, 4)))
+        self.assertEqual(facts, {"dimensions": [8, 8], "alpha": True, "corners_transparent": True})
+        opaque = check.png_facts(png(4, 3, lambda x, y: (x * 40, y * 60, 90, 255), filters=(4, 3)))
+        self.assertFalse(opaque["corners_transparent"])
+        rgb = check.png_facts(png(4, 4, lambda x, y: (1, 2, 3), color=2))
+        self.assertEqual((rgb["alpha"], rgb["corners_transparent"]), (False, None))
+
+    def test_corrupt_png_is_refused(self):
+        data = bytearray(png(4, 4, emblem))
+        data[40] ^= 0xFF
+        with self.assertRaises(ValueError):
+            check.png_facts(bytes(data))
+
+    def test_preflight_reads_no_key_and_writes_nothing(self):
+        result, req = self.run_check(execute=False)
+        self.assertEqual(result["status"], "dry-run")
+        self.assertEqual(result["mechanical"], {"size": True, "transparent_background": True})
+        req.assert_not_called()
+        self.assertFalse((self.private / "state").exists())
+        self.assertFalse((self.image.parent / "check.json").exists())
+
+    def test_pass_settles_usage_and_writes_check_next_to_image(self):
+        result, req = self.run_check()
+        self.assertEqual((result["status"], result["verdict"]), ("checked", "pass"))
+        self.assertEqual(result["actual_usd"], 0.014)  # 1000 x $4 + 500 x $20 per million tokens
+        self.assertEqual(self.ledger(), [(14000, "checked")])
+        saved = (self.image.parent / "check.json").read_text(encoding="utf-8")
+        self.assertNotIn("synthetic-private-key", saved)
+        self.assertNotIn("A silver emblem.", saved)
+        body = req.call_args.args[0]
+        self.assertEqual(body["output_config"]["format"]["type"], "json_schema")
+        self.assertNotIn("A silver emblem.", json.dumps(body))
+        self.assertEqual(body["messages"][0]["content"][0]["source"]["media_type"], "image/png")
+
+    def test_any_fail_fails_and_unsure_without_fail_is_unsure(self):
+        self.answer["items"][1]["result"] = "unsure"
+        self.assertEqual(self.run_check()[0]["verdict"], "unsure")
+        self.answer["items"][0]["result"] = "fail"
+        self.assertEqual(self.run_check()[0]["verdict"], "fail")
+
+    def test_mechanical_failure_fails_without_a_paid_call(self):
+        self.job["size"] = "1024x1024"
+        self.save()
+        result, req = self.run_check()
+        self.assertEqual((result["verdict"], result["mechanical"]["size"]), ("fail", False))
+        req.assert_not_called()
+        self.image.write_bytes(png(8, 8, lambda x, y: (9, 9, 9, 255)))
+        self.job["size"] = "8x8"
+        self.save()
+        self.assertFalse(self.run_check()[0]["mechanical"]["transparent_background"])
+
+    def test_missing_acceptance_is_refused(self):
+        del self.job["acceptance"]
+        self.save()
+        with self.assertRaises(ValueError):
+            self.run_check()
+
+    def test_incomplete_or_short_answers_are_unsure_but_charged(self):
+        result, _ = self.run_check(self.response(stop="max_tokens"))
+        self.assertEqual((result["status"], result["verdict"]), ("failed", "unsure"))
+        result, _ = self.run_check(self.response({"items": self.answer["items"][:1]}))
+        self.assertEqual(result["verdict"], "unsure")
+        self.assertEqual(self.ledger(), [(14000, "failed"), (14000, "failed")])
+
+    def test_network_failure_keeps_the_reservation_and_call_limit_holds(self):
+        result, _ = self.run_check(error=OSError("down"))
+        self.assertEqual((result["status"], result["accounted_usd"]), ("unknown-charge", 0.3))
+        self.run_check()
+        with self.assertRaises(ValueError):
+            self.run_check()
+
+    def test_unknown_result_values_are_unsure(self):
+        self.answer["items"][0]["result"] = "ok"
+        self.assertEqual(self.run_check()[0]["verdict"], "unsure")
+
+    def test_a_worktree_root_is_refused(self):
+        subprocess.run(["git", "-C", str(self.root), "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                        "commit", "-q", "--allow-empty", "-m", "base"], check=True)
+        tree = self.private / "wt"
+        subprocess.run(["git", "-C", str(self.root), "worktree", "add", "-q", "--detach", str(tree)], check=True)
+        (tree / ".private").mkdir()
+        self.cfg["project_root"] = str(tree)
+        moved = tree / ".private/check.json"
+        moved.write_text(json.dumps(self.cfg), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "primary checkout"):
+            check.run(moved, self.card, self.image)
+
+    def test_main_exit_codes_separate_preflight_from_pass(self):
+        argv = ["image_check.py", "--config", str(self.config), "--card", str(self.card), "--image", str(self.image)]
+        with patch.object(sys, "argv", argv), patch("builtins.print"):
+            self.assertEqual(check.main(), 4)
+        with (patch.object(sys, "argv", argv + ["--execute"]), patch("builtins.print"),
+              patch.dict(os.environ, {"MERCURY_CHECK_TEST_KEY": "synthetic-private-key"}),
+              patch.object(check, "request", return_value=self.response())):
+            self.assertEqual(check.main(), 0)
+
+    def test_unknown_model_and_public_paths_are_refused(self):
+        self.cfg["model"] = "claude-unknown"
+        self.save()
+        with self.assertRaises(ValueError):
+            self.run_check(execute=False)
+        self.cfg.pop("model")
+        self.save()
+        public = self.root / "image.png"
+        public.write_bytes(self.image.read_bytes())
+        with self.assertRaises(ValueError):
+            check.run(self.config, self.card, public)
+
+
+if __name__ == "__main__":
+    unittest.main()

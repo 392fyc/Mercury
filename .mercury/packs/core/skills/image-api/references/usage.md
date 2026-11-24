@@ -67,3 +67,32 @@ SQLite 的 `BEGIN IMMEDIATE` 将检查与预留放进同一事务，避免并行
 费率相同不等于单张同价：2026-11-05 实测，`gpt-image-2.6-flare` 的 `low` 档 1024x1024 生成一张用了 824 个输出 token，约 0.025 美元；旧任务卡若未写 `model`，现在也会改用 2.6，`reserve_usd` 请按实测设置。工具不发送 `complexity`，模型按官方默认 `high` 处理；token 增加是否由它引起尚未核实。
 
 官方提示，人物跨图一致性、精确构图与文字仍可能出错；蒙版也是指导而非逐像素保证。详见[图像生成指南](https://developers.openai.com/api/docs/guides/image-generation)。这些限制应由项目实际验收覆盖，不以模型名称或高质量档代替检查。
+
+## 视觉验收
+
+`scripts/image_check.py` 同样只用标准库，`project_root` 同样必须是主 checkout。它使用一份单独的私有配置，不与生图配置混用（生图配置拒绝未知字段）：
+
+```json
+{
+  "project_root": "/absolute/project-root",
+  "state_dir": ".tmp/image-api/task-001",
+  "anthropic_key_file": "/absolute/approved-credentials.env",
+  "model": "claude-opus-5-5",
+  "budget_usd": "1.00",
+  "reserve_usd": "0.30",
+  "max_calls": 5
+}
+```
+
+`anthropic_key_file` 读取其中唯一的 `ANTHROPIC_API_KEY=` 行，或改用 `"anthropic_key_env"` 指名环境变量，二者选一。账本是状态目录里的 `check-usage.sqlite3`，与生图账本分开，规则相同：请求前原子预留，用量完整才结算，失败保留预留，不自动重试。这是逐次的本地消费控制；账号的月度额度由负责人在服务端管理，脚本只报告每次用量。`model` 默认 `claude-opus-5-5`，也接受 `claude-sonnet-5-5`；单次最多输出 8000 token，`reserve_usd` 应覆盖这一上限（Opus 约 0.16 美元加输入）。
+
+任务卡新增 `acceptance`：1—30 条可以逐条判断的短句，例如“画面里没有文字、数字或边框”。没有这个字段时拒绝送检；提示词不发送给检查者。检查顺序：
+
+1. 机械检查：PNG 逐块 CRC 与像素数据长度、真实尺寸等于卡片 `size`；卡片 `background` 为 `transparent` 时须有透明通道，8 位 RGBA 图还要求四角完全透明。任一项不通过即 `verdict: fail`，不调用模型。解压后的像素数据以 64 MiB 为限。
+2. 模型判定：图片以 base64 PNG 发送（单张不超过 7 MiB），结构化输出限定每条为 `pass`、`fail` 或 `unsure` 并附理由。任一条 `fail` 即不合格；无 `fail` 而有 `unsure` 即无法判定；全部 `pass` 才合格。回答被截断、拒答、条目数不符或出现未知判定值时判为无法判定，费用照计。
+
+`check.json` 记录机械检查、每条判定与理由、模型、用量、费用和图片 SHA-256，不含 key、提示词和本机路径。
+
+## 视觉验收的接口与价格依据
+
+2026-11-24 核对：[价格页](https://platform.claude.com/docs/en/about-claude/pricing)列 `claude-opus-5-5` 每百万输入 token 4 美元、输出 20 美元，Sonnet 5.5 为 2 美元和 10 美元；[思考文档](https://platform.claude.com/docs/en/build-with-claude/thinking-steering-and-cost)说明思考 token 计入 `output_tokens` 按输出计费；[视觉文档](https://platform.claude.com/docs/en/build-with-claude/vision)说明一张图约 ⌈宽/28⌉×⌈高/28⌉ 个视觉 token（1024x1024 约 1369 个），其“Request limits”一节写明 Claude API 单张上限为 base64 后 10 MB（脚本限 7 MiB 原文件，编码后约 9.8 MB）；[结构化输出文档](https://platform.claude.com/docs/en/build-with-claude/structured-outputs)以 `output_config.format`（`type: "json_schema"`）发送约束，支持列表含 `claude-opus-5-5`；[版本文档](https://platform.claude.com/docs/en/api/versioning)示例的 `anthropic-version` 为 `2026-10-21`。2026-11-24 实测一次 1024x1024 送检（3 条条目）为 1858 输入、166 输出 token，约 0.011 美元；条目多或思考多时更高。模型或价格变化后先核对文档再改脚本里的费率。

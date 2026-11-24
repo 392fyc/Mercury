@@ -1,0 +1,199 @@
+"""Check one generated PNG against its card's acceptance list with Claude; verdict only. Mercury #821."""
+import argparse
+import base64
+import hashlib
+import json
+import os
+import sqlite3
+import struct
+import sys
+import urllib.request
+import uuid
+import zlib
+from contextlib import closing
+from datetime import datetime, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from image_api import NoRedirect, PNG, micro, primary_root, private, require, reserve_call  # noqa: E402
+
+MODELS = {"claude-opus-5-5": (4, 20), "claude-sonnet-5-5": (2, 10)}  # USD per 1M input, output tokens
+SYSTEM = ("You check one generated image against acceptance criteria. Judge each criterion only from what "
+          "is visible. Answer pass or fail with a short reason; answer unsure when the image does not let "
+          "you decide. Transparency is checked separately by a script, so do not judge it.")
+ITEM = {"type": "object", "additionalProperties": False, "required": ["criterion", "result", "reason"],
+        "properties": {"criterion": {"type": "string"}, "reason": {"type": "string"},
+                       "result": {"type": "string", "enum": ["pass", "fail", "unsure"]}}}
+SCHEMA = {"type": "object", "additionalProperties": False, "required": ["items"],
+          "properties": {"items": {"type": "array", "items": ITEM}}}
+
+
+def png_facts(data):
+    """Size, alpha and corner transparency of a PNG, decoded with the standard library only."""
+    require(data.startswith(PNG), "not a PNG")
+    pos, idat, ihdr, trns, kind = 8, b"", None, False, b""
+    while pos < len(data) and kind != b"IEND":
+        length, kind = struct.unpack(">I4s", data[pos:pos + 8])
+        body = data[pos + 8:pos + 8 + length]
+        require(len(body) == length and zlib.crc32(kind + body) ==
+                struct.unpack(">I", data[pos + 8 + length:pos + 12 + length])[0], "corrupt PNG chunk")
+        ihdr = body if kind == b"IHDR" else ihdr
+        idat += body if kind == b"IDAT" else b""
+        trns = trns or kind == b"tRNS"
+        pos += 12 + length
+    require(ihdr is not None and idat, "PNG lacks IHDR or IDAT")
+    width, height, depth, color, _, _, interlace = struct.unpack(">IIBBBBB", ihdr)
+    require(color in (0, 2, 3, 4, 6) and depth in (1, 2, 4, 8, 16), "unsupported PNG format")
+    inflater = zlib.decompressobj()
+    raw = inflater.decompress(idat, 64 * 1024 * 1024)  # bounded: a small file cannot inflate without limit
+    require(inflater.eof, "PNG pixel data is truncated or too large")
+    facts = {"dimensions": [width, height], "alpha": color in (4, 6) or trns, "corners_transparent": None}
+    if depth == 8 and color == 6 and not interlace:
+        require(len(raw) == height * (1 + 4 * width), "PNG pixel data has the wrong length")
+        rows = unfilter(raw, width * 4, height, 4)
+        corners = [rows[y][x * 4 + 3] for y in (0, height - 1) for x in (0, width - 1)]
+        facts["corners_transparent"] = all(a == 0 for a in corners)
+    return facts
+
+
+def unfilter(raw, stride, height, bpp):
+    rows, prev = [], bytearray(stride)
+    for y in range(height):
+        kind, line = raw[y * (stride + 1)], bytearray(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
+        require(kind <= 4, "unknown PNG filter")
+        if kind == 2:
+            line = bytearray((x + b) & 0xFF for x, b in zip(line, prev))
+        elif kind:
+            for i in range(stride):
+                a, b = line[i - bpp] if i >= bpp else 0, prev[i]
+                if kind == 1:
+                    line[i] = (line[i] + a) & 0xFF
+                elif kind == 3:
+                    line[i] = (line[i] + (a + b) // 2) & 0xFF
+                else:
+                    c = prev[i - bpp] if i >= bpp else 0
+                    pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
+                    line[i] = (line[i] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 0xFF
+        rows.append(line)
+        prev = line
+    return rows
+
+
+def request(body, key):
+    req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=json.dumps(body).encode(),
+                                 method="POST", headers={"x-api-key": key, "anthropic-version": "2026-10-21",
+                                                         "content-type": "application/json"})
+    with urllib.request.build_opener(NoRedirect()).open(req, timeout=300) as response:
+        return json.load(response)
+
+
+def read_key(cfg):
+    if cfg.get("anthropic_key_file"):
+        lines = Path(cfg["anthropic_key_file"]).read_text(encoding="utf-8-sig").splitlines()
+        keys = [line.split("=", 1)[1].strip().strip("\"'") for line in lines
+                if line.startswith("ANTHROPIC_API_KEY=")]
+        require(len(keys) == 1, "credential reference must contain one ANTHROPIC_API_KEY")
+        return keys[0]
+    return os.environ.get(cfg["anthropic_key_env"], "")
+
+
+def verdict(results):
+    return "fail" if "fail" in results else "pass" if set(results) == {"pass"} else "unsure"
+
+
+def run(config_path, card_path, image_path, execute=False):
+    cfg = json.loads(config_path.read_text(encoding="utf-8"))
+    require(set(cfg) <= {"project_root", "state_dir", "anthropic_key_file", "anthropic_key_env", "model",
+                         "budget_usd", "reserve_usd", "max_calls"}, "unknown config fields")
+    root = primary_root(cfg["project_root"])
+    private(root, config_path)
+    state = private(root, root / cfg["state_dir"])
+    require(bool(cfg.get("anthropic_key_file")) != bool(cfg.get("anthropic_key_env")),
+            "choose one credential reference")
+    model = cfg.get("model", "claude-opus-5-5")
+    require(model in MODELS, "unsupported model; recheck model and prices before adding one")
+    budget, reserved = micro(cfg["budget_usd"]), micro(cfg["reserve_usd"])
+    require(reserved <= budget and type(cfg["max_calls"]) is int and cfg["max_calls"] > 0,
+            "invalid reservation or call limit")
+    card = json.loads(private(root, card_path).read_text(encoding="utf-8"))
+    criteria = card.get("acceptance")
+    require(isinstance(criteria, list) and 0 < len(criteria) <= 30 and
+            all(isinstance(c, str) and 0 < len(c) <= 500 for c in criteria), "card needs an acceptance list")
+    image_path = private(root, image_path)
+    data = image_path.read_bytes()
+    require(len(data) <= 7 * 1024 * 1024, "image too large to send")
+    facts = png_facts(data)
+    mechanical = {"size": facts["dimensions"] == [int(n) for n in card.get("size", "1024x1024").split("x")]}
+    if card.get("background") == "transparent":
+        mechanical["transparent_background"] = facts["alpha"] and facts["corners_transparent"] is not False
+    record = {"schema": "mercury-image-check/1", "model": model, "image_sha256": hashlib.sha256(data).hexdigest(),
+              "dimensions": facts["dimensions"], "mechanical": mechanical, "status": "dry-run", "items": []}
+    if not all(mechanical.values()):
+        record.update(status="checked", verdict="fail")
+    if not execute or record["status"] == "checked":
+        return finish(record, image_path, execute)
+    key = read_key(cfg)
+    require(key and not any(c.isspace() for c in key), "credential unavailable or invalid")
+    state.mkdir(parents=True, exist_ok=True)
+    db_path, run_id = private(root, state / "check-usage.sqlite3"), uuid.uuid4().hex
+    reserve_call(db_path, budget, cfg["max_calls"], reserved, run_id)
+    charge = reserved
+    record.update(status="unknown-charge", at=datetime.now(timezone.utc).isoformat())
+    listing = "\n".join(f"{i + 1}. {c}" for i, c in enumerate(criteria))
+    body = {"model": model, "max_tokens": 8000, "system": SYSTEM, "thinking": {"type": "adaptive"},
+            "output_config": {"format": {"type": "json_schema", "schema": SCHEMA}},
+            "messages": [{"role": "user", "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                                             "data": base64.b64encode(data).decode("ascii")}},
+                {"type": "text", "text": "Check the image against each criterion, in order:\n" + listing}]}]}
+    try:
+        response = request(body, key)
+        usage = response["usage"]
+        tokens = [usage["input_tokens"], usage["output_tokens"]]
+        require(all(type(n) is int and n >= 0 for n in tokens), "invalid usage")
+        charge = sum(n * rate for n, rate in zip(tokens, MODELS[model]))
+        record.update(usage=dict(zip(("input_tokens", "output_tokens"), tokens)), actual_usd=charge / 1e6)
+        require(response.get("stop_reason") == "end_turn", "answer incomplete or refused")
+        text = "".join(b["text"] for b in response["content"] if b.get("type") == "text")
+        items = json.loads(text)["items"]
+        require(len(items) == len(criteria), "answer does not cover every criterion")
+        record["items"] = [{"criterion": c, "result": i["result"], "reason": i["reason"]}
+                           for c, i in zip(criteria, items)]
+        record.update(status="checked", verdict=verdict([i["result"] for i in record["items"]]))
+    except Exception as error:
+        record.update(status="unknown-charge" if record.get("actual_usd") is None else "failed",
+                      verdict="unsure", error_type=type(error).__name__)
+    finally:
+        if charge > reserved:
+            record["status"] = "budget-exceeded"
+        record["accounted_usd"] = charge / 1e6
+        with closing(sqlite3.connect(db_path, timeout=10)) as db, db:
+            db.execute("UPDATE calls SET micro=?, status=? WHERE id=?", (charge, record["status"], run_id))
+    return finish(record, image_path, execute)
+
+
+def finish(record, image_path, execute):
+    if execute:
+        (image_path.parent / "check.json").write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n",
+                                                      encoding="utf-8")
+    return record
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", required=True, type=Path)
+    parser.add_argument("--card", required=True, type=Path)
+    parser.add_argument("--image", required=True, type=Path)
+    parser.add_argument("--execute", action="store_true", help="send one paid request; default is offline checks")
+    args = parser.parse_args()
+    try:
+        result = run(args.config, args.card, args.image, args.execute)
+        print(json.dumps(result, ensure_ascii=False))
+        return {"pass": 0, "fail": 1, "unsure": 2}.get(result.get("verdict"), 4)  # 4: preflight passed, not judged
+    except Exception as error:
+        print(json.dumps({"status": "refused", "error_type": type(error).__name__}))
+        return 3
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

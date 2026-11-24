@@ -86,7 +86,7 @@ FILE_WRITERS = {
 }
 WRITE_SCRIPTS = (
     "git-safe.ps1", "sync-downstream-pr.py", "lane-spawn.sh", "lane-close.sh", "lane-claim.sh", "lane-init.sh",
-    "image_api.py",
+    "image_api.py", "image_check.py",
     # The lane bus writes its store on claim, release, send and read (reading marks read); release cannot be undone (#744).
     "lane-bus.sh", "lane-bus.py",
 )
@@ -739,9 +739,10 @@ def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), 
     # so reading or searching for them stays allowed.
     executed = [word] if word.endswith((".ps1", ".py", ".sh")) else []
     if word in INTERPRETERS:
-        # uv run and interpreter flag values can precede this paid helper.
-        if any(command_word(a) == "image_api.py" for a in args):
-            raise Blocked("image_api.py")
+        # uv run and interpreter flag values can precede these paid helpers.
+        paid = [command_word(a) for a in args if command_word(a) in ("image_api.py", "image_check.py")]
+        if paid:
+            raise Blocked(paid[0])
         executed += [command_word(a) for a in args if not a.startswith("-")][:1]
         executed += [command_word(args[i + 1]) for i, a in enumerate(args[:-1])
                      if a.lower() in ("-file", "-f")]
