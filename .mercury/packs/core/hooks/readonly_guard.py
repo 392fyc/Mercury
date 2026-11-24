@@ -463,17 +463,18 @@ def _ansi_decode(body: str) -> str:
     return ANSI_ESCAPE.sub(one, body).split("\x00", 1)[0]
 
 
-def tokenize(segment: str, shell: str = "bash", *, skip_redirects: bool = False) -> list[str]:
+def tokenize(segment: str, shell: str = "bash", *, input_files: list[str] | None = None) -> list[str]:
     """The words of `segment` as the shell passes them on: quotes and escape characters removed, comments dropped.
     In Bash the `$` of `$'...'` and `$"..."` goes too, and the escapes of `$'...'` are decoded (#799): otherwise
-    `bash -c $'git push'` would hand `$git push` to the check of the inner command."""
+    `bash -c $'git push'` would hand `$git push` to the check of the inner command.
+    When input_files is given, omit shell redirections from the arguments and collect their input file names."""
     kinds, _ = lex(segment, shell)
     rules = RULES[shell]
     redirect_chars = ">" if shell == "powershell" else "<>"
     tokens, current, has, i, n = [], [], False, 0, len(segment)
     while i < n:
         ch, kind = segment[i], kinds[i]
-        if skip_redirects and kind == LIVE and ch in redirect_chars:
+        if input_files is not None and kind == LIVE and ch in redirect_chars:
             # A live descriptor belongs to the redirection. An adjacent ordinary word is an argument.
             prefix = "".join(current)
             special_descriptor = "*" if shell == "powershell" else "&"
@@ -481,15 +482,20 @@ def tokenize(segment: str, shell: str = "bash", *, skip_redirects: bool = False)
             if (current or has) and not (descriptor and not has and all(k == LIVE for k in kinds[i - len(prefix):i])):
                 tokens.append(prefix)
             current, has = [], False
+            operator_start = i
             i += 1
             while i < n and kinds[i] == LIVE and segment[i] in redirect_chars + "&|":
                 i += 1
             if i < n and kinds[i] == LIVE and segment[i] == "-" and segment[i - 2:i] == "<<":
                 i += 1
+            operator = segment[operator_start:i]
             while i < n and kinds[i] == LIVE and segment[i].isspace():
                 i += 1
+            target_start = i
             while i < n and not (kinds[i] == LIVE and (segment[i].isspace() or segment[i] in redirect_chars)):
                 i += 1
+            if operator in ("<", "<>"):
+                input_files.extend(tokenize(segment[target_start:i], shell))
             continue
         if rules.ansi and kind == SYNTAX and ch in "'\"" and current and current[-1] == "$" \
                 and kinds[i - 1] == LIVE and _odd_dollars(segment, i, kinds):
@@ -750,8 +756,11 @@ def strip_wrappers(tokens: list[str]) -> list[str]:
 
 def python_entry(args: list[str], launcher: bool) -> tuple[str, str]:
     """Read the interpreter options up to the script, module, inline code or stdin."""
-    if launcher and args and args[0].startswith("-V:"):
-        args = args[1:]
+    if launcher:
+        if args and args[0].lower() == "exec":  # Python install manager: py exec [tag] [Python arguments]
+            args = args[1:]
+        if args and args[0].startswith("-V:"):
+            args = args[1:]
     options = iter(args)
     for arg in options:
         if arg == "--":
@@ -785,8 +794,14 @@ def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), 
     executed = [word] if word.endswith((".ps1", ".py", ".sh")) else []
     if word in PYTHON_INTERPRETERS:
         # A redirection can appear before the program; it is consumed by the shell, not by Python.
+        input_files: list[str] = []
         if "<" in segment or ">" in segment:
-            args = strip_wrappers(tokenize(segment, shell, skip_redirects=True))[1:]
+            args = strip_wrappers(tokenize(segment, shell, input_files=input_files))[1:]
+        # Keep refusing paid helpers named as input files: Python can execute code from stdin.
+        inputs = {command_word(path) for path in input_files}
+        for name in PAID_PYTHON_HELPERS:
+            if name + ".py" in inputs:
+                raise Blocked(name + ".py")
         kind, entry = python_entry(args, launcher=word == "py")
         if kind == "script":
             executed.append(command_word(entry))
