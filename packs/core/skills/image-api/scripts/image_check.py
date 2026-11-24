@@ -18,20 +18,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from image_api import NoRedirect, PNG, micro, primary_root, private, require, reserve_call  # noqa: E402
 
 MODELS = {"claude-opus-5-5": (4, 20), "claude-sonnet-5-5": (2, 10)}  # USD per 1M input, output tokens
-SYSTEM = ("You check one generated image against acceptance criteria. Judge each criterion only from what "
-          "is visible. Answer pass or fail with a short reason; answer unsure when the image does not let "
-          "you decide. Transparency is checked separately by a script, so do not judge it.")
-ITEM = {"type": "object", "additionalProperties": False, "required": ["criterion", "result", "reason"],
-        "properties": {"criterion": {"type": "string"}, "reason": {"type": "string"},
+SYSTEM = ("Check one generated image against numbered criteria, judging only what is visible: pass, fail, or unsure "
+          "when the image does not let you decide, each with a short reason. Do not judge transparency.")
+ITEM = {"type": "object", "additionalProperties": False, "required": ["id", "result", "reason"],
+        "properties": {"id": {"type": "integer"}, "reason": {"type": "string"},
                        "result": {"type": "string", "enum": ["pass", "fail", "unsure"]}}}
 SCHEMA = {"type": "object", "additionalProperties": False, "required": ["items"],
           "properties": {"items": {"type": "array", "items": ITEM}}}
 
 
 def png_facts(data):
-    """Size, alpha and corner transparency of a PNG, decoded with the standard library only."""
+    """Size and corner transparency (8-bit RGBA only, else None) of a non-interlaced PNG; standard library."""
     require(data.startswith(PNG), "not a PNG")
-    pos, idat, ihdr, trns, kind = 8, b"", None, False, b""
+    pos, idat, ihdr, kind = 8, b"", None, b""
     while pos < len(data) and kind != b"IEND":
         length, kind = struct.unpack(">I4s", data[pos:pos + 8])
         body = data[pos + 8:pos + 8 + length]
@@ -39,21 +38,20 @@ def png_facts(data):
                 struct.unpack(">I", data[pos + 8 + length:pos + 12 + length])[0], "corrupt PNG chunk")
         ihdr = body if kind == b"IHDR" else ihdr
         idat += body if kind == b"IDAT" else b""
-        trns = trns or kind == b"tRNS"
         pos += 12 + length
-    require(ihdr is not None and idat, "PNG lacks IHDR or IDAT")
+    require(kind == b"IEND" and ihdr is not None and idat, "PNG lacks IHDR, IDAT or IEND")
     width, height, depth, color, _, _, interlace = struct.unpack(">IIBBBBB", ihdr)
-    require(color in (0, 2, 3, 4, 6) and depth in (1, 2, 4, 8, 16), "unsupported PNG format")
+    channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}.get(color)
+    require(channels and depth in (1, 2, 4, 8, 16) and not interlace, "unsupported PNG format")
     inflater = zlib.decompressobj()
     raw = inflater.decompress(idat, 64 * 1024 * 1024)  # bounded: a small file cannot inflate without limit
-    require(inflater.eof, "PNG pixel data is truncated or too large")
-    facts = {"dimensions": [width, height], "alpha": color in (4, 6) or trns, "corners_transparent": None}
-    if depth == 8 and color == 6 and not interlace:
-        require(len(raw) == height * (1 + 4 * width), "PNG pixel data has the wrong length")
+    require(inflater.eof and len(raw) == height * (1 + (width * channels * depth + 7) // 8),
+            "PNG pixel data is truncated, too large or the wrong length")
+    corners = None
+    if depth == 8 and color == 6:
         rows = unfilter(raw, width * 4, height, 4)
-        corners = [rows[y][x * 4 + 3] for y in (0, height - 1) for x in (0, width - 1)]
-        facts["corners_transparent"] = all(a == 0 for a in corners)
-    return facts
+        corners = all(rows[y][x * 4 + 3] == 0 for y in (0, height - 1) for x in (0, width - 1))
+    return {"dimensions": [width, height], "corners_transparent": corners}
 
 
 def unfilter(raw, stride, height, bpp):
@@ -66,16 +64,11 @@ def unfilter(raw, stride, height, bpp):
         elif kind:
             for i in range(stride):
                 a, b = line[i - bpp] if i >= bpp else 0, prev[i]
-                if kind == 1:
-                    line[i] = (line[i] + a) & 0xFF
-                elif kind == 3:
-                    line[i] = (line[i] + (a + b) // 2) & 0xFF
-                else:
-                    c = prev[i - bpp] if i >= bpp else 0
-                    pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
-                    line[i] = (line[i] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 0xFF
-        rows.append(line)
-        prev = line
+                c = prev[i - bpp] if i >= bpp else 0
+                pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
+                paeth = a if pa <= pb and pa <= pc else b if pb <= pc else c
+                line[i] = (line[i] + (a if kind == 1 else (a + b) // 2 if kind == 3 else paeth)) & 0xFF
+        rows.append(prev := line)
     return rows
 
 
@@ -122,16 +115,22 @@ def run(config_path, card_path, image_path, execute=False):
     image_path = private(root, image_path)
     data = image_path.read_bytes()
     require(len(data) <= 7 * 1024 * 1024, "image too large to send")
-    facts = png_facts(data)
-    mechanical = {"size": facts["dimensions"] == [int(n) for n in card.get("size", "1024x1024").split("x")]}
-    if card.get("background") == "transparent":
-        mechanical["transparent_background"] = facts["alpha"] and facts["corners_transparent"] is not False
+    require(not (image_path.parent / "check.json").is_symlink(), "check.json must not be a link")
+    report = private(root, image_path.parent / "check.json")
+    try:
+        facts = png_facts(data)
+    except (ValueError, struct.error, zlib.error):
+        facts = {"dimensions": None, "corners_transparent": None}
+    mechanical = {"png": facts["dimensions"] is not None,
+                  "size": facts["dimensions"] == [int(n) for n in card.get("size", "1024x1024").split("x")]}
+    if card.get("background") == "transparent":  # unverifiable transparency does not pass
+        mechanical["transparent_background"] = facts["corners_transparent"] is True
     record = {"schema": "mercury-image-check/1", "model": model, "image_sha256": hashlib.sha256(data).hexdigest(),
               "dimensions": facts["dimensions"], "mechanical": mechanical, "status": "dry-run", "items": []}
     if not all(mechanical.values()):
         record.update(status="checked", verdict="fail")
     if not execute or record["status"] == "checked":
-        return finish(record, image_path, execute)
+        return finish(record, report, execute)
     key = read_key(cfg)
     require(key and not any(c.isspace() for c in key), "credential unavailable or invalid")
     state.mkdir(parents=True, exist_ok=True)
@@ -145,7 +144,7 @@ def run(config_path, card_path, image_path, execute=False):
             "messages": [{"role": "user", "content": [
                 {"type": "image", "source": {"type": "base64", "media_type": "image/png",
                                              "data": base64.b64encode(data).decode("ascii")}},
-                {"type": "text", "text": "Check the image against each criterion, in order:\n" + listing}]}]}
+                {"type": "text", "text": "Judge each criterion once; answer with its number as id:\n" + listing}]}]}
     try:
         response = request(body, key)
         usage = response["usage"]
@@ -155,10 +154,11 @@ def run(config_path, card_path, image_path, execute=False):
         record.update(usage=dict(zip(("input_tokens", "output_tokens"), tokens)), actual_usd=charge / 1e6)
         require(response.get("stop_reason") == "end_turn", "answer incomplete or refused")
         text = "".join(b["text"] for b in response["content"] if b.get("type") == "text")
-        items = json.loads(text)["items"]
-        require(len(items) == len(criteria), "answer does not cover every criterion")
-        record["items"] = [{"criterion": c, "result": i["result"], "reason": i["reason"]}
-                           for c, i in zip(criteria, items)]
+        answer = {i["id"]: i for i in json.loads(text)["items"]}
+        require(len(answer) == len(json.loads(text)["items"]) and set(answer) == set(range(1, len(criteria) + 1)),
+                "answer must judge each criterion exactly once")
+        record["items"] = [{"id": n, "criterion": c, "result": answer[n]["result"], "reason": answer[n]["reason"]}
+                           for n, c in enumerate(criteria, 1)]
         record.update(status="checked", verdict=verdict([i["result"] for i in record["items"]]))
     except Exception as error:
         record.update(status="unknown-charge" if record.get("actual_usd") is None else "failed",
@@ -169,21 +169,21 @@ def run(config_path, card_path, image_path, execute=False):
         record["accounted_usd"] = charge / 1e6
         with closing(sqlite3.connect(db_path, timeout=10)) as db, db:
             db.execute("UPDATE calls SET micro=?, status=? WHERE id=?", (charge, record["status"], run_id))
-    return finish(record, image_path, execute)
+    return finish(record, report, execute)
 
 
-def finish(record, image_path, execute):
-    if execute:
-        (image_path.parent / "check.json").write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n",
-                                                      encoding="utf-8")
+def finish(record, report, execute):
+    if execute:  # O_NOFOLLOW where the platform has it: never write through a link placed after the check
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+        with open(os.open(report, flags, 0o600), "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False, indent=2) + "\n")
     return record
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", required=True, type=Path)
-    parser.add_argument("--card", required=True, type=Path)
-    parser.add_argument("--image", required=True, type=Path)
+    for name in ("--config", "--card", "--image"):
+        parser.add_argument(name, required=True, type=Path)
     parser.add_argument("--execute", action="store_true", help="send one paid request; default is offline checks")
     args = parser.parse_args()
     try:

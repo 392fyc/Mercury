@@ -69,8 +69,8 @@ class ImageCheckTests(unittest.TestCase):
                     "background": "transparent", "acceptance": ["One silver emblem", "No text"]}
         self.image.write_bytes(png(8, 8, emblem, filters=(0, 1, 2, 3, 4)))
         self.save()
-        self.answer = {"items": [{"criterion": "One silver emblem", "result": "pass", "reason": "centred"},
-                                 {"criterion": "No text", "result": "pass", "reason": "none"}]}
+        self.answer = {"items": [{"id": 1, "result": "pass", "reason": "centred"},
+                                 {"id": 2, "result": "pass", "reason": "none"}]}
 
     def save(self):
         self.config.write_text(json.dumps(self.cfg), encoding="utf-8")
@@ -92,22 +92,65 @@ class ImageCheckTests(unittest.TestCase):
 
     def test_png_facts_decode_every_filter_type(self):
         facts = check.png_facts(png(8, 8, emblem, filters=(0, 1, 2, 3, 4)))
-        self.assertEqual(facts, {"dimensions": [8, 8], "alpha": True, "corners_transparent": True})
+        self.assertEqual(facts, {"dimensions": [8, 8], "corners_transparent": True})
         opaque = check.png_facts(png(4, 3, lambda x, y: (x * 40, y * 60, 90, 255), filters=(4, 3)))
         self.assertFalse(opaque["corners_transparent"])
         rgb = check.png_facts(png(4, 4, lambda x, y: (1, 2, 3), color=2))
-        self.assertEqual((rgb["alpha"], rgb["corners_transparent"]), (False, None))
+        self.assertEqual(rgb, {"dimensions": [4, 4], "corners_transparent": None})
 
     def test_corrupt_png_is_refused(self):
         data = bytearray(png(4, 4, emblem))
         data[40] ^= 0xFF
         with self.assertRaises(ValueError):
             check.png_facts(bytes(data))
+        whole = png(4, 4, emblem)
+        with self.assertRaisesRegex(ValueError, "IEND"):
+            check.png_facts(whole[:-12])
+        raw = zlib.compress(b"".join(bytes(10) for _ in range(4)))  # RGB rows one byte short
+        short = whole[:33] + chunk(b"IDAT", raw) + chunk(b"IEND", b"")
+        short = short[:8] + chunk(b"IHDR", struct.pack(">IIBBBBB", 4, 4, 8, 2, 0, 0, 0)) + short[33:]
+        with self.assertRaisesRegex(ValueError, "wrong length"):
+            check.png_facts(short)
+        truncated = whole[:33] + chunk(b"IDAT", zlib.compress(bytes(68))[:-6]) + chunk(b"IEND", b"")
+        with self.assertRaisesRegex(ValueError, "truncated"):
+            check.png_facts(truncated)
+        interlaced = whole[:8] + chunk(b"IHDR", struct.pack(">IIBBBBB", 4, 4, 8, 6, 0, 0, 1)) + whole[33:]
+        with self.assertRaisesRegex(ValueError, "unsupported"):
+            check.png_facts(interlaced)
+
+    def test_an_unreadable_png_is_a_mechanical_fail_with_a_report(self):
+        self.image.write_bytes(png(8, 8, emblem)[:-12])
+        result, req = self.run_check()
+        self.assertEqual((result["verdict"], result["mechanical"]["png"]), ("fail", False))
+        req.assert_not_called()
+        self.assertTrue((self.image.parent / "check.json").exists())
+
+    def test_transparency_that_cannot_be_verified_does_not_pass(self):
+        self.image.write_bytes(png(8, 8, lambda x, y: (1, 2, 3), color=2))
+        result, req = self.run_check()
+        self.assertEqual((result["verdict"], result["mechanical"]["transparent_background"]), ("fail", False))
+        req.assert_not_called()
+
+    def test_a_tracked_report_is_refused_before_any_call(self):
+        report = self.image.parent / "check.json"
+        report.write_text("{}", encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.root), "add", "-f", str(report)], check=True)
+        with self.assertRaisesRegex(ValueError, "Git-ignored"):
+            self.run_check()
+
+    def test_a_linked_report_is_refused_before_any_call(self):
+        report = self.image.parent / "check.json"
+        try:
+            report.symlink_to(self.root / "elsewhere.json")
+        except OSError:
+            self.skipTest("symbolic links are not available")
+        with self.assertRaisesRegex(ValueError, "link"):
+            self.run_check()
 
     def test_preflight_reads_no_key_and_writes_nothing(self):
         result, req = self.run_check(execute=False)
         self.assertEqual(result["status"], "dry-run")
-        self.assertEqual(result["mechanical"], {"size": True, "transparent_background": True})
+        self.assertEqual(result["mechanical"], {"png": True, "size": True, "transparent_background": True})
         req.assert_not_called()
         self.assertFalse((self.private / "state").exists())
         self.assertFalse((self.image.parent / "check.json").exists())
@@ -154,6 +197,18 @@ class ImageCheckTests(unittest.TestCase):
         result, _ = self.run_check(self.response({"items": self.answer["items"][:1]}))
         self.assertEqual(result["verdict"], "unsure")
         self.assertEqual(self.ledger(), [(14000, "failed"), (14000, "failed")])
+
+    def test_a_repeated_or_unknown_criterion_id_is_unsure(self):
+        self.cfg["max_calls"] = 3
+        self.save()
+        twice = {"items": [self.answer["items"][0], dict(self.answer["items"][0])]}
+        self.assertEqual(self.run_check(self.response(twice))[0]["verdict"], "unsure")
+        stray = {"items": [self.answer["items"][0], {"id": 7, "result": "pass", "reason": "x"}]}
+        self.assertEqual(self.run_check(self.response(stray))[0]["verdict"], "unsure")
+        swapped = {"items": list(reversed(self.answer["items"]))}
+        swapped["items"][0] = {"id": 2, "result": "fail", "reason": "text"}
+        result = self.run_check(self.response(swapped))[0]
+        self.assertEqual([i["result"] for i in result["items"]], ["pass", "fail"])
 
     def test_network_failure_keeps_the_reservation_and_call_limit_holds(self):
         result, _ = self.run_check(error=OSError("down"))
