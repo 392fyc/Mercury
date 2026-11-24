@@ -41,8 +41,8 @@ def private(root, path):
 
 def primary_root(project_root):
     root = Path(project_root).resolve()
-    main = subprocess.run(["git", "-C", str(root), "worktree", "list", "--porcelain"],
-                          capture_output=True, text=True, check=True).stdout.splitlines()[0]
+    main = subprocess.run(["git", "-C", str(root), "worktree", "list", "--porcelain", "-z"],  # raw UTF-8 path
+                          capture_output=True, check=True).stdout.decode("utf-8").split(chr(0))[0]
     require(main == "worktree " + root.as_posix(), "project_root must be the primary checkout")
     return root
 

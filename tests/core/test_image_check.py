@@ -281,6 +281,11 @@ class ImageCheckTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "primary checkout"):
             check.run(moved, self.card, self.image)
 
+    def test_a_primary_checkout_with_a_non_ascii_path_is_accepted(self):
+        root = self.root / "中文 目录"
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        self.assertEqual(check.primary_root(str(root)), root.resolve())
+
     def test_main_exit_codes_separate_preflight_from_pass(self):
         argv = ["image_check.py", "--config", str(self.config), "--card", str(self.card), "--image", str(self.image)]
         with patch.object(sys, "argv", argv), patch("builtins.print"):
