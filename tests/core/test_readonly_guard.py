@@ -21,6 +21,7 @@ ALLOWED = [
     "git status -sb",
     # #821: tests and reads that name the paid helpers stay allowed; only running them is refused
     "python -B -m pytest -q tests/core/test_image_check.py", "python -m pytest tests/core -k image_api",
+    "bash -c 'grep -n image_check packs/core/hooks/readonly_guard.py'",
     # wrapper commands run the command after them (#804): read-only ones stay allowed
     "timeout 20 git log -1", "timeout -k 5 20s git status", "nice -n 5 git log", "env -i A=1 git status",
     "nohup git fetch --dry-run", "xargs -n 1 grep -l push", "command -v git", "stdbuf -o0 git log", "env",
@@ -150,6 +151,7 @@ BLOCKED = [
     "cd packs/core/skills/image-api/scripts && python -B -m image_api --execute",
     "PYTHONPATH=packs/core/skills/image-api/scripts python -m image_check --execute",
     "python -c 'import image_check; image_check.main()'",
+    "python -mimage_check --execute", "python -Bc 'import image_api'", "uv run --module image_check",
     # #744: the lane bus writes its store, and release cannot be undone
     "bash .mercury/packs/lanes/scripts/lane-bus.sh release --harness claude --lane main",
     "bash .mercury/packs/lanes/scripts/lane-bus.sh read --harness claude",

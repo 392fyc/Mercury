@@ -741,9 +741,12 @@ def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), 
     if word in INTERPRETERS:
         # uv run and interpreter flag values can precede these paid helpers. A module run (`python -m image_check`)
         # or inline code naming one is refused like the script path; test files such as test_image_check.py are not.
+        # Shell -c bodies are checked recursively below; only Python inline code is searched here (-c, -Bc).
         paths = [command_word(a) for a in args]
-        modules = [command_word(m) for flag, m in zip(args, args[1:]) if flag == "-m"]
-        inline = [code.lower() for flag, code in zip(args, args[1:]) if flag.lower() in INLINE_FLAGS]
+        modules = [command_word(m) for flag, m in zip(args, args[1:]) if flag in ("-m", "--module")]
+        modules += [command_word(a[2:]) for a in args if a.startswith("-m") and len(a) > 2]
+        inline = [code.lower() for flag, code in zip(args, args[1:]) if word in ("python", "python3", "py", "uv", "uvx")
+                  and flag.startswith("-") and not flag.startswith("--") and flag.endswith("c")]
         paid = [name for name in ("image_api", "image_check")
                 if name + ".py" in paths or name in modules or any(name in c for c in inline)]
         if paid:
