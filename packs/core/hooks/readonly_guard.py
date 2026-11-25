@@ -97,8 +97,6 @@ SHELLS = {"bash", "sh", "dash", "ash", "zsh", "powershell", "pwsh", "cmd"}
 PYTHON_INTERPRETERS = {"python", "python3", "py"}
 INTERPRETERS = {"pwsh", "powershell", "bash", "sh", "uv", "uvx", "node"}
 PAID_PYTHON_HELPERS = ("image_api", "image_check")
-# These test commands own options such as pytest's -m marker and -rc report selection.
-PYTHON_TEST_MODULES = {"pytest", "unittest"}
 # Options that take a value before the target program of these runners.
 PROFILE_VALUE_OPTIONS = ("os", {"--outfile", "--sort"})
 PYTHON_PROGRAM_RUNNERS = {
@@ -898,6 +896,22 @@ def explicit_file_targets(args):
             if flag.lower() in ("-file", "-f"))
 
 
+def unittest_file_targets(args):
+    # Discovery searches for files rather than accepting explicit test files.
+    if args and args[0].lower() == "discover":
+        return
+    tokens = iter(args)
+    in_options = True
+    for arg in tokens:
+        if in_options and arg.startswith("-"):
+            if arg == "--":
+                in_options = False
+            elif arg == "--durations" or re.fullmatch(r"-[bqvcf]*k", arg):
+                next(tokens, None)  # A count or a test-name pattern, not an input file.
+        elif arg.lower().endswith(".py"):
+            yield command_word(arg)
+
+
 def python_execution_targets(kind: str, entry: str, args: tuple[str, ...], python_minor: int | None):
     """Follow known runner entry points and retain opaque modules with their arguments."""
     pending = [(kind, entry, args)]
@@ -967,9 +981,10 @@ def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), 
                 executed.extend(explicit_file_targets(tail))
             elif target_kind == "m" and command_word(target) in PAID_PYTHON_HELPERS:
                 raise Blocked(command_word(target) + ".py")
-            elif target_kind == "m" and command_word(target) not in PYTHON_TEST_MODULES:
-                # Retain explicit execution targets for opaque runners while giving
-                # known test tools ownership of their own options.
+            elif target_kind == "m" and command_word(target) == "unittest":
+                executed.extend(unittest_file_targets(tail))
+            elif target_kind == "m" and command_word(target) != "pytest":
+                # Opaque runners can use explicit file and interpreter-like options.
                 check_paid_helper_arguments(list(tail), scan_inline=True)
                 executed.extend(explicit_file_targets(tail))
             elif target_kind == "c":

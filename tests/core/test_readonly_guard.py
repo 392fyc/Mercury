@@ -608,6 +608,15 @@ class GuardCommands(unittest.TestCase):
                         check_command(f"python {entry} {option} tasks/task_file.py", extra=extra)
         check_command("python -m pytest -f tasks/task_file.py", extra=extra)
 
+    def test_unittest_checks_explicit_project_script_targets(self):
+        extra = frozenset({"task_file.py"})
+        for options in ("-f", "-f -v", "--failfast", "-f --"):
+            with self.subTest(options=options):
+                with self.assertRaisesRegex(Blocked, "task_file.py"):
+                    check_command(f"python -m unittest {options} tasks/task_file.py", extra=extra)
+        check_command("python -m unittest -f -k task_file.py tests/test_main.py", extra=extra)
+        check_command("python -m unittest -fk task_file.py tests/test_main.py", extra=extra)
+
 
 class GuardActions(unittest.TestCase):
     """#692: params.guard_write_actions blocks a script only for listed -Action values, and whenever the action is unclear."""
