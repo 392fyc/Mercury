@@ -34,7 +34,9 @@ blocks every call of that script; a list of script names under this key blocks t
 """
 from __future__ import annotations
 
+import argparse
 import contextvars
+import getopt
 import json
 import os
 import re
@@ -103,7 +105,6 @@ PYTHON_PROGRAM_RUNNERS = {
     "cprofile": PROFILE_VALUE_OPTIONS,
     "profile": PROFILE_VALUE_OPTIONS,
     "trace": ("fC", {"--file", "--coverdir", "--ignore-module", "--ignore-dir"}),
-    "pdb": ("p", {"--pid"}),
     "coverage": ("", {"--concurrency", "--context", "--data-file", "--debug", "--include",
                      "--omit", "--rcfile", "--save-signal", "--source"}),
 }
@@ -797,26 +798,57 @@ def check_python_inline(code: str) -> None:
             raise Blocked(name + ".py")
 
 
-def pdb_target_options(options: Iterator[str]) -> Iterator[str]:
-    """Pdb claims its debugger commands even when they follow the debug target."""
-    target_options = []
-    for arg in options:
-        if arg == "--":
-            target_options.append(arg)
-            target_options.extend(options)
-            break
-        name, equals, value = arg.partition("=")
-        # Older pdb uses getopt, which accepts combined short options and unique long prefixes.
-        short_command = re.fullmatch(r"-(m*)c(.*)", arg, re.DOTALL)
-        if short_command:
-            if short_command[1]:
-                target_options.append("-m")
-            check_python_inline(short_command[2] or next(options, ""))
-        elif name.startswith("--") and "--command".startswith(name):
-            check_python_inline(value if equals else next(options, ""))
-        else:
-            target_options.append(arg)
-    return iter(target_options)
+def pdb_legacy_target(args: tuple[str, ...]) -> tuple[str, str, tuple[str, ...]] | None:
+    """In the getopt CLI, only options before the first target belong to pdb."""
+    try:
+        options, tail = getopt.getopt(list(args), "mhc:", ["help", "command="])
+    except getopt.GetoptError:
+        return None
+    flags = {flag for flag, _ in options}
+    if not tail or flags & {"-h", "--help"}:
+        return None
+    for flag, value in options:
+        if flag in ("-c", "--command"):
+            check_python_inline(value)
+    return ("m" if "-m" in flags else "script"), tail[0], tuple(tail[1:])
+
+
+def pdb_argparse_target(args: tuple[str, ...], *, last_module: bool) -> tuple[str, str, tuple[str, ...]] | None:
+    """Python 3.13 claims every -m; 3.14 selects only the first target after commands."""
+    parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False, exit_on_error=False)
+    parser.add_argument("-c", "--command", dest="commands", action="append", default=[])
+    if last_module:
+        parser.add_argument("-m")
+    try:
+        options, tail = parser.parse_known_args(args)
+        if last_module and options.m:
+            if "-m" not in args or parser.parse_known_args(args[:args.index("-m")])[1]:
+                return None
+    except argparse.ArgumentError:
+        return None
+    for command in options.commands:
+        check_python_inline(command)
+    if last_module and options.m:
+        return "m", options.m, tuple(tail)
+    if not last_module and len(tail) > 1 and tail[0] == "-m" and not tail[1].startswith("-"):
+        return "m", tail[1], tuple(tail[2:])
+    if tail and not tail[0].startswith("-"):
+        return "script", tail[0], tuple(tail[1:])
+    return None
+
+
+def pdb_targets(args: tuple[str, ...], python_minor: int | None):
+    # A shell-resolved interpreter may select any supported CLI. Only a qualified
+    # Python launcher invocation supplies a minor version we can use here.
+    if python_minor is None or python_minor <= 12:
+        yield pdb_legacy_target(args)
+    if python_minor in (None, 13):
+        yield pdb_argparse_target(args, last_module=True)
+    if python_minor in (None, 14):
+        yield pdb_argparse_target(args, last_module=False)
+    # Retain the prior conservative check for an explicit attached paid-module spelling.
+    check_paid_helper_arguments([arg for arg in args if arg.startswith("-m") and len(arg) > 2],
+                                scan_inline=False)
 
 
 def python_runner_entry(runner: str, options: Iterator[str]) -> tuple[str, str]:
@@ -832,28 +864,19 @@ def python_runner_entry(runner: str, options: Iterator[str]) -> tuple[str, str]:
             return kind, arg
         if arg.startswith("--"):
             option, equals, _ = arg.partition("=")
-            takes_value = option in long_values or (runner != "pdb" and
-                                                     any(flag.startswith(option) for flag in long_values))
+            takes_value = option in long_values or any(flag.startswith(option) for flag in long_values)
             if takes_value:
                 if not equals:
                     next(options, "")
-                if option == "--pid":
-                    return "", ""
             elif runner in ("trace", "coverage") and "--module".startswith(arg):
                 kind = "m"
             continue
         for i, flag in enumerate(arg[1:], start=1):
             if flag == "m" and runner != "trace":
-                # Legacy pdb accepts repeated -m mode flags. Keep the old guard's
-                # conservative check for an attached target spelling as well.
-                if runner == "pdb" and arg[i + 1:].strip("m"):
-                    return "m", arg[i + 1:]
                 kind = "m"
             if flag in short_values:
                 if i == len(arg) - 1:
                     next(options, "")
-                if flag == "p":
-                    return "", ""
                 break
     return "", ""
 
@@ -868,6 +891,36 @@ def check_paid_helper_arguments(args: list[str], *, scan_inline: bool) -> None:
     for name in PAID_PYTHON_HELPERS:
         if name + ".py" in paths or name in modules or any(name in c for c in inline):
             raise Blocked(name + ".py")
+
+
+def explicit_file_targets(args):
+    return (command_word(target) for flag, target in zip(args, args[1:])
+            if flag.lower() in ("-file", "-f"))
+
+
+def python_execution_targets(kind: str, entry: str, args: tuple[str, ...], python_minor: int | None):
+    """Follow known runner entry points and retain opaque modules with their arguments."""
+    pending = [(kind, entry, args)]
+    seen = set()
+    while pending:
+        target = pending.pop()
+        if target in seen:
+            continue
+        seen.add(target)
+        kind, entry, tail = target
+        name = command_word(entry)
+        runner = name if kind == "m" else name[:-3] if kind == "script" and name.endswith(".py") else ""
+        if runner != "pdb" and runner not in PYTHON_PROGRAM_RUNNERS:
+            yield target
+            continue
+        if kind == "script":
+            yield target  # Preserve project checks on the runner file itself.
+        if runner == "pdb":
+            pending.extend(target for target in pdb_targets(tail, python_minor) if target is not None)
+        else:
+            options = iter(tail)
+            nested_kind, nested_entry = python_runner_entry(runner, options)
+            pending.append((nested_kind, nested_entry, tuple(options)))
 
 
 def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), actions: dict | None = None,
@@ -893,35 +946,37 @@ def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), 
         for name in PAID_PYTHON_HELPERS:
             if name + ".py" in paths:
                 raise Blocked(name + ".py")
+        python_minor = None
         if word == "py":
             if args and args[0].lower() == "exec":  # Python install manager subcommand
                 args = args[1:]
-            if args and args[0].startswith("-V:"):
-                args = args[1:]
+            if args:
+                qualified = re.fullmatch(r"-(?:V:(?:PythonCore/)?)?3\.([0-9]{1,2})", args[0], re.IGNORECASE)
+                if qualified:
+                    minor = int(qualified[1])
+                    python_minor = minor if minor <= 14 else None
+                if qualified or args[0].startswith("-V:"):
+                    args = args[1:]
         options = iter(args)
         kind, entry = python_entry(options)
-        while kind == "m" and command_word(entry) in PYTHON_PROGRAM_RUNNERS:
-            runner = command_word(entry)
-            if runner == "pdb":
-                options = pdb_target_options(options)
-            kind, entry = python_runner_entry(runner, options)
-        if kind == "script":
-            executed.append(command_word(entry))
-        elif kind == "m" and command_word(entry) in PAID_PYTHON_HELPERS:
-            raise Blocked(command_word(entry) + ".py")
-        elif kind == "m" and command_word(entry) not in PYTHON_TEST_MODULES:
-            # A plugin or debugger can have its own execution options. Preserve the old
-            # paid-helper checks at this unknown boundary without misreading test flags.
-            check_paid_helper_arguments(list(options), scan_inline=True)
-        elif kind == "c":
-            check_python_inline(entry)
+        for target_kind, target, tail in python_execution_targets(kind, entry, tuple(options), python_minor):
+            if target_kind == "script":
+                executed.append(command_word(target))
+            elif target_kind == "m" and command_word(target) in PAID_PYTHON_HELPERS:
+                raise Blocked(command_word(target) + ".py")
+            elif target_kind == "m" and command_word(target) not in PYTHON_TEST_MODULES:
+                # Retain explicit execution targets for opaque runners while giving
+                # known test tools ownership of their own options.
+                check_paid_helper_arguments(list(tail), scan_inline=True)
+                executed.extend(explicit_file_targets(tail))
+            elif target_kind == "c":
+                check_python_inline(target)
     elif word in INTERPRETERS:
         # Keep checking wrappers such as uv run, whose options or wrapped interpreter can precede a paid helper.
         # Shell -c bodies are checked recursively below.
         check_paid_helper_arguments(args, scan_inline=word in ("uv", "uvx"))
         executed += [command_word(a) for a in args if not a.startswith("-")][:1]
-        executed += [command_word(args[i + 1]) for i, a in enumerate(args[:-1])
-                     if a.lower() in ("-file", "-f")]
+        executed.extend(explicit_file_targets(args))
     # Before the redirect check, so that a comment such as <# ... #> is refused for what it is.
     for script in executed:
         if script in WRITE_SCRIPTS or script in extra:

@@ -27,7 +27,10 @@ ALLOWED = [
     "python 2>&1 -m pytest tests -m image_check",
     "py exec -m pytest tests -m image_check",
     "python -m cProfile -m pytest tests -m image_check",
-    "python -m pdb -m pytest tests -m image_check",
+    "py -3.11 -m pdb -m pytest tests -m image_check",
+    "py -3.12 -m pdb -m pytest -c quit tests -m image_check",
+    "py -3.14 -m pdb -m pytest -c quit tests -m image_check",
+    "py -V:PythonCore/3.14 -m pdb -m pytest tests -m image_check",
     "python -m pdb -m -m pytest tests -m image_check",
     "python -m pdb -mc quit pytest tests -m image_check",
     "python -m coverage run -m pytest tests -m image_check",
@@ -184,6 +187,11 @@ BLOCKED = [
     "python -m pdb -m -m image_check --help",
     "python -m pdb -mm -- image_check --help",
     "python -m pdb -mimage_check --help",
+    "python /stdlib/cProfile.py -m image_check --help",
+    "py -3.11 -m pdb -m trace -c --module image_check --help",
+    "python -m pdb -m trace -c --module image_check --help",
+    "py -3.13 -m pdb -m pytest -c quit tests -m image_check",
+    "python -m pdb -m pytest tests -m image_check",
     # #744: the lane bus writes its store, and release cannot be undone
     "bash .mercury/packs/lanes/scripts/lane-bus.sh release --harness claude --lane main",
     "bash .mercury/packs/lanes/scripts/lane-bus.sh read --harness claude",
@@ -586,6 +594,14 @@ class GuardCommands(unittest.TestCase):
                 check_command(command)  # without the extension the same command is allowed
         check_command("cat tools/deploy.sh", extra=extra)
         check_command("grep -n publish.ps1 README.md", extra=extra)
+
+    def test_unknown_python_module_file_option_checks_project_scripts(self):
+        extra = frozenset({"task_file.py"})
+        for option in ("-f", "-File"):
+            with self.subTest(option=option):
+                with self.assertRaisesRegex(Blocked, "task_file.py"):
+                    check_command(f"python -m locust {option} tasks/task_file.py", extra=extra)
+        check_command("python -m pytest -f tasks/task_file.py", extra=extra)
 
 
 class GuardActions(unittest.TestCase):
