@@ -609,6 +609,44 @@ class GuardCommands(unittest.TestCase):
                         check_command(f"python {entry} {option} tasks/task_file.py", extra=extra)
         check_command("python -m pytest -f tests/test_main.py", extra=extra)
 
+    def test_pytest_checks_explicit_project_test_files(self):
+        extra = frozenset({"task_file.py"})
+        cases = (
+            "python -mpytest tests/task_file.py",
+            "python -m pytest tests/test_main.py tests/task_file.py::TestTask::test_run",
+            "python -m pytest -m fast -- tests/task_file.py",
+            "python -m pytest -rc tests/task_file.py",
+        )
+        for command in cases:
+            with self.subTest(command=command):
+                with self.assertRaisesRegex(Blocked, "task_file.py"):
+                    check_command(command, extra=extra)
+        for options in ('-m task_file.py', '-qm task_file.py', '-mtask_file.py',
+                        '--ignore tests/task_file.py', '--deselect tests/task_file.py::TestTask',
+                        '--debug -m task_file.py'):
+            with self.subTest(options=options):
+                check_command(f"python -m pytest {options} tests/test_main.py", extra=extra)
+
+    def test_known_python_file_runners_check_their_program(self):
+        runners = (
+            "/venv/bin/coverage run --source packs/core",
+            "/venv/bin/coverage3 run",
+            "/venv/bin/coverage-3.13 run",
+            "/venv/Scripts/coverage.EXE run",
+            "/venv/site-packages/coverage/__main__.py run",
+            "/venv/bin/debugpy --listen 127.0.0.1:5678",
+            "/venv/Scripts/debugpy.EXE --listen 127.0.0.1:5678",
+            "/venv/site-packages/debugpy/__main__.py --listen 127.0.0.1:5678 --configure-subProcess False",
+        )
+        for runner in runners:
+            with self.subTest(runner=runner):
+                with self.assertRaisesRegex(Blocked, "image_check.py"):
+                    check_command(f"python {runner} -m image_check")
+                check_command(f"python {runner} -m pytest tests -m image_check")
+        check_command("python tools/debugpy.py -m image_check")
+        check_command("python tools/debugpy -m image_check")
+        check_command("python tools/coverage run -m image_check")
+
     def test_ipython_file_launcher_checks_code_arguments(self):
         launchers = ("/venv/bin/ipython", "/venv/bin/ipython3", "/venv/site-packages/IPython/__main__.py",
                      "IPython/__main__.py")

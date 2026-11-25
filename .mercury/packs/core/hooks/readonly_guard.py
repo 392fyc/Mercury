@@ -106,6 +106,15 @@ PYTHON_PROGRAM_RUNNERS = {
     "coverage": ("", {"--concurrency", "--context", "--data-file", "--debug", "--include",
                      "--omit", "--rcfile", "--save-signal", "--source"}),
 }
+DEBUGPY_VALUE_OPTIONS = {"--listen", "--connect", "--log-to", "--parent-session-pid", "--adapter-access-token"}
+PYTEST_SHORT_VALUE_OPTIONS = "ckmoprW"
+# Core pytest options whose values can look like a test file or node ID.
+PYTEST_LONG_VALUE_OPTIONS = {
+    "--basetemp", "--confcutdir", "--config-file", "--deselect", "--doctest-glob", "--ignore", "--ignore-glob",
+    "--junit-xml", "--junitxml", "--log-file", "--log-file-format", "--log-file-date-format", "--log-format",
+    "--log-date-format", "--log-cli-format", "--log-cli-date-format", "--override-ini", "--rootdir",
+    "--report-chars", "--pythonwarnings",
+}
 INLINE_FLAGS = {"-c", "-command", "/c", "-commandwithargs"}
 # Per shell, spelled without quotes or escapes (Argus on ae13a5c). Checked in real shells: in Bash, `\$null`, `null`,
 # `nul` (Git Bash too) and `$null` with a variable `null` set all write a file; in PowerShell `'$null'` and `null`
@@ -898,6 +907,31 @@ def explicit_file_targets(args):
             if flag.lower() in ("-file", "-f"))
 
 
+def pytest_file_targets(args):
+    """Find explicit Python collection files, including node IDs, outside pytest option values."""
+    tokens = iter(enumerate(args))
+    in_options = True
+    for position, arg in tokens:
+        if in_options and arg.startswith("-"):
+            if arg == "--":
+                in_options = False
+            elif arg in PYTEST_LONG_VALUE_OPTIONS:
+                next(tokens, None)
+            elif arg in ("--cache-show", "--debug"):
+                if position + 1 < len(args) and not args[position + 1].startswith("-"):
+                    next(tokens, None)
+            elif not arg.startswith("--"):
+                for index, flag in enumerate(arg[1:], start=1):
+                    if flag in PYTEST_SHORT_VALUE_OPTIONS:
+                        if index == len(arg) - 1:
+                            next(tokens, None)
+                        break
+        else:
+            path = arg.split("::", 1)[0]
+            if path.lower().endswith(".py"):
+                yield command_word(path)
+
+
 def unittest_file_targets(args):
     # Discovery searches for files rather than accepting explicit test files.
     if args and args[0].lower() == "discover":
@@ -914,6 +948,34 @@ def unittest_file_targets(args):
             yield command_word(arg)
 
 
+def python_file_runner(entry: str) -> str:
+    folder, _, name = entry.strip().replace("\\", "/").lower().rpartition("/")
+    name = command_word(name)
+    package = folder.rsplit("/", 1)[-1]
+    if name == "__main__.py" and package in ("debugpy", "coverage"):
+        return package
+    if package in ("bin", "scripts"):
+        if name == "debugpy":
+            return name
+        if re.fullmatch(r"coverage(?:3|-3\.\d+)?", name):
+            return "coverage"
+    stem = name[:-3] if name.endswith(".py") else ""
+    return stem if stem == "pdb" or stem in PYTHON_PROGRAM_RUNNERS else ""
+
+
+def debugpy_file_entry(options: Iterator[str]) -> tuple[str, str]:
+    for arg in options:
+        if arg in ("-m", "-c"):
+            return arg[1], next(options, "")
+        if arg in ("--pid", "-h", "--help", "--version"):
+            break
+        if not arg.startswith("-") or arg == "-":
+            return "script", arg
+        if arg in DEBUGPY_VALUE_OPTIONS or arg.startswith("--configure-"):
+            next(options, None)
+    return "", ""
+
+
 def python_execution_targets(kind: str, entry: str, args: tuple[str, ...], python_minor: int | None):
     """Follow known runner entry points and retain opaque modules with their arguments."""
     pending = [(kind, entry, args)]
@@ -924,9 +986,9 @@ def python_execution_targets(kind: str, entry: str, args: tuple[str, ...], pytho
             continue
         seen.add(target)
         kind, entry, tail = target
-        name = command_word(entry)
-        runner = name if kind == "m" else name[:-3] if kind == "script" and name.endswith(".py") else ""
-        if runner != "pdb" and runner not in PYTHON_PROGRAM_RUNNERS:
+        runner = command_word(entry) if kind == "m" else python_file_runner(entry) if kind == "script" else ""
+        debugpy_file = kind == "script" and runner == "debugpy"
+        if runner != "pdb" and runner not in PYTHON_PROGRAM_RUNNERS and not debugpy_file:
             yield target
             continue
         if kind == "script":
@@ -938,7 +1000,7 @@ def python_execution_targets(kind: str, entry: str, args: tuple[str, ...], pytho
             pending.extend(target for target in pdb_targets(tail, debugger_minor) if target is not None)
         else:
             options = iter(tail)
-            nested_kind, nested_entry = python_runner_entry(runner, options)
+            nested_kind, nested_entry = debugpy_file_entry(options) if debugpy_file else python_runner_entry(runner, options)
             pending.append((nested_kind, nested_entry, tuple(options)))
 
 
@@ -994,10 +1056,11 @@ def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), 
                 raise Blocked(command_word(target) + ".py")
             elif target_kind == "m" and command_word(target) == "unittest":
                 executed.extend(unittest_file_targets(tail))
+            elif target_kind == "m" and command_word(target) == "pytest":
+                executed.extend(explicit_file_targets(tail))
+                executed.extend(pytest_file_targets(tail))
             elif target_kind == "m":
-                # pytest owns its marker and report options. Its plugins can still load explicit files.
-                if command_word(target) != "pytest":
-                    check_paid_helper_arguments(list(tail), scan_inline=True)
+                check_paid_helper_arguments(list(tail), scan_inline=True)
                 executed.extend(explicit_file_targets(tail))
             elif target_kind == "c":
                 check_python_inline(target)
