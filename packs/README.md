@@ -282,7 +282,9 @@ entry `create-a-workflow-dispatch-event`), which is granted to that job only (`p
 files have reached the integration branch every update runs the version that branch holds. No App token, variable or secret
 is referenced in the `dispatch` job. A scheduled run on the integration branch and a manual dispatch run `update`.
 
-GitHub reads the `workflow_run` trigger from the default branch too. The event path runs `update` only for a successful
+GitHub reads the `workflow_run` trigger from the default branch too. The workflow-name glob and branch filter follow
+[GitHub's trigger syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#onworkflow_runworkflows).
+The event path runs `update` only for a successful
 same-repository `pull_request` workflow on a Mercury update branch. It checks out Mercury `master` and the downstream
 integration branch. It reads required checks from that integration branch and uses the event's branch and SHA to select
 the candidate, then re-reads the current pull request and its checks before merging. The triggering run's artifacts,
@@ -297,7 +299,8 @@ Two properties of this design that are worth knowing:
   inside the threat model that already trusts write access (a writer can push a workflow file and run it anyway); it is
   mentioned so nobody assumes the token is reachable only from the integration branch.
 - The `dispatch` run, the run it starts and check completions share the `mercury-update` concurrency group.
-  With `queue: max`, GitHub serializes them and can keep multiple pending runs. A completion can stay queued while an
+  With [`queue: max`](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#concurrency),
+  GitHub serializes them and can keep multiple pending runs. A completion can stay queued while an
   update runs. Each run checks the current state when it starts, and a later scheduled run can recover a missed event.
 
 Because the scheduled copy on the default branch can be older than the tool, **the command line of `tools/mercury_update.py`
@@ -310,10 +313,12 @@ and only as optional; an existing flag is never removed, renamed or made require
 `publish` reads the newest commit of Mercury's `origin/master` and runs `tools/mercury.py apply` on a branch
 `mercury/update-<12 hex>`. If the project already matches, nothing happens. Otherwise it commits as
 `mercury-update@users.noreply.github.com`, pushes, and opens the one update pull request (source commit link, upstream
-change summary, files taken over or deleted). If an existing update is behind Mercury `master` and its head has green
-checks, `publish` runs the same merge gate on that head before considering the newer release. After it merges, the next
-publish run can open the newer update. An older head whose checks are missing or unsuccessful gets the new state on top
-of its branch with a regular push; the tool has no force option, so a regular push can
+change summary, files taken over or deleted). When the workflow supplies its required-check list to `publish`, the tool
+compares it to the integration config. If the existing head is green and GitHub reports a clean, non-draft merge state,
+`publish` runs the same merge gate before considering a newer release. After it merges, the next publish can open the
+newer update. A draft, a blocked PR or a head with unfinished checks can still receive a newer release. An older workflow
+without a check-list argument keeps its existing publish path. The new state goes on top of the branch with a regular
+push, which can
 never discard anyone's commits. An update branch that went stale is not built on: when it no longer merges cleanly with
 the base (the base changed the same managed files another way, for example by a hand-run `tools/mercury.py apply`) or the
 base already matches the release, `publish` closes its pull request with a comment, deletes the branch only while it is

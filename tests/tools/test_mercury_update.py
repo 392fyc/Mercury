@@ -84,6 +84,7 @@ class FakeGh:
 
     def item(self, pr):
         return {"number": pr["number"], "state": pr["state"], "draft": pr["draft"], "mergeable": pr["mergeable"],
+                "mergeable_state": pr.get("mergeable_state", "clean"),
                 "head": {"ref": pr["ref"], "sha": pr.get("sha") or self.sha(pr["ref"]),
                          "repo": None if pr["repo"] is None else {"full_name": pr["repo"]}},
                 "base": {"ref": pr["base"]}}
@@ -481,12 +482,42 @@ class Publish(Fixture):
         branch, head, pr = self.published()
         self.gh.all_green(head)
         self.release(self.m_commit(3))
-        rc, out, err = self.publish()
+        rc, out, err = self.run_tool("publish", "--required-checks-json", '["CI"]')
         self.assertEqual(rc, 0, out + err)
         self.assertEqual(self.gh.named("pr", "merge"), [
             ["pr", "merge", str(pr["number"]), "--repo", REPO, "--squash", "--match-head-commit", head]])
         self.assertEqual(self.gh.sha(branch), head)
         self.assertEqual(self.gh.named("pr", "edit"), [])
+
+    def test_a_green_but_nonmergeable_update_can_still_receive_a_new_release(self):
+        branch, head, pr = self.published()
+        for version, details in enumerate((
+            {"draft": True, "mergeable": True, "mergeable_state": "draft"},
+            {"draft": False, "mergeable": None, "mergeable_state": "unknown"},
+            {"draft": False, "mergeable": True, "mergeable_state": "blocked"},
+        ), 3):
+            with self.subTest(details=details):
+                pr.update(details)
+                self.gh.all_green(head)
+                self.release(self.m_commit(version))
+                rc, out, err = self.run_tool("publish", "--required-checks-json", '["CI"]')
+                self.assertEqual(rc, 0, out + err)
+                new_head = self.gh.sha(branch)
+                self.assertNotEqual(new_head, head)
+                self.assertEqual(self.gh.named("pr", "merge"), [])
+                head = new_head
+                self.reset_target()
+
+    def test_a_legacy_or_mismatched_publish_command_does_not_merge(self):
+        branch, head, _ = self.published()
+        self.gh.all_green(head)
+        self.release(self.m_commit(3))
+        rc, out, err = self.run_tool("publish", "--required-checks-json", "[]")
+        self.assertEqual(rc, 2, out + err)
+        self.assertEqual(self.gh.sha(branch), head)
+        self.assertEqual(self.publish()[0], 0)
+        self.assertNotEqual(self.gh.sha(branch), head)
+        self.assertEqual(self.gh.named("pr", "merge"), [])
 
     def test_the_tool_has_no_force_push_anywhere(self):
         text = TOOL.read_text(encoding="utf-8")

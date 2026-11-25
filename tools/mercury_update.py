@@ -2,6 +2,7 @@
 """Deliver released Mercury commits to a downstream project, from inside that project's GitHub Actions job.
 
     python tools/mercury_update.py publish --target <checkout> --mercury <checkout> --repo owner/name --base <branch>
+                                           [--required-checks-json <json list>]
     python tools/mercury_update.py merge   --target <checkout> --mercury <checkout> --repo owner/name --base <branch>
                                            [--required-checks-json <json list>] [--workflow-run-event <file>]
     python tools/mercury_update.py verify  --target <checkout> --mercury <checkout> --base <branch> --head-ref <branch>
@@ -12,7 +13,7 @@ every Git call; both are reached through one seam each so tests can replace them
 
 publish  Reads the newest commit of Mercury's `origin/master`, and when the project's managed files differ from it,
          applies it with `tools/mercury.py apply` on a branch `mercury/update-<12 hex>` and opens the one update pull
-         request. An existing green head gets a chance to merge before a newer release replaces it. Otherwise, the new
+         request. With --required-checks-json, a merge-ready head gets priority over a newer release. Otherwise, the new
          state goes on top of its branch with a regular push (see "Branch rule"). An update branch that went stale
          (the base changed the same managed files another way and the branch conflicts, or the base already matches the
          release) has its pull request closed and its branch deleted, and a fresh update is opened from the base.
@@ -636,7 +637,7 @@ def cmd_publish(a, gh):
         raise Stop("the target checkout must be clean")
     if git(target, "rev-parse", "HEAD") != git(target, "rev-parse", f"origin/{a.base}"):
         raise Stop(f"the target checkout must be at the tip of origin/{a.base}")
-    params = params_at_base(target, a.base, None)
+    params = params_at_base(target, a.base, a.required_checks_json)
     new = mercury_master(mercury)
     pr = update_queue(gh, a.repo, a.base)
     if pr is None:
@@ -660,11 +661,15 @@ def cmd_publish(a, gh):
         print(f"nothing to publish: pull request #{pr['number']} already carries Mercury {new[:12]}")
         return 0
     wanted = params["required_checks"] + [VERIFY_CHECK_NAME]
-    if not check_problems(gh, a.repo, head, wanted):
-        if not merge_update(a, gh, target, mercury, params, pr, expected=(branch, head)):
+    # Only a workflow that supplies its check list can opt into publishing's merge path.
+    if a.required_checks_json is not None and not check_problems(gh, a.repo, head, wanted):
+        current = update_details(a, gh, pr)
+        if current["head"]["sha"] != head:
             raise Stop("the ready update moved before it could be merged")
-        set_output("merged", "true")
-        return 0
+        if not current.get("draft") and current.get("mergeable") is True and current.get("mergeable_state") == "clean":
+            merge_update(a, gh, target, mercury, params, current)
+            set_output("merged", "true")
+            return 0
     git(target, "switch", "--no-track", "-C", branch, f"refs/remotes/origin/{branch}")
     apply_update(target, mercury, new)
     old = lock_commit(show(target, f"origin/{a.base}", LOCK_REL))
@@ -730,8 +735,12 @@ def cmd_merge(a, gh):
     if item is None:
         print("nothing to do: no open update pull request")
         return 0
+    pr = update_details(a, gh, item)
+    if expected is not None and expected != (pr["head"]["ref"], pr["head"]["sha"]):
+        print(f"nothing to do: the expected head is no longer current on pull request #{pr['number']}")
+        return 0
     try:
-        merge_update(a, gh, target, mercury, params, item, expected=expected)
+        merge_update(a, gh, target, mercury, params, pr)
     except ChecksNotReady as err:
         if expected is None:
             raise
@@ -739,7 +748,7 @@ def cmd_merge(a, gh):
     return 0
 
 
-def merge_update(a, gh, target, mercury, params, item, *, expected=None):
+def update_details(a, gh, item):
     n = item["number"]
     pr = json.loads(gh(["api", f"repos/{a.repo}/pulls/{n}"]))
     if not isinstance(pr, dict) or pr.get("number") != n:
@@ -748,12 +757,16 @@ def merge_update(a, gh, target, mercury, params, item, *, expected=None):
     if not isinstance(head_sha, str) or not inst.SHA_RE.match(head_sha) or pr.get("head", {}).get("ref") != item["head"]["ref"] \
             or (pr.get("base") or {}).get("ref") != a.base or (((pr.get("head") or {}).get("repo")) or {}).get("full_name", "").lower() != a.repo.lower():
         raise Unsafe(f"pull request #{n}: unexpected data from GitHub")
-    if pr.get("state") != "open" or pr.get("draft"):
-        raise Stop(f"pull request #{n} is not open or is a draft")
-    branch = item["head"]["ref"]
-    if expected is not None and expected != (branch, head_sha):
-        print(f"nothing to do: the expected head is no longer current on pull request #{n}")
-        return False
+    if pr.get("state") != "open":
+        raise Stop(f"pull request #{n} is not open")
+    return pr
+
+
+def merge_update(a, gh, target, mercury, params, pr):
+    n = pr["number"]
+    branch, head_sha = pr["head"]["ref"], pr["head"]["sha"]
+    if pr.get("draft"):
+        raise Stop(f"pull request #{n} is a draft")
     git(target, "fetch", "--no-tags", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}")
     if git(target, "rev-parse", f"refs/remotes/origin/{branch}") != head_sha:
         raise Stop(f"the head of pull request #{n} moved while it was being verified; try again")
@@ -772,7 +785,6 @@ def merge_update(a, gh, target, mercury, params, item, *, expected=None):
     # The server compares the head again; no admin or bypass flag is used.
     gh(["pr", "merge", str(n), "--repo", a.repo, "--squash", "--match-head-commit", head_sha])
     print(f"merged update pull request #{n} (Mercury {new[:12]})")
-    return True
 
 
 def cmd_verify(a, gh):
@@ -800,8 +812,9 @@ def build_parser():
         p.add_argument("--base", required=True, help="the project's integration branch")
         if name != "verify":
             p.add_argument("--repo", required=True, help="owner/name of the project")
-        if name == "merge":
+        if name in ("publish", "merge"):
             p.add_argument("--required-checks-json", help="the list rendered into the workflow; must equal params.required_checks")
+        if name == "merge":
             p.add_argument("--workflow-run-event", help="merge only the update head named by this completed Actions event")
         if name == "verify":
             p.add_argument("--head-ref", required=True, help="head branch of the pull request being verified")

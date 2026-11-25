@@ -89,7 +89,8 @@ jobs:
         if: github.event_name != 'workflow_run'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: python -B mercury/tools/mercury_update.py publish --target target --mercury mercury --repo "$GITHUB_REPOSITORY" --base "$MERCURY_BASE"
+          MERCURY_REQUIRED_CHECKS: @@REQUIRED_CHECKS@@
+        run: python -B mercury/tools/mercury_update.py publish --target target --mercury mercury --repo "$GITHUB_REPOSITORY" --base "$MERCURY_BASE" --required-checks-json "$MERCURY_REQUIRED_CHECKS"
       # A successful check completion only rechecks the event head. It never publishes an update.
       - name: Merge when every condition holds
         if: steps.publish.outputs.published != 'true' && steps.publish.outputs.merged != 'true'
