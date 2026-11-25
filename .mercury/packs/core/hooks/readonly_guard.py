@@ -731,11 +731,9 @@ def strip_wrappers(tokens: list[str]) -> list[str]:
 def pytest_argument_start(args: list[str], launcher: bool) -> int | None:
     """Return the argument boundary for a direct Python invocation of pytest."""
     start = 0
-    if launcher:
-        if args and args[0].lower() == "exec":
-            start = 1
-        if start < len(args) and re.match(r"-(?:[0-9]|V:)", args[start], re.IGNORECASE):
-            start += 1
+    # Only skip a version selector. The legacy Windows launcher can treat `exec` as a script path.
+    if launcher and args and re.match(r"-(?:[0-9]|V:)", args[0], re.IGNORECASE):
+        start = 1
     options = iter(enumerate(args[start:], start))
     for index, arg in options:
         if arg == "--check-hash-based-pycs":
