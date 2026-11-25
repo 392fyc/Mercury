@@ -1,0 +1,24 @@
+name: Mercury deploy syntax smoke
+
+on:
+  push:
+    branches: [fix/deploy-auto-merge-826-codex]
+  workflow_run:
+    workflows: ["*"]
+    types: [completed]
+    branches: ["mercury/update-*"]
+
+concurrency:
+  group: mercury-deploy-syntax-smoke
+  cancel-in-progress: false
+  queue: max
+
+permissions: {}
+
+jobs:
+  accepted:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: printf '%s\n' 'GitHub accepted the deploy workflow trigger and concurrency syntax.'

@@ -289,7 +289,8 @@ same-repository `pull_request` workflow on a Mercury update branch. It checks ou
 integration branch. It reads required checks from that integration branch and uses the event's branch and SHA to select
 the candidate, then re-reads the current pull request and its checks before merging. The triggering run's artifacts,
 cache, and code are outside this path. A stale completion is ignored, and another successful completion can retry when
-more required checks have finished. Scheduled runs remain the fallback. If the default and integration branches differ,
+more required checks have finished. The event path briefly re-reads the PR if GitHub is still computing whether it can
+merge. Scheduled runs remain the fallback. If the default and integration branches differ,
 the event trigger starts after the updated workflow reaches the default branch through the project's normal release flow.
 
 Two properties of this design that are worth knowing:
@@ -314,8 +315,9 @@ and only as optional; an existing flag is never removed, renamed or made require
 `mercury/update-<12 hex>`. If the project already matches, nothing happens. Otherwise it commits as
 `mercury-update@users.noreply.github.com`, pushes, and opens the one update pull request (source commit link, upstream
 change summary, files taken over or deleted). When the workflow supplies its required-check list to `publish`, the tool
-compares it to the integration config. If the existing head is green and GitHub reports a clean, non-draft merge state,
-`publish` runs the same merge gate before considering a newer release. After it merges, the next publish can open the
+compares it to the integration config. If the existing head passes its required checks and GitHub reports it mergeable,
+`publish` gives it the same merge gate before building and again before pushing a newer release. Optional failures still
+allow the gate to run when GitHub reports the PR as mergeable. After it merges, the next publish can open the
 newer update. A draft, a blocked PR or a head with unfinished checks can still receive a newer release. An older workflow
 without a check-list argument keeps its existing publish path. The new state goes on top of the branch with a regular
 push, which can

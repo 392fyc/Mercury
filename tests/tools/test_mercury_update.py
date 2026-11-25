@@ -489,6 +489,26 @@ class Publish(Fixture):
         self.assertEqual(self.gh.sha(branch), head)
         self.assertEqual(self.gh.named("pr", "edit"), [])
 
+    def test_a_head_that_becomes_ready_during_build_merges_even_with_an_optional_failure(self):
+        branch, head, pr = self.published()
+        self.release(self.m_commit(3))
+        pr["mergeable_state"] = "unstable"
+        commit_update = U.commit_update
+
+        def finish_checks(*args):
+            made = commit_update(*args)
+            self.gh.set_checks(head, {"CI": ("completed", "success"), "Mercury verify": ("completed", "success"),
+                                      "Optional check": ("completed", "failure")})
+            return made
+
+        with unittest.mock.patch.object(U, "commit_update", side_effect=finish_checks):
+            rc, out, err = self.run_tool("publish", "--required-checks-json", '["CI"]')
+        self.assertEqual(rc, 0, out + err)
+        self.assertEqual(self.gh.named("pr", "merge"), [
+            ["pr", "merge", str(pr["number"]), "--repo", REPO, "--squash", "--match-head-commit", head]])
+        self.assertEqual(self.gh.sha(branch), head)
+        self.assertEqual(self.gh.named("pr", "edit"), [])
+
     def test_a_green_but_nonmergeable_update_can_still_receive_a_new_release(self):
         branch, head, pr = self.published()
         for version, details in enumerate((
@@ -798,6 +818,21 @@ class Merge(Fixture):
         self.assertEqual(self.merge_on_completion(branch, head)[0], 0)
         self.assertEqual(self.gh.named("pr", "merge"), [
             ["pr", "merge", str(pr["number"]), "--repo", REPO, "--squash", "--match-head-commit", head]])
+
+    def test_completion_reloads_pending_mergeability_with_a_bounded_wait(self):
+        branch, head, pr = self.ready()
+        pr["mergeable"] = None
+        with unittest.mock.patch.object(U, "sleep") as wait:
+            rc, out, err = self.merge_on_completion(branch, head)
+        self.assertEqual(rc, 0, out + err)
+        self.assertIn("has not computed", out)
+        self.assertEqual(wait.call_count, 2)
+        self.assertEqual(self.gh.named("pr", "merge"), [])
+        with unittest.mock.patch.object(U, "sleep", side_effect=lambda _: pr.update(mergeable=True)) as wait:
+            rc, out, err = self.merge_on_completion(branch, head)
+        self.assertEqual(rc, 0, out + err)
+        self.assertEqual(wait.call_count, 1)
+        self.assertIn("merged update pull request", out)
 
     def test_unrelated_and_stale_completions_do_not_merge_a_green_update(self):
         branch, head, _ = self.ready()

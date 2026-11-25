@@ -66,6 +66,7 @@ import sys
 import tempfile
 import urllib.parse
 from pathlib import Path
+from time import sleep
 
 sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
@@ -91,8 +92,8 @@ class Stop(Exception):
     """A condition is not met; nothing unsafe happened (exit 1)."""
 
 
-class ChecksNotReady(Stop):
-    """The current head does not have all the required successful results."""
+class MergeNotReady(Stop):
+    """Required checks or GitHub's mergeability result are still unavailable or unsuccessful."""
 
 
 class Unsafe(Exception):
@@ -630,6 +631,22 @@ def retire(a, gh, target, pr, head, reason):
     print(f"closed stale update pull request #{n} and deleted {branch}: {reason}")
 
 
+def merge_ready_update(a, gh, target, mercury, params, pr, head):
+    # Only a workflow that supplies its check list can opt into publishing's merge path.
+    if a.required_checks_json is None or check_problems(gh, a.repo, head, params["required_checks"] + [VERIFY_CHECK_NAME]):
+        return False
+    current = update_details(a, gh, pr)
+    if current["head"]["sha"] != head:
+        raise Stop("the ready update moved before it could be merged")
+    # "unstable" may represent a failed optional check. GitHub still enforces branch protection on the merge.
+    if (current.get("draft") or current.get("mergeable") is not True
+            or current.get("mergeable_state") not in ("clean", "unstable")):
+        return False
+    merge_update(a, gh, target, mercury, params, current)
+    set_output("merged", "true")
+    return True
+
+
 def cmd_publish(a, gh):
     target, mercury = checkout_root(a.target, "--target"), checkout_root(a.mercury, "--mercury")
     git(target, "fetch", "--no-tags", "origin", f"+refs/heads/{a.base}:refs/remotes/origin/{a.base}")
@@ -660,22 +677,16 @@ def cmd_publish(a, gh):
     if here == new:
         print(f"nothing to publish: pull request #{pr['number']} already carries Mercury {new[:12]}")
         return 0
-    wanted = params["required_checks"] + [VERIFY_CHECK_NAME]
-    # Only a workflow that supplies its check list can opt into publishing's merge path.
-    if a.required_checks_json is not None and not check_problems(gh, a.repo, head, wanted):
-        current = update_details(a, gh, pr)
-        if current["head"]["sha"] != head:
-            raise Stop("the ready update moved before it could be merged")
-        if not current.get("draft") and current.get("mergeable") is True and current.get("mergeable_state") == "clean":
-            merge_update(a, gh, target, mercury, params, current)
-            set_output("merged", "true")
-            return 0
+    if merge_ready_update(a, gh, target, mercury, params, pr, head):
+        return 0
     git(target, "switch", "--no-track", "-C", branch, f"refs/remotes/origin/{branch}")
     apply_update(target, mercury, new)
     old = lock_commit(show(target, f"origin/{a.base}", LOCK_REL))
     made = commit_update(target, mercury, a.base, new, old)
     if made is None:
         print(f"nothing to do: pull request #{pr['number']} already has the content of Mercury {new[:12]}")
+        return 0
+    if merge_ready_update(a, gh, target, mercury, params, pr, head):
         return 0
     push_branch(target, branch)  # regular push on top of the branch: a fast-forward or nothing
     tmp, body = write_body(made[1])
@@ -736,15 +747,22 @@ def cmd_merge(a, gh):
         print("nothing to do: no open update pull request")
         return 0
     pr = update_details(a, gh, item)
-    if expected is not None and expected != (pr["head"]["ref"], pr["head"]["sha"]):
-        print(f"nothing to do: the expected head is no longer current on pull request #{pr['number']}")
-        return 0
+    if expected is not None:
+        # Reading the PR starts GitHub's background mergeability calculation.
+        for _ in range(2):
+            if expected != (pr["head"]["ref"], pr["head"]["sha"]) or pr.get("mergeable") is not None:
+                break
+            sleep(2)
+            pr = update_details(a, gh, item)
+        if expected != (pr["head"]["ref"], pr["head"]["sha"]):
+            print(f"nothing to do: the expected head is no longer current on pull request #{pr['number']}")
+            return 0
     try:
         merge_update(a, gh, target, mercury, params, pr)
-    except ChecksNotReady as err:
+    except MergeNotReady as err:
         if expected is None:
             raise
-        print(redact(str(err), 4000))  # Another required workflow may still be running.
+        print(redact(str(err), 4000))
     return 0
 
 
@@ -776,12 +794,12 @@ def merge_update(a, gh, target, mercury, params, pr):
     wanted = params["required_checks"] + [VERIFY_CHECK_NAME]
     problems = check_problems(gh, a.repo, head_sha, wanted)
     if problems:
-        raise ChecksNotReady(f"pull request #{n} is waiting for its checks on {head_sha[:12]}:\n  " + "\n  ".join(problems))
+        raise MergeNotReady(f"pull request #{n} is waiting for its checks on {head_sha[:12]}:\n  " + "\n  ".join(problems))
     if pr.get("mergeable") is False:
         raise Stop(f"pull request #{n} conflicts with {a.base} and cannot be merged; the next publish closes it, deletes "
                    f"{branch} and opens a fresh update from the current base")
     if pr.get("mergeable") is not True:
-        raise Stop(f"pull request #{n}: GitHub has not computed whether it is mergeable yet; the next run will look again")
+        raise MergeNotReady(f"pull request #{n}: GitHub has not computed whether it is mergeable yet")
     # The server compares the head again; no admin or bypass flag is used.
     gh(["pr", "merge", str(n), "--repo", a.repo, "--squash", "--match-head-commit", head_sha])
     print(f"merged update pull request #{n} (Mercury {new[:12]})")
