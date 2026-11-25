@@ -156,7 +156,8 @@ BLOCKED = [
     "python -c 'import image_check; image_check.main()'",
     "python -mimage_check --execute", "python -Bc 'import image_api'", "uv run --module image_check",
     "python -W -mpytest -m image_check --help",
-    "python -W ignore -m pytest -rc tests/core/test_image_check.py",  # Only the literal pytest prefix is recognized.
+    "python -W ignore -m pytest -rc tests/core/test_image_check.py",
+    "python -m pytest --pyargs -rc image_check",  # A collection module is not a report test path.
     "py exec -m pytest -rc tests/core/test_image_check.py",  # `exec` is ambiguous between Windows launchers.
     # #744: the lane bus writes its store, and release cannot be undone
     "bash .mercury/packs/lanes/scripts/lane-bus.sh release --harness claude --lane main",

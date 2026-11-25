@@ -700,8 +700,11 @@ WRAPPERS = {
 }
 ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 DIRECT_PYTEST = re.compile(
-    r"^[ \t]*(?:python3?(?:\.exe)?|py(?:\.exe)?(?:[ \t]+-3(?:\.[0-9]+)?)?)"
-    r"(?:[ \t]+-B)?[ \t]+-m[ \t]*pytest(?=[ \t]|$)"
+    r"[ \t]*(?P<interpreter>(?:python3?(?:\.exe)?|py(?:\.exe)?(?:[ \t]+-3(?:\.[0-9]+)?)?)"
+    r"(?:[ \t]+-B)?[ \t]+-m[ \t]*pytest)"
+    r"[ \t]+(?:-rc[ \t]+tests/(?:[\w.-]+/)*test_[\w.-]+\.py"
+    r"|tests(?:/[\w.-]+)*[ \t]+-m[ \t]+\w+)[ \t]*",
+    re.ASCII,
 )
 
 
@@ -743,10 +746,10 @@ def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), 
     # so reading or searching for them stays allowed.
     executed = [word] if word.endswith((".ps1", ".py", ".sh")) else []
     if word in INTERPRETERS:
-        # A literal prefix gives us the pytest boundary without guessing how the shell
-        # expands options. Other forms retain the original scan and file checks.
-        pytest_prefix = DIRECT_PYTEST.match(segment)
-        execution_args = args if pytest_prefix is None else pytest_prefix[0].split()[1:]
+        # Recognize the two reported pytest forms without parsing shell expansions or
+        # guessing whether other pytest options select a test, a module or a plugin.
+        pytest_call = DIRECT_PYTEST.fullmatch(segment)
+        execution_args = args if pytest_call is None else pytest_call["interpreter"].split()[1:]
         paths = [command_word(a) for a in args]
         modules = [command_word(m) for flag, m in zip(execution_args, execution_args[1:]) if flag in ("-m", "--module")]
         modules += [command_word(a[2:]) for a in execution_args if a.startswith("-m") and len(a) > 2]
