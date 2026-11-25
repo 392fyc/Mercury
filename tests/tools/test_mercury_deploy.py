@@ -217,13 +217,20 @@ class DeployInstall(unittest.TestCase):
         return CHECKER.parse_yaml((self.dst / rel).read_text(encoding="utf-8"))
 
     @staticmethod
-    def evaluate(expression, event, ref):
-        """Evaluate a workflow `if:` made only of github.event_name, github.ref_name, string literals, ==, != , && and ||.
+    def evaluate(expression, event, ref, *, source="", conclusion="", trigger=""):
+        """Evaluate a workflow `if:` made only of GitHub context values, string literals and boolean comparisons.
         GitHub compares strings ignoring case, so the expression and the values are folded to lower case first."""
-        allowed = r"(?:github\.event_name|github\.ref_name|==|!=|&&|\|\||'[A-Za-z0-9._/-]*'|\s)+"
+        values = {
+            "github.event_name": event, "github.ref_name": ref, "github.repository": "owner/project",
+            "github.event.workflow_run.event": trigger,
+            "github.event.workflow_run.conclusion": conclusion,
+            "github.event.workflow_run.head_repository.full_name": source,
+        }
+        contexts = "|".join(re.escape(key) for key in values)
+        allowed = rf"(?:{contexts}|==|!=|&&|\|\||'[A-Za-z0-9._/-]*'|[()\s])+"
         assert re.fullmatch(allowed, expression), f"unexpected syntax in {expression!r}"
-        text = expression.lower().replace("&&", " and ").replace("||", " or ")
-        text = text.replace("github.event_name", repr(event.lower())).replace("github.ref_name", repr(ref.lower()))
+        text = " ".join(expression.lower().split()).replace("&&", " and ").replace("||", " or ")
+        text = re.sub(contexts, lambda m: repr(values[m[0]].lower()), text)
         return eval(text, {"__builtins__": {}}, {})
 
     def required_checks(self):
@@ -283,10 +290,10 @@ class DeployInstall(unittest.TestCase):
         self.assertEqual(doc["on"]["schedule"], [{"cron": "17 3 * * *"}])
         self.assertIn("workflow_dispatch", doc["on"])
         self.assertEqual(doc["permissions"], {"contents": "read"})
-        self.assertIn("group", doc["concurrency"])
+        self.assertEqual(doc["concurrency"], {"group": "mercury-update", "cancel-in-progress": "false", "queue": "max"})
         job = doc["jobs"]["update"]
         self.assertIn("timeout-minutes", job)
-        self.assertEqual(job["if"], "github.event_name != 'schedule' || github.ref_name == 'develop'")
+        self.assertTrue(self.evaluate(job["if"], "schedule", "develop"))
         self.assertEqual(job["env"]["MERCURY_BASE"], "develop")
         steps = job["steps"]
         token = next(s for s in steps if str(s.get("uses", "")).startswith("actions/create-github-app-token@"))
@@ -302,8 +309,9 @@ class DeployInstall(unittest.TestCase):
         self.assertEqual(mine["with"]["token"], "${{ steps.app-token.outputs.token }}")
         self.assertEqual((mercury["with"]["ref"], mercury["with"]["persist-credentials"]), ("master", "false"))  # the checker's reader keeps scalars as text
         self.assertTrue(any(s.get("uses") == "actions/setup-python@v7" for s in steps))
-        runs = [s["run"] for s in steps if "run" in s]
-        self.assertEqual([r.split()[3] for r in runs], ["publish", "merge"])
+        commands = [line.split()[3] for step in steps for line in step.get("run", "").splitlines()
+                    if line.strip().startswith("python -B mercury/tools/mercury_update.py ")]
+        self.assertEqual(commands, ["publish", "merge"])
         self.assertEqual(self.required_checks(), PARAMS["required_checks"])
 
     def test_the_app_token_is_created_late_and_only_in_the_update_job(self):
@@ -328,7 +336,6 @@ class DeployInstall(unittest.TestCase):
         doc = self.yaml(UPDATE)
         dispatch, update = doc["jobs"]["dispatch"], doc["jobs"]["update"]
         self.assertEqual(dispatch["if"], "github.event_name == 'schedule' && github.ref_name != 'release/2.x'")
-        self.assertEqual(update["if"], "github.event_name != 'schedule' || github.ref_name == 'release/2.x'")
         self.assertEqual(dispatch["permissions"], {"actions": "write"})
         self.assertEqual(doc["permissions"], {"contents": "read"})
         self.assertEqual(len(dispatch["steps"]), 1)
@@ -350,6 +357,27 @@ class DeployInstall(unittest.TestCase):
                     self.assertNotEqual(runs_dispatch, runs_update)
                     self.assertEqual(runs_dispatch, event == "schedule" and ref.lower() != "release/2.x")
         self.assertEqual(self.dst.joinpath(UPDATE).name, "mercury-update.yml")  # the file name used in `gh workflow run`
+
+    def test_a_successful_update_pr_workflow_completion_only_rechecks_the_event_head(self):
+        self.assertEqual(self.tool()[0], 0)
+        doc = self.yaml(UPDATE)
+        self.assertEqual(doc["on"]["workflow_run"], {
+            "workflows": ["*"], "types": ["completed"], "branches": ["mercury/update-*"]})
+        job = doc["jobs"]["update"]
+        for source, conclusion, trigger, expected in (
+            ("Owner/Project", "success", "pull_request", True),
+            ("fork/project", "success", "pull_request", False),
+            ("owner/project", "failure", "pull_request", False),
+            ("owner/project", "success", "push", False),
+        ):
+            with self.subTest(source=source, conclusion=conclusion, trigger=trigger):
+                self.assertEqual(self.evaluate(job["if"], "workflow_run", "main", source=source,
+                                               conclusion=conclusion, trigger=trigger), expected)
+        publish = next(s for s in job["steps"] if s.get("id") == "publish")
+        self.assertFalse(self.evaluate(publish["if"], "workflow_run", "main"))
+        merge = job["steps"][-1]
+        self.assertIn('--workflow-run-event "$GITHUB_EVENT_PATH"', merge["run"])
+        self.assertIn("steps.publish.outputs.merged != 'true'", merge["if"])
 
     def test_verify_workflow_reads_back_and_uses_the_job_name_that_merge_requires(self):
         self.assertEqual(self.tool()[0], 0)

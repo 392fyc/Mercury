@@ -3,7 +3,7 @@
 
     python tools/mercury_update.py publish --target <checkout> --mercury <checkout> --repo owner/name --base <branch>
     python tools/mercury_update.py merge   --target <checkout> --mercury <checkout> --repo owner/name --base <branch>
-                                           [--required-checks-json <json list>]
+                                           [--required-checks-json <json list>] [--workflow-run-event <file>]
     python tools/mercury_update.py verify  --target <checkout> --mercury <checkout> --base <branch> --head-ref <branch>
 
 `--target` is a checkout of the downstream project (full history; `publish` needs it at the tip of `--base` and clean),
@@ -12,9 +12,9 @@ every Git call; both are reached through one seam each so tests can replace them
 
 publish  Reads the newest commit of Mercury's `origin/master`, and when the project's managed files differ from it,
          applies it with `tools/mercury.py apply` on a branch `mercury/update-<12 hex>` and opens the one update pull
-         request. When an update pull request already exists and is behind, the new state goes on top of its branch
-         with a regular push (see "Branch rule"). An update branch that went stale (it no longer merges cleanly with
-         the base, because the base changed the same managed files another way, or the base already matches the
+         request. An existing green head gets a chance to merge before a newer release replaces it. Otherwise, the new
+         state goes on top of its branch with a regular push (see "Branch rule"). An update branch that went stale
+         (the base changed the same managed files another way and the branch conflicts, or the base already matches the
          release) has its pull request closed and its branch deleted, and a fresh update is opened from the base.
 merge    Merges the one update pull request (squash, `--match-head-commit`) only when ALL of these hold on its exact head:
            1. it is from a same-repository `mercury/update-<12 hex>` branch and is the only such open pull request;
@@ -30,6 +30,7 @@ merge    Merges the one update pull request (squash, `--match-head-commit`) only
            5. every `params.required_checks` name and `Mercury verify` has a completed successful check run, or a success
               status, on that head (all pages read, or the run refuses);
            6. the pull request is open, not a draft and GitHub reports it mergeable.
+         With --workflow-run-event, it also matches the branch and head of a successful same-repository PR workflow.
 verify   Read-only form of 2 and 3 for the `Mercury verify` job: with a head ref that is not an update branch it does nothing.
 
 Branch rule: the tool never force-pushes and has no force option. A regular push cannot discard anyone's commits (the
@@ -87,6 +88,10 @@ PER_PAGE, MAX_PAGES = 100, 20
 
 class Stop(Exception):
     """A condition is not met; nothing unsafe happened (exit 1)."""
+
+
+class ChecksNotReady(Stop):
+    """The current head does not have all the required successful results."""
 
 
 class Unsafe(Exception):
@@ -631,7 +636,7 @@ def cmd_publish(a, gh):
         raise Stop("the target checkout must be clean")
     if git(target, "rev-parse", "HEAD") != git(target, "rev-parse", f"origin/{a.base}"):
         raise Stop(f"the target checkout must be at the tip of origin/{a.base}")
-    params_at_base(target, a.base, None)
+    params = params_at_base(target, a.base, None)
     new = mercury_master(mercury)
     pr = update_queue(gh, a.repo, a.base)
     if pr is None:
@@ -653,6 +658,12 @@ def cmd_publish(a, gh):
         return open_update(a, gh, target, mercury, new)
     if here == new:
         print(f"nothing to publish: pull request #{pr['number']} already carries Mercury {new[:12]}")
+        return 0
+    wanted = params["required_checks"] + [VERIFY_CHECK_NAME]
+    if not check_problems(gh, a.repo, head, wanted):
+        if not merge_update(a, gh, target, mercury, params, pr, expected=(branch, head)):
+            raise Stop("the ready update moved before it could be merged")
+        set_output("merged", "true")
         return 0
     git(target, "switch", "--no-track", "-C", branch, f"refs/remotes/origin/{branch}")
     apply_update(target, mercury, new)
@@ -685,7 +696,33 @@ def lock_commit(raw):
 
 # --- merge and verify ---
 
+def completed_update(event_file, repo):
+    try:
+        event = json.loads(Path(event_file).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as err:
+        raise Unsafe(f"cannot read the workflow_run event ({type(err).__name__})") from None
+    if not isinstance(event, dict) or not isinstance(event.get("workflow_run"), dict):
+        raise Unsafe("invalid workflow_run event")
+    run = event["workflow_run"]
+    head_repo = run.get("head_repository")
+    source = head_repo.get("full_name") if isinstance(head_repo, dict) else None
+    branch, sha = run.get("head_branch"), run.get("head_sha")
+    if (event.get("action") != "completed" or run.get("event") != "pull_request" or run.get("conclusion") != "success"
+            or not isinstance(source, str) or source.lower() != repo.lower()
+            or not isinstance(branch, str) or not BRANCH_RE.fullmatch(branch)):
+        return None
+    if not isinstance(sha, str) or not inst.SHA_RE.fullmatch(sha):
+        raise Unsafe("invalid head SHA in workflow_run event")
+    return branch, sha
+
+
 def cmd_merge(a, gh):
+    expected = None
+    if a.workflow_run_event is not None:
+        expected = completed_update(a.workflow_run_event, a.repo)
+        if expected is None:
+            print("nothing to do: workflow completion does not belong to a successful update PR run")
+            return 0
     target, mercury = checkout_root(a.target, "--target"), checkout_root(a.mercury, "--mercury")
     git(target, "fetch", "--no-tags", "origin", f"+refs/heads/{a.base}:refs/remotes/origin/{a.base}")
     params = params_at_base(target, a.base, a.required_checks_json)
@@ -693,6 +730,16 @@ def cmd_merge(a, gh):
     if item is None:
         print("nothing to do: no open update pull request")
         return 0
+    try:
+        merge_update(a, gh, target, mercury, params, item, expected=expected)
+    except ChecksNotReady as err:
+        if expected is None:
+            raise
+        print(redact(str(err), 4000))  # Another required workflow may still be running.
+    return 0
+
+
+def merge_update(a, gh, target, mercury, params, item, *, expected=None):
     n = item["number"]
     pr = json.loads(gh(["api", f"repos/{a.repo}/pulls/{n}"]))
     if not isinstance(pr, dict) or pr.get("number") != n:
@@ -704,6 +751,9 @@ def cmd_merge(a, gh):
     if pr.get("state") != "open" or pr.get("draft"):
         raise Stop(f"pull request #{n} is not open or is a draft")
     branch = item["head"]["ref"]
+    if expected is not None and expected != (branch, head_sha):
+        print(f"nothing to do: the expected head is no longer current on pull request #{n}")
+        return False
     git(target, "fetch", "--no-tags", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}")
     if git(target, "rev-parse", f"refs/remotes/origin/{branch}") != head_sha:
         raise Stop(f"the head of pull request #{n} moved while it was being verified; try again")
@@ -713,7 +763,7 @@ def cmd_merge(a, gh):
     wanted = params["required_checks"] + [VERIFY_CHECK_NAME]
     problems = check_problems(gh, a.repo, head_sha, wanted)
     if problems:
-        raise Stop(f"pull request #{n} is waiting for its checks on {head_sha[:12]}:\n  " + "\n  ".join(problems))
+        raise ChecksNotReady(f"pull request #{n} is waiting for its checks on {head_sha[:12]}:\n  " + "\n  ".join(problems))
     if pr.get("mergeable") is False:
         raise Stop(f"pull request #{n} conflicts with {a.base} and cannot be merged; the next publish closes it, deletes "
                    f"{branch} and opens a fresh update from the current base")
@@ -722,7 +772,7 @@ def cmd_merge(a, gh):
     # The server compares the head again; no admin or bypass flag is used.
     gh(["pr", "merge", str(n), "--repo", a.repo, "--squash", "--match-head-commit", head_sha])
     print(f"merged update pull request #{n} (Mercury {new[:12]})")
-    return 0
+    return True
 
 
 def cmd_verify(a, gh):
@@ -752,6 +802,7 @@ def build_parser():
             p.add_argument("--repo", required=True, help="owner/name of the project")
         if name == "merge":
             p.add_argument("--required-checks-json", help="the list rendered into the workflow; must equal params.required_checks")
+            p.add_argument("--workflow-run-event", help="merge only the update head named by this completed Actions event")
         if name == "verify":
             p.add_argument("--head-ref", required=True, help="head branch of the pull request being verified")
     return ap

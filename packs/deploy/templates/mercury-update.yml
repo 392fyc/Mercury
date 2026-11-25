@@ -6,11 +6,16 @@ on:
   schedule:
     - cron: @@UPDATE_SCHEDULE@@
   workflow_dispatch:
+  workflow_run:
+    workflows: ["*"]
+    types: [completed]
+    branches: ["mercury/update-*"]
 
 # One run at a time: two runs must not publish or merge side by side.
 concurrency:
   group: mercury-update
   cancel-in-progress: false
+  queue: max
 
 # The workflow token stays read-only. Every write goes through the GitHub App token created in the `update` job.
 permissions:
@@ -18,8 +23,7 @@ permissions:
 
 jobs:
   # GitHub runs scheduled workflows only from the default branch. When that is not the integration branch, the scheduled
-  # run does nothing but start this same workflow on the integration branch (a workflow_dispatch started with GITHUB_TOKEN
-  # does create a run), so the update always uses the integration branch's own copy of this file. No App token exists here.
+  # run starts this same workflow on the integration branch. No App token exists here.
   dispatch:
     name: Mercury update (dispatch)
     if: github.event_name == 'schedule' && github.ref_name != @@INTEGRATION_BRANCH_EXPR@@
@@ -37,7 +41,12 @@ jobs:
 
   update:
     name: Mercury update
-    if: github.event_name != 'schedule' || github.ref_name == @@INTEGRATION_BRANCH_EXPR@@
+    if: >-
+      (github.event_name != 'schedule' || github.ref_name == @@INTEGRATION_BRANCH_EXPR@@)
+      && (github.event_name != 'workflow_run'
+          || (github.event.workflow_run.event == 'pull_request'
+              && github.event.workflow_run.conclusion == 'success'
+              && github.event.workflow_run.head_repository.full_name == github.repository))
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -77,13 +86,21 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
       - name: Publish the update pull request
         id: publish
+        if: github.event_name != 'workflow_run'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: python -B mercury/tools/mercury_update.py publish --target target --mercury mercury --repo "$GITHUB_REPOSITORY" --base "$MERCURY_BASE"
-      # A pull request published a moment ago has no checks yet, so merging is left to the next run.
+      # A successful check completion only rechecks the event head. It never publishes an update.
       - name: Merge when every condition holds
-        if: steps.publish.outputs.published != 'true'
+        if: steps.publish.outputs.published != 'true' && steps.publish.outputs.merged != 'true'
+        shell: bash
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           MERCURY_REQUIRED_CHECKS: @@REQUIRED_CHECKS@@
-        run: python -B mercury/tools/mercury_update.py merge --target target --mercury mercury --repo "$GITHUB_REPOSITORY" --base "$MERCURY_BASE" --required-checks-json "$MERCURY_REQUIRED_CHECKS"
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_run ]; then
+            args=(--workflow-run-event "$GITHUB_EVENT_PATH")
+          else
+            args=(--required-checks-json "$MERCURY_REQUIRED_CHECKS")
+          fi
+          python -B mercury/tools/mercury_update.py merge --target target --mercury mercury --repo "$GITHUB_REPOSITORY" --base "$MERCURY_BASE" "${args[@]}"
