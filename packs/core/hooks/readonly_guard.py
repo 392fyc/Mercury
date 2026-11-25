@@ -475,11 +475,11 @@ def _ansi_decode(body: str) -> str:
     return ANSI_ESCAPE.sub(one, body).split("\x00", 1)[0]
 
 
-def tokenize(segment: str, shell: str = "bash", *, input_files: list[str] | None = None) -> list[str]:
+def tokenize(segment: str, shell: str = "bash", *, input_files: list[tuple[str, str]] | None = None) -> list[str]:
     """The words of `segment` as the shell passes them on: quotes and escape characters removed, comments dropped.
     In Bash the `$` of `$'...'` and `$"..."` goes too, and the escapes of `$'...'` are decoded (#799): otherwise
     `bash -c $'git push'` would hand `$git push` to the check of the inner command.
-    When input_files is given, omit shell redirections from the arguments and collect their input file names."""
+    When input_files is given, omit shell redirections and collect input file names with their descriptors."""
     kinds, _ = lex(segment, shell)
     rules = RULES[shell]
     redirect_chars = ">" if shell == "powershell" else "<>"
@@ -493,7 +493,8 @@ def tokenize(segment: str, shell: str = "bash", *, input_files: list[str] | None
             descriptor = prefix == special_descriptor or (prefix.isascii() and prefix.isdigit())
             if shell in ("bash", "sh") and re.fullmatch(r"\{[A-Za-z_][A-Za-z0-9_]*\}", prefix):
                 descriptor = True
-            if (current or has) and not (descriptor and not has and all(k == LIVE for k in kinds[i - len(prefix):i])):
+            attached = descriptor and not has and all(k == LIVE for k in kinds[i - len(prefix):i])
+            if (current or has) and not attached:
                 tokens.append(prefix)
             current, has = [], False
             operator_start = i
@@ -509,7 +510,8 @@ def tokenize(segment: str, shell: str = "bash", *, input_files: list[str] | None
             while i < n and not (kinds[i] == LIVE and (segment[i].isspace() or segment[i] in redirect_chars)):
                 i += 1
             if operator in ("<", "<>"):
-                input_files.extend(tokenize(segment[target_start:i], shell))
+                fd = prefix if attached else "0"
+                input_files.extend((target, fd) for target in tokenize(segment[target_start:i], shell))
             continue
         if rules.ansi and kind == SYNTAX and ch in "'\"" and current and current[-1] == "$" \
                 and kinds[i - 1] == LIVE and _odd_dollars(segment, i, kinds):
@@ -954,11 +956,11 @@ def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), 
         # Preserve the separate exact-name check for paid scripts, including targets passed to an unknown wrapper.
         paths = {command_word(arg) for arg in args}
         # A redirection can appear before the program; it is consumed by the shell, not by Python.
-        input_files: list[str] = []
+        input_files: list[tuple[str, str]] = []
         if "<" in segment or ">" in segment:
             args = strip_wrappers(tokenize(segment, shell, input_files=input_files))[1:]
         # Keep refusing paid helpers named as input files: Python can execute code from stdin.
-        paths.update(map(command_word, input_files))
+        paths.update(command_word(target) for target, _ in input_files)
         for name in PAID_PYTHON_HELPERS:
             if name + ".py" in paths:
                 raise Blocked(name + ".py")
@@ -975,6 +977,8 @@ def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), 
                     args = args[1:]
         options = iter(args)
         kind, entry = python_entry(options)
+        if kind in ("", "script") and entry in ("", "-"):
+            executed.extend(command_word(target) for target, fd in input_files if not fd.strip("0"))
         for target_kind, target, tail in python_execution_targets(kind, entry, tuple(options), python_minor):
             if target_kind == "script":
                 executed.append(command_word(target))
@@ -983,9 +987,10 @@ def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), 
                 raise Blocked(command_word(target) + ".py")
             elif target_kind == "m" and command_word(target) == "unittest":
                 executed.extend(unittest_file_targets(tail))
-            elif target_kind == "m" and command_word(target) != "pytest":
-                # Opaque runners can use explicit file and interpreter-like options.
-                check_paid_helper_arguments(list(tail), scan_inline=True)
+            elif target_kind == "m":
+                # pytest owns its marker and report options. Its plugins can still load explicit files.
+                if command_word(target) != "pytest":
+                    check_paid_helper_arguments(list(tail), scan_inline=True)
                 executed.extend(explicit_file_targets(tail))
             elif target_kind == "c":
                 check_python_inline(target)
