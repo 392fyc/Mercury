@@ -838,6 +838,9 @@ def pdb_argparse_target(args: tuple[str, ...], *, last_module: bool) -> tuple[st
 
 
 def pdb_targets(args: tuple[str, ...], python_minor: int | None):
+    # Preserve the prior check for an apparent attached target before any program.
+    if args and args[0].startswith("-m") and command_word(args[0][2:]) in PAID_PYTHON_HELPERS:
+        raise Blocked(command_word(args[0][2:]) + ".py")
     # A shell-resolved interpreter may select any supported CLI. Only a qualified
     # Python launcher invocation supplies a minor version we can use here.
     if python_minor is None or python_minor <= 12:
@@ -846,9 +849,6 @@ def pdb_targets(args: tuple[str, ...], python_minor: int | None):
         yield pdb_argparse_target(args, last_module=True)
     if python_minor in (None, 14):
         yield pdb_argparse_target(args, last_module=False)
-    # Retain the prior conservative check for an explicit attached paid-module spelling.
-    check_paid_helper_arguments([arg for arg in args if arg.startswith("-m") and len(arg) > 2],
-                                scan_inline=False)
 
 
 def python_runner_entry(runner: str, options: Iterator[str]) -> tuple[str, str]:

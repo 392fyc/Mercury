@@ -30,6 +30,8 @@ ALLOWED = [
     "py -3.11 -m pdb -m pytest tests -m image_check",
     "py -3.12 -m pdb -m pytest -c quit tests -m image_check",
     "py -3.14 -m pdb -m pytest -c quit tests -m image_check",
+    "py -3.14 -m pdb -m pytest tests -mimage_check",
+    "py -3.11 -m pdb -m pytest tests -mimage_check",
     "py -V:PythonCore/3.14 -m pdb -m pytest tests -m image_check",
     "python -m pdb -m -m pytest tests -m image_check",
     "python -m pdb -mc quit pytest tests -m image_check",
@@ -191,6 +193,7 @@ BLOCKED = [
     "py -3.11 -m pdb -m trace -c --module image_check --help",
     "python -m pdb -m trace -c --module image_check --help",
     "py -3.13 -m pdb -m pytest -c quit tests -m image_check",
+    "py -3.13 -m pdb -m pytest tests -mimage_check",
     "python -m pdb -m pytest tests -m image_check",
     # #744: the lane bus writes its store, and release cannot be undone
     "bash .mercury/packs/lanes/scripts/lane-bus.sh release --harness claude --lane main",
