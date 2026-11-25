@@ -190,6 +190,7 @@ BLOCKED = [
     "python -m pdb -mm -- image_check --help",
     "python -m pdb -mimage_check --help",
     "python /stdlib/cProfile.py -m image_check --help",
+    "py -3.13 -B -m pdb -c quit -mimage_check",
     "py -3.11 -m pdb -m trace -c --module image_check --help",
     "python -m pdb -m trace -c --module image_check --help",
     "py -3.13 -m pdb -m pytest -c quit tests -m image_check",
@@ -609,11 +610,14 @@ class GuardCommands(unittest.TestCase):
         check_command("python -m pytest -f tests/test_main.py", extra=extra)
 
     def test_ipython_file_launcher_checks_code_arguments(self):
-        for launcher in ("ipython", "ipython3"):
+        launchers = ("/venv/bin/ipython", "/venv/bin/ipython3", "/venv/site-packages/IPython/__main__.py",
+                     "IPython/__main__.py")
+        for launcher in launchers:
             with self.subTest(launcher=launcher):
                 with self.assertRaisesRegex(Blocked, "image_check.py"):
-                    check_command(f'python /venv/bin/{launcher} -c "print(\'image_check\')"')
+                    check_command(f'python {launcher} -c "print(\'image_check\')"')
         check_command('python tools/reader.py -c "print(\'image_check\')"')
+        check_command('python tools/__main__.py -c "print(\'image_check\')"')
 
     def test_python_checks_project_scripts_executed_from_stdin(self):
         extra = frozenset({"task_file.py"})

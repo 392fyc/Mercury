@@ -821,9 +821,9 @@ def pdb_argparse_target(args: tuple[str, ...], *, last_module: bool) -> tuple[st
         parser.add_argument("-m")
     try:
         options, tail = parser.parse_known_args(args)
-        if last_module and options.m:
-            if "-m" not in args or parser.parse_known_args(args[:args.index("-m")])[1]:
-                return None
+        # 3.13.0 accepted an attached module. Later 3.13 releases require a standalone -m.
+        if last_module and options.m and "-m" in args and parser.parse_known_args(args[:args.index("-m")])[1]:
+            return None
     except argparse.ArgumentError:
         return None
     for command in options.commands:
@@ -985,7 +985,10 @@ def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), 
                 script = command_word(target)
                 executed.append(script)
                 executed.extend(explicit_file_targets(tail))
-                if script in ("ipython", "ipython3"):
+                if script in ("ipython", "ipython3") or (
+                    script == "__main__.py"
+                    and ("/" + target.strip().replace("\\", "/").lower()).endswith("/ipython/__main__.py")
+                ):
                     check_paid_helper_arguments(list(tail), scan_inline=True)
             elif target_kind == "m" and command_word(target) in PAID_PYTHON_HELPERS:
                 raise Blocked(command_word(target) + ".py")
