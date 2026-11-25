@@ -194,6 +194,7 @@ BLOCKED = [
     "python -m pdb -m trace -c --module image_check --help",
     "py -3.13 -m pdb -m pytest -c quit tests -m image_check",
     "py -3.13 -m pdb -m pytest tests -mimage_check",
+    "py -3.14 /stdlib313/pdb.py -m pytest -c quit tests -m image_check",
     "python -m pdb -m pytest tests -m image_check",
     # #744: the lane bus writes its store, and release cannot be undone
     "bash .mercury/packs/lanes/scripts/lane-bus.sh release --harness claude --lane main",
@@ -598,12 +599,13 @@ class GuardCommands(unittest.TestCase):
         check_command("cat tools/deploy.sh", extra=extra)
         check_command("grep -n publish.ps1 README.md", extra=extra)
 
-    def test_unknown_python_module_file_option_checks_project_scripts(self):
+    def test_opaque_python_entry_file_option_checks_project_scripts(self):
         extra = frozenset({"task_file.py"})
-        for option in ("-f", "-File"):
-            with self.subTest(option=option):
-                with self.assertRaisesRegex(Blocked, "task_file.py"):
-                    check_command(f"python -m locust {option} tasks/task_file.py", extra=extra)
+        for entry in ("-m locust", "/venv/bin/locust"):
+            for option in ("-f", "-File"):
+                with self.subTest(entry=entry, option=option):
+                    with self.assertRaisesRegex(Blocked, "task_file.py"):
+                        check_command(f"python {entry} {option} tasks/task_file.py", extra=extra)
         check_command("python -m pytest -f tasks/task_file.py", extra=extra)
 
 

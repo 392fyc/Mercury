@@ -914,9 +914,11 @@ def python_execution_targets(kind: str, entry: str, args: tuple[str, ...], pytho
             yield target
             continue
         if kind == "script":
-            yield target  # Preserve project checks on the runner file itself.
+            yield kind, entry, ()  # Check the runner file; parse its options below.
         if runner == "pdb":
-            pending.extend(target for target in pdb_targets(tail, python_minor) if target is not None)
+            # An explicit debugger file can come from a different Python install.
+            debugger_minor = python_minor if kind == "m" else None
+            pending.extend(target for target in pdb_targets(tail, debugger_minor) if target is not None)
         else:
             options = iter(tail)
             nested_kind, nested_entry = python_runner_entry(runner, options)
@@ -962,6 +964,7 @@ def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), 
         for target_kind, target, tail in python_execution_targets(kind, entry, tuple(options), python_minor):
             if target_kind == "script":
                 executed.append(command_word(target))
+                executed.extend(explicit_file_targets(tail))
             elif target_kind == "m" and command_word(target) in PAID_PYTHON_HELPERS:
                 raise Blocked(command_word(target) + ".py")
             elif target_kind == "m" and command_word(target) not in PYTHON_TEST_MODULES:
