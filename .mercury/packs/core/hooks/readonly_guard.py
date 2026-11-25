@@ -95,6 +95,8 @@ SHELLS = {"bash", "sh", "dash", "ash", "zsh", "powershell", "pwsh", "cmd"}
 PYTHON_INTERPRETERS = {"python", "python3", "py"}
 INTERPRETERS = {"pwsh", "powershell", "bash", "sh", "uv", "uvx", "node"}
 PAID_PYTHON_HELPERS = ("image_api", "image_check")
+# These test commands own options such as pytest's -m marker and -rc report selection.
+PYTHON_TEST_MODULES = {"pytest", "unittest"}
 # Options that take a value before the target program of these runners.
 PROFILE_VALUE_OPTIONS = ("os", {"--outfile", "--sort"})
 PYTHON_PROGRAM_RUNNERS = {
@@ -842,8 +844,10 @@ def python_runner_entry(runner: str, options: Iterator[str]) -> tuple[str, str]:
             continue
         for i, flag in enumerate(arg[1:], start=1):
             if flag == "m" and runner != "trace":
-                if runner == "pdb":
-                    return "m", arg[i + 1:] or next(options, "")
+                # Legacy pdb accepts repeated -m mode flags. Keep the old guard's
+                # conservative check for an attached target spelling as well.
+                if runner == "pdb" and arg[i + 1:].strip("m"):
+                    return "m", arg[i + 1:]
                 kind = "m"
             if flag in short_values:
                 if i == len(arg) - 1:
@@ -905,6 +909,10 @@ def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), 
             executed.append(command_word(entry))
         elif kind == "m" and command_word(entry) in PAID_PYTHON_HELPERS:
             raise Blocked(command_word(entry) + ".py")
+        elif kind == "m" and command_word(entry) not in PYTHON_TEST_MODULES:
+            # A plugin or debugger can have its own execution options. Preserve the old
+            # paid-helper checks at this unknown boundary without misreading test flags.
+            check_paid_helper_arguments(list(options), scan_inline=True)
         elif kind == "c":
             check_python_inline(entry)
     elif word in INTERPRETERS:
