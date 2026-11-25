@@ -22,7 +22,7 @@ ALLOWED = [
     # #821: tests and reads that name the paid helpers stay allowed; only running them is refused
     "python -B -m pytest -q tests/core/test_image_check.py", "python -m pytest tests/core -k image_api",
     "python -B -m pytest -rc tests/core/test_image_check.py", "python -m pytest tests -m image_check",
-    "python -W ignore -X utf8 -mpytest tests -m image_check",
+    "python -B -mpytest tests -m image_check",
     "py -3.14 -B -m pytest -rc tests/core/test_image_check.py",
     "bash -c 'grep -n image_check packs/core/hooks/readonly_guard.py'",
     # wrapper commands run the command after them (#804): read-only ones stay allowed
@@ -156,6 +156,7 @@ BLOCKED = [
     "python -c 'import image_check; image_check.main()'",
     "python -mimage_check --execute", "python -Bc 'import image_api'", "uv run --module image_check",
     "python -W -mpytest -m image_check --help",
+    "python -W ignore -m pytest -rc tests/core/test_image_check.py",  # Only the literal pytest prefix is recognized.
     "py exec -m pytest -rc tests/core/test_image_check.py",  # `exec` is ambiguous between Windows launchers.
     # #744: the lane bus writes its store, and release cannot be undone
     "bash .mercury/packs/lanes/scripts/lane-bus.sh release --harness claude --lane main",

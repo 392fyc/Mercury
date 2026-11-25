@@ -91,8 +91,7 @@ WRITE_SCRIPTS = (
     "lane-bus.sh", "lane-bus.py",
 )
 SHELLS = {"bash", "sh", "dash", "ash", "zsh", "powershell", "pwsh", "cmd"}
-PYTHON_INTERPRETERS = {"python", "python3", "py"}
-INTERPRETERS = PYTHON_INTERPRETERS | {"pwsh", "powershell", "bash", "sh", "uv", "uvx", "node"}
+INTERPRETERS = {"python", "python3", "py", "pwsh", "powershell", "bash", "sh", "uv", "uvx", "node"}
 INLINE_FLAGS = {"-c", "-command", "/c", "-commandwithargs"}
 # Per shell, spelled without quotes or escapes (Argus on ae13a5c). Checked in real shells: in Bash, `\$null`, `null`,
 # `nul` (Git Bash too) and `$null` with a variable `null` set all write a file; in PowerShell `'$null'` and `null`
@@ -700,6 +699,10 @@ WRAPPERS = {
               "-s", "--max-chars"},
 }
 ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+DIRECT_PYTEST = re.compile(
+    r"^[ \t]*(?:python3?(?:\.exe)?|py(?:\.exe)?(?:[ \t]+-3(?:\.[0-9]+)?)?)"
+    r"(?:[ \t]+-B)?[ \t]+-m[ \t]*pytest(?=[ \t]|$)"
+)
 
 
 def strip_wrappers(tokens: list[str]) -> list[str]:
@@ -728,32 +731,6 @@ def strip_wrappers(tokens: list[str]) -> list[str]:
     return tokens[i:]
 
 
-def pytest_argument_start(args: list[str], launcher: bool) -> int | None:
-    """Return the argument boundary for a direct Python invocation of pytest."""
-    start = 0
-    # Only skip a version selector. The legacy Windows launcher can treat `exec` as a script path.
-    if launcher and args and re.match(r"-(?:[0-9]|V:)", args[0], re.IGNORECASE):
-        start = 1
-    options = iter(enumerate(args[start:], start))
-    for index, arg in options:
-        if arg == "--check-hash-based-pycs":
-            next(options, None)
-            continue
-        if not arg.startswith("-") or arg == "-" or arg.startswith("--"):
-            return None  # A script, stdin, or an option we cannot interpret here.
-        for offset, flag in enumerate(arg[1:], start=1):
-            if flag in "mWX":
-                value = arg[offset + 1:]
-                if not value:
-                    index, value = next(options, (index, ""))
-                if flag == "m":
-                    return index + 1 if value == "pytest" else None
-                break
-            if flag not in "bBdEiIOPqRsSuvx":
-                return None  # Inline code or an unrecognized option is not a pytest entry.
-    return None
-
-
 def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), actions: dict | None = None,
                   shell: str = "bash") -> None:
     actions = actions or {}
@@ -766,10 +743,10 @@ def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), 
     # so reading or searching for them stays allowed.
     executed = [word] if word.endswith((".ps1", ".py", ".sh")) else []
     if word in INTERPRETERS:
-        # Pytest owns its report and marker options once Python selects it. Keep the
-        # conservative baseline checks for other runners and the separate file policies.
-        pytest_start = pytest_argument_start(args, word == "py") if word in PYTHON_INTERPRETERS else None
-        execution_args = args if pytest_start is None else args[:pytest_start]
+        # A literal prefix gives us the pytest boundary without guessing how the shell
+        # expands options. Other forms retain the original scan and file checks.
+        pytest_prefix = DIRECT_PYTEST.match(segment)
+        execution_args = args if pytest_prefix is None else pytest_prefix[0].split()[1:]
         paths = [command_word(a) for a in args]
         modules = [command_word(m) for flag, m in zip(execution_args, execution_args[1:]) if flag in ("-m", "--module")]
         modules += [command_word(a[2:]) for a in execution_args if a.startswith("-m") and len(a) > 2]
