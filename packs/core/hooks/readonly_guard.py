@@ -930,7 +930,8 @@ def python_execution_targets(kind: str, entry: str, args: tuple[str, ...], pytho
             yield target
             continue
         if kind == "script":
-            yield kind, entry, ()  # Check the runner file; parse its options below.
+            # A project script can share a standard runner's filename. Keep its explicit file checks too.
+            yield target
         if runner == "pdb":
             # An explicit debugger file can come from a different Python install.
             debugger_minor = python_minor if kind == "m" else None
@@ -981,8 +982,11 @@ def check_segment(segment: str, depth: int = 0, extra: frozenset = frozenset(), 
             executed.extend(command_word(target) for target, fd in input_files if not fd.strip("0"))
         for target_kind, target, tail in python_execution_targets(kind, entry, tuple(options), python_minor):
             if target_kind == "script":
-                executed.append(command_word(target))
+                script = command_word(target)
+                executed.append(script)
                 executed.extend(explicit_file_targets(tail))
+                if script in ("ipython", "ipython3"):
+                    check_paid_helper_arguments(list(tail), scan_inline=True)
             elif target_kind == "m" and command_word(target) in PAID_PYTHON_HELPERS:
                 raise Blocked(command_word(target) + ".py")
             elif target_kind == "m" and command_word(target) == "unittest":

@@ -601,12 +601,19 @@ class GuardCommands(unittest.TestCase):
 
     def test_opaque_python_entry_file_option_checks_project_scripts(self):
         extra = frozenset({"task_file.py"})
-        for entry in ("-m locust", "/venv/bin/locust", "-m pytest"):
+        for entry in ("-m locust", "/venv/bin/locust", "-m pytest", "tools/trace.py"):
             for option in ("-f", "-File"):
                 with self.subTest(entry=entry, option=option):
                     with self.assertRaisesRegex(Blocked, "task_file.py"):
                         check_command(f"python {entry} {option} tasks/task_file.py", extra=extra)
         check_command("python -m pytest -f tests/test_main.py", extra=extra)
+
+    def test_ipython_file_launcher_checks_code_arguments(self):
+        for launcher in ("ipython", "ipython3"):
+            with self.subTest(launcher=launcher):
+                with self.assertRaisesRegex(Blocked, "image_check.py"):
+                    check_command(f'python /venv/bin/{launcher} -c "print(\'image_check\')"')
+        check_command('python tools/reader.py -c "print(\'image_check\')"')
 
     def test_python_checks_project_scripts_executed_from_stdin(self):
         extra = frozenset({"task_file.py"})
