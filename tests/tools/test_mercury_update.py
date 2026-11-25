@@ -84,6 +84,7 @@ class FakeGh:
 
     def item(self, pr):
         return {"number": pr["number"], "state": pr["state"], "draft": pr["draft"], "mergeable": pr["mergeable"],
+                "mergeable_state": pr.get("mergeable_state", "clean"),
                 "head": {"ref": pr["ref"], "sha": pr.get("sha") or self.sha(pr["ref"]),
                          "repo": None if pr["repo"] is None else {"full_name": pr["repo"]}},
                 "base": {"ref": pr["base"]}}
@@ -477,6 +478,67 @@ class Publish(Fixture):
         self.assertEqual(self.remote_branches(), [BASE, branch])  # no second branch
         self.assertEqual(git(self.bare, "log", "--format=%ce", f"{BASE}..{branch}").split(), [BOT, BOT])
 
+    def test_a_ready_older_head_merges_before_a_new_release_can_replace_it(self):
+        branch, head, pr = self.published()
+        self.gh.all_green(head)
+        self.release(self.m_commit(3))
+        rc, out, err = self.run_tool("publish", "--required-checks-json", '["CI"]')
+        self.assertEqual(rc, 0, out + err)
+        self.assertEqual(self.gh.named("pr", "merge"), [
+            ["pr", "merge", str(pr["number"]), "--repo", REPO, "--squash", "--match-head-commit", head]])
+        self.assertEqual(self.gh.sha(branch), head)
+        self.assertEqual(self.gh.named("pr", "edit"), [])
+
+    def test_a_head_that_becomes_ready_during_build_merges_even_with_an_optional_failure(self):
+        branch, head, pr = self.published()
+        self.release(self.m_commit(3))
+        pr["mergeable_state"] = "unstable"
+        commit_update = U.commit_update
+
+        def finish_checks(*args):
+            made = commit_update(*args)
+            self.gh.set_checks(head, {"CI": ("completed", "success"), "Mercury verify": ("completed", "success"),
+                                      "Optional check": ("completed", "failure")})
+            return made
+
+        with unittest.mock.patch.object(U, "commit_update", side_effect=finish_checks):
+            rc, out, err = self.run_tool("publish", "--required-checks-json", '["CI"]')
+        self.assertEqual(rc, 0, out + err)
+        self.assertEqual(self.gh.named("pr", "merge"), [
+            ["pr", "merge", str(pr["number"]), "--repo", REPO, "--squash", "--match-head-commit", head]])
+        self.assertEqual(self.gh.sha(branch), head)
+        self.assertEqual(self.gh.named("pr", "edit"), [])
+
+    def test_a_green_but_nonmergeable_update_can_still_receive_a_new_release(self):
+        branch, head, pr = self.published()
+        for version, details in enumerate((
+            {"draft": True, "mergeable": True, "mergeable_state": "draft"},
+            {"draft": False, "mergeable": None, "mergeable_state": "unknown"},
+            {"draft": False, "mergeable": True, "mergeable_state": "blocked"},
+        ), 3):
+            with self.subTest(details=details):
+                pr.update(details)
+                self.gh.all_green(head)
+                self.release(self.m_commit(version))
+                rc, out, err = self.run_tool("publish", "--required-checks-json", '["CI"]')
+                self.assertEqual(rc, 0, out + err)
+                new_head = self.gh.sha(branch)
+                self.assertNotEqual(new_head, head)
+                self.assertEqual(self.gh.named("pr", "merge"), [])
+                head = new_head
+                self.reset_target()
+
+    def test_a_legacy_or_mismatched_publish_command_does_not_merge(self):
+        branch, head, _ = self.published()
+        self.gh.all_green(head)
+        self.release(self.m_commit(3))
+        rc, out, err = self.run_tool("publish", "--required-checks-json", "[]")
+        self.assertEqual(rc, 2, out + err)
+        self.assertEqual(self.gh.sha(branch), head)
+        self.assertEqual(self.publish()[0], 0)
+        self.assertNotEqual(self.gh.sha(branch), head)
+        self.assertEqual(self.gh.named("pr", "merge"), [])
+
     def test_the_tool_has_no_force_push_anywhere(self):
         text = TOOL.read_text(encoding="utf-8")
         pushes = [l.strip() for l in text.splitlines() if '"push"' in l]
@@ -737,6 +799,59 @@ class Merge(Fixture):
         self.assertEqual(self.gh.named("pr", "merge"), [["pr", "merge", str(pr["number"]), "--repo", REPO, "--squash",
                                                           "--match-head-commit", head]])
         self.assertIn("merged update pull request", out)
+
+    def merge_on_completion(self, branch, head, **overrides):
+        payload = self.tmp / "workflow-event.json"
+        write(payload, json.dumps({"action": "completed", "workflow_run": {
+            "event": "pull_request", "conclusion": "success", "head_repository": {"full_name": REPO},
+            "head_branch": branch, "head_sha": head, **overrides}}))
+        return self.merge("--workflow-run-event", str(payload))
+
+    def test_completion_waits_for_all_checks_and_merges_the_same_head_when_ready(self):
+        branch, head, pr = self.published()
+        self.gh.all_green(head, names=("Mercury verify",))
+        rc, out, err = self.merge_on_completion(branch, head)
+        self.assertEqual(rc, 0, out + err)
+        self.assertIn("waiting for its checks", out)
+        self.assertEqual(self.gh.named("pr", "merge"), [])
+        self.gh.all_green(head)
+        self.assertEqual(self.merge_on_completion(branch, head)[0], 0)
+        self.assertEqual(self.gh.named("pr", "merge"), [
+            ["pr", "merge", str(pr["number"]), "--repo", REPO, "--squash", "--match-head-commit", head]])
+
+    def test_completion_reloads_pending_mergeability_with_a_bounded_wait(self):
+        branch, head, pr = self.ready()
+        pr["mergeable"] = None
+        with unittest.mock.patch.object(U, "sleep") as wait:
+            rc, out, err = self.merge_on_completion(branch, head)
+        self.assertEqual(rc, 0, out + err)
+        self.assertIn("has not computed", out)
+        self.assertEqual(wait.call_count, 2)
+        self.assertEqual(self.gh.named("pr", "merge"), [])
+        with unittest.mock.patch.object(U, "sleep", side_effect=lambda _: pr.update(mergeable=True)) as wait:
+            rc, out, err = self.merge_on_completion(branch, head)
+        self.assertEqual(rc, 0, out + err)
+        self.assertEqual(wait.call_count, 1)
+        self.assertIn("merged update pull request", out)
+
+    def test_unrelated_and_stale_completions_do_not_merge_a_green_update(self):
+        branch, head, _ = self.ready()
+        cases = [
+            ("feature/elsewhere", head, {}),
+            ("mercury/update-000000000000", head, {}),
+            (branch, "0" * 40, {}),
+            (branch, head, {"head_repository": {"full_name": "someone/fork"}}),
+            (branch, head, {"event": "push"}),
+            (branch, head, {"conclusion": "failure"}),
+        ]
+        for ref, sha, overrides in cases:
+            with self.subTest(ref=ref, sha=sha, overrides=overrides):
+                rc, out, err = self.merge_on_completion(ref, sha, **overrides)
+                self.assertEqual(rc, 0, out + err)
+                self.assertIn("nothing to do", out)
+        self.assertEqual(self.gh.named("pr", "merge"), [])
+        self.assertEqual(self.gh.named("pr", "edit"), [])
+        self.assertEqual(self.gh.sha(branch), head)
 
     def test_the_required_checks_come_from_the_workflow_only_when_they_agree_with_the_config(self):
         self.ready()
